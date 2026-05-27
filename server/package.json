@@ -1,0 +1,19 @@
+{
+  "name": "studious-robot-server",
+  "version": "0.1.0",
+  "description": "Signaling server (Express + Socket.IO) for studious-robot.",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "license": "MIT"
+}
