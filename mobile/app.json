@@ -10,10 +10,18 @@
       "supportsTablet": true
     },
     "android": {
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
       }
     },
+    "plugins": [
+      "@config-plugins/react-native-webrtc"
+    ],
     "web": {
       "bundler": "metro"
     }
