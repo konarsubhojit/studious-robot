@@ -27,7 +27,7 @@ function createServer() {
   let corsOrigin = '*';
   if (rawCorsOrigin) {
     corsOrigin = rawCorsOrigin === '*'
-      ? '*'
+      ? rawCorsOrigin
       : rawCorsOrigin.split(',').map((s) => s.trim()).filter(Boolean);
   } else if (process.env.NODE_ENV === 'production') {
     corsOrigin = [];
