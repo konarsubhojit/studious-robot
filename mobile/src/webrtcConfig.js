@@ -1,14 +1,17 @@
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
-const METERED_DEFAULT_USERNAME = 'openrelayproject';
-const METERED_DEFAULT_CREDENTIAL = 'openrelayproject';
+
+function readEnv(name) {
+  const env = globalThis?.process?.env;
+  return env?.[name];
+}
 
 export function getIceServers() {
-  const turnUsername = process.env?.['EXPO_PUBLIC_TURN_USERNAME'] || METERED_DEFAULT_USERNAME;
-  const turnCredential = process.env?.['EXPO_PUBLIC_TURN_CREDENTIAL'] || METERED_DEFAULT_CREDENTIAL;
+  const turnUsername = readEnv('EXPO_PUBLIC_TURN_USERNAME');
+  const turnCredential = readEnv('EXPO_PUBLIC_TURN_CREDENTIAL');
+  const iceServers = [{ urls: [GOOGLE_STUN_URL] }];
 
-  return [
-    { urls: [GOOGLE_STUN_URL] },
-    {
+  if (turnUsername && turnCredential) {
+    iceServers.push({
       urls: [
         'turn:global.relay.metered.ca:80',
         'turn:global.relay.metered.ca:80?transport=tcp',
@@ -17,6 +20,8 @@ export function getIceServers() {
       ],
       username: turnUsername,
       credential: turnCredential,
-    },
-  ];
+    });
+  }
+
+  return iceServers;
 }

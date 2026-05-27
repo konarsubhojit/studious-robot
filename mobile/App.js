@@ -108,8 +108,8 @@ export default function App() {
         return;
       }
 
-      await startLocalPreview();
       leaveRoom();
+      await startLocalPreview();
       setStatus('Connecting to signaling server...');
 
       const socket = io(signalingUrl.trim(), { transports: ['websocket'] });
@@ -171,7 +171,8 @@ export default function App() {
         setIsInRoom(false);
         setStatus('Unable to connect to signaling server');
       });
-    } catch {
+    } catch (error) {
+      console.error('joinRoom failed during media/signaling setup:', error);
       setStatus('Failed to access camera/microphone');
     }
   }, [closePeerConnection, ensurePeerConnection, leaveRoom, roomId, signalingUrl, startLocalPreview]);
@@ -183,6 +184,15 @@ export default function App() {
       localStreamRef.current = null;
     }
   }, [leaveRoom]);
+
+  const handleRoomButtonPress = () => {
+    if (isInRoom) {
+      leaveRoom('Disconnected');
+      return;
+    }
+
+    joinRoom();
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -211,10 +221,13 @@ export default function App() {
           <Button
             title="Start Preview"
             onPress={() => {
-              startLocalPreview().catch(() => setStatus('Failed to access camera/microphone'));
+              startLocalPreview().catch((error) => {
+                console.error('startLocalPreview failed (permissions/device):', error);
+                setStatus('Failed to access camera/microphone');
+              });
             }}
           />
-          <Button title={isInRoom ? 'Leave Room' : 'Join Room'} onPress={isInRoom ? leaveRoom : joinRoom} />
+          <Button title={isInRoom ? 'Leave Room' : 'Join Room'} onPress={handleRoomButtonPress} />
         </View>
 
         <Text style={styles.status}>{status}</Text>

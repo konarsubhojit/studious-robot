@@ -21,6 +21,8 @@ export EXPO_PUBLIC_TURN_USERNAME=<metered_turn_username>
 export EXPO_PUBLIC_TURN_CREDENTIAL=<metered_turn_credential>
 ```
 
+If TURN credentials are not provided, TURN support is disabled and only STUN is used.
+
 ## Run in Codespaces
 ```bash
 npm start          # alias for `expo start`
