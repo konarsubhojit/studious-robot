@@ -23,9 +23,16 @@ function createServer() {
   });
 
   const httpServer = http.createServer(app);
-  const corsOrigin = process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
-    : '*';
+  const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  let corsOrigin = '*';
+  if (rawCorsOrigin) {
+    corsOrigin = rawCorsOrigin === '*'
+      ? '*'
+      : rawCorsOrigin.split(',').map((s) => s.trim()).filter(Boolean);
+  } else if (process.env.NODE_ENV === 'production') {
+    corsOrigin = [];
+    console.warn('[signaling] CORS_ORIGIN is not set; rejecting browser origins in production.');
+  }
   const io = new Server(httpServer, {
     cors: { origin: corsOrigin },
   });
@@ -60,9 +67,7 @@ if (require.main === module) {
   const host = process.env.HOST || '0.0.0.0';
   const { httpServer } = createServer();
   httpServer.listen(port, host, () => {
-    // eslint-disable-next-line no-console
     console.log(`[signaling] listening on http://${host}:${port}`);
-    // eslint-disable-next-line no-console
     console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
   });
 }

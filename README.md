@@ -1,6 +1,6 @@
 # studious-robot
 
-Cloud-first project with two workspaces:
+Cloud-first project with two folders:
 
 | Path       | Purpose                                                  |
 | ---------- | -------------------------------------------------------- |
@@ -25,7 +25,7 @@ No local Android Studio, Xcode, or device toolchain is required — use the
 # 1. Use the pinned Node version
 nvm use
 
-# 2. Install dependencies for each workspace
+# 2. Install dependencies for each folder
 cd server && npm install && cd ..
 cd mobile && npm install && cd ..
 ```
@@ -66,7 +66,7 @@ outside the Codespace without any local Android Studio setup.
 
 ## Common npm scripts
 
-Both workspaces expose a consistent script surface:
+Both folders expose a consistent script surface:
 
 | Script         | `server/`                        | `mobile/`                        |
 | -------------- | -------------------------------- | -------------------------------- |
