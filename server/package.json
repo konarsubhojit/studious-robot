@@ -15,5 +15,8 @@
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
 }
