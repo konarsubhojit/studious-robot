@@ -23,8 +23,11 @@ function createServer() {
   });
 
   const httpServer = http.createServer(app);
+  const corsOrigin = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
+    : '*';
   const io = new Server(httpServer, {
-    cors: { origin: '*' },
+    cors: { origin: corsOrigin },
   });
 
   io.on('connection', (socket) => {
