@@ -4,13 +4,24 @@ React Native app scaffolded with Expo for the studious-robot project.
 
 ## Requirements
 - Node.js (see repo root `.nvmrc`)
-- Expo Go on your physical device (recommended for Codespaces workflow)
+- Android device/emulator with an Expo dev build (required for `react-native-webrtc`)
 
 ## Setup
 ```bash
 cd mobile
 npm install
 ```
+
+Optional environment variables for signaling and TURN:
+
+```bash
+export EXPO_PUBLIC_SIGNALING_URL=http://<YOUR_SIGNALING_HOST>:3001
+export EXPO_PUBLIC_ROOM_ID=room-1
+export EXPO_PUBLIC_TURN_USERNAME=<metered_turn_username>
+export EXPO_PUBLIC_TURN_CREDENTIAL=<metered_turn_credential>
+```
+
+If TURN credentials are not provided, TURN support is disabled and only STUN is used.
 
 ## Run in Codespaces
 ```bash
@@ -19,8 +30,9 @@ npm start          # alias for `expo start`
 npx expo start --tunnel
 ```
 
-Scan the printed QR code with the Expo Go app on your device. No local Android
-Studio / Xcode installation is required for development.
+Open the app on Android and grant camera/microphone permissions to start local
+preview and join a room. For device-to-device testing, launch two clients with
+the same room ID.
 
 ## Other scripts
 ```bash
