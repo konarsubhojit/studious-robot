@@ -6,10 +6,13 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "owner": "konarsubhojit",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.konarsubhojit.studiousrobot"
     },
     "android": {
+      "package": "com.konarsubhojit.studiousrobot",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",

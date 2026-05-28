@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: studious-robot-signaling
+    runtime: node
+    region: oregon
+    plan: free
+    branch: main
+    rootDir: server
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: CORS_ORIGIN
+        sync: false   # set in the Render dashboard to your Expo app origin(s)
