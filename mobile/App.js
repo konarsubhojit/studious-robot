@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Button, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -9,6 +9,7 @@ import {
   RTCSessionDescription,
   RTCView,
 } from 'react-native-webrtc';
+import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getIceServers } from './src/webrtcConfig';
 
 const DEFAULT_SIGNALING_URL = process.env.EXPO_PUBLIC_SIGNALING_URL || 'http://localhost:3001';
@@ -21,6 +22,8 @@ export default function App() {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [isInRoom, setIsInRoom] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
 
   const socketRef = useRef(null);
   const peerConnectionRef = useRef(null);
@@ -84,8 +87,14 @@ export default function App() {
     return connection;
   }, []);
 
+  const syncMediaState = useCallback((stream) => {
+    setIsMuted(!isTrackEnabled(stream, 'audio'));
+    setIsVideoEnabled(isTrackEnabled(stream, 'video'));
+  }, []);
+
   const startLocalPreview = useCallback(async () => {
     if (localStreamRef.current) {
+      syncMediaState(localStreamRef.current);
       return localStreamRef.current;
     }
 
@@ -97,9 +106,10 @@ export default function App() {
     });
     localStreamRef.current = stream;
     setLocalStream(stream);
+    syncMediaState(stream);
     setStatus('Local preview ready');
     return stream;
-  }, []);
+  }, [syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
@@ -194,11 +204,33 @@ export default function App() {
     joinRoom();
   };
 
+  const handleMuteToggle = useCallback(() => {
+    const nextMuted = !isMuted;
+    if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
+      setStatus('Start preview to control audio');
+      return;
+    }
+
+    setIsMuted(nextMuted);
+    setStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
+  }, [isMuted]);
+
+  const handleVideoToggle = useCallback(() => {
+    const nextVideoEnabled = !isVideoEnabled;
+    if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
+      setStatus('Start preview to control video');
+      return;
+    }
+
+    setIsVideoEnabled(nextVideoEnabled);
+    setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
+  }, [isVideoEnabled]);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>studious-robot</Text>
-        <Text style={styles.subtitle}>Phase 3 — Android WebRTC handshake</Text>
+        <Text style={styles.subtitle}>Phase 4 — Warm & cozy in-call interface</Text>
 
         <TextInput
           value={signalingUrl}
@@ -232,11 +264,48 @@ export default function App() {
 
         <Text style={styles.status}>{status}</Text>
 
-        <Text style={styles.streamLabel}>Local stream</Text>
-        {localStream ? <RTCView style={styles.stream} streamURL={localStream.toURL()} /> : <View style={styles.emptyStream} />}
+        <Text style={styles.streamLabel}>In call</Text>
+        <View style={styles.callStage}>
+          <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
+          <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
+          {remoteStream ? (
+            <RTCView style={styles.remoteStream} streamURL={remoteStream.toURL()} objectFit="cover" />
+          ) : (
+            <View style={styles.remotePlaceholder}>
+              <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
+            </View>
+          )}
+          {localStream ? (
+            <View style={styles.localPip}>
+              <RTCView style={styles.localPipStream} streamURL={localStream.toURL()} objectFit="cover" mirror />
+            </View>
+          ) : null}
+        </View>
 
-        <Text style={styles.streamLabel}>Remote stream</Text>
-        {remoteStream ? <RTCView style={styles.stream} streamURL={remoteStream.toURL()} /> : <View style={styles.emptyStream} />}
+        <View style={styles.controlsRow}>
+          <Pressable
+            onPress={handleMuteToggle}
+            style={({ pressed }) => [
+              styles.controlButton,
+              isMuted && styles.controlButtonActive,
+              !localStream && styles.controlButtonDisabled,
+              pressed && styles.controlButtonPressed,
+            ]}
+          >
+            <Text style={styles.controlButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleVideoToggle}
+            style={({ pressed }) => [
+              styles.controlButton,
+              !isVideoEnabled && styles.controlButtonActive,
+              !localStream && styles.controlButtonDisabled,
+              pressed && styles.controlButtonPressed,
+            ]}
+          >
+            <Text style={styles.controlButtonText}>{isVideoEnabled ? 'Video Off' : 'Video On'}</Text>
+          </Pressable>
+        </View>
       </ScrollView>
       <StatusBar style="auto" />
     </SafeAreaView>
@@ -246,7 +315,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#101420',
+    backgroundColor: '#2d2329',
   },
   content: {
     padding: 16,
@@ -254,14 +323,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '600',
-    color: '#f6f8ff',
+    color: '#fff5e8',
   },
   input: {
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#384666',
-    backgroundColor: '#1b2438',
-    color: '#f6f8ff',
+    borderColor: '#6d5057',
+    backgroundColor: '#45313a',
+    color: '#fff5e8',
     paddingHorizontal: 12,
     paddingVertical: 10,
     marginBottom: 12,
@@ -274,30 +343,96 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: '#adb6ca',
+    color: '#dec8b5',
     marginBottom: 16,
   },
   status: {
-    color: '#d8def0',
+    color: '#f1ddcb',
     marginBottom: 12,
   },
   streamLabel: {
-    color: '#d8def0',
+    color: '#f1ddcb',
+    fontWeight: '600',
     marginBottom: 8,
   },
-  stream: {
-    height: 220,
-    borderRadius: 8,
+  callStage: {
+    height: 320,
+    borderRadius: 18,
     overflow: 'hidden',
-    backgroundColor: '#000',
-    marginBottom: 16,
-  },
-  emptyStream: {
-    height: 220,
-    borderRadius: 8,
+    marginBottom: 12,
+    backgroundColor: '#3a2c34',
     borderWidth: 1,
-    borderColor: '#384666',
-    backgroundColor: '#141c2e',
-    marginBottom: 16,
+    borderColor: '#7d5962',
+  },
+  cozyBlob: {
+    position: 'absolute',
+    width: 170,
+    height: 170,
+    borderRadius: 85,
+    backgroundColor: '#f9d2a8',
+    opacity: 0.14,
+  },
+  cozyBlobTop: {
+    top: -70,
+    left: -45,
+  },
+  cozyBlobBottom: {
+    bottom: -90,
+    right: -45,
+  },
+  remoteStream: {
+    flex: 1,
+    backgroundColor: '#201a1e',
+  },
+  remotePlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2e242a',
+  },
+  remotePlaceholderText: {
+    color: '#f1ddcb',
+    fontSize: 16,
+  },
+  localPip: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    width: 110,
+    height: 155,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#ffd4a3',
+    backgroundColor: '#1f171c',
+  },
+  localPipStream: {
+    flex: 1,
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  controlButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3cfa9',
+  },
+  controlButtonActive: {
+    backgroundColor: '#f08d89',
+  },
+  controlButtonDisabled: {
+    opacity: 0.55,
+  },
+  controlButtonPressed: {
+    opacity: 0.88,
+  },
+  controlButtonText: {
+    color: '#3a2127',
+    fontWeight: '700',
   },
 });
