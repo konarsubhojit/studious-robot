@@ -32,7 +32,9 @@ npx expo start --tunnel
 
 Open the app on Android and grant camera/microphone permissions to start local
 preview and join a room. For device-to-device testing, launch two clients with
-the same room ID.
+the same room ID. During a call, the remote video is shown as the primary view,
+the local camera appears as picture-in-picture, and the Mute / Video controls
+toggle local outgoing tracks in real time.
 
 ## Other scripts
 ```bash
