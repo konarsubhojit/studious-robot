@@ -91,7 +91,7 @@ A new contributor should be able to:
 
 [`.github/workflows/android-debug-apk.yml`](./.github/workflows/android-debug-apk.yml)
 builds a debug APK from the React Native CLI project on every pull request and push
-to `main` that touches `mobile/`. It uploads `app-debug.apk` as a build artifact.
+to `master` that touches `mobile/`. It uploads `app-debug.apk` as a build artifact.
 
 > **Note:** The debug APK loads its JavaScript from the Metro bundler at runtime.
 > Installing it on a device without a running Metro server will show the
@@ -114,7 +114,7 @@ matching Kotlin package directory) to your own identifier.
 ### Android release APK
 
 [`.github/workflows/android-release-apk.yml`](./.github/workflows/android-release-apk.yml)
-builds a **self-contained** release APK on every push to `main` that touches
+builds a **self-contained** release APK on every push to `master` that touches
 `mobile/`, and on manual `workflow_dispatch`. It bundles the JavaScript at build
 time (no Metro server required), uploads `app-release.apk` as a build artifact,
 and can be installed directly on any Android device.
@@ -164,10 +164,10 @@ curl https://<your-render-service>.onrender.com/health
 ### GitHub Actions — Backend CI & Deploy
 
 [`.github/workflows/backend-ci.yml`](./.github/workflows/backend-ci.yml) runs
-automatically on every pull request and push to `main` that touches `server/`:
+automatically on every pull request and push to `master` that touches `server/`:
 
 1. **test** job — installs deps, runs `npm test` (Node built-in test runner).
-2. **deploy** job — on `main` push only, calls the Render deploy hook
+2. **deploy** job — on `master` push only, calls the Render deploy hook
    (`RENDER_DEPLOY_HOOK_URL` secret) so the live service is always up to date.
 
 ### GitHub Actions — Android APKs
@@ -177,7 +177,7 @@ builds a debug APK on pull requests and pushes affecting `mobile/`.
 
 [`.github/workflows/android-release-apk.yml`](./.github/workflows/android-release-apk.yml)
 builds a self-contained release APK (JS bundled; no Metro required) on every push
-to `main` affecting `mobile/` and on manual `workflow_dispatch`. Environment
+to `master` affecting `mobile/` and on manual `workflow_dispatch`. Environment
 variables (`SIGNALING_URL`, `ROOM_ID`, `TURN_USERNAME`, `TURN_CREDENTIAL`) are
 read from repository secrets and inlined into the bundle at build time.
 
@@ -197,9 +197,9 @@ Pull Request opened
     │  └─ GitHub Actions: android-debug-apk.yml builds the debug APK
     │
     ▼
-Merge to main
+Merge to master
     │  ├─ GitHub Actions: "deploy" job triggers Render redeploy
-    │  │      └─ Render builds from main → /health is live within ~2 min
+    │  │      └─ Render builds from master → /health is live within ~2 min
     │  │
     │  └─ GitHub Actions: android-release-apk.yml bundles JS + builds release APK
     │         └─ Download app-release.apk from the Actions artifact, install on device
