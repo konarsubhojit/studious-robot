@@ -1,5 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Button,
+  NativeModules,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import RNFS from 'react-native-fs';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -8,11 +21,143 @@ import {
   RTCSessionDescription,
   RTCView,
 } from 'react-native-webrtc';
+import appConfig from './app.json';
+import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from './src/appLogger';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getIceServers } from './src/webrtcConfig';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
+
+function formatDateForFile(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function getReactNativeVersion() {
+  const version = Platform.constants?.reactNativeVersion;
+  if (!version) {
+    return 'unknown';
+  }
+  const major = version.major ?? '?';
+  const minor = version.minor ?? '?';
+  const patch = version.patch ?? '?';
+  return `${major}.${minor}.${patch}`;
+}
+
+function getApplicationId() {
+  const maybeBundleId =
+    NativeModules?.PlatformConstants?.bundleIdentifier ||
+    NativeModules?.SettingsManager?.settings?.CFBundleIdentifier ||
+    NativeModules?.PlatformConstants?.applicationId;
+
+  return maybeBundleId || 'unknown';
+}
+
+function getSocketTransportName(socket) {
+  return socket?.io?.engine?.transport?.name || 'unknown';
+}
+
+function sanitizeUrlForLog(urlValue) {
+  if (!urlValue) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(urlValue);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return urlValue;
+  }
+}
+
+function summarizeIceCandidate(candidate) {
+  if (!candidate) {
+    return { hasCandidate: false };
+  }
+
+  const candidateText = candidate.candidate || '';
+  const parts = candidateText.split(' ');
+  const protocol = parts[2] ? parts[2].toLowerCase() : undefined;
+  const typeMatch = candidateText.match(/\btyp\s+([a-z0-9]+)/i);
+
+  return {
+    hasCandidate: true,
+    protocol: protocol || 'unknown',
+    candidateType: typeMatch?.[1] || 'unknown',
+    sdpMid: candidate.sdpMid ?? null,
+    sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+  };
+}
+
+function buildExportHeader({
+  signalingUrl,
+  roomId,
+  status,
+  localStream,
+  remoteStream,
+  isInRoom,
+  socket,
+}) {
+  const lines = [
+    'studious-robot diagnostic logs',
+    `exportedAt: ${new Date().toISOString()}`,
+    `appName: ${appConfig?.displayName || appConfig?.name || 'unknown'}`,
+    `applicationId: ${getApplicationId()}`,
+    `platform: ${Platform.OS}`,
+    `osVersion: ${Platform.Version}`,
+    `reactNativeVersion: ${getReactNativeVersion()}`,
+    `signalingUrl: ${sanitizeUrlForLog(signalingUrl)}`,
+    `roomId: ${roomId || ''}`,
+    `appStatus: ${status || ''}`,
+    `hasLocalStream: ${Boolean(localStream)}`,
+    `hasRemoteStream: ${Boolean(remoteStream)}`,
+    `isInRoom: ${Boolean(isInRoom)}`,
+    `socketConnected: ${Boolean(socket?.connected)}`,
+    `socketId: ${socket?.id || 'none'}`,
+    `socketTransport: ${getSocketTransportName(socket)}`,
+    '',
+    '--- logs ---',
+  ];
+
+  return lines.join('\n');
+}
+
+async function writeLogsFile(content) {
+  const fileName = `studious-robot-logs-${formatDateForFile()}.txt`;
+  const targets = Platform.OS === 'android'
+    ? [
+        { directory: RNFS.DownloadDirectoryPath, label: 'Downloads', primary: true },
+        { directory: RNFS.ExternalDirectoryPath, label: 'app external storage', primary: false },
+        { directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: false },
+      ]
+    : [{ directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: true }];
+
+  let firstError;
+
+  for (const target of targets) {
+    if (!target.directory) {
+      continue;
+    }
+
+    const path = `${target.directory}/${fileName}`;
+    try {
+      await RNFS.writeFile(path, content, 'utf8');
+      return {
+        success: true,
+        path,
+        label: target.label,
+        usedFallback: !target.primary,
+      };
+    } catch (error) {
+      if (!firstError) {
+        firstError = error;
+      }
+    }
+  }
+
+  return { success: false, error: firstError };
+}
 
 export default function App() {
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
@@ -30,11 +175,21 @@ export default function App() {
   const roomIdRef = useRef(roomId);
 
   useEffect(() => {
+    clearLogs();
+    logInfo('App mounted', {
+      defaultSignalingUrl: sanitizeUrlForLog(DEFAULT_SIGNALING_URL),
+      defaultRoomId: DEFAULT_ROOM_ID,
+      platform: Platform.OS,
+    });
+  }, []);
+
+  useEffect(() => {
     roomIdRef.current = roomId.trim();
   }, [roomId]);
 
   const closePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
+      logInfo('Closing RTCPeerConnection');
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
       peerConnectionRef.current.close();
@@ -44,6 +199,11 @@ export default function App() {
   }, []);
 
   const leaveRoom = useCallback((nextStatus = 'Disconnected') => {
+    logInfo('Leaving room', {
+      nextStatus,
+      hadSocket: Boolean(socketRef.current),
+      hadPeerConnection: Boolean(peerConnectionRef.current),
+    });
     setIsInRoom(false);
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -58,6 +218,7 @@ export default function App() {
       return peerConnectionRef.current;
     }
 
+    logInfo('Creating RTCPeerConnection');
     const connection = new RTCPeerConnection({ iceServers: getIceServers() });
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -67,6 +228,8 @@ export default function App() {
 
     connection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
+        const summary = summarizeIceCandidate(event.candidate);
+        logDebug('ICE candidate sent', summary);
         socketRef.current.emit('ice-candidate', {
           roomId: roomIdRef.current,
           candidate: event.candidate,
@@ -77,6 +240,7 @@ export default function App() {
     connection.ontrack = (event) => {
       const [stream] = event.streams;
       if (stream) {
+        logInfo('Remote stream connected');
         setRemoteStream(stream);
         setStatus('Remote stream connected');
       }
@@ -93,15 +257,21 @@ export default function App() {
 
   const startLocalPreview = useCallback(async () => {
     if (localStreamRef.current) {
+      logInfo('Local media stream already available');
       syncMediaState(localStreamRef.current);
       return localStreamRef.current;
     }
 
+    logInfo('Media permission request start');
     const stream = await mediaDevices.getUserMedia({
       audio: true,
       video: {
         facingMode: 'user',
       },
+    });
+    logInfo('Local media stream acquired', {
+      audioTracks: stream.getAudioTracks().length,
+      videoTracks: stream.getVideoTracks().length,
     });
     localStreamRef.current = stream;
     setLocalStream(stream);
@@ -112,7 +282,14 @@ export default function App() {
 
   const joinRoom = useCallback(async () => {
     try {
-      if (!signalingUrl.trim() || !roomId.trim()) {
+      const trimmedSignalingUrl = signalingUrl.trim();
+      const trimmedRoomId = roomId.trim();
+      logInfo('Join Room button press', {
+        signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
+        roomId: trimmedRoomId,
+      });
+
+      if (!trimmedSignalingUrl || !trimmedRoomId) {
         setStatus('Signaling URL and room ID are required');
         return;
       }
@@ -121,78 +298,135 @@ export default function App() {
       await startLocalPreview();
       setStatus('Connecting to signaling server...');
 
-      const socket = io(signalingUrl.trim(), { transports: ['polling', 'websocket'] });
+      logInfo('Socket.IO connection attempt', {
+        signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
+        roomId: trimmedRoomId,
+      });
+      const socket = io(trimmedSignalingUrl, { transports: ['polling', 'websocket'] });
       socketRef.current = socket;
 
       socket.on('connect', () => {
+        const transportName = getSocketTransportName(socket);
+        logInfo('Socket.IO connect success', {
+          socketId: socket.id,
+          transport: transportName,
+        });
         setStatus('Connected to signaling. Joining room...');
         setIsInRoom(true);
         socket.emit('join-room', roomIdRef.current);
       });
 
+      const onTransportUpgrade = socket.io?.engine?.on;
+      if (typeof onTransportUpgrade === 'function') {
+        onTransportUpgrade.call(socket.io.engine, 'upgrade', (transport) => {
+          logInfo('Socket.IO transport upgrade', { transport: transport?.name || 'unknown' });
+        });
+      } else {
+        logWarn('Socket.IO transport listener unavailable');
+      }
+
       socket.on('room-full', () => {
+        logWarn('room-full', { roomId: roomIdRef.current });
         leaveRoom(`Room "${roomIdRef.current}" is full`);
       });
 
       socket.on('peer-joined', async () => {
-        const peer = ensurePeerConnection();
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
-        setStatus('Offer sent');
+        logInfo('peer-joined', { roomId: roomIdRef.current });
+        try {
+          const peer = ensurePeerConnection();
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+          socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
+          logInfo('Offer created and sent', { sdpType: offer?.type || 'unknown' });
+          setStatus('Offer sent');
+        } catch (error) {
+          logError('Failed to create/send offer', error);
+          setStatus('Failed to create offer');
+        }
       });
 
       socket.on('offer', async ({ sdp } = {}) => {
-        if (!sdp) return;
-        const peer = ensurePeerConnection();
-        await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
-        setStatus('Answer sent');
+        if (!sdp) {
+          logWarn('Offer received without SDP');
+          return;
+        }
+        logInfo('Offer received', { sdpType: sdp.type || 'unknown' });
+        try {
+          const peer = ensurePeerConnection();
+          await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
+          logInfo('Answer created and sent', { sdpType: answer?.type || 'unknown' });
+          setStatus('Answer sent');
+        } catch (error) {
+          logError('Failed to process offer/create answer', error);
+          setStatus('Failed to process offer');
+        }
       });
 
       socket.on('answer', async ({ sdp } = {}) => {
-        if (!sdp) return;
-        const peer = ensurePeerConnection();
-        await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-        setStatus('Call connected');
+        if (!sdp) {
+          logWarn('Answer received without SDP');
+          return;
+        }
+        logInfo('Answer received', { sdpType: sdp.type || 'unknown' });
+        try {
+          const peer = ensurePeerConnection();
+          await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          setStatus('Call connected');
+        } catch (error) {
+          logError('Failed to apply remote answer', error);
+          setStatus('Failed to apply answer');
+        }
       });
 
       socket.on('ice-candidate', async ({ candidate } = {}) => {
-        if (!candidate) return;
-        const peer = ensurePeerConnection();
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        if (!candidate) {
+          return;
+        }
+        const summary = summarizeIceCandidate(candidate);
+        logDebug('ICE candidate received', summary);
+        try {
+          const peer = ensurePeerConnection();
+          await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+          logError('Failed to add ICE candidate', { error, summary });
+        }
       });
 
       socket.on('peer-left', () => {
+        logInfo('peer-left', { roomId: roomIdRef.current });
         closePeerConnection();
         setStatus('Peer left room');
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', (reason) => {
+        logWarn('Socket.IO disconnect', { reason });
         setIsInRoom(false);
         closePeerConnection();
         setStatus('Socket disconnected');
       });
 
       socket.on('connect_error', (error) => {
-        console.error('Socket connect_error:', {
+        const metadata = {
           message: error?.message,
           description: error?.description,
           context: error?.context,
           cause: error?.cause,
-        });
+        };
+        logError('Socket.IO connect_error', metadata);
         setIsInRoom(false);
         setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`);
       });
     } catch (error) {
-      console.error('joinRoom failed during media/signaling setup:', error);
+      logError('joinRoom failed during media/signaling setup', error);
       setStatus('Failed to access camera/microphone');
     }
   }, [closePeerConnection, ensurePeerConnection, leaveRoom, roomId, signalingUrl, startLocalPreview]);
 
   useEffect(() => () => {
+    logInfo('App cleanup/unmount');
     leaveRoom();
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -202,6 +436,7 @@ export default function App() {
 
   const handleRoomButtonPress = () => {
     if (isInRoom) {
+      logInfo('Leave Room button press');
       leaveRoom('Disconnected');
       return;
     }
@@ -209,8 +444,44 @@ export default function App() {
     joinRoom();
   };
 
+  const handleExportLogs = useCallback(async () => {
+    try {
+      logInfo('Export Logs button press');
+      const header = buildExportHeader({
+        signalingUrl: signalingUrl.trim(),
+        roomId: roomId.trim(),
+        status,
+        localStream,
+        remoteStream,
+        isInRoom,
+        socket: socketRef.current,
+      });
+      const content = `${header}\n${getLogsAsText()}\n`;
+      const result = await writeLogsFile(content);
+
+      if (result.success) {
+        const statusMessage = result.usedFallback
+          ? `Logs saved to fallback (${result.label}): ${result.path}`
+          : `Logs saved: ${result.path}`;
+        logInfo('Logs exported', {
+          path: result.path,
+          storage: result.label,
+          usedFallback: result.usedFallback,
+        });
+        setStatus(statusMessage);
+      } else {
+        logError('Failed to export logs', result.error);
+        setStatus(`Failed to export logs: ${result.error?.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      logError('Unexpected export logs failure', error);
+      setStatus(`Failed to export logs: ${error?.message || 'Unknown error'}`);
+    }
+  }, [isInRoom, localStream, remoteStream, roomId, signalingUrl, status]);
+
   const handleMuteToggle = useCallback(() => {
     const nextMuted = !isMuted;
+    logInfo('Mute toggle action', { nextMuted });
     if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
       setStatus('Start preview to control audio');
       return;
@@ -222,6 +493,7 @@ export default function App() {
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;
+    logInfo('Video toggle action', { nextVideoEnabled });
     if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
       setStatus('Start preview to control video');
       return;
@@ -258,13 +530,18 @@ export default function App() {
           <Button
             title="Start Preview"
             onPress={() => {
+              logInfo('Start Preview button press');
               startLocalPreview().catch((error) => {
-                console.error('startLocalPreview failed (permissions/device):', error);
+                logError('startLocalPreview failed (permissions/device)', error);
                 setStatus('Failed to access camera/microphone');
               });
             }}
           />
           <Button title={isInRoom ? 'Leave Room' : 'Join Room'} onPress={handleRoomButtonPress} />
+        </View>
+
+        <View style={styles.row}>
+          <Button title="Export Logs" onPress={handleExportLogs} />
         </View>
 
         <Text style={styles.status}>{status}</Text>
