@@ -8,8 +8,7 @@ Cloud-first project with two folders:
 | `server/`  | Node.js signaling server (Express + Socket.IO + `/health`) |
 
 This project is designed to be developed **entirely in GitHub Codespaces**.
-No local Android Studio, Xcode, or device toolchain is required — use the
-[Expo Go](https://expo.dev/client) app on your phone to preview the mobile app.
+No local Android Studio or Xcode setup is required to generate Android APKs.
 
 ---
 
@@ -17,7 +16,7 @@ No local Android Studio, Xcode, or device toolchain is required — use the
 
 - A GitHub Codespace for this repository (recommended). Locally, you need
   Node.js matching [`.nvmrc`](./.nvmrc) (run `nvm use`).
-- The free **Expo Go** app installed on your iOS/Android device.
+- Android Studio/emulator (optional for local device testing).
 
 ## First-time setup (in a Codespace)
 
@@ -37,32 +36,28 @@ cd server
 npm run dev        # auto-restart on changes (or: npm start)
 ```
 
-The server listens on port `3001` by default and exposes a health endpoint:
+The server listens on port `4173` by default and exposes a health endpoint:
 
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:4173/health
 # => {"status":"ok","service":"studious-robot-signaling", ...}
 ```
 
-In Codespaces, forward port `3001` (the Ports panel handles this automatically
+In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
 `/health` from a browser.
 
-## Run the Expo app
+## Run the mobile app (dev client)
 
 In a second Codespaces terminal:
 
 ```bash
 cd mobile
-npx expo start --tunnel
+npm start
 ```
 
-The Expo CLI prints a QR code and dev-server logs. Scan the QR code with
-**Expo Go** on your phone — `--tunnel` ensures the bundle is reachable from
-outside the Codespace without any local Android Studio setup.
-
-> Tip: `npm start` inside `mobile/` is a shortcut for `expo start`. Use
-> `--tunnel` from Codespaces so your device can connect across networks.
+Build/install a development client (`npm run android`) and then connect it to
+the Metro bundler started above.
 
 ## Common npm scripts
 
@@ -70,7 +65,7 @@ Both folders expose a consistent script surface:
 
 | Script         | `server/`                        | `mobile/`                        |
 | -------------- | -------------------------------- | -------------------------------- |
-| `npm start`    | Run the signaling server         | `expo start` (QR / dev server)   |
+| `npm start`    | Run the signaling server         | `expo start --dev-client`        |
 | `npm run dev`  | Run with `node --watch`          | —                                |
 | `npm test`     | `node --test`                    | `jest --passWithNoTests`         |
 
@@ -80,10 +75,10 @@ A new contributor should be able to:
 
 1. Open the repository in a Codespace.
 2. Run `npm install` inside `server/` and `mobile/`.
-3. `cd server && npm start` and see `[signaling] listening on http://0.0.0.0:3001`.
-4. `curl http://localhost:3001/health` and receive `{"status":"ok", ...}`.
-5. In another terminal, `cd mobile && npx expo start --tunnel` and scan the QR
-   code with Expo Go on a phone — without installing Android Studio locally.
+3. `cd server && npm start` and see `[signaling] listening on http://0.0.0.0:4173`.
+4. `curl http://localhost:4173/health` and receive `{"status":"ok", ...}`.
+5. In another terminal, `cd mobile && npm start` and connect
+   the app from an installed development client.
 
 ---
 
@@ -151,6 +146,17 @@ automatically on every pull request and push to `main` that touches `server/`:
 1. **test** job — installs deps, runs `npm test` (Node built-in test runner).
 2. **deploy** job — on `main` push only, calls the Render deploy hook
    (`RENDER_DEPLOY_HOOK_URL` secret) so the live service is always up to date.
+
+### GitHub Actions — Android Debug APK
+
+[`.github/workflows/android-debug-apk.yml`](./.github/workflows/android-debug-apk.yml)
+builds a debug APK on pull requests and pushes affecting `mobile/`.
+
+The workflow is optimized with cache usage for:
+
+- npm dependencies (`actions/setup-node` with lockfile-based npm cache),
+- Gradle dependencies (`actions/setup-java` with built-in Gradle cache),
+- Expo local cache (`~/.expo` via `actions/cache`).
 
 ### Release flow (PR merge → APK + live backend)
 

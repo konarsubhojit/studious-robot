@@ -130,7 +130,7 @@ function leaveRoom(socket, roomId, rooms) {
 module.exports = { createServer };
 
 if (require.main === module) {
-  const port = Number(process.env.PORT) || 3001;
+  const port = Number(process.env.PORT) || 4173;
   const host = process.env.HOST || '0.0.0.0';
   const { httpServer } = createServer();
   httpServer.listen(port, host, () => {

@@ -12,7 +12,7 @@ import {
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getIceServers } from './src/webrtcConfig';
 
-const DEFAULT_SIGNALING_URL = process.env.EXPO_PUBLIC_SIGNALING_URL || 'http://localhost:3001';
+const DEFAULT_SIGNALING_URL = process.env.EXPO_PUBLIC_SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.EXPO_PUBLIC_ROOM_ID || 'room-1';
 
 export default function App() {
