@@ -40,22 +40,11 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
-
-      - name: Restore Expo cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.expo
-          key: ${{ runner.os }}-expo-${{ hashFiles('mobile/package-lock.json', 'mobile/app.json') }}
-          restore-keys: |
-            ${{ runner.os }}-expo-
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Generate Android native project
-        run: npx expo prebuild --platform android --non-interactive --no-install
 
       - name: Assemble debug APK
         run: |

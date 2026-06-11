@@ -1,10 +1,11 @@
-# Mobile (Expo Dev Client)
+# Mobile (React Native CLI)
 
-React Native app scaffolded with Expo for the studious-robot project.
+Bare React Native app (React Native CLI) for the studious-robot project.
 
 ## Requirements
 - Node.js (see repo root `.nvmrc`)
-- Android device/emulator with an Expo dev build (required for `react-native-webrtc`)
+- JDK 17+ and the Android SDK (Android Studio recommended) for Android builds
+- Xcode + CocoaPods for iOS builds (macOS only)
 
 ## Setup
 ```bash
@@ -12,20 +13,23 @@ cd mobile
 npm install
 ```
 
-Optional environment variables for signaling and TURN:
+Optional environment variables for signaling and TURN (inlined at build time via
+`babel-plugin-transform-inline-environment-variables`):
 
 ```bash
-export EXPO_PUBLIC_SIGNALING_URL=http://<YOUR_SIGNALING_HOST>:4173
-export EXPO_PUBLIC_ROOM_ID=room-1
-export EXPO_PUBLIC_TURN_USERNAME=<metered_turn_username>
-export EXPO_PUBLIC_TURN_CREDENTIAL=<metered_turn_credential>
+export SIGNALING_URL=http://<YOUR_SIGNALING_HOST>:4173
+export ROOM_ID=room-1
+export TURN_USERNAME=<metered_turn_username>
+export TURN_CREDENTIAL=<metered_turn_credential>
 ```
 
 If TURN credentials are not provided, TURN support is disabled and only STUN is used.
 
-## Run in Codespaces
+## Run
 ```bash
-npm start
+npm start          # start the Metro bundler
+npm run android    # build & launch on a connected Android device/emulator
+npm run ios        # build & launch on an iOS simulator (macOS)
 ```
 
 Open the app on Android and grant camera/microphone permissions to start local
@@ -34,10 +38,15 @@ the same room ID. During a call, the remote video is shown as the primary view,
 the local camera appears as picture-in-picture, and the Mute / Video controls
 toggle local outgoing tracks in real time.
 
+## Build a debug APK locally
+```bash
+cd android
+./gradlew assembleDebug
+# => android/app/build/outputs/apk/debug/app-debug.apk
+```
+
 ## Other scripts
 ```bash
-npm run android    # open on connected Android device/emulator
-npm run ios        # open on iOS simulator (macOS)
-npm run web        # open web preview
-npm test           # jest (passes with no tests by default)
+npm run lint       # eslint
+npm test           # jest
 ```

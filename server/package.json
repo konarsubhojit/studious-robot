@@ -4,7 +4,7 @@
   "description": "Signaling server (Express + Socket.IO) for studious-robot.",
   "main": "src/index.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node src/index.js",

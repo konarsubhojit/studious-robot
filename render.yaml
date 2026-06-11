@@ -15,4 +15,4 @@ services:
       - key: PORT
         value: 10000
       - key: CORS_ORIGIN
-        sync: false   # set in the Render dashboard to your Expo app origin(s)
+        sync: false   # set in the Render dashboard to your mobile app origin(s)
