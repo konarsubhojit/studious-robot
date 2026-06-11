@@ -12,8 +12,8 @@
     "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5"
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
   },
   "license": "MIT",
   "devDependencies": {
