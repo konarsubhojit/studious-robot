@@ -176,9 +176,10 @@ export default function App() {
         setStatus('Socket disconnected');
       });
 
-      socket.on('connect_error', () => {
+      socket.on('connect_error', (error) => {
+        console.error('Socket connect_error:', error);
         setIsInRoom(false);
-        setStatus('Unable to connect to signaling server');
+        setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`);
       });
     } catch (error) {
       console.error('joinRoom failed during media/signaling setup:', error);
