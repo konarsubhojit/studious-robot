@@ -13,6 +13,9 @@ on:
       - '.github/workflows/android-debug-apk.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-debug-apk:
     name: Build debug APK
