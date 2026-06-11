@@ -45,6 +45,27 @@ cd android
 # => android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+> **Note:** The debug APK loads JavaScript from the Metro bundler at runtime.
+> Installing it on a device without Metro running will produce an
+> *"Unable to load script"* error. Use `assembleRelease` below for a
+> self-contained APK.
+
+## Build a release APK locally
+
+The release build bundles the JavaScript at compile time — no Metro server
+required. Set the desired env vars before running Gradle:
+
+```bash
+export SIGNALING_URL=https://<your-signaling-host>
+export ROOM_ID=room-1
+export TURN_USERNAME=<metered_turn_username>
+export TURN_CREDENTIAL=<metered_turn_credential>
+
+cd android
+./gradlew assembleRelease
+# => android/app/build/outputs/apk/release/app-release.apk
+```
+
 ## Other scripts
 ```bash
 npm run lint       # eslint
