@@ -18,7 +18,7 @@ npm run dev        # watch mode
 npm test           # node --test
 ```
 
-The server listens on `PORT` (default `3001`) and exposes:
+The server listens on `PORT` (default `4173`) and exposes:
 - `GET /health` — liveness/health probe returning JSON `{ status: "ok", ... }`
 - Socket.IO endpoint for WebRTC signaling (see events below)
 
@@ -50,6 +50,6 @@ Rooms hold at most **2 participants**. All relay events are forwarded only to th
 
 | Name          | Default     | Description                                                       |
 | ------------- | ----------- | ----------------------------------------------------------------- |
-| `PORT`        | `3001`      | TCP port to listen on                                             |
+| `PORT`        | `4173`      | TCP port to listen on                                             |
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |

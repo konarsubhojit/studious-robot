@@ -2,8 +2,8 @@ import { getIceServers } from '../src/webrtcConfig';
 
 describe('getIceServers', () => {
   afterEach(() => {
-    delete process.env.EXPO_PUBLIC_TURN_USERNAME;
-    delete process.env.EXPO_PUBLIC_TURN_CREDENTIAL;
+    delete process.env.TURN_USERNAME;
+    delete process.env.TURN_CREDENTIAL;
   });
 
   test('includes Google STUN server by default', () => {
@@ -13,8 +13,8 @@ describe('getIceServers', () => {
   });
 
   test('adds Metered TURN server when credentials are provided', () => {
-    process.env.EXPO_PUBLIC_TURN_USERNAME = 'demo-user';
-    process.env.EXPO_PUBLIC_TURN_CREDENTIAL = 'demo-pass';
+    process.env.TURN_USERNAME = 'demo-user';
+    process.env.TURN_CREDENTIAL = 'demo-pass';
 
     const servers = getIceServers();
     expect(servers).toHaveLength(2);

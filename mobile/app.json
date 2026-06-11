@@ -1,32 +1,4 @@
 {
-  "expo": {
-    "name": "studious-robot",
-    "slug": "studious-robot",
-    "version": "0.1.0",
-    "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
-    "owner": "konarsubhojit",
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.konarsubhojit.studiousrobot"
-    },
-    "android": {
-      "package": "com.konarsubhojit.studiousrobot",
-      "permissions": [
-        "CAMERA",
-        "RECORD_AUDIO",
-        "MODIFY_AUDIO_SETTINGS"
-      ],
-      "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
-    },
-    "plugins": [
-      "@config-plugins/react-native-webrtc"
-    ],
-    "web": {
-      "bundler": "metro"
-    }
-  }
+  "name": "StudiousRobot",
+  "displayName": "studious-robot"
 }

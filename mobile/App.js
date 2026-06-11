@@ -1,6 +1,5 @@
-import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Button, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -12,8 +11,8 @@ import {
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getIceServers } from './src/webrtcConfig';
 
-const DEFAULT_SIGNALING_URL = process.env.EXPO_PUBLIC_SIGNALING_URL || 'http://localhost:3001';
-const DEFAULT_ROOM_ID = process.env.EXPO_PUBLIC_ROOM_ID || 'room-1';
+const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
+const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
 
 export default function App() {
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
@@ -307,7 +306,7 @@ export default function App() {
           </Pressable>
         </View>
       </ScrollView>
-      <StatusBar style="auto" />
+      <StatusBar barStyle="light-content" />
     </SafeAreaView>
   );
 }

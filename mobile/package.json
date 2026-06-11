@@ -1,32 +1,38 @@
 {
   "name": "studious-robot-mobile",
   "version": "0.1.0",
-  "main": "index.js",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "lint": "eslint .",
     "test": "jest --passWithNoTests"
   },
   "dependencies": {
-    "@config-plugins/react-native-webrtc": "^9.0.0",
-    "expo": "~51.0.0",
-    "expo-status-bar": "~1.12.1",
-    "react": "18.2.0",
-    "react-dom": "^18.2.0",
-    "react-native": "0.74.5",
-    "react-native-web": "^0.19.13",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
     "react-native-webrtc": "^124.0.7",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "@babel/core": "^7.24.0",
-    "babel-preset-expo": "^11.0.15",
-    "jest": "^29.7.0"
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.1.0",
+    "@react-native-community/cli-platform-android": "20.1.0",
+    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@react-native/babel-preset": "0.86.0",
+    "@react-native/eslint-config": "0.86.0",
+    "@react-native/jest-preset": "0.86.0",
+    "@react-native/metro-config": "0.86.0",
+    "babel-plugin-transform-inline-environment-variables": "^0.4.4",
+    "eslint": "^8.19.0",
+    "jest": "^29.6.3",
+    "prettier": "2.8.8",
+    "react-test-renderer": "19.2.3"
   }
 }

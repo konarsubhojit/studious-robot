@@ -6,8 +6,8 @@ function readEnv(name) {
 }
 
 export function getIceServers() {
-  const turnUsername = readEnv('EXPO_PUBLIC_TURN_USERNAME');
-  const turnCredential = readEnv('EXPO_PUBLIC_TURN_CREDENTIAL');
+  const turnUsername = readEnv('TURN_USERNAME');
+  const turnCredential = readEnv('TURN_CREDENTIAL');
   const iceServers = [{ urls: [GOOGLE_STUN_URL] }];
 
   if (turnUsername && turnCredential) {

@@ -12,6 +12,7 @@
 
 # Package Files #
 *.jar
+!mobile/android/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
@@ -32,11 +33,19 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Expo
-mobile/.expo/
-mobile/.expo-shared/
-mobile/dist/
-mobile/web-build/
+# React Native / Android / iOS build artifacts
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/.cxx/
+mobile/android/.kotlin/
+mobile/ios/build/
+mobile/ios/Pods/
+mobile/vendor/bundle/
+mobile/.bundle/
+*.jsbundle
+.metro-health-check*
 *.tsbuildinfo
 
 # Environment
