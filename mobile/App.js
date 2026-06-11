@@ -121,7 +121,7 @@ export default function App() {
       await startLocalPreview();
       setStatus('Connecting to signaling server...');
 
-      const socket = io(signalingUrl.trim(), { transports: ['websocket'] });
+      const socket = io(signalingUrl.trim(), { transports: ['polling', 'websocket'] });
       socketRef.current = socket;
 
       socket.on('connect', () => {
@@ -177,7 +177,12 @@ export default function App() {
       });
 
       socket.on('connect_error', (error) => {
-        console.error('Socket connect_error:', error);
+        console.error('Socket connect_error:', {
+          message: error?.message,
+          description: error?.description,
+          context: error?.context,
+          cause: error?.cause,
+        });
         setIsInRoom(false);
         setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`);
       });

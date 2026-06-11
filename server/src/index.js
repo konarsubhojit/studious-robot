@@ -43,6 +43,7 @@ function createServer() {
   const rooms = new Map();
 
   io.on('connection', (socket) => {
+    console.log(`[signaling] socket connected: ${socket.id}`);
     // Track which room this socket is currently in (one room per socket).
     let currentRoom = null;
 
@@ -92,7 +93,8 @@ function createServer() {
       socket.to(roomId).emit('ice-candidate', { from: socket.id, candidate });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);
       if (currentRoom !== null) {
         leaveRoom(socket, currentRoom, rooms);
         currentRoom = null;
