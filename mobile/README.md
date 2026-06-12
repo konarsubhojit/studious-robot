@@ -38,6 +38,24 @@ the same room ID. During a call, the remote video is shown as the primary view,
 the local camera appears as picture-in-picture, and the Mute / Video controls
 toggle local outgoing tracks in real time.
 
+## Export diagnostic logs
+
+Use the **Export Logs** button in the app UI to save a diagnostic log file from
+the installed app.
+
+- Android: the app first tries the public **Downloads** folder.
+- If public Downloads is unavailable on a device/OS version, the app falls back
+  to app-specific storage and shows the saved path in the status text.
+- iOS: logs are saved to the app documents directory path.
+
+Log files are named:
+`studious-robot-logs-YYYYMMDD-HHMMSS.txt`
+
+The exported file includes app/runtime details (platform, OS version, signaling
+URL, room ID, call/socket state) and detailed app-side signaling/WebRTC events.
+Sensitive fields such as TURN credentials, passwords, tokens, authorization
+values, and other secrets are redacted or intentionally not logged.
+
 ## Build a debug APK locally
 ```bash
 cd android
