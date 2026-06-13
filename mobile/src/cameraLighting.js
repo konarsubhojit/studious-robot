@@ -11,6 +11,8 @@ export const LIGHTING_THRESHOLDS = {
 // a fixed aperture, so `aperture` (f-number) is only honored on the few devices
 // that expose a variable aperture; the other controls (exposure compensation,
 // brightness, frame rate) are what improve perceived lighting everywhere else.
+// A lower f-number means a wider aperture that lets in more light, so low light
+// requests the widest aperture (1.5) and bright light the narrowest (2.4).
 // All values are supplied as best-effort `advanced` constraints so unsupported
 // controls are ignored rather than causing applyConstraints to fail.
 export const LIGHTING_PROFILES = {

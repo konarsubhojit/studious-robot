@@ -37,7 +37,9 @@ import { getIceServers } from './src/webrtcConfig';
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
 
-// How often to re-evaluate ambient lighting and auto-adjust the camera.
+// How often to re-evaluate ambient lighting and auto-adjust the camera. Chosen
+// to stay responsive to lighting changes while avoiding frequent applyConstraints
+// calls that would add unnecessary CPU/battery overhead.
 const LIGHTING_ADJUST_INTERVAL_MS = 8000;
 
 function formatDateForFile(date = new Date()) {
