@@ -14,7 +14,10 @@ import {
   View,
 } from 'react-native';
 import RNFS from 'react-native-fs';
+import InCallManager from 'react-native-incall-manager';
 import { io } from 'socket.io-client';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import {
   mediaDevices,
   RTCIceCandidate,
@@ -30,6 +33,7 @@ import {
   stopCallService,
 } from './src/callService';
 import { applyLightingAdjustment } from './src/cameraLighting';
+import { clamp, formatCallDuration, getConnectionQuality } from './src/callUx';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
@@ -41,6 +45,10 @@ const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
 // to stay responsive to lighting changes while avoiding frequent applyConstraints
 // calls that would add unnecessary CPU/battery overhead.
 const LIGHTING_ADJUST_INTERVAL_MS = 8000;
+const STATS_POLL_INTERVAL_MS = 7000;
+const PIP_WIDTH = 110;
+const PIP_HEIGHT = 155;
+const PIP_MARGIN = 12;
 
 function formatDateForFile(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -182,6 +190,18 @@ export default function App() {
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
+  const [isLocalPrimary, setIsLocalPrimary] = useState(false);
+  const [callConnectedAt, setCallConnectedAt] = useState(null);
+  const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
+  const [connectionQuality, setConnectionQuality] = useState({ bars: 0, label: 'No link' });
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [pipPosition, setPipPosition] = useState({ x: PIP_MARGIN, y: PIP_MARGIN });
+
+  const pipX = useSharedValue(PIP_MARGIN);
+  const pipY = useSharedValue(PIP_MARGIN);
+  const pipStartX = useSharedValue(PIP_MARGIN);
+  const pipStartY = useSharedValue(PIP_MARGIN);
 
   const socketRef = useRef(null);
   const peerConnectionRef = useRef(null);
@@ -189,6 +209,10 @@ export default function App() {
   const roomIdRef = useRef(roomId);
   const isInRoomRef = useRef(false);
   const lightingIntervalRef = useRef(null);
+  const connectionStatsRef = useRef({
+    timestampMs: null,
+    totalBytesReceived: 0,
+  });
 
   useEffect(() => {
     isInRoomRef.current = isInRoom;
@@ -207,6 +231,16 @@ export default function App() {
     roomIdRef.current = roomId.trim();
   }, [roomId]);
 
+  const markCallConnected = useCallback(() => {
+    setCallConnectedAt((previous) => previous || Date.now());
+  }, []);
+
+  const getPipBounds = useCallback(() => {
+    const maxX = Math.max(PIP_MARGIN, stageSize.width - PIP_WIDTH - PIP_MARGIN);
+    const maxY = Math.max(PIP_MARGIN, stageSize.height - PIP_HEIGHT - PIP_MARGIN);
+    return { minX: PIP_MARGIN, minY: PIP_MARGIN, maxX, maxY };
+  }, [stageSize.height, stageSize.width]);
+
   const closePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       logInfo('Closing RTCPeerConnection');
@@ -216,6 +250,8 @@ export default function App() {
       peerConnectionRef.current = null;
     }
     setRemoteStream(null);
+    setConnectionQuality({ bars: 0, label: 'No link' });
+    connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
   const leaveRoom = useCallback((nextStatus = 'Disconnected') => {
@@ -226,6 +262,9 @@ export default function App() {
     });
     setIsInRoom(false);
     setIsReconnecting(false);
+    setCallConnectedAt(null);
+    setElapsedCallSeconds(0);
+    setIsLocalPrimary(false);
     stopCallService();
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -264,13 +303,14 @@ export default function App() {
       if (stream) {
         logInfo('Remote stream connected');
         setRemoteStream(stream);
+        markCallConnected();
         setStatus('Remote stream connected');
       }
     };
 
     peerConnectionRef.current = connection;
     return connection;
-  }, []);
+  }, [markCallConnected]);
 
   const syncMediaState = useCallback((stream) => {
     setIsMuted(!isTrackEnabled(stream, 'audio'));
@@ -449,6 +489,7 @@ export default function App() {
         try {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          markCallConnected();
           setStatus('Call connected');
         } catch (error) {
           logError('Failed to apply remote answer', error);
@@ -512,7 +553,7 @@ export default function App() {
       logError('joinRoom failed during media/signaling setup', error);
       setStatus('Failed to access camera/microphone');
     }
-  }, [closePeerConnection, ensurePeerConnection, leaveRoom, roomId, signalingUrl, startLocalPreview]);
+  }, [closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, signalingUrl, startLocalPreview]);
 
   useEffect(() => () => {
     logInfo('App cleanup/unmount');
@@ -538,6 +579,202 @@ export default function App() {
 
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    if (!callConnectedAt) {
+      setElapsedCallSeconds(0);
+      return undefined;
+    }
+
+    const updateElapsedCallSeconds = () => {
+      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAt) / 1000));
+    };
+
+    updateElapsedCallSeconds();
+    const timerId = setInterval(() => {
+      updateElapsedCallSeconds();
+    }, 1000);
+    return () => clearInterval(timerId);
+  }, [callConnectedAt]);
+
+  useEffect(() => {
+    if (!isInRoom) {
+      setConnectionQuality({ bars: 0, label: 'No link' });
+      connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
+      return undefined;
+    }
+
+    let cancelled = false;
+    const pollStats = async () => {
+      const peer = peerConnectionRef.current;
+      if (!peer || typeof peer.getStats !== 'function') {
+        return;
+      }
+
+      try {
+        const report = await peer.getStats();
+        if (cancelled) {
+          return;
+        }
+
+        let rttMs;
+        let totalPacketsLost = 0;
+        let totalPacketsReceived = 0;
+        let totalBytesReceived = 0;
+
+        report.forEach((stat) => {
+          if (
+            stat.type === 'candidate-pair' &&
+            stat.state === 'succeeded' &&
+            (stat.nominated || stat.selected)
+          ) {
+            if (typeof stat.currentRoundTripTime === 'number') {
+              rttMs = stat.currentRoundTripTime * 1000;
+            }
+          }
+
+          if (
+            stat.type === 'inbound-rtp' &&
+            !stat.isRemote &&
+            (stat.kind === 'video' || stat.mediaType === 'video')
+          ) {
+            totalPacketsLost += Number(stat.packetsLost || 0);
+            totalPacketsReceived += Number(stat.packetsReceived || 0);
+            totalBytesReceived += Number(stat.bytesReceived || 0);
+          }
+        });
+
+        const now = Date.now();
+        const previous = connectionStatsRef.current;
+        let bitrateKbps;
+        if (
+          previous.timestampMs &&
+          now > previous.timestampMs &&
+          totalBytesReceived >= previous.totalBytesReceived
+        ) {
+          const bitsReceived = (totalBytesReceived - previous.totalBytesReceived) * 8;
+          const elapsedMs = now - previous.timestampMs;
+          bitrateKbps = bitsReceived / elapsedMs;
+        }
+        connectionStatsRef.current = { timestampMs: now, totalBytesReceived };
+
+        const denominator = totalPacketsReceived + totalPacketsLost;
+        const packetLossRatio = denominator > 0 ? totalPacketsLost / denominator : undefined;
+        setConnectionQuality(getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }));
+      } catch (error) {
+        logWarn('Failed to read connection stats', { message: error?.message });
+      }
+    };
+
+    pollStats();
+    const intervalId = setInterval(pollStats, STATS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [isInRoom]);
+
+  useEffect(() => {
+    if (!isInRoom) {
+      return undefined;
+    }
+
+    try {
+      InCallManager.start({ media: 'video' });
+      InCallManager.setForceSpeakerphoneOn(isSpeakerEnabled);
+      InCallManager.setSpeakerphoneOn(isSpeakerEnabled);
+      InCallManager.setKeepScreenOn(true);
+    } catch (error) {
+      logWarn('InCallManager init failed', { message: error?.message });
+    }
+
+    return () => {
+      try {
+        InCallManager.setKeepScreenOn(false);
+        InCallManager.stop();
+      } catch (error) {
+        logWarn('InCallManager cleanup failed', { message: error?.message });
+      }
+    };
+  }, [isInRoom, isSpeakerEnabled]);
+
+  useEffect(() => {
+    const bounds = getPipBounds();
+    const clampedX = clamp(pipPosition.x, bounds.minX, bounds.maxX);
+    const clampedY = clamp(pipPosition.y, bounds.minY, bounds.maxY);
+    if (clampedX !== pipPosition.x || clampedY !== pipPosition.y) {
+      setPipPosition({ x: clampedX, y: clampedY });
+      return;
+    }
+    pipX.value = clampedX;
+    pipY.value = clampedY;
+  }, [getPipBounds, pipPosition.x, pipPosition.y, pipX, pipY]);
+
+  const handleSwapStreams = useCallback(() => {
+    if (!remoteStream || !localStream) {
+      return;
+    }
+    setIsLocalPrimary((previous) => !previous);
+  }, [localStream, remoteStream]);
+
+  const handleRetryReconnect = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket) {
+      setStatus('No active socket to reconnect');
+      return;
+    }
+    logInfo('Manual reconnect requested');
+    setIsReconnecting(true);
+    setStatus('Reconnecting…');
+    socket.disconnect();
+    socket.connect();
+  }, []);
+
+  const handleSpeakerToggle = useCallback(() => {
+    const nextSpeakerEnabled = !isSpeakerEnabled;
+    setIsSpeakerEnabled(nextSpeakerEnabled);
+    setStatus(nextSpeakerEnabled ? 'Speaker enabled' : 'Speaker disabled');
+  }, [isSpeakerEnabled]);
+
+  const handleCameraSwitch = useCallback(() => {
+    const [videoTrack] = localStreamRef.current?.getVideoTracks?.() || [];
+    const switchCamera = videoTrack?._switchCamera;
+    if (typeof switchCamera !== 'function') {
+      setStatus('Camera switch unavailable');
+      return;
+    }
+
+    switchCamera.call(videoTrack);
+    setStatus('Camera switched');
+  }, []);
+
+  const handleCallStageLayout = useCallback((event) => {
+    const { width, height } = event.nativeEvent.layout;
+    setStageSize({ width, height });
+  }, []);
+
+  const animatedPipStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: pipX.value }, { translateY: pipY.value }],
+  }));
+  const pipBounds = getPipBounds();
+
+  const pipGesture = Gesture.Race(
+    Gesture.Tap().onEnd(() => {
+      runOnJS(handleSwapStreams)();
+    }),
+    Gesture.Pan()
+      .onStart(() => {
+        pipStartX.value = pipX.value;
+        pipStartY.value = pipY.value;
+      })
+      .onUpdate((event) => {
+        pipX.value = clamp(pipStartX.value + event.translationX, pipBounds.minX, pipBounds.maxX);
+        pipY.value = clamp(pipStartY.value + event.translationY, pipBounds.minY, pipBounds.maxY);
+      })
+      .onEnd(() => {
+        runOnJS(setPipPosition)({ x: pipX.value, y: pipY.value });
+      }),
+  );
 
   const handleRoomButtonPress = () => {
     if (isInRoom) {
@@ -608,97 +845,168 @@ export default function App() {
     setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
   }, [isVideoEnabled]);
 
+  const mainStream = isLocalPrimary ? localStream : remoteStream;
+  const pipStream = isLocalPrimary ? remoteStream : localStream;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>studious-robot</Text>
-        <Text style={styles.subtitle}>Phase 4 — Warm & cozy in-call interface</Text>
-
-        <TextInput
-          value={signalingUrl}
-          onChangeText={setSignalingUrl}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.input}
-          placeholder="Signaling URL"
-        />
-        <TextInput
-          value={roomId}
-          onChangeText={setRoomId}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.input}
-          placeholder="Room ID"
-        />
-
-        <View style={styles.row}>
-          <Button
-            title="Start Preview"
-            onPress={() => {
-              logInfo('Start Preview button press');
-              startLocalPreview().catch((error) => {
-                logError('startLocalPreview failed (permissions/device)', error);
-                setStatus('Failed to access camera/microphone');
-              });
-            }}
-          />
-          <Button title={isInRoom ? 'Leave Room' : 'Join Room'} onPress={handleRoomButtonPress} />
-        </View>
-
-        <View style={styles.row}>
-          <Button title="Export Logs" onPress={handleExportLogs} />
-        </View>
-
-        <Text style={styles.status}>{status}</Text>
-        {isReconnecting ? (
-          <Text style={styles.reconnecting}>Reconnecting… keeping your call alive</Text>
-        ) : null}
-
-        <Text style={styles.streamLabel}>In call</Text>
-        <View style={styles.callStage}>
-          <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
-          <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
-          {remoteStream ? (
-            <RTCView style={styles.remoteStream} streamURL={remoteStream.toURL()} objectFit="cover" />
-          ) : (
-            <View style={styles.remotePlaceholder}>
-              <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
+    <GestureHandlerRootView style={styles.container}>
+      <SafeAreaView style={styles.container}>
+        {isInRoom ? (
+          <View style={styles.callScreen}>
+            <View style={styles.topBar}>
+              <Text style={styles.timerText}>{formatCallDuration(elapsedCallSeconds)}</Text>
+              <View style={styles.qualityContainer}>
+                <Text style={styles.qualityLabel}>{connectionQuality.label}</Text>
+                <View style={styles.signalBars}>
+                  {[0, 1, 2].map((barIndex) => (
+                    <View
+                      key={barIndex}
+                      style={[
+                        styles.signalBar,
+                        styles[`signalBar${barIndex}`],
+                        barIndex <= connectionQuality.bars - 1 && styles.signalBarActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
             </View>
-          )}
-          {localStream ? (
-            <View style={styles.localPip}>
-              <RTCView style={styles.localPipStream} streamURL={localStream.toURL()} objectFit="cover" mirror />
-            </View>
-          ) : null}
-        </View>
 
-        <View style={styles.controlsRow}>
-          <Pressable
-            onPress={handleMuteToggle}
-            style={({ pressed }) => [
-              styles.controlButton,
-              isMuted && styles.controlButtonActive,
-              !localStream && styles.controlButtonDisabled,
-              pressed && styles.controlButtonPressed,
-            ]}
-          >
-            <Text style={styles.controlButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleVideoToggle}
-            style={({ pressed }) => [
-              styles.controlButton,
-              !isVideoEnabled && styles.controlButtonActive,
-              !localStream && styles.controlButtonDisabled,
-              pressed && styles.controlButtonPressed,
-            ]}
-          >
-            <Text style={styles.controlButtonText}>{isVideoEnabled ? 'Video Off' : 'Video On'}</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
-      <StatusBar barStyle="light-content" />
-    </SafeAreaView>
+            {isReconnecting ? (
+              <View style={styles.reconnectBanner}>
+                <Text style={styles.reconnectBannerText}>Reconnecting… keeping your call alive</Text>
+                <Pressable onPress={handleRetryReconnect} style={styles.retryButton}>
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            <View style={styles.callStage} onLayout={handleCallStageLayout}>
+              <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
+              <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
+              {mainStream ? (
+                <RTCView style={styles.remoteStream} streamURL={mainStream.toURL()} objectFit="cover" />
+              ) : (
+                <View style={styles.remotePlaceholder}>
+                  <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
+                </View>
+              )}
+
+              {pipStream ? (
+                <GestureDetector gesture={pipGesture}>
+                  <Animated.View style={[styles.localPip, animatedPipStyle]}>
+                    <RTCView
+                      style={styles.localPipStream}
+                      streamURL={pipStream.toURL()}
+                      objectFit="cover"
+                      mirror={!isLocalPrimary}
+                    />
+                  </Animated.View>
+                </GestureDetector>
+              ) : null}
+            </View>
+
+            <View style={styles.controlsRow}>
+              <Pressable
+                onPress={handleMuteToggle}
+                style={({ pressed }) => [
+                  styles.controlButton,
+                  isMuted && styles.controlButtonActive,
+                  !localStream && styles.controlButtonDisabled,
+                  pressed && styles.controlButtonPressed,
+                ]}
+              >
+                <Text style={styles.controlButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleVideoToggle}
+                style={({ pressed }) => [
+                  styles.controlButton,
+                  !isVideoEnabled && styles.controlButtonActive,
+                  !localStream && styles.controlButtonDisabled,
+                  pressed && styles.controlButtonPressed,
+                ]}
+              >
+                <Text style={styles.controlButtonText}>{isVideoEnabled ? 'Video Off' : 'Video On'}</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleSpeakerToggle}
+                style={({ pressed }) => [
+                  styles.controlButton,
+                  isSpeakerEnabled && styles.controlButtonActive,
+                  pressed && styles.controlButtonPressed,
+                ]}
+              >
+                <Text style={styles.controlButtonText}>{isSpeakerEnabled ? 'Speaker' : 'Earpiece'}</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.controlsRow}>
+              <Pressable
+                onPress={handleCameraSwitch}
+                style={({ pressed }) => [
+                  styles.controlButton,
+                  !localStream && styles.controlButtonDisabled,
+                  pressed && styles.controlButtonPressed,
+                ]}
+              >
+                <Text style={styles.controlButtonText}>Swap Camera</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleRoomButtonPress}
+                style={({ pressed }) => [styles.controlButton, styles.leaveButton, pressed && styles.controlButtonPressed]}
+              >
+                <Text style={styles.controlButtonText}>Leave</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.status}>{status}</Text>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.title}>studious-robot</Text>
+            <Text style={styles.subtitle}>Phase 4 — Warm & cozy in-call interface</Text>
+
+            <TextInput
+              value={signalingUrl}
+              onChangeText={setSignalingUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+              placeholder="Signaling URL"
+            />
+            <TextInput
+              value={roomId}
+              onChangeText={setRoomId}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+              placeholder="Room ID"
+            />
+
+            <View style={styles.row}>
+              <Button
+                title="Start Preview"
+                onPress={() => {
+                  logInfo('Start Preview button press');
+                  startLocalPreview().catch((error) => {
+                    logError('startLocalPreview failed (permissions/device)', error);
+                    setStatus('Failed to access camera/microphone');
+                  });
+                }}
+              />
+              <Button title="Join Room" onPress={handleRoomButtonPress} />
+            </View>
+
+            <View style={styles.row}>
+              <Button title="Export Logs" onPress={handleExportLogs} />
+            </View>
+
+            <Text style={styles.status}>{status}</Text>
+          </ScrollView>
+        )}
+        <StatusBar barStyle="light-content" />
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -740,18 +1048,89 @@ const styles = StyleSheet.create({
     color: '#f1ddcb',
     marginBottom: 12,
   },
-  reconnecting: {
+  callScreen: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  topBar: {
+    minHeight: 40,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: '#4b3741',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  timerText: {
+    color: '#fff5e8',
+    fontWeight: '700',
+  },
+  qualityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qualityLabel: {
+    color: '#dec8b5',
+    fontSize: 12,
+  },
+  signalBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 3,
+  },
+  signalBar: {
+    width: 6,
+    borderRadius: 4,
+    backgroundColor: '#78606b',
+  },
+  signalBar0: {
+    height: 8,
+  },
+  signalBar1: {
+    height: 12,
+  },
+  signalBar2: {
+    height: 16,
+  },
+  signalBarActive: {
+    backgroundColor: '#8be7a5',
+  },
+  reconnectBanner: {
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ffd9a8',
+    backgroundColor: '#5a434d',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  reconnectBannerText: {
+    flex: 1,
     color: '#ffd9a8',
     fontWeight: '600',
-    marginBottom: 12,
   },
-  streamLabel: {
-    color: '#f1ddcb',
-    fontWeight: '600',
-    marginBottom: 8,
+  retryButton: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#ffd4a3',
+  },
+  retryButtonText: {
+    color: '#3a2127',
+    fontWeight: '700',
+    fontSize: 12,
   },
   callStage: {
-    height: 320,
+    flex: 1,
+    minHeight: 280,
     borderRadius: 18,
     overflow: 'hidden',
     marginBottom: 12,
@@ -791,10 +1170,10 @@ const styles = StyleSheet.create({
   },
   localPip: {
     position: 'absolute',
-    right: 12,
-    bottom: 12,
-    width: 110,
-    height: 155,
+    top: 0,
+    left: 0,
+    width: PIP_WIDTH,
+    height: PIP_HEIGHT,
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 2,
@@ -806,12 +1185,12 @@ const styles = StyleSheet.create({
   },
   controlsRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 8,
   },
   controlButton: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 44,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -829,5 +1208,8 @@ const styles = StyleSheet.create({
   controlButtonText: {
     color: '#3a2127',
     fontWeight: '700',
+  },
+  leaveButton: {
+    backgroundColor: '#f08d89',
   },
 });

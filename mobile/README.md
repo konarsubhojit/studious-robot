@@ -34,9 +34,15 @@ npm run ios        # build & launch on an iOS simulator (macOS)
 
 Open the app on Android and grant camera/microphone permissions to start local
 preview and join a room. For device-to-device testing, launch two clients with
-the same room ID. During a call, the remote video is shown as the primary view,
-the local camera appears as picture-in-picture, and the Mute / Video controls
-toggle local outgoing tracks in real time.
+the same room ID. While in the lobby you can set signaling/room values and
+export logs; once the call starts the app switches to a dedicated in-call UI
+with:
+
+- a draggable picture-in-picture (PiP) self-view that can be tapped to swap
+  local/remote focus,
+- call timer + connection quality signal bars (from periodic WebRTC stats),
+- reconnect banner with a manual **Retry** action,
+- in-call controls for mute, video, speaker/earpiece route, and camera switch.
 
 ## Background calls & Picture-in-Picture (Android)
 
