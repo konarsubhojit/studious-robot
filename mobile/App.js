@@ -14,7 +14,6 @@ import {
   View,
 } from 'react-native';
 import RNFS from 'react-native-fs';
-import InCallManager from 'react-native-incall-manager';
 import { io } from 'socket.io-client';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
@@ -37,6 +36,7 @@ import { clamp, formatCallDuration, getConnectionQuality } from './src/callUx';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
+import { setAudioRoute, startAudioSession, stopAudioSession } from './src/audioRouting';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
@@ -208,6 +208,7 @@ export default function App() {
   const localStreamRef = useRef(null);
   const roomIdRef = useRef(roomId);
   const isInRoomRef = useRef(false);
+  const isOffererRef = useRef(false);
   const lightingIntervalRef = useRef(null);
   const connectionStatsRef = useRef({
     timestampMs: null,
@@ -242,6 +243,7 @@ export default function App() {
   }, [stageSize.height, stageSize.width]);
 
   const closePeerConnection = useCallback(() => {
+    isOffererRef.current = false;
     if (peerConnectionRef.current) {
       logInfo('Closing RTCPeerConnection');
       peerConnectionRef.current.onicecandidate = null;
@@ -306,6 +308,33 @@ export default function App() {
         markCallConnected();
         setStatus('Remote stream connected');
       }
+    };
+
+    connection.oniceconnectionstatechange = () => {
+      const state = connection.iceConnectionState;
+      logInfo('ICE connection state changed', { state });
+      if (state !== 'failed') {
+        return;
+      }
+      if (!isOffererRef.current || !socketRef.current?.connected) {
+        return;
+      }
+      logWarn('ICE connection failed; triggering ICE restart');
+      connection
+        .createOffer({ iceRestart: true })
+        .then((offer) => connection.setLocalDescription(offer))
+        .then(() => {
+          if (socketRef.current) {
+            socketRef.current.emit('offer', {
+              roomId: roomIdRef.current,
+              sdp: connection.localDescription,
+            });
+            logInfo('ICE restart offer sent after ICE failure');
+          }
+        })
+        .catch((error) => {
+          logError('ICE restart after failure failed', error);
+        });
     };
 
     peerConnectionRef.current = connection;
@@ -418,11 +447,27 @@ export default function App() {
           setStatus('Reconnecting…');
         });
 
-        manager.on('reconnect', (attempt) => {
+        manager.on('reconnect', async (attempt) => {
           logInfo('Socket.IO reconnected', { attempt });
           setIsReconnecting(false);
           setStatus('Reconnected. Rejoining room...');
           socket.emit('join-room', roomIdRef.current);
+
+          // If we were the original offerer, send an ICE-restart offer so the
+          // peer connection re-negotiates a new network path without tearing
+          // down the call.
+          const peer = peerConnectionRef.current;
+          if (peer && isOffererRef.current) {
+            try {
+              logInfo('Sending ICE restart offer after socket reconnect');
+              const offer = await peer.createOffer({ iceRestart: true });
+              await peer.setLocalDescription(offer);
+              socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
+              logInfo('ICE restart offer sent after socket reconnect');
+            } catch (error) {
+              logError('ICE restart after socket reconnect failed', error);
+            }
+          }
         });
 
         manager.on('reconnect_failed', () => {
@@ -447,6 +492,7 @@ export default function App() {
 
       socket.on('peer-joined', async () => {
         logInfo('peer-joined', { roomId: roomIdRef.current });
+        isOffererRef.current = true;
         try {
           const peer = ensurePeerConnection();
           const offer = await peer.createOffer();
@@ -674,28 +720,42 @@ export default function App() {
     };
   }, [isInRoom]);
 
+  // Start/stop the in-call audio session when entering or leaving a call.
+  // Splitting this from the route-update effect below prevents unnecessary
+  // InCallManager stop/start cycles when only the speaker preference changes.
   useEffect(() => {
     if (!isInRoom) {
       return undefined;
     }
 
     try {
-      InCallManager.start({ media: 'video' });
-      InCallManager.setForceSpeakerphoneOn(isSpeakerEnabled);
-      InCallManager.setSpeakerphoneOn(isSpeakerEnabled);
-      InCallManager.setKeepScreenOn(true);
+      startAudioSession();
     } catch (error) {
-      logWarn('InCallManager init failed', { message: error?.message });
+      logWarn('InCallManager start failed', { message: error?.message });
     }
 
     return () => {
       try {
-        InCallManager.setKeepScreenOn(false);
-        InCallManager.stop();
+        stopAudioSession();
       } catch (error) {
-        logWarn('InCallManager cleanup failed', { message: error?.message });
+        logWarn('InCallManager stop failed', { message: error?.message });
       }
     };
+  }, [isInRoom]);
+
+  // Update the audio output route whenever the speaker preference changes while
+  // a call is active.  Runs immediately when the call starts (isInRoom flips to
+  // true) to apply the initial route, and again on every subsequent toggle.
+  useEffect(() => {
+    if (!isInRoom) {
+      return;
+    }
+
+    try {
+      setAudioRoute(isSpeakerEnabled);
+    } catch (error) {
+      logWarn('InCallManager route update failed', { message: error?.message });
+    }
   }, [isInRoom, isSpeakerEnabled]);
 
   useEffect(() => {

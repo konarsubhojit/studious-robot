@@ -44,7 +44,51 @@ with:
 - reconnect banner with a manual **Retry** action,
 - in-call controls for mute, video, speaker/earpiece route, and camera switch.
 
-## Background calls & Picture-in-Picture (Android)
+## Audio routing
+
+During a call the audio output route can be switched between the loudspeaker,
+earpiece, and any connected Bluetooth device using the **Speaker / Earpiece**
+toggle button in the in-call controls row.
+
+The app uses `react-native-incall-manager` (`src/audioRouting.js`) to:
+
+- **Activate the in-call audio focus** so that media volume controls and audio
+  interruption behaviour work correctly.
+- **Manage the proximity sensor** — when `media: 'video'` is passed to
+  `InCallManager.start`, the library automatically dims the screen and switches
+  to earpiece when the handset is held to the ear.
+- **Keep the screen on** throughout the call so the controls remain accessible.
+- **Switch routes on demand** via `setForceSpeakerphoneOn` /
+  `setSpeakerphoneOn`. When a Bluetooth device is paired, choosing *Earpiece*
+  will route through Bluetooth rather than the physical earpiece.
+
+Toggling the route does **not** restart the audio session — the speaker
+preference is applied in a dedicated effect that runs independently of the
+session lifecycle.  This means microphone muting continues to work correctly
+regardless of which output route is active.
+
+## ICE restart and reconnection
+
+WebRTC ICE connections can break when the device switches networks (e.g. Wi-Fi
+→ mobile data) or when the device wakes from sleep.  Two mechanisms are in
+place to restore connectivity without ending the call:
+
+1. **Socket.IO reconnect → ICE restart**: when the signaling socket reconnects
+   after a transient drop, the app re-emits `join-room` and — if it was the
+   original offerer — immediately sends a new WebRTC offer with
+   `{ iceRestart: true }`.  This re-negotiates the ICE candidates over the new
+   network path while keeping the existing media tracks and call UI intact.
+
+2. **Automatic ICE failure recovery**: an `oniceconnectionstatechange` handler
+   on the `RTCPeerConnection` watches for the `failed` state.  If reached, and
+   the offerer role is held and the socket is still connected, an ICE-restart
+   offer is sent automatically — without any user action required.
+
+> **Note:** Only the side that created the original SDP offer sends ICE-restart
+> offers.  The answerer simply processes the new offer normally.  This
+> convention avoids signaling races if both peers detect failure simultaneously.
+
+
 
 To keep calls alive when the app is backgrounded, Android uses a lightweight
 foreground service and the system Picture-in-Picture (PiP) window:
