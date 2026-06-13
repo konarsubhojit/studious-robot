@@ -3,7 +3,7 @@ export function clamp(value, min, max) {
 }
 
 export function formatCallDuration(totalSeconds) {
-  const safeSeconds = Math.max(0, totalSeconds || 0);
+  const safeSeconds = Math.floor(Math.max(0, totalSeconds || 0));
   const hours = Math.floor(safeSeconds / 3600);
   const minutes = Math.floor((safeSeconds % 3600) / 60);
   const seconds = safeSeconds % 60;

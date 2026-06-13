@@ -586,9 +586,13 @@ export default function App() {
       return undefined;
     }
 
-    setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAt) / 1000));
-    const timerId = setInterval(() => {
+    const updateElapsedCallSeconds = () => {
       setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAt) / 1000));
+    };
+
+    updateElapsedCallSeconds();
+    const timerId = setInterval(() => {
+      updateElapsedCallSeconds();
     }, 1000);
     return () => clearInterval(timerId);
   }, [callConnectedAt]);
@@ -643,7 +647,11 @@ export default function App() {
         const now = Date.now();
         const previous = connectionStatsRef.current;
         let bitrateKbps;
-        if (previous.timestampMs && now > previous.timestampMs && totalBytesReceived >= previous.totalBytesReceived) {
+        if (
+          previous.timestampMs &&
+          now > previous.timestampMs &&
+          totalBytesReceived >= previous.totalBytesReceived
+        ) {
           const bitsReceived = (totalBytesReceived - previous.totalBytesReceived) * 8;
           const elapsedMs = now - previous.timestampMs;
           bitrateKbps = bitsReceived / elapsedMs;
@@ -748,6 +756,7 @@ export default function App() {
   const animatedPipStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: pipX.value }, { translateY: pipY.value }],
   }));
+  const pipBounds = getPipBounds();
 
   const pipGesture = Gesture.Race(
     Gesture.Tap().onEnd(() => {
@@ -759,10 +768,8 @@ export default function App() {
         pipStartY.value = pipY.value;
       })
       .onUpdate((event) => {
-        const maxX = Math.max(PIP_MARGIN, stageSize.width - PIP_WIDTH - PIP_MARGIN);
-        const maxY = Math.max(PIP_MARGIN, stageSize.height - PIP_HEIGHT - PIP_MARGIN);
-        pipX.value = Math.min(Math.max(pipStartX.value + event.translationX, PIP_MARGIN), maxX);
-        pipY.value = Math.min(Math.max(pipStartY.value + event.translationY, PIP_MARGIN), maxY);
+        pipX.value = clamp(pipStartX.value + event.translationX, pipBounds.minX, pipBounds.maxX);
+        pipY.value = clamp(pipStartY.value + event.translationY, pipBounds.minY, pipBounds.maxY);
       })
       .onEnd(() => {
         runOnJS(setPipPosition)({ x: pipX.value, y: pipY.value });
