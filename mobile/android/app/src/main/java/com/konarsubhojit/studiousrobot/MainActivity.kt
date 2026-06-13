@@ -1,5 +1,8 @@
 package com.konarsubhojit.studiousrobot
 
+import android.app.PictureInPictureParams
+import android.os.Build
+import android.util.Rational
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -19,4 +22,19 @@ class MainActivity : ReactActivity() {
    */
   override fun createReactActivityDelegate(): ReactActivityDelegate =
       DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+
+  /**
+   * Enter Picture-in-Picture automatically when the user leaves the app (e.g. presses Home)
+   * while a call is active, so the call keeps playing in a small floating window.
+   */
+  override fun onUserLeaveHint() {
+    super.onUserLeaveHint()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && CallServiceModule.isCallActive) {
+      val params =
+        PictureInPictureParams.Builder()
+          .setAspectRatio(Rational(9, 16))
+          .build()
+      enterPictureInPictureMode(params)
+    }
+  }
 }

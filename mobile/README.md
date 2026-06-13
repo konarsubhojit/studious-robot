@@ -38,6 +38,39 @@ the same room ID. During a call, the remote video is shown as the primary view,
 the local camera appears as picture-in-picture, and the Mute / Video controls
 toggle local outgoing tracks in real time.
 
+## Background calls & Picture-in-Picture (Android)
+
+To keep calls alive when the app is backgrounded, Android uses a lightweight
+foreground service and the system Picture-in-Picture (PiP) window:
+
+- **Foreground service** — when a call connects, a foreground service with an
+  ongoing notification ("Call in progress") is started so the OS keeps the
+  process and media capture alive while the app is in the background. It is
+  stopped when you leave the room.
+- **Picture-in-Picture** — pressing Home (or otherwise leaving the app) while a
+  call is active shrinks the call into a small floating PiP window so you can
+  keep watching while using other apps. PiP requires Android 8.0 (API 26) or
+  newer.
+- **Reconnection** — Socket.IO uses a short bounded reconnection policy and
+  re-joins the room automatically after a transient drop. While reconnecting,
+  the UI shows a "Reconnecting…" indicator instead of ending the call.
+
+These features rely on the following permissions declared in
+`android/app/src/main/AndroidManifest.xml`:
+
+- `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CAMERA`,
+  `FOREGROUND_SERVICE_MICROPHONE` — run the call foreground service with
+  camera/microphone access.
+- `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
+  33) and newer.
+
+The `MainActivity` also declares `android:supportsPictureInPicture="true"` and
+`android:resizeableActivity="true"` to enable PiP.
+
+> **Note:** Some device manufacturers apply aggressive battery optimizations that
+> may still stop background processes. The foreground service and PiP mitigate
+> the most common cases. PiP handling here targets Android only.
+
 ## Export diagnostic logs
 
 Use the **Export Logs** button in the app UI to save a diagnostic log file from
