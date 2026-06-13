@@ -29,12 +29,16 @@ import {
   startCallService,
   stopCallService,
 } from './src/callService';
+import { applyLightingAdjustment } from './src/cameraLighting';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
+
+// How often to re-evaluate ambient lighting and auto-adjust the camera.
+const LIGHTING_ADJUST_INTERVAL_MS = 8000;
 
 function formatDateForFile(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -182,6 +186,7 @@ export default function App() {
   const localStreamRef = useRef(null);
   const roomIdRef = useRef(roomId);
   const isInRoomRef = useRef(false);
+  const lightingIntervalRef = useRef(null);
 
   useEffect(() => {
     isInRoomRef.current = isInRoom;
@@ -270,10 +275,39 @@ export default function App() {
     setIsVideoEnabled(isTrackEnabled(stream, 'video'));
   }, []);
 
+  const adjustCameraLighting = useCallback(async () => {
+    const stream = localStreamRef.current;
+    if (!stream?.getVideoTracks) {
+      return;
+    }
+    const [videoTrack] = stream.getVideoTracks();
+    if (!videoTrack) {
+      return;
+    }
+    await applyLightingAdjustment(videoTrack);
+  }, []);
+
+  const stopLightingMonitor = useCallback(() => {
+    if (lightingIntervalRef.current) {
+      clearInterval(lightingIntervalRef.current);
+      lightingIntervalRef.current = null;
+    }
+  }, []);
+
+  const startLightingMonitor = useCallback(() => {
+    stopLightingMonitor();
+    logInfo('Starting camera lighting auto-adjust monitor');
+    adjustCameraLighting();
+    lightingIntervalRef.current = setInterval(() => {
+      adjustCameraLighting();
+    }, LIGHTING_ADJUST_INTERVAL_MS);
+  }, [adjustCameraLighting, stopLightingMonitor]);
+
   const startLocalPreview = useCallback(async () => {
     if (localStreamRef.current) {
       logInfo('Local media stream already available');
       syncMediaState(localStreamRef.current);
+      startLightingMonitor();
       return localStreamRef.current;
     }
 
@@ -291,9 +325,10 @@ export default function App() {
     localStreamRef.current = stream;
     setLocalStream(stream);
     syncMediaState(stream);
+    startLightingMonitor();
     setStatus('Local preview ready');
     return stream;
-  }, [syncMediaState]);
+  }, [startLightingMonitor, syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
@@ -479,12 +514,13 @@ export default function App() {
 
   useEffect(() => () => {
     logInfo('App cleanup/unmount');
+    stopLightingMonitor();
     leaveRoom();
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
-  }, [leaveRoom]);
+  }, [leaveRoom, stopLightingMonitor]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {

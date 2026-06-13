@@ -71,6 +71,23 @@ The `MainActivity` also declares `android:supportsPictureInPicture="true"` and
 > may still stop background processes. The foreground service and PiP mitigate
 > the most common cases. PiP handling here targets Android only.
 
+## Adaptive camera lighting
+
+The local camera is auto-tuned for the current lighting while a preview or call is
+active. Every few seconds the app estimates scene brightness from the live video
+track and applies lighting-adjusted camera controls:
+
+- **Low light** — lowers the frame rate (to allow longer exposure), raises
+  exposure compensation/brightness, and requests a wider aperture.
+- **Bright light** — keeps a smooth frame rate, lowers exposure compensation, and
+  requests a narrower aperture.
+
+Most phones have a fixed aperture, so the aperture request is honored only on
+devices with a variable aperture; the exposure-compensation, brightness, and
+frame-rate adjustments improve perceived lighting on all devices. All controls are
+applied as best-effort `advanced` constraints, so unsupported controls are simply
+ignored and never interrupt the camera.
+
 ## Export diagnostic logs
 
 Use the **Export Logs** button in the app UI to save a diagnostic log file from
