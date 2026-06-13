@@ -462,7 +462,7 @@ export default function App() {
               logInfo('Sending ICE restart offer after socket reconnect');
               const offer = await peer.createOffer({ iceRestart: true });
               await peer.setLocalDescription(offer);
-              socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
+              socket.emit('offer', { roomId: roomIdRef.current, sdp: peer.localDescription });
               logInfo('ICE restart offer sent after socket reconnect');
             } catch (error) {
               logError('ICE restart after socket reconnect failed', error);
