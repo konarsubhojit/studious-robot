@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AppState,
   Button,
   NativeModules,
   Platform,
@@ -23,11 +24,23 @@ import {
 } from 'react-native-webrtc';
 import appConfig from './app.json';
 import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from './src/appLogger';
+import {
+  enterPictureInPicture,
+  startCallService,
+  stopCallService,
+} from './src/callService';
+import { applyLightingAdjustment } from './src/cameraLighting';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
+import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
+
+// How often to re-evaluate ambient lighting and auto-adjust the camera. Chosen
+// to stay responsive to lighting changes while avoiding frequent applyConstraints
+// calls that would add unnecessary CPU/battery overhead.
+const LIGHTING_ADJUST_INTERVAL_MS = 8000;
 
 function formatDateForFile(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -166,6 +179,7 @@ export default function App() {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [isInRoom, setIsInRoom] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
 
@@ -173,6 +187,12 @@ export default function App() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const roomIdRef = useRef(roomId);
+  const isInRoomRef = useRef(false);
+  const lightingIntervalRef = useRef(null);
+
+  useEffect(() => {
+    isInRoomRef.current = isInRoom;
+  }, [isInRoom]);
 
   useEffect(() => {
     clearLogs();
@@ -205,6 +225,8 @@ export default function App() {
       hadPeerConnection: Boolean(peerConnectionRef.current),
     });
     setIsInRoom(false);
+    setIsReconnecting(false);
+    stopCallService();
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -255,10 +277,39 @@ export default function App() {
     setIsVideoEnabled(isTrackEnabled(stream, 'video'));
   }, []);
 
+  const adjustCameraLighting = useCallback(async () => {
+    const stream = localStreamRef.current;
+    if (!stream?.getVideoTracks) {
+      return;
+    }
+    const [videoTrack] = stream.getVideoTracks();
+    if (!videoTrack) {
+      return;
+    }
+    await applyLightingAdjustment(videoTrack);
+  }, []);
+
+  const stopLightingMonitor = useCallback(() => {
+    if (lightingIntervalRef.current) {
+      clearInterval(lightingIntervalRef.current);
+      lightingIntervalRef.current = null;
+    }
+  }, []);
+
+  const startLightingMonitor = useCallback(() => {
+    stopLightingMonitor();
+    logInfo('Starting camera lighting auto-adjust monitor');
+    adjustCameraLighting();
+    lightingIntervalRef.current = setInterval(() => {
+      adjustCameraLighting();
+    }, LIGHTING_ADJUST_INTERVAL_MS);
+  }, [adjustCameraLighting, stopLightingMonitor]);
+
   const startLocalPreview = useCallback(async () => {
     if (localStreamRef.current) {
       logInfo('Local media stream already available');
       syncMediaState(localStreamRef.current);
+      startLightingMonitor();
       return localStreamRef.current;
     }
 
@@ -276,9 +327,10 @@ export default function App() {
     localStreamRef.current = stream;
     setLocalStream(stream);
     syncMediaState(stream);
+    startLightingMonitor();
     setStatus('Local preview ready');
     return stream;
-  }, [syncMediaState]);
+  }, [startLightingMonitor, syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
@@ -302,7 +354,7 @@ export default function App() {
         signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
         roomId: trimmedRoomId,
       });
-      const socket = io(trimmedSignalingUrl, { transports: ['polling', 'websocket'] });
+      const socket = io(trimmedSignalingUrl, getSocketOptions());
       socketRef.current = socket;
 
       socket.on('connect', () => {
@@ -313,8 +365,31 @@ export default function App() {
         });
         setStatus('Connected to signaling. Joining room...');
         setIsInRoom(true);
+        setIsReconnecting(false);
         socket.emit('join-room', roomIdRef.current);
+        startCallService();
       });
+
+      const manager = socket.io;
+      if (manager && typeof manager.on === 'function') {
+        manager.on('reconnect_attempt', (attempt) => {
+          logWarn('Socket.IO reconnect attempt', { attempt });
+          setIsReconnecting(true);
+          setStatus('Reconnecting…');
+        });
+
+        manager.on('reconnect', (attempt) => {
+          logInfo('Socket.IO reconnected', { attempt });
+          setIsReconnecting(false);
+          setStatus('Reconnected. Rejoining room...');
+          socket.emit('join-room', roomIdRef.current);
+        });
+
+        manager.on('reconnect_failed', () => {
+          logError('Socket.IO reconnect failed');
+          leaveRoom('Reconnection failed');
+        });
+      }
 
       const onTransportUpgrade = socket.io?.engine?.on;
       if (typeof onTransportUpgrade === 'function') {
@@ -403,7 +478,14 @@ export default function App() {
 
       socket.on('disconnect', (reason) => {
         logWarn('Socket.IO disconnect', { reason });
+        if (isRecoverableDisconnectReason(reason)) {
+          setIsReconnecting(true);
+          setStatus('Reconnecting…');
+          return;
+        }
         setIsInRoom(false);
+        setIsReconnecting(false);
+        stopCallService();
         closePeerConnection();
         setStatus('Socket disconnected');
       });
@@ -416,6 +498,13 @@ export default function App() {
           cause: error?.cause,
         };
         logError('Socket.IO connect_error', metadata);
+        if (isInRoomRef.current) {
+          // A call is already in progress; let the reconnection policy retry
+          // instead of tearing the call down on a transient error.
+          setIsReconnecting(true);
+          setStatus('Reconnecting…');
+          return;
+        }
         setIsInRoom(false);
         setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`);
       });
@@ -427,12 +516,28 @@ export default function App() {
 
   useEffect(() => () => {
     logInfo('App cleanup/unmount');
+    stopLightingMonitor();
     leaveRoom();
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
-  }, [leaveRoom]);
+  }, [leaveRoom, stopLightingMonitor]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return undefined;
+    }
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if ((nextState === 'background' || nextState === 'inactive') && isInRoomRef.current) {
+        logInfo('App backgrounded during call; requesting Picture-in-Picture', { nextState });
+        enterPictureInPicture();
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
 
   const handleRoomButtonPress = () => {
     if (isInRoom) {
@@ -545,6 +650,9 @@ export default function App() {
         </View>
 
         <Text style={styles.status}>{status}</Text>
+        {isReconnecting ? (
+          <Text style={styles.reconnecting}>Reconnecting… keeping your call alive</Text>
+        ) : null}
 
         <Text style={styles.streamLabel}>In call</Text>
         <View style={styles.callStage}>
@@ -630,6 +738,11 @@ const styles = StyleSheet.create({
   },
   status: {
     color: '#f1ddcb',
+    marginBottom: 12,
+  },
+  reconnecting: {
+    color: '#ffd9a8',
+    fontWeight: '600',
     marginBottom: 12,
   },
   streamLabel: {
