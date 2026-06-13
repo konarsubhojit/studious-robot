@@ -32,7 +32,12 @@ class MainActivity : ReactActivity() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && CallServiceModule.isCallActive) {
       val params =
         PictureInPictureParams.Builder()
-          .setAspectRatio(Rational(9, 16))
+          .setAspectRatio(
+            Rational(
+              CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
+              CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
+            ),
+          )
           .build()
       enterPictureInPictureMode(params)
     }

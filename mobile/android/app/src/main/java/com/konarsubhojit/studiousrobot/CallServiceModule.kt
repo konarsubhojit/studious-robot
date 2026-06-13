@@ -48,7 +48,7 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
     try {
       val params =
         PictureInPictureParams.Builder()
-          .setAspectRatio(Rational(9, 16))
+          .setAspectRatio(Rational(PIP_ASPECT_RATIO_WIDTH, PIP_ASPECT_RATIO_HEIGHT))
           .build()
       val entered = activity.enterPictureInPictureMode(params)
       promise.resolve(entered)
@@ -59,6 +59,10 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
 
   companion object {
     const val NAME = "CallService"
+
+    /** Aspect ratio (width:height) used for the Picture-in-Picture window. */
+    const val PIP_ASPECT_RATIO_WIDTH = 9
+    const val PIP_ASPECT_RATIO_HEIGHT = 16
 
     /** Set while a call is active so the activity can enter PiP on user leave. */
     @Volatile

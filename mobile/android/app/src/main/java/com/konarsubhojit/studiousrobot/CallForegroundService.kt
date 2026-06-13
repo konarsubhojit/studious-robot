@@ -63,6 +63,7 @@ class CallForegroundService : Service() {
 
   companion object {
     const val CHANNEL_ID = "studious_robot_calls"
+    // Fixed, app-unique notification id for the single ongoing-call notification.
     const val NOTIFICATION_ID = 4173
   }
 }
