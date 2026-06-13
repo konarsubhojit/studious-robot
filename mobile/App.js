@@ -347,15 +347,19 @@ export default function App() {
   }, []);
 
   const adjustCameraLighting = useCallback(async () => {
-    const stream = localStreamRef.current;
-    if (!stream?.getVideoTracks) {
-      return;
+    try {
+      const stream = localStreamRef.current;
+      if (!stream?.getVideoTracks) {
+        return;
+      }
+      const [videoTrack] = stream.getVideoTracks();
+      if (!videoTrack) {
+        return;
+      }
+      await applyLightingAdjustment(videoTrack);
+    } catch (error) {
+      logError('Camera lighting auto-adjust failed', error);
     }
-    const [videoTrack] = stream.getVideoTracks();
-    if (!videoTrack) {
-      return;
-    }
-    await applyLightingAdjustment(videoTrack);
   }, []);
 
   const stopLightingMonitor = useCallback(() => {
@@ -368,9 +372,9 @@ export default function App() {
   const startLightingMonitor = useCallback(() => {
     stopLightingMonitor();
     logInfo('Starting camera lighting auto-adjust monitor');
-    adjustCameraLighting();
+    void adjustCameraLighting();
     lightingIntervalRef.current = setInterval(() => {
-      adjustCameraLighting();
+      void adjustCameraLighting();
     }, LIGHTING_ADJUST_INTERVAL_MS);
   }, [adjustCameraLighting, stopLightingMonitor]);
 

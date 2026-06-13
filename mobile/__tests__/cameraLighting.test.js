@@ -112,6 +112,23 @@ describe('cameraLighting', () => {
     expect(result.condition).toBe('bright');
   });
 
+  test('applyLightingAdjustment swallows getCapabilities not-implemented errors', async () => {
+    const applyConstraints = jest.fn().mockResolvedValue(undefined);
+    const track = {
+      applyConstraints,
+      getSettings: () => ({ brightness: 5 }),
+      getCapabilities: () => {
+        throw new Error('Not implemented.');
+      },
+    };
+
+    const result = await applyLightingAdjustment(track);
+
+    expect(result.applied).toBe(false);
+    expect(result.condition).toBe('unknown');
+    expect(applyConstraints).not.toHaveBeenCalled();
+  });
+
   test('applyLightingAdjustment returns no-op for an invalid track', async () => {
     const result = await applyLightingAdjustment(null);
     expect(result.applied).toBe(false);
