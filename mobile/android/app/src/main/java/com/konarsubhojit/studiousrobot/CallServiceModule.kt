@@ -39,7 +39,7 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun enterPictureInPictureMode(promise: Promise) {
-    val activity: Activity? = currentActivity
+    val activity: Activity? = reactApplicationContext.currentActivity
     if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       promise.resolve(false)
       return
