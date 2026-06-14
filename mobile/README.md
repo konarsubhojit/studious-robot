@@ -123,20 +123,19 @@ The `MainActivity` also declares `android:supportsPictureInPicture="true"` and
 
 ## Adaptive camera lighting
 
-The local camera is auto-tuned for the current lighting while a preview or call is
-active. Every few seconds the app estimates scene brightness from the live video
-track and applies lighting-adjusted camera controls:
+Adaptive camera lighting is now controlled from the in-app **Settings** menu and
+is **disabled by default** for better stability on devices with strict camera
+constraint handling.
 
-- **Low light** — lowers the frame rate (to allow longer exposure), raises
-  exposure compensation/brightness, and requests a wider aperture.
-- **Bright light** — keeps a smooth frame rate, lowers exposure compensation, and
-  requests a narrower aperture.
+When enabled, every few seconds the app estimates scene brightness from the live
+video track and applies lighting-adjusted camera controls:
 
-Most phones have a fixed aperture, so the aperture request is honored only on
-devices with a variable aperture; the exposure-compensation, brightness, and
-frame-rate adjustments improve perceived lighting on all devices. All controls are
-applied as best-effort `advanced` constraints, so unsupported controls are simply
-ignored and never interrupt the camera.
+- **Low light** — lowers frame rate (to allow longer exposure), raises exposure
+  compensation and brightness.
+- **Bright light** — keeps a smooth frame rate and lowers exposure compensation.
+
+Controls are applied as best-effort `advanced` constraints, so unsupported values
+are ignored rather than interrupting the camera.
 
 ## Export diagnostic logs
 

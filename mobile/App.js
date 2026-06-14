@@ -40,6 +40,10 @@ import { setAudioRoute, startAudioSession, stopAudioSession } from './src/audioR
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
+const DEFAULT_SETTINGS = {
+  autoCameraLightingEnabled: false,
+  speakerEnabledByDefault: true,
+};
 
 // How often to re-evaluate ambient lighting and auto-adjust the camera. Chosen
 // to stay responsive to lighting changes while avoiding frequent applyConstraints
@@ -190,7 +194,9 @@ export default function App() {
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
+  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(DEFAULT_SETTINGS.speakerEnabledByDefault);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [callConnectedAt, setCallConnectedAt] = useState(null);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
@@ -382,7 +388,6 @@ export default function App() {
     if (localStreamRef.current) {
       logInfo('Local media stream already available');
       syncMediaState(localStreamRef.current);
-      startLightingMonitor();
       return localStreamRef.current;
     }
 
@@ -400,10 +405,9 @@ export default function App() {
     localStreamRef.current = stream;
     setLocalStream(stream);
     syncMediaState(stream);
-    startLightingMonitor();
     setStatus('Local preview ready');
     return stream;
-  }, [startLightingMonitor, syncMediaState]);
+  }, [syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
@@ -420,6 +424,7 @@ export default function App() {
       }
 
       leaveRoom();
+      setIsSpeakerEnabled(settings.speakerEnabledByDefault);
       await startLocalPreview();
       setStatus('Connecting to signaling server...');
 
@@ -603,7 +608,7 @@ export default function App() {
       logError('joinRoom failed during media/signaling setup', error);
       setStatus('Failed to access camera/microphone');
     }
-  }, [closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, signalingUrl, startLocalPreview]);
+  }, [closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, settings.speakerEnabledByDefault, signalingUrl, startLocalPreview]);
 
   useEffect(() => () => {
     logInfo('App cleanup/unmount');
@@ -614,6 +619,16 @@ export default function App() {
       localStreamRef.current = null;
     }
   }, [leaveRoom, stopLightingMonitor]);
+
+  useEffect(() => {
+    if (!settings.autoCameraLightingEnabled || !localStream) {
+      stopLightingMonitor();
+      return undefined;
+    }
+
+    startLightingMonitor();
+    return stopLightingMonitor;
+  }, [localStream, settings.autoCameraLightingEnabled, startLightingMonitor, stopLightingMonitor]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -850,6 +865,21 @@ export default function App() {
     joinRoom();
   };
 
+  const handleAutoLightingToggle = useCallback(() => {
+    const nextValue = !settings.autoCameraLightingEnabled;
+    setSettings((previous) => ({ ...previous, autoCameraLightingEnabled: nextValue }));
+    setStatus(nextValue ? 'Auto camera lighting enabled' : 'Auto camera lighting disabled');
+  }, [settings.autoCameraLightingEnabled]);
+
+  const handleSpeakerDefaultToggle = useCallback(() => {
+    const nextValue = !settings.speakerEnabledByDefault;
+    setSettings((previous) => ({ ...previous, speakerEnabledByDefault: nextValue }));
+    if (!isInRoom) {
+      setIsSpeakerEnabled(nextValue);
+    }
+    setStatus(nextValue ? 'Speaker default enabled' : 'Speaker default disabled');
+  }, [isInRoom, settings.speakerEnabledByDefault]);
+
   const handleExportLogs = useCallback(async () => {
     try {
       logInfo('Export Logs button press');
@@ -1062,8 +1092,48 @@ export default function App() {
             </View>
 
             <View style={styles.row}>
+              <Button
+                title={isSettingsVisible ? 'Hide Settings' : 'Settings'}
+                onPress={() => setIsSettingsVisible((previous) => !previous)}
+              />
               <Button title="Export Logs" onPress={handleExportLogs} />
             </View>
+
+            {isSettingsVisible ? (
+              <View style={styles.settingsCard}>
+                <Text style={styles.settingsTitle}>Settings</Text>
+                <Pressable
+                  onPress={handleAutoLightingToggle}
+                  style={({ pressed }) => [
+                    styles.settingsOption,
+                    pressed && styles.settingsOptionPressed,
+                  ]}
+                >
+                  <View>
+                    <Text style={styles.settingsOptionLabel}>Auto camera lighting</Text>
+                    <Text style={styles.settingsOptionHint}>Automatically adjusts camera for lighting conditions</Text>
+                  </View>
+                  <Text style={styles.settingsOptionValue}>
+                    {settings.autoCameraLightingEnabled ? 'On' : 'Off'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleSpeakerDefaultToggle}
+                  style={({ pressed }) => [
+                    styles.settingsOption,
+                    pressed && styles.settingsOptionPressed,
+                  ]}
+                >
+                  <View>
+                    <Text style={styles.settingsOptionLabel}>Speaker on join</Text>
+                    <Text style={styles.settingsOptionHint}>Default audio route for new calls</Text>
+                  </View>
+                  <Text style={styles.settingsOptionValue}>
+                    {settings.speakerEnabledByDefault ? 'On' : 'Off'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <Text style={styles.status}>{status}</Text>
           </ScrollView>
@@ -1111,6 +1181,49 @@ const styles = StyleSheet.create({
   status: {
     color: '#f1ddcb',
     marginBottom: 12,
+  },
+  settingsCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#6d5057',
+    backgroundColor: '#3d2d35',
+    padding: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  settingsTitle: {
+    color: '#fff5e8',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settingsOption: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#6d5057',
+    backgroundColor: '#4b3741',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  settingsOptionPressed: {
+    opacity: 0.85,
+  },
+  settingsOptionLabel: {
+    color: '#fff5e8',
+    fontWeight: '600',
+  },
+  settingsOptionHint: {
+    color: '#dec8b5',
+    fontSize: 12,
+  },
+  settingsOptionValue: {
+    color: '#ffd4a3',
+    fontWeight: '700',
+    minWidth: 28,
+    textAlign: 'right',
   },
   callScreen: {
     flex: 1,
