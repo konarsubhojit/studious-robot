@@ -621,7 +621,7 @@ export default function App() {
   }, [leaveRoom, stopLightingMonitor]);
 
   useEffect(() => {
-    if (!settings.autoCameraLightingEnabled || !localStreamRef.current) {
+    if (!settings.autoCameraLightingEnabled || !localStream) {
       stopLightingMonitor();
       return undefined;
     }
@@ -1115,7 +1115,7 @@ export default function App() {
                 >
                   <View>
                     <Text style={styles.settingsOptionLabel}>Auto camera lighting</Text>
-                    <Text style={styles.settingsOptionHint}>Off by default for stability</Text>
+                    <Text style={styles.settingsOptionHint}>Automatically adjusts camera for lighting conditions</Text>
                   </View>
                   <Text style={styles.settingsOptionValue}>
                     {settings.autoCameraLightingEnabled ? 'On' : 'Off'}
