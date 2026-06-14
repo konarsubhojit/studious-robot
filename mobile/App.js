@@ -862,7 +862,10 @@ export default function App() {
       return;
     }
 
-    joinRoom();
+    joinRoom().catch((error) => {
+      logError('joinRoom unhandled rejection', error);
+      setStatus('Failed to start call');
+    });
   };
 
   const handleAutoLightingToggle = useCallback(() => {
