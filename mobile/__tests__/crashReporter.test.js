@@ -9,9 +9,7 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));
 
-// eslint-disable-next-line import/first
 import RNFS from 'react-native-fs';
-// eslint-disable-next-line import/first
 import { installCrashHandler, saveCrashLog } from '../src/crashReporter';
 
 describe('saveCrashLog', () => {
