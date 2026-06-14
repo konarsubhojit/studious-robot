@@ -48,18 +48,19 @@ describe('cameraLighting', () => {
     expect(estimateSceneBrightness({}, {})).toBeNull();
   });
 
-  test('getLightingAdjustedConstraints lowers frame rate and widens aperture in low light', () => {
+  test('getLightingAdjustedConstraints lowers frame rate in low light', () => {
     const { condition, constraints } = getLightingAdjustedConstraints(0.1);
     expect(condition).toBe('low');
     expect(constraints.frameRate).toEqual({ ideal: 24, max: 30 });
-    expect(constraints.advanced).toContainEqual({ aperture: 1.5 });
     expect(constraints.advanced).toContainEqual({ exposureCompensation: 1.5 });
+    expect(constraints.advanced).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ aperture: expect.anything() })]),
+    );
   });
 
-  test('getLightingAdjustedConstraints narrows aperture in bright light', () => {
+  test('getLightingAdjustedConstraints adjusts exposure in bright light', () => {
     const { condition, constraints } = getLightingAdjustedConstraints(0.95);
     expect(condition).toBe('bright');
-    expect(constraints.advanced).toContainEqual({ aperture: 2.4 });
     expect(constraints.advanced).toContainEqual({ exposureCompensation: -0.5 });
   });
 
@@ -82,7 +83,7 @@ describe('cameraLighting', () => {
     expect(result.applied).toBe(true);
     expect(result.condition).toBe('low');
     expect(applyConstraints).toHaveBeenCalledTimes(1);
-    expect(applyConstraints.mock.calls[0][0].advanced).toContainEqual({ aperture: 1.5 });
+    expect(applyConstraints.mock.calls[0][0].advanced).toContainEqual({ exposureCompensation: 1.5 });
   });
 
   test('applyLightingAdjustment is a no-op when brightness cannot be estimated', async () => {

@@ -7,30 +7,22 @@ export const LIGHTING_THRESHOLDS = {
   bright: 0.75,
 };
 
-// Recommended camera controls per lighting condition. Phone cameras usually have
-// a fixed aperture, so `aperture` (f-number) is only honored on the few devices
-// that expose a variable aperture; the other controls (exposure compensation,
-// brightness, frame rate) are what improve perceived lighting everywhere else.
-// A lower f-number means a wider aperture that lets in more light, so low light
-// requests the widest aperture (1.5) and bright light the narrowest (2.4).
+// Recommended camera controls per lighting condition.
 // All values are supplied as best-effort `advanced` constraints so unsupported
 // controls are ignored rather than causing applyConstraints to fail.
 export const LIGHTING_PROFILES = {
   low: {
     frameRate: { ideal: 24, max: 30 },
-    aperture: 1.5,
     exposureCompensation: 1.5,
     brightness: 0.7,
   },
   normal: {
     frameRate: { ideal: 30 },
-    aperture: 1.8,
     exposureCompensation: 0,
     brightness: 0.5,
   },
   bright: {
     frameRate: { ideal: 30 },
-    aperture: 2.4,
     exposureCompensation: -0.5,
     brightness: 0.4,
   },
@@ -125,7 +117,6 @@ export function getLightingAdjustedConstraints(brightness) {
         { exposureMode: 'continuous' },
         { exposureCompensation: profile.exposureCompensation },
         { brightness: profile.brightness },
-        { aperture: profile.aperture },
       ],
     },
   };
