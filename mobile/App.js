@@ -431,9 +431,9 @@ export default function App() {
   const startLightingMonitor = useCallback(() => {
     stopLightingMonitor();
     logInfo('Starting camera lighting auto-adjust monitor');
-    adjustCameraLighting();
+    void adjustCameraLighting();
     lightingIntervalRef.current = setInterval(() => {
-      adjustCameraLighting();
+      void adjustCameraLighting();
     }, LIGHTING_ADJUST_INTERVAL_MS);
   }, [adjustCameraLighting, stopLightingMonitor]);
 

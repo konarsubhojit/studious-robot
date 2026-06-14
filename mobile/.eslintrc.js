@@ -10,5 +10,6 @@ module.exports = {
   },
   rules: {
     'import/first': 'off',
+    'no-void': 'off',
   },
 };
