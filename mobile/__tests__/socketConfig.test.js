@@ -8,7 +8,7 @@ describe('socketConfig', () => {
   test('getSocketOptions enables reconnection with a bounded retry policy', () => {
     const options = getSocketOptions();
 
-    expect(options.transports).toEqual(['polling', 'websocket']);
+    expect(options.transports).toEqual(['websocket', 'polling']);
     expect(options.reconnection).toBe(true);
     expect(options.reconnectionAttempts).toBe(RECONNECTION_OPTIONS.reconnectionAttempts);
     expect(options.reconnectionDelay).toBe(RECONNECTION_OPTIONS.reconnectionDelay);

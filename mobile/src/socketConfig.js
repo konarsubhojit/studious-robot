@@ -1,4 +1,4 @@
-const DEFAULT_TRANSPORTS = ['polling', 'websocket'];
+const DEFAULT_TRANSPORTS = ['websocket', 'polling'];
 
 export const RECONNECTION_OPTIONS = {
   reconnection: true,
