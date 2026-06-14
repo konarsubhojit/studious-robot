@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AppState,
   Button,
   NativeModules,
   Platform,
@@ -26,11 +25,6 @@ import {
 } from 'react-native-webrtc';
 import appConfig from './app.json';
 import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from './src/appLogger';
-import {
-  enterPictureInPicture,
-  startCallService,
-  stopCallService,
-} from './src/callService';
 import { applyLightingAdjustment } from './src/cameraLighting';
 import { clamp, formatCallDuration, getConnectionQuality } from './src/callUx';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
@@ -273,7 +267,6 @@ export default function App() {
     setCallConnectedAt(null);
     setElapsedCallSeconds(0);
     setIsLocalPrimary(false);
-    stopCallService();
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -445,7 +438,6 @@ export default function App() {
         setIsInRoom(true);
         setIsReconnecting(false);
         socket.emit('join-room', roomIdRef.current);
-        startCallService();
       });
 
       const manager = socket.io;
@@ -581,7 +573,6 @@ export default function App() {
         }
         setIsInRoom(false);
         setIsReconnecting(false);
-        stopCallService();
         closePeerConnection();
         setStatus('Socket disconnected');
       });
@@ -629,21 +620,6 @@ export default function App() {
     startLightingMonitor();
     return stopLightingMonitor;
   }, [localStream, settings.autoCameraLightingEnabled, startLightingMonitor, stopLightingMonitor]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') {
-      return undefined;
-    }
-
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if ((nextState === 'background' || nextState === 'inactive') && isInRoomRef.current) {
-        logInfo('App backgrounded during call; requesting Picture-in-Picture', { nextState });
-        enterPictureInPicture();
-      }
-    });
-
-    return () => subscription.remove();
-  }, []);
 
   useEffect(() => {
     if (!callConnectedAt) {
