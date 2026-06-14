@@ -20,11 +20,11 @@ import { logError } from './appLogger';
 export default class SafeRTCView extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, message: null };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true, message: error?.message || 'unknown error' };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
   componentDidCatch(error) {
@@ -38,8 +38,7 @@ export default class SafeRTCView extends React.Component {
     // Recover automatically when the stream URL changes (e.g. a new preview or
     // remote stream arrives) so a previous failure does not stick permanently.
     if (this.state.hasError && prevProps.streamURL !== this.props.streamURL) {
-      // eslint-disable-next-line react/no-did-update-set-state
-      this.setState({ hasError: false, message: null });
+      this.setState({ hasError: false });
     }
   }
 
@@ -61,9 +60,7 @@ export default class SafeRTCView extends React.Component {
     if (!rtcProps.streamURL) {
       return (
         <View style={[styles.fallback, style]}>
-          <Text style={styles.fallbackText}>
-            {fallbackLabel || 'No video stream'}
-          </Text>
+          <Text style={styles.fallbackText}>No video stream</Text>
         </View>
       );
     }
@@ -78,6 +75,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#2e242a',
     padding: 16,
+    minHeight: 120,
   },
   fallbackText: {
     color: '#f1ddcb',

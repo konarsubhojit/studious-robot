@@ -22,7 +22,6 @@ import {
   RTCIceCandidate,
   RTCPeerConnection,
   RTCSessionDescription,
-  RTCView,
 } from 'react-native-webrtc';
 import appConfig from './app.json';
 import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from './src/appLogger';
@@ -34,6 +33,7 @@ import {
 import { applyLightingAdjustment } from './src/cameraLighting';
 import { clamp, formatCallDuration, getConnectionQuality } from './src/callUx';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
+import SafeRTCView from './src/SafeRTCView';
 import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
 import { setAudioRoute, startAudioSession, stopAudioSession } from './src/audioRouting';
@@ -113,6 +113,59 @@ function summarizeIceCandidate(candidate) {
     sdpMid: candidate.sdpMid ?? null,
     sdpMLineIndex: candidate.sdpMLineIndex ?? null,
   };
+}
+
+function getStreamUrl(stream, context) {
+  if (!stream || typeof stream.toURL !== 'function') {
+    return null;
+  }
+
+  try {
+    return stream.toURL();
+  } catch (error) {
+    logError('Failed to build stream URL', {
+      context,
+      message: error?.message,
+      stack: error?.stack,
+    });
+    return null;
+  }
+}
+
+function getMediaAccessStatus(error) {
+  const name = `${error?.name || ''}`.toLowerCase();
+  const message = `${error?.message || ''}`.toLowerCase();
+  const combined = `${name} ${message}`;
+
+  if (
+    combined.includes('notallowed') ||
+    combined.includes('permission denied') ||
+    combined.includes('securityerror') ||
+    combined.includes('permission')
+  ) {
+    return 'Camera/microphone permission denied';
+  }
+
+  if (
+    combined.includes('notreadable') ||
+    combined.includes('trackstart') ||
+    combined.includes('already in use') ||
+    combined.includes('camera is in use') ||
+    combined.includes('device in use') ||
+    combined.includes('busy')
+  ) {
+    return 'Camera is already in use';
+  }
+
+  if (
+    combined.includes('notfound') ||
+    combined.includes('devices not found') ||
+    combined.includes('device not found')
+  ) {
+    return 'Camera or microphone unavailable';
+  }
+
+  return 'Failed to access camera/microphone';
 }
 
 function buildExportHeader({
@@ -378,9 +431,9 @@ export default function App() {
   const startLightingMonitor = useCallback(() => {
     stopLightingMonitor();
     logInfo('Starting camera lighting auto-adjust monitor');
-    void adjustCameraLighting();
+    adjustCameraLighting();
     lightingIntervalRef.current = setInterval(() => {
-      void adjustCameraLighting();
+      adjustCameraLighting();
     }, LIGHTING_ADJUST_INTERVAL_MS);
   }, [adjustCameraLighting, stopLightingMonitor]);
 
@@ -391,22 +444,32 @@ export default function App() {
       return localStreamRef.current;
     }
 
-    logInfo('Media permission request start');
-    const stream = await mediaDevices.getUserMedia({
-      audio: true,
-      video: {
-        facingMode: 'user',
-      },
-    });
-    logInfo('Local media stream acquired', {
-      audioTracks: stream.getAudioTracks().length,
-      videoTracks: stream.getVideoTracks().length,
-    });
-    localStreamRef.current = stream;
-    setLocalStream(stream);
-    syncMediaState(stream);
-    setStatus('Local preview ready');
-    return stream;
+    try {
+      logInfo('Media permission request start');
+      const stream = await mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          facingMode: 'user',
+        },
+      });
+      logInfo('Local media stream acquired', {
+        audioTracks: stream.getAudioTracks().length,
+        videoTracks: stream.getVideoTracks().length,
+      });
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      syncMediaState(stream);
+      setStatus('Local preview ready');
+      return stream;
+    } catch (error) {
+      logError('Failed to access local media stream', {
+        name: error?.name,
+        message: error?.message,
+        stack: error?.stack,
+      });
+      setStatus(getMediaAccessStatus(error));
+      throw error;
+    }
   }, [syncMediaState]);
 
   const joinRoom = useCallback(async () => {
@@ -445,7 +508,15 @@ export default function App() {
         setIsInRoom(true);
         setIsReconnecting(false);
         socket.emit('join-room', roomIdRef.current);
-        startCallService();
+        try {
+          if (!startCallService()) {
+            logWarn('Foreground call service unavailable after connect');
+            setStatus('Background service unavailable');
+          }
+        } catch (error) {
+          logError('Foreground call service start failed after connect', error);
+          setStatus('Background service unavailable');
+        }
       });
 
       const manager = socket.io;
@@ -606,7 +677,7 @@ export default function App() {
       });
     } catch (error) {
       logError('joinRoom failed during media/signaling setup', error);
-      setStatus('Failed to access camera/microphone');
+      setStatus(getMediaAccessStatus(error));
     }
   }, [closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, settings.speakerEnabledByDefault, signalingUrl, startLocalPreview]);
 
@@ -816,15 +887,20 @@ export default function App() {
   }, [isSpeakerEnabled]);
 
   const handleCameraSwitch = useCallback(() => {
-    const [videoTrack] = localStreamRef.current?.getVideoTracks?.() || [];
-    const switchCamera = videoTrack?._switchCamera;
-    if (typeof switchCamera !== 'function') {
-      setStatus('Camera switch unavailable');
-      return;
-    }
+    try {
+      const [videoTrack] = localStreamRef.current?.getVideoTracks?.() || [];
+      const switchCamera = videoTrack?._switchCamera;
+      if (typeof switchCamera !== 'function') {
+        setStatus('Camera switch unavailable');
+        return;
+      }
 
-    switchCamera.call(videoTrack);
-    setStatus('Camera switched');
+      switchCamera.call(videoTrack);
+      setStatus('Camera switched');
+    } catch (error) {
+      logError('Camera switch failed', error);
+      setStatus('Camera switch unavailable');
+    }
   }, []);
 
   const handleCallStageLayout = useCallback((event) => {
@@ -919,31 +995,44 @@ export default function App() {
   }, [isInRoom, localStream, remoteStream, roomId, signalingUrl, status]);
 
   const handleMuteToggle = useCallback(() => {
-    const nextMuted = !isMuted;
-    logInfo('Mute toggle action', { nextMuted });
-    if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
-      setStatus('Start preview to control audio');
-      return;
-    }
+    try {
+      const nextMuted = !isMuted;
+      logInfo('Mute toggle action', { nextMuted });
+      if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
+        setStatus('Start preview to control audio');
+        return;
+      }
 
-    setIsMuted(nextMuted);
-    setStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
+      setIsMuted(nextMuted);
+      setStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
+    } catch (error) {
+      logError('Mute toggle failed', error);
+      setStatus('Unable to control microphone');
+    }
   }, [isMuted]);
 
   const handleVideoToggle = useCallback(() => {
-    const nextVideoEnabled = !isVideoEnabled;
-    logInfo('Video toggle action', { nextVideoEnabled });
-    if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
-      setStatus('Start preview to control video');
-      return;
-    }
+    try {
+      const nextVideoEnabled = !isVideoEnabled;
+      logInfo('Video toggle action', { nextVideoEnabled });
+      if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
+        setStatus('Start preview to control video');
+        return;
+      }
 
-    setIsVideoEnabled(nextVideoEnabled);
-    setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
+      setIsVideoEnabled(nextVideoEnabled);
+      setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
+    } catch (error) {
+      logError('Video toggle failed', error);
+      setStatus('Unable to control camera');
+    }
   }, [isVideoEnabled]);
 
   const mainStream = isLocalPrimary ? localStream : remoteStream;
   const pipStream = isLocalPrimary ? remoteStream : localStream;
+  const localPreviewStreamUrl = getStreamUrl(localStream, 'local preview');
+  const mainStreamUrl = getStreamUrl(mainStream, 'main stream');
+  const pipStreamUrl = getStreamUrl(pipStream, 'picture-in-picture stream');
 
   return (
     <GestureHandlerRootView style={styles.container}>
@@ -982,7 +1071,12 @@ export default function App() {
               <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
               <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
               {mainStream ? (
-                <RTCView style={styles.remoteStream} streamURL={mainStream.toURL()} objectFit="cover" />
+                <SafeRTCView
+                  fallbackLabel="Call video unavailable"
+                  style={styles.remoteStream}
+                  streamURL={mainStreamUrl}
+                  objectFit="cover"
+                />
               ) : (
                 <View style={styles.remotePlaceholder}>
                   <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
@@ -992,9 +1086,10 @@ export default function App() {
               {pipStream ? (
                 <GestureDetector gesture={pipGesture}>
                   <Animated.View style={[styles.localPip, animatedPipStyle]}>
-                    <RTCView
+                    <SafeRTCView
+                      fallbackLabel="Self-view unavailable"
                       style={styles.localPipStream}
-                      streamURL={pipStream.toURL()}
+                      streamURL={pipStreamUrl}
                       objectFit="cover"
                       mirror={!isLocalPrimary}
                     />
@@ -1063,6 +1158,16 @@ export default function App() {
             <Text style={styles.title}>studious-robot</Text>
             <Text style={styles.subtitle}>Phase 4 — Warm & cozy in-call interface</Text>
 
+            {localStream ? (
+              <SafeRTCView
+                fallbackLabel="Preview unavailable"
+                style={styles.previewStream}
+                streamURL={localPreviewStreamUrl}
+                objectFit="cover"
+                mirror
+              />
+            ) : null}
+
             <TextInput
               value={signalingUrl}
               onChangeText={setSignalingUrl}
@@ -1087,7 +1192,7 @@ export default function App() {
                   logInfo('Start Preview button press');
                   startLocalPreview().catch((error) => {
                     logError('startLocalPreview failed (permissions/device)', error);
-                    setStatus('Failed to access camera/microphone');
+                    setStatus(getMediaAccessStatus(error));
                   });
                 }}
               />
@@ -1180,6 +1285,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#dec8b5',
     marginBottom: 16,
+  },
+  previewStream: {
+    height: 220,
+    borderRadius: 16,
+    marginBottom: 16,
+    overflow: 'hidden',
+    backgroundColor: '#2e242a',
+    borderWidth: 1,
+    borderColor: '#6d5057',
   },
   status: {
     color: '#f1ddcb',
