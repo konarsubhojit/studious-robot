@@ -14,10 +14,11 @@ on:
   workflow_dispatch:
 
 # Cancel any in-progress run for the same branch so stale commits don't waste
-# runner time.  workflow_dispatch runs are never cancelled.
+# runner time.  workflow_dispatch runs use cancel-in-progress: false so they
+# always complete.
 concurrency:
   group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 permissions:
   contents: read

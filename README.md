@@ -189,7 +189,7 @@ setup, and `npm ci` steps.
 - On push to `master` / `workflow_dispatch`: builds both APKs in one Gradle
   invocation and uploads `app-debug-apk` and `app-release-apk`.
 
-Optimisations applied vs the previous two-workflow setup:
+Optimizations applied vs the previous two-workflow setup:
 
 - npm and Gradle dependency caches (`actions/setup-node` + `actions/setup-java`)
 - `org.gradle.parallel=true` and `org.gradle.caching=true` in `gradle.properties`
