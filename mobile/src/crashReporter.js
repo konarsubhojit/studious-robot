@@ -82,8 +82,16 @@ export function installCrashHandler(getLogsCallback) {
   const previousHandler = ErrorUtils.getGlobalHandler();
 
   ErrorUtils.setGlobalHandler((error, isFatal) => {
-    // Fire-and-forget: the async write races against the process being killed
-    // on fatal errors but will always complete for non-fatal ones.
+    // Always log to logcat/console immediately — this is synchronous and
+    // survives even if the process is killed before the file write finishes.
+    console.error(
+      `[CrashReporter] ${isFatal ? 'FATAL' : 'non-fatal'} error: ${error?.message ?? error}`,
+      error?.stack ?? '',
+    );
+
+    // Best-effort async file dump for easier retrieval from the device.
+    // The write may not complete if the process is killed immediately after
+    // a fatal crash, but for non-fatal errors it will always finish.
     saveCrashLog(error, isFatal, getLogsCallback).catch(() => {
       // Swallow write errors to prevent recursive crash handling.
     });
