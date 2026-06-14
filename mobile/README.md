@@ -38,7 +38,7 @@ the same room ID. While in the lobby you can set signaling/room values and
 export logs; once the call starts the app switches to a dedicated in-call UI
 with:
 
-- a draggable picture-in-picture (PiP) self-view that can be tapped to swap
+- a draggable floating self-view thumbnail that can be tapped to swap
   local/remote focus,
 - call timer + connection quality signal bars (from periodic WebRTC stats),
 - reconnect banner with a manual **Retry** action,
@@ -90,36 +90,30 @@ place to restore connectivity without ending the call:
 
 
 
-To keep calls alive when the app is backgrounded, Android uses a lightweight
-foreground service and the system Picture-in-Picture (PiP) window:
+### Foreground-only calls
 
-- **Foreground service** — when a call connects, a foreground service with an
-  ongoing notification ("Call in progress") is started so the OS keeps the
-  process and media capture alive while the app is in the background. It is
-  stopped when you leave the room.
-- **Picture-in-Picture** — pressing Home (or otherwise leaving the app) while a
-  call is active shrinks the call into a small floating PiP window so you can
-  keep watching while using other apps. PiP requires Android 8.0 (API 26) or
-  newer.
+Calls currently run **only while the app is in the foreground**. The Android
+foreground call service and system Picture-in-Picture (PiP) window that
+previously kept a call alive in the background have been **intentionally
+removed** to avoid Android 14 foreground-service crash risk and Play Store
+policy overhead. Background-call support may return later as a deliberate,
+audio-only feature.
+
 - **Reconnection** — Socket.IO uses a short bounded reconnection policy and
   re-joins the room automatically after a transient drop. While reconnecting,
   the UI shows a "Reconnecting…" indicator instead of ending the call.
 
-These features rely on the following permissions declared in
-`android/app/src/main/AndroidManifest.xml`:
+The app declares only the permissions the call itself needs in
+`android/app/src/main/AndroidManifest.xml`: `CAMERA`, `RECORD_AUDIO`,
+`MODIFY_AUDIO_SETTINGS`, and `INTERNET`. The previous
+`FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_CAMERA`/`FOREGROUND_SERVICE_MICROPHONE`
+and `POST_NOTIFICATIONS` permissions, the `CallForegroundService` service entry,
+and the `supportsPictureInPicture`/`resizeableActivity` activity attributes have
+been removed.
 
-- `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CAMERA`,
-  `FOREGROUND_SERVICE_MICROPHONE` — run the call foreground service with
-  camera/microphone access.
-- `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
-  33) and newer.
-
-The `MainActivity` also declares `android:supportsPictureInPicture="true"` and
-`android:resizeableActivity="true"` to enable PiP.
-
-> **Note:** Some device manufacturers apply aggressive battery optimizations that
-> may still stop background processes. The foreground service and PiP mitigate
-> the most common cases. PiP handling here targets Android only.
+> **Note:** Because there is no foreground service, sending the app to the
+> background (Home, app switch, screen lock) will suspend the call. Keep the app
+> in the foreground for the duration of a call.
 
 ## Adaptive camera lighting
 
@@ -150,10 +144,55 @@ the installed app.
 Log files are named:
 `studious-robot-logs-YYYYMMDD-HHMMSS.txt`
 
-The exported file includes app/runtime details (platform, OS version, signaling
-URL, room ID, call/socket state) and detailed app-side signaling/WebRTC events.
-Sensitive fields such as TURN credentials, passwords, tokens, authorization
-values, and other secrets are redacted or intentionally not logged.
+The exported file includes app/runtime details (platform, OS version,
+`react-native` / `react-native-webrtc` versions, New Architecture flag, current
+connection/ICE/signaling states, log level, signaling URL, room ID, call ID,
+call/socket state, and whether TURN was configured in the build) and a detailed,
+time-ordered trace of app-side signaling/WebRTC events. Sensitive fields such as
+TURN credentials, passwords, tokens, authorization values, and other secrets are
+redacted or intentionally not logged. Full SDP bodies are never logged — only
+`sdp.type` and length.
+
+### Reading an exported log
+
+Every log line is prefixed with a stable, greppable **stage tag** so you can
+follow a call end-to-end:
+
+- `[lifecycle]` — app mount/unmount, button presses, export.
+- `[permissions]` / `[media]` — `getUserMedia`, camera resolution/fps,
+  mute/video/camera-switch.
+- `[signaling]` — Socket.IO connect/transport/disconnect and every signaling
+  event (`join-room`, `peer-joined`, `offer`, `answer`, `ice-candidate`, …) with
+  a `send`/`recv` direction.
+- `[webrtc]` — `createOffer`/`createAnswer`/`setLocalDescription`/
+  `setRemoteDescription` (each with a `durationMs`), peer-connection and track
+  setup.
+- `[ice]` — ICE gathering/connection states and the **selected candidate pair**.
+- `[stats]` — periodic media-flow stats (RTT, packet loss, bitrate,
+  `bytesReceived` growth). These are `debug`-level.
+- `[audio]` — in-call audio session and speaker/earpiece route changes.
+- `[teardown]` — leaving the room, closing the peer connection, stopping tracks.
+
+Each call gets a short **`callId`** that is attached to all of its
+signaling/WebRTC/ICE log lines, so you can `grep` a single call out of a busy
+log.
+
+#### Was TURN/relay used?
+
+- Check the header line `turnConfigured: true|false` to see whether the build had
+  TURN credentials at all.
+- Search for `[ice] selected pair` — it logs the active pair, e.g.
+  `{ local: 'relay', remote: 'srflx', protocol: 'udp', usesRelay: true }`. A
+  `local`/`remote` type of `relay` (and `usesRelay: true`) means media is going
+  **through TURN**; `host`/`srflx` means a direct path.
+- A one-time `[ice] connection established` line is logged the first time the
+  call reaches `connected`, summarizing the chosen candidate types and relay use.
+
+#### Log level
+
+The default log level is `info`. High-signal lifecycle/signaling/ICE-summary
+lines are `info`; noisy per-candidate and per-stats-tick lines are `debug`. Set
+the `LOG_LEVEL` build env var (e.g. `debug`) to include the debug lines.
 
 ## Build a debug APK locally
 ```bash

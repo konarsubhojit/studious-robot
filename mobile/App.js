@@ -24,9 +24,15 @@ import {
   RTCView,
 } from 'react-native-webrtc';
 import appConfig from './app.json';
-import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from './src/appLogger';
+import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn, LOG_LEVEL } from './src/appLogger';
 import { applyLightingAdjustment } from './src/cameraLighting';
 import { clamp, formatCallDuration, getConnectionQuality } from './src/callUx';
+import {
+  classifyMediaError,
+  summarizeIceServers,
+  summarizeSelectedCandidatePair,
+} from './src/iceDiagnostics';
+import { createCorrelationId, runStep } from './src/logSteps';
 import { isTrackEnabled, setTrackEnabled } from './src/mediaControls';
 import { getSocketOptions, isRecoverableDisconnectReason } from './src/socketConfig';
 import { getIceServers } from './src/webrtcConfig';
@@ -62,6 +68,18 @@ function getReactNativeVersion() {
   const minor = version.minor ?? '?';
   const patch = version.patch ?? '?';
   return `${major}.${minor}.${patch}`;
+}
+
+function getReactNativeWebrtcVersion() {
+  try {
+    return require('react-native-webrtc/package.json').version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function isNewArchitectureEnabled() {
+  return Boolean(globalThis?.nativeFabricUIManager) || Boolean(globalThis?.RN$Bridgeless);
 }
 
 function getApplicationId() {
@@ -117,7 +135,10 @@ function buildExportHeader({
   remoteStream,
   isInRoom,
   socket,
+  peerConnection,
+  callId,
 }) {
+  const turnSummary = summarizeIceServers(getIceServers());
   const lines = [
     'studious-robot diagnostic logs',
     `exportedAt: ${new Date().toISOString()}`,
@@ -126,8 +147,14 @@ function buildExportHeader({
     `platform: ${Platform.OS}`,
     `osVersion: ${Platform.Version}`,
     `reactNativeVersion: ${getReactNativeVersion()}`,
+    `reactNativeWebrtcVersion: ${getReactNativeWebrtcVersion()}`,
+    `newArchitecture: ${isNewArchitectureEnabled()}`,
+    `logLevel: ${LOG_LEVEL}`,
+    `turnConfigured: ${turnSummary.turnConfigured}`,
+    `iceServerCount: ${turnSummary.iceServerCount}`,
     `signalingUrl: ${sanitizeUrlForLog(signalingUrl)}`,
     `roomId: ${roomId || ''}`,
+    `callId: ${callId || 'none'}`,
     `appStatus: ${status || ''}`,
     `hasLocalStream: ${Boolean(localStream)}`,
     `hasRemoteStream: ${Boolean(remoteStream)}`,
@@ -135,6 +162,10 @@ function buildExportHeader({
     `socketConnected: ${Boolean(socket?.connected)}`,
     `socketId: ${socket?.id || 'none'}`,
     `socketTransport: ${getSocketTransportName(socket)}`,
+    `connectionState: ${peerConnection?.connectionState || 'none'}`,
+    `iceConnectionState: ${peerConnection?.iceConnectionState || 'none'}`,
+    `iceGatheringState: ${peerConnection?.iceGatheringState || 'none'}`,
+    `signalingState: ${peerConnection?.signalingState || 'none'}`,
     '',
     '--- logs ---',
   ];
@@ -210,10 +241,19 @@ export default function App() {
   const isInRoomRef = useRef(false);
   const isOffererRef = useRef(false);
   const lightingIntervalRef = useRef(null);
+  const callIdRef = useRef(null);
+  const relaySummaryLoggedRef = useRef(false);
   const connectionStatsRef = useRef({
     timestampMs: null,
     totalBytesReceived: 0,
   });
+
+  // Build correlation metadata so a single call can be traced end-to-end across
+  // all signaling/WebRTC/ICE log lines.
+  const callMeta = useCallback(
+    (extra) => ({ callId: callIdRef.current, roomId: roomIdRef.current, ...extra }),
+    [],
+  );
 
   useEffect(() => {
     isInRoomRef.current = isInRoom;
@@ -221,10 +261,18 @@ export default function App() {
 
   useEffect(() => {
     clearLogs();
-    logInfo('App mounted', {
+    const turnSummary = summarizeIceServers(getIceServers());
+    logInfo('[lifecycle] App mounted', {
       defaultSignalingUrl: sanitizeUrlForLog(DEFAULT_SIGNALING_URL),
       defaultRoomId: DEFAULT_ROOM_ID,
       platform: Platform.OS,
+      osVersion: Platform.Version,
+      reactNativeVersion: getReactNativeVersion(),
+      reactNativeWebrtcVersion: getReactNativeWebrtcVersion(),
+      newArchitecture: isNewArchitectureEnabled(),
+      logLevel: LOG_LEVEL,
+      turnConfigured: turnSummary.turnConfigured,
+      turnSchemes: turnSummary.turnSchemes,
     });
   }, []);
 
@@ -244,54 +292,81 @@ export default function App() {
 
   const closePeerConnection = useCallback(() => {
     isOffererRef.current = false;
+    relaySummaryLoggedRef.current = false;
     if (peerConnectionRef.current) {
-      logInfo('Closing RTCPeerConnection');
-      peerConnectionRef.current.onicecandidate = null;
-      peerConnectionRef.current.ontrack = null;
-      peerConnectionRef.current.close();
+      logInfo('[teardown] Closing RTCPeerConnection', callMeta());
+      const connection = peerConnectionRef.current;
+      connection.onicecandidate = null;
+      connection.ontrack = null;
+      connection.onconnectionstatechange = null;
+      connection.oniceconnectionstatechange = null;
+      connection.onicegatheringstatechange = null;
+      connection.onsignalingstatechange = null;
+      connection.onicecandidateerror = null;
+      connection.onnegotiationneeded = null;
+      connection.close();
       peerConnectionRef.current = null;
     }
     setRemoteStream(null);
     setConnectionQuality({ bars: 0, label: 'No link' });
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
-  }, []);
+  }, [callMeta]);
 
   const leaveRoom = useCallback((nextStatus = 'Disconnected') => {
-    logInfo('Leaving room', {
+    logInfo('[teardown] Leaving room', callMeta({
       nextStatus,
       hadSocket: Boolean(socketRef.current),
       hadPeerConnection: Boolean(peerConnectionRef.current),
-    });
+    }));
     setIsInRoom(false);
     setIsReconnecting(false);
     setCallConnectedAt(null);
     setElapsedCallSeconds(0);
     setIsLocalPrimary(false);
     if (socketRef.current) {
+      logInfo('[teardown] Disconnecting signaling socket', callMeta());
       socketRef.current.disconnect();
       socketRef.current = null;
     }
     closePeerConnection();
     setStatus(nextStatus);
-  }, [closePeerConnection]);
+  }, [callMeta, closePeerConnection]);
 
   const ensurePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
       return peerConnectionRef.current;
     }
 
-    logInfo('Creating RTCPeerConnection');
-    const connection = new RTCPeerConnection({ iceServers: getIceServers() });
+    const iceServers = getIceServers();
+    const iceSummary = summarizeIceServers(iceServers);
+    logInfo('[webrtc] Creating RTCPeerConnection', callMeta({
+      iceServerCount: iceSummary.iceServerCount,
+      turnConfigured: iceSummary.turnConfigured,
+      turnSchemes: iceSummary.turnSchemes,
+    }));
+
+    let connection;
+    try {
+      connection = new RTCPeerConnection({ iceServers });
+    } catch (error) {
+      logError('[webrtc] RTCPeerConnection creation failed', callMeta({
+        name: error?.name,
+        message: error?.message,
+      }));
+      throw error;
+    }
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         connection.addTrack(track, localStreamRef.current);
+        logInfo('[webrtc] addTrack', callMeta({ kind: track.kind, enabled: track.enabled }));
       });
     }
 
     connection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
         const summary = summarizeIceCandidate(event.candidate);
-        logDebug('ICE candidate sent', summary);
+        logDebug('[signaling] send ice-candidate', callMeta({ direction: 'send', ...summary }));
         socketRef.current.emit('ice-candidate', {
           roomId: roomIdRef.current,
           candidate: event.candidate,
@@ -302,43 +377,83 @@ export default function App() {
     connection.ontrack = (event) => {
       const [stream] = event.streams;
       if (stream) {
-        logInfo('Remote stream connected');
+        const tracks = typeof stream.getTracks === 'function' ? stream.getTracks() : [];
+        logInfo('[webrtc] Remote stream attached (ontrack)', callMeta({
+          trackCount: tracks.length,
+          kinds: tracks.map((track) => track.kind),
+        }));
         setRemoteStream(stream);
         markCallConnected();
         setStatus('Remote stream connected');
       }
     };
 
+    connection.onconnectionstatechange = () => {
+      logInfo('[webrtc] connectionState changed', callMeta({
+        connectionState: connection.connectionState,
+      }));
+    };
+
+    connection.onicegatheringstatechange = () => {
+      logInfo('[ice] iceGatheringState changed', callMeta({
+        iceGatheringState: connection.iceGatheringState,
+      }));
+    };
+
+    connection.onsignalingstatechange = () => {
+      logInfo('[signaling] signalingState changed', callMeta({
+        signalingState: connection.signalingState,
+      }));
+    };
+
+    connection.onicecandidateerror = (event) => {
+      logWarn('[ice] icecandidateerror', callMeta({
+        errorCode: event?.errorCode,
+        errorText: event?.errorText,
+        url: event?.url,
+        address: event?.address,
+        port: event?.port,
+      }));
+    };
+
+    connection.onnegotiationneeded = () => {
+      logInfo('[webrtc] negotiationneeded', callMeta({
+        signalingState: connection.signalingState,
+      }));
+    };
+
     connection.oniceconnectionstatechange = () => {
       const state = connection.iceConnectionState;
-      logInfo('ICE connection state changed', { state });
+      logInfo('[ice] iceConnectionState changed', callMeta({ iceConnectionState: state }));
       if (state !== 'failed') {
         return;
       }
       if (!isOffererRef.current || !socketRef.current?.connected) {
         return;
       }
-      logWarn('ICE connection failed; triggering ICE restart');
-      connection
-        .createOffer({ iceRestart: true })
-        .then((offer) => connection.setLocalDescription(offer))
-        .then(() => {
-          if (socketRef.current) {
-            socketRef.current.emit('offer', {
-              roomId: roomIdRef.current,
-              sdp: connection.localDescription,
-            });
-            logInfo('ICE restart offer sent after ICE failure');
-          }
-        })
-        .catch((error) => {
-          logError('ICE restart after failure failed', error);
-        });
+      logWarn('[ice] ICE connection failed; triggering ICE restart', callMeta());
+      runStep('[webrtc] ICE-restart offer (after failure)', async () => {
+        const offer = await connection.createOffer({ iceRestart: true });
+        await connection.setLocalDescription(offer);
+        if (socketRef.current) {
+          socketRef.current.emit('offer', {
+            roomId: roomIdRef.current,
+            sdp: connection.localDescription,
+          });
+          logInfo('[signaling] send offer (ice-restart)', callMeta({
+            direction: 'send',
+            sdpType: connection.localDescription?.type || 'unknown',
+            iceRestart: true,
+          }));
+        }
+      }, callMeta({ iceRestart: true })).catch(() => {
+        // runStep already logged the error with timing/correlation metadata.
+      });
     };
 
     peerConnectionRef.current = connection;
     return connection;
-  }, [markCallConnected]);
+  }, [callMeta, markCallConnected]);
 
   const syncMediaState = useCallback((stream) => {
     setIsMuted(!isTrackEnabled(stream, 'audio'));
@@ -357,9 +472,9 @@ export default function App() {
       }
       await applyLightingAdjustment(videoTrack);
     } catch (error) {
-      logError('Camera lighting auto-adjust failed', error);
+      logError('[media] Camera lighting auto-adjust failed', callMeta(error));
     }
-  }, []);
+  }, [callMeta]);
 
   const stopLightingMonitor = useCallback(() => {
     if (lightingIntervalRef.current) {
@@ -370,7 +485,7 @@ export default function App() {
 
   const startLightingMonitor = useCallback(() => {
     stopLightingMonitor();
-    logInfo('Starting camera lighting auto-adjust monitor');
+    logInfo('[media] Starting camera lighting auto-adjust monitor');
     void adjustCameraLighting();
     lightingIntervalRef.current = setInterval(() => {
       void adjustCameraLighting();
@@ -379,36 +494,60 @@ export default function App() {
 
   const startLocalPreview = useCallback(async () => {
     if (localStreamRef.current) {
-      logInfo('Local media stream already available');
+      logInfo('[media] Local media stream already available');
       syncMediaState(localStreamRef.current);
       return localStreamRef.current;
     }
 
-    logInfo('Media permission request start');
-    const stream = await mediaDevices.getUserMedia({
-      audio: true,
-      video: {
-        facingMode: 'user',
-      },
-    });
-    logInfo('Local media stream acquired', {
-      audioTracks: stream.getAudioTracks().length,
-      videoTracks: stream.getVideoTracks().length,
-    });
-    localStreamRef.current = stream;
-    setLocalStream(stream);
-    syncMediaState(stream);
-    setStatus('Local preview ready');
-    return stream;
+    try {
+      const stream = await runStep('[permissions] getUserMedia', () => mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          facingMode: 'user',
+        },
+      }));
+
+      const [videoTrack] = stream.getVideoTracks();
+      const videoSettings =
+        videoTrack && typeof videoTrack.getSettings === 'function' ? videoTrack.getSettings() : {};
+      logInfo('[media] Local media stream acquired', {
+        audioTracks: stream.getAudioTracks().length,
+        videoTracks: stream.getVideoTracks().length,
+        videoTrackLabel: videoTrack?.label,
+        videoSettings: {
+          width: videoSettings?.width,
+          height: videoSettings?.height,
+          frameRate: videoSettings?.frameRate,
+          facingMode: videoSettings?.facingMode,
+        },
+      });
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      syncMediaState(stream);
+      logInfo('[media] Local stream attached to preview UI');
+      setStatus('Local preview ready');
+      return stream;
+    } catch (error) {
+      logError('[permissions] getUserMedia failed', {
+        name: error?.name,
+        message: error?.message,
+        category: classifyMediaError(error),
+      });
+      throw error;
+    }
   }, [syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
       const trimmedSignalingUrl = signalingUrl.trim();
       const trimmedRoomId = roomId.trim();
-      logInfo('Join Room button press', {
+      const callId = createCorrelationId();
+      callIdRef.current = callId;
+      relaySummaryLoggedRef.current = false;
+      logInfo('[lifecycle] Join Room button press', {
         signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
         roomId: trimmedRoomId,
+        callId,
       });
 
       if (!trimmedSignalingUrl || !trimmedRoomId) {
@@ -421,37 +560,38 @@ export default function App() {
       await startLocalPreview();
       setStatus('Connecting to signaling server...');
 
-      logInfo('Socket.IO connection attempt', {
+      logInfo('[signaling] Socket.IO connection attempt', callMeta({
         signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
-        roomId: trimmedRoomId,
-      });
+      }));
       const socket = io(trimmedSignalingUrl, getSocketOptions());
       socketRef.current = socket;
 
       socket.on('connect', () => {
         const transportName = getSocketTransportName(socket);
-        logInfo('Socket.IO connect success', {
+        logInfo('[signaling] connect success', callMeta({
           socketId: socket.id,
           transport: transportName,
-        });
+        }));
         setStatus('Connected to signaling. Joining room...');
         setIsInRoom(true);
         setIsReconnecting(false);
+        logInfo('[signaling] send join-room', callMeta({ direction: 'send' }));
         socket.emit('join-room', roomIdRef.current);
       });
 
       const manager = socket.io;
       if (manager && typeof manager.on === 'function') {
         manager.on('reconnect_attempt', (attempt) => {
-          logWarn('Socket.IO reconnect attempt', { attempt });
+          logWarn('[signaling] reconnect attempt', callMeta({ attempt }));
           setIsReconnecting(true);
           setStatus('Reconnecting…');
         });
 
         manager.on('reconnect', async (attempt) => {
-          logInfo('Socket.IO reconnected', { attempt });
+          logInfo('[signaling] reconnected', callMeta({ attempt }));
           setIsReconnecting(false);
           setStatus('Reconnected. Rejoining room...');
+          logInfo('[signaling] send join-room (rejoin)', callMeta({ direction: 'send' }));
           socket.emit('join-room', roomIdRef.current);
 
           // If we were the original offerer, send an ICE-restart offer so the
@@ -459,20 +599,23 @@ export default function App() {
           // down the call.
           const peer = peerConnectionRef.current;
           if (peer && isOffererRef.current) {
-            try {
-              logInfo('Sending ICE restart offer after socket reconnect');
+            await runStep('[webrtc] ICE-restart offer (after reconnect)', async () => {
               const offer = await peer.createOffer({ iceRestart: true });
               await peer.setLocalDescription(offer);
               socket.emit('offer', { roomId: roomIdRef.current, sdp: peer.localDescription });
-              logInfo('ICE restart offer sent after socket reconnect');
-            } catch (error) {
-              logError('ICE restart after socket reconnect failed', error);
-            }
+              logInfo('[signaling] send offer (ice-restart)', callMeta({
+                direction: 'send',
+                sdpType: peer.localDescription?.type || 'unknown',
+                iceRestart: true,
+              }));
+            }, callMeta({ iceRestart: true })).catch(() => {
+              // runStep already logged the error with timing/correlation metadata.
+            });
           }
         });
 
         manager.on('reconnect_failed', () => {
-          logError('Socket.IO reconnect failed');
+          logError('[signaling] reconnect failed', callMeta());
           leaveRoom('Reconnection failed');
         });
       }
@@ -480,66 +623,74 @@ export default function App() {
       const onTransportUpgrade = socket.io?.engine?.on;
       if (typeof onTransportUpgrade === 'function') {
         onTransportUpgrade.call(socket.io.engine, 'upgrade', (transport) => {
-          logInfo('Socket.IO transport upgrade', { transport: transport?.name || 'unknown' });
+          logInfo('[signaling] transport upgrade', callMeta({ transport: transport?.name || 'unknown' }));
         });
       } else {
-        logWarn('Socket.IO transport listener unavailable');
+        logWarn('[signaling] transport listener unavailable', callMeta());
       }
 
       socket.on('room-full', () => {
-        logWarn('room-full', { roomId: roomIdRef.current });
+        logWarn('[signaling] recv room-full', callMeta({ direction: 'recv' }));
         leaveRoom(`Room "${roomIdRef.current}" is full`);
       });
 
       socket.on('peer-joined', async () => {
-        logInfo('peer-joined', { roomId: roomIdRef.current });
+        logInfo('[signaling] recv peer-joined', callMeta({ direction: 'recv' }));
         isOffererRef.current = true;
         try {
           const peer = ensurePeerConnection();
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
+          const offer = await runStep('[webrtc] createOffer', () => peer.createOffer(), callMeta());
+          await runStep('[webrtc] setLocalDescription (offer)', () => peer.setLocalDescription(offer), callMeta({ sdpType: offer?.type || 'unknown' }));
           socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
-          logInfo('Offer created and sent', { sdpType: offer?.type || 'unknown' });
+          logInfo('[signaling] send offer', callMeta({ direction: 'send', sdpType: offer?.type || 'unknown' }));
           setStatus('Offer sent');
         } catch (error) {
-          logError('Failed to create/send offer', error);
+          logError('[webrtc] Failed to create/send offer', callMeta({ name: error?.name, message: error?.message }));
           setStatus('Failed to create offer');
         }
       });
 
       socket.on('offer', async ({ sdp } = {}) => {
         if (!sdp) {
-          logWarn('Offer received without SDP');
+          logWarn('[signaling] recv offer without SDP', callMeta({ direction: 'recv' }));
           return;
         }
-        logInfo('Offer received', { sdpType: sdp.type || 'unknown' });
+        logInfo('[signaling] recv offer', callMeta({
+          direction: 'recv',
+          sdpType: sdp.type || 'unknown',
+          sdpLength: sdp.sdp?.length,
+        }));
         try {
           const peer = ensurePeerConnection();
-          await peer.setRemoteDescription(new RTCSessionDescription(sdp));
-          const answer = await peer.createAnswer();
-          await peer.setLocalDescription(answer);
+          await runStep('[webrtc] setRemoteDescription (offer)', () => peer.setRemoteDescription(new RTCSessionDescription(sdp)), callMeta({ sdpType: sdp.type || 'unknown' }));
+          const answer = await runStep('[webrtc] createAnswer', () => peer.createAnswer(), callMeta());
+          await runStep('[webrtc] setLocalDescription (answer)', () => peer.setLocalDescription(answer), callMeta({ sdpType: answer?.type || 'unknown' }));
           socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
-          logInfo('Answer created and sent', { sdpType: answer?.type || 'unknown' });
+          logInfo('[signaling] send answer', callMeta({ direction: 'send', sdpType: answer?.type || 'unknown' }));
           setStatus('Answer sent');
         } catch (error) {
-          logError('Failed to process offer/create answer', error);
+          logError('[webrtc] Failed to process offer/create answer', callMeta({ name: error?.name, message: error?.message }));
           setStatus('Failed to process offer');
         }
       });
 
       socket.on('answer', async ({ sdp } = {}) => {
         if (!sdp) {
-          logWarn('Answer received without SDP');
+          logWarn('[signaling] recv answer without SDP', callMeta({ direction: 'recv' }));
           return;
         }
-        logInfo('Answer received', { sdpType: sdp.type || 'unknown' });
+        logInfo('[signaling] recv answer', callMeta({
+          direction: 'recv',
+          sdpType: sdp.type || 'unknown',
+          sdpLength: sdp.sdp?.length,
+        }));
         try {
           const peer = ensurePeerConnection();
-          await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          await runStep('[webrtc] setRemoteDescription (answer)', () => peer.setRemoteDescription(new RTCSessionDescription(sdp)), callMeta({ sdpType: sdp.type || 'unknown' }));
           markCallConnected();
           setStatus('Call connected');
         } catch (error) {
-          logError('Failed to apply remote answer', error);
+          logError('[webrtc] Failed to apply remote answer', callMeta({ name: error?.name, message: error?.message }));
           setStatus('Failed to apply answer');
         }
       });
@@ -549,23 +700,23 @@ export default function App() {
           return;
         }
         const summary = summarizeIceCandidate(candidate);
-        logDebug('ICE candidate received', summary);
+        logDebug('[signaling] recv ice-candidate', callMeta({ direction: 'recv', ...summary }));
         try {
           const peer = ensurePeerConnection();
           await peer.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
-          logError('Failed to add ICE candidate', { error, summary });
+          logError('[ice] Failed to add ICE candidate', callMeta({ name: error?.name, message: error?.message, summary }));
         }
       });
 
       socket.on('peer-left', () => {
-        logInfo('peer-left', { roomId: roomIdRef.current });
+        logInfo('[signaling] recv peer-left', callMeta({ direction: 'recv' }));
         closePeerConnection();
         setStatus('Peer left room');
       });
 
       socket.on('disconnect', (reason) => {
-        logWarn('Socket.IO disconnect', { reason });
+        logWarn('[signaling] disconnect', callMeta({ reason }));
         if (isRecoverableDisconnectReason(reason)) {
           setIsReconnecting(true);
           setStatus('Reconnecting…');
@@ -578,13 +729,13 @@ export default function App() {
       });
 
       socket.on('connect_error', (error) => {
-        const metadata = {
+        const metadata = callMeta({
           message: error?.message,
           description: error?.description,
           context: error?.context,
           cause: error?.cause,
-        };
-        logError('Socket.IO connect_error', metadata);
+        });
+        logError('[signaling] connect_error', metadata);
         if (isInRoomRef.current) {
           // A call is already in progress; let the reconnection policy retry
           // instead of tearing the call down on a transient error.
@@ -596,16 +747,21 @@ export default function App() {
         setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`);
       });
     } catch (error) {
-      logError('joinRoom failed during media/signaling setup', error);
+      logError('[lifecycle] joinRoom failed during media/signaling setup', callMeta({
+        name: error?.name,
+        message: error?.message,
+        category: classifyMediaError(error),
+      }));
       setStatus('Failed to access camera/microphone');
     }
-  }, [closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, settings.speakerEnabledByDefault, signalingUrl, startLocalPreview]);
+  }, [callMeta, closePeerConnection, ensurePeerConnection, leaveRoom, markCallConnected, roomId, settings.speakerEnabledByDefault, signalingUrl, startLocalPreview]);
 
   useEffect(() => () => {
-    logInfo('App cleanup/unmount');
+    logInfo('[lifecycle] App cleanup/unmount');
     stopLightingMonitor();
     leaveRoom();
     if (localStreamRef.current) {
+      logInfo('[teardown] Stopping local media tracks on unmount');
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
     }
@@ -688,12 +844,14 @@ export default function App() {
         const now = Date.now();
         const previous = connectionStatsRef.current;
         let bitrateKbps;
+        let bytesReceivedDelta;
         if (
           previous.timestampMs &&
           now > previous.timestampMs &&
           totalBytesReceived >= previous.totalBytesReceived
         ) {
-          const bitsReceived = (totalBytesReceived - previous.totalBytesReceived) * 8;
+          bytesReceivedDelta = totalBytesReceived - previous.totalBytesReceived;
+          const bitsReceived = bytesReceivedDelta * 8;
           const elapsedMs = now - previous.timestampMs;
           bitrateKbps = bitsReceived / elapsedMs;
         }
@@ -702,8 +860,34 @@ export default function App() {
         const denominator = totalPacketsReceived + totalPacketsLost;
         const packetLossRatio = denominator > 0 ? totalPacketsLost / denominator : undefined;
         setConnectionQuality(getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }));
+
+        // Inspect the selected (active) candidate pair so the exported logs make
+        // it obvious whether media is going direct (host/srflx) or via TURN (relay).
+        const selectedPair = summarizeSelectedCandidatePair(report);
+        if (selectedPair) {
+          logInfo('[ice] selected pair', callMeta(selectedPair));
+          if (!relaySummaryLoggedRef.current) {
+            relaySummaryLoggedRef.current = true;
+            logInfo('[ice] connection established', callMeta({
+              local: selectedPair.local,
+              remote: selectedPair.remote,
+              protocol: selectedPair.protocol,
+              usesRelay: selectedPair.usesRelay,
+            }));
+          }
+        }
+
+        // Per-tick media-flow stats stay at debug so they can be enabled when
+        // needed without overwhelming the default (info) log.
+        logDebug('[stats] media flow', callMeta({
+          rttMs,
+          packetLossRatio,
+          bitrateKbps,
+          totalBytesReceived,
+          bytesReceivedDelta,
+        }));
       } catch (error) {
-        logWarn('Failed to read connection stats', { message: error?.message });
+        logWarn('[stats] Failed to read connection stats', callMeta({ message: error?.message }));
       }
     };
 
@@ -713,7 +897,7 @@ export default function App() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [isInRoom]);
+  }, [callMeta, isInRoom]);
 
   // Start/stop the in-call audio session when entering or leaving a call.
   // Splitting this from the route-update effect below prevents unnecessary
@@ -725,15 +909,17 @@ export default function App() {
 
     try {
       startAudioSession();
+      logInfo('[audio] InCallManager session started');
     } catch (error) {
-      logWarn('InCallManager start failed', { message: error?.message });
+      logWarn('[audio] InCallManager start failed', { message: error?.message });
     }
 
     return () => {
       try {
         stopAudioSession();
+        logInfo('[audio] InCallManager session stopped');
       } catch (error) {
-        logWarn('InCallManager stop failed', { message: error?.message });
+        logWarn('[audio] InCallManager stop failed', { message: error?.message });
       }
     };
   }, [isInRoom]);
@@ -748,8 +934,9 @@ export default function App() {
 
     try {
       setAudioRoute(isSpeakerEnabled);
+      logInfo('[audio] Audio route updated', { speakerEnabled: isSpeakerEnabled });
     } catch (error) {
-      logWarn('InCallManager route update failed', { message: error?.message });
+      logWarn('[audio] InCallManager route update failed', { message: error?.message });
     }
   }, [isInRoom, isSpeakerEnabled]);
 
@@ -778,15 +965,16 @@ export default function App() {
       setStatus('No active socket to reconnect');
       return;
     }
-    logInfo('Manual reconnect requested');
+    logInfo('[signaling] Manual reconnect requested', callMeta());
     setIsReconnecting(true);
     setStatus('Reconnecting…');
     socket.disconnect();
     socket.connect();
-  }, []);
+  }, [callMeta]);
 
   const handleSpeakerToggle = useCallback(() => {
     const nextSpeakerEnabled = !isSpeakerEnabled;
+    logInfo('[audio] Speaker toggle action', { nextSpeakerEnabled });
     setIsSpeakerEnabled(nextSpeakerEnabled);
     setStatus(nextSpeakerEnabled ? 'Speaker enabled' : 'Speaker disabled');
   }, [isSpeakerEnabled]);
@@ -795,12 +983,19 @@ export default function App() {
     const [videoTrack] = localStreamRef.current?.getVideoTracks?.() || [];
     const switchCamera = videoTrack?._switchCamera;
     if (typeof switchCamera !== 'function') {
+      logWarn('[media] Camera switch unavailable');
       setStatus('Camera switch unavailable');
       return;
     }
 
-    switchCamera.call(videoTrack);
-    setStatus('Camera switched');
+    try {
+      switchCamera.call(videoTrack);
+      logInfo('[media] Camera switched');
+      setStatus('Camera switched');
+    } catch (error) {
+      logError('[media] Camera switch failed', { name: error?.name, message: error?.message });
+      setStatus('Camera switch failed');
+    }
   }, []);
 
   const handleCallStageLayout = useCallback((event) => {
@@ -833,25 +1028,27 @@ export default function App() {
 
   const handleRoomButtonPress = () => {
     if (isInRoom) {
-      logInfo('Leave Room button press');
+      logInfo('[lifecycle] Leave Room button press', callMeta());
       leaveRoom('Disconnected');
       return;
     }
 
     joinRoom().catch((error) => {
-      logError('joinRoom unhandled rejection', error);
+      logError('[lifecycle] joinRoom unhandled rejection', { name: error?.name, message: error?.message });
       setStatus('Failed to start call');
     });
   };
 
   const handleAutoLightingToggle = useCallback(() => {
     const nextValue = !settings.autoCameraLightingEnabled;
+    logInfo('[settings] Auto camera lighting toggle', { enabled: nextValue });
     setSettings((previous) => ({ ...previous, autoCameraLightingEnabled: nextValue }));
     setStatus(nextValue ? 'Auto camera lighting enabled' : 'Auto camera lighting disabled');
   }, [settings.autoCameraLightingEnabled]);
 
   const handleSpeakerDefaultToggle = useCallback(() => {
     const nextValue = !settings.speakerEnabledByDefault;
+    logInfo('[settings] Speaker default toggle', { enabled: nextValue });
     setSettings((previous) => ({ ...previous, speakerEnabledByDefault: nextValue }));
     if (!isInRoom) {
       setIsSpeakerEnabled(nextValue);
@@ -861,7 +1058,7 @@ export default function App() {
 
   const handleExportLogs = useCallback(async () => {
     try {
-      logInfo('Export Logs button press');
+      logInfo('[lifecycle] Export Logs button press');
       const header = buildExportHeader({
         signalingUrl: signalingUrl.trim(),
         roomId: roomId.trim(),
@@ -870,6 +1067,8 @@ export default function App() {
         remoteStream,
         isInRoom,
         socket: socketRef.current,
+        peerConnection: peerConnectionRef.current,
+        callId: callIdRef.current,
       });
       const content = `${header}\n${getLogsAsText()}\n`;
       const result = await writeLogsFile(content);
@@ -878,25 +1077,25 @@ export default function App() {
         const statusMessage = result.usedFallback
           ? `Logs saved to fallback (${result.label}): ${result.path}`
           : `Logs saved: ${result.path}`;
-        logInfo('Logs exported', {
+        logInfo('[lifecycle] Logs exported', {
           path: result.path,
           storage: result.label,
           usedFallback: result.usedFallback,
         });
         setStatus(statusMessage);
       } else {
-        logError('Failed to export logs', result.error);
+        logError('[lifecycle] Failed to export logs', result.error);
         setStatus(`Failed to export logs: ${result.error?.message || 'Unknown error'}`);
       }
     } catch (error) {
-      logError('Unexpected export logs failure', error);
+      logError('[lifecycle] Unexpected export logs failure', error);
       setStatus(`Failed to export logs: ${error?.message || 'Unknown error'}`);
     }
   }, [isInRoom, localStream, remoteStream, roomId, signalingUrl, status]);
 
   const handleMuteToggle = useCallback(() => {
     const nextMuted = !isMuted;
-    logInfo('Mute toggle action', { nextMuted });
+    logInfo('[media] Mute toggle action', { nextMuted });
     if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
       setStatus('Start preview to control audio');
       return;
@@ -908,7 +1107,7 @@ export default function App() {
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;
-    logInfo('Video toggle action', { nextVideoEnabled });
+    logInfo('[media] Video toggle action', { nextVideoEnabled });
     if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
       setStatus('Start preview to control video');
       return;

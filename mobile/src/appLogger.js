@@ -1,5 +1,29 @@
 const LOG_ENTRIES = [];
 
+// Numeric priority for each log level. Lines whose level is below the active
+// threshold are dropped so high-frequency `debug` output (per-ICE-candidate and
+// per-stats-tick lines) can be enabled on demand without overwhelming the log by
+// default. High-signal lifecycle/signaling/ICE-summary lines stay at `info`.
+const LEVEL_PRIORITY = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
+function readLogLevel() {
+  const fromEnv = globalThis?.process?.env?.LOG_LEVEL;
+  const normalized = typeof fromEnv === 'string' ? fromEnv.toLowerCase() : '';
+  return LEVEL_PRIORITY[normalized] ? normalized : 'info';
+}
+
+// Active log-level threshold (env-inlined `LOG_LEVEL`, defaults to `info`).
+export const LOG_LEVEL = readLogLevel();
+
+function isLevelEnabled(level) {
+  return (LEVEL_PRIORITY[level] || 0) >= (LEVEL_PRIORITY[LOG_LEVEL] || 0);
+}
+
 const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
 const SENSITIVE_FIELDS = new Set([
@@ -94,6 +118,10 @@ function safeSerialize(metadata) {
 }
 
 function addLog(level, message, metadata) {
+  if (!isLevelEnabled(level)) {
+    return undefined;
+  }
+
   const timestamp = new Date().toISOString();
   const safeMessage = typeof message === 'string' ? message : String(message);
   const serializedMetadata = safeSerialize(metadata);
