@@ -866,23 +866,19 @@ export default function App() {
   };
 
   const handleAutoLightingToggle = useCallback(() => {
-    setSettings((previous) => {
-      const nextValue = !previous.autoCameraLightingEnabled;
-      setStatus(nextValue ? 'Auto camera lighting enabled' : 'Auto camera lighting disabled');
-      return { ...previous, autoCameraLightingEnabled: nextValue };
-    });
-  }, []);
+    const nextValue = !settings.autoCameraLightingEnabled;
+    setSettings((previous) => ({ ...previous, autoCameraLightingEnabled: nextValue }));
+    setStatus(nextValue ? 'Auto camera lighting enabled' : 'Auto camera lighting disabled');
+  }, [settings.autoCameraLightingEnabled]);
 
   const handleSpeakerDefaultToggle = useCallback(() => {
-    setSettings((previous) => {
-      const nextValue = !previous.speakerEnabledByDefault;
-      if (!isInRoom) {
-        setIsSpeakerEnabled(nextValue);
-      }
-      setStatus(nextValue ? 'Speaker default enabled' : 'Speaker default disabled');
-      return { ...previous, speakerEnabledByDefault: nextValue };
-    });
-  }, [isInRoom]);
+    const nextValue = !settings.speakerEnabledByDefault;
+    setSettings((previous) => ({ ...previous, speakerEnabledByDefault: nextValue }));
+    if (!isInRoom) {
+      setIsSpeakerEnabled(nextValue);
+    }
+    setStatus(nextValue ? 'Speaker default enabled' : 'Speaker default disabled');
+  }, [isInRoom, settings.speakerEnabledByDefault]);
 
   const handleExportLogs = useCallback(async () => {
     try {
