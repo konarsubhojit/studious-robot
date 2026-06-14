@@ -6,9 +6,7 @@ jest.mock('react-native-incall-manager', () => ({
   setKeepScreenOn: jest.fn(),
 }));
 
-// eslint-disable-next-line import/first
 import InCallManager from 'react-native-incall-manager';
-// eslint-disable-next-line import/first
 import { setAudioRoute, startAudioSession, stopAudioSession } from '../src/audioRouting';
 
 describe('audioRouting', () => {

@@ -35,8 +35,10 @@ npm run ios        # build & launch on an iOS simulator (macOS)
 Open the app on Android and grant camera/microphone permissions to start local
 preview and join a room. For device-to-device testing, launch two clients with
 the same room ID. While in the lobby you can set signaling/room values and
-export logs; once the call starts the app switches to a dedicated in-call UI
-with:
+export logs. The lobby now shows the local camera preview as soon as media
+access succeeds, and any RTC/native video render failure degrades to an inline
+message instead of crashing to a blank screen. Once the call starts the app
+switches to a dedicated in-call UI with:
 
 - a draggable picture-in-picture (PiP) self-view that can be tapped to swap
   local/remote focus,
