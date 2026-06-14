@@ -472,7 +472,7 @@ export default function App() {
       }
       await applyLightingAdjustment(videoTrack);
     } catch (error) {
-      logError('[media] Camera lighting auto-adjust failed', callMeta(error));
+      logError('[media] Camera lighting auto-adjust failed', callMeta({ name: error?.name, message: error?.message }));
     }
   }, [callMeta]);
 
