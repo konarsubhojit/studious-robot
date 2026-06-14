@@ -1,0 +1,99 @@
+name: Android APK
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-apk.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+
+# Cancel any in-progress run for the same branch so stale commits don't waste
+# runner time.  workflow_dispatch runs are never cancelled.
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build APK(s)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Install dependencies
+        run: npm ci
+
+      # On pull_request events only the debug APK is built (release adds no value
+      # on a feature branch and would duplicate the master-push build).
+      # On push-to-master and workflow_dispatch both APKs are built in a SINGLE
+      # Gradle invocation so the configuration phase and dependency resolution are
+      # paid only once.
+      #
+      # -PreactNativeArchitectures=arm64-v8a limits the build to one ABI in CI.
+      # All four ABIs (armeabi-v7a, arm64-v8a, x86, x86_64) remain the default
+      # for local builds via gradle.properties; CI overrides with the flag so the
+      # build is 2-4× faster without affecting local or production distribution.
+      - name: Assemble APK(s)
+        env:
+          SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
+          ROOM_ID: ${{ secrets.ROOM_ID }}
+          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
+          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
+        run: |
+          chmod +x android/gradlew
+          cd android
+          if [[ "${{ github.event_name }}" == "push" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ./gradlew assembleDebug assembleRelease \
+              --build-cache --no-daemon \
+              -PreactNativeArchitectures=arm64-v8a
+          else
+            ./gradlew assembleDebug \
+              --build-cache --no-daemon \
+              -PreactNativeArchitectures=arm64-v8a
+          fi
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Upload release APK
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
+          if-no-files-found: error
