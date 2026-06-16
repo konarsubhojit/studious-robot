@@ -39,12 +39,29 @@ cd server
 npm run dev        # auto-restart on changes (or: npm start)
 ```
 
-The server listens on port `4173` by default and exposes a health endpoint:
+The server listens on port `4173` by default and exposes a health endpoint
+plus an operational metrics endpoint:
 
 ```bash
 curl http://localhost:4173/health
 # => {"status":"ok","service":"studious-robot-signaling", ...}
+
+curl http://localhost:4173/metrics
+# => {"rooms":{"activeRooms":0,...},"counters":{"connectionsTotal":0,...}, ...}
 ```
+
+The server reads its configuration from the environment via a single validated
+config module (`server/src/config.js`):
+
+| Variable        | Default     | Purpose                                            |
+| --------------- | ----------- | -------------------------------------------------- |
+| `PORT`          | `4173`      | Listen port                                        |
+| `HOST`          | `0.0.0.0`   | Listen host                                        |
+| `MAX_ROOM_SIZE` | `2`         | Maximum participants per room                      |
+| `CORS_ORIGIN`   | `*` (dev)   | Allowed browser origin(s); empty in prod if unset  |
+
+The server shuts down gracefully on `SIGTERM`/`SIGINT`, draining Socket.IO
+connections so platforms like Render can perform zero-downtime redeploys.
 
 In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
@@ -178,6 +195,13 @@ automatically on every pull request and push to `master` that touches `server/`:
 1. **test** job — installs deps, runs `npm test` (Node built-in test runner).
 2. **deploy** job — on `master` push only, calls the Render deploy hook
    (`RENDER_DEPLOY_HOOK_URL` secret) so the live service is always up to date.
+
+### GitHub Actions — Mobile CI
+
+[`.github/workflows/mobile-ci.yml`](./.github/workflows/mobile-ci.yml) runs on
+every pull request and push to `master` that touches `mobile/`. It installs
+dependencies and runs `npm run lint` and `npm test` so JavaScript regressions
+are caught before the (slower) Android APK build runs.
 
 ### GitHub Actions — Android APKs
 
