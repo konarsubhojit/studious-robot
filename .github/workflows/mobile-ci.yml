@@ -17,6 +17,10 @@ concurrency:
   group: mobile-ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token: this workflow only needs to read repository contents.
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     name: Lint & test
