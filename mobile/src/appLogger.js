@@ -16,22 +16,22 @@ function isSensitiveKey(key) {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
 }
 
-function toSafeError(error, seen) {
-  if (!error || typeof error !== 'object') {
-    return error;
+function toSafeError(err, seen) {
+  if (!err || typeof err !== 'object') {
+    return err;
   }
 
   const safeError = {
-    name: error.name,
-    message: error.message,
+    name: err.name,
+    message: err.message,
   };
 
-  if (error.stack) {
-    safeError.stack = error.stack;
+  if (err.stack) {
+    safeError.stack = err.stack;
   }
 
-  if ('cause' in error) {
-    safeError.cause = toSafeValue(error.cause, undefined, seen);
+  if ('cause' in err) {
+    safeError.cause = toSafeValue(err.cause, undefined, seen);
   }
 
   return safeError;
@@ -71,8 +71,8 @@ function toSafeValue(value, key, seen = new WeakSet()) {
   Object.keys(value).forEach((childKey) => {
     try {
       output[childKey] = toSafeValue(value[childKey], childKey, seen);
-    } catch (error) {
-      output[childKey] = `[Unserializable: ${error?.message || 'unknown'}]`;
+    } catch (err) {
+      output[childKey] = `[Unserializable: ${err?.message || 'unknown'}]`;
     }
   });
 
@@ -86,9 +86,9 @@ function safeSerialize(metadata) {
 
   try {
     return JSON.stringify(toSafeValue(metadata));
-  } catch (error) {
+  } catch (err) {
     return JSON.stringify({
-      serializationError: error?.message || 'Unknown serialization error',
+      serializationError: err?.message || 'Unknown serialization error',
     });
   }
 }

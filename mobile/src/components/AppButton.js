@@ -1,0 +1,74 @@
+import { Pressable, StyleSheet, Text } from 'react-native';
+import { colors, radius, spacing } from '../theme';
+
+/**
+ * Unified pill button used across both the lobby and the in-call controls so
+ * the app speaks a single visual language.  Accessibility roles/labels/state
+ * are first-class props rather than afterthoughts.
+ *
+ * @param {object} props
+ * @param {string} props.title - Visible button label (also the default a11y label).
+ * @param {() => void} props.onPress
+ * @param {boolean} [props.active] - Highlights the button (e.g. muted / video-off).
+ * @param {boolean} [props.disabled]
+ * @param {object} [props.style] - Extra container style(s).
+ * @param {string} [props.accessibilityLabel]
+ * @param {string} [props.accessibilityHint]
+ * @param {string} [props.testID]
+ */
+export default function AppButton({
+  title,
+  onPress,
+  active = false,
+  disabled = false,
+  style,
+  accessibilityLabel,
+  accessibilityHint,
+  testID,
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel || title}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled, selected: active }}
+      testID={testID}
+      style={({ pressed }) => [
+        styles.button,
+        active && styles.buttonActive,
+        disabled && styles.buttonDisabled,
+        pressed && styles.buttonPressed,
+        style,
+      ]}
+    >
+      <Text style={styles.buttonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  button: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentButton,
+  },
+  buttonActive: {
+    backgroundColor: colors.danger,
+  },
+  buttonDisabled: {
+    opacity: 0.55,
+  },
+  buttonPressed: {
+    opacity: 0.88,
+  },
+  buttonText: {
+    color: colors.textOnAccent,
+    fontWeight: '700',
+  },
+});

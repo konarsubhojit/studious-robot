@@ -1,4 +1,4 @@
-package com.konarsubhojit.studiousrobot
+package com.tcalling
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -54,7 +54,7 @@ class CallForegroundService : Service() {
 
   private fun buildNotification(): Notification =
     NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle("studious-robot")
+      .setContentTitle("TCalling")
       .setContentText("Call in progress")
       .setSmallIcon(android.R.drawable.ic_menu_call)
       .setOngoing(true)

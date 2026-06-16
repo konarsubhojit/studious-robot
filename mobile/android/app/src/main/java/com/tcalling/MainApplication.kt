@@ -1,4 +1,4 @@
-package com.konarsubhojit.studiousrobot
+package com.tcalling
 
 import android.app.Application
 import com.facebook.react.PackageList

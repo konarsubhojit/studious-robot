@@ -4,10 +4,21 @@ jest.mock('react-native-incall-manager', () => ({
   setForceSpeakerphoneOn: jest.fn(),
   setSpeakerphoneOn: jest.fn(),
   setKeepScreenOn: jest.fn(),
+  chooseAudioRoute: jest.fn(),
 }));
 
+import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
-import { setAudioRoute, startAudioSession, stopAudioSession } from '../src/audioRouting';
+import {
+  AUDIO_ROUTES,
+  chooseAudioRoute,
+  getAudioRouteLabel,
+  parseAudioDeviceStatus,
+  setAudioRoute,
+  startAudioSession,
+  stopAudioSession,
+  subscribeAudioDevices,
+} from '../src/audioRouting';
 
 describe('audioRouting', () => {
   beforeEach(() => {
@@ -49,6 +60,90 @@ describe('audioRouting', () => {
       setAudioRoute(false);
       expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenCalledWith(false);
       expect(InCallManager.setSpeakerphoneOn).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('getAudioRouteLabel', () => {
+    test('maps known routes to friendly labels', () => {
+      expect(getAudioRouteLabel(AUDIO_ROUTES.SPEAKER_PHONE)).toBe('Speaker');
+      expect(getAudioRouteLabel(AUDIO_ROUTES.EARPIECE)).toBe('Earpiece');
+      expect(getAudioRouteLabel(AUDIO_ROUTES.BLUETOOTH)).toBe('Bluetooth');
+      expect(getAudioRouteLabel(AUDIO_ROUTES.WIRED_HEADSET)).toBe('Wired headset');
+    });
+
+    test('falls back to the raw value for unknown routes', () => {
+      expect(getAudioRouteLabel('FUTURE_DEVICE')).toBe('FUTURE_DEVICE');
+      expect(getAudioRouteLabel(undefined)).toBe('Unknown');
+    });
+  });
+
+  describe('parseAudioDeviceStatus', () => {
+    test('parses a JSON-encoded device list and selected device', () => {
+      const status = parseAudioDeviceStatus({
+        availableAudioDeviceList: '["SPEAKER_PHONE","EARPIECE","BLUETOOTH"]',
+        selectedAudioDevice: 'BLUETOOTH',
+      });
+      expect(status.available).toEqual(['SPEAKER_PHONE', 'EARPIECE', 'BLUETOOTH']);
+      expect(status.selected).toBe('BLUETOOTH');
+    });
+
+    test('accepts an already-parsed array', () => {
+      const status = parseAudioDeviceStatus({
+        availableAudioDeviceList: ['SPEAKER_PHONE', 'EARPIECE'],
+        selectedAudioDevice: '',
+      });
+      expect(status.available).toEqual(['SPEAKER_PHONE', 'EARPIECE']);
+      expect(status.selected).toBeNull();
+    });
+
+    test('drops NONE entries and de-duplicates', () => {
+      const status = parseAudioDeviceStatus({
+        availableAudioDeviceList: '["SPEAKER_PHONE","NONE","SPEAKER_PHONE"]',
+        selectedAudioDevice: 'SPEAKER_PHONE',
+      });
+      expect(status.available).toEqual(['SPEAKER_PHONE']);
+    });
+
+    test('tolerates malformed JSON and missing payloads', () => {
+      expect(parseAudioDeviceStatus({ availableAudioDeviceList: 'not-json' }).available).toEqual([]);
+      expect(parseAudioDeviceStatus(undefined)).toEqual({ available: [], selected: null });
+      expect(parseAudioDeviceStatus(null)).toEqual({ available: [], selected: null });
+    });
+  });
+
+  describe('chooseAudioRoute', () => {
+    test('delegates to InCallManager and returns parsed status', async () => {
+      InCallManager.chooseAudioRoute.mockResolvedValue({
+        availableAudioDeviceList: '["SPEAKER_PHONE","BLUETOOTH"]',
+        selectedAudioDevice: 'BLUETOOTH',
+      });
+      const status = await chooseAudioRoute(AUDIO_ROUTES.BLUETOOTH);
+      expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
+      expect(status).toEqual({ available: ['SPEAKER_PHONE', 'BLUETOOTH'], selected: 'BLUETOOTH' });
+    });
+  });
+
+  describe('subscribeAudioDevices', () => {
+    test('parses native payloads and unsubscribes on teardown', () => {
+      const handler = jest.fn();
+      const unsubscribe = subscribeAudioDevices(handler);
+
+      DeviceEventEmitter.emit('onAudioDeviceChanged', {
+        availableAudioDeviceList: '["SPEAKER_PHONE","EARPIECE"]',
+        selectedAudioDevice: 'EARPIECE',
+      });
+      expect(handler).toHaveBeenCalledWith({
+        available: ['SPEAKER_PHONE', 'EARPIECE'],
+        selected: 'EARPIECE',
+      });
+
+      handler.mockClear();
+      unsubscribe();
+      DeviceEventEmitter.emit('onAudioDeviceChanged', {
+        availableAudioDeviceList: '["SPEAKER_PHONE"]',
+        selectedAudioDevice: 'SPEAKER_PHONE',
+      });
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 });
