@@ -17,6 +17,7 @@ function createMetrics() {
     answersRelayedTotal: 0,
     iceCandidatesRelayedTotal: 0,
     invalidPayloadsTotal: 0,
+    turnCredentialsIssuedTotal: 0,
   };
 
   /**
