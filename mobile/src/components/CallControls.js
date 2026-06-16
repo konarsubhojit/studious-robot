@@ -19,6 +19,7 @@ export default function CallControls({
   onChooseAudioOutput,
   onCameraSwitch,
   onLeave,
+  onMenuOpenChange,
 }) {
   return (
     <>
@@ -44,6 +45,7 @@ export default function CallControls({
           selected={audioDevices?.selected}
           isSpeakerEnabled={isSpeakerEnabled}
           onSelect={onChooseAudioOutput}
+          onOpenChange={onMenuOpenChange}
         />
       </View>
 

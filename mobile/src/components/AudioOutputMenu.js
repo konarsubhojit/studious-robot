@@ -34,24 +34,30 @@ export default function AudioOutputMenu({
   selected,
   isSpeakerEnabled,
   onSelect,
+  onOpenChange,
   disabled = false,
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const routes = useMemo(() => buildRouteList(available), [available]);
+
+  const setOpen = (open) => {
+    setIsOpen(open);
+    onOpenChange?.(open);
+  };
 
   const effectiveSelected =
     selected || (isSpeakerEnabled ? AUDIO_ROUTES.SPEAKER_PHONE : AUDIO_ROUTES.EARPIECE);
   const currentLabel = getAudioRouteLabel(effectiveSelected);
 
   const handleSelect = (route) => {
-    setIsOpen(false);
+    setOpen(false);
     onSelect(route);
   };
 
   return (
     <>
       <Pressable
-        onPress={() => setIsOpen(true)}
+        onPress={() => setOpen(true)}
         disabled={disabled}
         accessibilityRole="button"
         accessibilityLabel={`Audio output: ${currentLabel}. Tap to change`}
@@ -71,12 +77,12 @@ export default function AudioOutputMenu({
         visible={isOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
+        onRequestClose={() => setOpen(false)}
       >
         <Pressable
           style={styles.backdrop}
           accessibilityLabel="Close audio output menu"
-          onPress={() => setIsOpen(false)}
+          onPress={() => setOpen(false)}
         >
           <View style={styles.menu} accessibilityRole="menu">
             <Text style={styles.menuTitle}>Audio output</Text>

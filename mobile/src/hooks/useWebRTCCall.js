@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { AppState, Platform, Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
@@ -33,6 +33,12 @@ import { SIGNALING_EVENTS } from '../signalingEvents';
 import { getSocketOptions, isRecoverableDisconnectReason } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
 import { getAppConfig } from '../appConfig';
+import {
+  CALL_EVENTS,
+  INITIAL_CALL_PHASE,
+  callReducer,
+  isReconnectingPhase,
+} from '../callStateMachine';
 
 const APP_CONFIG = getAppConfig();
 const DEFAULT_SIGNALING_URL = APP_CONFIG.signalingUrl;
@@ -75,7 +81,11 @@ export default function useWebRTCCall() {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [isInRoom, setIsInRoom] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
+  // Explicit call-lifecycle state machine (see ../callStateMachine). It is the
+  // single source of truth for the call phase; `isReconnecting` is derived from
+  // it rather than tracked as a separate, easily-desynced boolean.
+  const [callPhase, dispatchCall] = useReducer(callReducer, INITIAL_CALL_PHASE);
+  const isReconnecting = isReconnectingPhase(callPhase);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(DEFAULT_SETTINGS.speakerEnabledByDefault);
@@ -147,6 +157,7 @@ export default function useWebRTCCall() {
   }, [roomId]);
 
   const markCallConnected = useCallback(() => {
+    dispatchCall(CALL_EVENTS.CALL_CONNECTED);
     setCallConnectedAt((previous) => {
       if (!previous) {
         haptic(HAPTIC_CONNECT_MS);
@@ -186,7 +197,7 @@ export default function useWebRTCCall() {
     }
 
     setIsInRoom(false);
-    setIsReconnecting(false);
+    dispatchCall(CALL_EVENTS.LEAVE);
     setCallConnectedAt(null);
     setElapsedCallSeconds(0);
     setIsLocalPrimary(false);
@@ -324,6 +335,7 @@ export default function useWebRTCCall() {
       localStreamRef.current = stream;
       setLocalStream(stream);
       syncMediaState(stream);
+      dispatchCall(CALL_EVENTS.PREVIEW_READY);
       setStatus('Local preview ready', 'success');
       return stream;
     } catch (error) {
@@ -353,6 +365,7 @@ export default function useWebRTCCall() {
 
       setCallSummary(null);
       leaveRoom();
+      dispatchCall(CALL_EVENTS.JOIN);
       setIsSpeakerEnabled(settings.speakerEnabledByDefault);
       await startLocalPreview();
       setStatus('Connecting to signaling server...');
@@ -372,7 +385,7 @@ export default function useWebRTCCall() {
         });
         setStatus('Connected to signaling. Joining room...');
         setIsInRoom(true);
-        setIsReconnecting(false);
+        dispatchCall(CALL_EVENTS.SIGNALING_CONNECTED);
         socket.emit(SIGNALING_EVENTS.JOIN_ROOM, roomIdRef.current);
         try {
           if (!startCallService()) {
@@ -389,13 +402,13 @@ export default function useWebRTCCall() {
       if (manager && typeof manager.on === 'function') {
         manager.on('reconnect_attempt', (attempt) => {
           logWarn('Socket.IO reconnect attempt', { attempt });
-          setIsReconnecting(true);
+          dispatchCall(CALL_EVENTS.RECONNECTING);
           setStatus('Reconnecting…');
         });
 
         manager.on('reconnect', async (attempt) => {
           logInfo('Socket.IO reconnected', { attempt });
-          setIsReconnecting(false);
+          dispatchCall(CALL_EVENTS.RECONNECTED);
           setStatus('Reconnected. Rejoining room...', 'success');
           socket.emit(SIGNALING_EVENTS.JOIN_ROOM, roomIdRef.current);
 
@@ -512,12 +525,12 @@ export default function useWebRTCCall() {
       socket.on('disconnect', (reason) => {
         logWarn('Socket.IO disconnect', { reason });
         if (isRecoverableDisconnectReason(reason)) {
-          setIsReconnecting(true);
+          dispatchCall(CALL_EVENTS.RECONNECTING);
           setStatus('Reconnecting…');
           return;
         }
         setIsInRoom(false);
-        setIsReconnecting(false);
+        dispatchCall(CALL_EVENTS.FATAL);
         stopCallService();
         closePeerConnection();
         setStatus('Socket disconnected', 'error');
@@ -534,11 +547,12 @@ export default function useWebRTCCall() {
         if (isInRoomRef.current) {
           // A call is already in progress; let the reconnection policy retry
           // instead of tearing the call down on a transient error.
-          setIsReconnecting(true);
+          dispatchCall(CALL_EVENTS.RECONNECTING);
           setStatus('Reconnecting…');
           return;
         }
         setIsInRoom(false);
+        dispatchCall(CALL_EVENTS.FATAL);
         setStatus(`Unable to connect: ${error?.message || 'Unknown error'}`, 'error');
       });
     } catch (error) {
@@ -753,7 +767,7 @@ export default function useWebRTCCall() {
       return;
     }
     logInfo('Manual reconnect requested');
-    setIsReconnecting(true);
+    dispatchCall(CALL_EVENTS.RECONNECTING);
     setStatus('Reconnecting…');
     socket.disconnect();
     socket.connect();
@@ -924,6 +938,7 @@ export default function useWebRTCCall() {
     remoteStream,
     isInRoom,
     isReconnecting,
+    callPhase,
     isMuted,
     isVideoEnabled,
     isSpeakerEnabled,

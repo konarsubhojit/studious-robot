@@ -1,5 +1,6 @@
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { colors, spacing } from '../theme';
+import useAutoHidingControls from '../hooks/useAutoHidingControls';
 import CallControls from './CallControls';
 import CallStage from './CallStage';
 import CallTopBar from './CallTopBar';
@@ -37,6 +38,10 @@ export default function CallScreen({
   onLeave,
   status,
 }) {
+  // The control deck auto-hides during a call so the video has room to breathe;
+  // tapping the stage (or interacting with a control) brings it back.
+  const { visible: controlsVisible, reveal, hold } = useAutoHidingControls();
+
   return (
     <View style={styles.callScreen}>
       <CallTopBar
@@ -47,29 +52,44 @@ export default function CallScreen({
 
       {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
 
-      <CallStage
-        onLayout={onStageLayout}
-        mainStreamUrl={mainStreamUrl}
-        hasMainStream={hasMainStream}
-        pipStreamUrl={pipStreamUrl}
-        hasPipStream={hasPipStream}
-        mirrorPip={mirrorPip}
-        pipGesture={pipGesture}
-        animatedPipStyle={animatedPipStyle}
-      />
+      <Pressable
+        style={styles.stagePressable}
+        onPress={reveal}
+        accessibilityLabel="Show call controls"
+        testID="call-stage-tap"
+      >
+        <CallStage
+          onLayout={onStageLayout}
+          mainStreamUrl={mainStreamUrl}
+          hasMainStream={hasMainStream}
+          pipStreamUrl={pipStreamUrl}
+          hasPipStream={hasPipStream}
+          mirrorPip={mirrorPip}
+          pipGesture={pipGesture}
+          animatedPipStyle={animatedPipStyle}
+        />
+      </Pressable>
 
-      <CallControls
-        isMuted={isMuted}
-        isVideoEnabled={isVideoEnabled}
-        hasLocalStream={hasLocalStream}
-        audioDevices={audioDevices}
-        isSpeakerEnabled={isSpeakerEnabled}
-        onMuteToggle={onMuteToggle}
-        onVideoToggle={onVideoToggle}
-        onChooseAudioOutput={onChooseAudioOutput}
-        onCameraSwitch={onCameraSwitch}
-        onLeave={onLeave}
-      />
+      <View
+        style={[styles.controlDeck, controlsVisible ? null : styles.controlDeckHidden]}
+        pointerEvents={controlsVisible ? 'auto' : 'none'}
+        onTouchStart={reveal}
+        testID="control-deck"
+      >
+        <CallControls
+          isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
+          hasLocalStream={hasLocalStream}
+          audioDevices={audioDevices}
+          isSpeakerEnabled={isSpeakerEnabled}
+          onMuteToggle={onMuteToggle}
+          onVideoToggle={onVideoToggle}
+          onChooseAudioOutput={onChooseAudioOutput}
+          onCameraSwitch={onCameraSwitch}
+          onLeave={onLeave}
+          onMenuOpenChange={hold}
+        />
+      </View>
 
       <StatusBanner status={status} style={styles.status} />
     </View>
@@ -82,6 +102,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
+  },
+  stagePressable: {
+    flex: 1,
+  },
+  controlDeck: {
+    opacity: 1,
+  },
+  controlDeckHidden: {
+    opacity: 0,
   },
   status: {
     color: colors.textMuted,
