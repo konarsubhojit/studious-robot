@@ -31,6 +31,12 @@ function createTurnCredentials(turn, { name = '', nowMs = Date.now() } = {}) {
   const ttl = turn.ttlSeconds;
   const expiry = Math.floor(nowMs / 1000) + ttl;
   const username = name ? `${expiry}:${name}` : `${expiry}`;
+  // HMAC-SHA1 is mandated by coturn's `use-auth-secret` / TURN REST API scheme
+  // (draft-uberti-behave-turn-rest-00); it is the only algorithm coturn accepts
+  // for this credential format. This is a keyed MAC, not a bare SHA-1 hash, so
+  // SHA-1's collision weaknesses do not apply, and the shared secret never
+  // leaves the server. Switching algorithms here would break interop with every
+  // standard TURN server. (CodeQL js/weak-cryptographic-algorithm: accepted.)
   const credential = crypto
     .createHmac('sha1', turn.secret)
     .update(username)

@@ -59,9 +59,43 @@ config module (`server/src/config.js`):
 | `HOST`          | `0.0.0.0`   | Listen host                                        |
 | `MAX_ROOM_SIZE` | `2`         | Maximum participants per room                      |
 | `CORS_ORIGIN`   | `*` (dev)   | Allowed browser origin(s); empty in prod if unset  |
+| `REDIS_URL`     | _(unset)_   | Enable the Socket.IO Redis adapter for horizontal scaling |
+| `SENTRY_DSN`    | _(unset)_   | Enable Sentry error reporting (telemetry)          |
+| `INSTANCE_ID`   | `local-<pid>` | Instance label surfaced in `/health` and `/metrics` |
+| `TURN_SECRET`   | _(unset)_   | coturn shared secret for minting TURN credentials  |
+| `TURN_URLS`     | _(unset)_   | Comma-separated TURN URLs handed to clients        |
+| `TURN_TTL_SECONDS` | `86400`  | Lifetime of issued TURN credentials                |
 
 The server shuts down gracefully on `SIGTERM`/`SIGINT`, draining Socket.IO
 connections so platforms like Render can perform zero-downtime redeploys.
+
+### Horizontal scaling, telemetry, and TURN provisioning
+
+These features are **opt-in** and activate only when their environment
+variables are set; with none set the server behaves exactly as before.
+
+- **Horizontal scaling (`REDIS_URL`)** — attaches `@socket.io/redis-adapter`
+  so multiple server replicas behind a load balancer share room/broadcast state
+  (a prerequisite for autoscaling). The Redis packages are *optional*
+  dependencies: if they are absent the server logs a warning and continues in
+  single-instance mode rather than failing to boot.
+- **Telemetry (`SENTRY_DSN`)** — reports captured errors (including
+  `uncaughtException`/`unhandledRejection`) to Sentry via the optional
+  `@sentry/node` dependency, falling back to structured console logging when the
+  DSN is unset or the package is unavailable.
+- **TURN provisioning (`TURN_SECRET` + `TURN_URLS`)** — exposes
+  `GET /turn-credentials`, which mints short-lived, HMAC-signed credentials
+  using coturn's `use-auth-secret` (TURN REST API) scheme so clients never embed
+  the long-lived shared secret. When unconfigured the endpoint returns `404`.
+
+  ```bash
+  curl http://localhost:4173/turn-credentials
+  # => {"username":"<expiry>","credential":"<hmac>","ttl":86400,
+  #     "urls":["turn:host:3478"],"iceServers":[ ... ]}
+  ```
+
+  Configure coturn with `use-auth-secret` and a `static-auth-secret` equal to
+  `TURN_SECRET`; point `TURN_URLS` at the same server.
 
 In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
@@ -241,3 +275,40 @@ Merge to master
     ▼
 QA installs release APK (no Metro needed), points app to Render URL, tests end-to-end
 ```
+
+---
+
+## Mobile call-lifecycle state machine & auto-hiding controls
+
+- **Call state machine** — `mobile/src/callStateMachine.js` is a pure, unit-tested
+  finite-state machine (`idle → previewing → connecting → joined → connected`,
+  plus `reconnecting`/`ended`). `useWebRTCCall` dispatches lifecycle events into
+  it; `isReconnecting` is derived from the phase and the current phase is
+  exposed as `callPhase`, replacing several overlapping ad-hoc booleans.
+- **Auto-hiding control deck** — `mobile/src/hooks/useAutoHidingControls.js`
+  fades the in-call control deck after a few seconds of inactivity and reveals
+  it again on a tap (or any control interaction); it stays pinned while the
+  audio-output menu is open.
+
+## Roadmap — items requiring a native toolchain
+
+The following backlog items need native dependencies and a device build, which
+cannot be compiled or validated in the CI/Codespaces sandbox. They are tracked
+here with concrete integration steps for whoever picks them up on a machine with
+the Android/iOS toolchain:
+
+- **Icon fonts** — add `react-native-vector-icons`, register the font assets in
+  `android/app/build.gradle` (`fonts.gradle`) and the iOS `Info.plist`
+  (`UIAppFonts`), then replace the emoji/text glyphs in the control deck.
+- **Safe-area handling** — add `react-native-safe-area-context`, wrap the app in
+  `SafeAreaProvider`, and swap the `react-native` `SafeAreaView` in `App.js` for
+  the context-aware component (correct insets on notched devices).
+- **Navigation** — adopt `@react-navigation/native` (+ a stack navigator and its
+  native peers `react-native-screens`/`react-native-safe-area-context`) to
+  replace the conditional Lobby/CallScreen render in `App.js` with real routes;
+  `callPhase` from the state machine is a natural navigation driver.
+- **TypeScript adoption** — add a `tsconfig.json`, `typescript`, and
+  `@babel/preset-typescript`, enable the TS Jest transform, and migrate modules
+  incrementally starting with the dependency-free units (`theme`,
+  `callStateMachine`, `webrtcConfig`).
+
