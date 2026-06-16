@@ -29,11 +29,14 @@ import {
 } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { loadSettings, saveSettings } from '../settingsStorage';
+import { SIGNALING_EVENTS } from '../signalingEvents';
 import { getSocketOptions, isRecoverableDisconnectReason } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
+import { getAppConfig } from '../appConfig';
 
-const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
-const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
+const APP_CONFIG = getAppConfig();
+const DEFAULT_SIGNALING_URL = APP_CONFIG.signalingUrl;
+const DEFAULT_ROOM_ID = APP_CONFIG.roomId;
 const DEFAULT_SETTINGS = {
   autoCameraLightingEnabled: false,
   speakerEnabledByDefault: true,
@@ -214,7 +217,7 @@ export default function useWebRTCCall() {
       if (event.candidate && socketRef.current) {
         const summary = summarizeIceCandidate(event.candidate);
         logDebug('ICE candidate sent', summary);
-        socketRef.current.emit('ice-candidate', {
+        socketRef.current.emit(SIGNALING_EVENTS.ICE_CANDIDATE, {
           roomId: roomIdRef.current,
           candidate: event.candidate,
         });
@@ -246,7 +249,7 @@ export default function useWebRTCCall() {
         .then((offer) => connection.setLocalDescription(offer))
         .then(() => {
           if (socketRef.current) {
-            socketRef.current.emit('offer', {
+            socketRef.current.emit(SIGNALING_EVENTS.OFFER, {
               roomId: roomIdRef.current,
               sdp: connection.localDescription,
             });
@@ -370,7 +373,7 @@ export default function useWebRTCCall() {
         setStatus('Connected to signaling. Joining room...');
         setIsInRoom(true);
         setIsReconnecting(false);
-        socket.emit('join-room', roomIdRef.current);
+        socket.emit(SIGNALING_EVENTS.JOIN_ROOM, roomIdRef.current);
         try {
           if (!startCallService()) {
             logWarn('Foreground call service unavailable after connect');
@@ -394,7 +397,7 @@ export default function useWebRTCCall() {
           logInfo('Socket.IO reconnected', { attempt });
           setIsReconnecting(false);
           setStatus('Reconnected. Rejoining room...', 'success');
-          socket.emit('join-room', roomIdRef.current);
+          socket.emit(SIGNALING_EVENTS.JOIN_ROOM, roomIdRef.current);
 
           // If we were the original offerer, send an ICE-restart offer so the
           // peer connection re-negotiates a new network path without tearing
@@ -405,7 +408,7 @@ export default function useWebRTCCall() {
               logInfo('Sending ICE restart offer after socket reconnect');
               const offer = await peer.createOffer({ iceRestart: true });
               await peer.setLocalDescription(offer);
-              socket.emit('offer', { roomId: roomIdRef.current, sdp: peer.localDescription });
+              socket.emit(SIGNALING_EVENTS.OFFER, { roomId: roomIdRef.current, sdp: peer.localDescription });
               logInfo('ICE restart offer sent after socket reconnect');
             } catch (error) {
               logError('ICE restart after socket reconnect failed', error);
@@ -428,19 +431,19 @@ export default function useWebRTCCall() {
         logWarn('Socket.IO transport listener unavailable');
       }
 
-      socket.on('room-full', () => {
+      socket.on(SIGNALING_EVENTS.ROOM_FULL, () => {
         logWarn('room-full', { roomId: roomIdRef.current });
         leaveRoom(`Room "${roomIdRef.current}" is full`, 'error');
       });
 
-      socket.on('peer-joined', async () => {
+      socket.on(SIGNALING_EVENTS.PEER_JOINED, async () => {
         logInfo('peer-joined', { roomId: roomIdRef.current });
         isOffererRef.current = true;
         try {
           const peer = ensurePeerConnection();
           const offer = await peer.createOffer();
           await peer.setLocalDescription(offer);
-          socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
+          socket.emit(SIGNALING_EVENTS.OFFER, { roomId: roomIdRef.current, sdp: offer });
           logInfo('Offer created and sent', { sdpType: offer?.type || 'unknown' });
           setStatus('Offer sent');
         } catch (error) {
@@ -449,7 +452,7 @@ export default function useWebRTCCall() {
         }
       });
 
-      socket.on('offer', async ({ sdp } = {}) => {
+      socket.on(SIGNALING_EVENTS.OFFER, async ({ sdp } = {}) => {
         if (!sdp) {
           logWarn('Offer received without SDP');
           return;
@@ -460,7 +463,7 @@ export default function useWebRTCCall() {
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
+          socket.emit(SIGNALING_EVENTS.ANSWER, { roomId: roomIdRef.current, sdp: answer });
           logInfo('Answer created and sent', { sdpType: answer?.type || 'unknown' });
           setStatus('Answer sent');
         } catch (error) {
@@ -469,7 +472,7 @@ export default function useWebRTCCall() {
         }
       });
 
-      socket.on('answer', async ({ sdp } = {}) => {
+      socket.on(SIGNALING_EVENTS.ANSWER, async ({ sdp } = {}) => {
         if (!sdp) {
           logWarn('Answer received without SDP');
           return;
@@ -486,7 +489,7 @@ export default function useWebRTCCall() {
         }
       });
 
-      socket.on('ice-candidate', async ({ candidate } = {}) => {
+      socket.on(SIGNALING_EVENTS.ICE_CANDIDATE, async ({ candidate } = {}) => {
         if (!candidate) {
           return;
         }
@@ -500,7 +503,7 @@ export default function useWebRTCCall() {
         }
       });
 
-      socket.on('peer-left', () => {
+      socket.on(SIGNALING_EVENTS.PEER_LEFT, () => {
         logInfo('peer-left', { roomId: roomIdRef.current });
         closePeerConnection();
         setStatus('Peer left room');

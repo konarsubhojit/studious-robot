@@ -46,6 +46,7 @@ export const spacing = {
   sm: 8,
   md: 12,
   lg: 16,
+  xl: 24,
 };
 
 export const radius = {
@@ -56,15 +57,97 @@ export const radius = {
   pill: 999,
 };
 
-export const typography = {
-  title: { fontSize: 28, fontWeight: '600' },
-  sectionTitle: { fontSize: 16, fontWeight: '700' },
-  body: { fontSize: 14 },
-  label: { fontWeight: '600' },
-  emphasis: { fontWeight: '700' },
-  hint: { fontSize: 12 },
+/**
+ * Modular font-size and line-height scale.  Components should reference these
+ * tokens instead of hardcoding `fontSize` so typography stays consistent and
+ * Dynamic Type scaling can be reasoned about in one place.
+ */
+export const fontSizes = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 20,
+  xl: 28,
 };
 
-export const theme = { colors, spacing, radius, typography };
+export const lineHeights = {
+  xs: 16,
+  sm: 20,
+  md: 22,
+  lg: 26,
+  xl: 34,
+};
+
+export const fontWeights = {
+  regular: '400',
+  medium: '600',
+  bold: '700',
+};
+
+/** Opacity scale for disabled / pressed / decorative states. */
+export const opacity = {
+  disabled: 0.55,
+  pressed: 0.88,
+  decorative: 0.14,
+};
+
+/** Square hit targets for icon buttons (min 44pt for accessibility). */
+export const iconButton = {
+  sm: 36,
+  md: 44,
+  lg: 56,
+};
+
+/** Animation durations (ms) for consistent motion across the app. */
+export const durations = {
+  fast: 150,
+  base: 250,
+  slow: 400,
+};
+
+/**
+ * Elevation presets (cross-platform shadow tokens).  Spreading one of these
+ * into a style gives a consistent raised look on both iOS (shadow*) and
+ * Android (elevation).
+ */
+export const elevation = {
+  low: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.18,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  medium: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+};
+
+export const typography = {
+  title: { fontSize: fontSizes.xl, lineHeight: lineHeights.xl, fontWeight: fontWeights.medium },
+  sectionTitle: { fontSize: fontSizes.md, lineHeight: lineHeights.md, fontWeight: fontWeights.bold },
+  body: { fontSize: fontSizes.sm, lineHeight: lineHeights.sm },
+  label: { fontWeight: fontWeights.medium },
+  emphasis: { fontWeight: fontWeights.bold },
+  hint: { fontSize: fontSizes.xs, lineHeight: lineHeights.xs },
+};
+
+export const theme = {
+  colors,
+  spacing,
+  radius,
+  fontSizes,
+  lineHeights,
+  fontWeights,
+  opacity,
+  iconButton,
+  durations,
+  elevation,
+  typography,
+};
 
 export default theme;
