@@ -17,6 +17,8 @@ Environment=PORT=4173
 Environment=HOST=0.0.0.0
 # Tighten CORS_ORIGIN to your actual web-client origin in production,
 # e.g. Environment=CORS_ORIGIN=https://your-app.example.com
+# The native Android app does not send a browser Origin header so CORS does
+# not apply to it; use * only if you have no web-browser clients.
 Environment=CORS_ORIGIN=*
 
 [Install]

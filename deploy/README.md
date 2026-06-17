@@ -135,7 +135,7 @@ Add the following line and save:
 opc ALL=(ALL) NOPASSWD: /bin/systemctl restart studious-robot, /bin/systemctl is-active studious-robot
 ```
 
-> Using a drop-in under `/etc/sudoers.d/` is safer than editing `/etc/sudoers` directly.
+> **Note:** On some distributions (Oracle Linux 8+, Ubuntu 20.04+) `systemctl` lives at `/usr/bin/systemctl`. Verify with `which systemctl` on the VM and use that path in the sudoers rule. Using the wrong path will silently cause the passwordless sudo to fail and prompt for a password instead.
 
 ---
 
