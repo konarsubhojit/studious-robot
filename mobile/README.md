@@ -127,6 +127,8 @@ These features rely on the following permissions declared in
   camera/microphone access.
 - `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
   33) and newer.
+- `VIBRATE` — allow `react-native-incall-manager` to vibrate the device on
+  incoming calls.
 
 The Android APK workflow now inspects the assembled debug APK with `aapt dump
 permissions` and fails CI if any required call permission is missing from the
