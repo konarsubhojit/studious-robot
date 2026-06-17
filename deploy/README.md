@@ -11,10 +11,10 @@ GitHub Actions (push to master)
   └─► appleboy/ssh-action → OCI Ampere A1 VM
           ├─ git fetch / reset
           ├─ npm ci --omit=dev
-          └─ sudo systemctl restart robot-service
+          └─ sudo systemctl restart robot-signal
 ```
 
-The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-service.service`.
+The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`.
 
 ---
 
@@ -46,7 +46,7 @@ sudo apt-get install -y nodejs
 node --version
 ```
 
-If `node` ends up at a path other than `/usr/bin/node`, update `ExecStart` in `deploy/robot-service.service` accordingly (e.g. `/usr/local/bin/node`).
+If `node` ends up at a path other than `/usr/bin/node`, update `ExecStart` in `deploy/robot-signal.service` accordingly (e.g. `/usr/local/bin/node`).
 
 ---
 
@@ -74,16 +74,16 @@ npm ci --omit=dev
 ## 5. Install the systemd unit
 
 ```bash
-sudo cp /opt/studious-robot/deploy/robot-service.service /etc/systemd/system/
+sudo cp /opt/studious-robot/deploy/robot-signal.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now robot-service
-sudo systemctl status robot-service
+sudo systemctl enable --now robot-signal
+sudo systemctl status robot-signal
 ```
 
 The service listens on `PORT=4173` by default. Edit the unit file's `Environment=` lines to change the port, `CORS_ORIGIN`, etc., then reload:
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl restart robot-service
+sudo systemctl daemon-reload && sudo systemctl restart robot-signal
 ```
 
 ---
@@ -122,7 +122,7 @@ chmod 600 ~/.ssh/authorized_keys
 
 ## 7. Sudoers — passwordless restart for the deploy script
 
-The CI deploy script runs `sudo systemctl restart robot-service` and `sudo systemctl is-active robot-service` as the `opc` user. Grant passwordless sudo for those two commands only:
+The CI deploy script runs `sudo systemctl restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
 
 ```bash
 # On the VM
@@ -132,7 +132,7 @@ sudo visudo -f /etc/sudoers.d/studious-robot-deploy
 Add the following line and save:
 
 ```
-opc ALL=(ALL) NOPASSWD: /bin/systemctl restart robot-service, /bin/systemctl is-active robot-service
+opc ALL=(ALL) NOPASSWD: /bin/systemctl restart robot-signal, /bin/systemctl is-active robot-signal
 ```
 
 > **Note:** On some distributions (Oracle Linux 8+, Ubuntu 20.04+) `systemctl` lives at `/usr/bin/systemctl`. Verify with `which systemctl` on the VM and use that path in the sudoers rule. Using the wrong path will silently cause the passwordless sudo to fail and prompt for a password instead.
@@ -232,10 +232,10 @@ server {
 
 ```bash
 # Follow live logs
-journalctl -u robot-service -f
+journalctl -u robot-signal -f
 
 # Last 100 lines
-journalctl -u robot-service -n 100 --no-pager
+journalctl -u robot-signal -n 100 --no-pager
 ```
 
 ---
@@ -266,9 +266,9 @@ git fetch --quiet origin master
 git reset --hard origin/master
 cd server
 npm ci --omit=dev
-sudo systemctl restart robot-service
+sudo systemctl restart robot-signal
 sleep 2
-sudo systemctl is-active --quiet robot-service && echo "robot-service is running"
+sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
 ```
 
 The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the restart.

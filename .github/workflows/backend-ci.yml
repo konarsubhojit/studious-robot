@@ -60,7 +60,7 @@ jobs:
             git reset --hard origin/master
             cd server
             npm ci --omit=dev
-            sudo systemctl restart robot-service
+            sudo systemctl restart robot-signal
             # Verify the service came back up; fail the job if it did not.
             sleep 2
-            sudo systemctl is-active --quiet robot-service && echo "robot-service is running"
+            sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
