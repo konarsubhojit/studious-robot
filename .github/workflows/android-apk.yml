@@ -82,6 +82,49 @@ jobs:
               -PreactNativeArchitectures=arm64-v8a
           fi
 
+      - name: Verify APK permissions
+        run: |
+          set -euo pipefail
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [[ ! -f "$APK_PATH" ]]; then
+            echo "::error::Debug APK not found at $APK_PATH"
+            exit 1
+          fi
+
+          if [[ -z "$SDK_ROOT" || ! -d "$SDK_ROOT/build-tools" ]]; then
+            echo "::error::Android SDK build-tools directory is unavailable"
+            exit 1
+          fi
+
+          AAPT_PATH="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          if [[ -z "$AAPT_PATH" ]]; then
+            echo "::error::Unable to locate aapt in $SDK_ROOT/build-tools"
+            exit 1
+          fi
+
+          echo "Using $AAPT_PATH to inspect $APK_PATH"
+          PERMISSIONS_DUMP="$("$AAPT_PATH" dump permissions "$APK_PATH")"
+          REQUIRED_PERMISSIONS=(
+            "android.permission.INTERNET"
+            "android.permission.CAMERA"
+            "android.permission.RECORD_AUDIO"
+            "android.permission.MODIFY_AUDIO_SETTINGS"
+            "android.permission.WAKE_LOCK"
+            "android.permission.ACCESS_NETWORK_STATE"
+            "android.permission.BLUETOOTH"
+            "android.permission.BLUETOOTH_CONNECT"
+          )
+
+          for permission in "${REQUIRED_PERMISSIONS[@]}"; do
+            if ! grep -Fq "$permission" <<<"$PERMISSIONS_DUMP"; then
+              echo "::error::Built APK is missing required permission $permission"
+              echo "$PERMISSIONS_DUMP"
+              exit 1
+            fi
+          done
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

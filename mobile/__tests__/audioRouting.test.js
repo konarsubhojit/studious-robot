@@ -7,6 +7,12 @@ jest.mock('react-native-incall-manager', () => ({
   chooseAudioRoute: jest.fn(),
 }));
 
+const mockEnsureBluetoothPermission = jest.fn();
+
+jest.mock('../src/permissions', () => ({
+  ensureBluetoothPermission: (...args) => mockEnsureBluetoothPermission(...args),
+}));
+
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 import {
@@ -27,13 +33,24 @@ describe('audioRouting', () => {
 
   describe('startAudioSession', () => {
     test('starts InCallManager with video media', () => {
-      startAudioSession();
+      expect(startAudioSession()).toEqual({ ok: true });
       expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
     });
 
     test('keeps the screen on during the call', () => {
       startAudioSession();
       expect(InCallManager.setKeepScreenOn).toHaveBeenCalledWith(true);
+    });
+
+    test('returns an error result instead of throwing when native start fails', () => {
+      InCallManager.start.mockImplementation(() => {
+        throw new Error('missing WAKE_LOCK');
+      });
+
+      expect(startAudioSession()).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('Unable to update in-call audio'),
+      });
     });
   });
 
@@ -47,19 +64,50 @@ describe('audioRouting', () => {
       stopAudioSession();
       expect(InCallManager.stop).toHaveBeenCalled();
     });
+
+    test('returns an error result instead of throwing when native stop fails', () => {
+      InCallManager.stop.mockImplementation(() => {
+        throw new Error('stop failed');
+      });
+
+      expect(stopAudioSession()).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('Unable to update in-call audio'),
+      });
+    });
   });
 
   describe('setAudioRoute', () => {
     test('forces speaker when speakerEnabled is true', () => {
-      setAudioRoute(true);
+      expect(setAudioRoute(true)).toEqual({
+        ok: true,
+        selected: AUDIO_ROUTES.SPEAKER_PHONE,
+      });
       expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenCalledWith(true);
       expect(InCallManager.setSpeakerphoneOn).toHaveBeenCalledWith(true);
     });
 
     test('routes to earpiece/bluetooth when speakerEnabled is false', () => {
-      setAudioRoute(false);
+      expect(setAudioRoute(false)).toEqual({
+        ok: true,
+        selected: AUDIO_ROUTES.EARPIECE,
+      });
       expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenCalledWith(false);
       expect(InCallManager.setSpeakerphoneOn).toHaveBeenCalledWith(false);
+    });
+
+    test('falls back to speaker when route update fails', () => {
+      InCallManager.setForceSpeakerphoneOn
+        .mockImplementationOnce(() => {
+          throw new Error('missing BLUETOOTH_CONNECT');
+        })
+        .mockImplementation(() => {});
+
+      expect(setAudioRoute(false)).toMatchObject({
+        ok: false,
+        selected: AUDIO_ROUTES.SPEAKER_PHONE,
+      });
+      expect(InCallManager.setSpeakerphoneOn).toHaveBeenCalledWith(true);
     });
   });
 
@@ -112,14 +160,53 @@ describe('audioRouting', () => {
   });
 
   describe('chooseAudioRoute', () => {
+    beforeEach(() => {
+      mockEnsureBluetoothPermission.mockResolvedValue({ ok: true, granted: true, requested: false });
+    });
+
     test('delegates to InCallManager and returns parsed status', async () => {
       InCallManager.chooseAudioRoute.mockResolvedValue({
         availableAudioDeviceList: '["SPEAKER_PHONE","BLUETOOTH"]',
         selectedAudioDevice: 'BLUETOOTH',
       });
       const status = await chooseAudioRoute(AUDIO_ROUTES.BLUETOOTH);
+      expect(mockEnsureBluetoothPermission).toHaveBeenCalledWith({ requestIfNeeded: true });
       expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
-      expect(status).toEqual({ available: ['SPEAKER_PHONE', 'BLUETOOTH'], selected: 'BLUETOOTH' });
+      expect(status).toEqual({
+        available: ['SPEAKER_PHONE', 'BLUETOOTH'],
+        selected: 'BLUETOOTH',
+        ok: true,
+      });
+    });
+
+    test('falls back gracefully when Bluetooth permission is denied', async () => {
+      mockEnsureBluetoothPermission.mockResolvedValue({
+        ok: false,
+        granted: false,
+        requested: true,
+        message: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
+      });
+
+      const status = await chooseAudioRoute(AUDIO_ROUTES.BLUETOOTH);
+
+      expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+      expect(status).toMatchObject({
+        ok: false,
+        selected: AUDIO_ROUTES.SPEAKER_PHONE,
+        message: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
+      });
+    });
+
+    test('returns a non-throwing error result when native route selection fails', async () => {
+      InCallManager.chooseAudioRoute.mockRejectedValue(new Error('native failure'));
+
+      const status = await chooseAudioRoute(AUDIO_ROUTES.EARPIECE);
+
+      expect(status).toMatchObject({
+        ok: false,
+        selected: null,
+        message: expect.stringContaining('Unable to update in-call audio'),
+      });
     });
   });
 

@@ -28,6 +28,7 @@ import {
   writeLogsFile,
 } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
+import { ensureCallPermissions } from '../permissions';
 import { loadSettings, saveSettings } from '../settingsStorage';
 import { getSocketOptions, isRecoverableDisconnectReason } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
@@ -307,6 +308,19 @@ export default function useWebRTCCall() {
     }
 
     try {
+      const permissionResult = await ensureCallPermissions();
+      if (!permissionResult.ok) {
+        logWarn('Android call permission preflight failed', permissionResult);
+        setStatus(permissionResult.message, 'error');
+        return null;
+      }
+      if (permissionResult.warningMessage) {
+        logWarn('Optional Android call permission denied', {
+          message: permissionResult.warningMessage,
+          deniedPermissions: permissionResult.deniedPermissions,
+        });
+      }
+
       logInfo('Media permission request start');
       const stream = await mediaDevices.getUserMedia({
         audio: true,
@@ -351,7 +365,10 @@ export default function useWebRTCCall() {
       setCallSummary(null);
       leaveRoom();
       setIsSpeakerEnabled(settings.speakerEnabledByDefault);
-      await startLocalPreview();
+      const stream = await startLocalPreview();
+      if (!stream) {
+        return;
+      }
       setStatus('Connecting to signaling server...');
 
       logInfo('Socket.IO connection attempt', {
@@ -691,20 +708,25 @@ export default function useWebRTCCall() {
       return undefined;
     }
 
-    try {
-      startAudioSession();
-    } catch (error) {
-      logWarn('InCallManager start failed', { message: error?.message });
+    const result = startAudioSession();
+    if (!result.ok) {
+      logWarn('InCallManager start failed', {
+        message: result.message,
+        nativeMessage: result.error?.message,
+      });
+      setStatus(result.message, 'error');
     }
 
     return () => {
-      try {
-        stopAudioSession();
-      } catch (error) {
-        logWarn('InCallManager stop failed', { message: error?.message });
+      const stopResult = stopAudioSession();
+      if (!stopResult.ok) {
+        logWarn('InCallManager stop failed', {
+          message: stopResult.message,
+          nativeMessage: stopResult.error?.message,
+        });
       }
     };
-  }, [isInRoom]);
+  }, [isInRoom, setStatus]);
 
   // Subscribe to native audio-device changes (headset/Bluetooth connect or
   // disconnect, route switches) while a call is active so the output picker
@@ -729,12 +751,18 @@ export default function useWebRTCCall() {
       return;
     }
 
-    try {
-      setAudioRoute(isSpeakerEnabled);
-    } catch (error) {
-      logWarn('InCallManager route update failed', { message: error?.message });
+    const routeResult = setAudioRoute(isSpeakerEnabled);
+    if (!routeResult.ok) {
+      if (routeResult.selected === AUDIO_ROUTES.SPEAKER_PHONE && !isSpeakerEnabled) {
+        setIsSpeakerEnabled(true);
+      }
+      logWarn('InCallManager route update failed', {
+        message: routeResult.message,
+        nativeMessage: routeResult.error?.message,
+      });
+      setStatus(routeResult.message, 'error');
     }
-  }, [isInRoom, isSpeakerEnabled]);
+  }, [isInRoom, isSpeakerEnabled, setStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) {
@@ -769,7 +797,19 @@ export default function useWebRTCCall() {
       try {
         logInfo('Audio output selected', { route });
         const nextStatus = await chooseAudioRoute(route);
-        setAudioDevices(nextStatus);
+        if (!nextStatus.ok) {
+          logWarn('Audio output selection degraded', {
+            route,
+            message: nextStatus.message,
+            nativeMessage: nextStatus.error?.message,
+          });
+          setAudioDevices({ available: nextStatus.available, selected: nextStatus.selected });
+          setIsSpeakerEnabled(nextStatus.selected === AUDIO_ROUTES.SPEAKER_PHONE);
+          setStatus(nextStatus.message, 'error');
+          return;
+        }
+
+        setAudioDevices({ available: nextStatus.available, selected: nextStatus.selected });
         setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
         setStatus(`Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? 'Speaker' : route}`);
       } catch (error) {

@@ -1,4 +1,33 @@
-import { logError, logInfo } from './appLogger';
+import { logDebug, logError, logInfo } from './appLogger';
+
+// Some platforms (notably react-native-webrtc on Android) do not implement every
+// MediaStreamTrack introspection API and throw an "Not implemented." error when
+// called. Such errors are an expected capability gap rather than a real failure,
+// so we detect them to avoid logging them at error level.
+function isNotImplementedError(error) {
+  return Boolean(error) && /not implemented/i.test(error.message || '');
+}
+
+// Safely invoke an optional MediaStreamTrack reader (getSettings/getCapabilities).
+// Returns null when the reader is missing or throws. "Not implemented." errors are
+// logged at debug level because they are an expected platform limitation; any other
+// error is logged at error level.
+function readTrackState(track, method) {
+  if (!track || typeof track[method] !== 'function') {
+    return null;
+  }
+
+  try {
+    return track[method]();
+  } catch (error) {
+    if (isNotImplementedError(error)) {
+      logDebug(`Camera ${method} is not implemented on this platform`, error);
+    } else {
+      logError('Failed to read camera state for lighting adjustment', error);
+    }
+    return null;
+  }
+}
 
 // Scene brightness is normalized to the [0, 1] range, where 0 is very dark and 1
 // is very bright. These thresholds split that range into low / normal / bright.
@@ -130,19 +159,8 @@ export async function applyLightingAdjustment(track) {
     return { applied: false, condition: 'unknown' };
   }
 
-  let settings = null;
-  let capabilities = null;
-  try {
-    if (typeof track.getSettings === 'function') {
-      settings = track.getSettings();
-    }
-    if (typeof track.getCapabilities === 'function') {
-      capabilities = track.getCapabilities();
-    }
-  } catch (error) {
-    logError('Failed to read camera state for lighting adjustment', error);
-    return { applied: false, condition: 'unknown' };
-  }
+  const settings = readTrackState(track, 'getSettings');
+  const capabilities = readTrackState(track, 'getCapabilities');
 
   const brightness = estimateSceneBrightness(settings, capabilities);
   const { condition, constraints } = getLightingAdjustedConstraints(brightness);

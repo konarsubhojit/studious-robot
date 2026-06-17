@@ -110,11 +110,27 @@ foreground service and the system Picture-in-Picture (PiP) window:
 These features rely on the following permissions declared in
 `android/app/src/main/AndroidManifest.xml`:
 
+- `INTERNET` — connect to the signaling server and TURN/STUN services.
+- `CAMERA`, `RECORD_AUDIO` — capture the local video/audio tracks for
+  `react-native-webrtc`.
+- `MODIFY_AUDIO_SETTINGS` — let `react-native-webrtc` and
+  `react-native-incall-manager` control in-call audio routing and focus.
+- `WAKE_LOCK` — allow `react-native-incall-manager` to keep the device awake
+  during an active call.
+- `ACCESS_NETWORK_STATE` — allow `react-native-webrtc` to query Android network
+  connectivity during ICE gathering without crashing native WebRTC threads.
+- `BLUETOOTH` (Android 11 and older) and `BLUETOOTH_CONNECT` (Android 12+) —
+  enable Bluetooth call-audio routing. `BLUETOOTH_CONNECT` is requested at
+  runtime; if denied, the call stays on speaker/earpiece instead of crashing.
 - `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CAMERA`,
   `FOREGROUND_SERVICE_MICROPHONE` — run the call foreground service with
   camera/microphone access.
 - `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
   33) and newer.
+
+The Android APK workflow now inspects the assembled debug APK with `aapt dump
+permissions` and fails CI if any required call permission is missing from the
+final packaged manifest.
 
 The `MainActivity` also declares `android:supportsPictureInPicture="true"` and
 `android:resizeableActivity="true"` to enable PiP.

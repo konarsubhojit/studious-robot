@@ -5,6 +5,7 @@ import {
   getLightingAdjustedConstraints,
   normalizeToUnitRange,
 } from '../src/cameraLighting';
+import { clearLogs, getLogsAsText } from '../src/appLogger';
 
 describe('cameraLighting', () => {
   test('classifyLighting buckets brightness into low/normal/bright', () => {
@@ -114,6 +115,7 @@ describe('cameraLighting', () => {
   });
 
   test('applyLightingAdjustment swallows getCapabilities not-implemented errors', async () => {
+    clearLogs();
     const applyConstraints = jest.fn().mockResolvedValue(undefined);
     const track = {
       applyConstraints,
@@ -128,6 +130,10 @@ describe('cameraLighting', () => {
     expect(result.applied).toBe(false);
     expect(result.condition).toBe('unknown');
     expect(applyConstraints).not.toHaveBeenCalled();
+    // The expected platform limitation must not be logged at error level.
+    const logs = getLogsAsText();
+    expect(logs).not.toContain('[ERROR]');
+    expect(logs).toContain('[DEBUG]');
   });
 
   test('applyLightingAdjustment returns no-op for an invalid track', async () => {
