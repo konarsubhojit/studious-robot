@@ -6,21 +6,21 @@ const BLUETOOTH_CONNECT_PERMISSION = PermissionsAndroid?.PERMISSIONS?.BLUETOOTH_
 
 const REQUIRED_CALL_PERMISSIONS = [CAMERA_PERMISSION, MICROPHONE_PERMISSION].filter(Boolean);
 
-export function requiresBluetoothConnectPermission(platformVersion = Platform.Version) {
+export function requiresBluetoothConnectPermission(androidApiLevel = Platform.Version) {
   return (
     Platform.OS === 'android' &&
-    Number(platformVersion) >= 31 &&
+    Number(androidApiLevel) >= 31 &&
     Boolean(BLUETOOTH_CONNECT_PERMISSION)
   );
 }
 
-export function getCallRuntimePermissions(platformVersion = Platform.Version) {
+export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   if (Platform.OS !== 'android') {
     return [];
   }
 
   const permissions = [...REQUIRED_CALL_PERMISSIONS];
-  if (requiresBluetoothConnectPermission(platformVersion)) {
+  if (requiresBluetoothConnectPermission(androidApiLevel)) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
   return permissions;

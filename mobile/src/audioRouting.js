@@ -1,5 +1,6 @@
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
+import { logWarn } from './appLogger';
 import { ensureBluetoothPermission } from './permissions';
 
 /**
@@ -23,7 +24,8 @@ export const AUDIO_ROUTE_LABELS = {
 };
 
 const NATIVE_DEVICE_EVENT = 'onAudioDeviceChanged';
-const GENERIC_AUDIO_SESSION_ERROR = 'Unable to update in-call audio. Check call permissions and audio device access.';
+const GENERIC_AUDIO_SESSION_ERROR =
+  'Unable to update in-call audio. Check app permissions in Settings and confirm the selected audio device is available.';
 const AUDIO_ROUTE_FALLBACK_MESSAGE = 'Requested audio route unavailable. Call will stay on speaker or earpiece.';
 
 /**
@@ -93,8 +95,8 @@ export function setAudioRoute(speakerEnabled) {
       try {
         InCallManager.setForceSpeakerphoneOn(true);
         InCallManager.setSpeakerphoneOn(true);
-      } catch {
-        // Preserve the original error below; the fallback is best-effort only.
+      } catch (fallbackError) {
+        logWarn('Audio route fallback to speaker failed', { message: fallbackError?.message });
       }
       return {
         ok: false,
