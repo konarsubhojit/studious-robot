@@ -60,7 +60,7 @@ jobs:
             git reset --hard origin/master
             cd server
             npm ci --omit=dev
-            sudo systemctl restart studious-robot
+            sudo systemctl restart robot-service
             # Verify the service came back up; fail the job if it did not.
             sleep 2
-            sudo systemctl is-active --quiet studious-robot && echo "studious-robot service is running"
+            sudo systemctl is-active --quiet robot-service && echo "robot-service is running"

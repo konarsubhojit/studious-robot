@@ -1,5 +1,5 @@
 [Unit]
-Description=studious-robot signaling server
+Description=robot-service signaling server
 After=network.target
 
 [Service]
