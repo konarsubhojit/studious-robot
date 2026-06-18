@@ -27,8 +27,9 @@ export default function DraggablePip({ gesture, animatedStyle, streamURL, mirror
           fallbackLabel="Self-view unavailable"
           style={styles.localPipStream}
           streamURL={streamURL}
-          objectFit="cover"
+          objectFit="contain"
           mirror={mirror}
+          zOrder={2}
         />
       </Animated.View>
     </GestureDetector>

@@ -16,6 +16,7 @@ import DraggablePip from './DraggablePip';
  * @param {boolean} props.mirrorPip
  * @param {object} props.pipGesture
  * @param {object} props.animatedPipStyle
+ * @param {boolean} [props.isCompact]
  */
 export default function CallStage({
   onLayout,
@@ -26,9 +27,10 @@ export default function CallStage({
   mirrorPip,
   pipGesture,
   animatedPipStyle,
+  isCompact = false,
 }) {
   return (
-    <View style={styles.callStage} onLayout={onLayout}>
+    <View style={[styles.callStage, isCompact && styles.callStageCompact]} onLayout={onLayout}>
       <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
       <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
       {hasMainStream ? (
@@ -37,6 +39,7 @@ export default function CallStage({
           style={styles.remoteStream}
           streamURL={mainStreamUrl}
           objectFit="cover"
+          zOrder={0}
         />
       ) : (
         <View style={styles.remotePlaceholder}>
@@ -66,6 +69,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.stage,
     borderWidth: 1,
     borderColor: colors.borderStage,
+  },
+  callStageCompact: {
+    marginBottom: 0,
   },
   cozyBlob: {
     position: 'absolute',
