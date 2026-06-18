@@ -1,0 +1,68 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import CallStage from '../../src/components/CallStage';
+
+jest.mock('../../src/SafeRTCView', () => (props) =>
+  require('react').createElement('SafeRTCView', props),
+);
+jest.mock('../../src/components/DraggablePip', () => (props) =>
+  require('react').createElement('DraggablePip', props),
+);
+
+function createProps(overrides = {}) {
+  return {
+    onLayout: () => {},
+    mainStreamUrl: 'remote-stream-url',
+    hasMainStream: true,
+    pipStreamUrl: 'local-stream-url',
+    hasPipStream: true,
+    mirrorPip: true,
+    pipGesture: {},
+    animatedPipStyle: {},
+    isCompact: false,
+    ...overrides,
+  };
+}
+
+describe('CallStage', () => {
+  test('renders main stream and DraggablePip in normal mode', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps()} />);
+    });
+
+    expect(tree.root.findAllByType('SafeRTCView')).toHaveLength(1);
+    expect(tree.root.findAllByType('DraggablePip')).toHaveLength(1);
+  });
+
+  test('renders main stream but hides DraggablePip in compact PiP mode', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ isCompact: true })} />);
+    });
+
+    expect(tree.root.findAllByType('SafeRTCView')).toHaveLength(1);
+    expect(tree.root.findAllByType('DraggablePip')).toHaveLength(0);
+  });
+
+  test('does not render DraggablePip when hasPipStream is false', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ hasPipStream: false })} />);
+    });
+
+    expect(tree.root.findAllByType('DraggablePip')).toHaveLength(0);
+  });
+
+  test('renders waiting placeholder when hasMainStream is false', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ hasMainStream: false })} />);
+    });
+
+    expect(tree.root.findAllByType('SafeRTCView')).toHaveLength(0);
+    const { Text } = require('react-native');
+    const texts = tree.root.findAllByType(Text);
+    expect(texts.some((t) => t.props.children === 'Waiting for someone to join…')).toBe(true);
+  });
+});

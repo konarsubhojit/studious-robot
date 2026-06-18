@@ -39,7 +39,7 @@ export default function CallScreen({
   isCompact = false,
 }) {
   return (
-    <View style={styles.callScreen}>
+    <View style={[styles.callScreen, isCompact && styles.callScreenCompact]}>
       {!isCompact ? (
         <CallTopBar
           elapsedCallSeconds={elapsedCallSeconds}
@@ -88,6 +88,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
+  },
+  callScreenCompact: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   status: {
     color: colors.textMuted,
