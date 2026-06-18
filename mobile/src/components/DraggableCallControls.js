@@ -62,10 +62,12 @@ export default function DraggableCallControls({
   const panelWidth = screenWidth - 2 * PANEL_SIDE_MARGIN;
 
   // Allowable translation range keeps the entire panel on-screen.
-  const maxX = Math.max(0, screenWidth - panelWidth - PANEL_SIDE_MARGIN);
+  // panelWidth = screenWidth - 2*PANEL_SIDE_MARGIN, so the right bound is
+  // screenWidth - panelWidth = 2*PANEL_SIDE_MARGIN (panel touches the right edge).
+  const maxX = Math.max(0, screenWidth - panelWidth);
   const maxY = Math.max(0, screenHeight - panelHeight - PANEL_SIDE_MARGIN);
 
-  // Default position: horizontally centred at the left margin, vertically
+  // Default position: aligned with the left margin, vertically
   // near the bottom so the video area above is fully visible.
   const defaultX = PANEL_SIDE_MARGIN;
   const defaultY = Math.max(0, screenHeight - panelHeight - PANEL_BOTTOM_GAP);
