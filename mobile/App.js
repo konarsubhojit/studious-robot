@@ -1,4 +1,4 @@
-import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
+import { Platform, SafeAreaView, StatusBar, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { logError } from './src/appLogger';
 import CallScreen from './src/components/CallScreen';
@@ -55,6 +55,7 @@ export default function App() {
             onCameraSwitch={call.handleCameraSwitch}
             onLeave={call.handleRoomButtonPress}
             status={call.status}
+            isCompact={call.isCompactView}
           />
         ) : (
           <Lobby
@@ -81,7 +82,7 @@ export default function App() {
             onDismissSummary={call.dismissCallSummary}
           />
         )}
-        <StatusBar barStyle="light-content" />
+        <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -91,5 +92,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
 });

@@ -36,16 +36,19 @@ export default function CallScreen({
   onCameraSwitch,
   onLeave,
   status,
+  isCompact = false,
 }) {
   return (
     <View style={styles.callScreen}>
-      <CallTopBar
-        elapsedCallSeconds={elapsedCallSeconds}
-        connectionQuality={connectionQuality}
-        participantLabel={participantLabel}
-      />
+      {!isCompact ? (
+        <CallTopBar
+          elapsedCallSeconds={elapsedCallSeconds}
+          connectionQuality={connectionQuality}
+          participantLabel={participantLabel}
+        />
+      ) : null}
 
-      {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
+      {!isCompact && isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
 
       <CallStage
         onLayout={onStageLayout}
@@ -56,22 +59,25 @@ export default function CallScreen({
         mirrorPip={mirrorPip}
         pipGesture={pipGesture}
         animatedPipStyle={animatedPipStyle}
+        isCompact={isCompact}
       />
 
-      <CallControls
-        isMuted={isMuted}
-        isVideoEnabled={isVideoEnabled}
-        hasLocalStream={hasLocalStream}
-        audioDevices={audioDevices}
-        isSpeakerEnabled={isSpeakerEnabled}
-        onMuteToggle={onMuteToggle}
-        onVideoToggle={onVideoToggle}
-        onChooseAudioOutput={onChooseAudioOutput}
-        onCameraSwitch={onCameraSwitch}
-        onLeave={onLeave}
-      />
+      {!isCompact ? (
+        <CallControls
+          isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
+          hasLocalStream={hasLocalStream}
+          audioDevices={audioDevices}
+          isSpeakerEnabled={isSpeakerEnabled}
+          onMuteToggle={onMuteToggle}
+          onVideoToggle={onVideoToggle}
+          onChooseAudioOutput={onChooseAudioOutput}
+          onCameraSwitch={onCameraSwitch}
+          onLeave={onLeave}
+        />
+      ) : null}
 
-      <StatusBanner status={status} style={styles.status} />
+      {!isCompact ? <StatusBanner status={status} style={styles.status} /> : null}
     </View>
   );
 }

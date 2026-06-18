@@ -61,8 +61,8 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
     const val NAME = "CallService"
 
     /** Aspect ratio (width:height) used for the Picture-in-Picture window. */
-    const val PIP_ASPECT_RATIO_WIDTH = 9
-    const val PIP_ASPECT_RATIO_HEIGHT = 16
+    const val PIP_ASPECT_RATIO_WIDTH = 16
+    const val PIP_ASPECT_RATIO_HEIGHT = 9
 
     /** Set while a call is active so the activity can enter PiP on user leave. */
     @Volatile

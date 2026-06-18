@@ -79,6 +79,7 @@ export default function useWebRTCCall() {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(DEFAULT_SETTINGS.speakerEnabledByDefault);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+  const [isCompactView, setIsCompactView] = useState(false);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [callConnectedAt, setCallConnectedAt] = useState(null);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
@@ -187,6 +188,7 @@ export default function useWebRTCCall() {
     setIsReconnecting(false);
     setCallConnectedAt(null);
     setElapsedCallSeconds(0);
+    setIsCompactView(false);
     setIsLocalPrimary(false);
     setAudioDevices({ available: [], selected: null });
     stopCallService();
@@ -597,7 +599,11 @@ export default function useWebRTCCall() {
     }
 
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if ((nextState === 'background' || nextState === 'inactive') && isInRoomRef.current) {
+      const shouldUseCompactView =
+        isInRoomRef.current && (nextState === 'background' || nextState === 'inactive');
+      setIsCompactView(shouldUseCompactView);
+
+      if (shouldUseCompactView) {
         logInfo('App backgrounded during call; requesting Picture-in-Picture', { nextState });
         enterPictureInPicture();
       }
@@ -964,6 +970,7 @@ export default function useWebRTCCall() {
     isMuted,
     isVideoEnabled,
     isSpeakerEnabled,
+    isCompactView,
     isLocalPrimary,
     elapsedCallSeconds,
     connectionQuality,
