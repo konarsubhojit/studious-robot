@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { clamp } from '../callUx';
@@ -21,6 +21,7 @@ import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
 export default function usePictureInPicturePip({ onTap }) {
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [pipPosition, setPipPosition] = useState({ x: PIP_MARGIN, y: PIP_MARGIN });
+  const hasDefaultPositioned = useRef(false);
 
   const pipX = useSharedValue(PIP_MARGIN);
   const pipY = useSharedValue(PIP_MARGIN);
@@ -35,6 +36,15 @@ export default function usePictureInPicturePip({ onTap }) {
 
   useEffect(() => {
     const bounds = getPipBounds();
+
+    // On first valid layout, snap the PiP to the bottom-right corner so it
+    // does not obscure the remote participant in portrait orientation.
+    if (!hasDefaultPositioned.current && stageSize.width > 0 && stageSize.height > 0) {
+      hasDefaultPositioned.current = true;
+      setPipPosition({ x: bounds.maxX, y: bounds.maxY });
+      return;
+    }
+
     const clampedX = clamp(pipPosition.x, bounds.minX, bounds.maxX);
     const clampedY = clamp(pipPosition.y, bounds.minY, bounds.maxY);
     if (clampedX !== pipPosition.x || clampedY !== pipPosition.y) {
@@ -43,7 +53,7 @@ export default function usePictureInPicturePip({ onTap }) {
     }
     pipX.value = clampedX;
     pipY.value = clampedY;
-  }, [getPipBounds, pipPosition.x, pipPosition.y, pipX, pipY]);
+  }, [getPipBounds, pipPosition.x, pipPosition.y, pipX, pipY, stageSize.width, stageSize.height]);
 
   const handleCallStageLayout = useCallback((event) => {
     const { width, height } = event.nativeEvent.layout;
