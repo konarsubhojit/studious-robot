@@ -21,8 +21,8 @@ export default function CallControls({
   onLeave,
 }) {
   return (
-    <>
-      <View style={styles.controlsRow}>
+    <View style={styles.controls}>
+      <View style={styles.mediaRow}>
         <AppButton
           title={isMuted ? 'Unmute' : 'Mute'}
           onPress={onMuteToggle}
@@ -45,9 +45,6 @@ export default function CallControls({
           isSpeakerEnabled={isSpeakerEnabled}
           onSelect={onChooseAudioOutput}
         />
-      </View>
-
-      <View style={styles.controlsRow}>
         <AppButton
           title="Swap Camera"
           onPress={onCameraSwitch}
@@ -55,23 +52,27 @@ export default function CallControls({
           accessibilityLabel="Switch between front and back camera"
           testID="control-swap-camera"
         />
-        <AppButton
-          title="Leave"
-          onPress={onLeave}
-          style={styles.leaveButton}
-          accessibilityLabel="Leave the call"
-          testID="control-leave"
-        />
       </View>
-    </>
+
+      <AppButton
+        title="Leave"
+        onPress={onLeave}
+        style={styles.leaveButton}
+        accessibilityLabel="Leave the call"
+        testID="control-leave"
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  controlsRow: {
-    flexDirection: 'row',
+  controls: {
     gap: spacing.sm,
     marginBottom: spacing.sm,
+  },
+  mediaRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   leaveButton: {
     backgroundColor: colors.danger,

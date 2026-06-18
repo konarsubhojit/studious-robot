@@ -19,6 +19,8 @@ function createProps(overrides = {}) {
     mirrorPip: true,
     pipGesture: {},
     animatedPipStyle: {},
+    isMuted: false,
+    isVideoEnabled: true,
     isCompact: false,
     ...overrides,
   };
@@ -64,5 +66,30 @@ describe('CallStage', () => {
     const { Text } = require('react-native');
     const texts = tree.root.findAllByType(Text);
     expect(texts.some((t) => t.props.children === 'Waiting for someone to join…')).toBe(true);
+  });
+
+  test('forwards isMuted and isVideoEnabled to DraggablePip', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ isMuted: true, isVideoEnabled: false })} />);
+    });
+
+    const pip = tree.root.findAllByType('DraggablePip')[0];
+    expect(pip.props.isMuted).toBe(true);
+    expect(pip.props.isVideoEnabled).toBe(false);
+  });
+
+  test('forwards default isMuted=false and isVideoEnabled=true when not provided', () => {
+    const props = createProps();
+    delete props.isMuted;
+    delete props.isVideoEnabled;
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...props} />);
+    });
+
+    const pip = tree.root.findAllByType('DraggablePip')[0];
+    expect(pip.props.isMuted).toBe(false);
+    expect(pip.props.isVideoEnabled).toBe(true);
   });
 });

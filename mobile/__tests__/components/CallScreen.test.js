@@ -73,4 +73,15 @@ describe('CallScreen', () => {
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
     expect(tree.root.findAllByType('CallStage')[0].props.isCompact).toBe(true);
   });
+
+  test('forwards isMuted and isVideoEnabled to CallStage', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ isMuted: true, isVideoEnabled: false })} />);
+    });
+
+    const stage = tree.root.findAllByType('CallStage')[0];
+    expect(stage.props.isMuted).toBe(true);
+    expect(stage.props.isVideoEnabled).toBe(false);
+  });
 });
