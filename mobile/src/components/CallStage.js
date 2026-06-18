@@ -47,7 +47,7 @@ export default function CallStage({
         </View>
       )}
 
-      {hasPipStream ? (
+      {!isCompact && hasPipStream ? (
         <DraggablePip
           gesture={pipGesture}
           animatedStyle={animatedPipStyle}
@@ -72,6 +72,9 @@ const styles = StyleSheet.create({
   },
   callStageCompact: {
     marginBottom: 0,
+    minHeight: 0,
+    borderRadius: 0,
+    borderWidth: 0,
   },
   cozyBlob: {
     position: 'absolute',
