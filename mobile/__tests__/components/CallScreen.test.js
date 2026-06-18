@@ -14,6 +14,9 @@ jest.mock('../../src/components/CallStage', () => (props) =>
 jest.mock('../../src/components/CallControls', () => (props) =>
   require('react').createElement('CallControls', props),
 );
+jest.mock('../../src/components/DraggableCallControls', () => (props) =>
+  require('react').createElement('DraggableCallControls', props),
+);
 jest.mock('../../src/components/StatusBanner', () => (props) =>
   require('react').createElement('StatusBanner', props),
 );
@@ -56,7 +59,7 @@ describe('CallScreen', () => {
     });
 
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
-    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+    expect(tree.root.findAllByType('DraggableCallControls')).toHaveLength(1);
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
     expect(tree.root.findAllByType('CallStage')[0].props.isCompact).toBe(false);
   });
@@ -69,7 +72,7 @@ describe('CallScreen', () => {
 
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(0);
     expect(tree.root.findAllByType('ReconnectBanner')).toHaveLength(0);
-    expect(tree.root.findAllByType('CallControls')).toHaveLength(0);
+    expect(tree.root.findAllByType('DraggableCallControls')).toHaveLength(0);
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
     expect(tree.root.findAllByType('CallStage')[0].props.isCompact).toBe(true);
   });
