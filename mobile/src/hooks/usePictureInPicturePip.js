@@ -41,6 +41,8 @@ export default function usePictureInPicturePip({ onTap }) {
     // does not obscure the remote participant in portrait orientation.
     if (!hasDefaultPositioned.current && stageSize.width > 0 && stageSize.height > 0) {
       hasDefaultPositioned.current = true;
+      pipX.value = bounds.maxX;
+      pipY.value = bounds.maxY;
       setPipPosition({ x: bounds.maxX, y: bounds.maxY });
       return;
     }
