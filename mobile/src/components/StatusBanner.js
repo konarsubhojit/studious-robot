@@ -34,11 +34,11 @@ export default function StatusBanner({ status, style }) {
   return (
     <View
       style={[styles.container, bg ? { backgroundColor: bg } : null, style]}
-      accessibilityRole="text"
       accessibilityLiveRegion="polite"
     >
       <Text
         testID="status-banner"
+        accessibilityRole="text"
         style={[styles.status, { color: SEVERITY_COLOR[severity] || colors.textMuted }]}
         numberOfLines={2}
       >

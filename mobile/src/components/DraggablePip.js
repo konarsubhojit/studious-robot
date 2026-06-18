@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
   },
   muteBadgeText: {
     color: colors.textPrimary,
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: '700',
   },
 });
