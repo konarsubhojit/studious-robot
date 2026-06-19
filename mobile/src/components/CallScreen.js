@@ -1,15 +1,16 @@
 import { StyleSheet, View } from 'react-native';
 import { colors, spacing } from '../theme';
-import CallControls from './CallControls';
 import CallStage from './CallStage';
 import CallTopBar from './CallTopBar';
+import DraggableCallControls from './DraggableCallControls';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
 
 /**
- * Full in-call screen: top bar, reconnect banner, video stage, control deck,
- * and the status line.  Purely presentational — all behaviour is supplied via
- * props from the useWebRTCCall / usePictureInPicturePip hooks.
+ * Full in-call screen: top bar, reconnect banner, video stage, floating
+ * draggable controls, and the status line.  Purely presentational — all
+ * behaviour is supplied via props from the useWebRTCCall /
+ * usePictureInPicturePip hooks.
  */
 export default function CallScreen({
   elapsedCallSeconds,
@@ -63,7 +64,7 @@ export default function CallScreen({
       />
 
       {!isCompact ? (
-        <CallControls
+        <DraggableCallControls
           isMuted={isMuted}
           isVideoEnabled={isVideoEnabled}
           hasLocalStream={hasLocalStream}
@@ -87,7 +88,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
   },
   callScreenCompact: {
     paddingHorizontal: 0,
