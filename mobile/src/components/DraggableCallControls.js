@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
-import { clamp } from '../callUx';
 import { colors, radius, spacing } from '../theme';
 import CallControls from './CallControls';
 
@@ -83,8 +82,11 @@ export default function DraggableCallControls({
       startY.value = panY.value;
     })
     .onUpdate((event) => {
-      panX.value = clamp(startX.value + event.translationX, 0, maxX);
-      panY.value = clamp(startY.value + event.translationY, 0, maxY);
+      'worklet';
+      const nextX = startX.value + event.translationX;
+      const nextY = startY.value + event.translationY;
+      panX.value = Math.min(Math.max(nextX, 0), maxX);
+      panY.value = Math.min(Math.max(nextY, 0), maxY);
     });
 
   const animatedStyle = useAnimatedStyle(() => ({

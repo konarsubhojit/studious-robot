@@ -21,8 +21,9 @@ const SEVERITY_BG = {
  * @param {object} props
  * @param {{ message: string, severity?: 'info'|'success'|'error' }} props.status
  * @param {object} [props.style]
+ * @param {object} [props.textStyle]
  */
-export default function StatusBanner({ status, style }) {
+export default function StatusBanner({ status, style, textStyle }) {
   const message = status?.message || '';
   const severity = status?.severity || 'info';
   const bg = SEVERITY_BG[severity];
@@ -39,7 +40,7 @@ export default function StatusBanner({ status, style }) {
       <Text
         testID="status-banner"
         accessibilityRole="text"
-        style={[styles.status, { color: SEVERITY_COLOR[severity] || colors.textMuted }]}
+        style={[styles.status, { color: SEVERITY_COLOR[severity] || colors.textMuted }, textStyle]}
         numberOfLines={2}
       >
         {message}

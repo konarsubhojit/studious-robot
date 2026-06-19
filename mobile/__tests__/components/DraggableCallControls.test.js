@@ -1,14 +1,24 @@
 import React from 'react';
+import * as ReactNative from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import DraggableCallControls from '../../src/components/DraggableCallControls';
+
+const mockPanCallbacks = {};
+const mockSharedValues = [];
 
 jest.mock('react-native-gesture-handler', () => ({
   __esModule: true,
   GestureDetector: ({ children }) => children,
   Gesture: {
     Pan: () => ({
-      onStart: function () { return this; },
-      onUpdate: function () { return this; },
+      onStart: function (callback) {
+        mockPanCallbacks.onStart = callback;
+        return this;
+      },
+      onUpdate: function (callback) {
+        mockPanCallbacks.onUpdate = callback;
+        return this;
+      },
     }),
   },
 }));
@@ -18,7 +28,11 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View },
-    useSharedValue: (init) => ({ value: init }),
+    useSharedValue: (init) => {
+      const sharedValue = { value: init };
+      mockSharedValues.push(sharedValue);
+      return sharedValue;
+    },
     useAnimatedStyle: (fn) => fn(),
     runOnJS: (fn) => fn,
   };
@@ -45,6 +59,17 @@ function createProps(overrides = {}) {
 }
 
 describe('DraggableCallControls', () => {
+  beforeEach(() => {
+    mockSharedValues.length = 0;
+    mockPanCallbacks.onStart = null;
+    mockPanCallbacks.onUpdate = null;
+    jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 400, height: 800 });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   test('renders with the draggable-call-controls testID', () => {
     let tree;
     act(() => {
@@ -103,5 +128,24 @@ describe('DraggableCallControls', () => {
       ? Object.assign({}, ...panel.props.style.filter(Boolean))
       : panel.props.style;
     expect(flatStyle.position).toBe('absolute');
+  });
+
+  test('clamps drag updates within the visible screen bounds', () => {
+    act(() => {
+      renderer.create(<DraggableCallControls {...createProps()} />);
+    });
+
+    expect(typeof mockPanCallbacks.onStart).toBe('function');
+    expect(typeof mockPanCallbacks.onUpdate).toBe('function');
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -1000, translationY: -1000 });
+    });
+
+    const numericValues = mockSharedValues.map((sharedValue) => sharedValue.value);
+    expect(numericValues.every(Number.isFinite)).toBe(true);
+    expect(numericValues.some((value) => value === 0)).toBe(true);
+    expect(numericValues.every((value) => value >= 0)).toBe(true);
   });
 });
