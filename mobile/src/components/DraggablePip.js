@@ -42,7 +42,7 @@ export default function DraggablePip({
           fallbackLabel="Self-view unavailable"
           style={styles.localPipStream}
           streamURL={streamURL}
-          objectFit="contain"
+          objectFit="cover"
           mirror={mirror}
           zOrder={2}
         />
