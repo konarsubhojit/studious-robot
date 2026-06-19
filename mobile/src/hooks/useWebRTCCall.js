@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Platform, Vibration } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -16,7 +16,8 @@ import {
   stopAudioSession,
   subscribeAudioDevices,
 } from '../audioRouting';
-import { enterPictureInPicture, startCallService, stopCallService } from '../callService';
+import { startCallService, stopCallService } from '../callService';
+import useCompactCallView from './useCompactCallView';
 import { applyLightingAdjustment } from '../cameraLighting';
 import { getConnectionQuality } from '../callUx';
 import {
@@ -79,9 +80,7 @@ export default function useWebRTCCall() {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(DEFAULT_SETTINGS.speakerEnabledByDefault);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
-  const [isCompactView, setIsCompactView] = useState(false);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
-  const [callConnectedAt, setCallConnectedAt] = useState(null);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
   const [connectionQuality, setConnectionQuality] = useState({ bars: 0, label: 'No link' });
   const [audioDevices, setAudioDevices] = useState({ available: [], selected: null });
@@ -95,6 +94,7 @@ export default function useWebRTCCall() {
   const isOffererRef = useRef(false);
   const lightingIntervalRef = useRef(null);
   const callConnectedAtRef = useRef(null);
+  const elapsedTimerRef = useRef(null);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
   const connectionStatsRef = useRef({
     timestampMs: null,
@@ -105,13 +105,11 @@ export default function useWebRTCCall() {
     setStatusState({ message, severity });
   }, []);
 
+  const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef);
+
   useEffect(() => {
     isInRoomRef.current = isInRoom;
   }, [isInRoom]);
-
-  useEffect(() => {
-    callConnectedAtRef.current = callConnectedAt;
-  }, [callConnectedAt]);
 
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
@@ -146,12 +144,15 @@ export default function useWebRTCCall() {
   }, [roomId]);
 
   const markCallConnected = useCallback(() => {
-    setCallConnectedAt((previous) => {
-      if (!previous) {
-        haptic(HAPTIC_CONNECT_MS);
-      }
-      return previous || Date.now();
-    });
+    if (callConnectedAtRef.current) {
+      return; // already connected; idempotent
+    }
+    haptic(HAPTIC_CONNECT_MS);
+    callConnectedAtRef.current = Date.now();
+    setElapsedCallSeconds(0);
+    elapsedTimerRef.current = setInterval(() => {
+      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
+    }, 1000);
   }, []);
 
   const closePeerConnection = useCallback(() => {
@@ -160,6 +161,7 @@ export default function useWebRTCCall() {
       logInfo('Closing RTCPeerConnection');
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
+      peerConnectionRef.current.oniceconnectionstatechange = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -184,9 +186,14 @@ export default function useWebRTCCall() {
       });
     }
 
+    callConnectedAtRef.current = null;
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
+
     setIsInRoom(false);
     setIsReconnecting(false);
-    setCallConnectedAt(null);
     setElapsedCallSeconds(0);
     setIsCompactView(false);
     setIsLocalPrimary(false);
@@ -244,10 +251,10 @@ export default function useWebRTCCall() {
         return;
       }
       logWarn('ICE connection failed; triggering ICE restart');
-      connection
-        .createOffer({ iceRestart: true })
-        .then((offer) => connection.setLocalDescription(offer))
-        .then(() => {
+      const attemptIceRestart = async () => {
+        try {
+          const offer = await connection.createOffer({ iceRestart: true });
+          await connection.setLocalDescription(offer);
           if (socketRef.current) {
             socketRef.current.emit('offer', {
               roomId: roomIdRef.current,
@@ -255,10 +262,11 @@ export default function useWebRTCCall() {
             });
             logInfo('ICE restart offer sent after ICE failure');
           }
-        })
-        .catch((error) => {
+        } catch (error) {
           logError('ICE restart after failure failed', error);
-        });
+        }
+      };
+      void attemptIceRestart();
     };
 
     peerConnectionRef.current = connection;
@@ -592,42 +600,6 @@ export default function useWebRTCCall() {
     startLightingMonitor();
     return stopLightingMonitor;
   }, [localStream, settings.autoCameraLightingEnabled, startLightingMonitor, stopLightingMonitor]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') {
-      return undefined;
-    }
-
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      const shouldUseCompactView =
-        isInRoomRef.current && (nextState === 'background' || nextState === 'inactive');
-      setIsCompactView(shouldUseCompactView);
-
-      if (shouldUseCompactView) {
-        logInfo('App backgrounded during call; requesting Picture-in-Picture', { nextState });
-        enterPictureInPicture();
-      }
-    });
-
-    return () => subscription.remove();
-  }, []);
-
-  useEffect(() => {
-    if (!callConnectedAt) {
-      setElapsedCallSeconds(0);
-      return undefined;
-    }
-
-    const updateElapsedCallSeconds = () => {
-      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAt) / 1000));
-    };
-
-    updateElapsedCallSeconds();
-    const timerId = setInterval(() => {
-      updateElapsedCallSeconds();
-    }, 1000);
-    return () => clearInterval(timerId);
-  }, [callConnectedAt]);
 
   useEffect(() => {
     if (!isInRoom) {
