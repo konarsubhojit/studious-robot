@@ -27,7 +27,7 @@ export default function DraggablePip({ gesture, animatedStyle, streamURL, mirror
           fallbackLabel="Self-view unavailable"
           style={styles.localPipStream}
           streamURL={streamURL}
-          objectFit="contain"
+          objectFit="cover"
           mirror={mirror}
           zOrder={2}
         />
