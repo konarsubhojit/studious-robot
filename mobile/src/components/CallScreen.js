@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { colors, spacing } from '../theme';
+import { spacing } from '../theme';
 import CallStage from './CallStage';
 import CallTopBar from './CallTopBar';
 import DraggableCallControls from './DraggableCallControls';
@@ -60,6 +60,8 @@ export default function CallScreen({
         mirrorPip={mirrorPip}
         pipGesture={pipGesture}
         animatedPipStyle={animatedPipStyle}
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
         isCompact={isCompact}
       />
 
@@ -78,7 +80,7 @@ export default function CallScreen({
         />
       ) : null}
 
-      {!isCompact ? <StatusBanner status={status} style={styles.status} /> : null}
+      {!isCompact ? <StatusBanner status={status} /> : null}
     </View>
   );
 }
@@ -94,8 +96,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 0,
-  },
-  status: {
-    color: colors.textMuted,
   },
 });

@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { colors, radius, spacing } from '../theme';
 import DraggablePip from './DraggablePip';
@@ -16,6 +16,8 @@ import DraggablePip from './DraggablePip';
  * @param {boolean} props.mirrorPip
  * @param {object} props.pipGesture
  * @param {object} props.animatedPipStyle
+ * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
+ * @param {boolean} [props.isVideoEnabled] - Local camera on/off state (forwarded to PiP overlay).
  * @param {boolean} [props.isCompact]
  */
 export default function CallStage({
@@ -27,10 +29,22 @@ export default function CallStage({
   mirrorPip,
   pipGesture,
   animatedPipStyle,
+  isMuted = false,
+  isVideoEnabled = true,
   isCompact = false,
 }) {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   return (
-    <View style={[styles.callStage, isCompact && styles.callStageCompact]} onLayout={onLayout}>
+    <View
+      style={[
+        styles.callStage,
+        isCompact && styles.callStageCompact,
+        isLandscape && styles.callStageLandscape,
+      ]}
+      onLayout={onLayout}
+    >
       <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
       <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
       {hasMainStream ? (
@@ -53,6 +67,8 @@ export default function CallStage({
           animatedStyle={animatedPipStyle}
           streamURL={pipStreamUrl}
           mirror={mirrorPip}
+          isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
         />
       ) : null}
     </View>
@@ -75,6 +91,9 @@ const styles = StyleSheet.create({
     minHeight: 0,
     borderRadius: 0,
     borderWidth: 0,
+  },
+  callStageLandscape: {
+    minHeight: 120,
   },
   cozyBlob: {
     position: 'absolute',
