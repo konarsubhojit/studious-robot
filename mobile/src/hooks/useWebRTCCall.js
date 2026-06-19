@@ -240,7 +240,7 @@ export default function useWebRTCCall() {
         logInfo('Remote stream connected');
         setRemoteStream(stream);
         markCallConnected();
-        setStatus('Remote stream connected', 'success');
+        setStatus('Call started', 'success');
       }
     };
 
@@ -382,7 +382,7 @@ export default function useWebRTCCall() {
       if (!stream) {
         return;
       }
-      setStatus('Connecting to signaling server...');
+      setStatus('Connecting…');
 
       logInfo('Socket.IO connection attempt', {
         signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
@@ -397,7 +397,7 @@ export default function useWebRTCCall() {
           socketId: socket.id,
           transport: transportName,
         });
-        setStatus('Connected to signaling. Joining room...');
+        setStatus('Waiting for peer…');
         setIsInRoom(true);
         setIsReconnecting(false);
         socket.emit('join-room', roomIdRef.current);
@@ -472,7 +472,6 @@ export default function useWebRTCCall() {
           await peer.setLocalDescription(offer);
           socket.emit('offer', { roomId: roomIdRef.current, sdp: offer });
           logInfo('Offer created and sent', { sdpType: offer?.type || 'unknown' });
-          setStatus('Offer sent');
         } catch (error) {
           logError('Failed to create/send offer', error);
           setStatus('Failed to create offer', 'error');
@@ -492,7 +491,6 @@ export default function useWebRTCCall() {
           await peer.setLocalDescription(answer);
           socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
           logInfo('Answer created and sent', { sdpType: answer?.type || 'unknown' });
-          setStatus('Answer sent');
         } catch (error) {
           logError('Failed to process offer/create answer', error);
           setStatus('Failed to process offer', 'error');
@@ -509,7 +507,7 @@ export default function useWebRTCCall() {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
           markCallConnected();
-          setStatus('Call connected', 'success');
+          setStatus('Call started', 'success');
         } catch (error) {
           logError('Failed to apply remote answer', error);
           setStatus('Failed to apply answer', 'error');

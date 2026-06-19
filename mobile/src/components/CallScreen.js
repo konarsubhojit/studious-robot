@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { spacing } from '../theme';
 import CallStage from './CallStage';
@@ -5,6 +6,8 @@ import CallTopBar from './CallTopBar';
 import DraggableCallControls from './DraggableCallControls';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
+
+const STATUS_AUTO_HIDE_MS = 3000;
 
 /**
  * Full in-call screen: top bar, reconnect banner, video stage, floating
@@ -39,6 +42,31 @@ export default function CallScreen({
   status,
   isCompact = false,
 }) {
+  const [visibleStatus, setVisibleStatus] = useState(null);
+
+  useEffect(() => {
+    const message = status?.message?.trim();
+    const severity = status?.severity || 'info';
+
+    if (isCompact || isReconnecting || !message) {
+      setVisibleStatus(null);
+      return undefined;
+    }
+
+    setVisibleStatus({ message, severity });
+    if (severity === 'error') {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      setVisibleStatus((current) =>
+        current?.message === message && current?.severity === severity ? null : current,
+      );
+    }, STATUS_AUTO_HIDE_MS);
+
+    return () => clearTimeout(timeout);
+  }, [isCompact, isReconnecting, status?.message, status?.severity]);
+
   return (
     <View style={[styles.callScreen, isCompact && styles.callScreenCompact]}>
       {!isCompact ? (
@@ -50,6 +78,14 @@ export default function CallScreen({
       ) : null}
 
       {!isCompact && isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
+
+      {!isCompact && visibleStatus ? (
+        <StatusBanner
+          status={visibleStatus}
+          style={styles.inCallStatus}
+          textStyle={styles.inCallStatusText}
+        />
+      ) : null}
 
       <CallStage
         onLayout={onStageLayout}
@@ -80,7 +116,6 @@ export default function CallScreen({
         />
       ) : null}
 
-      {!isCompact ? <StatusBanner status={status} /> : null}
     </View>
   );
 }
@@ -96,5 +131,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 0,
+  },
+  inCallStatus: {
+    alignSelf: 'flex-start',
+    maxWidth: '72%',
+    marginBottom: spacing.sm,
+  },
+  inCallStatusText: {
+    textAlign: 'left',
   },
 });

@@ -46,14 +46,25 @@ function createProps(overrides = {}) {
     onChooseAudioOutput: () => {},
     onCameraSwitch: () => {},
     onLeave: () => {},
-    status: { message: 'Connected', severity: 'success' },
+    status: { message: 'Call started', severity: 'success' },
     ...overrides,
   };
 }
 
 describe('CallScreen', () => {
+  let tree;
+
+  afterEach(() => {
+    if (tree) {
+      act(() => {
+        tree.unmount();
+      });
+      tree = null;
+    }
+    jest.useRealTimers();
+  });
+
   test('renders full in-call chrome when not compact', () => {
-    let tree;
     act(() => {
       tree = renderer.create(<CallScreen {...createProps()} />);
     });
@@ -65,7 +76,6 @@ describe('CallScreen', () => {
   });
 
   test('hides top chrome in compact PiP mode but keeps stage visible', () => {
-    let tree;
     act(() => {
       tree = renderer.create(<CallScreen {...createProps({ isCompact: true, isReconnecting: true })} />);
     });
@@ -78,7 +88,6 @@ describe('CallScreen', () => {
   });
 
   test('forwards isMuted and isVideoEnabled to CallStage', () => {
-    let tree;
     act(() => {
       tree = renderer.create(<CallScreen {...createProps({ isMuted: true, isVideoEnabled: false })} />);
     });
@@ -86,5 +95,35 @@ describe('CallScreen', () => {
     const stage = tree.root.findAllByType('CallStage')[0];
     expect(stage.props.isMuted).toBe(true);
     expect(stage.props.isVideoEnabled).toBe(false);
+  });
+
+  test('auto-hides non-error in-call status messages', () => {
+    jest.useFakeTimers();
+
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ status: { message: 'Waiting for peer…', severity: 'info' } })} />);
+    });
+
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
+  });
+
+  test('keeps error status messages visible', () => {
+    jest.useFakeTimers();
+
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ status: { message: 'Failed to create offer', severity: 'error' } })} />);
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
   });
 });
