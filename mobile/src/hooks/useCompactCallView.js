@@ -36,7 +36,7 @@ export default function useCompactCallView(isInRoomRef) {
     });
 
     return () => subscription.remove();
-  }, [isInRoomRef]);
+  }, []);
 
   return { isCompactView, setIsCompactView };
 }

@@ -151,6 +151,9 @@ export default function useWebRTCCall() {
     callConnectedAtRef.current = Date.now();
     setElapsedCallSeconds(0);
     elapsedTimerRef.current = setInterval(() => {
+      if (!callConnectedAtRef.current) {
+        return;
+      }
       setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
     }, 1000);
   }, []);
