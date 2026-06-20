@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { clamp } from '../callUx';
@@ -8,6 +8,10 @@ import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
  * Encapsulates the draggable picture-in-picture self-view: tracks the call
  * stage size, keeps the PiP clamped within bounds, and exposes a tap-to-swap /
  * drag-to-move gesture plus the animated style.
+ *
+ * Bounds are stored as shared values so the UI-thread worklets inside the Pan
+ * gesture can read them without crossing to the JS thread (avoids a worklet
+ * call-non-worklet crash when dragging the PiP).
  *
  * @param {object} params
  * @param {() => void} params.onTap - Invoked when the PiP is tapped (swap streams).
@@ -27,35 +31,36 @@ export default function usePictureInPicturePip({ onTap }) {
   const pipY = useSharedValue(PIP_MARGIN);
   const pipStartX = useSharedValue(PIP_MARGIN);
   const pipStartY = useSharedValue(PIP_MARGIN);
-
-  const getPipBounds = useCallback(() => {
-    const maxX = Math.max(PIP_MARGIN, stageSize.width - PIP_WIDTH - PIP_MARGIN);
-    const maxY = Math.max(PIP_MARGIN, stageSize.height - PIP_HEIGHT - PIP_MARGIN);
-    return { minX: PIP_MARGIN, minY: PIP_MARGIN, maxX, maxY };
-  }, [stageSize.height, stageSize.width]);
+  // Shared values for drag bounds so they are readable from UI-thread worklets.
+  const pipMaxX = useSharedValue(PIP_MARGIN);
+  const pipMaxY = useSharedValue(PIP_MARGIN);
 
   useEffect(() => {
-    const bounds = getPipBounds();
+    const maxX = Math.max(PIP_MARGIN, stageSize.width - PIP_WIDTH - PIP_MARGIN);
+    const maxY = Math.max(PIP_MARGIN, stageSize.height - PIP_HEIGHT - PIP_MARGIN);
+
+    pipMaxX.value = maxX;
+    pipMaxY.value = maxY;
 
     // On first valid layout, snap the PiP to the bottom-right corner so it
     // does not obscure the remote participant in portrait orientation.
     if (!hasDefaultPositioned.current && stageSize.width > 0 && stageSize.height > 0) {
       hasDefaultPositioned.current = true;
-      pipX.value = bounds.maxX;
-      pipY.value = bounds.maxY;
-      setPipPosition({ x: bounds.maxX, y: bounds.maxY });
+      pipX.value = maxX;
+      pipY.value = maxY;
+      setPipPosition({ x: maxX, y: maxY });
       return;
     }
 
-    const clampedX = clamp(pipPosition.x, bounds.minX, bounds.maxX);
-    const clampedY = clamp(pipPosition.y, bounds.minY, bounds.maxY);
+    const clampedX = clamp(pipPosition.x, PIP_MARGIN, maxX);
+    const clampedY = clamp(pipPosition.y, PIP_MARGIN, maxY);
     if (clampedX !== pipPosition.x || clampedY !== pipPosition.y) {
       setPipPosition({ x: clampedX, y: clampedY });
       return;
     }
     pipX.value = clampedX;
     pipY.value = clampedY;
-  }, [getPipBounds, pipPosition.x, pipPosition.y, pipX, pipY, stageSize.width, stageSize.height]);
+  }, [stageSize.width, stageSize.height, pipPosition.x, pipPosition.y, pipX, pipY, pipMaxX, pipMaxY]);
 
   const handleCallStageLayout = useCallback((event) => {
     const { width, height } = event.nativeEvent.layout;
@@ -66,24 +71,31 @@ export default function usePictureInPicturePip({ onTap }) {
     transform: [{ translateX: pipX.value }, { translateY: pipY.value }],
   }));
 
-  const pipBounds = getPipBounds();
-
-  const pipGesture = Gesture.Race(
-    Gesture.Tap().onEnd(() => {
-      runOnJS(onTap)();
-    }),
-    Gesture.Pan()
-      .onStart(() => {
-        pipStartX.value = pipX.value;
-        pipStartY.value = pipY.value;
-      })
-      .onUpdate((event) => {
-        pipX.value = clamp(pipStartX.value + event.translationX, pipBounds.minX, pipBounds.maxX);
-        pipY.value = clamp(pipStartY.value + event.translationY, pipBounds.minY, pipBounds.maxY);
-      })
-      .onEnd(() => {
-        runOnJS(setPipPosition)({ x: pipX.value, y: pipY.value });
-      }),
+  // Memoised so GestureDetector does not remount the native handler on every
+  // render.  Bounds are read from shared values, not from a captured closure,
+  // so they stay current without needing gesture recreation.
+  const pipGesture = useMemo(
+    () =>
+      Gesture.Race(
+        Gesture.Tap().onEnd(() => {
+          runOnJS(onTap)();
+        }),
+        Gesture.Pan()
+          .onStart(() => {
+            pipStartX.value = pipX.value;
+            pipStartY.value = pipY.value;
+          })
+          .onUpdate((event) => {
+            pipX.value = clamp(pipStartX.value + event.translationX, PIP_MARGIN, pipMaxX.value);
+            pipY.value = clamp(pipStartY.value + event.translationY, PIP_MARGIN, pipMaxY.value);
+          })
+          .onEnd(() => {
+            runOnJS(setPipPosition)({ x: pipX.value, y: pipY.value });
+          }),
+      ),
+    // Shared-value references are stable; only onTap needs to trigger recreation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onTap],
   );
 
   return { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle };

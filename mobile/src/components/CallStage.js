@@ -14,6 +14,7 @@ import DraggablePip from './DraggablePip';
  * @param {string|null} props.pipStreamUrl
  * @param {boolean} props.hasPipStream
  * @param {boolean} props.mirrorPip
+ * @param {boolean} [props.mirrorMain] - Mirror the main stream (true when local front camera is primary).
  * @param {object} props.pipGesture
  * @param {object} props.animatedPipStyle
  * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
@@ -27,6 +28,7 @@ export default function CallStage({
   pipStreamUrl,
   hasPipStream,
   mirrorPip,
+  mirrorMain = false,
   pipGesture,
   animatedPipStyle,
   isMuted = false,
@@ -53,6 +55,7 @@ export default function CallStage({
           style={styles.remoteStream}
           streamURL={mainStreamUrl}
           objectFit="cover"
+          mirror={mirrorMain}
           zOrder={0}
         />
       ) : (
