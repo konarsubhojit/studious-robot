@@ -80,9 +80,9 @@ export default function useWebRTCCall() {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(DEFAULT_SETTINGS.speakerEnabledByDefault);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
-  const [connectionQuality, setConnectionQuality] = useState({ bars: 0, label: 'No link' });
   const [audioDevices, setAudioDevices] = useState({ available: [], selected: null });
   const [callSummary, setCallSummary] = useState(null);
 
@@ -809,6 +809,7 @@ export default function useWebRTCCall() {
       }
 
       switchCamera.call(videoTrack);
+      setIsFrontCamera((previous) => !previous);
       setStatus('Camera switched');
     } catch (error) {
       logError('Camera switch failed', error);
@@ -945,6 +946,7 @@ export default function useWebRTCCall() {
     isSpeakerEnabled,
     isCompactView,
     isLocalPrimary,
+    isFrontCamera,
     elapsedCallSeconds,
     connectionQuality,
     audioDevices,

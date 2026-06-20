@@ -27,6 +27,7 @@ export default function CallScreen({
   pipStreamUrl,
   hasPipStream,
   mirrorPip,
+  mirrorMain = false,
   pipGesture,
   animatedPipStyle,
   isMuted,
@@ -94,6 +95,7 @@ export default function CallScreen({
         pipStreamUrl={pipStreamUrl}
         hasPipStream={hasPipStream}
         mirrorPip={mirrorPip}
+        mirrorMain={mirrorMain}
         pipGesture={pipGesture}
         animatedPipStyle={animatedPipStyle}
         isMuted={isMuted}

@@ -17,6 +17,7 @@ function createProps(overrides = {}) {
     pipStreamUrl: 'local-stream-url',
     hasPipStream: true,
     mirrorPip: true,
+    mirrorMain: false,
     pipGesture: {},
     animatedPipStyle: {},
     isMuted: false,
@@ -91,5 +92,25 @@ describe('CallStage', () => {
     const pip = tree.root.findAllByType('DraggablePip')[0];
     expect(pip.props.isMuted).toBe(false);
     expect(pip.props.isVideoEnabled).toBe(true);
+  });
+
+  test('passes mirrorMain to the main SafeRTCView', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ mirrorMain: true })} />);
+    });
+
+    const rtcView = tree.root.findAllByType('SafeRTCView')[0];
+    expect(rtcView.props.mirror).toBe(true);
+  });
+
+  test('main SafeRTCView is not mirrored by default', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps()} />);
+    });
+
+    const rtcView = tree.root.findAllByType('SafeRTCView')[0];
+    expect(rtcView.props.mirror).toBe(false);
   });
 });

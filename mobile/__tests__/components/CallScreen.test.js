@@ -34,6 +34,7 @@ function createProps(overrides = {}) {
     pipStreamUrl: 'pip-stream',
     hasPipStream: true,
     mirrorPip: true,
+    mirrorMain: false,
     pipGesture: {},
     animatedPipStyle: {},
     isMuted: false,
@@ -95,6 +96,16 @@ describe('CallScreen', () => {
     const stage = tree.root.findAllByType('CallStage')[0];
     expect(stage.props.isMuted).toBe(true);
     expect(stage.props.isVideoEnabled).toBe(false);
+  });
+
+  test('forwards mirrorPip and mirrorMain to CallStage', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ mirrorPip: false, mirrorMain: true })} />);
+    });
+
+    const stage = tree.root.findAllByType('CallStage')[0];
+    expect(stage.props.mirrorPip).toBe(false);
+    expect(stage.props.mirrorMain).toBe(true);
   });
 
   test('auto-hides non-error in-call status messages', () => {
