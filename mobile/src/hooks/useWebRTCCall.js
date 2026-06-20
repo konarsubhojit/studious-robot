@@ -85,6 +85,7 @@ export default function useWebRTCCall() {
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
   const [audioDevices, setAudioDevices] = useState({ available: [], selected: null });
   const [callSummary, setCallSummary] = useState(null);
+  const [connectionQuality, setConnectionQuality] = useState({ bars: 0, label: 'No link' });
 
   const socketRef = useRef(null);
   const peerConnectionRef = useRef(null);
