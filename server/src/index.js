@@ -8,6 +8,29 @@ const { Server } = require('socket.io');
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 
+// ─── Call lifecycle ───────────────────────────────────────────────────────────
+
+/** States from which calls can never leave. */
+const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
+
+/**
+ * Valid next states for each non-terminal call state.
+ *
+ * @type {Map<string, Set<string>>}
+ */
+const CALL_TRANSITIONS = new Map([
+  ['ringing',          new Set(['accepted', 'declined', 'missed', 'busy', 'unreachable', 'ended'])],
+  ['accepted',         new Set(['connecting_media', 'ended'])],
+  ['connecting_media', new Set(['in_call', 'ended'])],
+  ['in_call',          new Set(['ended'])],
+]);
+
+/** How long a call may remain in `ringing` before it becomes `missed`. */
+const DEFAULT_RINGING_TIMEOUT_MS = 30_000;
+
+/** How often the background worker polls for timed-out ringing calls. */
+const RINGING_POLL_MS = 5_000;
+
 /**
  * Build the Express app and HTTP/Socket.IO server.
  *
@@ -18,6 +41,8 @@ function createServer() {
   const app = express();
   app.use(express.json());
 
+  const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
+
   const state = {
     rooms: new Map(),
     sessions: new Map(),
@@ -26,6 +51,10 @@ function createServer() {
     userDevices: new Map(),
     userConnections: new Map(),
     userPresence: new Map(),
+    /** @type {Map<string, CallRecord>} callId → call record */
+    calls: new Map(),
+    /** @type {Map<string, CallEvent[]>} callId → ordered event list */
+    callEvents: new Map(),
   };
 
   app.get('/health', (_req, res) => {
@@ -151,6 +180,173 @@ function createServer() {
     res.status(200).json(getPresenceSnapshot(state, userId));
   });
 
+  // ─── Call lifecycle endpoints ───────────────────────────────────────────────
+
+  app.post('/calls', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const calleeId = normaliseId(req.body?.calleeId);
+    if (!calleeId) {
+      res.status(400).json({ error: 'calleeId is required' });
+      return;
+    }
+
+    if (calleeId === session.userId) {
+      res.status(400).json({ error: 'cannot call yourself' });
+      return;
+    }
+
+    const call = createCallRecord(state, {
+      callerId: session.userId,
+      calleeId,
+      ringingTimeoutMs,
+    });
+
+    res.status(201).json(call);
+  });
+
+  app.get('/calls/:callId', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+      res.status(403).json({ error: 'not a participant in this call' });
+      return;
+    }
+
+    res.status(200).json(call);
+  });
+
+  app.post('/calls/:callId/accept', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.calleeId !== session.userId) {
+      res.status(403).json({ error: 'only the callee can accept a call' });
+      return;
+    }
+
+    const result = transitionCall(state, call.callId, 'accepted', { actor: session.userId });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.message || result.error });
+      return;
+    }
+
+    res.status(200).json(result.call);
+  });
+
+  app.post('/calls/:callId/decline', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.calleeId !== session.userId) {
+      res.status(403).json({ error: 'only the callee can decline a call' });
+      return;
+    }
+
+    const result = transitionCall(state, call.callId, 'declined', {
+      actor: session.userId,
+      reason: 'declined',
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.message || result.error });
+      return;
+    }
+
+    res.status(200).json(result.call);
+  });
+
+  app.post('/calls/:callId/cancel', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.callerId !== session.userId) {
+      res.status(403).json({ error: 'only the caller can cancel a call' });
+      return;
+    }
+
+    const result = transitionCall(state, call.callId, 'ended', {
+      actor: session.userId,
+      reason: 'cancelled',
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.message || result.error });
+      return;
+    }
+
+    res.status(200).json(result.call);
+  });
+
+  app.post('/calls/:callId/end', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+      res.status(403).json({ error: 'not a participant in this call' });
+      return;
+    }
+
+    const result = transitionCall(state, call.callId, 'ended', {
+      actor: session.userId,
+      reason: 'ended',
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.message || result.error });
+      return;
+    }
+
+    res.status(200).json(result.call);
+  });
+
   const httpServer = http.createServer(app);
   const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
   let corsOrigin = '*';
@@ -241,12 +437,30 @@ function createServer() {
     });
   });
 
+  // Background worker: advance stale ringing calls to `missed`.
+  const pollTimer = setInterval(
+    () => tickRingingTimeouts(state, Date.now()),
+    RINGING_POLL_MS,
+  );
+  // Don't prevent the process from exiting if only the timer is left.
+  pollTimer.unref();
+
   return {
     app,
     httpServer,
     io,
     getPresence: (userId) => getPresenceSnapshot(state, userId),
     resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
+    getCall: (callId) => state.calls.get(callId) || null,
+    getCallEvents: (callId) => state.callEvents.get(callId) || [],
+    /**
+     * Advance all stale `ringing` calls to `missed`.  Exposed for
+     * deterministic testing; the production server also calls this on a timer.
+     *
+     * @param {number} [now] - Unix timestamp in ms (defaults to Date.now()).
+     * @returns {number} Number of calls transitioned.
+     */
+    tickRingingTimeouts: (now = Date.now()) => tickRingingTimeouts(state, now),
   };
 }
 
@@ -504,6 +718,181 @@ function resolveReachableChannels(state, userId) {
 }
 
 module.exports = { createServer };
+
+// ─── Call domain helpers ──────────────────────────────────────────────────────
+
+/**
+ * Create a new call record and append the initial `created` event.
+ *
+ * Immediately resolves to `busy` when the callee already has an active
+ * (non-terminal) call, or to `unreachable` when the callee has no reachable
+ * channels at all; otherwise starts in `ringing`.
+ *
+ * @param {object} state
+ * @param {{ callerId: string, calleeId: string, ringingTimeoutMs: number }} opts
+ * @returns {CallRecord}
+ */
+function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
+  const callId = randomUUID();
+  const now = new Date().toISOString();
+
+  // Determine initial status.
+  let status = 'ringing';
+  let endReason = null;
+
+  if (getActiveCallsForUser(state, calleeId).length > 0) {
+    status = 'busy';
+    endReason = 'busy';
+  } else if (resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId)) {
+    status = 'unreachable';
+    endReason = 'unreachable';
+  }
+
+  const call = {
+    callId,
+    callerId,
+    calleeId,
+    status,
+    endReason,
+    createdAt: now,
+    updatedAt: now,
+    ringTimeoutAt: status === 'ringing'
+      ? new Date(Date.now() + ringingTimeoutMs).toISOString()
+      : null,
+  };
+
+  state.calls.set(callId, call);
+  state.callEvents.set(callId, []);
+  appendCallEvent(state, callId, 'created', callerId, null);
+  if (status !== 'ringing') {
+    appendCallEvent(state, callId, status, null, endReason);
+  }
+
+  return call;
+}
+
+/**
+ * Attempt to move a call to `toStatus`.
+ *
+ * Idempotent: if the call is already in `toStatus`, returns `{ ok: true }`.
+ * Terminal states are immutable: any other transition out of a terminal state
+ * returns `{ ok: false, status: 409 }`.
+ *
+ * @param {object} state
+ * @param {string} callId
+ * @param {string} toStatus
+ * @param {{ actor?: string|null, reason?: string|null }} [opts]
+ * @returns {{ ok: boolean, call?: CallRecord, status?: number, error?: string, message?: string }}
+ */
+function transitionCall(state, callId, toStatus, { actor = null, reason = null } = {}) {
+  const call = state.calls.get(callId);
+  if (!call) {
+    return { ok: false, error: 'not_found', status: 404 };
+  }
+
+  // Idempotent: already in the requested state.
+  if (call.status === toStatus) {
+    return { ok: true, call };
+  }
+
+  // Terminal states are immutable.
+  if (TERMINAL_CALL_STATES.has(call.status)) {
+    return {
+      ok: false,
+      error: 'terminal_state',
+      status: 409,
+      message: `call is already in terminal state: ${call.status}`,
+    };
+  }
+
+  const allowed = CALL_TRANSITIONS.get(call.status);
+  if (!allowed || !allowed.has(toStatus)) {
+    return {
+      ok: false,
+      error: 'invalid_transition',
+      status: 409,
+      message: `cannot transition from ${call.status} to ${toStatus}`,
+    };
+  }
+
+  call.status = toStatus;
+  call.endReason = TERMINAL_CALL_STATES.has(toStatus) ? (reason ?? null) : null;
+  call.updatedAt = new Date().toISOString();
+  if (TERMINAL_CALL_STATES.has(toStatus)) {
+    call.ringTimeoutAt = null;
+  }
+
+  appendCallEvent(state, callId, toStatus, actor, reason);
+
+  return { ok: true, call };
+}
+
+/**
+ * Append an event entry to a call's event log.
+ *
+ * @param {object} state
+ * @param {string} callId
+ * @param {string} event
+ * @param {string|null} actor
+ * @param {string|null} reason
+ */
+function appendCallEvent(state, callId, event, actor, reason) {
+  const events = state.callEvents.get(callId);
+  if (!events) return;
+
+  events.push({
+    eventId: randomUUID(),
+    callId,
+    event,
+    actor: actor || null,
+    reason: reason || null,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Return all non-terminal calls where `userId` is either the caller or callee.
+ *
+ * @param {object} state
+ * @param {string} userId
+ * @returns {CallRecord[]}
+ */
+function getActiveCallsForUser(state, userId) {
+  const active = [];
+  for (const call of state.calls.values()) {
+    if (
+      !TERMINAL_CALL_STATES.has(call.status)
+      && (call.callerId === userId || call.calleeId === userId)
+    ) {
+      active.push(call);
+    }
+  }
+  return active;
+}
+
+/**
+ * Advance every `ringing` call whose `ringTimeoutAt` is ≤ `now` to `missed`.
+ *
+ * @param {object} state
+ * @param {number} now - Unix timestamp in ms.
+ * @returns {number} Number of calls transitioned.
+ */
+function tickRingingTimeouts(state, now) {
+  let count = 0;
+  for (const call of state.calls.values()) {
+    if (call.status !== 'ringing') continue;
+    if (call.ringTimeoutAt === null) continue;
+    if (new Date(call.ringTimeoutAt).getTime() > now) continue;
+
+    call.status = 'missed';
+    call.endReason = 'timeout';
+    call.updatedAt = new Date(now).toISOString();
+    call.ringTimeoutAt = null;
+    appendCallEvent(state, call.callId, 'missed', null, 'timeout');
+    count++;
+  }
+  return count;
+}
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
