@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
 
+const PRESENCE_UPDATE_DELAY_MS = 25;
+
 async function startServer() {
   const server = createServer();
   await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
@@ -31,13 +33,14 @@ function connect(url, auth) {
   });
 }
 
-async function postJson(url, path, body, sessionId) {
+async function postJson(url, path, body, options = {}) {
+  const payload = options.sessionId ? { ...body, sessionId: options.sessionId } : body;
   const response = await fetch(`${url}${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
     },
-    body: JSON.stringify(sessionId ? { ...body, sessionId } : body),
+    body: JSON.stringify(payload),
   });
 
   return {
@@ -46,9 +49,9 @@ async function postJson(url, path, body, sessionId) {
   };
 }
 
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
+async function getJson(url, path, options = {}) {
+  const pathname = options.sessionId
+    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(options.sessionId)}`
     : path;
   const response = await fetch(`${url}${pathname}`);
 
@@ -72,7 +75,7 @@ test('session identity remains stable and device push tokens can be registered/u
     assert.equal(createdSession.body.deviceId, 'device-iphone');
     assert.equal(typeof createdSession.body.sessionId, 'string');
 
-    const fetchedSession = await getJson(url, '/session', createdSession.body.sessionId);
+    const fetchedSession = await getJson(url, '/session', { sessionId: createdSession.body.sessionId });
     assert.equal(fetchedSession.status, 200);
     assert.deepEqual(fetchedSession.body, createdSession.body);
 
@@ -80,7 +83,7 @@ test('session identity remains stable and device push tokens can be registered/u
       url,
       '/devices/register',
       { provider: 'apns', pushToken: 'push-token-1' },
-      createdSession.body.sessionId,
+      { sessionId: createdSession.body.sessionId },
     );
     assert.equal(registered.status, 200);
     assert.deepEqual(registered.body, {
@@ -113,7 +116,9 @@ test('session identity remains stable and device push tokens can be registered/u
       },
     ]);
 
-    const unregistered = await postJson(url, '/devices/unregister', {}, createdSession.body.sessionId);
+    const unregistered = await postJson(url, '/devices/unregister', {}, {
+      sessionId: createdSession.body.sessionId,
+    });
     assert.equal(unregistered.status, 200);
     assert.deepEqual(unregistered.body, {
       status: 'unregistered',
@@ -149,13 +154,13 @@ test('presence and reachable channels support multiple devices for the same user
       url,
       '/devices/register',
       { provider: 'apns', pushToken: 'push-apns-1' },
-      session1.body.sessionId,
+      { sessionId: session1.body.sessionId },
     );
     await postJson(
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'push-fcm-1' },
-      session2.body.sessionId,
+      { sessionId: session2.body.sessionId },
     );
 
     clients.push(await connect(url, { sessionId: session1.body.sessionId }));
@@ -204,7 +209,8 @@ test('presence and reachable channels support multiple devices for the same user
 
     clients.forEach((client) => client.disconnect());
     clients.length = 0;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Wait briefly for the socket disconnect handlers to stamp lastSeen.
+    await new Promise((resolve) => setTimeout(resolve, PRESENCE_UPDATE_DELAY_MS));
 
     const offlinePresence = await getJson(url, '/presence/user-bob');
     assert.equal(offlinePresence.status, 200);

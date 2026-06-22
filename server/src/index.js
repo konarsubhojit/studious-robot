@@ -21,6 +21,7 @@ function createServer() {
   const state = {
     rooms: new Map(),
     sessions: new Map(),
+    userSessions: new Map(),
     devices: new Map(),
     userDevices: new Map(),
     userConnections: new Map(),
@@ -50,6 +51,7 @@ function createServer() {
     };
 
     state.sessions.set(session.sessionId, session);
+    addSessionToUser(state, session);
     upsertDevice(state, {
       userId,
       deviceId,
@@ -349,6 +351,14 @@ function ensurePresenceRecord(state, userId) {
   return state.userPresence.get(userId);
 }
 
+function addSessionToUser(state, session) {
+  if (!state.userSessions.has(session.userId)) {
+    state.userSessions.set(session.userId, new Set());
+  }
+
+  state.userSessions.get(session.userId).add(session.sessionId);
+}
+
 function upsertDevice(state, nextDevice) {
   const existing = state.devices.get(nextDevice.deviceId);
   if (existing && existing.userId !== nextDevice.userId) {
@@ -448,17 +458,11 @@ function getPresenceSnapshot(state, userId) {
 }
 
 function hasKnownUser(state, userId) {
-  if (state.userPresence.has(userId) || state.userDevices.has(userId) || state.userConnections.has(userId)) {
+  if (state.userConnections.has(userId) || state.userDevices.has(userId) || state.userSessions.has(userId)) {
     return true;
   }
 
-  for (const session of state.sessions.values()) {
-    if (session.userId === userId) {
-      return true;
-    }
-  }
-
-  return false;
+  return state.userPresence.has(userId);
 }
 
 function hasOwnProp(value, key) {
