@@ -744,6 +744,10 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
     status = 'busy';
     endReason = 'busy';
   } else if (resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId)) {
+    // Only treat as unreachable when the callee has never interacted with this
+    // server instance.  A known-but-offline user (e.g. no active websocket and
+    // no registered push token yet) is still rung; the callee may come online
+    // or register a push token before the ringing timeout expires.
     status = 'unreachable';
     endReason = 'unreachable';
   }
@@ -816,9 +820,10 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
   }
 
   call.status = toStatus;
-  call.endReason = TERMINAL_CALL_STATES.has(toStatus) ? (reason ?? null) : null;
+  const isTerminal = TERMINAL_CALL_STATES.has(toStatus);
+  call.endReason = isTerminal ? (reason ?? null) : null;
   call.updatedAt = new Date().toISOString();
-  if (TERMINAL_CALL_STATES.has(toStatus)) {
+  if (isTerminal) {
     call.ringTimeoutAt = null;
   }
 
