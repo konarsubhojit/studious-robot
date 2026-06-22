@@ -1,10 +1,12 @@
 'use strict';
 
 const http = require('http');
+const { randomUUID } = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
 
 const MAX_ROOM_SIZE = 2;
+const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 
 /**
  * Build the Express app and HTTP/Socket.IO server.
@@ -14,6 +16,17 @@ const MAX_ROOM_SIZE = 2;
  */
 function createServer() {
   const app = express();
+  app.use(express.json());
+
+  const state = {
+    rooms: new Map(),
+    sessions: new Map(),
+    userSessions: new Map(),
+    devices: new Map(),
+    userDevices: new Map(),
+    userConnections: new Map(),
+    userPresence: new Map(),
+  };
 
   app.get('/health', (_req, res) => {
     res.status(200).json({
@@ -22,6 +35,120 @@ function createServer() {
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  app.post('/session', (req, res) => {
+    const userId = normaliseId(req.body?.userId) || `user-${randomUUID()}`;
+    const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
+    const platform = normaliseOptionalString(req.body?.platform);
+    const createdAt = new Date().toISOString();
+    const session = {
+      sessionId: randomUUID(),
+      userId,
+      deviceId,
+      platform,
+      createdAt,
+    };
+
+    state.sessions.set(session.sessionId, session);
+    addSessionToUser(state, session);
+    upsertDevice(state, {
+      userId,
+      deviceId,
+      platform,
+      sessionId: session.sessionId,
+    });
+    ensurePresenceRecord(state, userId);
+
+    res.status(201).json(session);
+  });
+
+  app.get('/session', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    res.status(200).json(session);
+  });
+
+  app.post('/devices/register', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const provider = normalisePushProvider(req.body?.provider);
+    const pushToken = normaliseId(req.body?.pushToken);
+    const requestedDeviceId = normaliseId(req.body?.deviceId);
+    if (!provider || !pushToken) {
+      res.status(400).json({ error: 'provider and pushToken are required' });
+      return;
+    }
+    if (requestedDeviceId && requestedDeviceId !== session.deviceId) {
+      res.status(400).json({ error: 'deviceId does not match active session' });
+      return;
+    }
+
+    const device = upsertDevice(state, {
+      userId: session.userId,
+      deviceId: session.deviceId,
+      platform: session.platform,
+      sessionId: session.sessionId,
+      pushProvider: provider,
+      pushToken,
+      lastRegisteredAt: new Date().toISOString(),
+      lastUnregisteredAt: null,
+    });
+
+    res.status(200).json({
+      status: 'registered',
+      userId: device.userId,
+      deviceId: device.deviceId,
+      provider: device.pushProvider,
+    });
+  });
+
+  app.post('/devices/unregister', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const requestedDeviceId = normaliseId(req.body?.deviceId);
+    if (requestedDeviceId && requestedDeviceId !== session.deviceId) {
+      res.status(400).json({ error: 'deviceId does not match active session' });
+      return;
+    }
+
+    const device = upsertDevice(state, {
+      userId: session.userId,
+      deviceId: session.deviceId,
+      platform: session.platform,
+      sessionId: session.sessionId,
+      pushProvider: null,
+      pushToken: null,
+      lastUnregisteredAt: new Date().toISOString(),
+    });
+
+    res.status(200).json({
+      status: 'unregistered',
+      userId: device.userId,
+      deviceId: device.deviceId,
+    });
+  });
+
+  app.get('/presence/:userId', (req, res) => {
+    const userId = normaliseId(req.params.userId);
+    if (!userId || !hasKnownUser(state, userId)) {
+      res.status(404).json({ error: 'user not found' });
+      return;
+    }
+
+    res.status(200).json(getPresenceSnapshot(state, userId));
   });
 
   const httpServer = http.createServer(app);
@@ -39,21 +166,32 @@ function createServer() {
     cors: { origin: corsOrigin },
   });
 
-  // rooms: Map<roomId, Set<socketId>>
-  const rooms = new Map();
-
   io.on('connection', (socket) => {
-    console.log(`[signaling] socket connected: ${socket.id}`);
+    const identity = resolveSocketIdentity(socket, state.sessions);
+    socket.data.identity = identity;
+    ensurePresenceRecord(state, identity.userId);
+    upsertDevice(state, identity);
+    addConnection(state, {
+      userId: identity.userId,
+      socketId: socket.id,
+      deviceId: identity.deviceId,
+      sessionId: identity.sessionId,
+      connectedAt: new Date().toISOString(),
+    });
+
+    console.log(
+      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
+    );
     // Track which room this socket is currently in (one room per socket).
     let currentRoom = null;
 
     socket.on('join-room', (roomId) => {
       if (typeof roomId !== 'string' || roomId.length === 0) return;
 
-      if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Set());
+      if (!state.rooms.has(roomId)) {
+        state.rooms.set(roomId, new Set());
       }
-      const room = rooms.get(roomId);
+      const room = state.rooms.get(roomId);
 
       if (room.size >= MAX_ROOM_SIZE) {
         console.log(`[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room.size})`);
@@ -63,7 +201,7 @@ function createServer() {
 
       // Leave any previous room before joining a new one.
       if (currentRoom !== null) {
-        leaveRoom(socket, currentRoom, rooms);
+        leaveRoom(socket, currentRoom, state.rooms);
       }
 
       currentRoom = roomId;
@@ -96,13 +234,20 @@ function createServer() {
     socket.on('disconnect', (reason) => {
       console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);
       if (currentRoom !== null) {
-        leaveRoom(socket, currentRoom, rooms);
+        leaveRoom(socket, currentRoom, state.rooms);
         currentRoom = null;
       }
+      removeConnection(state, socket.data.identity?.userId, socket.id);
     });
   });
 
-  return { app, httpServer, io };
+  return {
+    app,
+    httpServer,
+    io,
+    getPresence: (userId) => getPresenceSnapshot(state, userId),
+    resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
+  };
 }
 
 /**
@@ -127,6 +272,235 @@ function leaveRoom(socket, roomId, rooms) {
     // Notify remaining peer(s).
     socket.to(roomId).emit('peer-left', { id: socket.id });
   }
+}
+
+function normaliseId(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normaliseOptionalString(value) {
+  return normaliseId(value);
+}
+
+function normalisePushProvider(value) {
+  const provider = normaliseId(value)?.toLowerCase();
+  return provider && PUSH_PROVIDERS.has(provider) ? provider : null;
+}
+
+function getSessionFromRequest(req, sessions) {
+  const sessionId = normaliseId(parseBearerToken(req.headers.authorization))
+    || normaliseId(req.body?.sessionId)
+    || normaliseId(req.query?.sessionId);
+
+  return sessionId ? sessions.get(sessionId) || null : null;
+}
+
+function parseBearerToken(header) {
+  if (typeof header !== 'string') {
+    return null;
+  }
+
+  const trimmed = header.trim();
+  if (trimmed.length < 7 || trimmed.slice(0, 7).toLowerCase() !== 'bearer ') {
+    return null;
+  }
+
+  const token = trimmed.slice(7).trim();
+  return token.length > 0 ? token : null;
+}
+
+function resolveSocketIdentity(socket, sessions) {
+  const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth : {};
+  const sessionId = normaliseId(auth.sessionId);
+  const session = sessionId ? sessions.get(sessionId) : null;
+  if (session) {
+    return {
+      userId: session.userId,
+      deviceId: session.deviceId,
+      platform: session.platform,
+      sessionId: session.sessionId,
+    };
+  }
+
+  return {
+    userId: normaliseId(auth.userId) || `guest-${randomUUID()}`,
+    deviceId: normaliseId(auth.deviceId) || `device-${randomUUID()}`,
+    platform: normaliseOptionalString(auth.platform),
+    sessionId: null,
+  };
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function ensurePresenceRecord(state, userId) {
+  if (!userId) {
+    return null;
+  }
+
+  if (!state.userPresence.has(userId)) {
+    state.userPresence.set(userId, { lastSeen: null });
+  }
+
+  return state.userPresence.get(userId);
+}
+
+function addSessionToUser(state, session) {
+  if (!state.userSessions.has(session.userId)) {
+    state.userSessions.set(session.userId, new Set());
+  }
+
+  state.userSessions.get(session.userId).add(session.sessionId);
+}
+
+function upsertDevice(state, nextDevice) {
+  const existing = state.devices.get(nextDevice.deviceId);
+  if (existing && existing.userId !== nextDevice.userId) {
+    unlinkDeviceFromUser(state, existing.userId, existing.deviceId);
+  }
+
+  const device = {
+    deviceId: nextDevice.deviceId,
+    userId: nextDevice.userId,
+    platform: nextDevice.platform ?? existing?.platform ?? null,
+    sessionId: nextDevice.sessionId ?? existing?.sessionId ?? null,
+    pushProvider: hasOwnProp(nextDevice, 'pushProvider')
+      ? nextDevice.pushProvider
+      : existing?.pushProvider ?? null,
+    pushToken: hasOwnProp(nextDevice, 'pushToken')
+      ? nextDevice.pushToken
+      : existing?.pushToken ?? null,
+    lastRegisteredAt: hasOwnProp(nextDevice, 'lastRegisteredAt')
+      ? nextDevice.lastRegisteredAt
+      : existing?.lastRegisteredAt ?? null,
+    lastUnregisteredAt: hasOwnProp(nextDevice, 'lastUnregisteredAt')
+      ? nextDevice.lastUnregisteredAt
+      : existing?.lastUnregisteredAt ?? null,
+  };
+
+  state.devices.set(device.deviceId, device);
+  if (!state.userDevices.has(device.userId)) {
+    state.userDevices.set(device.userId, new Set());
+  }
+  state.userDevices.get(device.userId).add(device.deviceId);
+  return device;
+}
+
+function unlinkDeviceFromUser(state, userId, deviceId) {
+  const deviceIds = state.userDevices.get(userId);
+  if (!deviceIds) {
+    return;
+  }
+
+  deviceIds.delete(deviceId);
+  if (deviceIds.size === 0) {
+    state.userDevices.delete(userId);
+  }
+}
+
+function addConnection(state, connection) {
+  if (!state.userConnections.has(connection.userId)) {
+    state.userConnections.set(connection.userId, new Map());
+  }
+
+  state.userConnections.get(connection.userId).set(connection.socketId, connection);
+  ensurePresenceRecord(state, connection.userId).lastSeen = null;
+}
+
+function removeConnection(state, userId, socketId) {
+  if (!userId) {
+    return;
+  }
+
+  const connections = state.userConnections.get(userId);
+  if (!connections) {
+    return;
+  }
+
+  connections.delete(socketId);
+  if (connections.size === 0) {
+    state.userConnections.delete(userId);
+    ensurePresenceRecord(state, userId).lastSeen = new Date().toISOString();
+  }
+}
+
+function getPresenceSnapshot(state, userId) {
+  ensurePresenceRecord(state, userId);
+  const connections = state.userConnections.get(userId);
+  const online = Boolean(connections && connections.size > 0);
+  const deviceIds = state.userDevices.get(userId) || new Set();
+  const connectedDeviceIds = new Set(
+    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+  );
+
+  return {
+    userId,
+    status: online ? 'online' : 'offline',
+    online,
+    lastSeen: online ? null : state.userPresence.get(userId)?.lastSeen ?? null,
+    activeConnections: connections?.size || 0,
+    devices: Array.from(deviceIds, (deviceId) => {
+      const device = state.devices.get(deviceId);
+      return {
+        deviceId,
+        platform: device?.platform ?? null,
+        pushRegistered: Boolean(device?.pushProvider && device?.pushToken),
+        connected: connectedDeviceIds.has(deviceId),
+      };
+    }),
+  };
+}
+
+function hasKnownUser(state, userId) {
+  if (state.userConnections.has(userId) || state.userDevices.has(userId) || state.userSessions.has(userId)) {
+    return true;
+  }
+
+  return state.userPresence.has(userId);
+}
+
+function hasOwnProp(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function resolveReachableChannels(state, userId) {
+  const channels = [];
+  const connections = state.userConnections.get(userId);
+  if (connections) {
+    for (const connection of connections.values()) {
+      channels.push({
+        type: 'websocket',
+        socketId: connection.socketId,
+        deviceId: connection.deviceId,
+        sessionId: connection.sessionId,
+      });
+    }
+  }
+
+  const deviceIds = state.userDevices.get(userId);
+  if (deviceIds) {
+    for (const deviceId of deviceIds) {
+      const device = state.devices.get(deviceId);
+      if (!device?.pushProvider || !device?.pushToken) {
+        continue;
+      }
+
+      channels.push({
+        type: 'push',
+        deviceId,
+        provider: device.pushProvider,
+        pushToken: device.pushToken,
+      });
+    }
+  }
+
+  return channels;
 }
 
 module.exports = { createServer };
