@@ -11,8 +11,7 @@ async function startServer() {
   const { port } = server.httpServer.address();
   const url = `http://127.0.0.1:${port}`;
 
-  async function teardown(...clients) {
-    clients.forEach((client) => client.disconnect());
+  async function teardown() {
     server.httpServer.closeAllConnections?.();
     await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
   }
@@ -213,6 +212,7 @@ test('presence and reachable channels support multiple devices for the same user
     assert.equal(offlinePresence.body.online, false);
     assert.equal(typeof offlinePresence.body.lastSeen, 'string');
   } finally {
-    await teardown(...clients);
+    clients.forEach((client) => client.disconnect());
+    await teardown();
   }
 });

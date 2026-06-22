@@ -303,8 +303,13 @@ function parseBearerToken(header) {
     return null;
   }
 
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] : null;
+  const trimmed = header.trim();
+  if (trimmed.length < 7 || trimmed.slice(0, 7).toLowerCase() !== 'bearer ') {
+    return null;
+  }
+
+  const token = trimmed.slice(7).trim();
+  return token.length > 0 ? token : null;
 }
 
 function resolveSocketIdentity(socket, sessions) {
@@ -355,16 +360,16 @@ function upsertDevice(state, nextDevice) {
     userId: nextDevice.userId,
     platform: nextDevice.platform ?? existing?.platform ?? null,
     sessionId: nextDevice.sessionId ?? existing?.sessionId ?? null,
-    pushProvider: Object.prototype.hasOwnProperty.call(nextDevice, 'pushProvider')
+    pushProvider: hasOwnProp(nextDevice, 'pushProvider')
       ? nextDevice.pushProvider
       : existing?.pushProvider ?? null,
-    pushToken: Object.prototype.hasOwnProperty.call(nextDevice, 'pushToken')
+    pushToken: hasOwnProp(nextDevice, 'pushToken')
       ? nextDevice.pushToken
       : existing?.pushToken ?? null,
-    lastRegisteredAt: Object.prototype.hasOwnProperty.call(nextDevice, 'lastRegisteredAt')
+    lastRegisteredAt: hasOwnProp(nextDevice, 'lastRegisteredAt')
       ? nextDevice.lastRegisteredAt
       : existing?.lastRegisteredAt ?? null,
-    lastUnregisteredAt: Object.prototype.hasOwnProperty.call(nextDevice, 'lastUnregisteredAt')
+    lastUnregisteredAt: hasOwnProp(nextDevice, 'lastUnregisteredAt')
       ? nextDevice.lastUnregisteredAt
       : existing?.lastUnregisteredAt ?? null,
   };
@@ -443,10 +448,21 @@ function getPresenceSnapshot(state, userId) {
 }
 
 function hasKnownUser(state, userId) {
-  return state.userPresence.has(userId)
-    || state.userDevices.has(userId)
-    || state.userConnections.has(userId)
-    || Array.from(state.sessions.values()).some((session) => session.userId === userId);
+  if (state.userPresence.has(userId) || state.userDevices.has(userId) || state.userConnections.has(userId)) {
+    return true;
+  }
+
+  for (const session of state.sessions.values()) {
+    if (session.userId === userId) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasOwnProp(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function resolveReachableChannels(state, userId) {
