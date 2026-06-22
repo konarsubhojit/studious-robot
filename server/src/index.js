@@ -743,11 +743,7 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   if (getActiveCallsForUser(state, calleeId).length > 0) {
     status = 'busy';
     endReason = 'busy';
-  } else if (resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId)) {
-    // Only treat as unreachable when the callee has never interacted with this
-    // server instance.  A known-but-offline user (e.g. no active websocket and
-    // no registered push token yet) is still rung; the callee may come online
-    // or register a push token before the ringing timeout expires.
+  } else if (isCalleeUnreachable(state, calleeId)) {
     status = 'unreachable';
     endReason = 'unreachable';
   }
@@ -849,8 +845,8 @@ function appendCallEvent(state, callId, event, actor, reason) {
     eventId: randomUUID(),
     callId,
     event,
-    actor: actor || null,
-    reason: reason || null,
+    actor: actor ?? null,
+    reason: reason ?? null,
     timestamp: new Date().toISOString(),
   });
 }
@@ -873,6 +869,22 @@ function getActiveCallsForUser(state, userId) {
     }
   }
   return active;
+}
+
+/**
+ * Return true when the callee has never interacted with this server instance
+ * (completely unknown user with no reachable channels).
+ *
+ * A known-but-offline user is intentionally **not** considered unreachable
+ * here: they may come online or register a push token before the ringing
+ * timeout fires.
+ *
+ * @param {object} state
+ * @param {string} calleeId
+ * @returns {boolean}
+ */
+function isCalleeUnreachable(state, calleeId) {
+  return resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId);
 }
 
 /**

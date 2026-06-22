@@ -38,7 +38,7 @@ async function getJson(url, path, sessionId) {
   return { status: response.status, body: await response.json() };
 }
 
-/** Create a session for a given userId/deviceId, returning the sessionId. */
+/** Create a session for a given userId, returning the sessionId. */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
