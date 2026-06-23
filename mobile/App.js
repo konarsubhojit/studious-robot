@@ -63,6 +63,18 @@ export default function App() {
 
   // ── Screen routing ────────────────────────────────────────────────────────
 
+  /**
+   * Derive the participant label shown in the call-flow CallScreen top bar.
+   * Shows the remote party's userId: the callerId when the local user is the
+   * callee (isLocalPrimary = false) and the calleeId when they are the caller.
+   */
+  function getCallFlowParticipantLabel() {
+    const ac = callFlow.activeCall;
+    if (!ac?.callerId || !ac?.calleeId) return null;
+    const remoteId = callFlow.isLocalPrimary ? ac.calleeId : ac.callerId;
+    return `Call with ${remoteId}`;
+  }
+
   let screenContent;
 
   if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {
@@ -89,13 +101,7 @@ export default function App() {
       <CallScreen
         elapsedCallSeconds={callFlow.elapsedCallSeconds}
         connectionQuality={callFlow.connectionQuality}
-        participantLabel={
-          callFlow.activeCall?.callerId && callFlow.activeCall?.calleeId
-            ? `Call with ${callFlow.isInCall && !callFlow.isLocalPrimary
-                ? callFlow.activeCall.callerId
-                : callFlow.activeCall.calleeId}`
-            : null
-        }
+        participantLabel={getCallFlowParticipantLabel()}
         isReconnecting={callFlow.isReconnecting}
         onRetry={callFlow.handleRetryReconnect}
         onStageLayout={handleCallStageLayout}

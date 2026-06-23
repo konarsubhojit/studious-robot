@@ -30,9 +30,6 @@ const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:417
 /** Server-side signaling protocol version required for call.* and rtc.* events. */
 const SIGNALING_VERSION = 1;
 
-/** Default ringing timeout shown in the UI (matches server DEFAULT_RINGING_TIMEOUT_MS). */
-const RINGING_TIMEOUT_MS = 30_000;
-
 const STATS_POLL_INTERVAL_MS = 7000;
 
 const HAPTIC_TAP_MS = 15;
@@ -371,7 +368,7 @@ export default function useCallFlow() {
       // ── Incoming call ──────────────────────────────────────────────────
       socket.on('call.incoming', ({ call }) => {
         logInfo('[CallFlow] Incoming call', { callId: call.callId, callerId: call.callerId });
-        haptic(RINGING_TIMEOUT_MS > 0 ? 400 : 0);
+        haptic(400);
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
         setStatus(`Incoming call from ${call.callerId}`);
