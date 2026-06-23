@@ -7,6 +7,8 @@ const { Server } = require('socket.io');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
+const SIGNALING_VERSION = 1;
+const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
 
 // ─── Call lifecycle ───────────────────────────────────────────────────────────
 
@@ -205,6 +207,7 @@ function createServer() {
       calleeId,
       ringingTimeoutMs,
     });
+    notifyCallCreated(io, state, call);
 
     res.status(201).json(call);
   });
@@ -248,10 +251,17 @@ function createServer() {
       return;
     }
 
+    const previousStatus = call.status;
     const result = transitionCall(state, call.callId, 'accepted', { actor: session.userId });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
+    }
+    if (previousStatus !== result.call.status) {
+      notifyCallTransition(io, state, result.call, {
+        previousStatus,
+        actor: session.userId,
+      });
     }
 
     res.status(200).json(result.call);
@@ -275,6 +285,7 @@ function createServer() {
       return;
     }
 
+    const previousStatus = call.status;
     const result = transitionCall(state, call.callId, 'declined', {
       actor: session.userId,
       reason: 'declined',
@@ -282,6 +293,13 @@ function createServer() {
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
+    }
+    if (previousStatus !== result.call.status) {
+      notifyCallTransition(io, state, result.call, {
+        previousStatus,
+        actor: session.userId,
+        reason: 'declined',
+      });
     }
 
     res.status(200).json(result.call);
@@ -305,6 +323,7 @@ function createServer() {
       return;
     }
 
+    const previousStatus = call.status;
     const result = transitionCall(state, call.callId, 'ended', {
       actor: session.userId,
       reason: 'cancelled',
@@ -312,6 +331,13 @@ function createServer() {
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
+    }
+    if (previousStatus !== result.call.status) {
+      notifyCallTransition(io, state, result.call, {
+        previousStatus,
+        actor: session.userId,
+        reason: 'cancelled',
+      });
     }
 
     res.status(200).json(result.call);
@@ -335,6 +361,7 @@ function createServer() {
       return;
     }
 
+    const previousStatus = call.status;
     const result = transitionCall(state, call.callId, 'ended', {
       actor: session.userId,
       reason: 'ended',
@@ -342,6 +369,13 @@ function createServer() {
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
+    }
+    if (previousStatus !== result.call.status) {
+      notifyCallTransition(io, state, result.call, {
+        previousStatus,
+        actor: session.userId,
+        reason: 'ended',
+      });
     }
 
     res.status(200).json(result.call);
@@ -427,6 +461,122 @@ function createServer() {
       socket.to(roomId).emit('ice-candidate', { from: socket.id, candidate });
     });
 
+    socket.on('call.initiate', (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, 'call.initiate')) {
+        return;
+      }
+      if (!validateSignalingVersion(socket, payload, ack, 'call.initiate')) {
+        return;
+      }
+
+      const calleeId = normaliseId(payload.calleeId);
+      if (!calleeId) {
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'calleeId is required');
+        return;
+      }
+      if (calleeId === socket.data.identity.userId) {
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'cannot call yourself');
+        return;
+      }
+
+      const call = createCallRecord(state, {
+        callerId: socket.data.identity.userId,
+        calleeId,
+        ringingTimeoutMs,
+      });
+      notifyCallCreated(io, state, call);
+      acknowledgeSuccess(socket, ack, 'call.initiate', { call });
+    });
+
+    socket.on('call.accept', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.accept',
+        nextStatus: 'accepted',
+        authorize: (call, userId) => (
+          call.calleeId === userId
+            ? null
+            : 'only the callee can accept a call'
+        ),
+      });
+    });
+
+    socket.on('call.decline', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.decline',
+        nextStatus: 'declined',
+        reason: 'declined',
+        authorize: (call, userId) => (
+          call.calleeId === userId
+            ? null
+            : 'only the callee can decline a call'
+        ),
+      });
+    });
+
+    socket.on('call.cancel', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.cancel',
+        nextStatus: 'ended',
+        reason: 'cancelled',
+        authorize: (call, userId) => (
+          call.callerId === userId
+            ? null
+            : 'only the caller can cancel a call'
+        ),
+      });
+    });
+
+    socket.on('call.end', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.end',
+        nextStatus: 'ended',
+        reason: 'ended',
+        authorize: (call, userId) => (
+          call.callerId === userId || call.calleeId === userId
+            ? null
+            : 'not a participant in this call'
+        ),
+      });
+    });
+
+    socket.on('rtc.offer', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.offer',
+        dataKey: 'sdp',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    socket.on('rtc.answer', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.answer',
+        dataKey: 'sdp',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    socket.on('rtc.candidate', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.candidate',
+        dataKey: 'candidate',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
     socket.on('disconnect', (reason) => {
       console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);
       if (currentRoom !== null) {
@@ -439,7 +589,13 @@ function createServer() {
 
   // Background worker: advance stale ringing calls to `missed`.
   const pollTimer = setInterval(
-    () => tickRingingTimeouts(state, Date.now()),
+    () => tickRingingTimeouts(state, Date.now(), (call, previousStatus, reason) => {
+      notifyCallTransition(io, state, call, {
+        previousStatus,
+        actor: null,
+        reason,
+      });
+    }),
     RINGING_POLL_MS,
   );
   // Don't prevent the process from exiting if only the timer is left.
@@ -717,6 +873,237 @@ function resolveReachableChannels(state, userId) {
   return channels;
 }
 
+function emitToUserSockets(io, state, userId, eventName, payload) {
+  const connections = state.userConnections.get(userId);
+  if (!connections) {
+    return;
+  }
+
+  for (const connection of connections.values()) {
+    io.to(connection.socketId).emit(eventName, payload);
+  }
+}
+
+function notifyCallCreated(io, state, call) {
+  const envelope = createCallEnvelope(call);
+  if (call.status === 'ringing') {
+    emitToUserSockets(io, state, call.calleeId, 'call.incoming', envelope);
+    emitToUserSockets(io, state, call.callerId, 'call.ringing', envelope);
+  }
+
+  notifyCallTransition(io, state, call, {
+    previousStatus: null,
+    actor: call.callerId,
+    reason: call.endReason,
+  });
+}
+
+function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
+  const statePayload = {
+    version: SIGNALING_VERSION,
+    callId: call.callId,
+    previousStatus,
+    status: call.status,
+    actor,
+    reason: reason ?? call.endReason ?? null,
+    call,
+  };
+  emitToUserSockets(io, state, call.callerId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, state, call.calleeId, 'call.state_changed', statePayload);
+
+  const eventName = getCallTransitionEventName(call.status, statePayload.reason);
+  if (!eventName) {
+    return;
+  }
+
+  const eventPayload = {
+    version: SIGNALING_VERSION,
+    callId: call.callId,
+    actor,
+    reason: statePayload.reason,
+    call,
+  };
+  emitToUserSockets(io, state, call.callerId, eventName, eventPayload);
+  emitToUserSockets(io, state, call.calleeId, eventName, eventPayload);
+}
+
+function getCallTransitionEventName(status, reason) {
+  if (status === 'accepted') {
+    return 'call.accept';
+  }
+  if (status === 'declined') {
+    return 'call.decline';
+  }
+  if (status === 'ended') {
+    return reason === 'cancelled' ? 'call.cancel' : 'call.end';
+  }
+  return null;
+}
+
+function createCallEnvelope(call) {
+  return {
+    version: SIGNALING_VERSION,
+    callId: call.callId,
+    call,
+  };
+}
+
+function requireSocketSession(socket, ack, eventName) {
+  if (socket.data.identity?.sessionId) {
+    return true;
+  }
+
+  acknowledgeError(socket, ack, eventName, 'unauthorized', 'a valid session is required');
+  return false;
+}
+
+function validateSignalingVersion(socket, payload, ack, eventName) {
+  if (payload?.version === SIGNALING_VERSION) {
+    return true;
+  }
+
+  acknowledgeError(socket, ack, eventName, 'unsupported_version', `version ${SIGNALING_VERSION} is required`);
+  return false;
+}
+
+function acknowledgeSuccess(socket, ack, eventName, data) {
+  const payload = {
+    ok: true,
+    version: SIGNALING_VERSION,
+    event: eventName,
+    ...data,
+  };
+
+  if (typeof ack === 'function') {
+    ack(payload);
+  }
+}
+
+function acknowledgeError(socket, ack, eventName, code, message) {
+  const payload = {
+    ok: false,
+    version: SIGNALING_VERSION,
+    event: eventName,
+    error: {
+      code,
+      message,
+    },
+  };
+
+  if (typeof ack === 'function') {
+    ack(payload);
+    return;
+  }
+
+  socket?.emit('signaling.error', payload);
+}
+
+function handleSocketCallTransition(socket, ack, payload, options) {
+  if (!requireSocketSession(socket, ack, options.eventName)) {
+    return;
+  }
+  if (!validateSignalingVersion(socket, payload, ack, options.eventName)) {
+    return;
+  }
+
+  const callId = normaliseId(payload.callId);
+  if (!callId) {
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required');
+    return;
+  }
+
+  const call = options.state.calls.get(callId);
+  if (!call) {
+    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found');
+    return;
+  }
+
+  const authorizationError = options.authorize(call, socket.data.identity.userId);
+  if (authorizationError) {
+    acknowledgeError(socket, ack, options.eventName, 'forbidden', authorizationError);
+    return;
+  }
+
+  const previousStatus = call.status;
+  const result = transitionCall(options.state, callId, options.nextStatus, {
+    actor: socket.data.identity.userId,
+    reason: options.reason ?? null,
+  });
+  if (!result.ok) {
+    acknowledgeError(socket, ack, options.eventName, 'invalid_state', result.message || result.error);
+    return;
+  }
+
+  if (previousStatus !== result.call.status) {
+    notifyCallTransition(options.io, options.state, result.call, {
+      previousStatus,
+      actor: socket.data.identity.userId,
+      reason: options.reason ?? null,
+    });
+  }
+  acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
+}
+
+function handleRtcRelay(socket, ack, payload, options) {
+  if (!requireSocketSession(socket, ack, options.eventName)) {
+    return;
+  }
+  if (!validateSignalingVersion(socket, payload, ack, options.eventName)) {
+    return;
+  }
+
+  const callId = normaliseId(payload.callId);
+  if (!callId) {
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required');
+    return;
+  }
+
+  const value = payload[options.dataKey];
+  if (!options.validateData(value)) {
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', `${options.dataKey} is required`);
+    return;
+  }
+
+  const call = options.state.calls.get(callId);
+  if (!call) {
+    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found');
+    return;
+  }
+
+  const userId = socket.data.identity.userId;
+  if (call.callerId !== userId && call.calleeId !== userId) {
+    acknowledgeError(socket, ack, options.eventName, 'forbidden', 'not a participant in this call');
+    return;
+  }
+  if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
+    acknowledgeError(socket, ack, options.eventName, 'stale_call_state', `call is not ready for RTC in state: ${call.status}`);
+    return;
+  }
+
+  if (call.status === 'accepted') {
+    const previousStatus = call.status;
+    const result = transitionCall(options.state, callId, 'connecting_media', {
+      actor: userId,
+    });
+    if (result.ok && previousStatus !== result.call.status) {
+      notifyCallTransition(options.io, options.state, result.call, {
+        previousStatus,
+        actor: userId,
+      });
+    }
+  }
+
+  const peerUserId = call.callerId === userId ? call.calleeId : call.callerId;
+  const relayPayload = {
+    version: SIGNALING_VERSION,
+    callId,
+    fromUserId: userId,
+    [options.dataKey]: value,
+  };
+  emitToUserSockets(options.io, options.state, peerUserId, options.eventName, relayPayload);
+  acknowledgeSuccess(socket, ack, options.eventName, { callId });
+}
+
 module.exports = { createServer };
 
 // ─── Call domain helpers ──────────────────────────────────────────────────────
@@ -894,18 +1281,20 @@ function isCalleeUnreachable(state, calleeId) {
  * @param {number} now - Unix timestamp in ms.
  * @returns {number} Number of calls transitioned.
  */
-function tickRingingTimeouts(state, now) {
+function tickRingingTimeouts(state, now, onTransition) {
   let count = 0;
   for (const call of state.calls.values()) {
     if (call.status !== 'ringing') continue;
     if (call.ringTimeoutAt === null) continue;
     if (new Date(call.ringTimeoutAt).getTime() > now) continue;
 
+    const previousStatus = call.status;
     call.status = 'missed';
     call.endReason = 'timeout';
     call.updatedAt = new Date(now).toISOString();
     call.ringTimeoutAt = null;
     appendCallEvent(state, call.callId, 'missed', null, 'timeout');
+    onTransition?.(call, previousStatus, 'timeout');
     count++;
   }
   return count;

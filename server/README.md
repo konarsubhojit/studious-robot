@@ -24,7 +24,42 @@ The server listens on `PORT` (default `4173`) and exposes:
 
 ### Socket.IO signaling events
 
-Rooms hold at most **2 participants**. All relay events are forwarded only to the other peer in the same room.
+Authenticated call/RTC signaling uses versioned websocket events (`version: 1`) and Socket.IO acknowledgements.
+Every `call.*`/`rtc.*` client event requires a socket authenticated with `auth.sessionId`.
+
+#### Client → Server (call contract)
+
+| Event            | Payload                                 | Ack success                        | Notes |
+| ---------------- | --------------------------------------- | ---------------------------------- | ----- |
+| `call.initiate`  | `{ version, calleeId }`                 | `{ ok, version, event, call }`     | Starts a call and notifies the callee in real time when ringing. |
+| `call.accept`    | `{ version, callId }`                   | `{ ok, version, event, call }`     | Callee-only. |
+| `call.decline`   | `{ version, callId }`                   | `{ ok, version, event, call }`     | Callee-only. |
+| `call.cancel`    | `{ version, callId }`                   | `{ ok, version, event, call }`     | Caller-only. |
+| `call.end`       | `{ version, callId }`                   | `{ ok, version, event, call }`     | Either participant may end an active call. |
+| `rtc.offer`      | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
+| `rtc.answer`     | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
+| `rtc.candidate`  | `{ version, callId, candidate }`        | `{ ok, version, event, callId }`   | Accepted call participants only. |
+
+Ack failures return `{ ok: false, version, event, error: { code, message } }` with clean rejection codes such as `unauthorized`, `unsupported_version`, `forbidden`, `call_not_found`, and `stale_call_state`.
+
+#### Server → Client (call contract)
+
+| Event                | Payload summary |
+| -------------------- | --------------- |
+| `call.incoming`      | `{ version, callId, call }` sent to the callee when a ringing call is created. |
+| `call.ringing`       | `{ version, callId, call }` sent to the caller when the call is ringing. |
+| `call.accept`        | `{ version, callId, actor, reason, call }` |
+| `call.decline`       | `{ version, callId, actor, reason, call }` |
+| `call.cancel`        | `{ version, callId, actor, reason, call }` |
+| `call.end`           | `{ version, callId, actor, reason, call }` |
+| `call.state_changed` | `{ version, callId, previousStatus, status, actor, reason, call }` emitted on every call-state transition. |
+| `rtc.offer`          | `{ version, callId, fromUserId, sdp }` relayed only to the other participant. |
+| `rtc.answer`         | `{ version, callId, fromUserId, sdp }` relayed only to the other participant. |
+| `rtc.candidate`      | `{ version, callId, fromUserId, candidate }` relayed only to the other participant. |
+
+#### Legacy room signaling
+
+Rooms hold at most **2 participants**. These legacy relay events remain available for room-based flows.
 
 #### Client → Server
 
