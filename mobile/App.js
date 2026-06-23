@@ -2,96 +2,201 @@ import { Platform, SafeAreaView, StatusBar, StyleSheet, View } from 'react-nativ
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { logError } from './src/appLogger';
 import CallScreen from './src/components/CallScreen';
+import IncomingCallScreen from './src/components/IncomingCallScreen';
 import Lobby from './src/components/Lobby';
+import OutgoingCallScreen from './src/components/OutgoingCallScreen';
 import { getStreamUrl } from './src/diagnostics';
+import { CALL_PHASES } from './src/hooks/useCallFlow';
+import useCallFlow from './src/hooks/useCallFlow';
 import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
 import useWebRTCCall from './src/hooks/useWebRTCCall';
 import { colors } from './src/theme';
 
 /**
- * Thin composition root: wires the call + picture-in-picture hooks to the
- * presentational Lobby / CallScreen components.  All call behaviour lives in
- * `useWebRTCCall`; all draggable-PiP behaviour lives in `usePictureInPicturePip`.
+ * Thin composition root: wires the call hooks to the presentational screens.
+ *
+ * Two call paths are supported:
+ *   1. **Server-authoritative call flow** (`useCallFlow`) – user places / receives
+ *      calls by userId.  Drives OutgoingCallScreen, IncomingCallScreen, and
+ *      CallScreen once media is connected.
+ *   2. **Legacy room-join flow** (`useWebRTCCall`) – user shares a room ID.
+ *      Drives the existing Lobby → CallScreen path.
+ *
+ * All behaviour lives in the hooks; the components are purely presentational.
  */
 export default function App() {
+  // ── New server-authoritative call flow ────────────────────────────────────
+  const callFlow = useCallFlow();
+
+  // ── Legacy direct room-join flow ──────────────────────────────────────────
   const call = useWebRTCCall();
-  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip({
-    onTap: call.handleSwapStreams,
-  });
+
+  // Active call source: prefer callFlow when it has a live call/in-call session.
+  const callFlowActive =
+    callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
+
+  // Choose which hook provides PiP swap behaviour.
+  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } =
+    usePictureInPicturePip({
+      onTap: callFlowActive ? callFlow.handleSwapStreams : call.handleSwapStreams,
+    });
   void stageSize;
 
-  const mainStream = call.isLocalPrimary ? call.localStream : call.remoteStream;
-  const pipStream = call.isLocalPrimary ? call.remoteStream : call.localStream;
+  // ── Stream helpers for active call ────────────────────────────────────────
+
+  // Call-flow streams
+  const cfMainStream = callFlow.isLocalPrimary ? callFlow.localStream : callFlow.remoteStream;
+  const cfPipStream = callFlow.isLocalPrimary ? callFlow.remoteStream : callFlow.localStream;
+  const cfMainStreamUrl = getStreamUrl(cfMainStream, 'cf main stream');
+  const cfPipStreamUrl = getStreamUrl(cfPipStream, 'cf pip stream');
+  const cfMirrorPip = !callFlow.isLocalPrimary && callFlow.isFrontCamera;
+  const cfMirrorMain = callFlow.isLocalPrimary && callFlow.isFrontCamera;
+
+  // Legacy streams
+  const legacyMainStream = call.isLocalPrimary ? call.localStream : call.remoteStream;
+  const legacyPipStream = call.isLocalPrimary ? call.remoteStream : call.localStream;
+  const legacyMainStreamUrl = getStreamUrl(legacyMainStream, 'main stream');
+  const legacyPipStreamUrl = getStreamUrl(legacyPipStream, 'picture-in-picture stream');
+  const legacyMirrorPip = !call.isLocalPrimary && call.isFrontCamera;
+  const legacyMirrorMain = call.isLocalPrimary && call.isFrontCamera;
   const localPreviewStreamUrl = getStreamUrl(call.localStream, 'local preview');
-  const mainStreamUrl = getStreamUrl(mainStream, 'main stream');
-  const pipStreamUrl = getStreamUrl(pipStream, 'picture-in-picture stream');
 
-  // Mirror only the local stream, and only when the front camera is active.
-  // Back-camera output must not be mirrored or it appears spatially inverted.
-  const mirrorPip = !call.isLocalPrimary && call.isFrontCamera;
-  const mirrorMain = call.isLocalPrimary && call.isFrontCamera;
+  // ── Screen routing ────────────────────────────────────────────────────────
 
-  // In compact (Android PiP) mode replace SafeAreaView with a plain View so
-  // system-inset padding is not applied — the PiP window has no status bar or
-  // navigation bar, so those insets would create blank black margins.
-  const screenContent = call.isInRoom ? (
-    <CallScreen
-      elapsedCallSeconds={call.elapsedCallSeconds}
-      connectionQuality={call.connectionQuality}
-      participantLabel={call.roomId ? `Room ${call.roomId.trim()}` : null}
-      isReconnecting={call.isReconnecting}
-      onRetry={call.handleRetryReconnect}
-      onStageLayout={handleCallStageLayout}
-      mainStreamUrl={mainStreamUrl}
-      hasMainStream={Boolean(mainStream)}
-      pipStreamUrl={pipStreamUrl}
-      hasPipStream={Boolean(pipStream)}
-      mirrorPip={mirrorPip}
-      mirrorMain={mirrorMain}
-      pipGesture={pipGesture}
-      animatedPipStyle={animatedPipStyle}
-      isMuted={call.isMuted}
-      isVideoEnabled={call.isVideoEnabled}
-      hasLocalStream={Boolean(call.localStream)}
-      audioDevices={call.audioDevices}
-      isSpeakerEnabled={call.isSpeakerEnabled}
-      onMuteToggle={call.handleMuteToggle}
-      onVideoToggle={call.handleVideoToggle}
-      onChooseAudioOutput={call.chooseAudioOutput}
-      onCameraSwitch={call.handleCameraSwitch}
-      onLeave={call.handleRoomButtonPress}
-      status={call.status}
-      isCompact={call.isCompactView}
-    />
-  ) : (
-    <Lobby
-      signalingUrl={call.signalingUrl}
-      onChangeSignalingUrl={call.setSignalingUrl}
-      roomId={call.roomId}
-      onChangeRoomId={call.setRoomId}
-      localPreviewStreamUrl={localPreviewStreamUrl}
-      hasLocalStream={Boolean(call.localStream)}
-      onStartPreview={() => {
-        call.startLocalPreview().catch((error) => {
-          logError('startLocalPreview failed (permissions/device)', error);
-        });
-      }}
-      onJoinRoom={call.handleRoomButtonPress}
-      isSettingsVisible={call.isSettingsVisible}
-      onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
-      onExportLogs={call.handleExportLogs}
-      settings={call.settings}
-      onToggleAutoLighting={call.handleAutoLightingToggle}
-      onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
-      status={call.status}
-      callSummary={call.callSummary}
-      onDismissSummary={call.dismissCallSummary}
-    />
-  );
+  let screenContent;
+
+  if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {
+    screenContent = (
+      <OutgoingCallScreen
+        calleeId={callFlow.calleeId}
+        activeCall={callFlow.activeCall}
+        status={callFlow.status}
+        onCancel={callFlow.cancelOutgoingCall}
+      />
+    );
+  } else if (callFlow.callPhase === CALL_PHASES.INCOMING_RINGING) {
+    screenContent = (
+      <IncomingCallScreen
+        incomingCall={callFlow.incomingCall}
+        status={callFlow.status}
+        onAccept={callFlow.acceptIncomingCall}
+        onDecline={callFlow.declineIncomingCall}
+      />
+    );
+  } else if (callFlow.isInCall) {
+    // In-call screen driven by the new call flow.
+    screenContent = (
+      <CallScreen
+        elapsedCallSeconds={callFlow.elapsedCallSeconds}
+        connectionQuality={callFlow.connectionQuality}
+        participantLabel={
+          callFlow.activeCall?.callerId && callFlow.activeCall?.calleeId
+            ? `Call with ${callFlow.isInCall && !callFlow.isLocalPrimary
+                ? callFlow.activeCall.callerId
+                : callFlow.activeCall.calleeId}`
+            : null
+        }
+        isReconnecting={callFlow.isReconnecting}
+        onRetry={callFlow.handleRetryReconnect}
+        onStageLayout={handleCallStageLayout}
+        mainStreamUrl={cfMainStreamUrl}
+        hasMainStream={Boolean(cfMainStream)}
+        pipStreamUrl={cfPipStreamUrl}
+        hasPipStream={Boolean(cfPipStream)}
+        mirrorPip={cfMirrorPip}
+        mirrorMain={cfMirrorMain}
+        pipGesture={pipGesture}
+        animatedPipStyle={animatedPipStyle}
+        isMuted={callFlow.isMuted}
+        isVideoEnabled={callFlow.isVideoEnabled}
+        hasLocalStream={Boolean(callFlow.localStream)}
+        audioDevices={callFlow.audioDevices}
+        isSpeakerEnabled={callFlow.isSpeakerEnabled}
+        onMuteToggle={callFlow.handleMuteToggle}
+        onVideoToggle={callFlow.handleVideoToggle}
+        onChooseAudioOutput={callFlow.chooseAudioOutput}
+        onCameraSwitch={callFlow.handleCameraSwitch}
+        onLeave={callFlow.handleEndCall}
+        status={callFlow.status}
+        isCompact={callFlow.isCompactView}
+      />
+    );
+  } else if (call.isInRoom) {
+    // In-call screen driven by the legacy room-join flow.
+    screenContent = (
+      <CallScreen
+        elapsedCallSeconds={call.elapsedCallSeconds}
+        connectionQuality={call.connectionQuality}
+        participantLabel={call.roomId ? `Room ${call.roomId.trim()}` : null}
+        isReconnecting={call.isReconnecting}
+        onRetry={call.handleRetryReconnect}
+        onStageLayout={handleCallStageLayout}
+        mainStreamUrl={legacyMainStreamUrl}
+        hasMainStream={Boolean(legacyMainStream)}
+        pipStreamUrl={legacyPipStreamUrl}
+        hasPipStream={Boolean(legacyPipStream)}
+        mirrorPip={legacyMirrorPip}
+        mirrorMain={legacyMirrorMain}
+        pipGesture={pipGesture}
+        animatedPipStyle={animatedPipStyle}
+        isMuted={call.isMuted}
+        isVideoEnabled={call.isVideoEnabled}
+        hasLocalStream={Boolean(call.localStream)}
+        audioDevices={call.audioDevices}
+        isSpeakerEnabled={call.isSpeakerEnabled}
+        onMuteToggle={call.handleMuteToggle}
+        onVideoToggle={call.handleVideoToggle}
+        onChooseAudioOutput={call.chooseAudioOutput}
+        onCameraSwitch={call.handleCameraSwitch}
+        onLeave={call.handleRoomButtonPress}
+        status={call.status}
+        isCompact={call.isCompactView}
+      />
+    );
+  } else {
+    screenContent = (
+      <Lobby
+        userId={callFlow.userId}
+        onChangeUserId={callFlow.setUserId}
+        calleeId={callFlow.calleeId}
+        onChangeCalleeId={callFlow.setCalleeId}
+        onCall={() => {
+          callFlow.placeCall().catch((error) => {
+            logError('placeCall unhandled rejection', error);
+          });
+        }}
+        signalingUrl={call.signalingUrl}
+        onChangeSignalingUrl={call.setSignalingUrl}
+        roomId={call.roomId}
+        onChangeRoomId={call.setRoomId}
+        localPreviewStreamUrl={localPreviewStreamUrl}
+        hasLocalStream={Boolean(call.localStream)}
+        onStartPreview={() => {
+          call.startLocalPreview().catch((error) => {
+            logError('startLocalPreview failed (permissions/device)', error);
+          });
+        }}
+        onJoinRoom={call.handleRoomButtonPress}
+        isSettingsVisible={call.isSettingsVisible}
+        onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
+        onExportLogs={call.handleExportLogs}
+        settings={call.settings}
+        onToggleAutoLighting={call.handleAutoLightingToggle}
+        onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
+        status={callFlow.userId ? callFlow.status : call.status}
+        callSummary={callFlow.callSummary ?? call.callSummary}
+        onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
+      />
+    );
+  }
+
+  // Compact (Android PiP) mode: replace SafeAreaView with a plain View so
+  // system-inset padding is not applied.
+  const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
 
   return (
-    <GestureHandlerRootView style={call.isCompactView ? styles.containerCompact : styles.container}>
-      {call.isCompactView ? (
+    <GestureHandlerRootView style={isCompact ? styles.containerCompact : styles.container}>
+      {isCompact ? (
         <View style={styles.containerCompact}>
           {screenContent}
         </View>

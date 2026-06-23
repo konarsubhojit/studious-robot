@@ -47,8 +47,20 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
 /**
  * Pre-call lobby: branding, last-call summary, self preview, connection inputs,
  * primary actions, and the settings panel.
+ *
+ * The lobby exposes two ways to start a call:
+ *   1. **Call** – server-authoritative flow using `userId` / `calleeId`.
+ *      The server manages call state and drives the outgoing/incoming screens.
+ *   2. **Join Room** – legacy direct-room flow using a shared `roomId`.
  */
 export default function Lobby({
+  // ── Server-authoritative call flow ──────────────────────────────────────
+  userId,
+  onChangeUserId,
+  calleeId,
+  onChangeCalleeId,
+  onCall,
+  // ── Legacy room-join flow ────────────────────────────────────────────────
   signalingUrl,
   onChangeSignalingUrl,
   roomId,
@@ -105,6 +117,35 @@ export default function Lobby({
             mirror
           />
         ) : null}
+
+        {/* ── Server-authoritative call section ─────────────────────────── */}
+        <Text style={styles.sectionTitle}>Call</Text>
+
+        <ClearableInput
+          value={userId}
+          onChangeText={onChangeUserId}
+          placeholder="Your user ID"
+          accessibilityLabel="Your user ID"
+          testID="input-user-id"
+        />
+        <ClearableInput
+          value={calleeId}
+          onChangeText={onChangeCalleeId}
+          placeholder="Callee user ID"
+          accessibilityLabel="Callee user ID"
+          testID="input-callee-id"
+        />
+
+        <AppButton
+          title="Call"
+          onPress={onCall}
+          disabled={!userId?.trim() || !calleeId?.trim()}
+          testID="lobby-call"
+          style={styles.callButton}
+        />
+
+        {/* ── Legacy room-join section ───────────────────────────────────── */}
+        <Text style={styles.sectionTitle}>Join Room</Text>
 
         <ClearableInput
           value={signalingUrl}
@@ -237,6 +278,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 10,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  callButton: {
     marginBottom: spacing.sm,
   },
 });
