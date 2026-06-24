@@ -96,6 +96,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `FCM_SERVICE_ACCOUNT_JSON` | _(unset)_ | Firebase service-account credentials for FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. Absent ⇒ FCM pushes are skipped (`fcm_not_configured`). |
 | `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
 
 ## Push notifications
 
@@ -151,3 +152,38 @@ npm run db:migrate
 The database-backed tests in `test/db-drizzle.test.js` are **skipped** unless
 `DATABASE_URL` is set, so the rest of the suite runs offline. To run them
 locally, point `DATABASE_URL` at a disposable Postgres and run `npm test`.
+
+## Horizontal scaling (Redis)
+
+Running more than one server instance behind a load balancer requires two pieces
+of cross-instance coordination, both backed by Redis:
+
+- **Message bus** (`src/messageBus.js`) — Redis Pub/Sub used to broadcast
+  call-state transitions (channel `signaling:call.transitions`) to other
+  instances / observers.
+- **Socket.IO Redis adapter** — so room and per-user emits reach a user's
+  sockets no matter which instance they are connected to. Each socket joins a
+  `user:<userId>` room on connect; user-targeted call/RTC events are addressed to
+  that room.
+
+Wire both by building a Redis-backed store bundle and passing it to
+`createServer`:
+
+```js
+const { createServer, createRedisPgStores } = require('./src/index');
+
+const stores = await createRedisPgStores();      // uses REDIS_URL
+const server = createServer({ stores, messageBus: stores.messageBus });
+```
+
+`createRedisPgStores()` opens the Redis connections (one Pub/Sub pair for the
+bus, one for the adapter), exposes `messageBus` and `attachAdapter(io)` (invoked
+automatically by `createServer`), and a `close()` that `shutdown()` calls during
+a graceful drain. Hot keyed state (rooms, sessions, presence, …) remains
+in-process per instance; cross-instance delivery is handled by the adapter and
+bus rather than by sharing those maps.
+
+When `REDIS_URL` is unset the default in-memory stores and a no-op (single
+instance) bus are used, so local development and the test suite run without
+Redis. The message-bus / Redis-store tests in `test/message-bus.test.js` use an
+in-memory Redis fake and need no live server.

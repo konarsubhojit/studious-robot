@@ -42,4 +42,9 @@ module.exports = {
   STORE_NAMES,
   createMemoryStores,
   createStores,
+  // Lazily required so the default in-memory path never loads the `redis` /
+  // `@socket.io/redis-adapter` dependencies.
+  get createRedisPgStores() {
+    return require('./redis').createRedisPgStores;
+  },
 };

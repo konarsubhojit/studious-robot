@@ -19,6 +19,11 @@ const { createStores } = require('./stores');
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 const SIGNALING_VERSION = 1;
+/**
+ * Message-bus channel on which call-state transitions are broadcast to other
+ * instances / observers when a cross-instance bus is configured.
+ */
+const CALL_TRANSITION_CHANNEL = 'signaling:call.transitions';
 const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
 
 // ─── Call lifecycle ───────────────────────────────────────────────────────────
@@ -131,6 +136,13 @@ function createServer(opts = {}) {
     rtcRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
+    /**
+     * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
+     * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
+     * Used to broadcast call-state transitions to other instances / observers.
+     * `null` for single-instance (in-memory) deployments.
+     */
+    messageBus: opts.messageBus ?? stores.messageBus ?? null,
     /**
      * Lifecycle flag.  Flipped to `true` by `shutdown()` so that `/health`
      * reports the instance as draining and new socket connections are rejected
@@ -774,6 +786,13 @@ function createServer(opts = {}) {
     cors: { origin: corsOrigin },
   });
 
+  // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
+  // adapter so room / per-user emits fan out to sockets on every instance.
+  if (typeof stores.attachAdapter === 'function') {
+    stores.attachAdapter(io);
+    console.log('[signaling] Socket.IO Redis adapter attached (multi-instance mode)');
+  }
+
   io.on('connection', (socket) => {
     // Reject connections that race in after shutdown has begun: tell the client
     // this instance is draining so it can reconnect elsewhere, then disconnect.
@@ -794,6 +813,10 @@ function createServer(opts = {}) {
       sessionId: identity.sessionId,
       connectedAt: new Date().toISOString(),
     });
+    // Join a per-user room so call/RTC notifications can be addressed to the
+    // user regardless of which instance their socket(s) live on (the Socket.IO
+    // Redis adapter fans the emit out across instances).
+    socket.join(userRoom(identity.userId));
 
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
@@ -1088,6 +1111,7 @@ function createServer(opts = {}) {
     httpServer,
     io,
     shutdown,
+    messageBus: state.messageBus,
     getPresence: (userId) => getPresenceSnapshot(state, userId),
     resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
     getCall: (callId) => state.calls.get(callId) || null,
@@ -1393,15 +1417,25 @@ function resolveReachableChannels(state, userId) {
   return channels;
 }
 
-function emitToUserSockets(io, state, userId, eventName, payload) {
-  const connections = state.userConnections.get(userId);
-  if (!connections) {
-    return;
-  }
+/**
+ * Socket.IO room name that every one of a user's sockets joins on connect.
+ *
+ * Addressing emits to this room (instead of iterating tracked socket ids) lets
+ * the Socket.IO Redis adapter deliver to the user's sockets on other instances.
+ *
+ * @param {string} userId
+ * @returns {string}
+ */
+function userRoom(userId) {
+  return `user:${userId}`;
+}
 
-  for (const connection of connections.values()) {
-    io.to(connection.socketId).emit(eventName, payload);
-  }
+function emitToUserSockets(io, state, userId, eventName, payload) {
+  // Emit to the user's room: locally this reaches every tracked socket, and
+  // with the Redis adapter attached it also reaches the user's sockets on other
+  // instances. `state` is retained for signature stability with call sites.
+  void state;
+  io.to(userRoom(userId)).emit(eventName, payload);
 }
 
 function notifyCallCreated(io, state, call) {
@@ -1461,6 +1495,24 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
   };
   emitToUserSockets(io, state, call.callerId, 'call.state_changed', statePayload);
   emitToUserSockets(io, state, call.calleeId, 'call.state_changed', statePayload);
+
+  // Broadcast the transition on the cross-instance bus (best-effort) so other
+  // instances / external observers can react to call lifecycle changes. Socket
+  // delivery to participants is handled by the Redis adapter above, so bus
+  // subscribers must not re-emit to sockets (to avoid duplicate delivery).
+  if (state.messageBus && previousStatus !== null) {
+    state.messageBus
+      .publish(CALL_TRANSITION_CHANNEL, {
+        callId: call.callId,
+        previousStatus,
+        status: call.status,
+        actor,
+        reason: statePayload.reason,
+      })
+      .catch((error) => {
+        console.error(`[signaling] message bus publish failed: ${error?.message}`);
+      });
+  }
 
   const eventName = getCallTransitionEventName(call.status, statePayload.reason);
   if (!eventName) {
@@ -1688,7 +1740,18 @@ function handleRtcRelay(socket, ack, payload, options) {
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 
-module.exports = { createServer, CALL_END_REASONS, createStores };
+const { createRedisPgStores } = require('./stores');
+const { createMemoryMessageBus, createRedisMessageBus } = require('./messageBus');
+
+module.exports = {
+  createServer,
+  CALL_END_REASONS,
+  CALL_TRANSITION_CHANNEL,
+  createStores,
+  createRedisPgStores,
+  createMemoryMessageBus,
+  createRedisMessageBus,
+};
 
 // ─── Call domain helpers ──────────────────────────────────────────────────────
 

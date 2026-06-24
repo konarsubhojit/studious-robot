@@ -174,6 +174,37 @@ when the new code starts. `drizzle-kit` is a dev dependency and is intentionally
 not installed on the VM (`npm ci --omit=dev`); migrations therefore run from CI,
 not on the VM.
 
+### Redis (horizontal scaling) configuration — optional
+
+A single VM instance does **not** need Redis. Redis is only required to run more
+than one server instance (multiple processes/VMs behind a load balancer), where
+it provides:
+
+- a **Pub/Sub message bus** for cross-instance call-state events, and
+- the **Socket.IO Redis adapter** so a user's WebSocket events are delivered
+  regardless of which instance holds their socket.
+
+Provision Redis and point the server at it with the `REDIS_URL` env var:
+
+- **Self-hosted on the VM** (simplest for a small deployment):
+
+  ```bash
+  # Oracle Linux
+  sudo dnf install -y redis
+  sudo systemctl enable --now redis
+  # Bind to localhost only (default) and set REDIS_URL=redis://127.0.0.1:6379
+  ```
+
+- **Managed** (OCI Cache / Redis Cloud / Upstash): create an instance and use the
+  provider's `rediss://…` URL (TLS).
+
+Then add `Environment=REDIS_URL=redis://127.0.0.1:6379` (or the managed URL) to
+the systemd unit's `Environment=` lines on **every** instance and reload the
+service. When `REDIS_URL` is unset the server runs in single-instance mode with
+in-memory state — keep it unset for a one-VM deployment. Secure self-hosted Redis
+by binding to localhost (or a private subnet) and/or setting `requirepass`; never
+expose it publicly.
+
 ---
 
 ## 7. Sudoers — passwordless restart for the deploy script
