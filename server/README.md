@@ -80,6 +80,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `answer`        | `{ from: socketId, sdp }`            | Forwarded answer from the other peer.                    |
 | `ice-candidate` | `{ from: socketId, candidate }`      | Forwarded ICE candidate from the other peer.             |
 | `peer-left`     | `{ id: socketId }`                   | Emitted to the remaining peer when the other disconnects.|
+| `server.draining` | `{ reason, ts }`                   | Emitted to every connected client when the instance begins a graceful shutdown; clients should reconnect. |
 
 ### Environment variables
 
@@ -88,6 +89,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `PORT`        | `4173`      | TCP port to listen on                                             |
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
+| `SHUTDOWN_DRAIN_MS` | `25000` | Max time (ms) to wait for in-flight socket connections to drain on `SIGTERM`/`SIGINT` before force-closing. Keep below the systemd `TimeoutStopSec`. |
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |

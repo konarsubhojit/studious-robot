@@ -11,6 +11,13 @@ WorkingDirectory=/opt/studious-robot/server
 ExecStart=/usr/bin/node src/index.js
 Restart=on-failure
 RestartSec=5
+# Graceful shutdown for rolling deploys: send SIGTERM to the main process only
+# (the app drains in-flight connections on SIGTERM) and allow up to 30s for the
+# drain to complete before systemd hard-kills the process.  Keep this >= the
+# app's SHUTDOWN_DRAIN_MS (default 25s).
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
 
 Environment=NODE_ENV=production
 Environment=PORT=4173

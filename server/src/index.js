@@ -64,6 +64,16 @@ const DEFAULT_RINGING_TIMEOUT_MS = 30_000;
 const RINGING_POLL_MS = 5_000;
 
 /**
+ * Default maximum time `shutdown()` waits for in-flight socket connections to
+ * drain before force-closing them.  Kept below the systemd `TimeoutStopSec`
+ * (30s) so the process exits cleanly before being hard-killed.
+ */
+const DEFAULT_SHUTDOWN_DRAIN_MS = 25_000;
+
+/** Poll interval while waiting for sockets to drain during shutdown. */
+const SHUTDOWN_DRAIN_POLL_MS = 50;
+
+/**
  * Build the Express app and HTTP/Socket.IO server.
  *
  * Exported as a factory so tests can spin up an isolated instance on an
@@ -121,9 +131,26 @@ function createServer(opts = {}) {
     rtcRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
+    /**
+     * Lifecycle flag.  Flipped to `true` by `shutdown()` so that `/health`
+     * reports the instance as draining and new socket connections are rejected
+     * during a rolling deploy.
+     */
+    draining: false,
   };
 
   app.get('/health', (_req, res) => {
+    // While draining, report unhealthy so load balancers / orchestrators stop
+    // routing new traffic to this instance during a rolling deploy.
+    if (state.draining) {
+      res.status(503).json({
+        status: 'draining',
+        service: 'studious-robot-signaling',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
     res.status(200).json({
       status: 'ok',
       service: 'studious-robot-signaling',
@@ -748,6 +775,14 @@ function createServer(opts = {}) {
   });
 
   io.on('connection', (socket) => {
+    // Reject connections that race in after shutdown has begun: tell the client
+    // this instance is draining so it can reconnect elsewhere, then disconnect.
+    if (state.draining) {
+      socket.emit('server.draining', { reason: 'shutdown', ts: new Date().toISOString() });
+      socket.disconnect(true);
+      return;
+    }
+
     const identity = resolveSocketIdentity(socket, state.sessions);
     socket.data.identity = identity;
     ensurePresenceRecord(state, identity.userId);
@@ -982,10 +1017,77 @@ function createServer(opts = {}) {
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
+  const shutdownDrainMs = opts.shutdownDrainMs
+    ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
+
+  /** Resolves once shutdown has fully completed; shared for idempotency. */
+  let shutdownPromise = null;
+
+  /**
+   * Gracefully shut down this instance for a rolling deploy / SIGTERM.
+   *
+   * Steps:
+   *  1. Flip the `draining` flag so `/health` reports 503 and new socket
+   *     connections are rejected.
+   *  2. Stop the background ringing-timeout worker.
+   *  3. Notify every connected client (`server.draining`) so they can reconnect
+   *     to another instance, and drop local connections from presence.
+   *  4. Keep the HTTP server listening during the drain window (so load
+   *     balancers observe the 503 health status) and wait up to
+   *     `drainTimeoutMs` for sockets to disconnect on their own.
+   *  5. Force-close any straggler sockets and the Socket.IO/HTTP servers.
+   *  6. Close pluggable stores that expose a `close()` method (e.g. Redis /
+   *     Postgres-backed stores).
+   *
+   * Idempotent: repeated calls return the same in-flight promise.
+   *
+   * @param {object} [shutdownOpts]
+   * @param {number} [shutdownOpts.drainTimeoutMs] - Max ms to wait for drain.
+   * @param {string} [shutdownOpts.reason] - Reason advertised to clients.
+   * @returns {Promise<void>}
+   */
+  function shutdown({ drainTimeoutMs = shutdownDrainMs, reason = 'shutdown' } = {}) {
+    if (shutdownPromise) return shutdownPromise;
+    state.draining = true;
+
+    shutdownPromise = (async () => {
+      // Stop the background worker.
+      clearInterval(pollTimer);
+
+      // Tell connected clients to reconnect elsewhere.
+      io.emit('server.draining', { reason, ts: new Date().toISOString() });
+
+      // Drop this instance's connections from presence so peers see users go
+      // offline promptly rather than waiting for socket teardown.
+      drainLocalPresence(state);
+
+      // Keep the HTTP server listening during the drain window so health checks
+      // observe the 503 `draining` status and load balancers stop routing new
+      // traffic here; brand-new socket connections are rejected by the
+      // connection handler (see the `state.draining` guard).  Wait for existing
+      // clients to disconnect on their own, up to the drain timeout.
+      await waitForSocketsToDrain(io, drainTimeoutMs);
+
+      // Force-disconnect any remaining sockets, then close the servers.
+      io.disconnectSockets(true);
+      httpServer.closeAllConnections?.();
+      await new Promise((resolve) => io.close(() => resolve()));
+      await new Promise((resolve) => httpServer.close(() => resolve()));
+
+      // Close durable stores (Redis/Postgres) if they support it.
+      if (typeof stores.close === 'function') {
+        await stores.close();
+      }
+    })();
+
+    return shutdownPromise;
+  }
+
   return {
     app,
     httpServer,
     io,
+    shutdown,
     getPresence: (userId) => getPresenceSnapshot(state, userId),
     resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
     getCall: (callId) => state.calls.get(callId) || null,
@@ -1185,6 +1287,36 @@ function removeConnection(state, userId, socketId) {
   if (connections.size === 0) {
     state.userConnections.delete(userId);
     ensurePresenceRecord(state, userId).lastSeen = new Date().toISOString();
+  }
+}
+
+/**
+ * Drop every locally-tracked socket connection from presence and mark the
+ * affected users offline (with a fresh `lastSeen`).  Called during graceful
+ * shutdown so presence reflects the drain immediately rather than waiting for
+ * each socket teardown.
+ *
+ * @param {object} state
+ */
+function drainLocalPresence(state) {
+  const now = new Date().toISOString();
+  for (const userId of Array.from(state.userConnections.keys())) {
+    state.userConnections.delete(userId);
+    ensurePresenceRecord(state, userId).lastSeen = now;
+  }
+}
+
+/**
+ * Resolve once all Socket.IO clients have disconnected or `timeoutMs` elapses.
+ *
+ * @param {import('socket.io').Server} io
+ * @param {number} timeoutMs
+ * @returns {Promise<void>}
+ */
+async function waitForSocketsToDrain(io, timeoutMs) {
+  const start = Date.now();
+  while (io.engine?.clientsCount > 0 && Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_POLL_MS));
   }
 }
 
@@ -1756,9 +1888,29 @@ function tickRingingTimeouts(state, now, onTransition) {
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
   const host = process.env.HOST || '0.0.0.0';
-  const { httpServer } = createServer();
+  const { httpServer, shutdown } = createServer();
   httpServer.listen(port, host, () => {
     console.log(`[signaling] listening on http://${host}:${port}`);
     console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
   });
+
+  // Graceful shutdown for rolling deploys: drain in-flight connections, then
+  // exit cleanly so systemd can restart/replace the instance.
+  let exiting = false;
+  const handleSignal = (signal) => {
+    if (exiting) return;
+    exiting = true;
+    console.log(`[signaling] received ${signal}; draining connections...`);
+    shutdown({ reason: signal })
+      .then(() => {
+        console.log('[signaling] shutdown complete; exiting');
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('[signaling] error during shutdown:', err);
+        process.exit(1);
+      });
+  };
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
 }

@@ -11,7 +11,7 @@ GitHub Actions (push to master)
   └─► appleboy/ssh-action → OCI Ampere A1 VM
           ├─ git fetch / reset
           ├─ npm ci --omit=dev
-          └─ sudo systemctl restart robot-signal
+          └─ sudo systemctl reload-or-restart robot-signal
 ```
 
 The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`.
@@ -86,6 +86,26 @@ The service listens on `PORT=4173` by default. Edit the unit file's `Environment
 sudo systemctl daemon-reload && sudo systemctl restart robot-signal
 ```
 
+### Graceful shutdown & rolling deploys
+
+The server installs `SIGTERM`/`SIGINT` handlers and shuts down gracefully:
+
+1. `/health` starts returning **`503 { "status": "draining" }`** so load balancers / reverse proxies stop routing new traffic to the instance.
+2. Connected Socket.IO clients receive a **`server.draining`** event so they can reconnect (to another instance, once horizontal scaling lands).
+3. New socket connections are rejected while draining; the server waits up to `SHUTDOWN_DRAIN_MS` (default **25s**) for in-flight connections to drain, then force-closes the sockets and HTTP server and closes any durable stores.
+
+The systemd unit is configured for this with:
+
+```ini
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+```
+
+`KillMode=mixed` sends `SIGTERM` to the main process first (triggering the drain) and only escalates to `SIGKILL` for any survivors after `TimeoutStopSec`. Keep `TimeoutStopSec` **≥ `SHUTDOWN_DRAIN_MS`** (set `Environment=SHUTDOWN_DRAIN_MS=25000` to tune the drain window).
+
+Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restart`** instead of a hard `restart`, which lets in-flight calls drain during a redeploy and starts the service if it was stopped. For a multi-instance (true rolling) setup, restart instances one at a time behind the load balancer, waiting for each `/health` to return `200` before moving to the next.
+
 ---
 
 ## 6. Create the deploy SSH key pair
@@ -140,7 +160,7 @@ not on the VM.
 
 ## 7. Sudoers — passwordless restart for the deploy script
 
-The CI deploy script runs `sudo systemctl restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
+The CI deploy script runs `sudo systemctl reload-or-restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
 
 ```bash
 # On the VM
@@ -150,7 +170,7 @@ sudo visudo -f /etc/sudoers.d/studious-robot-deploy
 Add the following line and save:
 
 ```
-opc ALL=(ALL) NOPASSWD: /bin/systemctl restart robot-signal, /bin/systemctl is-active robot-signal
+opc ALL=(ALL) NOPASSWD: /bin/systemctl reload-or-restart robot-signal, /bin/systemctl is-active robot-signal
 ```
 
 > **Note:** On some distributions (Oracle Linux 8+, Ubuntu 20.04+) `systemctl` lives at `/usr/bin/systemctl`. Verify with `which systemctl` on the VM and use that path in the sudoers rule. Using the wrong path will silently cause the passwordless sudo to fail and prompt for a password instead.
@@ -284,9 +304,9 @@ git fetch --quiet origin master
 git reset --hard origin/master
 cd server
 npm ci --omit=dev
-sudo systemctl restart robot-signal
+sudo systemctl reload-or-restart robot-signal
 sleep 2
 sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
 ```
 
-The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the restart.
+The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the reload-or-restart.
