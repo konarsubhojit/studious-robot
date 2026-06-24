@@ -368,6 +368,171 @@ describe('rehydrateCallFromPush', () => {
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
     expect(resultRef.current.status.message).toMatch(/missed call/i);
   });
+
+  // ─── Terminal-state rehydration ───────────────────────────────────────────
+
+  test('shows "Call was declined" status for a declined call', async () => {
+    const fakeCall = {
+      callId: 'call-declined',
+      callerId: 'user-dave',
+      calleeId: 'user-alice',
+      status: 'declined',
+      endReason: 'declined',
+    };
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-4', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => fakeCall,
+      });
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    await act(async () => {
+      await resultRef.current.rehydrateCallFromPush('call-declined');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.status.message).toMatch(/declined/i);
+  });
+
+  test('shows "Call ended" status for an already-ended call', async () => {
+    const fakeCall = {
+      callId: 'call-ended',
+      callerId: 'user-eve',
+      calleeId: 'user-alice',
+      status: 'ended',
+      endReason: 'ended',
+    };
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-5', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => fakeCall,
+      });
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    await act(async () => {
+      await resultRef.current.rehydrateCallFromPush('call-ended');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.status.message).toMatch(/call ended/i);
+  });
+
+  test('shows fallback status for an accepted call (background restore bridge)', async () => {
+    // When the app is backgrounded during a call, the server-side status may be
+    // "accepted" or "connecting_media".  These active states are not ringing and
+    // not yet terminal; the current rehydration path reports a fallback message
+    // so the user knows the call is no longer available in this session.
+    const fakeCall = {
+      callId: 'call-accepted',
+      callerId: 'user-frank',
+      calleeId: 'user-alice',
+      status: 'accepted',
+    };
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-6', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => fakeCall,
+      });
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    await act(async () => {
+      await resultRef.current.rehydrateCallFromPush('call-accepted');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    // Call remains idle; a descriptive status message is shown.
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(typeof resultRef.current.status.message).toBe('string');
+    expect(resultRef.current.status.message.length).toBeGreaterThan(0);
+  });
+
+  test('shows fallback status for an in_call call (background restore bridge)', async () => {
+    const fakeCall = {
+      callId: 'call-in-call',
+      callerId: 'user-grace',
+      calleeId: 'user-alice',
+      status: 'in_call',
+    };
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-7', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => fakeCall,
+      });
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    await act(async () => {
+      await resultRef.current.rehydrateCallFromPush('call-in-call');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(typeof resultRef.current.status.message).toBe('string');
+    expect(resultRef.current.status.message.length).toBeGreaterThan(0);
+  });
+
+  test('shows error status when the server returns a non-404 HTTP error', async () => {
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-8', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    await act(async () => {
+      await resultRef.current.rehydrateCallFromPush('call-server-error');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.status.severity).toBe('error');
+  });
 });
 
 // ─── WebRTC hardening: camera switch ─────────────────────────────────────────
