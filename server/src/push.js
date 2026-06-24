@@ -4,8 +4,8 @@
  * Push notification delivery for incoming calls.
  *
  * Supports APNs (Apple Push Notification service) via HTTP/2 and FCM (Firebase
- * Cloud Messaging) via the Legacy HTTP API.  Both providers are env-gated and
- * fail gracefully with console diagnostics when credentials are absent.
+ * Cloud Messaging) via the HTTP v1 API.  Both providers are env-gated and fail
+ * gracefully with console diagnostics when credentials are absent.
  *
  * Configuration env vars
  * ──────────────────────
@@ -15,9 +15,13 @@
  *        APNS_BUNDLE_ID   App bundle ID (e.g. com.tcalling)
  *        APNS_PRODUCTION  Set to 'true' to use the production gateway
  *
- *  FCM   FCM_SERVER_KEY   Legacy server key from the Firebase console
+ *  FCM   FCM_SERVICE_ACCOUNT_JSON  Firebase service-account credentials (JSON
+ *                                  string, or a path to the JSON file).  Used to
+ *                                  mint an OAuth2 access token for the FCM HTTP
+ *                                  v1 API (`messages:send`).
  */
 
+const fs = require('fs');
 const http2 = require('http2');
 const https = require('https');
 const { createSign } = require('crypto');
@@ -28,7 +32,14 @@ const APNS_HOST_SANDBOX    = 'api.sandbox.push.apple.com';
 const APNS_HOST_PRODUCTION = 'api.push.apple.com';
 
 const FCM_HOST = 'fcm.googleapis.com';
-const FCM_PATH = '/fcm/send';
+/** OAuth2 scope required to send messages via the FCM HTTP v1 API. */
+const FCM_SEND_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
+/** Default Google OAuth2 token endpoint (overridden by the SA `token_uri`). */
+const GOOGLE_TOKEN_URI = 'https://oauth2.googleapis.com/token';
+/** Google access tokens last ~1 hour; refresh a little early. */
+const FCM_TOKEN_TTL_SECS = 3300; // 55 minutes
+/** Skew applied to the cached-token expiry check, in seconds. */
+const FCM_TOKEN_SKEW_SECS = 60;
 
 /** Maximum delivery attempts (initial + retries). */
 const MAX_ATTEMPTS = 3;
@@ -73,6 +84,127 @@ function buildApnsJwt(config) {
   return _apnsJwt;
 }
 
+// ─── FCM OAuth2 access-token cache ─────────────────────────────────────────────
+
+let _fcmAccessToken = null;
+let _fcmAccessTokenExpiresAt = 0;
+let _fcmAccessTokenEmail = null;
+
+/**
+ * Reset the cached FCM access token.  Intended for tests so credential changes
+ * between cases are not masked by the in-process cache.
+ */
+function _resetFcmTokenCache() {
+  _fcmAccessToken = null;
+  _fcmAccessTokenExpiresAt = 0;
+  _fcmAccessTokenEmail = null;
+}
+
+/**
+ * Build a signed RS256 JWT asserting the service-account identity, used to
+ * exchange for an OAuth2 access token at the service account's `token_uri`.
+ *
+ * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
+ * @returns {string}
+ */
+function buildFcmAssertion(config) {
+  const nowSecs = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const claims = Buffer.from(JSON.stringify({
+    iss: config.clientEmail,
+    scope: FCM_SEND_SCOPE,
+    aud: config.tokenUri,
+    iat: nowSecs,
+    exp: nowSecs + 3600,
+  })).toString('base64url');
+  const unsigned = `${header}.${claims}`;
+
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsigned);
+  const sig = signer.sign(config.privateKey).toString('base64url');
+  return `${unsigned}.${sig}`;
+}
+
+/**
+ * Exchange a signed assertion for an OAuth2 access token via the token endpoint.
+ *
+ * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
+ * @returns {Promise<{ ok: boolean, accessToken?: string, statusCode?: number, reason?: string }>}
+ */
+function requestFcmAccessToken(config) {
+  const assertion = buildFcmAssertion(config);
+  const form = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion,
+  }).toString();
+
+  const url = new URL(config.tokenUri);
+  const body = Buffer.from(form);
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': body.length,
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          const statusCode = res.statusCode;
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+          if (statusCode === 200 && parsed.access_token) {
+            resolve({ ok: true, accessToken: parsed.access_token });
+            return;
+          }
+          resolve({
+            ok: false,
+            statusCode,
+            reason: parsed.error || parsed.error_description || 'token_request_failed',
+          });
+        });
+      },
+    );
+    req.on('error', () => {
+      resolve({ ok: false, statusCode: null, reason: 'token_request_failed' });
+    });
+    req.end(body);
+  });
+}
+
+/**
+ * Return a cached OAuth2 access token, refreshing it when expired or when the
+ * service-account identity changes.
+ *
+ * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
+ * @returns {Promise<{ ok: boolean, accessToken?: string, statusCode?: number, reason?: string }>}
+ */
+async function getFcmAccessToken(config) {
+  const nowSecs = Math.floor(Date.now() / 1000);
+  if (
+    _fcmAccessToken &&
+    _fcmAccessTokenEmail === config.clientEmail &&
+    _fcmAccessTokenExpiresAt - FCM_TOKEN_SKEW_SECS > nowSecs
+  ) {
+    return { ok: true, accessToken: _fcmAccessToken };
+  }
+
+  const result = await requestFcmAccessToken(config);
+  if (result.ok) {
+    _fcmAccessToken = result.accessToken;
+    _fcmAccessTokenEmail = config.clientEmail;
+    _fcmAccessTokenExpiresAt = nowSecs + FCM_TOKEN_TTL_SECS;
+  }
+  return result;
+}
+
 // ─── Config loaders ───────────────────────────────────────────────────────────
 
 function loadApnsConfig() {
@@ -92,9 +224,53 @@ function loadApnsConfig() {
   };
 }
 
+/**
+ * Load and validate the FCM service-account credentials used for HTTP v1.
+ *
+ * `FCM_SERVICE_ACCOUNT_JSON` may contain either the raw JSON of the service
+ * account key, or a filesystem path to that JSON file.  Returns `null` (so the
+ * caller can skip gracefully) when the variable is absent or cannot be parsed
+ * into a usable credential.
+ *
+ * @returns {{ projectId: string, clientEmail: string, privateKey: string, tokenUri: string } | null}
+ */
 function loadFcmConfig() {
-  const serverKey = process.env.FCM_SERVER_KEY?.trim();
-  return serverKey ? { serverKey } : null;
+  const raw = process.env.FCM_SERVICE_ACCOUNT_JSON?.trim();
+  if (!raw) return null;
+
+  let json = raw;
+  // Allow pointing at a file on disk instead of inlining the JSON.
+  if (!raw.startsWith('{')) {
+    try {
+      json = fs.readFileSync(raw, 'utf8');
+    } catch (error) {
+      console.warn(`[push] FCM service account file unreadable: ${error?.message}`);
+      return null;
+    }
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    console.warn(`[push] FCM service account JSON is invalid: ${error?.message}`);
+    return null;
+  }
+
+  const projectId = parsed.project_id;
+  const clientEmail = parsed.client_email;
+  const privateKey = parsed.private_key;
+  if (!projectId || !clientEmail || !privateKey) {
+    console.warn('[push] FCM service account JSON missing project_id/client_email/private_key');
+    return null;
+  }
+
+  return {
+    projectId,
+    clientEmail,
+    privateKey,
+    tokenUri: parsed.token_uri || GOOGLE_TOKEN_URI,
+  };
 }
 
 // ─── Payload builders ─────────────────────────────────────────────────────────
@@ -117,19 +293,33 @@ function buildApnsPayload(callData) {
   });
 }
 
+/**
+ * Build an FCM HTTP v1 `messages:send` request body.
+ *
+ * v1 requires all `data` values to be strings; the notification block is sent
+ * separately so the OS renders a system notification while `data` carries the
+ * deep-link payload the app consumes.
+ *
+ * @param {string} pushToken
+ * @param {{ callId: string, callerId: string }} callData
+ * @returns {string}
+ */
 function buildFcmPayload(pushToken, callData) {
   return JSON.stringify({
-    to: pushToken,
-    priority: 'high',
-    notification: {
-      title: 'Incoming call',
-      body: `Call from ${callData.callerId}`,
-    },
-    data: {
-      callId: callData.callId,
-      callerId: callData.callerId,
-      type: 'call.incoming',
-      deepLink: `tcalling://call/${callData.callId}`,
+    message: {
+      token: pushToken,
+      notification: {
+        title: 'Incoming call',
+        body: `Call from ${callData.callerId}`,
+      },
+      data: {
+        callId: String(callData.callId),
+        callerId: String(callData.callerId),
+        type: 'call.incoming',
+        deepLink: `tcalling://call/${callData.callId}`,
+      },
+      android: { priority: 'high' },
+      apns: { headers: { 'apns-priority': '10' } },
     },
   });
 }
@@ -185,22 +375,34 @@ function sendApnsOnce(config, pushToken, callData) {
 }
 
 /**
- * Perform one FCM Legacy HTTP delivery attempt.
+ * Perform one FCM HTTP v1 delivery attempt.
+ *
+ * Acquires (or reuses) an OAuth2 access token from the service-account
+ * credentials, then POSTs the v1 message to
+ * `/v1/projects/{projectId}/messages:send`.
  *
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
-function sendFcmOnce(config, pushToken, callData) {
+async function sendFcmOnce(config, pushToken, callData) {
+  const token = await getFcmAccessToken(config);
+  if (!token.ok) {
+    // Treat token-endpoint 5xx/429 (or network errors) as retryable; other
+    // failures surface their status so withRetry can short-circuit.
+    return { ok: false, statusCode: token.statusCode ?? null, reason: token.reason ?? 'token_error' };
+  }
+
   const payload    = buildFcmPayload(pushToken, callData);
   const payloadLen = Buffer.byteLength(payload);
+  const path       = `/v1/projects/${config.projectId}/messages:send`;
 
   return new Promise((resolve, reject) => {
     const req = https.request(
       {
         hostname: FCM_HOST,
-        path: FCM_PATH,
+        path,
         method: 'POST',
         headers: {
-          Authorization: `key=${config.serverKey}`,
+          Authorization: 'Bearer ' + token.accessToken,
           'Content-Type': 'application/json',
           'Content-Length': payloadLen,
         },
@@ -210,14 +412,16 @@ function sendFcmOnce(config, pushToken, callData) {
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => {
           const statusCode = res.statusCode;
-          if (statusCode !== 200) {
-            resolve({ ok: false, statusCode });
+          if (statusCode === 200) {
+            resolve({ ok: true, statusCode });
             return;
           }
-          let parsed;
-          try { parsed = JSON.parse(body); } catch { parsed = {}; }
-          const reason = parsed.results?.[0]?.error;
-          resolve(reason ? { ok: false, statusCode, reason } : { ok: true, statusCode });
+          let reason = 'unknown';
+          try {
+            const parsed = JSON.parse(body);
+            reason = parsed?.error?.status || parsed?.error?.message || 'unknown';
+          } catch { /* ignore */ }
+          resolve({ ok: false, statusCode, reason });
         });
       },
     );
@@ -315,7 +519,7 @@ async function sendIncomingCallPush(channel, callData) {
   } else if (provider === 'fcm') {
     const config = loadFcmConfig();
     if (!config) {
-      console.warn(`[push] FCM not configured (set FCM_SERVER_KEY); skip ${deviceId}`);
+      console.warn(`[push] FCM not configured (set FCM_SERVICE_ACCOUNT_JSON); skip ${deviceId}`);
       return { ok: false, provider, deviceId, reason: 'fcm_not_configured' };
     }
     result = await withRetry(() => sendFcmOnce(config, pushToken, callData), label);
@@ -340,4 +544,10 @@ async function sendIncomingCallPush(channel, callData) {
   return outcome;
 }
 
-module.exports = { sendIncomingCallPush };
+module.exports = {
+  sendIncomingCallPush,
+  // Exported for unit tests.
+  _resetFcmTokenCache,
+  _loadFcmConfig: loadFcmConfig,
+  _buildFcmPayload: buildFcmPayload,
+};

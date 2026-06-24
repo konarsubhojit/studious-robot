@@ -80,6 +80,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `answer`        | `{ from: socketId, sdp }`            | Forwarded answer from the other peer.                    |
 | `ice-candidate` | `{ from: socketId, candidate }`      | Forwarded ICE candidate from the other peer.             |
 | `peer-left`     | `{ id: socketId }`                   | Emitted to the remaining peer when the other disconnects.|
+| `server.draining` | `{ reason, ts }`                   | Emitted to every connected client when the instance begins a graceful shutdown; clients should reconnect. |
 
 ### Environment variables
 
@@ -88,3 +89,101 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `PORT`        | `4173`      | TCP port to listen on                                             |
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
+| `SHUTDOWN_DRAIN_MS` | `25000` | Max time (ms) to wait for in-flight socket connections to drain on `SIGTERM`/`SIGINT` before force-closing. Keep below the systemd `TimeoutStopSec`. |
+| `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
+| `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
+| `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
+| `FCM_SERVICE_ACCOUNT_JSON` | _(unset)_ | Firebase service-account credentials for FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. Absent ⇒ FCM pushes are skipped (`fcm_not_configured`). |
+| `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
+| `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
+
+## Push notifications
+
+Incoming-call pushes are delivered by `src/push.js` to callees with no live
+WebSocket connection. Two providers are supported and both fail gracefully when
+unconfigured (logging and returning a `*_not_configured` reason).
+
+### FCM (Firebase Cloud Messaging) — HTTP v1
+
+The server uses the **FCM HTTP v1 API** (`/v1/projects/{projectId}/messages:send`)
+with OAuth2 service-account authentication. The legacy server-key API is no
+longer used.
+
+1. In the Firebase console open **Project settings → Service accounts** and click
+   **Generate new private key** to download the service-account JSON.
+2. Provide it to the server via `FCM_SERVICE_ACCOUNT_JSON` — either the raw JSON
+   (e.g. injected from a secret) or a path to the key file on disk.
+3. In CI/CD, store the JSON as a GitHub Actions secret named
+   `FCM_SERVICE_ACCOUNT_JSON` and expose it to the deploy environment. Never
+   commit the key to the repository.
+
+The server mints (and caches) a short-lived OAuth2 access token from the
+service-account key and refreshes it automatically before expiry. If
+`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid, FCM delivery is skipped.
+
+### APNs (Apple Push Notification service)
+
+Set `APNS_KEY` (the `.p8` private key contents), `APNS_KEY_ID`, `APNS_TEAM_ID`,
+and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
+
+## Database (Drizzle ORM)
+
+Durable persistence uses [Drizzle ORM](https://orm.drizzle.team/) over Postgres
+(Neon). The schema is defined in code at `db/schema.js`; versioned SQL
+migrations are generated from it into `db/migrations/` by `drizzle-kit` — do not
+hand-edit the generated SQL.
+
+```bash
+# After editing db/schema.js, regenerate the migration (commit the result):
+npm run db:generate
+
+# Apply pending migrations (uses DATABASE_URL_DIRECT, falling back to DATABASE_URL):
+npm run db:migrate
+```
+
+### Neon connection split
+
+- **App/runtime** queries → the **pooled** endpoint via `DATABASE_URL`.
+- **Migrations/DDL** → the **direct (unpooled)** endpoint via `DATABASE_URL_DIRECT`
+  (Neon's PgBouncer transaction-mode pooler can't run migration advisory locks
+  / some DDL).
+
+The database-backed tests in `test/db-drizzle.test.js` are **skipped** unless
+`DATABASE_URL` is set, so the rest of the suite runs offline. To run them
+locally, point `DATABASE_URL` at a disposable Postgres and run `npm test`.
+
+## Horizontal scaling (Redis)
+
+Running more than one server instance behind a load balancer requires two pieces
+of cross-instance coordination, both backed by Redis:
+
+- **Message bus** (`src/messageBus.js`) — Redis Pub/Sub used to broadcast
+  call-state transitions (channel `signaling:call.transitions`) to other
+  instances / observers.
+- **Socket.IO Redis adapter** — so room and per-user emits reach a user's
+  sockets no matter which instance they are connected to. Each socket joins a
+  `user:<userId>` room on connect; user-targeted call/RTC events are addressed to
+  that room.
+
+Wire both by building a Redis-backed store bundle and passing it to
+`createServer`:
+
+```js
+const { createServer, createRedisPgStores } = require('./src/index');
+
+const stores = await createRedisPgStores();      // uses REDIS_URL
+const server = createServer({ stores, messageBus: stores.messageBus });
+```
+
+`createRedisPgStores()` opens the Redis connections (one Pub/Sub pair for the
+bus, one for the adapter), exposes `messageBus` and `attachAdapter(io)` (invoked
+automatically by `createServer`), and a `close()` that `shutdown()` calls during
+a graceful drain. Hot keyed state (rooms, sessions, presence, …) remains
+in-process per instance; cross-instance delivery is handled by the adapter and
+bus rather than by sharing those maps.
+
+When `REDIS_URL` is unset the default in-memory stores and a no-op (single
+instance) bus are used, so local development and the test suite run without
+Redis. The message-bus / Redis-store tests in `test/message-bus.test.js` use an
+in-memory Redis fake and need no live server.

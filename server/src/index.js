@@ -14,10 +14,16 @@ const {
   listBlocks,
   createAuditLog,
 } = require('./security');
+const { createStores } = require('./stores');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 const SIGNALING_VERSION = 1;
+/**
+ * Message-bus channel on which call-state transitions are broadcast to other
+ * instances / observers when a cross-instance bus is configured.
+ */
+const CALL_TRANSITION_CHANNEL = 'signaling:call.transitions';
 const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
 
 // ─── Call lifecycle ───────────────────────────────────────────────────────────
@@ -63,6 +69,16 @@ const DEFAULT_RINGING_TIMEOUT_MS = 30_000;
 const RINGING_POLL_MS = 5_000;
 
 /**
+ * Default maximum time `shutdown()` waits for in-flight socket connections to
+ * drain before force-closing them.  Kept below the systemd `TimeoutStopSec`
+ * (30s) so the process exits cleanly before being hard-killed.
+ */
+const DEFAULT_SHUTDOWN_DRAIN_MS = 25_000;
+
+/** Poll interval while waiting for sockets to drain during shutdown. */
+const SHUTDOWN_DRAIN_POLL_MS = 50;
+
+/**
  * Build the Express app and HTTP/Socket.IO server.
  *
  * Exported as a factory so tests can spin up an isolated instance on an
@@ -92,20 +108,26 @@ function createServer(opts = {}) {
 
   const telemetry = createTelemetry();
 
+  // ── Persistence stores ───────────────────────────────────────────────────
+  // Keyed runtime collections (rooms, sessions, calls, …) are obtained from a
+  // pluggable store bundle.  Defaults to in-memory Maps; tests/production may
+  // inject an alternative backend via opts.stores.
+  const stores = createStores({ stores: opts.stores });
+
   const state = {
-    rooms: new Map(),
-    sessions: new Map(),
-    userSessions: new Map(),
-    devices: new Map(),
-    userDevices: new Map(),
-    userConnections: new Map(),
-    userPresence: new Map(),
+    rooms: stores.rooms,
+    sessions: stores.sessions,
+    userSessions: stores.userSessions,
+    devices: stores.devices,
+    userDevices: stores.userDevices,
+    userConnections: stores.userConnections,
+    userPresence: stores.userPresence,
     /** @type {Map<string, CallRecord>} callId → call record */
-    calls: new Map(),
+    calls: stores.calls,
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
-    callEvents: new Map(),
+    callEvents: stores.callEvents,
     /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
-    blocks: new Map(),
+    blocks: stores.blocks,
     /** Audit log for security-relevant events. */
     auditLog: createAuditLog(),
     /** Rate limiter for call initiation (HTTP + socket). */
@@ -114,9 +136,33 @@ function createServer(opts = {}) {
     rtcRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
+    /**
+     * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
+     * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
+     * Used to broadcast call-state transitions to other instances / observers.
+     * `null` for single-instance (in-memory) deployments.
+     */
+    messageBus: opts.messageBus ?? stores.messageBus ?? null,
+    /**
+     * Lifecycle flag.  Flipped to `true` by `shutdown()` so that `/health`
+     * reports the instance as draining and new socket connections are rejected
+     * during a rolling deploy.
+     */
+    draining: false,
   };
 
   app.get('/health', (_req, res) => {
+    // While draining, report unhealthy so load balancers / orchestrators stop
+    // routing new traffic to this instance during a rolling deploy.
+    if (state.draining) {
+      res.status(503).json({
+        status: 'draining',
+        service: 'studious-robot-signaling',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
     res.status(200).json({
       status: 'ok',
       service: 'studious-robot-signaling',
@@ -740,7 +786,22 @@ function createServer(opts = {}) {
     cors: { origin: corsOrigin },
   });
 
+  // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
+  // adapter so room / per-user emits fan out to sockets on every instance.
+  if (typeof stores.attachAdapter === 'function') {
+    stores.attachAdapter(io);
+    console.log('[signaling] Socket.IO Redis adapter attached (multi-instance mode)');
+  }
+
   io.on('connection', (socket) => {
+    // Reject connections that race in after shutdown has begun: tell the client
+    // this instance is draining so it can reconnect elsewhere, then disconnect.
+    if (state.draining) {
+      socket.emit('server.draining', { reason: 'shutdown', ts: new Date().toISOString() });
+      socket.disconnect(true);
+      return;
+    }
+
     const identity = resolveSocketIdentity(socket, state.sessions);
     socket.data.identity = identity;
     ensurePresenceRecord(state, identity.userId);
@@ -752,6 +813,10 @@ function createServer(opts = {}) {
       sessionId: identity.sessionId,
       connectedAt: new Date().toISOString(),
     });
+    // Join a per-user room so call/RTC notifications can be addressed to the
+    // user regardless of which instance their socket(s) live on (the Socket.IO
+    // Redis adapter fans the emit out across instances).
+    socket.join(userRoom(identity.userId));
 
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
@@ -975,10 +1040,78 @@ function createServer(opts = {}) {
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
+  const shutdownDrainMs = opts.shutdownDrainMs
+    ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
+
+  /** Resolves once shutdown has fully completed; shared for idempotency. */
+  let shutdownPromise = null;
+
+  /**
+   * Gracefully shut down this instance for a rolling deploy / SIGTERM.
+   *
+   * Steps:
+   *  1. Flip the `draining` flag so `/health` reports 503 and new socket
+   *     connections are rejected.
+   *  2. Stop the background ringing-timeout worker.
+   *  3. Notify every connected client (`server.draining`) so they can reconnect
+   *     to another instance, and drop local connections from presence.
+   *  4. Keep the HTTP server listening during the drain window (so load
+   *     balancers observe the 503 health status) and wait up to
+   *     `drainTimeoutMs` for sockets to disconnect on their own.
+   *  5. Force-close any straggler sockets and the Socket.IO/HTTP servers.
+   *  6. Close pluggable stores that expose a `close()` method (e.g. Redis /
+   *     Postgres-backed stores).
+   *
+   * Idempotent: repeated calls return the same in-flight promise.
+   *
+   * @param {object} [shutdownOpts]
+   * @param {number} [shutdownOpts.drainTimeoutMs] - Max ms to wait for drain.
+   * @param {string} [shutdownOpts.reason] - Reason advertised to clients.
+   * @returns {Promise<void>}
+   */
+  function shutdown({ drainTimeoutMs = shutdownDrainMs, reason = 'shutdown' } = {}) {
+    if (shutdownPromise) return shutdownPromise;
+    state.draining = true;
+
+    shutdownPromise = (async () => {
+      // Stop the background worker.
+      clearInterval(pollTimer);
+
+      // Tell connected clients to reconnect elsewhere.
+      io.emit('server.draining', { reason, ts: new Date().toISOString() });
+
+      // Drop this instance's connections from presence so peers see users go
+      // offline promptly rather than waiting for socket teardown.
+      drainLocalPresence(state);
+
+      // Keep the HTTP server listening during the drain window so health checks
+      // observe the 503 `draining` status and load balancers stop routing new
+      // traffic here; brand-new socket connections are rejected by the
+      // connection handler (see the `state.draining` guard).  Wait for existing
+      // clients to disconnect on their own, up to the drain timeout.
+      await waitForSocketsToDrain(io, drainTimeoutMs);
+
+      // Force-disconnect any remaining sockets, then close the servers.
+      io.disconnectSockets(true);
+      httpServer.closeAllConnections?.();
+      await new Promise((resolve) => io.close(() => resolve()));
+      await new Promise((resolve) => httpServer.close(() => resolve()));
+
+      // Close durable stores (Redis/Postgres) if they support it.
+      if (typeof stores.close === 'function') {
+        await stores.close();
+      }
+    })();
+
+    return shutdownPromise;
+  }
+
   return {
     app,
     httpServer,
     io,
+    shutdown,
+    messageBus: state.messageBus,
     getPresence: (userId) => getPresenceSnapshot(state, userId),
     resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
     getCall: (callId) => state.calls.get(callId) || null,
@@ -1181,6 +1314,36 @@ function removeConnection(state, userId, socketId) {
   }
 }
 
+/**
+ * Drop every locally-tracked socket connection from presence and mark the
+ * affected users offline (with a fresh `lastSeen`).  Called during graceful
+ * shutdown so presence reflects the drain immediately rather than waiting for
+ * each socket teardown.
+ *
+ * @param {object} state
+ */
+function drainLocalPresence(state) {
+  const now = new Date().toISOString();
+  for (const userId of Array.from(state.userConnections.keys())) {
+    state.userConnections.delete(userId);
+    ensurePresenceRecord(state, userId).lastSeen = now;
+  }
+}
+
+/**
+ * Resolve once all Socket.IO clients have disconnected or `timeoutMs` elapses.
+ *
+ * @param {import('socket.io').Server} io
+ * @param {number} timeoutMs
+ * @returns {Promise<void>}
+ */
+async function waitForSocketsToDrain(io, timeoutMs) {
+  const start = Date.now();
+  while (io.engine?.clientsCount > 0 && Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_POLL_MS));
+  }
+}
+
 function getPresenceSnapshot(state, userId) {
   ensurePresenceRecord(state, userId);
   const connections = state.userConnections.get(userId);
@@ -1254,15 +1417,24 @@ function resolveReachableChannels(state, userId) {
   return channels;
 }
 
-function emitToUserSockets(io, state, userId, eventName, payload) {
-  const connections = state.userConnections.get(userId);
-  if (!connections) {
-    return;
-  }
+/**
+ * Socket.IO room name that every one of a user's sockets joins on connect.
+ *
+ * Addressing emits to this room (instead of iterating tracked socket ids) lets
+ * the Socket.IO Redis adapter deliver to the user's sockets on other instances.
+ *
+ * @param {string} userId
+ * @returns {string}
+ */
+function userRoom(userId) {
+  return `user:${userId}`;
+}
 
-  for (const connection of connections.values()) {
-    io.to(connection.socketId).emit(eventName, payload);
-  }
+function emitToUserSockets(io, userId, eventName, payload) {
+  // Emit to the user's room: locally this reaches every tracked socket, and
+  // with the Redis adapter attached it also reaches the user's sockets on other
+  // instances.
+  io.to(userRoom(userId)).emit(eventName, payload);
 }
 
 function notifyCallCreated(io, state, call) {
@@ -1273,8 +1445,8 @@ function notifyCallCreated(io, state, call) {
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
-    emitToUserSockets(io, state, call.calleeId, 'call.incoming', envelope);
-    emitToUserSockets(io, state, call.callerId, 'call.ringing', envelope);
+    emitToUserSockets(io, call.calleeId, 'call.incoming', envelope);
+    emitToUserSockets(io, call.callerId, 'call.ringing', envelope);
 
     // Push fallback: if the callee has no active WebSocket connection, deliver
     // the incoming-call notification via APNs / FCM to every registered device.
@@ -1320,8 +1492,26 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     reason: reason ?? call.endReason ?? null,
     call,
   };
-  emitToUserSockets(io, state, call.callerId, 'call.state_changed', statePayload);
-  emitToUserSockets(io, state, call.calleeId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, call.callerId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, call.calleeId, 'call.state_changed', statePayload);
+
+  // Broadcast the transition on the cross-instance bus (best-effort) so other
+  // instances / external observers can react to call lifecycle changes. Socket
+  // delivery to participants is handled by the Redis adapter above, so bus
+  // subscribers must not re-emit to sockets (to avoid duplicate delivery).
+  if (state.messageBus && previousStatus !== null) {
+    state.messageBus
+      .publish(CALL_TRANSITION_CHANNEL, {
+        callId: call.callId,
+        previousStatus,
+        status: call.status,
+        actor,
+        reason: statePayload.reason,
+      })
+      .catch((error) => {
+        console.error(`[signaling] message bus publish failed: ${error?.message}`);
+      });
+  }
 
   const eventName = getCallTransitionEventName(call.status, statePayload.reason);
   if (!eventName) {
@@ -1335,8 +1525,8 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     reason: statePayload.reason,
     call,
   };
-  emitToUserSockets(io, state, call.callerId, eventName, eventPayload);
-  emitToUserSockets(io, state, call.calleeId, eventName, eventPayload);
+  emitToUserSockets(io, call.callerId, eventName, eventPayload);
+  emitToUserSockets(io, call.calleeId, eventName, eventPayload);
 }
 
 function getCallTransitionEventName(status, reason) {
@@ -1545,11 +1735,22 @@ function handleRtcRelay(socket, ack, payload, options) {
     fromUserId: userId,
     [options.dataKey]: value,
   };
-  emitToUserSockets(options.io, options.state, peerUserId, options.eventName, relayPayload);
+  emitToUserSockets(options.io, peerUserId, options.eventName, relayPayload);
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 
-module.exports = { createServer, CALL_END_REASONS };
+const { createRedisPgStores } = require('./stores');
+const { createMemoryMessageBus, createRedisMessageBus } = require('./messageBus');
+
+module.exports = {
+  createServer,
+  CALL_END_REASONS,
+  CALL_TRANSITION_CHANNEL,
+  createStores,
+  createRedisPgStores,
+  createMemoryMessageBus,
+  createRedisMessageBus,
+};
 
 // ─── Call domain helpers ──────────────────────────────────────────────────────
 
@@ -1749,9 +1950,29 @@ function tickRingingTimeouts(state, now, onTransition) {
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
   const host = process.env.HOST || '0.0.0.0';
-  const { httpServer } = createServer();
+  const { httpServer, shutdown } = createServer();
   httpServer.listen(port, host, () => {
     console.log(`[signaling] listening on http://${host}:${port}`);
     console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
   });
+
+  // Graceful shutdown for rolling deploys: drain in-flight connections, then
+  // exit cleanly so systemd can restart/replace the instance.
+  let exiting = false;
+  const handleSignal = (signal) => {
+    if (exiting) return;
+    exiting = true;
+    console.log(`[signaling] received ${signal}; draining connections...`);
+    shutdown({ reason: signal })
+      .then(() => {
+        console.log('[signaling] shutdown complete; exiting');
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error('[signaling] error during shutdown:', err);
+        process.exit(1);
+      });
+  };
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
 }

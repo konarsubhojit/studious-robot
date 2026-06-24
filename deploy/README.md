@@ -11,7 +11,7 @@ GitHub Actions (push to master)
   └─► appleboy/ssh-action → OCI Ampere A1 VM
           ├─ git fetch / reset
           ├─ npm ci --omit=dev
-          └─ sudo systemctl restart robot-signal
+          └─ sudo systemctl reload-or-restart robot-signal
 ```
 
 The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`.
@@ -86,6 +86,26 @@ The service listens on `PORT=4173` by default. Edit the unit file's `Environment
 sudo systemctl daemon-reload && sudo systemctl restart robot-signal
 ```
 
+### Graceful shutdown & rolling deploys
+
+The server installs `SIGTERM`/`SIGINT` handlers and shuts down gracefully:
+
+1. `/health` starts returning **`503 { "status": "draining" }`** so load balancers / reverse proxies stop routing new traffic to the instance.
+2. Connected Socket.IO clients receive a **`server.draining`** event so they can reconnect (to another instance, once horizontal scaling lands).
+3. New socket connections are rejected while draining; the server waits up to `SHUTDOWN_DRAIN_MS` (default **25s**) for in-flight connections to drain, then force-closes the sockets and HTTP server and closes any durable stores.
+
+The systemd unit is configured for this with:
+
+```ini
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+```
+
+`KillMode=mixed` sends `SIGTERM` to the main process first (triggering the drain) and only escalates to `SIGKILL` for any survivors after `TimeoutStopSec`. Keep `TimeoutStopSec` **≥ `SHUTDOWN_DRAIN_MS`** (set `Environment=SHUTDOWN_DRAIN_MS=25000` to tune the drain window).
+
+Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restart`** instead of a hard `restart`, which lets in-flight calls drain during a redeploy and starts the service if it was stopped. For a multi-instance (true rolling) setup, restart instances one at a time behind the load balancer, waiting for each `/health` to return `200` before moving to the next.
+
 ---
 
 ## 6. Create the deploy SSH key pair
@@ -115,14 +135,81 @@ chmod 600 ~/.ssh/authorized_keys
 | `DEPLOY_SSH_HOST`   | VM public IP or hostname                        |
 | `DEPLOY_SSH_USER`   | `opc` (or your VM user)                         |
 | `DEPLOY_SSH_PORT`   | SSH port — **optional**, defaults to `22`       |
+| `DATABASE_URL_DIRECT` | Neon **direct (unpooled)** Postgres URL — used by the deploy job to run migrations before restart. **Optional**; migrations are skipped when unset. |
+| `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM HTTP v1 push delivery. **Optional**; FCM pushes are skipped when unset. |
 
 > **`RENDER_DEPLOY_HOOK_URL` is no longer used** — the Render deploy step has been removed. You can delete that secret from the GitHub repository settings.
+
+### Push notifications (FCM HTTP v1) configuration
+
+Incoming-call pushes to offline callees use the **FCM HTTP v1 API** with an
+OAuth2 service account (the deprecated legacy server-key API is no longer used).
+
+1. In the Firebase console: **Project settings → Service accounts → Generate new
+   private key** to download the service-account JSON.
+2. Add the JSON as the `FCM_SERVICE_ACCOUNT_JSON` GitHub Actions secret (or store
+   it in your secret manager of choice) and surface it to the server process —
+   either as the raw JSON in the `FCM_SERVICE_ACCOUNT_JSON` env var, or by
+   writing it to a file on the VM and pointing the env var at that path.
+3. Never commit the key. The server mints and caches a short-lived OAuth2 token
+   from the key automatically; if the secret is absent FCM delivery is skipped.
+
+APNs uses token auth via the `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
+`APNS_BUNDLE_ID` (and optional `APNS_PRODUCTION`) env vars.
+
+### Database (Neon Postgres) configuration
+
+Durable persistence uses Drizzle ORM over Postgres. Provision a Neon project and
+note its two connection strings:
+
+- **Pooled** endpoint (`...-pooler.neon.tech`) → set as `DATABASE_URL` in the
+  systemd unit's `Environment=` lines; used by the running server.
+- **Direct (unpooled)** endpoint → set as the `DATABASE_URL_DIRECT` GitHub
+  secret; used by `npm run db:migrate` in the deploy job (Neon's pooled
+  PgBouncer can't run migration DDL/advisory locks).
+
+The deploy workflow runs `npm run db:migrate` (against `DATABASE_URL_DIRECT`) on
+the GitHub runner **before** restarting the service, so the schema is up to date
+when the new code starts. `drizzle-kit` is a dev dependency and is intentionally
+not installed on the VM (`npm ci --omit=dev`); migrations therefore run from CI,
+not on the VM.
+
+### Redis (horizontal scaling) configuration — optional
+
+A single VM instance does **not** need Redis. Redis is only required to run more
+than one server instance (multiple processes/VMs behind a load balancer), where
+it provides:
+
+- a **Pub/Sub message bus** for cross-instance call-state events, and
+- the **Socket.IO Redis adapter** so a user's WebSocket events are delivered
+  regardless of which instance holds their socket.
+
+Provision Redis and point the server at it with the `REDIS_URL` env var:
+
+- **Self-hosted on the VM** (simplest for a small deployment):
+
+  ```bash
+  # Oracle Linux
+  sudo dnf install -y redis
+  sudo systemctl enable --now redis
+  # Bind to localhost only (default) and set REDIS_URL=redis://127.0.0.1:6379
+  ```
+
+- **Managed** (OCI Cache / Redis Cloud / Upstash): create an instance and use the
+  provider's `rediss://…` URL (TLS).
+
+Then add `Environment=REDIS_URL=redis://127.0.0.1:6379` (or the managed URL) to
+the systemd unit's `Environment=` lines on **every** instance and reload the
+service. When `REDIS_URL` is unset the server runs in single-instance mode with
+in-memory state — keep it unset for a one-VM deployment. Secure self-hosted Redis
+by binding to localhost (or a private subnet) and/or setting `requirepass`; never
+expose it publicly.
 
 ---
 
 ## 7. Sudoers — passwordless restart for the deploy script
 
-The CI deploy script runs `sudo systemctl restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
+The CI deploy script runs `sudo systemctl reload-or-restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
 
 ```bash
 # On the VM
@@ -132,7 +219,7 @@ sudo visudo -f /etc/sudoers.d/studious-robot-deploy
 Add the following line and save:
 
 ```
-opc ALL=(ALL) NOPASSWD: /bin/systemctl restart robot-signal, /bin/systemctl is-active robot-signal
+opc ALL=(ALL) NOPASSWD: /bin/systemctl reload-or-restart robot-signal, /bin/systemctl is-active robot-signal
 ```
 
 > **Note:** On some distributions (Oracle Linux 8+, Ubuntu 20.04+) `systemctl` lives at `/usr/bin/systemctl`. Verify with `which systemctl` on the VM and use that path in the sudoers rule. Using the wrong path will silently cause the passwordless sudo to fail and prompt for a password instead.
@@ -266,9 +353,9 @@ git fetch --quiet origin master
 git reset --hard origin/master
 cd server
 npm ci --omit=dev
-sudo systemctl restart robot-signal
+sudo systemctl reload-or-restart robot-signal
 sleep 2
 sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
 ```
 
-The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the restart.
+The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the reload-or-restart.
