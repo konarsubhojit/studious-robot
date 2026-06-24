@@ -80,6 +80,14 @@ async function postJson(url, path, body, sessionId) {
   return { status: response.status, body: await response.json() };
 }
 
+async function getJson(url, path, sessionId) {
+  const pathname = sessionId
+    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
+    : path;
+  const response = await fetch(`${url}${pathname}`);
+  return { status: response.status, body: await response.json() };
+}
+
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -408,21 +416,15 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
     const callId = ack.call.callId;
 
     // Simulate callee polling – they can see the call via HTTP.
-    const polled = await fetch(
-      `${url}/calls/${callId}?sessionId=${encodeURIComponent(calleeSession)}`,
-    );
+    const polled = await getJson(url, `/calls/${callId}`, calleeSession);
     assert.equal(polled.status, 200);
-    const polledBody = await polled.json();
+    const polledBody = polled.body;
     assert.equal(polledBody.status, 'ringing');
 
     // Callee accepts via HTTP (e.g., from a background task or polling).
-    const acceptRes = await fetch(`${url}/calls/${callId}/accept`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: calleeSession }),
-    });
+    const acceptRes = await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     assert.equal(acceptRes.status, 200);
-    const accepted = await acceptRes.json();
+    const accepted = acceptRes.body;
     assert.equal(accepted.status, 'accepted');
 
     // Ringing timeout must not re-transition the now-accepted call.
