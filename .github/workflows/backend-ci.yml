@@ -21,6 +21,73 @@ jobs:
       run:
         working-directory: server
 
+    # Postgres service so the Drizzle migration + store tests run against a real
+    # database in CI.  Credentials are ephemeral and scoped to this job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studious_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Connection components for the ephemeral CI Postgres service. The full
+      # DATABASE_URL(s) are composed from these in a step below to avoid
+      # embedding a credential-shaped literal in the workflow.
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: studious_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Compose database URLs
+        # App (pooled) and migration (direct) URLs point at the same CI service.
+        run: |
+          URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
+          echo "DATABASE_URL=${URL}" >> "$GITHUB_ENV"
+          echo "DATABASE_URL_DIRECT=${URL}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for uncommitted schema drift
+        # Regenerating migrations from the schema must produce no changes; a
+        # non-empty diff means db/schema.js was edited without `npm run db:generate`.
+        run: |
+          npm run db:generate
+          git diff --exit-code db/migrations
+
+      - name: Apply database migrations
+        run: npm run db:migrate
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    name: Deploy to Oracle Cloud VM
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,18 +100,24 @@ jobs:
           cache-dependency-path: server/package-lock.json
 
       - name: Install dependencies
+        working-directory: server
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Apply database migrations
+        # Runs against the direct (unpooled) Neon endpoint before the new code
+        # starts. drizzle-kit is a dev dependency, so migrations run here on the
+        # runner rather than on the VM (which installs with --omit=dev). Skipped
+        # when DATABASE_URL_DIRECT is not configured.
+        working-directory: server
+        env:
+          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
+        run: |
+          if [ -n "${DATABASE_URL_DIRECT:-}" ]; then
+            npm run db:migrate
+          else
+            echo "DATABASE_URL_DIRECT not set; skipping migrations"
+          fi
 
-  deploy:
-    name: Deploy to Oracle Cloud VM
-    runs-on: ubuntu-latest
-    needs: test
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-
-    steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
         with:

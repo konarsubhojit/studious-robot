@@ -115,8 +115,26 @@ chmod 600 ~/.ssh/authorized_keys
 | `DEPLOY_SSH_HOST`   | VM public IP or hostname                        |
 | `DEPLOY_SSH_USER`   | `opc` (or your VM user)                         |
 | `DEPLOY_SSH_PORT`   | SSH port — **optional**, defaults to `22`       |
+| `DATABASE_URL_DIRECT` | Neon **direct (unpooled)** Postgres URL — used by the deploy job to run migrations before restart. **Optional**; migrations are skipped when unset. |
 
 > **`RENDER_DEPLOY_HOOK_URL` is no longer used** — the Render deploy step has been removed. You can delete that secret from the GitHub repository settings.
+
+### Database (Neon Postgres) configuration
+
+Durable persistence uses Drizzle ORM over Postgres. Provision a Neon project and
+note its two connection strings:
+
+- **Pooled** endpoint (`...-pooler.neon.tech`) → set as `DATABASE_URL` in the
+  systemd unit's `Environment=` lines; used by the running server.
+- **Direct (unpooled)** endpoint → set as the `DATABASE_URL_DIRECT` GitHub
+  secret; used by `npm run db:migrate` in the deploy job (Neon's pooled
+  PgBouncer can't run migration DDL/advisory locks).
+
+The deploy workflow runs `npm run db:migrate` (against `DATABASE_URL_DIRECT`) on
+the GitHub runner **before** restarting the service, so the schema is up to date
+when the new code starts. `drizzle-kit` is a dev dependency and is intentionally
+not installed on the VM (`npm ci --omit=dev`); migrations therefore run from CI,
+not on the VM.
 
 ---
 

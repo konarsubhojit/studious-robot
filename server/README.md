@@ -88,3 +88,32 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `PORT`        | `4173`      | TCP port to listen on                                             |
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
+| `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
+| `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
+| `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
+
+## Database (Drizzle ORM)
+
+Durable persistence uses [Drizzle ORM](https://orm.drizzle.team/) over Postgres
+(Neon). The schema is defined in code at `db/schema.js`; versioned SQL
+migrations are generated from it into `db/migrations/` by `drizzle-kit` — do not
+hand-edit the generated SQL.
+
+```bash
+# After editing db/schema.js, regenerate the migration (commit the result):
+npm run db:generate
+
+# Apply pending migrations (uses DATABASE_URL_DIRECT, falling back to DATABASE_URL):
+npm run db:migrate
+```
+
+### Neon connection split
+
+- **App/runtime** queries → the **pooled** endpoint via `DATABASE_URL`.
+- **Migrations/DDL** → the **direct (unpooled)** endpoint via `DATABASE_URL_DIRECT`
+  (Neon's PgBouncer transaction-mode pooler can't run migration advisory locks
+  / some DDL).
+
+The database-backed tests in `test/db-drizzle.test.js` are **skipped** unless
+`DATABASE_URL` is set, so the rest of the suite runs offline. To run them
+locally, point `DATABASE_URL` at a disposable Postgres and run `npm test`.
