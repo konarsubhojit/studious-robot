@@ -85,6 +85,76 @@ A new contributor should be able to:
 
 ---
 
+## Automated tests
+
+### Running tests locally
+
+```bash
+# Server – Node.js built-in test runner
+cd server && npm test
+
+# Mobile – Jest
+cd mobile && npm test
+```
+
+Both commands run the full test suite for their package and exit non-zero on
+any failure.  Run them before opening a pull request.
+
+### Test inventory
+
+| Package  | File                                  | What it covers                                               |
+| -------- | ------------------------------------- | ------------------------------------------------------------ |
+| `server` | `test/calls.test.js`                  | Call lifecycle HTTP endpoints (create, accept, decline, cancel, end, history, timeouts) |
+| `server` | `test/signaling-contract.test.js`     | Versioned WebSocket call/RTC signaling contract              |
+| `server` | `test/reconnect.test.js`              | Socket reconnect, network handoff, offline callee, ICE restart |
+| `server` | `test/push-fallback.test.js`          | Push-notification fallback for offline callees               |
+| `server` | `test/identity.test.js`               | Session, device registration, and presence APIs              |
+| `server` | `test/telemetry.test.js`              | Metrics counters and derived rates                           |
+| `server` | `test/security.test.js`               | Rate limiting and blocklist                                  |
+| `server` | `test/signaling.test.js`              | Legacy join-room signaling                                   |
+| `server` | `test/health.test.js`                 | Health endpoint                                              |
+| `mobile` | `__tests__/hooks/useCallFlow.test.js` | Call phases, push rehydration (all terminal + ringing states), camera switch |
+| `mobile` | `__tests__/hooks/useWebRTCCall.test.js` | WebRTC camera switch hardening                             |
+| `mobile` | `__tests__/hooks/useCompactCallView.test.js` | PiP compact-view logic                               |
+| `mobile` | `__tests__/components/`               | Incoming/outgoing/in-call UI components                      |
+
+### CI workflows and merge gates
+
+| Workflow                                    | Trigger                        | Gate            |
+| ------------------------------------------- | ------------------------------ | --------------- |
+| `backend-ci.yml` — *Lint, build & test*     | PR / push to `master` (server) | Blocks merge    |
+| `mobile-ci.yml` — *Unit tests*              | PR / push to `master` (mobile) | Blocks merge    |
+| `android-apk.yml` — *Build APK(s)*          | PR / push to `master` (mobile) | —               |
+
+All three workflows run automatically.  A pull request that touches `server/`
+must pass `backend-ci.yml`; a PR touching `mobile/` must pass `mobile-ci.yml`.
+The APK build is informational (the artifact is uploaded but the check does not
+gate the merge on its own).
+
+### Scenario coverage
+
+The following critical call paths have repeatable automated test coverage:
+
+| Scenario                              | Test file(s)                                          |
+| ------------------------------------- | ----------------------------------------------------- |
+| Ringing → accepted → in-call → ended  | `calls.test.js`, `signaling-contract.test.js`         |
+| Caller cancels before acceptance      | `calls.test.js`                                       |
+| Callee declines                       | `calls.test.js`                                       |
+| Ringing timeout (missed)              | `calls.test.js`, `telemetry.test.js`                  |
+| Callee busy (second incoming call)    | `calls.test.js`, `telemetry.test.js`                  |
+| Callee unreachable (unknown user)     | `calls.test.js`                                       |
+| Offline callee → push notification    | `push-fallback.test.js`                               |
+| Socket disconnect preserves call      | `reconnect.test.js`                                   |
+| Network handoff (ICE restart)         | `reconnect.test.js`                                   |
+| Reconnected participant receives events | `reconnect.test.js`                                 |
+| Multiple sockets per user             | `reconnect.test.js`                                   |
+| Push rehydration (ringing/missed/ended) | `useCallFlow.test.js`                               |
+| Push rehydration (active/terminal states) | `useCallFlow.test.js`                             |
+| Incoming/outgoing call UI             | `IncomingCallScreen.test.js`, `OutgoingCallScreen.test.js` |
+| PiP / compact in-call view            | `CallScreen.test.js`, `useCompactCallView.test.js`    |
+
+---
+
 ## Cloud delivery (Phase 5)
 
 ### Android APKs
