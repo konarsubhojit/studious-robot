@@ -200,6 +200,10 @@ describe('useWebRTCCall handleCameraSwitch hardening', () => {
     expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(2,
       expect.objectContaining({ video: { facingMode: 'environment' } }),
     );
+    // Old track must be stopped and removed; new track added to the stream.
+    expect(videoTrack.stop).toHaveBeenCalled();
+    expect(stream.removeTrack).toHaveBeenCalledWith(videoTrack);
+    expect(stream.addTrack).toHaveBeenCalledWith(newVideoTrack);
     expect(resultRef.current.isFrontCamera).toBe(!before);
     expect(resultRef.current.status.message).toBe('Camera switched');
   });

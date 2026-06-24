@@ -195,7 +195,7 @@ export default function useCallFlow() {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
       const existingSenders = pc.getSenders?.() ?? [];
-      const attachedTracks = existingSenders.map((s) => s.track);
+      const attachedTracks = existingSenders.map((s) => s.track).filter(Boolean);
       localStreamRef.current.getTracks().forEach((track) => {
         if (!attachedTracks.includes(track)) {
           pc.addTrack(track, localStreamRef.current);
@@ -1028,7 +1028,7 @@ export default function useCallFlow() {
 
       videoTrack?.stop();
       if (localStreamRef.current) {
-        localStreamRef.current.removeTrack(videoTrack);
+        if (videoTrack) localStreamRef.current.removeTrack(videoTrack);
         localStreamRef.current.addTrack(newVideoTrack);
       }
       setLocalStream(localStreamRef.current);
