@@ -22,6 +22,7 @@ import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions } from '../permissions';
+import { addCallLinkListener, getInitialCallLink } from '../pushNotifications';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
 
@@ -100,6 +101,10 @@ export default function useCallFlow() {
   const [callPhase, setCallPhase] = useState(CALL_PHASES.IDLE);
   const [activeCall, setActiveCall] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
+
+  // callId received from a push-notification deep link before the user identity
+  // is fully established.  Cleared once rehydration is attempted.
+  const [pendingPushCallId, setPendingPushCallId] = useState(null);
 
   // ─── UI state ─────────────────────────────────────────────────────────────
   const [status, setStatusState] = useState({ message: '', severity: 'info' });
@@ -529,6 +534,101 @@ export default function useCallFlow() {
     [disconnectSocket, setStatus, signalingUrl],
   );
 
+  // ─── Call rehydration (push-notification deep link) ───────────────────────
+
+  /**
+   * Fetch the current state of a call by ID and restore the appropriate UI.
+   *
+   * Called when the app is opened (or brought to the foreground) from a push
+   * notification tap.  Handles the three possible outcomes:
+   *  - `ringing`  → show the IncomingCallScreen so the user can accept/decline
+   *  - terminal   → show a brief informational status message
+   *  - not found  → notify the user gracefully
+   *
+   * If the user identity is not yet known (userId or signalingUrl not set), the
+   * callId is stored in `pendingPushCallId` and rehydration is deferred until
+   * the presence auto-connect effect fires with a valid identity.
+   *
+   * @param {string} callId
+   */
+  const rehydrateCallFromPush = useCallback(
+    async (callId) => {
+      if (!callId) return;
+
+      const trimmedUserId = userId.trim();
+      const trimmedUrl = signalingUrl.trim();
+
+      if (!trimmedUserId || !trimmedUrl) {
+        logInfo('[CallFlow] Deferring push rehydration until identity is set', { callId });
+        setPendingPushCallId(callId);
+        return;
+      }
+
+      logInfo('[CallFlow] Rehydrating call from push', { callId });
+
+      try {
+        const sessionId = await createOrGetSession();
+
+        const response = await fetch(
+          `${trimmedUrl}/calls/${encodeURIComponent(callId)}` +
+          `?sessionId=${encodeURIComponent(sessionId)}`,
+        );
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            setStatus('Call no longer available', 'info');
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const call = await response.json();
+
+        if (call.status === 'ringing') {
+          logInfo('[CallFlow] Rehydrated ringing call; showing incoming screen', {
+            callId: call.callId,
+          });
+          haptic(400);
+          setIncomingCall(call);
+          setCallPhase(CALL_PHASES.INCOMING_RINGING);
+          setStatus(`Incoming call from ${call.callerId}`);
+
+          // Ensure a socket is live so the user can accept / decline.
+          if (!socketRef.current?.connected) {
+            connectSocket(sessionId);
+          }
+        } else {
+          // Terminal or non-ringing state – inform the user and stay idle.
+          const terminalMessages = {
+            missed:      'Missed call',
+            declined:    'Call was declined',
+            ended:       'Call ended',
+            busy:        'Line was busy',
+            unreachable: 'Call unreachable',
+          };
+          const message = terminalMessages[call.status] ?? 'Call no longer active';
+          logInfo('[CallFlow] Push call already finished', {
+            callId,
+            status: call.status,
+          });
+          setStatus(message, 'info');
+        }
+      } catch (error) {
+        logError('[CallFlow] rehydrateCallFromPush failed', error);
+        setStatus('Unable to retrieve call state', 'error');
+      }
+    },
+    // connectSocket and createOrGetSession are stable relative to userId/signalingUrl
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userId, signalingUrl, setStatus],
+  );
+
+  // Store in a ref so deep-link effects always call the latest version.
+  const rehydrateCallFromPushRef = useRef(rehydrateCallFromPush);
+  useEffect(() => {
+    rehydrateCallFromPushRef.current = rehydrateCallFromPush;
+  }, [rehydrateCallFromPush]);
+
   // ─── Presence: auto-connect when userId + signalingUrl are set ────────────
   // Keeps a persistent socket open so the user can receive incoming calls even
   // while on the Lobby screen.
@@ -593,6 +693,45 @@ export default function useCallFlow() {
       stopCallService();
     };
   }, [closePeerConnection, disconnectSocket]);
+
+  // ─── Deep-link / push-notification entry points ───────────────────────────
+
+  // 1. Check if the app was launched from a notification tap (cold start).
+  useEffect(() => {
+    getInitialCallLink()
+      .then((descriptor) => {
+        if (descriptor?.callId) {
+          logInfo('[CallFlow] App launched from push notification', descriptor);
+          rehydrateCallFromPushRef.current(descriptor.callId);
+        }
+      })
+      .catch((error) => {
+        logError('[CallFlow] Failed to read initial call link', error);
+      });
+    // Run only once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2. Listen for deep links while the app is already running (background → foreground).
+  useEffect(() => {
+    const unlisten = addCallLinkListener((descriptor) => {
+      logInfo('[CallFlow] Deep-link received while running', descriptor);
+      rehydrateCallFromPushRef.current(descriptor.callId);
+    });
+    return unlisten;
+    // Run only once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 3. Deferred rehydration: once identity is set, process any pending push callId.
+  useEffect(() => {
+    if (!pendingPushCallId) return;
+    if (!userId.trim() || !signalingUrl.trim()) return;
+
+    const callId = pendingPushCallId;
+    setPendingPushCallId(null);
+    rehydrateCallFromPushRef.current(callId);
+  }, [pendingPushCallId, userId, signalingUrl]);
 
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
@@ -974,6 +1113,7 @@ export default function useCallFlow() {
     declineIncomingCall,
     handleEndCall,
     startLocalPreview,
+    rehydrateCallFromPush,
 
     // In-call controls (identical interface to useWebRTCCall for CallScreen compat)
     handleMuteToggle,
