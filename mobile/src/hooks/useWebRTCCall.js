@@ -228,8 +228,7 @@ export default function useWebRTCCall() {
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
-      const existingSenders = connection.getSenders?.() ?? [];
-      const attachedTracks = existingSenders.map((s) => s.track).filter(Boolean);
+      const attachedTracks = (connection.getSenders?.() ?? []).map((s) => s.track).filter(Boolean);
       localStreamRef.current.getTracks().forEach((track) => {
         if (!attachedTracks.includes(track)) {
           connection.addTrack(track, localStreamRef.current);
@@ -507,7 +506,8 @@ export default function useWebRTCCall() {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
           // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current.splice(0);
+          const buffered = iceCandidateBufferRef.current;
+          iceCandidateBufferRef.current = [];
           for (const c of buffered) {
             try {
               await peer.addIceCandidate(new RTCIceCandidate(c));
@@ -537,7 +537,8 @@ export default function useWebRTCCall() {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
           // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current.splice(0);
+          const buffered = iceCandidateBufferRef.current;
+          iceCandidateBufferRef.current = [];
           for (const c of buffered) {
             try {
               await peer.addIceCandidate(new RTCIceCandidate(c));

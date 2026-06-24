@@ -194,8 +194,7 @@ export default function useCallFlow() {
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
-      const existingSenders = pc.getSenders?.() ?? [];
-      const attachedTracks = existingSenders.map((s) => s.track).filter(Boolean);
+      const attachedTracks = (pc.getSenders?.() ?? []).map((s) => s.track).filter(Boolean);
       localStreamRef.current.getTracks().forEach((track) => {
         if (!attachedTracks.includes(track)) {
           pc.addTrack(track, localStreamRef.current);
@@ -500,7 +499,8 @@ export default function useCallFlow() {
           if (!pc) return;
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current.splice(0);
+          const buffered = iceCandidateBufferRef.current;
+          iceCandidateBufferRef.current = [];
           for (const c of buffered) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
@@ -540,7 +540,8 @@ export default function useCallFlow() {
           if (!pc) return;
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current.splice(0);
+          const buffered = iceCandidateBufferRef.current;
+          iceCandidateBufferRef.current = [];
           for (const c of buffered) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
