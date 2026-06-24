@@ -135,6 +135,11 @@ export default function useCallFlow() {
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
   const connectionStatsRef = useRef({ timestampMs: null, totalBytesReceived: 0 });
   const isInCallRef = useRef(false);
+  // ICE candidates that arrive before the remote description is applied are
+  // buffered here and flushed once setRemoteDescription succeeds.
+  const iceCandidateBufferRef = useRef([]);
+  // Prevents concurrent offer/answer negotiations (glare guard).
+  const isNegotiatingRef = useRef(false);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -166,6 +171,8 @@ export default function useCallFlow() {
   }, []);
 
   const closePeerConnection = useCallback(() => {
+    iceCandidateBufferRef.current = [];
+    isNegotiatingRef.current = false;
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
@@ -185,8 +192,14 @@ export default function useCallFlow() {
     const pc = new RTCPeerConnection({ iceServers: getIceServers() });
 
     if (localStreamRef.current) {
+      // Guard against double-adding tracks when ensurePeerConnection is called
+      // more than once during renegotiation (idempotent attach).
+      const existingSenders = pc.getSenders?.() ?? [];
+      const attachedTracks = existingSenders.map((s) => s.track);
       localStreamRef.current.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current);
+        if (!attachedTracks.includes(track)) {
+          pc.addTrack(track, localStreamRef.current);
+        }
       });
     }
 
@@ -209,6 +222,31 @@ export default function useCallFlow() {
         markCallConnected();
         setStatus('Call started', 'success');
       }
+    };
+
+    // Trigger an ICE restart when the caller detects ICE failure so the call
+    // can survive a network handoff without tearing down entirely.
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+      logInfo('[CallFlow] ICE connection state', { state });
+      if (state !== 'failed') return;
+      if (!isCallerRef.current || !socketRef.current?.connected) return;
+      logWarn('[CallFlow] ICE failed; attempting restart');
+      (async () => {
+        try {
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          socketRef.current?.emit('rtc.offer', {
+            version: SIGNALING_VERSION,
+            callId: activeCallIdRef.current,
+            sdp: pc.localDescription,
+          }, (ack) => {
+            if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
+          });
+        } catch (err) {
+          logError('[CallFlow] ICE restart failed', err);
+        }
+      })();
     };
 
     peerConnectionRef.current = pc;
@@ -451,11 +489,25 @@ export default function useCallFlow() {
           logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
           return;
         }
+        if (isNegotiatingRef.current) {
+          logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer');
+          return;
+        }
+        isNegotiatingRef.current = true;
         logInfo('[CallFlow] RTC offer received');
         try {
           const pc = ensurePeerConnectionRef.current?.();
           if (!pc) return;
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          // Flush any ICE candidates that arrived before the remote description.
+          const buffered = iceCandidateBufferRef.current.splice(0);
+          for (const c of buffered) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              logWarn('[CallFlow] Failed to add buffered ICE candidate', { message: err?.message });
+            }
+          }
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           socket.emit('rtc.answer', {
@@ -471,6 +523,8 @@ export default function useCallFlow() {
           logError('[CallFlow] Failed to handle RTC offer', error);
           setStatus('Failed to connect media', 'error');
           endActiveCallRef.current?.('Failed to connect media', 'error');
+        } finally {
+          isNegotiatingRef.current = false;
         }
       });
 
@@ -485,6 +539,15 @@ export default function useCallFlow() {
           const pc = peerConnectionRef.current;
           if (!pc) return;
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          // Flush any ICE candidates that arrived before the remote description.
+          const buffered = iceCandidateBufferRef.current.splice(0);
+          for (const c of buffered) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              logWarn('[CallFlow] Failed to add buffered ICE candidate', { message: err?.message });
+            }
+          }
           setCallPhase(CALL_PHASES.IN_CALL);
           startCallService();
         } catch (error) {
@@ -497,9 +560,16 @@ export default function useCallFlow() {
       // ── RTC ICE candidates ────────────────────────────────────────────
       socket.on('rtc.candidate', async ({ candidate, callId }) => {
         if (callId !== activeCallIdRef.current) return;
+        const pc = peerConnectionRef.current;
+        if (!pc) return;
+        // Buffer the candidate until the remote description is applied; adding
+        // a candidate without a remote description throws on all platforms.
+        if (!pc.remoteDescription) {
+          iceCandidateBufferRef.current.push(candidate);
+          logInfo('[CallFlow] ICE candidate buffered (awaiting remote description)');
+          return;
+        }
         try {
-          const pc = peerConnectionRef.current;
-          if (!pc) return;
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
           logWarn('[CallFlow] Failed to add ICE candidate', { message: error?.message });
@@ -507,10 +577,30 @@ export default function useCallFlow() {
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
-      socket.on('connect', () => {
+      socket.on('connect', async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
-        if (isInCallRef.current) {
-          setIsReconnecting(false);
+        if (!isInCallRef.current) return;
+        setIsReconnecting(false);
+        // When the caller's socket reconnects mid-call, send an ICE-restart
+        // offer so the peer connection can negotiate a new network path.
+        if (isCallerRef.current) {
+          const pc = peerConnectionRef.current;
+          if (pc) {
+            try {
+              logInfo('[CallFlow] Sending ICE restart offer after socket reconnect');
+              const offer = await pc.createOffer({ iceRestart: true });
+              await pc.setLocalDescription(offer);
+              socket.emit('rtc.offer', {
+                version: SIGNALING_VERSION,
+                callId: activeCallIdRef.current,
+                sdp: pc.localDescription,
+              }, (ack) => {
+                if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
+              });
+            } catch (err) {
+              logError('[CallFlow] ICE restart after socket reconnect failed', err);
+            }
+          }
         }
       });
 
@@ -900,22 +990,55 @@ export default function useCallFlow() {
     setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
   }, [isVideoEnabled, setStatus]);
 
-  const handleCameraSwitch = useCallback(() => {
+  const handleCameraSwitch = useCallback(async () => {
     try {
       const [videoTrack] = localStreamRef.current?.getVideoTracks?.() ?? [];
-      const switchCamera = videoTrack?._switchCamera;
-      if (typeof switchCamera !== 'function') {
+
+      // Fast path: react-native-webrtc provides an in-place camera flip that
+      // keeps the same track object – no renegotiation required.
+      if (typeof videoTrack?._switchCamera === 'function') {
+        videoTrack._switchCamera();
+        setIsFrontCamera((prev) => !prev);
+        setStatus('Camera switched');
+        return;
+      }
+
+      // Fallback: acquire a new stream with the opposite facing mode and call
+      // replaceTrack on the active peer connection sender so the remote peer
+      // receives the new camera source without requiring renegotiation.
+      const nextFacingMode = isFrontCamera ? 'environment' : 'user';
+      const newStream = await mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: nextFacingMode },
+      });
+      const [newVideoTrack] = newStream.getVideoTracks();
+      if (!newVideoTrack) {
+        newStream.getTracks().forEach((t) => t.stop());
         setStatus('Camera switch unavailable', 'error');
         return;
       }
-      switchCamera.call(videoTrack);
+
+      const pc = peerConnectionRef.current;
+      if (pc) {
+        const sender = pc.getSenders?.().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(newVideoTrack);
+        }
+      }
+
+      videoTrack?.stop();
+      if (localStreamRef.current) {
+        localStreamRef.current.removeTrack(videoTrack);
+        localStreamRef.current.addTrack(newVideoTrack);
+      }
+      setLocalStream(localStreamRef.current);
       setIsFrontCamera((prev) => !prev);
       setStatus('Camera switched');
     } catch (error) {
       logError('[CallFlow] Camera switch failed', error);
       setStatus('Camera switch unavailable', 'error');
     }
-  }, [setStatus]);
+  }, [isFrontCamera, setStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) return;

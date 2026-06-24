@@ -101,6 +101,11 @@ export default function useWebRTCCall() {
     timestampMs: null,
     totalBytesReceived: 0,
   });
+  // ICE candidates that arrive before the remote description is applied are
+  // buffered here and flushed once setRemoteDescription succeeds.
+  const iceCandidateBufferRef = useRef([]);
+  // Prevents concurrent offer/answer negotiations (glare guard).
+  const isNegotiatingRef = useRef(false);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -161,6 +166,8 @@ export default function useWebRTCCall() {
 
   const closePeerConnection = useCallback(() => {
     isOffererRef.current = false;
+    iceCandidateBufferRef.current = [];
+    isNegotiatingRef.current = false;
     if (peerConnectionRef.current) {
       logInfo('Closing RTCPeerConnection');
       peerConnectionRef.current.onicecandidate = null;
@@ -219,8 +226,14 @@ export default function useWebRTCCall() {
     logInfo('Creating RTCPeerConnection');
     const connection = new RTCPeerConnection({ iceServers: getIceServers() });
     if (localStreamRef.current) {
+      // Guard against double-adding tracks when ensurePeerConnection is called
+      // more than once during renegotiation (idempotent attach).
+      const existingSenders = connection.getSenders?.() ?? [];
+      const attachedTracks = existingSenders.map((s) => s.track);
       localStreamRef.current.getTracks().forEach((track) => {
-        connection.addTrack(track, localStreamRef.current);
+        if (!attachedTracks.includes(track)) {
+          connection.addTrack(track, localStreamRef.current);
+        }
       });
     }
 
@@ -484,10 +497,24 @@ export default function useWebRTCCall() {
           logWarn('Offer received without SDP');
           return;
         }
+        if (isNegotiatingRef.current) {
+          logWarn('Glare: ignoring concurrent offer');
+          return;
+        }
+        isNegotiatingRef.current = true;
         logInfo('Offer received', { sdpType: sdp.type || 'unknown' });
         try {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          // Flush any ICE candidates that arrived before the remote description.
+          const buffered = iceCandidateBufferRef.current.splice(0);
+          for (const c of buffered) {
+            try {
+              await peer.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              logWarn('Failed to add buffered ICE candidate', { message: err?.message });
+            }
+          }
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
           socket.emit('answer', { roomId: roomIdRef.current, sdp: answer });
@@ -495,6 +522,8 @@ export default function useWebRTCCall() {
         } catch (error) {
           logError('Failed to process offer/create answer', error);
           setStatus('Failed to process offer', 'error');
+        } finally {
+          isNegotiatingRef.current = false;
         }
       });
 
@@ -507,6 +536,15 @@ export default function useWebRTCCall() {
         try {
           const peer = ensurePeerConnection();
           await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+          // Flush any ICE candidates that arrived before the remote description.
+          const buffered = iceCandidateBufferRef.current.splice(0);
+          for (const c of buffered) {
+            try {
+              await peer.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              logWarn('Failed to add buffered ICE candidate', { message: err?.message });
+            }
+          }
           markCallConnected();
           setStatus('Call started', 'success');
         } catch (error) {
@@ -521,8 +559,16 @@ export default function useWebRTCCall() {
         }
         const summary = summarizeIceCandidate(candidate);
         logDebug('ICE candidate received', summary);
+        const peer = peerConnectionRef.current;
+        if (!peer) return;
+        // Buffer the candidate until the remote description is applied; adding
+        // a candidate without a remote description throws on all platforms.
+        if (!peer.remoteDescription) {
+          iceCandidateBufferRef.current.push(candidate);
+          logDebug('ICE candidate buffered (awaiting remote description)', summary);
+          return;
+        }
         try {
-          const peer = ensurePeerConnection();
           await peer.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
           logError('Failed to add ICE candidate', { error, summary });
@@ -800,23 +846,55 @@ export default function useWebRTCCall() {
     [setStatus],
   );
 
-  const handleCameraSwitch = useCallback(() => {
+  const handleCameraSwitch = useCallback(async () => {
     try {
       const [videoTrack] = localStreamRef.current?.getVideoTracks?.() || [];
-      const switchCamera = videoTrack?._switchCamera;
-      if (typeof switchCamera !== 'function') {
+
+      // Fast path: react-native-webrtc provides an in-place camera flip that
+      // keeps the same track object – no renegotiation required.
+      if (typeof videoTrack?._switchCamera === 'function') {
+        videoTrack._switchCamera();
+        setIsFrontCamera((previous) => !previous);
+        setStatus('Camera switched');
+        return;
+      }
+
+      // Fallback: acquire a new stream with the opposite facing mode and call
+      // replaceTrack on the active peer connection sender so the remote peer
+      // receives the new camera source without requiring renegotiation.
+      const nextFacingMode = isFrontCamera ? 'environment' : 'user';
+      const newStream = await mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: nextFacingMode },
+      });
+      const [newVideoTrack] = newStream.getVideoTracks();
+      if (!newVideoTrack) {
+        newStream.getTracks().forEach((t) => t.stop());
         setStatus('Camera switch unavailable', 'error');
         return;
       }
 
-      switchCamera.call(videoTrack);
+      const peer = peerConnectionRef.current;
+      if (peer) {
+        const sender = peer.getSenders?.().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(newVideoTrack);
+        }
+      }
+
+      videoTrack?.stop();
+      if (localStreamRef.current) {
+        localStreamRef.current.removeTrack(videoTrack);
+        localStreamRef.current.addTrack(newVideoTrack);
+      }
+      setLocalStream(localStreamRef.current);
       setIsFrontCamera((previous) => !previous);
       setStatus('Camera switched');
     } catch (error) {
       logError('Camera switch failed', error);
       setStatus('Camera switch unavailable', 'error');
     }
-  }, [setStatus]);
+  }, [isFrontCamera, setStatus]);
 
   const handleRoomButtonPress = useCallback(() => {
     if (isInRoom) {
