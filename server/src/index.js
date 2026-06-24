@@ -1130,8 +1130,25 @@ function acknowledgeSuccess(socket, ack, eventName, data) {
   }
 }
 
+/**
+ * Send an error acknowledgement and record a signaling error in telemetry.
+ *
+ * `state` is intentionally optional: early guards like `requireSocketSession`
+ * and `validateSignalingVersion` call this helper before they have access to a
+ * call-scoped state object.  All call/RTC handlers that do have state pass it
+ * so the error is counted in the telemetry metrics.
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {Function|undefined} ack
+ * @param {string} eventName
+ * @param {string} code
+ * @param {string} message
+ * @param {object} [state]  - Optional server state (provides telemetry recorder).
+ */
 function acknowledgeError(socket, ack, eventName, code, message, state) {
-  state?.telemetry?.recordSignalingError(code);
+  if (state) {
+    state.telemetry.recordSignalingError(code);
+  }
 
   const payload = {
     ok: false,
