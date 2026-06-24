@@ -55,11 +55,12 @@ export const CALL_PHASES = {
 };
 
 /**
- * Localization-friendly labels for server-side `endReason` codes.
+ * English display strings for server-side `endReason` codes.
  *
  * Each key mirrors a value that can appear in `call.endReason` from the
- * server.  The mapped string is a stable message key suitable for use as an
- * i18n lookup key; the key itself also serves as a readable English default.
+ * server.  The mapped string is the default English label shown in the UI.
+ * Applications that support multiple languages should use these as fallback
+ * defaults and provide translated overrides keyed by the same reason code.
  *
  * @type {Record<string, string>}
  */
@@ -168,8 +169,8 @@ export default function useCallFlow() {
   const iceCandidateBufferRef = useRef([]);
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
-  // Refs that mirror activeCall / incomingCall state for use in callbacks where
-  // the React closure would otherwise be stale (e.g. endActiveCall).
+  // Refs that mirror activeCall / incomingCall state for use in any callback
+  // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
 

@@ -20,7 +20,7 @@ const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'un
  * Canonical end-reason codes with their stable i18n message keys.
  *
  * Each key is the value stored in `call.endReason`.  The value is a
- * localisation-friendly message key that clients can map to translated text;
+ * localization-friendly message key that clients can map to translated text;
  * the key itself also serves as a readable default English hint.
  *
  * @type {Record<string, string>}
