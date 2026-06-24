@@ -6,6 +6,14 @@ const express = require('express');
 const { Server } = require('socket.io');
 const push = require('./push');
 const { createTelemetry } = require('./telemetry');
+const {
+  createRateLimiter,
+  isBlocked,
+  addBlock,
+  removeBlock,
+  listBlocks,
+  createAuditLog,
+} = require('./security');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -60,11 +68,27 @@ const RINGING_POLL_MS = 5_000;
  * Exported as a factory so tests can spin up an isolated instance on an
  * ephemeral port without starting the production listener.
  */
-function createServer() {
+function createServer(opts = {}) {
   const app = express();
   app.use(express.json());
 
   const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
+
+  // ── Session TTL ──────────────────────────────────────────────────────────
+  // When non-zero, sessions expire after this many milliseconds.  Pass via
+  // opts (tests) or SESSION_TTL_MS env var (production).
+  const sessionTtlMs = opts.sessionTtlMs
+    ?? (Number(process.env.SESSION_TTL_MS) || 0);
+
+  // ── Rate limiters ────────────────────────────────────────────────────────
+  const callInitRateLimiter = createRateLimiter({
+    maxRequests: opts.callRateLimit ?? (Number(process.env.CALL_RATE_LIMIT) || 10),
+    windowMs: opts.callRateWindowMs ?? (Number(process.env.CALL_RATE_WINDOW_MS) || 60_000),
+  });
+  const rtcRateLimiter = createRateLimiter({
+    maxRequests: opts.rtcRateLimit ?? (Number(process.env.RTC_RATE_LIMIT) || 100),
+    windowMs: opts.rtcRateWindowMs ?? (Number(process.env.RTC_RATE_WINDOW_MS) || 10_000),
+  });
 
   const telemetry = createTelemetry();
 
@@ -80,6 +104,14 @@ function createServer() {
     calls: new Map(),
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
     callEvents: new Map(),
+    /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
+    blocks: new Map(),
+    /** Audit log for security-relevant events. */
+    auditLog: createAuditLog(),
+    /** Rate limiter for call initiation (HTTP + socket). */
+    callInitRateLimiter,
+    /** Rate limiter for RTC signaling events. */
+    rtcRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
   };
@@ -104,6 +136,7 @@ function createServer() {
       deviceId,
       platform,
       createdAt,
+      expiresAt: sessionTtlMs > 0 ? new Date(Date.now() + sessionTtlMs).toISOString() : null,
     };
 
     state.sessions.set(session.sessionId, session);
@@ -127,6 +160,52 @@ function createServer() {
     }
 
     res.status(200).json(session);
+  });
+
+  /**
+   * POST /session/refresh
+   *
+   * Rotate the session token: the old token is immediately invalidated and a
+   * fresh one (same userId / deviceId) is returned.  Useful for security-
+   * conscious clients that periodically rotate their credentials.
+   */
+  app.post('/session/refresh', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    // Invalidate the old session token.
+    state.sessions.delete(session.sessionId);
+    state.userSessions.get(session.userId)?.delete(session.sessionId);
+
+    // Issue a fresh session with a new token.
+    const newSession = {
+      sessionId: randomUUID(),
+      userId: session.userId,
+      deviceId: session.deviceId,
+      platform: session.platform,
+      createdAt: new Date().toISOString(),
+      expiresAt: sessionTtlMs > 0 ? new Date(Date.now() + sessionTtlMs).toISOString() : null,
+    };
+    state.sessions.set(newSession.sessionId, newSession);
+    addSessionToUser(state, newSession);
+    upsertDevice(state, {
+      userId: newSession.userId,
+      deviceId: newSession.deviceId,
+      platform: newSession.platform,
+      sessionId: newSession.sessionId,
+    });
+
+    state.auditLog.record({
+      event: 'session.refreshed',
+      actor: session.userId,
+      outcome: 'success',
+      details: { deviceId: session.deviceId },
+    });
+
+    res.status(200).json(newSession);
   });
 
   app.post('/devices/register', (req, res) => {
@@ -232,6 +311,121 @@ function createServer() {
     res.status(200).json(state.telemetry.getSnapshot());
   });
 
+  // ─── Block management ──────────────────────────────────────────────────────
+
+  /**
+   * POST /blocks
+   *
+   * Block another user so they cannot initiate calls to you.
+   * Idempotent: blocking an already-blocked user is a no-op.
+   *
+   * Body: { blockeeId: string }
+   * Response 200: { blockerId, blockeeId }
+   */
+  app.post('/blocks', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const blockeeId = normaliseId(req.body?.blockeeId);
+    if (!blockeeId) {
+      res.status(400).json({ error: 'blockeeId is required' });
+      return;
+    }
+    if (blockeeId === session.userId) {
+      res.status(400).json({ error: 'cannot block yourself' });
+      return;
+    }
+
+    addBlock(state.blocks, session.userId, blockeeId);
+    state.auditLog.record({
+      event: 'block.added',
+      actor: session.userId,
+      target: blockeeId,
+      outcome: 'success',
+    });
+
+    console.log(`[security] block.added blockerId=${session.userId} blockeeId=${blockeeId}`);
+    res.status(200).json({ blockerId: session.userId, blockeeId });
+  });
+
+  /**
+   * DELETE /blocks/:blockeeId
+   *
+   * Remove a previously added block.
+   *
+   * Response 200: { blockerId, blockeeId }
+   * Response 404: when the block did not exist
+   */
+  app.delete('/blocks/:blockeeId', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const blockeeId = normaliseId(req.params.blockeeId);
+    if (!blockeeId) {
+      res.status(400).json({ error: 'blockeeId is required' });
+      return;
+    }
+
+    const removed = removeBlock(state.blocks, session.userId, blockeeId);
+    if (!removed) {
+      res.status(404).json({ error: 'block not found' });
+      return;
+    }
+
+    state.auditLog.record({
+      event: 'block.removed',
+      actor: session.userId,
+      target: blockeeId,
+      outcome: 'success',
+    });
+
+    console.log(`[security] block.removed blockerId=${session.userId} blockeeId=${blockeeId}`);
+    res.status(200).json({ blockerId: session.userId, blockeeId });
+  });
+
+  /**
+   * GET /blocks
+   *
+   * Return the list of user IDs that the authenticated user has blocked.
+   *
+   * Response 200: { blockedUsers: string[] }
+   */
+  app.get('/blocks', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    res.status(200).json({ blockedUsers: listBlocks(state.blocks, session.userId) });
+  });
+
+  // ─── Audit log ─────────────────────────────────────────────────────────────
+
+  /**
+   * GET /audit-log
+   *
+   * Return the security audit log entries where the authenticated user is
+   * either the actor or the target.  Entries are ordered oldest-first.
+   *
+   * Response 200: { entries: AuditEntry[] }
+   */
+  app.get('/audit-log', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    res.status(200).json({ entries: state.auditLog.getForUser(session.userId) });
+  });
+
   // ─── Call lifecycle endpoints ───────────────────────────────────────────────
 
   app.post('/calls', (req, res) => {
@@ -249,6 +443,37 @@ function createServer() {
 
     if (calleeId === session.userId) {
       res.status(400).json({ error: 'cannot call yourself' });
+      return;
+    }
+
+    // Blocklist: reject when the callee has blocked the caller.
+    if (isBlocked(state.blocks, calleeId, session.userId)) {
+      state.auditLog.record({
+        event: 'call.blocked',
+        actor: session.userId,
+        target: calleeId,
+        outcome: 'rejected',
+        details: { via: 'http' },
+      });
+      console.log(`[security] call.blocked callerId=${session.userId} calleeId=${calleeId} via=http`);
+      res.status(403).json({ error: 'blocked' });
+      return;
+    }
+
+    // Rate limit: cap call initiations per user per window.
+    const rateCheck = state.callInitRateLimiter.check(session.userId);
+    if (!rateCheck.allowed) {
+      state.auditLog.record({
+        event: 'call.rate_limited',
+        actor: session.userId,
+        outcome: 'rejected',
+        details: { via: 'http' },
+      });
+      console.log(`[security] call.rate_limited userId=${session.userId} via=http`);
+      res.status(429).json({
+        error: 'too many requests',
+        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+      });
       return;
     }
 
@@ -598,6 +823,36 @@ function createServer() {
         return;
       }
 
+      // Blocklist: reject when the callee has blocked this caller.
+      if (isBlocked(state.blocks, calleeId, socket.data.identity.userId)) {
+        state.auditLog.record({
+          event: 'call.blocked',
+          actor: socket.data.identity.userId,
+          target: calleeId,
+          outcome: 'rejected',
+          details: { via: 'websocket' },
+        });
+        console.log(
+          `[security] call.blocked callerId=${socket.data.identity.userId} calleeId=${calleeId} via=websocket`,
+        );
+        acknowledgeError(socket, ack, 'call.initiate', 'blocked', 'you are blocked by this user', state);
+        return;
+      }
+
+      // Rate limit: cap call initiations per user per window.
+      const rateCheck = state.callInitRateLimiter.check(socket.data.identity.userId);
+      if (!rateCheck.allowed) {
+        state.auditLog.record({
+          event: 'call.rate_limited',
+          actor: socket.data.identity.userId,
+          outcome: 'rejected',
+          details: { via: 'websocket' },
+        });
+        console.log(`[security] call.rate_limited userId=${socket.data.identity.userId} via=websocket`);
+        acknowledgeError(socket, ack, 'call.initiate', 'rate_limited', 'too many call attempts', state);
+        return;
+      }
+
       const call = createCallRecord(state, {
         callerId: socket.data.identity.userId,
         calleeId,
@@ -787,7 +1042,11 @@ function getSessionFromRequest(req, sessions) {
     || normaliseId(req.body?.sessionId)
     || normaliseId(req.query?.sessionId);
 
-  return sessionId ? sessions.get(sessionId) || null : null;
+  if (!sessionId) return null;
+  const session = sessions.get(sessionId) || null;
+  if (!session) return null;
+  if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) return null;
+  return session;
 }
 
 function parseBearerToken(header) {
@@ -808,7 +1067,9 @@ function resolveSocketIdentity(socket, sessions) {
   const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth : {};
   const sessionId = normaliseId(auth.sessionId);
   const session = sessionId ? sessions.get(sessionId) : null;
-  if (session) {
+  const expiresAtMs = session?.expiresAt ? new Date(session.expiresAt).getTime() : null;
+  const sessionValid = session && (!expiresAtMs || expiresAtMs > Date.now());
+  if (sessionValid) {
     return {
       userId: session.userId,
       deviceId: session.deviceId,
@@ -1222,6 +1483,21 @@ function handleRtcRelay(socket, ack, payload, options) {
     return;
   }
 
+  // Rate limit: cap RTC signaling events per user per window.
+  const userId = socket.data.identity.userId;
+  const rtcCheck = options.state.rtcRateLimiter.check(userId);
+  if (!rtcCheck.allowed) {
+    options.state.auditLog.record({
+      event: 'rtc.rate_limited',
+      actor: userId,
+      outcome: 'rejected',
+      details: { event: options.eventName },
+    });
+    console.log(`[security] rtc.rate_limited userId=${userId} event=${options.eventName}`);
+    acknowledgeError(socket, ack, options.eventName, 'rate_limited', 'too many signaling events', options.state);
+    return;
+  }
+
   const callId = normaliseId(payload.callId);
   if (!callId) {
     acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required', options.state);
@@ -1240,7 +1516,6 @@ function handleRtcRelay(socket, ack, payload, options) {
     return;
   }
 
-  const userId = socket.data.identity.userId;
   if (call.callerId !== userId && call.calleeId !== userId) {
     acknowledgeError(socket, ack, options.eventName, 'forbidden', 'not a participant in this call', options.state);
     return;
