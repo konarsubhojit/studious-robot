@@ -4,6 +4,7 @@ const http = require('http');
 const { randomUUID } = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
+const push = require('./push');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -889,6 +890,23 @@ function notifyCallCreated(io, state, call) {
   if (call.status === 'ringing') {
     emitToUserSockets(io, state, call.calleeId, 'call.incoming', envelope);
     emitToUserSockets(io, state, call.callerId, 'call.ringing', envelope);
+
+    // Push fallback: if the callee has no active WebSocket connection, deliver
+    // the incoming-call notification via APNs / FCM to every registered device.
+    const calleeConnections = state.userConnections.get(call.calleeId);
+    const calleeIsOffline = !calleeConnections || calleeConnections.size === 0;
+    if (calleeIsOffline) {
+      const pushChannels = resolveReachableChannels(state, call.calleeId)
+        .filter((ch) => ch.type === 'push');
+      for (const channel of pushChannels) {
+        push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+          .catch((err) => {
+            console.error(
+              `[push] Unhandled error for device ${channel.deviceId}: ${err?.message}`,
+            );
+          });
+      }
+    }
   }
 
   notifyCallTransition(io, state, call, {
