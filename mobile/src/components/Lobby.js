@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
+import { CALL_END_REASON_LABELS } from '../hooks/useCallFlow';
 import { formatCallDuration } from '../callUx';
 import { colors, radius, spacing } from '../theme';
 import AppButton from './AppButton';
@@ -78,6 +79,10 @@ export default function Lobby({
   status,
   callSummary,
   onDismissSummary,
+  // ── Call history ──────────────────────────────────────────────────────────
+  callHistory,
+  missedCallCount,
+  onMarkMissedRead,
 }) {
   return (
     <KeyboardAvoidingView
@@ -85,7 +90,20 @@ export default function Lobby({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>TCalling</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>TCalling</Text>
+          {missedCallCount > 0 ? (
+            <Pressable
+              onPress={onMarkMissedRead}
+              accessibilityRole="button"
+              accessibilityLabel={`${missedCallCount} missed call${missedCallCount === 1 ? '' : 's'}`}
+              testID="missed-calls-badge"
+              style={styles.missedBadge}
+            >
+              <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <Text style={styles.subtitle}>Warm, simple one-to-one video calls</Text>
 
         {callSummary ? (
@@ -105,6 +123,43 @@ export default function Lobby({
             >
               <Text style={styles.summaryDismissText}>✕</Text>
             </Pressable>
+          </View>
+        ) : null}
+
+        {Array.isArray(callHistory) && callHistory.length > 0 ? (
+          <View testID="call-history-section">
+            <Text style={styles.sectionTitle}>Recent calls</Text>
+            {callHistory.slice(0, 5).map((entry) => {
+              const isMissed =
+                entry.direction === 'incoming' &&
+                (entry.status === 'missed' || entry.endReason === 'timeout');
+              const directionIcon = entry.direction === 'outgoing' ? '↑' : '↓';
+              const label = CALL_END_REASON_LABELS[entry.endReason] ??
+                            CALL_END_REASON_LABELS[entry.status] ?? 'Call';
+              const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
+              return (
+                <View
+                  key={entry.callId}
+                  style={[styles.historyRow, isMissed && styles.historyRowMissed]}
+                  testID="call-history-row"
+                >
+                  <Text style={isMissed ? styles.historyIconMissed : styles.historyIcon}>
+                    {directionIcon}
+                  </Text>
+                  <View style={styles.historyText}>
+                    <Text style={isMissed ? styles.historyPeerMissed : styles.historyPeer}>
+                      {peer}
+                    </Text>
+                    <Text style={styles.historyDetail}>
+                      {label}
+                      {entry.durationSeconds != null
+                        ? ` · ${formatCallDuration(entry.durationSeconds)}`
+                        : ''}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         ) : null}
 
@@ -197,10 +252,29 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing.lg,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
   title: {
     fontSize: 28,
     fontWeight: '600',
     color: colors.textPrimary,
+  },
+  missedBadge: {
+    backgroundColor: colors.danger,
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  missedBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   subtitle: {
     fontSize: 14,
@@ -291,5 +365,45 @@ const styles = StyleSheet.create({
   },
   callButton: {
     marginBottom: spacing.sm,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
+  },
+  historyRowMissed: {
+    backgroundColor: colors.surfaceRaised ?? colors.surface,
+  },
+  historyIcon: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    width: 16,
+    textAlign: 'center',
+  },
+  historyIconMissed: {
+    fontSize: 14,
+    color: colors.danger,
+    width: 16,
+    textAlign: 'center',
+  },
+  historyText: {
+    flex: 1,
+  },
+  historyPeer: {
+    color: colors.textPrimary,
+    fontSize: 14,
+  },
+  historyPeerMissed: {
+    color: colors.danger,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  historyDetail: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 1,
   },
 });
