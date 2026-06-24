@@ -5,6 +5,7 @@ const { randomUUID } = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
 const push = require('./push');
+const { createTelemetry } = require('./telemetry');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -65,6 +66,8 @@ function createServer() {
 
   const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
 
+  const telemetry = createTelemetry();
+
   const state = {
     rooms: new Map(),
     sessions: new Map(),
@@ -77,6 +80,8 @@ function createServer() {
     calls: new Map(),
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
     callEvents: new Map(),
+    /** Shared telemetry recorder for this server instance. */
+    telemetry,
   };
 
   app.get('/health', (_req, res) => {
@@ -208,6 +213,25 @@ function createServer() {
     res.status(200).json({ reasons: CALL_END_REASONS });
   });
 
+  // ─── Operational metrics (no auth required) ────────────────────────────────
+
+  /**
+   * GET /metrics
+   *
+   * Returns a point-in-time JSON snapshot of all in-process call-funnel
+   * counters and latency histograms.  Designed to be scraped by a monitoring
+   * system (Prometheus, Datadog, Grafana, etc.) or consumed by an ops dashboard.
+   *
+   * Shape:
+   *   collectedAt   – ISO-8601 timestamp of the snapshot
+   *   counters      – monotonically increasing call-lifecycle counts
+   *   histograms    – latency distributions with bucket, count, sum, mean, min, max
+   *   derived       – calculated rates (connect rate, completion rate)
+   */
+  app.get('/metrics', (_req, res) => {
+    res.status(200).json(state.telemetry.getSnapshot());
+  });
+
   // ─── Call lifecycle endpoints ───────────────────────────────────────────────
 
   app.post('/calls', (req, res) => {
@@ -257,6 +281,37 @@ function createServer() {
     }
 
     res.status(200).json(call);
+  });
+
+  /**
+   * GET /calls/:callId/events
+   *
+   * Returns the ordered event timeline for a call.  Each entry records which
+   * state transition occurred, who triggered it, and when – giving on-call
+   * engineers a full tracing timeline to diagnose failed or degraded calls.
+   *
+   * Requires an authenticated session that belongs to a call participant.
+   */
+  app.get('/calls/:callId/events', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    if (!call) {
+      res.status(404).json({ error: 'call not found' });
+      return;
+    }
+
+    if (call.callerId !== session.userId && call.calleeId !== session.userId) {
+      res.status(403).json({ error: 'not a participant in this call' });
+      return;
+    }
+
+    const events = state.callEvents.get(call.callId) ?? [];
+    res.status(200).json({ callId: call.callId, events });
   });
 
   /**
@@ -535,11 +590,11 @@ function createServer() {
 
       const calleeId = normaliseId(payload.calleeId);
       if (!calleeId) {
-        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'calleeId is required');
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'calleeId is required', state);
         return;
       }
       if (calleeId === socket.data.identity.userId) {
-        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'cannot call yourself');
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'cannot call yourself', state);
         return;
       }
 
@@ -673,6 +728,7 @@ function createServer() {
     resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
     getCall: (callId) => state.calls.get(callId) || null,
     getCallEvents: (callId) => state.callEvents.get(callId) || [],
+    getMetrics: () => state.telemetry.getSnapshot(),
     /**
      * Advance all stale `ringing` calls to `missed`.  Exposed for
      * deterministic testing; the production server also calls this on a timer.
@@ -949,6 +1005,11 @@ function emitToUserSockets(io, state, userId, eventName, payload) {
 }
 
 function notifyCallCreated(io, state, call) {
+  state.telemetry.recordCallCreated(call);
+  console.log(
+    `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`,
+  );
+
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
     emitToUserSockets(io, state, call.calleeId, 'call.incoming', envelope);
@@ -980,6 +1041,15 @@ function notifyCallCreated(io, state, call) {
 }
 
 function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
+  if (previousStatus !== null) {
+    state.telemetry.recordCallTransition(call, previousStatus);
+    console.log(
+      `[signaling] call.transition callId=${call.callId} ${previousStatus}->${call.status}` +
+      (reason ? ` reason=${reason}` : '') +
+      (actor ? ` actor=${actor}` : ''),
+    );
+  }
+
   const statePayload = {
     version: SIGNALING_VERSION,
     callId: call.callId,
@@ -1060,7 +1130,9 @@ function acknowledgeSuccess(socket, ack, eventName, data) {
   }
 }
 
-function acknowledgeError(socket, ack, eventName, code, message) {
+function acknowledgeError(socket, ack, eventName, code, message, state) {
+  state?.telemetry?.recordSignalingError(code);
+
   const payload = {
     ok: false,
     version: SIGNALING_VERSION,
@@ -1089,19 +1161,19 @@ function handleSocketCallTransition(socket, ack, payload, options) {
 
   const callId = normaliseId(payload.callId);
   if (!callId) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required');
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required', options.state);
     return;
   }
 
   const call = options.state.calls.get(callId);
   if (!call) {
-    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found');
+    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found', options.state);
     return;
   }
 
   const authorizationError = options.authorize(call, socket.data.identity.userId);
   if (authorizationError) {
-    acknowledgeError(socket, ack, options.eventName, 'forbidden', authorizationError);
+    acknowledgeError(socket, ack, options.eventName, 'forbidden', authorizationError, options.state);
     return;
   }
 
@@ -1111,7 +1183,7 @@ function handleSocketCallTransition(socket, ack, payload, options) {
     reason: options.reason ?? null,
   });
   if (!result.ok) {
-    acknowledgeError(socket, ack, options.eventName, 'invalid_state', result.message || result.error);
+    acknowledgeError(socket, ack, options.eventName, 'invalid_state', result.message || result.error, options.state);
     return;
   }
 
@@ -1135,29 +1207,29 @@ function handleRtcRelay(socket, ack, payload, options) {
 
   const callId = normaliseId(payload.callId);
   if (!callId) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required');
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required', options.state);
     return;
   }
 
   const value = payload[options.dataKey];
   if (!options.validateData(value)) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', `${options.dataKey} is required`);
+    acknowledgeError(socket, ack, options.eventName, 'bad_request', `${options.dataKey} is required`, options.state);
     return;
   }
 
   const call = options.state.calls.get(callId);
   if (!call) {
-    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found');
+    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found', options.state);
     return;
   }
 
   const userId = socket.data.identity.userId;
   if (call.callerId !== userId && call.calleeId !== userId) {
-    acknowledgeError(socket, ack, options.eventName, 'forbidden', 'not a participant in this call');
+    acknowledgeError(socket, ack, options.eventName, 'forbidden', 'not a participant in this call', options.state);
     return;
   }
   if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
-    acknowledgeError(socket, ack, options.eventName, 'stale_call_state', `call is not ready for RTC in state: ${call.status}`);
+    acknowledgeError(socket, ack, options.eventName, 'stale_call_state', `call is not ready for RTC in state: ${call.status}`, options.state);
     return;
   }
 
@@ -1375,6 +1447,7 @@ function tickRingingTimeouts(state, now, onTransition) {
     call.updatedAt = new Date(now).toISOString();
     call.ringTimeoutAt = null;
     appendCallEvent(state, call.callId, 'missed', null, 'timeout');
+    state.telemetry.recordCallTransition(call, previousStatus);
     onTransition?.(call, previousStatus, 'timeout');
     count++;
   }
