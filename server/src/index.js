@@ -17,6 +17,25 @@ const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call
 const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
 /**
+ * Canonical end-reason codes with their stable i18n message keys.
+ *
+ * Each key is the value stored in `call.endReason`.  The value is a
+ * localisation-friendly message key that clients can map to translated text;
+ * the key itself also serves as a readable default English hint.
+ *
+ * @type {Record<string, string>}
+ */
+const CALL_END_REASONS = {
+  ended:       'call_ended',
+  declined:    'call_declined',
+  cancelled:   'call_cancelled',
+  timeout:     'call_missed',
+  busy:        'callee_busy',
+  unreachable: 'callee_unreachable',
+  failed:      'call_failed',
+};
+
+/**
  * Valid next states for each non-terminal call state.
  *
  * @type {Map<string, Set<string>>}
@@ -183,6 +202,12 @@ function createServer() {
     res.status(200).json(getPresenceSnapshot(state, userId));
   });
 
+  // ─── Call end-reason taxonomy (static, no auth required) ──────────────────
+
+  app.get('/call-end-reasons', (_req, res) => {
+    res.status(200).json({ reasons: CALL_END_REASONS });
+  });
+
   // ─── Call lifecycle endpoints ───────────────────────────────────────────────
 
   app.post('/calls', (req, res) => {
@@ -232,6 +257,44 @@ function createServer() {
     }
 
     res.status(200).json(call);
+  });
+
+  /**
+   * GET /calls – return the call history for the authenticated user.
+   *
+   * Query parameters:
+   *   limit  – max number of records to return (1–100, default 20)
+   *   status – optional filter by call status (e.g. "missed", "ended")
+   *
+   * Records are ordered by `createdAt` descending (most recent first).
+   */
+  app.get('/calls', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const limitParam = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitParam) && limitParam > 0
+      ? Math.min(limitParam, 100)
+      : 20;
+    const statusFilter = normaliseId(req.query.status) ?? null;
+
+    const userId = session.userId;
+    const userCalls = [];
+    for (const call of state.calls.values()) {
+      if (call.callerId !== userId && call.calleeId !== userId) continue;
+      if (statusFilter && call.status !== statusFilter) continue;
+      userCalls.push(call);
+    }
+
+    userCalls.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    res.status(200).json({
+      calls: userCalls.slice(0, limit),
+      total: userCalls.length,
+    });
   });
 
   app.post('/calls/:callId/accept', (req, res) => {
@@ -1122,7 +1185,7 @@ function handleRtcRelay(socket, ack, payload, options) {
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 
-module.exports = { createServer };
+module.exports = { createServer, CALL_END_REASONS };
 
 // ─── Call domain helpers ──────────────────────────────────────────────────────
 

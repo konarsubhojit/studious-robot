@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createServer } = require('../src/index.js');
+const { createServer, CALL_END_REASONS } = require('../src/index.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -574,5 +574,177 @@ test('call_events: busy call generates created + busy events', async () => {
     assert.equal(events[1].event, 'busy');
   } finally {
     await teardown();
+  }
+});
+
+// ─── GET /call-end-reasons ────────────────────────────────────────────────────
+
+test('call-end-reasons: returns the canonical reason map (no auth required)', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const res = await getJson(url, '/call-end-reasons');
+    assert.equal(res.status, 200);
+    const { reasons } = res.body;
+    // Spot-check known reasons are present and map to non-empty i18n keys.
+    for (const [reason, key] of Object.entries(CALL_END_REASONS)) {
+      assert.equal(typeof reasons[reason], 'string', `reason '${reason}' should be a string`);
+      assert.equal(reasons[reason], key);
+    }
+  } finally {
+    await teardown();
+  }
+});
+
+// ─── GET /calls (history) ─────────────────────────────────────────────────────
+
+test('history: returns calls for the authenticated user', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const aliceSession = await createSession(url, 'user-alice');
+    const bobSession = await createSession(url, 'user-bob');
+
+    // Alice calls Bob and Bob declines.
+    const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, aliceSession);
+    await postJson(url, `/calls/${created.body.callId}/decline`, {}, bobSession);
+
+    const aliceHistory = await getJson(url, '/calls', aliceSession);
+    assert.equal(aliceHistory.status, 200);
+    assert.equal(aliceHistory.body.calls.length, 1);
+    assert.equal(aliceHistory.body.total, 1);
+    assert.equal(aliceHistory.body.calls[0].callId, created.body.callId);
+    assert.equal(aliceHistory.body.calls[0].status, 'declined');
+
+    const bobHistory = await getJson(url, '/calls', bobSession);
+    assert.equal(bobHistory.status, 200);
+    assert.equal(bobHistory.body.calls.length, 1);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: requires a valid session', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const res = await getJson(url, '/calls', 'bad-session');
+    assert.equal(res.status, 401);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: returns 401 with no session', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const response = await fetch(`${url}/calls`);
+    assert.equal(response.status, 401);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: only shows calls involving the requesting user', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const aliceSession = await createSession(url, 'user-alice');
+    const bobSession = await createSession(url, 'user-bob');
+    const carolSession = await createSession(url, 'user-carol');
+
+    // Alice calls Bob; Carol is not involved.
+    await postJson(url, '/calls', { calleeId: 'user-bob' }, aliceSession);
+
+    const carolHistory = await getJson(url, '/calls', carolSession);
+    assert.equal(carolHistory.body.calls.length, 0);
+    assert.equal(carolHistory.body.total, 0);
+
+    // Make Carol place a call so she has history.
+    await createSession(url, 'user-dave');
+    await postJson(url, '/calls', { calleeId: 'user-dave' }, carolSession);
+    const carolHistory2 = await getJson(url, '/calls', carolSession);
+    assert.equal(carolHistory2.body.calls.length, 1);
+
+    // Bob's history still only has Alice's call.
+    const bobHistory = await getJson(url, '/calls', bobSession);
+    assert.equal(bobHistory.body.calls.length, 1);
+    assert.equal(bobHistory.body.calls[0].callerId, 'user-alice');
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: respects the limit query parameter', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+
+    // Create 5 calls (each to a different unknown callee to get terminal status immediately).
+    for (let i = 0; i < 5; i++) {
+      await postJson(url, '/calls', { calleeId: `ghost-${i}` }, callerSession);
+    }
+
+    const res = await getJson(url, '/calls?limit=3', callerSession);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.calls.length, 3);
+    assert.equal(res.body.total, 5);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: filters by status', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const aliceSession = await createSession(url, 'user-alice');
+    const bobSession = await createSession(url, 'user-bob');
+
+    // One declined call.
+    const c1 = await postJson(url, '/calls', { calleeId: 'user-bob' }, aliceSession);
+    await postJson(url, `/calls/${c1.body.callId}/decline`, {}, bobSession);
+
+    // One unreachable call (ghost user).
+    await postJson(url, '/calls', { calleeId: 'ghost-user' }, aliceSession);
+
+    const declined = await getJson(url, '/calls?status=declined', aliceSession);
+    assert.equal(declined.body.calls.length, 1);
+    assert.equal(declined.body.calls[0].status, 'declined');
+
+    const unreachable = await getJson(url, '/calls?status=unreachable', aliceSession);
+    assert.equal(unreachable.body.calls.length, 1);
+
+    const all = await getJson(url, '/calls', aliceSession);
+    assert.equal(all.body.total, 2);
+  } finally {
+    await teardown();
+  }
+});
+
+test('history: returns most-recent calls first', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+
+    // Create 3 calls and capture their IDs in order.
+    const callIds = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await postJson(url, '/calls', { calleeId: `ghost-${i}` }, callerSession);
+      callIds.push(r.body.callId);
+    }
+
+    const res = await getJson(url, '/calls?limit=3', callerSession);
+    // Most recent should be at index 0.
+    assert.equal(res.body.calls[0].callId, callIds[2]);
+    assert.equal(res.body.calls[2].callId, callIds[0]);
+  } finally {
+    await teardown();
+  }
+});
+
+test('CALL_END_REASONS: exported object has expected terminal reasons', () => {
+  const expected = ['ended', 'declined', 'cancelled', 'timeout', 'busy', 'unreachable', 'failed'];
+  for (const reason of expected) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(CALL_END_REASONS, reason),
+      `expected reason '${reason}' to be in CALL_END_REASONS`,
+    );
+    assert.equal(typeof CALL_END_REASONS[reason], 'string');
   }
 });

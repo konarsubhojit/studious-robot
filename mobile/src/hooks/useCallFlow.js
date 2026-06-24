@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
@@ -36,6 +36,9 @@ const STATS_POLL_INTERVAL_MS = 7000;
 const HAPTIC_TAP_MS = 15;
 const HAPTIC_CONNECT_MS = 30;
 
+/** Maximum number of call history entries to retain in memory. */
+const MAX_CALL_HISTORY = 50;
+
 /**
  * Call phases that drive which screen the UI renders.
  *
@@ -49,6 +52,26 @@ export const CALL_PHASES = {
   OUTGOING_RINGING: 'outgoing_ringing',
   INCOMING_RINGING: 'incoming_ringing',
   IN_CALL: 'in_call',
+};
+
+/**
+ * Localization-friendly labels for server-side `endReason` codes.
+ *
+ * Each key mirrors a value that can appear in `call.endReason` from the
+ * server.  The mapped string is a stable message key suitable for use as an
+ * i18n lookup key; the key itself also serves as a readable English default.
+ *
+ * @type {Record<string, string>}
+ */
+export const CALL_END_REASON_LABELS = {
+  ended:       'Call ended',
+  declined:    'Call declined',
+  cancelled:   'Call cancelled',
+  timeout:     'Missed call',
+  missed:      'Missed call',
+  busy:        'Line was busy',
+  unreachable: 'User unavailable',
+  failed:      'Call failed',
 };
 
 function haptic(durationMs) {
@@ -110,6 +133,11 @@ export default function useCallFlow() {
   const [status, setStatusState] = useState({ message: '', severity: 'info' });
   const [callSummary, setCallSummary] = useState(null);
 
+  // ─── Call history ─────────────────────────────────────────────────────────
+  // Each entry: { callId, callerId, calleeId, direction, status, endReason,
+  //               createdAt, durationSeconds, isRead }
+  const [callHistory, setCallHistory] = useState([]);
+
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -140,6 +168,10 @@ export default function useCallFlow() {
   const iceCandidateBufferRef = useRef([]);
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
+  // Refs that mirror activeCall / incomingCall state for use in callbacks where
+  // the React closure would otherwise be stale (e.g. endActiveCall).
+  const activeCallRef = useRef(null);
+  const incomingCallRef = useRef(null);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -156,6 +188,70 @@ export default function useCallFlow() {
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
   }, [connectionQuality]);
+
+  // ─── Call history helpers ─────────────────────────────────────────────────
+
+  /**
+   * Number of incoming calls that ended as 'missed' and have not yet been
+   * acknowledged by the user.
+   */
+  const missedCallCount = useMemo(
+    () => callHistory.filter(
+      (e) => e.direction === 'incoming' &&
+             (e.status === 'missed' || e.endReason === 'timeout') &&
+             !e.isRead,
+    ).length,
+    [callHistory],
+  );
+
+  /** Append or update a call history entry (deduplicates by callId). */
+  const addToHistory = useCallback((entry) => {
+    setCallHistory((prev) => {
+      const without = prev.filter((e) => e.callId !== entry.callId);
+      return [entry, ...without].slice(0, MAX_CALL_HISTORY);
+    });
+  }, []);
+
+  /** Mark all missed-call entries as read (clears the badge counter). */
+  const markMissedCallsRead = useCallback(() => {
+    setCallHistory((prev) => prev.map((e) => ({ ...e, isRead: true })));
+  }, []);
+
+  /**
+   * Fetch the authenticated user's recent call history from the server and
+   * populate `callHistory`.  Safe to call repeatedly; silently swallows
+   * network errors so it never disrupts other call-flow operations.
+   *
+   * @param {number} [limit=20]
+   */
+  const fetchCallHistory = useCallback(async (limit = 20) => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const trimmedUrl = signalingUrl.trim();
+      const trimmedUserId = userId.trim();
+      const response = await fetch(
+        `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}`,
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data.calls)) return;
+      const entries = data.calls.map((call) => ({
+        callId: call.callId,
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
+        status: call.status,
+        endReason: call.endReason,
+        createdAt: call.createdAt,
+        durationSeconds: null,
+        isRead: call.status !== 'missed',
+      }));
+      setCallHistory(entries);
+    } catch (error) {
+      logWarn('[CallFlow] fetchCallHistory failed', { message: error?.message });
+    }
+  }, [signalingUrl, userId]);
 
   // ─── Peer connection ──────────────────────────────────────────────────────
 
@@ -294,16 +390,47 @@ export default function useCallFlow() {
   /**
    * Wind down an active call.  Preserves the socket connection so the user
    * can receive subsequent incoming calls without reconnecting.
+   *
+   * @param {string} [nextMessage='Call ended'] - Status message to display.
+   * @param {string} [severity='info']          - Status severity.
+   * @param {string|null} [endReason=null]      - Canonical end-reason code
+   *   (one of the keys from CALL_END_REASON_LABELS) for history tracking.
    */
   const endActiveCall = useCallback(
-    (nextMessage = 'Call ended', severity = 'info') => {
+    (nextMessage = 'Call ended', severity = 'info', endReason = null) => {
+      // Capture call record before clearing – activeCallRef / incomingCallRef
+      // are kept in sync with state throughout the call lifecycle.
+      const callRecord = activeCallRef.current ?? incomingCallRef.current;
+      const isCaller = isCallerRef.current;
+
+      const durationSeconds = callConnectedAtRef.current
+        ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
+        : null;
+
       if (callConnectedAtRef.current) {
-        const durationSeconds = Math.floor(
-          (Date.now() - callConnectedAtRef.current) / 1000,
-        );
         setCallSummary({
           durationSeconds,
           quality: connectionQualityRef.current?.label || 'No link',
+        });
+      }
+
+      // Record in call history whenever we have a call object to log.
+      if (callRecord?.callId) {
+        const resolvedReason = endReason ?? callRecord.endReason ?? null;
+        const isMissed =
+          resolvedReason === 'missed' ||
+          resolvedReason === 'timeout' ||
+          callRecord.status === 'missed';
+        addToHistory({
+          callId: callRecord.callId,
+          callerId: callRecord.callerId,
+          calleeId: callRecord.calleeId,
+          direction: isCaller ? 'outgoing' : 'incoming',
+          status: callRecord.status,
+          endReason: resolvedReason,
+          createdAt: callRecord.createdAt,
+          durationSeconds,
+          isRead: !isMissed,
         });
       }
 
@@ -315,6 +442,8 @@ export default function useCallFlow() {
 
       activeCallIdRef.current = null;
       isCallerRef.current = false;
+      activeCallRef.current = null;
+      incomingCallRef.current = null;
 
       setCallPhase(CALL_PHASES.IDLE);
       setActiveCall(null);
@@ -328,7 +457,7 @@ export default function useCallFlow() {
       closePeerConnection();
       if (nextMessage) setStatus(nextMessage, severity);
     },
-    [closePeerConnection, setIsCompactView, setStatus],
+    [addToHistory, closePeerConnection, setIsCompactView, setStatus],
   );
 
   // ─── Session management ───────────────────────────────────────────────────
@@ -411,6 +540,7 @@ export default function useCallFlow() {
       socket.on('call.incoming', ({ call }) => {
         logInfo('[CallFlow] Incoming call', { callId: call.callId, callerId: call.callerId });
         haptic(400);
+        incomingCallRef.current = call;
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
         setStatus(`Incoming call from ${call.callerId}`);
@@ -419,13 +549,17 @@ export default function useCallFlow() {
       // ── Call ringing (caller confirmation) ────────────────────────────
       socket.on('call.ringing', ({ call }) => {
         logInfo('[CallFlow] Call ringing', { callId: call.callId });
+        activeCallRef.current = call;
         setActiveCall(call);
       });
 
       // ── Call state changes ────────────────────────────────────────────
       socket.on('call.state_changed', async ({ status: callStatus, call, reason }) => {
         logInfo('[CallFlow] call.state_changed', { callStatus, callId: call?.callId, reason });
-        if (call) setActiveCall(call);
+        if (call) {
+          activeCallRef.current = call;
+          setActiveCall(call);
+        }
 
         switch (callStatus) {
           case 'accepted': {
@@ -456,24 +590,26 @@ export default function useCallFlow() {
           }
 
           case 'declined':
-            endActiveCallRef.current?.('Call declined');
+            endActiveCallRef.current?.('Call declined', 'info', 'declined');
             break;
 
           case 'missed':
-            endActiveCallRef.current?.('Call not answered', 'error');
+            endActiveCallRef.current?.('Call not answered', 'error', 'missed');
             break;
 
           case 'busy':
-            endActiveCallRef.current?.('Callee is busy', 'error');
+            endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
             break;
 
           case 'unreachable':
-            endActiveCallRef.current?.('Callee is unreachable', 'error');
+            endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
             break;
 
           case 'ended':
             endActiveCallRef.current?.(
               reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
+              'info',
+              reason ?? 'ended',
             );
             break;
 
@@ -680,6 +816,7 @@ export default function useCallFlow() {
             callId: call.callId,
           });
           haptic(400);
+          incomingCallRef.current = call;
           setIncomingCall(call);
           setCallPhase(CALL_PHASES.INCOMING_RINGING);
           setStatus(`Incoming call from ${call.callerId}`);
@@ -864,6 +1001,7 @@ export default function useCallFlow() {
 
       isCallerRef.current = true;
       activeCallIdRef.current = ack.call.callId;
+      activeCallRef.current = ack.call;
       setActiveCall(ack.call);
       setCallPhase(CALL_PHASES.OUTGOING_RINGING);
       setStatus(`Ringing ${trimmedCalleeId}…`);
@@ -893,7 +1031,7 @@ export default function useCallFlow() {
       }
     }
 
-    endActiveCall('Call cancelled');
+    endActiveCall('Call cancelled', 'info', 'cancelled');
   }, [endActiveCall]);
 
   // ─── Accept incoming call ─────────────────────────────────────────────────
@@ -917,7 +1055,9 @@ export default function useCallFlow() {
         callId: call.callId,
       });
 
+      activeCallRef.current = ack.call;
       setActiveCall(ack.call);
+      incomingCallRef.current = null;
       setIncomingCall(null);
       setStatus('Connecting…');
       // callPhase advances to in_call via the rtc.offer handler once the caller
@@ -946,7 +1086,7 @@ export default function useCallFlow() {
       }
     }
 
-    endActiveCall('Call declined');
+    endActiveCall('Call declined', 'info', 'declined');
   }, [endActiveCall, incomingCall]);
 
   // ─── End active in-call ───────────────────────────────────────────────────
@@ -965,7 +1105,7 @@ export default function useCallFlow() {
       }
     }
 
-    endActiveCall('Call ended');
+    endActiveCall('Call ended', 'info', 'ended');
   }, [endActiveCall]);
 
   // ─── Media controls ───────────────────────────────────────────────────────
@@ -1214,6 +1354,12 @@ export default function useCallFlow() {
     // UI status
     status,
     callSummary,
+
+    // Call history
+    callHistory,
+    missedCallCount,
+    markMissedCallsRead,
+    fetchCallHistory,
 
     // In-call media state
     localStream,

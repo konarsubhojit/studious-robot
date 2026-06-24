@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import useCallFlow, { CALL_PHASES } from '../../src/hooks/useCallFlow';
+import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -204,6 +204,39 @@ describe('useCallFlow', () => {
     expect(CALL_PHASES.OUTGOING_RINGING).toBe('outgoing_ringing');
     expect(CALL_PHASES.INCOMING_RINGING).toBe('incoming_ringing');
     expect(CALL_PHASES.IN_CALL).toBe('in_call');
+  });
+
+  test('CALL_END_REASON_LABELS exports string labels for all expected reason codes', () => {
+    const expectedReasons = ['ended', 'declined', 'cancelled', 'timeout', 'missed', 'busy', 'unreachable', 'failed'];
+    for (const reason of expectedReasons) {
+      expect(typeof CALL_END_REASON_LABELS[reason]).toBe('string');
+      expect(CALL_END_REASON_LABELS[reason].length).toBeGreaterThan(0);
+    }
+  });
+
+  test('initialises callHistory as an empty array', () => {
+    const { resultRef } = renderHook();
+    expect(Array.isArray(resultRef.current.callHistory)).toBe(true);
+    expect(resultRef.current.callHistory.length).toBe(0);
+  });
+
+  test('initialises missedCallCount as 0', () => {
+    const { resultRef } = renderHook();
+    expect(resultRef.current.missedCallCount).toBe(0);
+  });
+
+  test('exposes markMissedCallsRead and fetchCallHistory as functions', () => {
+    const { resultRef } = renderHook();
+    expect(typeof resultRef.current.markMissedCallsRead).toBe('function');
+    expect(typeof resultRef.current.fetchCallHistory).toBe('function');
+  });
+
+  test('markMissedCallsRead is safe to call on an empty history', () => {
+    const { resultRef, tree } = renderHook();
+    act(() => { resultRef.current.markMissedCallsRead(); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    expect(resultRef.current.callHistory.length).toBe(0);
+    expect(resultRef.current.missedCallCount).toBe(0);
   });
 
   test('dismissCallSummary clears callSummary', () => {

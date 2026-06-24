@@ -192,6 +192,9 @@ export default function App() {
         status={callFlow.userId ? callFlow.status : call.status}
         callSummary={callFlow.callSummary ?? call.callSummary}
         onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
+        callHistory={callFlow.callHistory}
+        missedCallCount={callFlow.missedCallCount}
+        onMarkMissedRead={callFlow.markMissedCallsRead}
       />
     );
   }
