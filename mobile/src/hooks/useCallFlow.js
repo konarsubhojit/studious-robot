@@ -555,8 +555,8 @@ export default function useCallFlow() {
     async (callId) => {
       if (!callId) return;
 
-      const trimmedUserId = userId.trim();
-      const trimmedUrl = signalingUrl.trim();
+      const trimmedUserId = (userId ?? '').trim();
+      const trimmedUrl = (signalingUrl ?? '').trim();
 
       if (!trimmedUserId || !trimmedUrl) {
         logInfo('[CallFlow] Deferring push rehydration until identity is set', { callId });
@@ -726,7 +726,7 @@ export default function useCallFlow() {
   // 3. Deferred rehydration: once identity is set, process any pending push callId.
   useEffect(() => {
     if (!pendingPushCallId) return;
-    if (!userId.trim() || !signalingUrl.trim()) return;
+    if (!(userId ?? '').trim() || !(signalingUrl ?? '').trim()) return;
 
     const callId = pendingPushCallId;
     setPendingPushCallId(null);

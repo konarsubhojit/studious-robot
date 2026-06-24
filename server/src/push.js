@@ -56,7 +56,7 @@ function buildApnsJwt(config) {
     return _apnsJwt;
   }
 
-  const header  = Buffer.from(JSON.stringify({ alg: 'ES256', kid: config.keyId  })).toString('base64url');
+  const header  = Buffer.from(JSON.stringify({ alg: 'ES256', kid: config.keyId })).toString('base64url');
   const claims  = Buffer.from(JSON.stringify({ iss: config.teamId, iat: nowSecs })).toString('base64url');
   const unsigned = `${header}.${claims}`;
 
