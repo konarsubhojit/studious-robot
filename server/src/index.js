@@ -1067,7 +1067,8 @@ function resolveSocketIdentity(socket, sessions) {
   const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth : {};
   const sessionId = normaliseId(auth.sessionId);
   const session = sessionId ? sessions.get(sessionId) : null;
-  const sessionValid = session && (!session.expiresAt || new Date(session.expiresAt).getTime() > Date.now());
+  const expiresAtMs = session?.expiresAt ? new Date(session.expiresAt).getTime() : null;
+  const sessionValid = session && (!expiresAtMs || expiresAtMs > Date.now());
   if (sessionValid) {
     return {
       userId: session.userId,
