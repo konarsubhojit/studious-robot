@@ -178,6 +178,20 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
 
     async close() {
       if (closed) return;
+
+      // Unsubscribe from all known channels so a reused (non-owned) `sub`
+      // client doesn't keep receiving messages with no local handlers.
+      const channels = Array.from(handlers.keys());
+      if (sub && typeof sub.unsubscribe === 'function') {
+        for (const channel of channels) {
+          try {
+            await sub.unsubscribe(channel);
+          } catch (error) {
+            console.error(`[messageBus] unsubscribe "${channel}" failed: ${error?.message}`);
+          }
+        }
+      }
+
       closed = true;
       handlers.clear();
       if (ownsClients) {

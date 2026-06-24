@@ -172,7 +172,9 @@ function requestFcmAccessToken(config) {
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', () => {
+      resolve({ ok: false, statusCode: null, reason: 'token_request_failed' });
+    });
     req.end(body);
   });
 }
