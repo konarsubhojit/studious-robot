@@ -33,7 +33,7 @@ const APNS_HOST_PRODUCTION = 'api.push.apple.com';
 
 const FCM_HOST = 'fcm.googleapis.com';
 /** OAuth2 scope required to send messages via the FCM HTTP v1 API. */
-const FCM_OAUTH_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
+const FCM_SEND_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 /** Default Google OAuth2 token endpoint (overridden by the SA `token_uri`). */
 const GOOGLE_TOKEN_URI = 'https://oauth2.googleapis.com/token';
 /** Google access tokens last ~1 hour; refresh a little early. */
@@ -112,7 +112,7 @@ function buildFcmAssertion(config) {
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
   const claims = Buffer.from(JSON.stringify({
     iss: config.clientEmail,
-    scope: FCM_OAUTH_SCOPE,
+    scope: FCM_SEND_SCOPE,
     aud: config.tokenUri,
     iat: nowSecs,
     exp: nowSecs + 3600,

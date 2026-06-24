@@ -1430,11 +1430,10 @@ function userRoom(userId) {
   return `user:${userId}`;
 }
 
-function emitToUserSockets(io, state, userId, eventName, payload) {
+function emitToUserSockets(io, userId, eventName, payload) {
   // Emit to the user's room: locally this reaches every tracked socket, and
   // with the Redis adapter attached it also reaches the user's sockets on other
-  // instances. `state` is retained for signature stability with call sites.
-  void state;
+  // instances.
   io.to(userRoom(userId)).emit(eventName, payload);
 }
 
@@ -1446,8 +1445,8 @@ function notifyCallCreated(io, state, call) {
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
-    emitToUserSockets(io, state, call.calleeId, 'call.incoming', envelope);
-    emitToUserSockets(io, state, call.callerId, 'call.ringing', envelope);
+    emitToUserSockets(io, call.calleeId, 'call.incoming', envelope);
+    emitToUserSockets(io, call.callerId, 'call.ringing', envelope);
 
     // Push fallback: if the callee has no active WebSocket connection, deliver
     // the incoming-call notification via APNs / FCM to every registered device.
@@ -1493,8 +1492,8 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     reason: reason ?? call.endReason ?? null,
     call,
   };
-  emitToUserSockets(io, state, call.callerId, 'call.state_changed', statePayload);
-  emitToUserSockets(io, state, call.calleeId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, call.callerId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, call.calleeId, 'call.state_changed', statePayload);
 
   // Broadcast the transition on the cross-instance bus (best-effort) so other
   // instances / external observers can react to call lifecycle changes. Socket
@@ -1526,8 +1525,8 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     reason: statePayload.reason,
     call,
   };
-  emitToUserSockets(io, state, call.callerId, eventName, eventPayload);
-  emitToUserSockets(io, state, call.calleeId, eventName, eventPayload);
+  emitToUserSockets(io, call.callerId, eventName, eventPayload);
+  emitToUserSockets(io, call.calleeId, eventName, eventPayload);
 }
 
 function getCallTransitionEventName(status, reason) {
@@ -1736,7 +1735,7 @@ function handleRtcRelay(socket, ack, payload, options) {
     fromUserId: userId,
     [options.dataKey]: value,
   };
-  emitToUserSockets(options.io, options.state, peerUserId, options.eventName, relayPayload);
+  emitToUserSockets(options.io, peerUserId, options.eventName, relayPayload);
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 
