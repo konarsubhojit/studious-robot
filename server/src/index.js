@@ -14,6 +14,7 @@ const {
   listBlocks,
   createAuditLog,
 } = require('./security');
+const { createStores } = require('./stores');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -92,20 +93,26 @@ function createServer(opts = {}) {
 
   const telemetry = createTelemetry();
 
+  // ── Persistence stores ───────────────────────────────────────────────────
+  // Keyed runtime collections (rooms, sessions, calls, …) are obtained from a
+  // pluggable store bundle.  Defaults to in-memory Maps; tests/production may
+  // inject an alternative backend via opts.stores.
+  const stores = createStores({ stores: opts.stores });
+
   const state = {
-    rooms: new Map(),
-    sessions: new Map(),
-    userSessions: new Map(),
-    devices: new Map(),
-    userDevices: new Map(),
-    userConnections: new Map(),
-    userPresence: new Map(),
+    rooms: stores.rooms,
+    sessions: stores.sessions,
+    userSessions: stores.userSessions,
+    devices: stores.devices,
+    userDevices: stores.userDevices,
+    userConnections: stores.userConnections,
+    userPresence: stores.userPresence,
     /** @type {Map<string, CallRecord>} callId → call record */
-    calls: new Map(),
+    calls: stores.calls,
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
-    callEvents: new Map(),
+    callEvents: stores.callEvents,
     /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
-    blocks: new Map(),
+    blocks: stores.blocks,
     /** Audit log for security-relevant events. */
     auditLog: createAuditLog(),
     /** Rate limiter for call initiation (HTTP + socket). */
@@ -1549,7 +1556,7 @@ function handleRtcRelay(socket, ack, payload, options) {
   acknowledgeSuccess(socket, ack, options.eventName, { callId });
 }
 
-module.exports = { createServer, CALL_END_REASONS };
+module.exports = { createServer, CALL_END_REASONS, createStores };
 
 // ─── Call domain helpers ──────────────────────────────────────────────────────
 
