@@ -93,6 +93,38 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
+| `FCM_SERVICE_ACCOUNT_JSON` | _(unset)_ | Firebase service-account credentials for FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. Absent ⇒ FCM pushes are skipped (`fcm_not_configured`). |
+| `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
+| `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
+
+## Push notifications
+
+Incoming-call pushes are delivered by `src/push.js` to callees with no live
+WebSocket connection. Two providers are supported and both fail gracefully when
+unconfigured (logging and returning a `*_not_configured` reason).
+
+### FCM (Firebase Cloud Messaging) — HTTP v1
+
+The server uses the **FCM HTTP v1 API** (`/v1/projects/{projectId}/messages:send`)
+with OAuth2 service-account authentication. The legacy server-key API is no
+longer used.
+
+1. In the Firebase console open **Project settings → Service accounts** and click
+   **Generate new private key** to download the service-account JSON.
+2. Provide it to the server via `FCM_SERVICE_ACCOUNT_JSON` — either the raw JSON
+   (e.g. injected from a secret) or a path to the key file on disk.
+3. In CI/CD, store the JSON as a GitHub Actions secret named
+   `FCM_SERVICE_ACCOUNT_JSON` and expose it to the deploy environment. Never
+   commit the key to the repository.
+
+The server mints (and caches) a short-lived OAuth2 access token from the
+service-account key and refreshes it automatically before expiry. If
+`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid, FCM delivery is skipped.
+
+### APNs (Apple Push Notification service)
+
+Set `APNS_KEY` (the `.p8` private key contents), `APNS_KEY_ID`, `APNS_TEAM_ID`,
+and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
 
 ## Database (Drizzle ORM)
 

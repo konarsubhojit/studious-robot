@@ -136,8 +136,26 @@ chmod 600 ~/.ssh/authorized_keys
 | `DEPLOY_SSH_USER`   | `opc` (or your VM user)                         |
 | `DEPLOY_SSH_PORT`   | SSH port — **optional**, defaults to `22`       |
 | `DATABASE_URL_DIRECT` | Neon **direct (unpooled)** Postgres URL — used by the deploy job to run migrations before restart. **Optional**; migrations are skipped when unset. |
+| `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM HTTP v1 push delivery. **Optional**; FCM pushes are skipped when unset. |
 
 > **`RENDER_DEPLOY_HOOK_URL` is no longer used** — the Render deploy step has been removed. You can delete that secret from the GitHub repository settings.
+
+### Push notifications (FCM HTTP v1) configuration
+
+Incoming-call pushes to offline callees use the **FCM HTTP v1 API** with an
+OAuth2 service account (the deprecated legacy server-key API is no longer used).
+
+1. In the Firebase console: **Project settings → Service accounts → Generate new
+   private key** to download the service-account JSON.
+2. Add the JSON as the `FCM_SERVICE_ACCOUNT_JSON` GitHub Actions secret (or store
+   it in your secret manager of choice) and surface it to the server process —
+   either as the raw JSON in the `FCM_SERVICE_ACCOUNT_JSON` env var, or by
+   writing it to a file on the VM and pointing the env var at that path.
+3. Never commit the key. The server mints and caches a short-lived OAuth2 token
+   from the key automatically; if the secret is absent FCM delivery is skipped.
+
+APNs uses token auth via the `APNS_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
+`APNS_BUNDLE_ID` (and optional `APNS_PRODUCTION`) env vars.
 
 ### Database (Neon Postgres) configuration
 
