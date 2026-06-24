@@ -8,6 +8,7 @@ import {
   RTCSessionDescription,
 } from 'react-native-webrtc';
 import { logError, logInfo, logWarn } from '../appLogger';
+import * as Telemetry from '../telemetry';
 import {
   AUDIO_ROUTES,
   chooseAudioRoute,
@@ -260,6 +261,9 @@ export default function useCallFlow() {
     if (callConnectedAtRef.current) return;
     haptic(HAPTIC_CONNECT_MS);
     callConnectedAtRef.current = Date.now();
+    if (activeCallIdRef.current) {
+      Telemetry.trackCallConnected(activeCallIdRef.current);
+    }
     setElapsedCallSeconds(0);
     elapsedTimerRef.current = setInterval(() => {
       if (!callConnectedAtRef.current) return;
@@ -315,6 +319,9 @@ export default function useCallFlow() {
       if (stream) {
         logInfo('[CallFlow] Remote stream connected');
         setRemoteStream(stream);
+        if (activeCallIdRef.current) {
+          Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
+        }
         markCallConnected();
         setStatus('Call started', 'success');
       }
@@ -328,6 +335,9 @@ export default function useCallFlow() {
       if (state !== 'failed') return;
       if (!isCallerRef.current || !socketRef.current?.connected) return;
       logWarn('[CallFlow] ICE failed; attempting restart');
+      if (activeCallIdRef.current) {
+        Telemetry.trackIceRestart(activeCallIdRef.current);
+      }
       (async () => {
         try {
           const offer = await pc.createOffer({ iceRestart: true });
@@ -413,6 +423,14 @@ export default function useCallFlow() {
           durationSeconds,
           quality: connectionQualityRef.current?.label || 'No link',
         });
+      }
+
+      // Emit QoS summary telemetry for post-call diagnosis.
+      if (callRecord?.callId) {
+        const qos = Telemetry.trackCallEnd(callRecord.callId);
+        if (qos) {
+          logInfo('[CallFlow] call QoS summary', qos);
+        }
       }
 
       // Record in call history whenever we have a call object to log.
@@ -719,6 +737,9 @@ export default function useCallFlow() {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
+        if (activeCallIdRef.current) {
+          Telemetry.trackReconnect(activeCallIdRef.current);
+        }
         // When the caller's socket reconnects mid-call, send an ICE-restart
         // offer so the peer connection can negotiate a new network path.
         if (isCallerRef.current) {
@@ -726,6 +747,9 @@ export default function useCallFlow() {
           if (pc) {
             try {
               logInfo('[CallFlow] Sending ICE restart offer after socket reconnect');
+              if (activeCallIdRef.current) {
+                Telemetry.trackIceRestart(activeCallIdRef.current);
+              }
               const offer = await pc.createOffer({ iceRestart: true });
               await pc.setLocalDescription(offer);
               socket.emit('rtc.offer', {
@@ -1006,6 +1030,7 @@ export default function useCallFlow() {
       setActiveCall(ack.call);
       setCallPhase(CALL_PHASES.OUTGOING_RINGING);
       setStatus(`Ringing ${trimmedCalleeId}…`);
+      Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
     } catch (error) {
       logError('[CallFlow] placeCall failed', error);
       setStatus(`Failed to place call: ${error.message}`, 'error');
@@ -1061,6 +1086,7 @@ export default function useCallFlow() {
       incomingCallRef.current = null;
       setIncomingCall(null);
       setStatus('Connecting…');
+      Telemetry.trackCallStart(call.callId, sessionIdRef.current);
       // callPhase advances to in_call via the rtc.offer handler once the caller
       // sends its offer.
     } catch (error) {
