@@ -231,7 +231,9 @@ export default function useCallFlow() {
     setUserId(newUserId);
     const trimmed = (newUserId ?? '').trim();
     if (trimmed) {
-      saveIdentity({ userId: trimmed }).catch(() => {/* best-effort */});
+      saveIdentity({ userId: trimmed }).catch((error) => {
+        logWarn('[CallFlow] Failed to persist userId update', { message: error?.message });
+      });
     }
   }, []);
 
