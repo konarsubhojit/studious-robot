@@ -51,7 +51,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  * Contact-directory search: a debounced query against the server's `GET /users`
  * endpoint (via `onSearchUsers`).  Tapping a result selects that user as the
  * callee (`onSelectContact`).  The section is hidden entirely when no
- * `onSearchUsers` handler is provided (e.g. before a session exists).
+ * `onSearchUsers` handler is provided (i.e. when contact search is enabled).
  */
 function ContactDirectory({ onSearchUsers, onSelectContact }) {
   const [query, setQuery] = useState('');

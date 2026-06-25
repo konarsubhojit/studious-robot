@@ -59,6 +59,23 @@ describe('IncomingCallScreen', () => {
     expect(nodes[0].props.children).toBe('charlie');
   });
 
+  test('derives avatar initials from multi-part caller IDs', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <IncomingCallScreen
+          incomingCall={makeCall({ callerId: 'charlie-brown' })}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+        />,
+      );
+    });
+    expect(
+      tree.root.findAll((node) => node.props.children === 'CB').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   test('renders Accept and Decline icon buttons', () => {
     let tree;
     act(() => {
@@ -170,4 +187,3 @@ describe('IncomingCallScreen', () => {
     expect(nodes[0].props.children).toBe('Unknown');
   });
 });
-

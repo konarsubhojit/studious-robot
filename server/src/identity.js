@@ -16,13 +16,16 @@
  * keeping the change backwards-compatible for existing/anonymous clients.
  */
 
-const { randomBytes, scryptSync, timingSafeEqual } = require('crypto');
+const { randomBytes, scrypt, timingSafeEqual } = require('crypto');
+const { promisify } = require('util');
 
 /** Bytes of random salt generated per claimed identity. */
 const SALT_BYTES = 16;
 
 /** Derived key length (bytes) for the scrypt hash. */
 const KEY_LENGTH = 32;
+
+const scryptAsync = promisify(scrypt);
 
 /**
  * Normalise a caller-supplied verification code to a non-empty string or null.
@@ -44,10 +47,10 @@ function normaliseVerificationCode(value) {
  *
  * @param {string} code
  * @param {string} [salt]  Hex-encoded salt; omit to generate a new one.
- * @returns {{ salt: string, hash: string }}
+ * @returns {Promise<{ salt: string, hash: string }>}
  */
-function hashVerificationCode(code, salt = randomBytes(SALT_BYTES).toString('hex')) {
-  const hash = scryptSync(String(code), salt, KEY_LENGTH).toString('hex');
+async function hashVerificationCode(code, salt = randomBytes(SALT_BYTES).toString('hex')) {
+  const hash = (await scryptAsync(String(code), salt, KEY_LENGTH)).toString('hex');
   return { salt, hash };
 }
 
@@ -56,13 +59,13 @@ function hashVerificationCode(code, salt = randomBytes(SALT_BYTES).toString('hex
  *
  * @param {string} code
  * @param {{ verificationHash?: string, verificationSalt?: string }} record
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function verifyVerificationCode(code, record) {
+async function verifyVerificationCode(code, record) {
   if (!record || !record.verificationHash || !record.verificationSalt) {
     return false;
   }
-  const { hash } = hashVerificationCode(code, record.verificationSalt);
+  const { hash } = await hashVerificationCode(code, record.verificationSalt);
   const provided = Buffer.from(hash, 'hex');
   const expected = Buffer.from(record.verificationHash, 'hex');
   if (provided.length !== expected.length) {
@@ -93,22 +96,22 @@ function verifyVerificationCode(code, record) {
  * @param {Map<string, object>} usersStore
  * @param {string} userId
  * @param {unknown} verificationCode
- * @returns {IdentityClaimResult}
+ * @returns {Promise<IdentityClaimResult>}
  */
-function resolveIdentityClaim(usersStore, userId, verificationCode) {
+async function resolveIdentityClaim(usersStore, userId, verificationCode) {
   const code = normaliseVerificationCode(verificationCode);
   const existing = usersStore.get(userId) || null;
   const isClaimed = Boolean(existing && existing.verificationHash);
 
   if (isClaimed) {
-    if (!code || !verifyVerificationCode(code, existing)) {
+    if (!code || !(await verifyVerificationCode(code, existing))) {
       return { ok: false, reason: 'identity_claimed', user: existing };
     }
     return { ok: true, verified: true, user: existing };
   }
 
   if (code) {
-    const { salt, hash } = hashVerificationCode(code);
+    const { salt, hash } = await hashVerificationCode(code);
     const now = new Date().toISOString();
     const user = {
       userId,

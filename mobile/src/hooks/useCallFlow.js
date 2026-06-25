@@ -187,6 +187,7 @@ export default function useCallFlow() {
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
+  const calleePresenceRequestIdRef = useRef(0);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -341,7 +342,7 @@ export default function useCallFlow() {
    * the request fails.  Never throws.
    *
    * @param {string} targetUserId
-   * @returns {Promise<{ status: string, online: boolean } | null>}
+   * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
    */
   const checkPresence = useCallback(async (targetUserId) => {
     const trimmedId = (targetUserId ?? '').trim();
@@ -369,7 +370,7 @@ export default function useCallFlow() {
    *
    * @param {string} [query] optional substring filter
    * @param {number} [limit=20] max results
-   * @returns {Promise<Array<{ userId: string, status: string, online: boolean }>>}
+   * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
    */
   const searchUsers = useCallback(async (query = '', limit = 20) => {
     const sessionId = sessionIdRef.current;
@@ -392,13 +393,18 @@ export default function useCallFlow() {
   useEffect(() => {
     const trimmedId = calleeId.trim();
     if (!trimmedId) {
+      calleePresenceRequestIdRef.current += 1;
       setCalleePresence(null);
       return undefined;
     }
     let cancelled = false;
+    const requestId = calleePresenceRequestIdRef.current + 1;
+    calleePresenceRequestIdRef.current = requestId;
     const timer = setTimeout(async () => {
       const presence = await checkPresence(trimmedId);
-      if (!cancelled) setCalleePresence(presence);
+      if (!cancelled && calleePresenceRequestIdRef.current === requestId) {
+        setCalleePresence(presence);
+      }
     }, 400);
     return () => {
       cancelled = true;

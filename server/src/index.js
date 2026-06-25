@@ -178,12 +178,12 @@ function createServer(opts = {}) {
     });
   });
 
-  app.post('/session', (req, res) => {
+  app.post('/session', async (req, res) => {
     const userId = normaliseId(req.body?.userId) || `user-${randomUUID()}`;
 
     // Enforce identity ownership: a userId that has been claimed with a
     // verification code can only be re-used by presenting that same code.
-    const claim = resolveIdentityClaim(state.users, userId, req.body?.verificationCode);
+    const claim = await resolveIdentityClaim(state.users, userId, req.body?.verificationCode);
     if (!claim.ok) {
       state.auditLog.record({
         event: 'session.identity_conflict',

@@ -59,6 +59,23 @@ describe('OutgoingCallScreen', () => {
     expect(nodes[0].props.children).toBe('charlie');
   });
 
+  test('derives avatar initials from multi-part callee IDs', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          calleeId="charlie_brown"
+          activeCall={makeCall({ calleeId: 'charlie_brown' })}
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    expect(
+      tree.root.findAll((node) => node.props.children === 'CB').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
   test('renders Cancel icon button', () => {
     let tree;
     act(() => {
@@ -142,4 +159,3 @@ describe('OutgoingCallScreen', () => {
     expect(nodes[0].props.children).toBe('Unknown');
   });
 });
-

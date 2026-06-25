@@ -115,6 +115,8 @@ function renderHook() {
 describe('useCallFlow', () => {
   afterEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
+    delete global.fetch;
   });
 
   test('initialises with idle callPhase', () => {
@@ -250,6 +252,58 @@ describe('useCallFlow', () => {
       users = await resultRef.current.searchUsers('bob');
     });
     expect(users).toEqual([]);
+  });
+
+  test('calleePresence ignores stale presence responses for older calleeIds', async () => {
+    jest.useFakeTimers();
+    const pending = [];
+    global.fetch = jest.fn((url) => new Promise((resolve) => {
+      pending.push({ url, resolve });
+    }));
+
+    const { resultRef, tree } = renderHook();
+
+    act(() => {
+      resultRef.current.setCalleeId('alice');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(pending[0].url).toContain('/presence/alice');
+    expect(pending[1].url).toContain('/presence/bob');
+
+    await act(async () => {
+      pending[1].resolve({
+        ok: true,
+        json: async () => ({ status: 'online', online: true }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    expect(resultRef.current.calleePresence).toEqual({ status: 'online', online: true });
+
+    await act(async () => {
+      pending[0].resolve({
+        ok: true,
+        json: async () => ({ status: 'offline', online: false }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    expect(resultRef.current.calleePresence).toEqual({ status: 'online', online: true });
   });
 
   test('markMissedCallsRead is safe to call on an empty history', () => {

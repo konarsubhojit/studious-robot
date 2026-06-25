@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { deriveInitials } from '../callUx';
 import { colors, spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
@@ -13,16 +14,6 @@ import StatusBanner from './StatusBanner';
 function secondsRemaining(ringTimeoutAt) {
   if (!ringTimeoutAt) return 0;
   return Math.max(0, Math.round((new Date(ringTimeoutAt).getTime() - Date.now()) / 1000));
-}
-
-/** Derive callee initials (up to 2 characters) from a calleeId string. */
-function getInitials(id) {
-  if (!id) return '?';
-  const parts = id.trim().split(/[\s\-_]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return id.slice(0, 2).toUpperCase();
 }
 
 /**
@@ -41,7 +32,7 @@ function getInitials(id) {
  */
 export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }) {
   const ringTimeoutAt = activeCall?.ringTimeoutAt ?? null;
-  const initials = getInitials(calleeId);
+  const initials = deriveInitials(calleeId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef = useRef(null);
@@ -208,4 +199,3 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg * 2,
   },
 });
-

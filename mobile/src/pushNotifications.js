@@ -174,6 +174,7 @@ export async function unregisterPushToken({ sessionId, signalingUrl }) {
 
 /** Cached result of the optional native messaging module lookup. */
 let cachedMessaging;
+let hasLoggedMissingMessaging = false;
 
 /**
  * Lazily resolve the optional @react-native-firebase/messaging default export.
@@ -189,6 +190,10 @@ export function loadMessaging() {
     cachedMessaging = mod?.default ?? mod ?? null;
   } catch {
     cachedMessaging = null;
+    if (!hasLoggedMissingMessaging) {
+      logWarn('[Push] Native messaging module not installed; skipping push token acquisition');
+      hasLoggedMissingMessaging = true;
+    }
   }
   return cachedMessaging;
 }
@@ -196,6 +201,7 @@ export function loadMessaging() {
 /** Reset the memoised messaging module (test hook). */
 export function _resetMessagingCache() {
   cachedMessaging = undefined;
+  hasLoggedMissingMessaging = false;
 }
 
 /**
@@ -210,10 +216,7 @@ export function _resetMessagingCache() {
  */
 export async function getPushToken() {
   const messaging = loadMessaging();
-  if (!messaging) {
-    logWarn('[Push] Native messaging module not installed; skipping push token acquisition');
-    return null;
-  }
+  if (!messaging) return null;
 
   try {
     const authStatus = await messaging().requestPermission();

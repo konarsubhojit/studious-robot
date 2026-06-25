@@ -10,6 +10,7 @@ import {
   unregisterPushToken,
   _resetMessagingCache,
 } from '../src/pushNotifications';
+import { logWarn } from '../src/appLogger';
 
 jest.mock('../src/appLogger', () => ({
   logError: jest.fn(),
@@ -243,7 +244,10 @@ describe('unregisterPushToken', () => {
 // ─── getPushToken / registerForPushNotifications ──────────────────────────────
 
 describe('getPushToken / registerForPushNotifications (native module absent)', () => {
-  beforeEach(() => _resetMessagingCache());
+  beforeEach(() => {
+    _resetMessagingCache();
+    jest.clearAllMocks();
+  });
   afterEach(() => _resetMessagingCache());
 
   test('loadMessaging returns null when the package is not installed', () => {
@@ -252,6 +256,21 @@ describe('getPushToken / registerForPushNotifications (native module absent)', (
 
   test('getPushToken resolves null when the native module is missing', async () => {
     await expect(getPushToken()).resolves.toBeNull();
+  });
+
+  test('logs the missing native-module warning only once', async () => {
+    expect(loadMessaging()).toBeNull();
+    await expect(getPushToken()).resolves.toBeNull();
+    expect(loadMessaging()).toBeNull();
+    expect(logWarn).toHaveBeenCalledTimes(1);
+  });
+
+  test('reset hook clears the missing-module warning state', () => {
+    expect(loadMessaging()).toBeNull();
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    _resetMessagingCache();
+    expect(loadMessaging()).toBeNull();
+    expect(logWarn).toHaveBeenCalledTimes(2);
   });
 
   test('registerForPushNotifications resolves false when no token is available', async () => {

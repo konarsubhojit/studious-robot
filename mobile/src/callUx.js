@@ -16,6 +16,15 @@ export function formatCallDuration(totalSeconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+export function deriveInitials(id) {
+  if (!id) return '?';
+  const parts = id.trim().split(/[\s\-_]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return id.slice(0, 2).toUpperCase();
+}
+
 export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }) {
   if (!Number.isFinite(rttMs) && !Number.isFinite(packetLossRatio) && !Number.isFinite(bitrateKbps)) {
     return { bars: 0, label: 'No link' };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { deriveInitials } from '../callUx';
+import { colors, spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
 
@@ -13,16 +14,6 @@ import StatusBanner from './StatusBanner';
 function secondsRemaining(ringTimeoutAt) {
   if (!ringTimeoutAt) return 0;
   return Math.max(0, Math.round((new Date(ringTimeoutAt).getTime() - Date.now()) / 1000));
-}
-
-/** Derive caller initials (up to 2 characters) from a callerId string. */
-function getInitials(callerId) {
-  if (!callerId) return '?';
-  const parts = callerId.trim().split(/[\s\-_]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return callerId.slice(0, 2).toUpperCase();
 }
 
 /**
@@ -42,7 +33,7 @@ function getInitials(callerId) {
 export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }) {
   const ringTimeoutAt = incomingCall?.ringTimeoutAt ?? null;
   const callerId = incomingCall?.callerId ?? 'Unknown';
-  const initials = getInitials(callerId);
+  const initials = deriveInitials(callerId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef = useRef(null);
@@ -220,4 +211,3 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg * 2,
   },
 });
-
