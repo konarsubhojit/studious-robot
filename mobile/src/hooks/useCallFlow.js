@@ -24,6 +24,7 @@ import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions } from '../permissions';
 import { addCallLinkListener, getInitialCallLink } from '../pushNotifications';
+import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
 
@@ -122,6 +123,9 @@ export default function useCallFlow() {
   const [userId, setUserId] = useState('');
   const [calleeId, setCalleeId] = useState('');
 
+  // true while the identity is being loaded from persistent storage on mount.
+  const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+
   // ─── Call lifecycle state ─────────────────────────────────────────────────
   const [callPhase, setCallPhase] = useState(CALL_PHASES.IDLE);
   const [activeCall, setActiveCall] = useState(null);
@@ -181,7 +185,65 @@ export default function useCallFlow() {
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
 
+  /** True once a userId has been persisted (i.e. the user has registered). */
+  const isRegistered = userId.trim().length > 0;
+
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
+
+  // ─── Load persisted identity on mount ────────────────────────────────────
+
+  useEffect(() => {
+    let cancelled = false;
+    loadIdentity().then(({ userId: savedId }) => {
+      if (cancelled) return;
+      if (savedId) {
+        setUserId(savedId);
+      }
+      setIsLoadingIdentity(false);
+    }).catch(() => {
+      if (!cancelled) setIsLoadingIdentity(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Register the local user with the given userId.  Persists the identity to
+   * disk and updates the in-memory state so the presence socket connects.
+   *
+   * @param {string} newUserId
+   */
+  const registerUser = useCallback(async (newUserId) => {
+    const trimmed = (newUserId ?? '').trim();
+    if (!trimmed) return;
+    setUserId(trimmed);
+    await saveIdentity({ userId: trimmed });
+    logInfo('[CallFlow] User registered', { userId: trimmed });
+  }, []);
+
+  /**
+   * Update the active userId and persist the new value.
+   * Use this when the user edits their username in the Lobby so the new
+   * identity survives app restarts.
+   *
+   * @param {string} newUserId
+   */
+  const updateUserId = useCallback((newUserId) => {
+    setUserId(newUserId);
+    const trimmed = (newUserId ?? '').trim();
+    if (trimmed) {
+      saveIdentity({ userId: trimmed }).catch(() => {/* best-effort */});
+    }
+  }, []);
+
+  /**
+   * Clear the persisted identity and disconnect.  After this the app returns
+   * to the RegistrationScreen on next launch.
+   */
+  const unregisterUser = useCallback(async () => {
+    setUserId('');
+    await saveIdentity({ userId: '' });
+    logInfo('[CallFlow] User unregistered');
+  }, []);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -1368,6 +1430,11 @@ export default function useCallFlow() {
     // Identity / connection config
     userId,
     setUserId,
+    isRegistered,
+    isLoadingIdentity,
+    registerUser,
+    unregisterUser,
+    updateUserId,
     calleeId,
     setCalleeId,
     signalingUrl,

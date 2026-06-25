@@ -69,3 +69,47 @@ export async function saveSettings(settings) {
 }
 
 export const SETTINGS_FILE_PATH = SETTINGS_FILE;
+
+// ─── User identity storage ────────────────────────────────────────────────────
+// Kept in a separate file so it does not interfere with the app-settings file
+// that useWebRTCCall manages independently.
+
+const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/tcalling-identity.json`;
+
+/**
+ * Load the persisted user identity.  Returns `{ userId: '' }` when no identity
+ * has been saved yet or the file cannot be read.
+ *
+ * @returns {Promise<{ userId: string }>}
+ */
+export async function loadIdentity() {
+  try {
+    const exists = await RNFS.exists(IDENTITY_FILE);
+    if (!exists) return { userId: '' };
+    const content = await RNFS.readFile(IDENTITY_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    return { userId: typeof parsed.userId === 'string' ? parsed.userId : '' };
+  } catch (error) {
+    logError('Failed to load identity; using empty default', { message: error?.message });
+    return { userId: '' };
+  }
+}
+
+/**
+ * Persist the user identity to disk.  Failures are logged but never thrown.
+ *
+ * @param {{ userId: string }} identity
+ * @returns {Promise<boolean>} whether the write succeeded
+ */
+export async function saveIdentity(identity) {
+  try {
+    await RNFS.writeFile(IDENTITY_FILE, JSON.stringify(identity), 'utf8');
+    logInfo('Identity persisted', { userId: identity.userId });
+    return true;
+  } catch (error) {
+    logError('Failed to persist identity', { message: error?.message });
+    return false;
+  }
+}
+
+export const IDENTITY_FILE_PATH = IDENTITY_FILE;

@@ -5,6 +5,7 @@ import CallScreen from './src/components/CallScreen';
 import IncomingCallScreen from './src/components/IncomingCallScreen';
 import Lobby from './src/components/Lobby';
 import OutgoingCallScreen from './src/components/OutgoingCallScreen';
+import RegistrationScreen from './src/components/RegistrationScreen';
 import { getStreamUrl } from './src/diagnostics';
 import { CALL_PHASES } from './src/hooks/useCallFlow';
 import useCallFlow from './src/hooks/useCallFlow';
@@ -77,7 +78,21 @@ export default function App() {
 
   let screenContent;
 
-  if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {
+  if (callFlow.isLoadingIdentity) {
+    // Blank screen while identity is being loaded from storage; the app
+    // transitions to the correct screen once loading completes.
+    screenContent = null;
+  } else if (!callFlow.isRegistered) {
+    screenContent = (
+      <RegistrationScreen
+        onRegister={(newUserId) => {
+          callFlow.registerUser(newUserId).catch((error) => {
+            logError('registerUser failed', error);
+          });
+        }}
+      />
+    );
+  } else if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {
     screenContent = (
       <OutgoingCallScreen
         calleeId={callFlow.calleeId}
@@ -163,7 +178,7 @@ export default function App() {
     screenContent = (
       <Lobby
         userId={callFlow.userId}
-        onChangeUserId={callFlow.setUserId}
+        onChangeUserId={callFlow.updateUserId}
         calleeId={callFlow.calleeId}
         onChangeCalleeId={callFlow.setCalleeId}
         onCall={() => {

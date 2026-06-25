@@ -1,12 +1,14 @@
 import { StyleSheet, View } from 'react-native';
 import { colors, spacing } from '../theme';
-import AppButton from './AppButton';
 import AudioOutputMenu from './AudioOutputMenu';
+import IconButton from './IconButton';
 
 /**
  * In-call control deck: mute, camera on/off, audio-output picker, camera swap,
- * and leave.  The audio-output picker lets the user route to speaker, earpiece,
- * Bluetooth, or a wired headset.
+ * and leave.
+ *
+ * All action buttons use icon-only circular IconButton components for a clean,
+ * professional look.  The leave button is visually distinct (danger variant).
  */
 export default function CallControls({
   isMuted,
@@ -23,19 +25,23 @@ export default function CallControls({
   return (
     <View style={styles.controls}>
       <View style={styles.mediaRow}>
-        <AppButton
-          title={isMuted ? 'Unmute' : 'Mute'}
+        <IconButton
+          icon={isMuted ? '🔇' : '🎤'}
+          label={isMuted ? 'Unmute' : 'Mute'}
           onPress={onMuteToggle}
-          active={isMuted}
+          variant={isMuted ? 'active' : 'default'}
           disabled={!hasLocalStream}
+          size={52}
           accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
           testID="control-mute"
         />
-        <AppButton
-          title={isVideoEnabled ? 'Video Off' : 'Video On'}
+        <IconButton
+          icon={isVideoEnabled ? '📷' : '🚫'}
+          label={isVideoEnabled ? 'Video off' : 'Video on'}
           onPress={onVideoToggle}
-          active={!isVideoEnabled}
+          variant={isVideoEnabled ? 'default' : 'active'}
           disabled={!hasLocalStream}
+          size={52}
           accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
           testID="control-video"
         />
@@ -45,19 +51,24 @@ export default function CallControls({
           isSpeakerEnabled={isSpeakerEnabled}
           onSelect={onChooseAudioOutput}
         />
-        <AppButton
-          title="Swap Camera"
+        <IconButton
+          icon="🔄"
+          label="Flip"
           onPress={onCameraSwitch}
+          variant="default"
           disabled={!hasLocalStream}
+          size={52}
           accessibilityLabel="Switch between front and back camera"
           testID="control-swap-camera"
         />
       </View>
 
-      <AppButton
-        title="Leave"
+      <IconButton
+        icon="✕"
+        label="Leave"
         onPress={onLeave}
-        style={styles.leaveButton}
+        variant="danger"
+        size={56}
         accessibilityLabel="Leave the call"
         testID="control-leave"
       />
@@ -69,12 +80,13 @@ const styles = StyleSheet.create({
   controls: {
     gap: spacing.sm,
     marginBottom: spacing.sm,
+    alignItems: 'center',
   },
   mediaRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  leaveButton: {
-    backgroundColor: colors.danger,
+    gap: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
+

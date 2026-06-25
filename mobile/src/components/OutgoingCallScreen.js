@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
-import AppButton from './AppButton';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { colors, spacing } from '../theme';
+import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
 
 /**
@@ -15,28 +15,62 @@ function secondsRemaining(ringTimeoutAt) {
   return Math.max(0, Math.round((new Date(ringTimeoutAt).getTime() - Date.now()) / 1000));
 }
 
+/** Derive callee initials (up to 2 characters) from a calleeId string. */
+function getInitials(id) {
+  if (!id) return '?';
+  const parts = id.trim().split(/[\s\-_]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return id.slice(0, 2).toUpperCase();
+}
+
 /**
  * Outgoing ringing screen.
  *
  * Shown while the caller waits for the callee to answer.  Displays a
- * countdown derived from the call record's `ringTimeoutAt` field and
- * a Cancel button to withdraw the call.
+ * pulsing callee avatar, a countdown, and an icon-only Cancel button.
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object} props
- * @param {string} props.calleeId - The ID / name of the callee.
- * @param {object|null} props.activeCall - Live call record from the server (may include ringTimeoutAt).
- * @param {object} props.status - Current status message `{ message, severity }`.
- * @param {() => void} props.onCancel - Called when the user presses Cancel.
+ * @param {object}   props
+ * @param {string}   props.calleeId    - The ID / name of the callee.
+ * @param {object|null} props.activeCall - Live call record (may include ringTimeoutAt).
+ * @param {object}   props.status      - Current status `{ message, severity }`.
+ * @param {Function} props.onCancel    - Called when the user presses Cancel.
  */
 export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }) {
   const ringTimeoutAt = activeCall?.ringTimeoutAt ?? null;
+  const initials = getInitials(calleeId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef = useRef(null);
 
-  // Update the countdown every second.
+  // ── Pulse animation ───────────────────────────────────────────────────────
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.2,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  // ── Countdown timer ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!ringTimeoutAt) {
       setSecondsLeft(0);
@@ -64,10 +98,22 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
 
   return (
     <View style={styles.container} testID="outgoing-call-screen">
-      <View style={styles.card}>
-        <Text style={styles.label} accessibilityRole="header">
-          Calling…
-        </Text>
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <View style={styles.header}>
+        <Text style={styles.headerLabel}>Calling…</Text>
+      </View>
+
+      {/* ── Callee info ───────────────────────────────────────────────────── */}
+      <View style={styles.calleeSection}>
+        {/* Pulsing ring behind avatar */}
+        <Animated.View
+          style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
+          accessible={false}
+        />
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
 
         <Text style={styles.calleeId} testID="outgoing-callee-id">
           {calleeId || 'Unknown'}
@@ -78,11 +124,16 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
             {secondsLeft > 0 ? `${secondsLeft}s` : 'Timed out'}
           </Text>
         ) : null}
+      </View>
 
-        <AppButton
-          title="Cancel"
+      {/* ── Action button ─────────────────────────────────────────────────── */}
+      <View style={styles.actions}>
+        <IconButton
+          icon="✕"
+          label="Cancel"
           onPress={onCancel}
-          style={styles.cancelButton}
+          variant="danger"
+          size={72}
           accessibilityLabel="Cancel outgoing call"
           testID="outgoing-cancel"
         />
@@ -96,39 +147,65 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'stretch',
+    justifyContent: 'space-between',
+    backgroundColor: colors.background,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
-    backgroundColor: colors.background,
   },
-  card: {
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
+  header: {
     alignItems: 'center',
+    paddingTop: spacing.lg,
+  },
+  headerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  calleeSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: spacing.md,
   },
-  label: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    fontWeight: '600',
+  pulseRing: {
+    position: 'absolute',
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: colors.accentButton,
+    opacity: 0.15,
+  },
+  avatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
   calleeId: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: '700',
     color: colors.textPrimary,
     textAlign: 'center',
+    marginTop: spacing.sm,
   },
   countdown: {
     fontSize: 14,
     color: colors.textSecondary,
   },
-  cancelButton: {
-    backgroundColor: colors.danger,
-    marginTop: spacing.sm,
-    minWidth: 160,
+  actions: {
+    alignItems: 'center',
+    paddingBottom: spacing.lg * 2,
   },
 });
+

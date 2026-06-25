@@ -86,6 +86,13 @@ jest.mock('../../src/pushNotifications', () => ({
   unregisterPushToken: jest.fn(async () => true),
 }));
 
+jest.mock('../../src/settingsStorage', () => ({
+  loadIdentity: jest.fn(async () => ({ userId: '' })),
+  saveIdentity: jest.fn(async () => true),
+  loadSettings: jest.fn(async (defaults) => ({ ...defaults })),
+  saveSettings: jest.fn(async () => true),
+}));
+
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 function TestHook({ resultRef }) {
