@@ -89,7 +89,7 @@ opt-in verification code:
 
 | # | Gap | Next step |
 | - | --- | --------- |
-| 4 | **Contact list / discovery** | Add a `users` directory endpoint + search; QR-pair; "recent contacts" (history redial is done). |
+| 4 | **Contact list / discovery** | ✅ Server `GET /users` contact-directory endpoint (auth, `?search=` substring, `?limit=`, presence per user, block-aware) + `searchUsers()` in `useCallFlow`. Remaining: surface it in the Lobby UI; add QR-pair. |
 | 5 | **Lobby is a dev panel** | ✅ The legacy Join-Room / Signaling-URL fields are now hidden behind a "Developer mode" toggle in Settings (persisted; off by default). |
 | 7 | **Presence before calling** | ✅ basic indicator added; optionally subscribe to live presence over the socket instead of one-shot fetch. |
 | 8 | **In-memory sessions lost on restart** | Persist sessions/presence in Redis (`server/src/stores/redis.js` exists) and configure it in `render.yaml`; add retry-on-401 + session refresh (`POST /session/refresh` exists but is never called by the app). |

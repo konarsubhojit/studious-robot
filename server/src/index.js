@@ -79,6 +79,10 @@ const DEFAULT_SHUTDOWN_DRAIN_MS = 25_000;
 /** Poll interval while waiting for sockets to drain during shutdown. */
 const SHUTDOWN_DRAIN_POLL_MS = 50;
 
+/** Default / maximum page size for the GET /users contact directory. */
+const USER_DIRECTORY_DEFAULT_LIMIT = 50;
+const USER_DIRECTORY_MAX_LIMIT = 100;
+
 /**
  * Build the Express app and HTTP/Socket.IO server.
  *
@@ -353,6 +357,61 @@ function createServer(opts = {}) {
     }
 
     res.status(200).json(getPresenceSnapshot(state, userId));
+  });
+
+  /**
+   * GET /users
+   *
+   * Contact directory / discovery.  Returns the list of known users (anyone who
+   * has ever created a session, registered a device, or appeared in presence),
+   * each annotated with a lightweight presence snapshot so the client can show
+   * who is reachable before placing a call.
+   *
+   * Query params:
+   *   - `search`: case-insensitive substring filter on `userId`.
+   *   - `limit`:  max number of results (default 50, capped at 100).
+   *
+   * The authenticated user is excluded from their own directory, as are users
+   * in either direction of a block relationship with the requester.
+   *
+   * Response 200: { users: Array<{ userId, status, online, lastSeen }>, total }
+   */
+  app.get('/users', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const search = (normaliseOptionalString(req.query?.search) || '').toLowerCase();
+    const requestedLimit = Number(req.query?.limit);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(Math.floor(requestedLimit), USER_DIRECTORY_MAX_LIMIT)
+      : USER_DIRECTORY_DEFAULT_LIMIT;
+
+    const matches = [];
+    for (const candidateId of listKnownUsers(state)) {
+      if (candidateId === session.userId) continue;
+      if (search && !candidateId.toLowerCase().includes(search)) continue;
+      // Hide users in either direction of a block relationship.
+      if (isBlocked(state.blocks, session.userId, candidateId)) continue;
+      if (isBlocked(state.blocks, candidateId, session.userId)) continue;
+      matches.push(candidateId);
+    }
+
+    matches.sort((a, b) => a.localeCompare(b));
+
+    const users = matches.slice(0, limit).map((candidateId) => {
+      const snapshot = getPresenceSnapshot(state, candidateId);
+      return {
+        userId: snapshot.userId,
+        status: snapshot.status,
+        online: snapshot.online,
+        lastSeen: snapshot.lastSeen,
+      };
+    });
+
+    res.status(200).json({ users, total: matches.length });
   });
 
   // ─── Call end-reason taxonomy (static, no auth required) ──────────────────
@@ -1400,6 +1459,23 @@ function hasKnownUser(state, userId) {
   }
 
   return state.userPresence.has(userId);
+}
+
+/**
+ * Enumerate every userId the server is aware of, deduplicated across the
+ * session, device, connection and presence collections.  Used by the contact
+ * directory (`GET /users`).
+ *
+ * @param {object} state
+ * @returns {Set<string>}
+ */
+function listKnownUsers(state) {
+  const userIds = new Set();
+  for (const userId of state.userSessions.keys()) userIds.add(userId);
+  for (const userId of state.userDevices.keys()) userIds.add(userId);
+  for (const userId of state.userConnections.keys()) userIds.add(userId);
+  for (const userId of state.userPresence.keys()) userIds.add(userId);
+  return userIds;
 }
 
 function hasOwnProp(value, key) {

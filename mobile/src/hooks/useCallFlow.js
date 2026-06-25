@@ -361,7 +361,33 @@ export default function useCallFlow() {
     }
   }, [signalingUrl]);
 
-  // Debounced presence lookup whenever the callee field changes so the Lobby
+  /**
+   * Search the server's contact directory (`GET /users`) for known users whose
+   * userId matches `query` (case-insensitive substring).  Returns an array of
+   * `{ userId, status, online, lastSeen }` entries, or an empty array when the
+   * request fails or no session exists.  Never throws.
+   *
+   * @param {string} [query] optional substring filter
+   * @param {number} [limit=20] max results
+   * @returns {Promise<Array<{ userId: string, status: string, online: boolean }>>}
+   */
+  const searchUsers = useCallback(async (query = '', limit = 20) => {
+    const sessionId = sessionIdRef.current;
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (!sessionId || !trimmedUrl) return [];
+    try {
+      const params = new URLSearchParams({ sessionId, limit: String(limit) });
+      const trimmedQuery = (query ?? '').trim();
+      if (trimmedQuery) params.set('search', trimmedQuery);
+      const response = await fetch(`${trimmedUrl}/users?${params.toString()}`);
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data.users) ? data.users : [];
+    } catch (error) {
+      logWarn('[CallFlow] searchUsers failed', { message: error?.message });
+      return [];
+    }
+  }, [signalingUrl]);
   // can show whether the callee is online before the user presses Call.
   useEffect(() => {
     const trimmedId = calleeId.trim();
@@ -1519,6 +1545,7 @@ export default function useCallFlow() {
     callSummary,
     calleePresence,
     checkPresence,
+    searchUsers,
 
     // Call history
     callHistory,

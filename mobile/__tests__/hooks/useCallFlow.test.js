@@ -238,6 +238,20 @@ describe('useCallFlow', () => {
     expect(typeof resultRef.current.fetchCallHistory).toBe('function');
   });
 
+  test('exposes searchUsers as a function', () => {
+    const { resultRef } = renderHook();
+    expect(typeof resultRef.current.searchUsers).toBe('function');
+  });
+
+  test('searchUsers resolves to an empty array when there is no session', async () => {
+    const { resultRef } = renderHook();
+    let users;
+    await act(async () => {
+      users = await resultRef.current.searchUsers('bob');
+    });
+    expect(users).toEqual([]);
+  });
+
   test('markMissedCallsRead is safe to call on an empty history', () => {
     const { resultRef, tree } = renderHook();
     act(() => { resultRef.current.markMissedCallsRead(); });

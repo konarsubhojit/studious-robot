@@ -109,6 +109,7 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/reconnect.test.js`              | Socket reconnect, network handoff, offline callee, ICE restart |
 | `server` | `test/push-fallback.test.js`          | Push-notification fallback for offline callees               |
 | `server` | `test/identity.test.js`               | Session, device registration, and presence APIs              |
+| `server` | `test/directory.test.js`              | Contact directory (`GET /users`) search, paging, block filtering |
 | `server` | `test/telemetry.test.js`              | Metrics counters and derived rates                           |
 | `server` | `test/security.test.js`               | Rate limiting and blocklist                                  |
 | `server` | `test/signaling.test.js`              | Legacy join-room signaling                                   |
