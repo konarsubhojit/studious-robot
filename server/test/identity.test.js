@@ -231,7 +231,7 @@ test('a verification code claims a userId; the same code re-uses it but a wrong/
     const claimed = await postJson(url, '/session', {
       userId: 'user-carol',
       deviceId: 'device-1',
-      verificationCode: 'hunter2',
+      verificationCode: 'example-verification-code',
     });
     assert.equal(claimed.status, 201);
     assert.equal(claimed.body.userId, 'user-carol');
@@ -241,7 +241,7 @@ test('a verification code claims a userId; the same code re-uses it but a wrong/
     const reuse = await postJson(url, '/session', {
       userId: 'user-carol',
       deviceId: 'device-2',
-      verificationCode: 'hunter2',
+      verificationCode: 'example-verification-code',
     });
     assert.equal(reuse.status, 201);
     assert.equal(reuse.body.userId, 'user-carol');
