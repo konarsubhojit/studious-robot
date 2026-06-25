@@ -1,4 +1,6 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -46,6 +48,107 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
 }
 
 /**
+ * Contact-directory search: a debounced query against the server's `GET /users`
+ * endpoint (via `onSearchUsers`).  Tapping a result selects that user as the
+ * callee (`onSelectContact`).  The section is hidden entirely when no
+ * `onSearchUsers` handler is provided (e.g. before a session exists).
+ */
+function ContactDirectory({ onSearchUsers, onSelectContact }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const requestIdRef = useRef(0);
+
+  const runSearch = useCallback(
+    async (term) => {
+      if (typeof onSearchUsers !== 'function') return;
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      setIsSearching(true);
+      let users = [];
+      try {
+        users = await onSearchUsers(term);
+      } catch (_error) {
+        users = [];
+      }
+      // Ignore stale responses that resolved out of order.
+      if (requestIdRef.current !== requestId) return;
+      setResults(Array.isArray(users) ? users : []);
+      setIsSearching(false);
+      setHasSearched(true);
+    },
+    [onSearchUsers],
+  );
+
+  // Debounce the directory lookup so we don't fire a request per keystroke.
+  useEffect(() => {
+    if (typeof onSearchUsers !== 'function') return undefined;
+    const timer = setTimeout(() => {
+      runSearch(query.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, onSearchUsers, runSearch]);
+
+  if (typeof onSearchUsers !== 'function') return null;
+
+  return (
+    <View testID="contact-directory">
+      <Text style={styles.sectionTitle}>Contacts</Text>
+      <ClearableInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Search contacts"
+        accessibilityLabel="Search contacts"
+        testID="input-contact-search"
+      />
+      {isSearching ? (
+        <View style={styles.contactStatusRow} testID="contact-searching">
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <Text style={styles.contactStatusText}>Searching…</Text>
+        </View>
+      ) : null}
+      {!isSearching && results.length > 0
+        ? results.map((contact) => (
+            <Pressable
+              key={contact.userId}
+              onPress={
+                onSelectContact ? () => onSelectContact(contact.userId) : undefined
+              }
+              disabled={!onSelectContact}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${contact.userId}`}
+              style={({ pressed }) => [
+                styles.contactRow,
+                pressed && styles.historyRowPressed,
+              ]}
+              testID="contact-row"
+            >
+              <View
+                style={[
+                  styles.presenceDot,
+                  contact.online ? styles.presenceDotOnline : styles.presenceDotOffline,
+                ]}
+              />
+              <View style={styles.contactText}>
+                <Text style={styles.contactName}>{contact.userId}</Text>
+                <Text style={styles.contactDetail}>
+                  {contact.online ? 'Online' : 'Offline'}
+                </Text>
+              </View>
+            </Pressable>
+          ))
+        : null}
+      {!isSearching && hasSearched && results.length === 0 ? (
+        <Text style={styles.contactEmpty} testID="contact-empty">
+          No matching contacts
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
  * Pre-call lobby: branding, last-call summary, self preview, connection inputs,
  * primary actions, and the settings panel.
  *
@@ -64,6 +167,9 @@ export default function Lobby({
   onCall,
   calleePresence,
   onOpenSettings,
+  // ── Contact directory ─────────────────────────────────────────────────────
+  onSearchUsers,
+  onSelectContact,
   // ── Legacy room-join flow ────────────────────────────────────────────────
   developerMode,
   signalingUrl,
@@ -243,6 +349,11 @@ export default function Lobby({
           disabled={!userId?.trim() || !calleeId?.trim()}
           testID="lobby-call"
           style={styles.callButton}
+        />
+
+        <ContactDirectory
+          onSearchUsers={onSearchUsers}
+          onSelectContact={onSelectContact}
         />
 
         {/* ── Legacy room-join section (developer mode only) ─────────────── */}
@@ -451,6 +562,41 @@ const styles = StyleSheet.create({
   },
   callButton: {
     marginBottom: spacing.sm,
+  },
+  contactStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  contactStatusText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
+  },
+  contactText: {
+    flex: 1,
+  },
+  contactName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+  },
+  contactDetail: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  contactEmpty: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    paddingVertical: spacing.sm,
   },
   historyRow: {
     flexDirection: 'row',

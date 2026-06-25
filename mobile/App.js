@@ -212,6 +212,8 @@ export default function App() {
         }}
         calleePresence={callFlow.calleePresence}
         onOpenSettings={() => setShowSettings(true)}
+        onSearchUsers={callFlow.searchUsers}
+        onSelectContact={callFlow.setCalleeId}
         developerMode={call.settings.developerModeEnabled}
         signalingUrl={call.signalingUrl}
         onChangeSignalingUrl={call.setSignalingUrl}

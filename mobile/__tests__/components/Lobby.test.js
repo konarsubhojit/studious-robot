@@ -202,3 +202,94 @@ describe('Lobby – developer mode (legacy room-join section)', () => {
     ).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('Lobby – contact directory', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('does not render the contacts section without onSearchUsers', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} onSearchUsers={undefined} />);
+    });
+    expect(tree.root.findAll((n) => n.props.testID === 'contact-directory')).toHaveLength(0);
+  });
+
+  test('renders the contacts search input when onSearchUsers is provided', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} onSearchUsers={jest.fn().mockResolvedValue([])} />,
+      );
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'input-contact-search').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('debounces, lists results, and selects a contact on press', async () => {
+    jest.useFakeTimers();
+    const onSearchUsers = jest
+      .fn()
+      .mockResolvedValue([
+        { userId: 'user-carol', online: true },
+        { userId: 'user-dave', online: false },
+      ]);
+    const onSelectContact = jest.fn();
+
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby
+          {...baseProps}
+          onSearchUsers={onSearchUsers}
+          onSelectContact={onSelectContact}
+        />,
+      );
+    });
+
+    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
+    act(() => { input.props.onChangeText('user'); });
+
+    // Before the debounce window elapses, no request should fire.
+    expect(onSearchUsers).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onSearchUsers).toHaveBeenCalledWith('user');
+
+    const rows = tree.root.findAll((n) => n.props.testID === 'contact-row');
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+
+    act(() => { rows[0].props.onPress(); });
+    expect(onSelectContact).toHaveBeenCalledWith('user-carol');
+
+    jest.useRealTimers();
+  });
+
+  test('shows an empty-state message when no contacts match', async () => {
+    jest.useFakeTimers();
+    const onSearchUsers = jest.fn().mockResolvedValue([]);
+
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} onSearchUsers={onSearchUsers} onSelectContact={jest.fn()} />,
+      );
+    });
+
+    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
+    act(() => { input.props.onChangeText('nobody'); });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'contact-empty').length,
+    ).toBeGreaterThanOrEqual(1);
+
+    jest.useRealTimers();
+  });
+});
