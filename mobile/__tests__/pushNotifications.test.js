@@ -2,9 +2,13 @@ import { Linking } from 'react-native';
 import {
   addCallLinkListener,
   getInitialCallLink,
+  getPushToken,
+  loadMessaging,
   parseCallDeepLink,
+  registerForPushNotifications,
   registerPushToken,
   unregisterPushToken,
+  _resetMessagingCache,
 } from '../src/pushNotifications';
 
 jest.mock('../src/appLogger', () => ({
@@ -14,6 +18,7 @@ jest.mock('../src/appLogger', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  Platform: { OS: 'android' },
   Linking: {
     getInitialURL: jest.fn(),
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
@@ -232,5 +237,115 @@ describe('unregisterPushToken', () => {
     });
 
     expect(result).toBe(false);
+  });
+});
+
+// ─── getPushToken / registerForPushNotifications ──────────────────────────────
+
+describe('getPushToken / registerForPushNotifications (native module absent)', () => {
+  beforeEach(() => _resetMessagingCache());
+  afterEach(() => _resetMessagingCache());
+
+  test('loadMessaging returns null when the package is not installed', () => {
+    expect(loadMessaging()).toBeNull();
+  });
+
+  test('getPushToken resolves null when the native module is missing', async () => {
+    await expect(getPushToken()).resolves.toBeNull();
+  });
+
+  test('registerForPushNotifications resolves false when no token is available', async () => {
+    await expect(
+      registerForPushNotifications({
+        sessionId: 'sess-1',
+        signalingUrl: 'http://localhost:4173',
+      }),
+    ).resolves.toBe(false);
+  });
+
+  test('registerForPushNotifications resolves false for missing args', async () => {
+    await expect(registerForPushNotifications({})).resolves.toBe(false);
+  });
+});
+
+describe('getPushToken (native module present)', () => {
+  const AUTH = { AUTHORIZED: 1, PROVISIONAL: 2, DENIED: 0 };
+
+  function withMessaging(instance, run) {
+    let mod;
+    jest.isolateModules(() => {
+      const messagingFn = jest.fn(() => instance);
+      messagingFn.AuthorizationStatus = AUTH;
+      jest.doMock(
+        '@react-native-firebase/messaging',
+        () => ({ __esModule: true, default: messagingFn }),
+        { virtual: true },
+      );
+      mod = require('../src/pushNotifications');
+      // Prime the memoised native-module lookup while the virtual mock is
+      // active; the lazy require would otherwise resolve after isolateModules
+      // exits and pick up a stale mock from a previous test.
+      mod._resetMessagingCache();
+      mod.loadMessaging();
+    });
+    return run(mod);
+  }
+
+  test('returns an fcm token when permission is granted', async () => {
+    const instance = {
+      requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
+      getToken: jest.fn().mockResolvedValue('fcm-token-123'),
+    };
+    await withMessaging(instance, async (mod) => {
+      await expect(mod.getPushToken()).resolves.toEqual({
+        provider: 'fcm',
+        pushToken: 'fcm-token-123',
+      });
+    });
+  });
+
+  test('returns null when permission is denied', async () => {
+    const instance = {
+      requestPermission: jest.fn().mockResolvedValue(AUTH.DENIED),
+      getToken: jest.fn(),
+    };
+    await withMessaging(instance, async (mod) => {
+      await expect(mod.getPushToken()).resolves.toBeNull();
+      expect(instance.getToken).not.toHaveBeenCalled();
+    });
+  });
+
+  test('returns null when the token is empty', async () => {
+    const instance = {
+      requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
+      getToken: jest.fn().mockResolvedValue(''),
+    };
+    await withMessaging(instance, async (mod) => {
+      await expect(mod.getPushToken()).resolves.toBeNull();
+    });
+  });
+
+  test('registerForPushNotifications registers the acquired token', async () => {
+    const instance = {
+      requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
+      getToken: jest.fn().mockResolvedValue('fcm-token-xyz'),
+    };
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ deviceId: 'd-1' }),
+    });
+    await withMessaging(instance, async (mod) => {
+      await expect(
+        mod.registerForPushNotifications({
+          sessionId: 'sess-9',
+          signalingUrl: 'http://localhost:4173',
+        }),
+      ).resolves.toBe(true);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'http://localhost:4173/devices/register',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+    delete global.fetch;
   });
 });

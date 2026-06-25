@@ -127,9 +127,10 @@ describe('Lobby – call history section', () => {
     });
 
     const rows = tree.root.findAll((n) => n.props.testID === 'call-history-row');
-    // Only up to 5 rows should be shown; findAll returns composite+host so ×2.
+    // Only up to 5 rows should be shown; findAll returns multiple fibers per
+    // Pressable row (composite + host + inner), so allow up to 5 × 3.
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows.length).toBeLessThanOrEqual(10);
+    expect(rows.length).toBeLessThanOrEqual(15);
   });
 
   test('missed incoming calls are visually distinguished', () => {

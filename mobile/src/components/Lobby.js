@@ -61,6 +61,8 @@ export default function Lobby({
   calleeId,
   onChangeCalleeId,
   onCall,
+  calleePresence,
+  onOpenSettings,
   // ── Legacy room-join flow ────────────────────────────────────────────────
   signalingUrl,
   onChangeSignalingUrl,
@@ -83,6 +85,7 @@ export default function Lobby({
   callHistory,
   missedCallCount,
   onMarkMissedRead,
+  onRedial,
 }) {
   return (
     <KeyboardAvoidingView
@@ -101,6 +104,18 @@ export default function Lobby({
               style={styles.missedBadge}
             >
               <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
+            </Pressable>
+          ) : null}
+          <View style={styles.titleSpacer} />
+          {onOpenSettings ? (
+            <Pressable
+              onPress={onOpenSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              testID="lobby-open-settings"
+              style={styles.gearButton}
+            >
+              <Text style={styles.gearIcon}>⚙️</Text>
             </Pressable>
           ) : null}
         </View>
@@ -138,9 +153,17 @@ export default function Lobby({
                             CALL_END_REASON_LABELS[entry.status] ?? 'Call';
               const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
               return (
-                <View
+                <Pressable
                   key={entry.callId}
-                  style={[styles.historyRow, isMissed && styles.historyRowMissed]}
+                  onPress={onRedial && peer ? () => onRedial(peer) : undefined}
+                  disabled={!onRedial || !peer}
+                  accessibilityRole="button"
+                  accessibilityLabel={peer ? `Call ${peer} back` : 'Call entry'}
+                  style={({ pressed }) => [
+                    styles.historyRow,
+                    isMissed && styles.historyRowMissed,
+                    pressed && styles.historyRowPressed,
+                  ]}
                   testID="call-history-row"
                 >
                   <Text style={isMissed ? styles.historyIconMissed : styles.historyIcon}>
@@ -157,7 +180,10 @@ export default function Lobby({
                         : ''}
                     </Text>
                   </View>
-                </View>
+                  {onRedial && peer ? (
+                    <Text style={styles.historyRedialIcon}>📞</Text>
+                  ) : null}
+                </Pressable>
               );
             })}
           </View>
@@ -190,6 +216,24 @@ export default function Lobby({
           accessibilityLabel="Callee user ID"
           testID="input-callee-id"
         />
+
+        {calleeId?.trim() && calleePresence ? (
+          <View style={styles.presenceRow} testID="callee-presence">
+            <View
+              style={[
+                styles.presenceDot,
+                calleePresence.online ? styles.presenceDotOnline : styles.presenceDotOffline,
+              ]}
+            />
+            <Text style={styles.presenceText}>
+              {calleePresence.unknown
+                ? 'User not found'
+                : calleePresence.online
+                  ? 'Online'
+                  : 'Offline — they may miss your call'}
+            </Text>
+          </View>
+        ) : null}
 
         <AppButton
           title="Call"
@@ -275,6 +319,42 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  titleSpacer: {
+    flex: 1,
+  },
+  gearButton: {
+    height: 36,
+    width: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceControl,
+  },
+  gearIcon: {
+    fontSize: 18,
+  },
+  presenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: -spacing.sm + 2,
+    marginBottom: spacing.sm,
+  },
+  presenceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  presenceDotOnline: {
+    backgroundColor: colors.success,
+  },
+  presenceDotOffline: {
+    backgroundColor: colors.textSecondary,
+  },
+  presenceText: {
+    color: colors.textSecondary,
+    fontSize: 12,
   },
   subtitle: {
     fontSize: 14,
@@ -376,6 +456,13 @@ const styles = StyleSheet.create({
   },
   historyRowMissed: {
     backgroundColor: colors.surfaceRaised ?? colors.surface,
+  },
+  historyRowPressed: {
+    opacity: 0.6,
+  },
+  historyRedialIcon: {
+    fontSize: 16,
+    marginLeft: spacing.sm,
   },
   historyIcon: {
     fontSize: 14,

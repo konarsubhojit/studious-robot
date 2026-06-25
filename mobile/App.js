@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Platform, SafeAreaView, StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { logError } from './src/appLogger';
@@ -6,6 +7,7 @@ import IncomingCallScreen from './src/components/IncomingCallScreen';
 import Lobby from './src/components/Lobby';
 import OutgoingCallScreen from './src/components/OutgoingCallScreen';
 import RegistrationScreen from './src/components/RegistrationScreen';
+import SettingsScreen from './src/components/SettingsScreen';
 import { getStreamUrl } from './src/diagnostics';
 import { CALL_PHASES } from './src/hooks/useCallFlow';
 import useCallFlow from './src/hooks/useCallFlow';
@@ -31,6 +33,9 @@ export default function App() {
 
   // ── Legacy direct room-join flow ──────────────────────────────────────────
   const call = useWebRTCCall();
+
+  // Whether the account/connection Settings screen is showing (Lobby only).
+  const [showSettings, setShowSettings] = useState(false);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
   const callFlowActive =
@@ -174,6 +179,23 @@ export default function App() {
         isCompact={call.isCompactView}
       />
     );
+  } else if (showSettings) {
+    screenContent = (
+      <SettingsScreen
+        userId={callFlow.userId}
+        onSaveUserId={callFlow.updateUserId}
+        signalingUrl={callFlow.signalingUrl}
+        onSaveSignalingUrl={callFlow.setSignalingUrl}
+        onSignOut={() => {
+          setShowSettings(false);
+          callFlow.unregisterUser().catch((error) => {
+            logError('unregisterUser failed', error);
+          });
+        }}
+        onClose={() => setShowSettings(false)}
+        onExportLogs={call.handleExportLogs}
+      />
+    );
   } else {
     screenContent = (
       <Lobby
@@ -186,6 +208,8 @@ export default function App() {
             logError('placeCall unhandled rejection', error);
           });
         }}
+        calleePresence={callFlow.calleePresence}
+        onOpenSettings={() => setShowSettings(true)}
         signalingUrl={call.signalingUrl}
         onChangeSignalingUrl={call.setSignalingUrl}
         roomId={call.roomId}
@@ -210,6 +234,12 @@ export default function App() {
         callHistory={callFlow.callHistory}
         missedCallCount={callFlow.missedCallCount}
         onMarkMissedRead={callFlow.markMissedCallsRead}
+        onRedial={(peerId) => {
+          callFlow.setCalleeId(peerId);
+          callFlow.placeCall(peerId).catch((error) => {
+            logError('redial placeCall failed', error);
+          });
+        }}
       />
     );
   }

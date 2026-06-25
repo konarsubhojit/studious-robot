@@ -23,7 +23,12 @@ import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions } from '../permissions';
-import { addCallLinkListener, getInitialCallLink } from '../pushNotifications';
+import {
+  addCallLinkListener,
+  getInitialCallLink,
+  registerForPushNotifications,
+  unregisterPushToken,
+} from '../pushNotifications';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
@@ -139,6 +144,10 @@ export default function useCallFlow() {
   const [status, setStatusState] = useState({ message: '', severity: 'info' });
   const [callSummary, setCallSummary] = useState(null);
 
+  // Presence of the user currently entered in `calleeId`, or `null` while
+  // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
+  const [calleePresence, setCalleePresence] = useState(null);
+
   // ─── Call history ─────────────────────────────────────────────────────────
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
@@ -242,10 +251,17 @@ export default function useCallFlow() {
    * to the RegistrationScreen on next launch.
    */
   const unregisterUser = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (sessionId && trimmedUrl) {
+      // Best-effort: drop the device push registration so a signed-out device
+      // stops receiving incoming-call notifications.
+      await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
+    }
     setUserId('');
     await saveIdentity({ userId: '' });
     logInfo('[CallFlow] User unregistered');
-  }, []);
+  }, [signalingUrl]);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -319,7 +335,50 @@ export default function useCallFlow() {
     }
   }, [signalingUrl, userId]);
 
-  // ─── Peer connection ──────────────────────────────────────────────────────
+  /**
+   * Query the signaling server for the online/offline presence of a userId.
+   * Returns the presence snapshot, or `null` when the user is unknown (404) or
+   * the request fails.  Never throws.
+   *
+   * @param {string} targetUserId
+   * @returns {Promise<{ status: string, online: boolean } | null>}
+   */
+  const checkPresence = useCallback(async (targetUserId) => {
+    const trimmedId = (targetUserId ?? '').trim();
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (!trimmedId || !trimmedUrl) return null;
+    try {
+      const response = await fetch(
+        `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`,
+      );
+      if (response.status === 404) return { status: 'offline', online: false, unknown: true };
+      if (!response.ok) return null;
+      const data = await response.json();
+      return { status: data.status, online: Boolean(data.online) };
+    } catch (error) {
+      logWarn('[CallFlow] checkPresence failed', { message: error?.message });
+      return null;
+    }
+  }, [signalingUrl]);
+
+  // Debounced presence lookup whenever the callee field changes so the Lobby
+  // can show whether the callee is online before the user presses Call.
+  useEffect(() => {
+    const trimmedId = calleeId.trim();
+    if (!trimmedId) {
+      setCalleePresence(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const presence = await checkPresence(trimmedId);
+      if (!cancelled) setCalleePresence(presence);
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [calleeId, checkPresence]);
 
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
@@ -970,6 +1029,13 @@ export default function useCallFlow() {
         const sessionId = await createOrGetSession();
         if (!cancelled) {
           connectSocket(sessionId);
+          // Bind this device to the user for offline (push) delivery.  Runs in
+          // the background and degrades to a no-op when the native messaging
+          // library is not installed, so it never blocks presence connection.
+          registerForPushNotifications({ sessionId, signalingUrl: trimmedUrl })
+            .catch((error) => {
+              logWarn('[CallFlow] Push registration failed', { message: error?.message });
+            });
         }
       } catch (error) {
         if (!cancelled) {
@@ -1052,8 +1118,12 @@ export default function useCallFlow() {
 
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
-  const placeCall = useCallback(async () => {
-    const trimmedCalleeId = calleeId.trim();
+  const placeCall = useCallback(async (explicitCalleeId) => {
+    const trimmedCalleeId = (
+      typeof explicitCalleeId === 'string' && explicitCalleeId.trim()
+        ? explicitCalleeId
+        : calleeId
+    ).trim();
     if (!trimmedCalleeId) {
       setStatus('Enter a callee ID to call', 'error');
       return;
@@ -1450,6 +1520,8 @@ export default function useCallFlow() {
     // UI status
     status,
     callSummary,
+    calleePresence,
+    checkPresence,
 
     // Call history
     callHistory,
