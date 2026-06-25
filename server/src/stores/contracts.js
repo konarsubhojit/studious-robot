@@ -23,6 +23,9 @@
  * @typedef {Map<string, Set<string>>} RoomStore
  *   roomId → set of socket ids currently in the room.
  *
+ * @typedef {Map<string, object>} UserStore
+ *   userId → claimed-identity record (`{ userId, verificationHash, verificationSalt, … }`).
+ *
  * @typedef {Map<string, object>} SessionStore
  *   sessionId → session record.
  *
@@ -52,6 +55,7 @@
  *
  * @typedef {object} Stores
  * @property {RoomStore} rooms
+ * @property {UserStore} users
  * @property {SessionStore} sessions
  * @property {UserSessionStore} userSessions
  * @property {DeviceStore} devices
@@ -71,6 +75,7 @@
  */
 const STORE_NAMES = Object.freeze([
   'rooms',
+  'users',
   'sessions',
   'userSessions',
   'devices',

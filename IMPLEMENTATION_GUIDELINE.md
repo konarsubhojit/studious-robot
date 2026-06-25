@@ -65,13 +65,23 @@ call UI so the call isn't missed during cold start.
   handles the *accepted* phase — keep it for that.
 
 ### 3. userId uniqueness / identity verification
-`POST /session` accepts any `userId` with no auth — impersonation is trivial.
+✅ **Implemented.** `POST /session` now enforces identity ownership via an
+opt-in verification code:
 
-**Next steps**
-- Add a `users` table (Drizzle) with a unique constraint on `userId`.
-- Add a minimal verification step on registration (PIN, email OTP, or phone).
-- Reject `POST /session` when the `userId` is claimed by a different verified
-  identity; return `409`. Add a server test mirroring `test/identity.test.js`.
+- A `users` table (Drizzle, unique `user_id` primary key) was added in
+  `server/db/schema.js` (migration `db/migrations/0001_*.sql`), plus a matching
+  in-memory `users` store in the store contract.
+- `server/src/identity.js` claims a `userId` the first time a session request
+  supplies a `verificationCode`, storing only a salted scrypt hash.
+- A later `POST /session` for a claimed `userId` must present the matching code,
+  otherwise it returns **409** (`identity_conflict`) and writes a
+  `session.identity_conflict` audit entry. Unclaimed `userId`s remain freely
+  usable (backwards-compatible). Covered by `test/identity.test.js`.
+
+**Remaining (optional follow-up)**
+- Swap the in-memory `users` store for the Drizzle table at runtime so claims
+  survive restarts, and add an external verification channel (email/phone OTP)
+  to bootstrap the code instead of trust-on-first-use.
 
 ---
 

@@ -15,6 +15,7 @@ const {
   createAuditLog,
 } = require('./security');
 const { createStores } = require('./stores');
+const { resolveIdentityClaim } = require('./identity');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -116,6 +117,8 @@ function createServer(opts = {}) {
 
   const state = {
     rooms: stores.rooms,
+    /** @type {Map<string, object>} userId → claimed-identity record */
+    users: stores.users,
     sessions: stores.sessions,
     userSessions: stores.userSessions,
     devices: stores.devices,
@@ -173,6 +176,26 @@ function createServer(opts = {}) {
 
   app.post('/session', (req, res) => {
     const userId = normaliseId(req.body?.userId) || `user-${randomUUID()}`;
+
+    // Enforce identity ownership: a userId that has been claimed with a
+    // verification code can only be re-used by presenting that same code.
+    const claim = resolveIdentityClaim(state.users, userId, req.body?.verificationCode);
+    if (!claim.ok) {
+      state.auditLog.record({
+        event: 'session.identity_conflict',
+        actor: userId,
+        target: userId,
+        outcome: 'denied',
+        details: { reason: claim.reason },
+      });
+      console.warn(`[security] session.identity_conflict userId=${userId} reason=${claim.reason}`);
+      res.status(409).json({
+        error: 'userId is claimed by a verified identity',
+        code: 'identity_conflict',
+      });
+      return;
+    }
+
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
     const platform = normaliseOptionalString(req.body?.platform);
     const createdAt = new Date().toISOString();

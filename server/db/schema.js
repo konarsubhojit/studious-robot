@@ -8,6 +8,7 @@
  * runtime record shapes used by the signaling server (see `server/src/index.js`
  * and `server/src/security.js`):
  *
+ *   - users        claimed identities (unique userId + verification secret)
  *   - calls        durable call history
  *   - call_events  per-call ordered event timeline
  *   - devices      push-notification device registrations
@@ -24,6 +25,24 @@ const {
   index,
   primaryKey,
 } = require('drizzle-orm/pg-core');
+
+/**
+ * Claimed identities.
+ *
+ * A `userId` becomes "claimed" the first time a `POST /session` request supplies
+ * a verification code for it.  The code is stored only as a salted scrypt hash
+ * (`verification_hash` + `verification_salt`); the plaintext is never persisted.
+ * Once an identity is claimed, a later session request for the same `userId`
+ * must present the matching code, otherwise it is rejected — preventing trivial
+ * impersonation.  The primary key on `user_id` enforces uniqueness.
+ */
+const users = pgTable('users', {
+  userId: text('user_id').primaryKey(),
+  verificationHash: text('verification_hash'),
+  verificationSalt: text('verification_salt'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }),
+});
 
 const calls = pgTable(
   'calls',
@@ -101,4 +120,4 @@ const blocks = pgTable(
   (t) => [primaryKey({ columns: [t.blockerId, t.blockeeId] })],
 );
 
-module.exports = { calls, callEvents, devices, auditLog, blocks };
+module.exports = { users, calls, callEvents, devices, auditLog, blocks };
