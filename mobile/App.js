@@ -194,6 +194,8 @@ export default function App() {
         }}
         onClose={() => setShowSettings(false)}
         onExportLogs={call.handleExportLogs}
+        developerModeEnabled={call.settings.developerModeEnabled}
+        onToggleDeveloperMode={call.handleDeveloperModeToggle}
       />
     );
   } else {
@@ -210,6 +212,7 @@ export default function App() {
         }}
         calleePresence={callFlow.calleePresence}
         onOpenSettings={() => setShowSettings(true)}
+        developerMode={call.settings.developerModeEnabled}
         signalingUrl={call.signalingUrl}
         onChangeSignalingUrl={call.setSignalingUrl}
         roomId={call.roomId}

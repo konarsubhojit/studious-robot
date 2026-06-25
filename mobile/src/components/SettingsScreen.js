@@ -31,6 +31,8 @@ import AppButton from './AppButton';
  * @param {Function} props.onSignOut             - Clear the identity and return to registration.
  * @param {Function} props.onClose               - Dismiss the screen (back to Lobby).
  * @param {Function} [props.onExportLogs]        - Optional: export diagnostic logs.
+ * @param {boolean}  [props.developerModeEnabled] - Whether the legacy room-join developer tools are shown in the Lobby.
+ * @param {Function} [props.onToggleDeveloperMode] - Toggle developer mode on/off.
  */
 export default function SettingsScreen({
   userId,
@@ -40,6 +42,8 @@ export default function SettingsScreen({
   onSignOut,
   onClose,
   onExportLogs,
+  developerModeEnabled,
+  onToggleDeveloperMode,
 }) {
   const [name, setName] = useState(userId ?? '');
   const [url, setUrl] = useState(signalingUrl ?? '');
@@ -113,6 +117,30 @@ export default function SettingsScreen({
           testID="settings-save-signaling"
           style={styles.saveButton}
         />
+
+        {/* ── Developer ───────────────────────────────────────────────────── */}
+        {onToggleDeveloperMode ? (
+          <>
+            <Text style={styles.sectionTitle}>Developer</Text>
+            <Pressable
+              onPress={onToggleDeveloperMode}
+              accessibilityRole="switch"
+              accessibilityLabel="Developer mode"
+              accessibilityHint="Shows the legacy room-join tools in the lobby"
+              accessibilityState={{ checked: Boolean(developerModeEnabled) }}
+              testID="settings-developer-mode"
+              style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}
+            >
+              <View style={styles.toggleTextWrap}>
+                <Text style={styles.toggleLabel}>Developer mode</Text>
+                <Text style={styles.hint}>
+                  Show the legacy Join Room tools (signaling URL, room ID) in the lobby.
+                </Text>
+              </View>
+              <Text style={styles.toggleValue}>{developerModeEnabled ? 'On' : 'Off'}</Text>
+            </Pressable>
+          </>
+        ) : null}
 
         {/* ── Account actions ─────────────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Account</Text>
@@ -219,6 +247,33 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 12,
     marginTop: spacing.sm,
+  },
+  toggleRow: {
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  toggleTextWrap: {
+    flexShrink: 1,
+  },
+  toggleLabel: {
+    color: colors.textPrimary,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  toggleValue: {
+    color: colors.accentValue,
+    fontWeight: '700',
+    minWidth: 28,
+    textAlign: 'right',
   },
   pressed: {
     opacity: 0.78,

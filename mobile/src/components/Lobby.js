@@ -53,6 +53,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  *   1. **Call** – server-authoritative flow using `userId` / `calleeId`.
  *      The server manages call state and drives the outgoing/incoming screens.
  *   2. **Join Room** – legacy direct-room flow using a shared `roomId`.
+ *      Only shown when `developerMode` is enabled (toggled in Settings).
  */
 export default function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
@@ -64,6 +65,7 @@ export default function Lobby({
   calleePresence,
   onOpenSettings,
   // ── Legacy room-join flow ────────────────────────────────────────────────
+  developerMode,
   signalingUrl,
   onChangeSignalingUrl,
   roomId,
@@ -243,44 +245,48 @@ export default function Lobby({
           style={styles.callButton}
         />
 
-        {/* ── Legacy room-join section ───────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Join Room</Text>
+        {/* ── Legacy room-join section (developer mode only) ─────────────── */}
+        {developerMode ? (
+          <View testID="developer-room-section">
+            <Text style={styles.sectionTitle}>Join Room</Text>
 
-        <ClearableInput
-          value={signalingUrl}
-          onChangeText={onChangeSignalingUrl}
-          placeholder="Signaling URL"
-          accessibilityLabel="Signaling URL"
-          testID="input-signaling-url"
-        />
-        <ClearableInput
-          value={roomId}
-          onChangeText={onChangeRoomId}
-          placeholder="Room ID"
-          accessibilityLabel="Room ID"
-          testID="input-room-id"
-        />
+            <ClearableInput
+              value={signalingUrl}
+              onChangeText={onChangeSignalingUrl}
+              placeholder="Signaling URL"
+              accessibilityLabel="Signaling URL"
+              testID="input-signaling-url"
+            />
+            <ClearableInput
+              value={roomId}
+              onChangeText={onChangeRoomId}
+              placeholder="Room ID"
+              accessibilityLabel="Room ID"
+              testID="input-room-id"
+            />
 
-        <View style={styles.row}>
-          <AppButton title="Start Preview" onPress={onStartPreview} testID="lobby-start-preview" />
-          <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
-        </View>
+            <View style={styles.row}>
+              <AppButton title="Start Preview" onPress={onStartPreview} testID="lobby-start-preview" />
+              <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
+            </View>
 
-        <View style={styles.row}>
-          <AppButton
-            title={isSettingsVisible ? 'Hide Settings' : 'Settings'}
-            onPress={onToggleSettings}
-            testID="lobby-settings"
-          />
-          <AppButton title="Export Logs" onPress={onExportLogs} testID="lobby-export-logs" />
-        </View>
+            <View style={styles.row}>
+              <AppButton
+                title={isSettingsVisible ? 'Hide Settings' : 'Settings'}
+                onPress={onToggleSettings}
+                testID="lobby-settings"
+              />
+              <AppButton title="Export Logs" onPress={onExportLogs} testID="lobby-export-logs" />
+            </View>
 
-        {isSettingsVisible ? (
-          <SettingsCard
-            settings={settings}
-            onToggleAutoLighting={onToggleAutoLighting}
-            onToggleSpeakerDefault={onToggleSpeakerDefault}
-          />
+            {isSettingsVisible ? (
+              <SettingsCard
+                settings={settings}
+                onToggleAutoLighting={onToggleAutoLighting}
+                onToggleSpeakerDefault={onToggleSpeakerDefault}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         <StatusBanner status={status} />

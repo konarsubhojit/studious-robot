@@ -117,4 +117,45 @@ describe('SettingsScreen', () => {
     });
     expect(onExportLogs).toHaveBeenCalled();
   });
+
+  test('developer-mode toggle is only shown when onToggleDeveloperMode is provided', () => {
+    let withoutTree;
+    act(() => {
+      withoutTree = renderer.create(<SettingsScreen {...baseProps} />);
+    });
+    expect(findByTestID(withoutTree, 'settings-developer-mode')).toHaveLength(0);
+
+    const onToggleDeveloperMode = jest.fn();
+    let withTree;
+    act(() => {
+      withTree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          developerModeEnabled={false}
+          onToggleDeveloperMode={onToggleDeveloperMode}
+        />,
+      );
+    });
+    const toggle = findByTestID(withTree, 'settings-developer-mode')[0];
+    expect(toggle.props.accessibilityState).toEqual({ checked: false });
+    act(() => {
+      toggle.props.onPress();
+    });
+    expect(onToggleDeveloperMode).toHaveBeenCalledTimes(1);
+  });
+
+  test('developer-mode toggle reflects the enabled state', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          developerModeEnabled
+          onToggleDeveloperMode={jest.fn()}
+        />,
+      );
+    });
+    const toggle = findByTestID(tree, 'settings-developer-mode')[0];
+    expect(toggle.props.accessibilityState).toEqual({ checked: true });
+  });
 });

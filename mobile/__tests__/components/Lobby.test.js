@@ -51,6 +51,7 @@ const baseProps = {
   callHistory: [],
   missedCallCount: 0,
   onMarkMissedRead: jest.fn(),
+  developerMode: true,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -158,5 +159,46 @@ describe('Lobby – call history section', () => {
       (n) => n.type === 'Text' && n.props.children === 'user-bob',
     );
     expect(texts.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('Lobby – developer mode (legacy room-join section)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('hides the legacy room-join section by default (developerMode off)', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
+    });
+    expect(tree.root.findAll((n) => n.props.testID === 'developer-room-section')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'input-signaling-url')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'input-room-id')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'lobby-join-room')).toHaveLength(0);
+  });
+
+  test('shows the legacy room-join section when developerMode is on', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode />);
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'developer-room-section').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'input-signaling-url').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'lobby-join-room').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('the server-authoritative Call button is shown regardless of developerMode', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'lobby-call').length,
+    ).toBeGreaterThanOrEqual(1);
   });
 });
