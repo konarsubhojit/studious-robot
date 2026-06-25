@@ -1119,11 +1119,8 @@ export default function useCallFlow() {
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
   const placeCall = useCallback(async (explicitCalleeId) => {
-    const trimmedCalleeId = (
-      typeof explicitCalleeId === 'string' && explicitCalleeId.trim()
-        ? explicitCalleeId
-        : calleeId
-    ).trim();
+    const explicit = (typeof explicitCalleeId === 'string' ? explicitCalleeId : '').trim();
+    const trimmedCalleeId = explicit || calleeId.trim();
     if (!trimmedCalleeId) {
       setStatus('Enter a callee ID to call', 'error');
       return;
