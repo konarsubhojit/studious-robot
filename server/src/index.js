@@ -2089,7 +2089,13 @@ if (require.main === module) {
         exiting = true;
         console.log(`[signaling] received ${signal}; draining connections...`);
         shutdown({ reason: signal })
-          .then(() => stores?.close?.())
+          .then(() =>
+            // Close Redis connections after draining; log close failures
+            // specifically but don't abort the exit on them.
+            Promise.resolve(stores?.close?.()).catch((err) => {
+              console.error('[signaling] error closing Redis stores:', err?.message);
+            }),
+          )
           .then(() => {
             console.log('[signaling] shutdown complete; exiting');
             process.exit(0);

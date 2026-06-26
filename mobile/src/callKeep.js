@@ -213,6 +213,8 @@ export function registerCallActionListeners({ onAnswer, onEnd } = {}) {
 
   return () => {
     try {
+      // react-native-callkeep tracks a single listener per event name, so it
+      // unsubscribes by event name only (no handler reference required).
       callKeep.removeEventListener?.('answerCall');
       callKeep.removeEventListener?.('endCall');
     } catch (error) {

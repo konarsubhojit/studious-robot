@@ -177,9 +177,9 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
-  // Holds the latest authedFetch implementation so call-history / contact
-  // helpers defined earlier in the hook can perform 401-recovering requests
-  // without a temporal-dead-zone reference to the later useCallback.
+  // Holds the latest authedFetch implementation so the call-history / contact
+  // helpers (declared earlier in this hook) can issue 401-recovering requests
+  // without referencing the later-declared authedFetch useCallback directly.
   const authedFetchRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
