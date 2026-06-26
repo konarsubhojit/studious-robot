@@ -31,38 +31,44 @@ These gaps are complete and covered by tests (`cd mobile && npm test`):
 
 ---
 
-## 🔴 P0 — Hard blockers (still open)
+## 🔴 P0 — Hard blockers
 
-### 1. Install the native FCM library (finish background push)
-The JS plumbing is done but no library actually returns a device token.
+### 1. Native FCM background push
+✅ **Implemented.** The full background-push path is now wired:
 
-**Next steps**
-- `cd mobile && npm install @react-native-firebase/app @react-native-firebase/messaging`
-  (run `runtime-tools-gh-advisory-database` for these npm packages first).
-- Android: add `google-services.json` to `mobile/android/app/`, apply the
-  `com.google.gms.google-services` Gradle plugin in
-  `mobile/android/build.gradle` + `app/build.gradle`.
-- Add the FCM background handler (`messaging().setBackgroundMessageHandler(...)`)
-  in `mobile/index.js` and a `data`-only push payload contract with the server
-  (`server/src/push.js` already sends FCM; confirm payload keys match the deep
-  link `tcalling://call/{callId}`).
-- No code change needed in `pushNotifications.js` — `loadMessaging()` will pick
-  the library up automatically once installed.
-- **Validation:** real-device only (FCM cannot be unit-tested); add a manual QA
-  checklist entry.
+- `@react-native-firebase/app` + `@react-native-firebase/messaging` are declared
+  in `mobile/package.json`; `loadMessaging()` in `mobile/src/pushNotifications.js`
+  picks them up automatically and degrades to a no-op when absent.
+- The Android Gradle `com.google.gms.google-services` plugin is applied in
+  `mobile/android/build.gradle` + `app/build.gradle` (conditional on a
+  `google-services.json` being present).
+- `installBackgroundMessageHandler()` is registered at startup in
+  `mobile/index.js`; the `data`-only payload keys (`callId`, `callerId`,
+  `deepLink`) match what `server/src/push.js` sends, and a `tcalling://call/{callId}`
+  deep-link `<intent-filter>` is declared in `AndroidManifest.xml` so taps route
+  into the app.
+
+**Remaining (operational, not code):** drop a real `google-services.json` into
+`mobile/android/app/` and complete real-device QA (FCM cannot be unit-tested).
 
 ### 2. System-level incoming-call UI (CallKit / ConnectionService)
-A push banner is not enough — the ringing phase needs an OS-level full-screen
-call UI so the call isn't missed during cold start.
+✅ **Implemented.** `react-native-callkeep` is integrated as an *optional* native
+module (mirrors the Firebase pattern — graceful no-op when absent):
 
-**Next steps**
-- Add `react-native-callkeep` (covers Android ConnectionService + iOS CallKit).
-- On a background push, call `RNCallKeep.displayIncomingCall(uuid, handle, name)`
-  and bridge "answer"/"end" events into `useCallFlow.acceptIncomingCall` /
-  `declineIncomingCall`.
-- Android: declare `ConnectionService` + `FOREGROUND_SERVICE_PHONE_CALL`
-  permissions in `AndroidManifest.xml`; the existing `CallForegroundService.kt`
-  handles the *accepted* phase — keep it for that.
+- `mobile/src/callKeep.js` wraps setup, `displayIncomingCall`, connected/end
+  reporting, and answer/end event bridging; covered by
+  `mobile/__tests__/callKeep.test.js`.
+- A background push now calls `displayIncomingCall(...)` from
+  `handleBackgroundPushMessage`, so the OS rings full-screen even on cold start.
+- `useCallFlow` configures CallKeep on mount, bridges the OS answer/end buttons
+  into `acceptIncomingCall` / `declineIncomingCall` / `endActiveCall`, reports the
+  call active on accept, and dismisses the system UI when a call ends.
+- `AndroidManifest.xml` declares the `VoiceConnectionService` ConnectionService
+  plus `FOREGROUND_SERVICE_PHONE_CALL` / `MANAGE_OWN_CALLS` permissions. The
+  existing `CallForegroundService.kt` still handles the *accepted* phase.
+
+**Remaining (operational, not code):** `cd mobile && npm install` to fetch the
+native module, plus real-device QA (iOS additionally needs a CallKit entitlement).
 
 ### 3. userId uniqueness / identity verification
 ✅ **Implemented.** `POST /session` now enforces identity ownership via an
@@ -87,12 +93,12 @@ opt-in verification code:
 
 ## 🟠 P1 — Major functional gaps
 
-| # | Gap | Next step |
-| - | --- | --------- |
+| # | Gap | Status |
+| - | --- | ------ |
 | 4 | **Contact list / discovery** | ✅ Server `GET /users` contact-directory endpoint (auth, `?search=` substring, `?limit=`, presence per user, block-aware) + `searchUsers()` in `useCallFlow` + a **Contacts** search section in the Lobby (debounced lookup, presence-aware rows, tap-to-select callee). Remaining: add QR-pair. |
 | 5 | **Lobby is a dev panel** | ✅ The legacy Join-Room / Signaling-URL fields are now hidden behind a "Developer mode" toggle in Settings (persisted; off by default). |
 | 7 | **Presence before calling** | ✅ basic indicator added; optionally subscribe to live presence over the socket instead of one-shot fetch. |
-| 8 | **In-memory sessions lost on restart** | Persist sessions/presence in Redis (`server/src/stores/redis.js` exists) and configure it in `render.yaml`; add retry-on-401 + session refresh (`POST /session/refresh` exists but is never called by the app). |
+| 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.js`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown); `render.yaml` provisions a managed key-value instance and injects `REDIS_URL`. The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
 
 ---
 
@@ -132,11 +138,16 @@ account deletion/data export (GDPR), app icon & splash, i18n
 
 ## Suggested order for the next session
 
-1. Install `@react-native-firebase/messaging` and finish background push (P0 #1).
-2. Add `react-native-callkeep` for the OS ringing UI (P0 #2).
-3. Enforce `userId` uniqueness + basic verification (P0 #3).
-4. Hide the legacy room-join flow behind developer mode (P1 #5).
-5. Swap emoji glyphs for `react-native-vector-icons` (P2).
+All P0 items and the P1 functional gaps (#4, #5, #7, #8) are now implemented. The
+remaining backlog is P2 / P3 / infra:
+
+1. `cd mobile && npm install` to fetch the `react-native-callkeep` /
+   `@react-native-firebase/*` native modules, then run real-device QA for
+   background push + the system call UI (P0 #1/#2 operational follow-up).
+2. Swap emoji glyphs for `react-native-vector-icons` (P2).
+3. Persist the hot keyed state (sessions/presence Maps) behind Redis and call
+   `POST /session/refresh` proactively on a TTL (P1 #8 follow-up).
+4. TURN fallback + diagnostics and Lobby network-error recovery (P2).
 
 **Conventions to follow** (see repo memories): Drizzle ORM for DB; run tests per
 package (`cd mobile && npm test`, `cd server && npm test`); default branch is
