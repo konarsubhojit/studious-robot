@@ -265,3 +265,66 @@ export async function registerForPushNotifications({ sessionId, signalingUrl }) 
     pushToken: token.pushToken,
   });
 }
+
+/**
+ * Parse the incoming-call payload from an FCM/APNs data message.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {{ callId: string, callerId: string | null, deepLink: string } | null}
+ */
+export function _extractIncomingCallFromMessage(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
+  if (!callId) return null;
+
+  const callerId = typeof data.callerId === 'string' ? data.callerId.trim() : '';
+  const providedDeepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
+
+  return {
+    callId,
+    callerId: callerId || null,
+    deepLink: providedDeepLink || `tcalling://call/${callId}`,
+  };
+}
+
+/**
+ * Background push callback used by @react-native-firebase/messaging.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<{ callId: string, callerId: string | null, deepLink: string } | null>}
+ */
+export async function handleBackgroundPushMessage(remoteMessage) {
+  const incoming = _extractIncomingCallFromMessage(remoteMessage);
+  if (!incoming) {
+    logWarn('[Push] Background message missing call payload');
+    return null;
+  }
+
+  logInfo('[Push] Background call push received', {
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  });
+  return incoming;
+}
+
+/**
+ * Install the Firebase background message handler when the native messaging
+ * module is available.
+ *
+ * @returns {boolean} `true` when a handler was registered
+ */
+export function installBackgroundMessageHandler() {
+  const messaging = loadMessaging();
+  if (!messaging) return false;
+
+  const instance = messaging();
+  if (!instance || typeof instance.setBackgroundMessageHandler !== 'function') {
+    logWarn('[Push] Native messaging module has no background handler API');
+    return false;
+  }
+
+  instance.setBackgroundMessageHandler(async (remoteMessage) => {
+    await handleBackgroundPushMessage(remoteMessage);
+  });
+  return true;
+}

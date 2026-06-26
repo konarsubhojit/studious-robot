@@ -13,6 +13,8 @@
     "test": "jest --passWithNoTests"
   },
   "dependencies": {
+    "@react-native-firebase/app": "^25.1.0",
+    "@react-native-firebase/messaging": "^25.1.0",
     "react": "19.2.3",
     "react-native": "0.86.0",
     "react-native-fs": "^2.20.0",
