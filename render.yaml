@@ -16,3 +16,21 @@ services:
         value: 10000
       - key: CORS_ORIGIN
         sync: false   # set in the Render dashboard to your mobile app origin(s)
+      # Persist sessions/presence and enable multi-instance fan-out via Redis.
+      # The connection string is injected from the managed key-value instance
+      # below; when REDIS_URL is set the server boots the Redis-backed stores.
+      - key: REDIS_URL
+        fromService:
+          name: studious-robot-redis
+          type: keyvalue
+          property: connectionString
+
+  # Managed Redis (Render "Key Value") for session/presence persistence and the
+  # Socket.IO Redis adapter / cross-instance message bus.
+  - type: keyvalue
+    name: studious-robot-redis
+    region: oregon
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []   # only reachable from Render services (no external access)
+

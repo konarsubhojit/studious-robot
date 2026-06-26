@@ -2049,29 +2049,61 @@ function tickRingingTimeouts(state, now, onTransition) {
 if (require.main === module) {
   const port = Number(process.env.PORT) || 4173;
   const host = process.env.HOST || '0.0.0.0';
-  const { httpServer, shutdown } = createServer();
-  httpServer.listen(port, host, () => {
-    console.log(`[signaling] listening on http://${host}:${port}`);
-    console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
-  });
 
-  // Graceful shutdown for rolling deploys: drain in-flight connections, then
-  // exit cleanly so systemd can restart/replace the instance.
-  let exiting = false;
-  const handleSignal = (signal) => {
-    if (exiting) return;
-    exiting = true;
-    console.log(`[signaling] received ${signal}; draining connections...`);
-    shutdown({ reason: signal })
-      .then(() => {
-        console.log('[signaling] shutdown complete; exiting');
-        process.exit(0);
-      })
-      .catch((err) => {
-        console.error('[signaling] error during shutdown:', err);
-        process.exit(1);
+  /**
+   * Build the server, wiring a Redis-backed store bundle when `REDIS_URL` is
+   * configured so sessions/presence survive restarts and scale across
+   * instances. Falls back to the in-memory bundle (single instance) otherwise.
+   *
+   * @returns {Promise<{ httpServer: import('http').Server, shutdown: Function, stores?: object }>}
+   */
+  async function bootstrap() {
+    if (process.env.REDIS_URL) {
+      try {
+        const stores = await createRedisPgStores();
+        console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
+        const server = createServer({ stores });
+        return { ...server, stores };
+      } catch (err) {
+        // Fail closed on an explicitly configured but unreachable Redis so the
+        // operator notices rather than silently losing cross-instance state.
+        console.error('[signaling] failed to initialise Redis stores:', err?.message);
+        throw err;
+      }
+    }
+    return createServer();
+  }
+
+  bootstrap()
+    .then(({ httpServer, shutdown, stores }) => {
+      httpServer.listen(port, host, () => {
+        console.log(`[signaling] listening on http://${host}:${port}`);
+        console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
       });
-  };
-  process.on('SIGTERM', () => handleSignal('SIGTERM'));
-  process.on('SIGINT', () => handleSignal('SIGINT'));
+
+      // Graceful shutdown for rolling deploys: drain in-flight connections, then
+      // exit cleanly so systemd can restart/replace the instance.
+      let exiting = false;
+      const handleSignal = (signal) => {
+        if (exiting) return;
+        exiting = true;
+        console.log(`[signaling] received ${signal}; draining connections...`);
+        shutdown({ reason: signal })
+          .then(() => stores?.close?.())
+          .then(() => {
+            console.log('[signaling] shutdown complete; exiting');
+            process.exit(0);
+          })
+          .catch((err) => {
+            console.error('[signaling] error during shutdown:', err);
+            process.exit(1);
+          });
+      };
+      process.on('SIGTERM', () => handleSignal('SIGTERM'));
+      process.on('SIGINT', () => handleSignal('SIGINT'));
+    })
+    .catch((err) => {
+      console.error('[signaling] fatal startup error:', err);
+      process.exit(1);
+    });
 }
