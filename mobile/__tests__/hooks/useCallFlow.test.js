@@ -86,6 +86,13 @@ jest.mock('../../src/pushNotifications', () => ({
   unregisterPushToken: jest.fn(async () => true),
 }));
 
+jest.mock('../../src/settingsStorage', () => ({
+  loadIdentity: jest.fn(async () => ({ userId: '' })),
+  saveIdentity: jest.fn(async () => true),
+  loadSettings: jest.fn(async (defaults) => ({ ...defaults })),
+  saveSettings: jest.fn(async () => true),
+}));
+
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 function TestHook({ resultRef }) {
@@ -108,6 +115,8 @@ function renderHook() {
 describe('useCallFlow', () => {
   afterEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
+    delete global.fetch;
   });
 
   test('initialises with idle callPhase', () => {
@@ -229,6 +238,72 @@ describe('useCallFlow', () => {
     const { resultRef } = renderHook();
     expect(typeof resultRef.current.markMissedCallsRead).toBe('function');
     expect(typeof resultRef.current.fetchCallHistory).toBe('function');
+  });
+
+  test('exposes searchUsers as a function', () => {
+    const { resultRef } = renderHook();
+    expect(typeof resultRef.current.searchUsers).toBe('function');
+  });
+
+  test('searchUsers resolves to an empty array when there is no session', async () => {
+    const { resultRef } = renderHook();
+    let users;
+    await act(async () => {
+      users = await resultRef.current.searchUsers('bob');
+    });
+    expect(users).toEqual([]);
+  });
+
+  test('calleePresence ignores stale presence responses for older calleeIds', async () => {
+    jest.useFakeTimers();
+    const pending = [];
+    global.fetch = jest.fn((url) => new Promise((resolve) => {
+      pending.push({ url, resolve });
+    }));
+
+    const { resultRef, tree } = renderHook();
+
+    act(() => {
+      resultRef.current.setCalleeId('alice');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(pending[0].url).toContain('/presence/alice');
+    expect(pending[1].url).toContain('/presence/bob');
+
+    await act(async () => {
+      pending[1].resolve({
+        ok: true,
+        json: async () => ({ status: 'online', online: true }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    expect(resultRef.current.calleePresence).toEqual({ status: 'online', online: true });
+
+    await act(async () => {
+      pending[0].resolve({
+        ok: true,
+        json: async () => ({ status: 'offline', online: false }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    expect(resultRef.current.calleePresence).toEqual({ status: 'online', online: true });
   });
 
   test('markMissedCallsRead is safe to call on an empty history', () => {

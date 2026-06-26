@@ -2,8 +2,8 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import IncomingCallScreen from '../../src/components/IncomingCallScreen';
 
-jest.mock('../../src/components/AppButton', () => (props) =>
-  require('react').createElement('AppButton', props),
+jest.mock('../../src/components/IconButton', () => (props) =>
+  require('react').createElement('IconButton', props),
 );
 jest.mock('../../src/components/StatusBanner', () => (props) =>
   require('react').createElement('StatusBanner', props),
@@ -59,7 +59,24 @@ describe('IncomingCallScreen', () => {
     expect(nodes[0].props.children).toBe('charlie');
   });
 
-  test('renders Accept and Decline buttons', () => {
+  test('derives avatar initials from multi-part caller IDs', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <IncomingCallScreen
+          incomingCall={makeCall({ callerId: 'charlie-brown' })}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+        />,
+      );
+    });
+    expect(
+      tree.root.findAll((node) => node.props.children === 'CB').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('renders Accept and Decline icon buttons', () => {
     let tree;
     act(() => {
       tree = renderer.create(
@@ -71,8 +88,7 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    // findAllByType uses string match against mock-created elements (one per AppButton).
-    const buttons = tree.root.findAllByType('AppButton');
+    const buttons = tree.root.findAllByType('IconButton');
     expect(buttons).toHaveLength(2);
     const testIDs = buttons.map((b) => b.props.testID);
     expect(testIDs).toContain('incoming-decline');
@@ -93,7 +109,7 @@ describe('IncomingCallScreen', () => {
       );
     });
     act(() => {
-      const acceptBtn = tree.root.findAllByType('AppButton').find(
+      const acceptBtn = tree.root.findAllByType('IconButton').find(
         (b) => b.props.testID === 'incoming-accept',
       );
       acceptBtn.props.onPress();
@@ -115,7 +131,7 @@ describe('IncomingCallScreen', () => {
       );
     });
     act(() => {
-      const declineBtn = tree.root.findAllByType('AppButton').find(
+      const declineBtn = tree.root.findAllByType('IconButton').find(
         (b) => b.props.testID === 'incoming-decline',
       );
       declineBtn.props.onPress();

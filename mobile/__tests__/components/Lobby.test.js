@@ -51,6 +51,7 @@ const baseProps = {
   callHistory: [],
   missedCallCount: 0,
   onMarkMissedRead: jest.fn(),
+  developerMode: true,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -127,9 +128,10 @@ describe('Lobby – call history section', () => {
     });
 
     const rows = tree.root.findAll((n) => n.props.testID === 'call-history-row');
-    // Only up to 5 rows should be shown; findAll returns composite+host so ×2.
+    // Only up to 5 rows should be shown; findAll returns multiple fibers per
+    // Pressable row (composite + host + inner), so allow up to 5 × 3.
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    expect(rows.length).toBeLessThanOrEqual(10);
+    expect(rows.length).toBeLessThanOrEqual(15);
   });
 
   test('missed incoming calls are visually distinguished', () => {
@@ -157,5 +159,137 @@ describe('Lobby – call history section', () => {
       (n) => n.type === 'Text' && n.props.children === 'user-bob',
     );
     expect(texts.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('Lobby – developer mode (legacy room-join section)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('hides the legacy room-join section by default (developerMode off)', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
+    });
+    expect(tree.root.findAll((n) => n.props.testID === 'developer-room-section')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'input-signaling-url')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'input-room-id')).toHaveLength(0);
+    expect(tree.root.findAll((n) => n.props.testID === 'lobby-join-room')).toHaveLength(0);
+  });
+
+  test('shows the legacy room-join section when developerMode is on', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode />);
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'developer-room-section').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'input-signaling-url').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'lobby-join-room').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('the server-authoritative Call button is shown regardless of developerMode', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'lobby-call').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('Lobby – contact directory', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('does not render the contacts section without onSearchUsers', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} onSearchUsers={undefined} />);
+    });
+    expect(tree.root.findAll((n) => n.props.testID === 'contact-directory')).toHaveLength(0);
+  });
+
+  test('renders the contacts search input when onSearchUsers is provided', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} onSearchUsers={jest.fn().mockResolvedValue([])} />,
+      );
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'input-contact-search').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('debounces, lists results, and selects a contact on press', async () => {
+    jest.useFakeTimers();
+    const onSearchUsers = jest
+      .fn()
+      .mockResolvedValue([
+        { userId: 'user-carol', online: true },
+        { userId: 'user-dave', online: false },
+      ]);
+    const onSelectContact = jest.fn();
+
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby
+          {...baseProps}
+          onSearchUsers={onSearchUsers}
+          onSelectContact={onSelectContact}
+        />,
+      );
+    });
+
+    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
+    act(() => { input.props.onChangeText('user'); });
+
+    // Before the debounce window elapses, no request should fire.
+    expect(onSearchUsers).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(onSearchUsers).toHaveBeenCalledWith('user');
+
+    const rows = tree.root.findAll((n) => n.props.testID === 'contact-row');
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+
+    act(() => { rows[0].props.onPress(); });
+    expect(onSelectContact).toHaveBeenCalledWith('user-carol');
+
+    jest.useRealTimers();
+  });
+
+  test('shows an empty-state message when no contacts match', async () => {
+    jest.useFakeTimers();
+    const onSearchUsers = jest.fn().mockResolvedValue([]);
+
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} onSearchUsers={onSearchUsers} onSelectContact={jest.fn()} />,
+      );
+    });
+
+    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
+    act(() => { input.props.onChangeText('nobody'); });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'contact-empty').length,
+    ).toBeGreaterThanOrEqual(1);
+
+    jest.useRealTimers();
   });
 });

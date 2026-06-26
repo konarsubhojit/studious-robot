@@ -8,6 +8,13 @@
       "when": 1782314403901,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782411137989,
+      "tag": "0001_omniscient_daredevil",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,6 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -46,6 +48,107 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
 }
 
 /**
+ * Contact-directory search: a debounced query against the server's `GET /users`
+ * endpoint (via `onSearchUsers`).  Tapping a result selects that user as the
+ * callee (`onSelectContact`).  The section is hidden entirely when no
+ * `onSearchUsers` handler is provided (i.e. when contact search is disabled).
+ */
+function ContactDirectory({ onSearchUsers, onSelectContact }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const requestIdRef = useRef(0);
+
+  const runSearch = useCallback(
+    async (term) => {
+      if (typeof onSearchUsers !== 'function') return;
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
+      setIsSearching(true);
+      let users = [];
+      try {
+        users = await onSearchUsers(term);
+      } catch (_error) {
+        users = [];
+      }
+      // Ignore stale responses that resolved out of order.
+      if (requestIdRef.current !== requestId) return;
+      setResults(Array.isArray(users) ? users : []);
+      setIsSearching(false);
+      setHasSearched(true);
+    },
+    [onSearchUsers],
+  );
+
+  // Debounce the directory lookup so we don't fire a request per keystroke.
+  useEffect(() => {
+    if (typeof onSearchUsers !== 'function') return undefined;
+    const timer = setTimeout(() => {
+      runSearch(query.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, onSearchUsers, runSearch]);
+
+  if (typeof onSearchUsers !== 'function') return null;
+
+  return (
+    <View testID="contact-directory">
+      <Text style={styles.sectionTitle}>Contacts</Text>
+      <ClearableInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Search contacts"
+        accessibilityLabel="Search contacts"
+        testID="input-contact-search"
+      />
+      {isSearching ? (
+        <View style={styles.contactStatusRow} testID="contact-searching">
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <Text style={styles.contactStatusText}>Searching…</Text>
+        </View>
+      ) : null}
+      {!isSearching && results.length > 0
+        ? results.map((contact) => (
+            <Pressable
+              key={contact.userId}
+              onPress={
+                onSelectContact ? () => onSelectContact(contact.userId) : undefined
+              }
+              disabled={!onSelectContact}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${contact.userId}`}
+              style={({ pressed }) => [
+                styles.contactRow,
+                pressed && styles.historyRowPressed,
+              ]}
+              testID="contact-row"
+            >
+              <View
+                style={[
+                  styles.presenceDot,
+                  contact.online ? styles.presenceDotOnline : styles.presenceDotOffline,
+                ]}
+              />
+              <View style={styles.contactText}>
+                <Text style={styles.contactName}>{contact.userId}</Text>
+                <Text style={styles.contactDetail}>
+                  {contact.online ? 'Online' : 'Offline'}
+                </Text>
+              </View>
+            </Pressable>
+          ))
+        : null}
+      {!isSearching && hasSearched && results.length === 0 ? (
+        <Text style={styles.contactEmpty} testID="contact-empty">
+          No matching contacts
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
  * Pre-call lobby: branding, last-call summary, self preview, connection inputs,
  * primary actions, and the settings panel.
  *
@@ -53,6 +156,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  *   1. **Call** – server-authoritative flow using `userId` / `calleeId`.
  *      The server manages call state and drives the outgoing/incoming screens.
  *   2. **Join Room** – legacy direct-room flow using a shared `roomId`.
+ *      Only shown when `developerMode` is enabled (toggled in Settings).
  */
 export default function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
@@ -61,7 +165,13 @@ export default function Lobby({
   calleeId,
   onChangeCalleeId,
   onCall,
+  calleePresence,
+  onOpenSettings,
+  // ── Contact directory ─────────────────────────────────────────────────────
+  onSearchUsers,
+  onSelectContact,
   // ── Legacy room-join flow ────────────────────────────────────────────────
+  developerMode,
   signalingUrl,
   onChangeSignalingUrl,
   roomId,
@@ -83,6 +193,7 @@ export default function Lobby({
   callHistory,
   missedCallCount,
   onMarkMissedRead,
+  onRedial,
 }) {
   return (
     <KeyboardAvoidingView
@@ -101,6 +212,18 @@ export default function Lobby({
               style={styles.missedBadge}
             >
               <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
+            </Pressable>
+          ) : null}
+          <View style={styles.titleSpacer} />
+          {onOpenSettings ? (
+            <Pressable
+              onPress={onOpenSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              testID="lobby-open-settings"
+              style={styles.gearButton}
+            >
+              <Text style={styles.gearIcon}>⚙️</Text>
             </Pressable>
           ) : null}
         </View>
@@ -138,9 +261,17 @@ export default function Lobby({
                             CALL_END_REASON_LABELS[entry.status] ?? 'Call';
               const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
               return (
-                <View
+                <Pressable
                   key={entry.callId}
-                  style={[styles.historyRow, isMissed && styles.historyRowMissed]}
+                  onPress={onRedial && peer ? () => onRedial(peer) : undefined}
+                  disabled={!onRedial || !peer}
+                  accessibilityRole="button"
+                  accessibilityLabel={peer ? `Call ${peer} back` : 'Call entry'}
+                  style={({ pressed }) => [
+                    styles.historyRow,
+                    isMissed && styles.historyRowMissed,
+                    pressed && styles.historyRowPressed,
+                  ]}
                   testID="call-history-row"
                 >
                   <Text style={isMissed ? styles.historyIconMissed : styles.historyIcon}>
@@ -157,7 +288,10 @@ export default function Lobby({
                         : ''}
                     </Text>
                   </View>
-                </View>
+                  {onRedial && peer ? (
+                    <Text style={styles.historyRedialIcon}>📞</Text>
+                  ) : null}
+                </Pressable>
               );
             })}
           </View>
@@ -191,6 +325,24 @@ export default function Lobby({
           testID="input-callee-id"
         />
 
+        {calleeId?.trim() && calleePresence ? (
+          <View style={styles.presenceRow} testID="callee-presence">
+            <View
+              style={[
+                styles.presenceDot,
+                calleePresence.online ? styles.presenceDotOnline : styles.presenceDotOffline,
+              ]}
+            />
+            <Text style={styles.presenceText}>
+              {calleePresence.unknown
+                ? 'User not found'
+                : calleePresence.online
+                  ? 'Online'
+                  : 'Offline — they may miss your call'}
+            </Text>
+          </View>
+        ) : null}
+
         <AppButton
           title="Call"
           onPress={onCall}
@@ -199,44 +351,53 @@ export default function Lobby({
           style={styles.callButton}
         />
 
-        {/* ── Legacy room-join section ───────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Join Room</Text>
-
-        <ClearableInput
-          value={signalingUrl}
-          onChangeText={onChangeSignalingUrl}
-          placeholder="Signaling URL"
-          accessibilityLabel="Signaling URL"
-          testID="input-signaling-url"
-        />
-        <ClearableInput
-          value={roomId}
-          onChangeText={onChangeRoomId}
-          placeholder="Room ID"
-          accessibilityLabel="Room ID"
-          testID="input-room-id"
+        <ContactDirectory
+          onSearchUsers={onSearchUsers}
+          onSelectContact={onSelectContact}
         />
 
-        <View style={styles.row}>
-          <AppButton title="Start Preview" onPress={onStartPreview} testID="lobby-start-preview" />
-          <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
-        </View>
+        {/* ── Legacy room-join section (developer mode only) ─────────────── */}
+        {developerMode ? (
+          <View testID="developer-room-section">
+            <Text style={styles.sectionTitle}>Join Room</Text>
 
-        <View style={styles.row}>
-          <AppButton
-            title={isSettingsVisible ? 'Hide Settings' : 'Settings'}
-            onPress={onToggleSettings}
-            testID="lobby-settings"
-          />
-          <AppButton title="Export Logs" onPress={onExportLogs} testID="lobby-export-logs" />
-        </View>
+            <ClearableInput
+              value={signalingUrl}
+              onChangeText={onChangeSignalingUrl}
+              placeholder="Signaling URL"
+              accessibilityLabel="Signaling URL"
+              testID="input-signaling-url"
+            />
+            <ClearableInput
+              value={roomId}
+              onChangeText={onChangeRoomId}
+              placeholder="Room ID"
+              accessibilityLabel="Room ID"
+              testID="input-room-id"
+            />
 
-        {isSettingsVisible ? (
-          <SettingsCard
-            settings={settings}
-            onToggleAutoLighting={onToggleAutoLighting}
-            onToggleSpeakerDefault={onToggleSpeakerDefault}
-          />
+            <View style={styles.row}>
+              <AppButton title="Start Preview" onPress={onStartPreview} testID="lobby-start-preview" />
+              <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
+            </View>
+
+            <View style={styles.row}>
+              <AppButton
+                title={isSettingsVisible ? 'Hide Settings' : 'Settings'}
+                onPress={onToggleSettings}
+                testID="lobby-settings"
+              />
+              <AppButton title="Export Logs" onPress={onExportLogs} testID="lobby-export-logs" />
+            </View>
+
+            {isSettingsVisible ? (
+              <SettingsCard
+                settings={settings}
+                onToggleAutoLighting={onToggleAutoLighting}
+                onToggleSpeakerDefault={onToggleSpeakerDefault}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         <StatusBanner status={status} />
@@ -275,6 +436,42 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  titleSpacer: {
+    flex: 1,
+  },
+  gearButton: {
+    height: 36,
+    width: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceControl,
+  },
+  gearIcon: {
+    fontSize: 18,
+  },
+  presenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: -spacing.sm + 2,
+    marginBottom: spacing.sm,
+  },
+  presenceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  presenceDotOnline: {
+    backgroundColor: colors.success,
+  },
+  presenceDotOffline: {
+    backgroundColor: colors.textSecondary,
+  },
+  presenceText: {
+    color: colors.textSecondary,
+    fontSize: 12,
   },
   subtitle: {
     fontSize: 14,
@@ -366,6 +563,41 @@ const styles = StyleSheet.create({
   callButton: {
     marginBottom: spacing.sm,
   },
+  contactStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  contactStatusText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
+  },
+  contactText: {
+    flex: 1,
+  },
+  contactName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+  },
+  contactDetail: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  contactEmpty: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    paddingVertical: spacing.sm,
+  },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -376,6 +608,13 @@ const styles = StyleSheet.create({
   },
   historyRowMissed: {
     backgroundColor: colors.surfaceRaised ?? colors.surface,
+  },
+  historyRowPressed: {
+    opacity: 0.6,
+  },
+  historyRedialIcon: {
+    fontSize: 16,
+    marginLeft: spacing.sm,
   },
   historyIcon: {
     fontSize: 14,

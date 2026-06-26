@@ -25,8 +25,8 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
 // Schema definitions are import-safe without a DB connection.
 const schema = require('../db/schema');
 
-test('schema module exports all five tables', () => {
-  for (const name of ['calls', 'callEvents', 'devices', 'auditLog', 'blocks']) {
+test('schema module exports all tables', () => {
+  for (const name of ['users', 'calls', 'callEvents', 'devices', 'auditLog', 'blocks']) {
     assert.ok(schema[name], `schema.${name} should be defined`);
   }
 });
@@ -67,7 +67,7 @@ test('migrations apply and the Drizzle client round-trips', { skip: !HAS_DB }, a
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
     );
     const tableNames = rows.map((r) => r.table_name);
-    for (const expected of ['calls', 'call_events', 'devices', 'audit_log', 'blocks']) {
+    for (const expected of ['users', 'calls', 'call_events', 'devices', 'audit_log', 'blocks']) {
       assert.ok(tableNames.includes(expected), `missing table ${expected}`);
     }
 

@@ -39,6 +39,7 @@ const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
 const DEFAULT_SETTINGS = {
   autoCameraLightingEnabled: false,
   speakerEnabledByDefault: true,
+  developerModeEnabled: false,
 };
 
 // How often to re-evaluate ambient lighting and auto-adjust the camera. Chosen
@@ -934,6 +935,16 @@ export default function useWebRTCCall() {
     setStatus(nextValue ? 'Speaker default enabled' : 'Speaker default disabled');
   }, [isInRoom, settings.speakerEnabledByDefault, setStatus]);
 
+  const handleDeveloperModeToggle = useCallback(() => {
+    const nextValue = !settings.developerModeEnabled;
+    setSettings((previous) => {
+      const next = { ...previous, developerModeEnabled: nextValue };
+      void saveSettings(next);
+      return next;
+    });
+    setStatus(nextValue ? 'Developer mode enabled' : 'Developer mode disabled');
+  }, [settings.developerModeEnabled, setStatus]);
+
   const handleExportLogs = useCallback(async () => {
     try {
       logInfo('Export Logs button press');
@@ -1046,6 +1057,7 @@ export default function useWebRTCCall() {
     handleRetryReconnect,
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
+    handleDeveloperModeToggle,
     handleExportLogs,
     chooseAudioOutput,
     dismissCallSummary,

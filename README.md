@@ -109,6 +109,7 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/reconnect.test.js`              | Socket reconnect, network handoff, offline callee, ICE restart |
 | `server` | `test/push-fallback.test.js`          | Push-notification fallback for offline callees               |
 | `server` | `test/identity.test.js`               | Session, device registration, and presence APIs              |
+| `server` | `test/directory.test.js`              | Contact directory (`GET /users`) search, paging, block filtering |
 | `server` | `test/telemetry.test.js`              | Metrics counters and derived rates                           |
 | `server` | `test/security.test.js`               | Rate limiting and blocklist                                  |
 | `server` | `test/signaling.test.js`              | Legacy join-room signaling                                   |
@@ -116,6 +117,8 @@ any failure.  Run them before opening a pull request.
 | `mobile` | `__tests__/hooks/useCallFlow.test.js` | Call phases, push rehydration (all terminal + ringing states), camera switch |
 | `mobile` | `__tests__/hooks/useWebRTCCall.test.js` | WebRTC camera switch hardening                             |
 | `mobile` | `__tests__/hooks/useCompactCallView.test.js` | PiP compact-view logic                               |
+| `mobile` | `__tests__/components/SettingsScreen.test.js` | Settings screen (username/server edit, sign out) |
+| `mobile` | `__tests__/pushNotifications.test.js`  | Deep links + push-token acquisition/registration            |
 | `mobile` | `__tests__/components/`               | Incoming/outgoing/in-call UI components                      |
 
 ### CI workflows and merge gates

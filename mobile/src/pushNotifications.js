@@ -1,4 +1,4 @@
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 
 /**
@@ -161,4 +161,107 @@ export async function unregisterPushToken({ sessionId, signalingUrl }) {
     logError('[Push] unregisterPushToken threw', error);
     return false;
   }
+}
+
+// ─── Native push-token acquisition ────────────────────────────────────────────
+//
+// The raw OS push token is obtained through @react-native-firebase/messaging.
+// That package is an *optional* native dependency: when it (and the matching
+// google-services.json / APNs entitlement) is not installed, the helpers below
+// degrade gracefully to a no-op so the JS bundle still builds and runs.  This
+// mirrors the server's env-gated push delivery, which simply skips when the
+// APNs/FCM credentials are absent.
+
+/** Cached result of the optional native messaging module lookup. */
+let cachedMessaging;
+let hasLoggedMissingMessaging = false;
+
+/**
+ * Lazily resolve the optional @react-native-firebase/messaging default export.
+ * Returns the messaging factory function, or `null` when the package is not
+ * installed.  The lookup is memoised so a missing module is only logged once.
+ *
+ * @returns {Function | null}
+ */
+export function loadMessaging() {
+  if (cachedMessaging !== undefined) return cachedMessaging;
+  try {
+    const mod = require('@react-native-firebase/messaging');
+    cachedMessaging = mod?.default ?? mod ?? null;
+  } catch {
+    cachedMessaging = null;
+    if (!hasLoggedMissingMessaging) {
+      logWarn('[Push] Native messaging module not installed; skipping push token acquisition');
+      hasLoggedMissingMessaging = true;
+    }
+  }
+  return cachedMessaging;
+}
+
+/** Reset the memoised messaging module (test hook). */
+export function _resetMessagingCache() {
+  cachedMessaging = undefined;
+  hasLoggedMissingMessaging = false;
+}
+
+/**
+ * Acquire the device push token from the native messaging library, requesting
+ * notification permission first.  Returns `null` (never throws) when the native
+ * library is unavailable, permission is denied, or no token can be retrieved.
+ *
+ * Firebase Cloud Messaging issues a single token on both platforms (on iOS it
+ * proxies to APNs internally), so the provider is reported as `'fcm'`.
+ *
+ * @returns {Promise<{ provider: 'fcm', pushToken: string } | null>}
+ */
+export async function getPushToken() {
+  const messaging = loadMessaging();
+  if (!messaging) return null;
+
+  try {
+    const authStatus = await messaging().requestPermission();
+    const { AuthorizationStatus } = messaging;
+    const granted =
+      authStatus === AuthorizationStatus?.AUTHORIZED ||
+      authStatus === AuthorizationStatus?.PROVISIONAL;
+    if (!granted) {
+      logWarn('[Push] Notification permission not granted', { authStatus });
+      return null;
+    }
+
+    // On iOS the APNs token must be available before the FCM token can be read.
+    if (Platform.OS === 'ios' && typeof messaging().registerDeviceForRemoteMessages === 'function') {
+      await messaging().registerDeviceForRemoteMessages();
+    }
+
+    const pushToken = await messaging().getToken();
+    if (!pushToken) {
+      logWarn('[Push] Native messaging returned an empty token');
+      return null;
+    }
+    return { provider: 'fcm', pushToken };
+  } catch (error) {
+    logError('[Push] getPushToken threw', error);
+    return null;
+  }
+}
+
+/**
+ * Acquire the device push token and register it with the signaling server in a
+ * single step.  Safe to call repeatedly; returns `false` (never throws) when no
+ * token is available or registration fails.
+ *
+ * @param {{ sessionId: string, signalingUrl: string }} opts
+ * @returns {Promise<boolean>} `true` when a token was acquired and registered
+ */
+export async function registerForPushNotifications({ sessionId, signalingUrl }) {
+  if (!sessionId || !signalingUrl) return false;
+  const token = await getPushToken();
+  if (!token) return false;
+  return registerPushToken({
+    sessionId,
+    signalingUrl,
+    provider: token.provider,
+    pushToken: token.pushToken,
+  });
 }

@@ -222,3 +222,83 @@ test('presence and reachable channels support multiple devices for the same user
     await teardown();
   }
 });
+
+test('a verification code claims a userId; the same code re-uses it but a wrong/missing code is rejected', async () => {
+  const { url, teardown } = await startServer();
+
+  try {
+    // First session claims the identity with a verification code.
+    const claimed = await postJson(url, '/session', {
+      userId: 'user-carol',
+      deviceId: 'device-1',
+      verificationCode: 'example-verification-code',
+    });
+    assert.equal(claimed.status, 201);
+    assert.equal(claimed.body.userId, 'user-carol');
+
+    // A different device presenting the correct code is allowed (e.g. re-login
+    // or a second device for the same owner).
+    const reuse = await postJson(url, '/session', {
+      userId: 'user-carol',
+      deviceId: 'device-2',
+      verificationCode: 'example-verification-code',
+    });
+    assert.equal(reuse.status, 201);
+    assert.equal(reuse.body.userId, 'user-carol');
+
+    // An impostor without the code is rejected.
+    const noCode = await postJson(url, '/session', {
+      userId: 'user-carol',
+      deviceId: 'device-evil',
+    });
+    assert.equal(noCode.status, 409);
+    assert.equal(noCode.body.code, 'identity_conflict');
+
+    // An impostor with the wrong code is rejected too.
+    const wrongCode = await postJson(url, '/session', {
+      userId: 'user-carol',
+      deviceId: 'device-evil',
+      verificationCode: 'guess',
+    });
+    assert.equal(wrongCode.status, 409);
+    assert.equal(wrongCode.body.code, 'identity_conflict');
+  } finally {
+    await teardown();
+  }
+});
+
+test('userIds without a verification code remain unclaimed and freely reusable', async () => {
+  const { url, teardown } = await startServer();
+
+  try {
+    const first = await postJson(url, '/session', {
+      userId: 'user-dan',
+      deviceId: 'device-a',
+    });
+    assert.equal(first.status, 201);
+
+    // No code was ever set, so any later session for the same userId is allowed.
+    const second = await postJson(url, '/session', {
+      userId: 'user-dan',
+      deviceId: 'device-b',
+    });
+    assert.equal(second.status, 201);
+
+    // Once a code is supplied it claims the identity going forward.
+    const claim = await postJson(url, '/session', {
+      userId: 'user-dan',
+      deviceId: 'device-c',
+      verificationCode: 'pin-1234',
+    });
+    assert.equal(claim.status, 201);
+
+    const blocked = await postJson(url, '/session', {
+      userId: 'user-dan',
+      deviceId: 'device-d',
+    });
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.code, 'identity_conflict');
+  } finally {
+    await teardown();
+  }
+});

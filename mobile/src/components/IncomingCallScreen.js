@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
-import AppButton from './AppButton';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { deriveInitials } from '../callUx';
+import { colors, spacing } from '../theme';
+import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
 
 /**
@@ -18,26 +19,50 @@ function secondsRemaining(ringTimeoutAt) {
 /**
  * Incoming call screen.
  *
- * Shown to the callee while a call is ringing.  Displays the caller's ID,
- * a countdown derived from the call record's `ringTimeoutAt` field, and
- * Accept / Decline buttons.
+ * Shown to the callee while a call is ringing.  Displays the caller's ID with
+ * a pulsing avatar, a countdown, and icon-only Accept / Decline buttons.
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object} props
- * @param {object} props.incomingCall - Call record from the server (includes callerId, ringTimeoutAt).
- * @param {object} props.status - Current status message `{ message, severity }`.
- * @param {() => void} props.onAccept - Called when the user presses Accept.
- * @param {() => void} props.onDecline - Called when the user presses Decline.
+ * @param {object}   props
+ * @param {object}   props.incomingCall   - Call record from the server (callerId, ringTimeoutAt).
+ * @param {object}   props.status         - Current status `{ message, severity }`.
+ * @param {Function} props.onAccept       - Called when the user presses Accept.
+ * @param {Function} props.onDecline      - Called when the user presses Decline.
  */
 export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }) {
   const ringTimeoutAt = incomingCall?.ringTimeoutAt ?? null;
   const callerId = incomingCall?.callerId ?? 'Unknown';
+  const initials = deriveInitials(callerId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef = useRef(null);
 
-  // Update the countdown every second.
+  // ── Pulse animation ───────────────────────────────────────────────────────
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.18,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  // ── Countdown timer ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!ringTimeoutAt) {
       setSecondsLeft(0);
@@ -65,10 +90,22 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   return (
     <View style={styles.container} testID="incoming-call-screen">
-      <View style={styles.card}>
-        <Text style={styles.label} accessibilityRole="header">
-          Incoming call
-        </Text>
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <View style={styles.header}>
+        <Text style={styles.headerLabel}>Incoming call</Text>
+      </View>
+
+      {/* ── Caller info ───────────────────────────────────────────────────── */}
+      <View style={styles.callerSection}>
+        {/* Pulsing ring behind the avatar */}
+        <Animated.View
+          style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
+          accessible={false}
+        />
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
 
         <Text style={styles.callerId} testID="incoming-caller-id">
           {callerId}
@@ -79,23 +116,28 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
             {secondsLeft > 0 ? `Rings for ${secondsLeft}s` : 'Timed out'}
           </Text>
         ) : null}
+      </View>
 
-        <View style={styles.actions}>
-          <AppButton
-            title="Decline"
-            onPress={onDecline}
-            style={styles.declineButton}
-            accessibilityLabel="Decline incoming call"
-            testID="incoming-decline"
-          />
-          <AppButton
-            title="Accept"
-            onPress={onAccept}
-            style={styles.acceptButton}
-            accessibilityLabel="Accept incoming call"
-            testID="incoming-accept"
-          />
-        </View>
+      {/* ── Action buttons ────────────────────────────────────────────────── */}
+      <View style={styles.actions}>
+        <IconButton
+          icon="✕"
+          label="Decline"
+          onPress={onDecline}
+          variant="danger"
+          size={72}
+          accessibilityLabel="Decline incoming call"
+          testID="incoming-decline"
+        />
+        <IconButton
+          icon="✓"
+          label="Accept"
+          onPress={onAccept}
+          variant="success"
+          size={72}
+          accessibilityLabel="Accept incoming call"
+          testID="incoming-accept"
+        />
       </View>
 
       <StatusBanner status={status} />
@@ -106,31 +148,57 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'stretch',
+    justifyContent: 'space-between',
+    backgroundColor: colors.background,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
-    backgroundColor: colors.background,
   },
-  card: {
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
+  header: {
     alignItems: 'center',
+    paddingTop: spacing.lg,
+  },
+  headerLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  callerSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: spacing.md,
   },
-  label: {
-    fontSize: 16,
-    color: colors.textSecondary,
-    fontWeight: '600',
+  pulseRing: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: colors.success,
+    opacity: 0.18,
+  },
+  avatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 2,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
   callerId: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: '700',
     color: colors.textPrimary,
     textAlign: 'center',
+    marginTop: spacing.sm,
   },
   countdown: {
     fontSize: 14,
@@ -138,14 +206,8 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.sm,
-    width: '100%',
-  },
-  declineButton: {
-    backgroundColor: colors.danger,
-  },
-  acceptButton: {
-    backgroundColor: colors.success,
+    justifyContent: 'space-evenly',
+    alignItems: 'center',
+    paddingBottom: spacing.lg * 2,
   },
 });

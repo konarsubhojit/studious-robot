@@ -11,7 +11,7 @@ jest.mock('../src/appLogger', () => ({
 }));
 
 import RNFS from 'react-native-fs';
-import { loadSettings, mergeSettings, saveSettings } from '../src/settingsStorage';
+import { loadIdentity, loadSettings, mergeSettings, saveIdentity, saveSettings } from '../src/settingsStorage';
 
 const DEFAULTS = { autoCameraLightingEnabled: false, speakerEnabledByDefault: true };
 
@@ -81,6 +81,48 @@ describe('settingsStorage', () => {
     test('resolves false on write failure', async () => {
       RNFS.writeFile.mockRejectedValue(new Error('disk full'));
       await expect(saveSettings(DEFAULTS)).resolves.toBe(false);
+    });
+  });
+
+  describe('loadIdentity', () => {
+    test('returns empty userId when no identity file exists', async () => {
+      RNFS.exists.mockResolvedValue(false);
+      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+    });
+
+    test('returns stored userId when file exists', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockResolvedValue(JSON.stringify({ userId: 'alice' }));
+      await expect(loadIdentity()).resolves.toEqual({ userId: 'alice' });
+    });
+
+    test('falls back to empty userId on read errors', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockRejectedValue(new Error('read failed'));
+      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+    });
+
+    test('ignores non-string userId values', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockResolvedValue(JSON.stringify({ userId: 42 }));
+      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+    });
+  });
+
+  describe('saveIdentity', () => {
+    test('writes JSON and resolves true on success', async () => {
+      RNFS.writeFile.mockResolvedValue();
+      await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(true);
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/tcalling-identity.json',
+        JSON.stringify({ userId: 'bob' }),
+        'utf8',
+      );
+    });
+
+    test('resolves false on write failure', async () => {
+      RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+      await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(false);
     });
   });
 });

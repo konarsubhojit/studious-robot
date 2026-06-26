@@ -23,7 +23,13 @@ import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions } from '../permissions';
-import { addCallLinkListener, getInitialCallLink } from '../pushNotifications';
+import {
+  addCallLinkListener,
+  getInitialCallLink,
+  registerForPushNotifications,
+  unregisterPushToken,
+} from '../pushNotifications';
+import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
 
@@ -122,6 +128,9 @@ export default function useCallFlow() {
   const [userId, setUserId] = useState('');
   const [calleeId, setCalleeId] = useState('');
 
+  // true while the identity is being loaded from persistent storage on mount.
+  const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+
   // ─── Call lifecycle state ─────────────────────────────────────────────────
   const [callPhase, setCallPhase] = useState(CALL_PHASES.IDLE);
   const [activeCall, setActiveCall] = useState(null);
@@ -134,6 +143,10 @@ export default function useCallFlow() {
   // ─── UI state ─────────────────────────────────────────────────────────────
   const [status, setStatusState] = useState({ message: '', severity: 'info' });
   const [callSummary, setCallSummary] = useState(null);
+
+  // Presence of the user currently entered in `calleeId`, or `null` while
+  // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
+  const [calleePresence, setCalleePresence] = useState(null);
 
   // ─── Call history ─────────────────────────────────────────────────────────
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
@@ -174,6 +187,7 @@ export default function useCallFlow() {
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
+  const calleePresenceRequestIdRef = useRef(0);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -181,7 +195,74 @@ export default function useCallFlow() {
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
 
+  /** True once a userId has been persisted (i.e. the user has registered). */
+  const isRegistered = userId.trim().length > 0;
+
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
+
+  // ─── Load persisted identity on mount ────────────────────────────────────
+
+  useEffect(() => {
+    let cancelled = false;
+    loadIdentity().then(({ userId: savedId }) => {
+      if (cancelled) return;
+      if (savedId) {
+        setUserId(savedId);
+      }
+      setIsLoadingIdentity(false);
+    }).catch(() => {
+      if (!cancelled) setIsLoadingIdentity(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Register the local user with the given userId.  Persists the identity to
+   * disk and updates the in-memory state so the presence socket connects.
+   *
+   * @param {string} newUserId
+   */
+  const registerUser = useCallback(async (newUserId) => {
+    const trimmed = (newUserId ?? '').trim();
+    if (!trimmed) return;
+    setUserId(trimmed);
+    await saveIdentity({ userId: trimmed });
+    logInfo('[CallFlow] User registered', { userId: trimmed });
+  }, []);
+
+  /**
+   * Update the active userId and persist the new value.
+   * Use this when the user edits their username in the Lobby so the new
+   * identity survives app restarts.
+   *
+   * @param {string} newUserId
+   */
+  const updateUserId = useCallback((newUserId) => {
+    setUserId(newUserId);
+    const trimmed = (newUserId ?? '').trim();
+    if (trimmed) {
+      saveIdentity({ userId: trimmed }).catch((error) => {
+        logWarn('[CallFlow] Failed to persist userId update', { message: error?.message });
+      });
+    }
+  }, []);
+
+  /**
+   * Clear the persisted identity and disconnect.  After this the app returns
+   * to the RegistrationScreen on next launch.
+   */
+  const unregisterUser = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (sessionId && trimmedUrl) {
+      // Best-effort: drop the device push registration so a signed-out device
+      // stops receiving incoming-call notifications.
+      await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
+    }
+    setUserId('');
+    await saveIdentity({ userId: '' });
+    logInfo('[CallFlow] User unregistered');
+  }, [signalingUrl]);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -255,7 +336,81 @@ export default function useCallFlow() {
     }
   }, [signalingUrl, userId]);
 
-  // ─── Peer connection ──────────────────────────────────────────────────────
+  /**
+   * Query the signaling server for the online/offline presence of a userId.
+   * Returns the presence snapshot, or `null` when the user is unknown (404) or
+   * the request fails.  Never throws.
+   *
+   * @param {string} targetUserId
+   * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
+   */
+  const checkPresence = useCallback(async (targetUserId) => {
+    const trimmedId = (targetUserId ?? '').trim();
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (!trimmedId || !trimmedUrl) return null;
+    try {
+      const response = await fetch(
+        `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`,
+      );
+      if (response.status === 404) return { status: 'offline', online: false, unknown: true };
+      if (!response.ok) return null;
+      const data = await response.json();
+      return { status: data.status, online: Boolean(data.online) };
+    } catch (error) {
+      logWarn('[CallFlow] checkPresence failed', { message: error?.message });
+      return null;
+    }
+  }, [signalingUrl]);
+
+  /**
+   * Search the server's contact directory (`GET /users`) for known users whose
+   * userId matches `query` (case-insensitive substring).  Returns an array of
+   * `{ userId, status, online, lastSeen }` entries, or an empty array when the
+   * request fails or no session exists.  Never throws.
+   *
+   * @param {string} [query] optional substring filter
+   * @param {number} [limit=20] max results
+   * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
+   */
+  const searchUsers = useCallback(async (query = '', limit = 20) => {
+    const sessionId = sessionIdRef.current;
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (!sessionId || !trimmedUrl) return [];
+    try {
+      const params = new URLSearchParams({ sessionId, limit: String(limit) });
+      const trimmedQuery = (query ?? '').trim();
+      if (trimmedQuery) params.set('search', trimmedQuery);
+      const response = await fetch(`${trimmedUrl}/users?${params.toString()}`);
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data.users) ? data.users : [];
+    } catch (error) {
+      logWarn('[CallFlow] searchUsers failed', { message: error?.message });
+      return [];
+    }
+  }, [signalingUrl]);
+  // can show whether the callee is online before the user presses Call.
+  useEffect(() => {
+    const trimmedId = calleeId.trim();
+    if (!trimmedId) {
+      calleePresenceRequestIdRef.current += 1;
+      setCalleePresence(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const requestId = calleePresenceRequestIdRef.current + 1;
+    calleePresenceRequestIdRef.current = requestId;
+    const timer = setTimeout(async () => {
+      const presence = await checkPresence(trimmedId);
+      if (!cancelled && calleePresenceRequestIdRef.current === requestId) {
+        setCalleePresence(presence);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [calleeId, checkPresence]);
 
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
@@ -906,6 +1061,13 @@ export default function useCallFlow() {
         const sessionId = await createOrGetSession();
         if (!cancelled) {
           connectSocket(sessionId);
+          // Bind this device to the user for offline (push) delivery.  Runs in
+          // the background and degrades to a no-op when the native messaging
+          // library is not installed, so it never blocks presence connection.
+          registerForPushNotifications({ sessionId, signalingUrl: trimmedUrl })
+            .catch((error) => {
+              logWarn('[CallFlow] Push registration failed', { message: error?.message });
+            });
         }
       } catch (error) {
         if (!cancelled) {
@@ -988,8 +1150,9 @@ export default function useCallFlow() {
 
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
-  const placeCall = useCallback(async () => {
-    const trimmedCalleeId = calleeId.trim();
+  const placeCall = useCallback(async (explicitCalleeId) => {
+    const explicit = (typeof explicitCalleeId === 'string' ? explicitCalleeId : '').trim();
+    const trimmedCalleeId = explicit || calleeId.trim();
     if (!trimmedCalleeId) {
       setStatus('Enter a callee ID to call', 'error');
       return;
@@ -1368,6 +1531,11 @@ export default function useCallFlow() {
     // Identity / connection config
     userId,
     setUserId,
+    isRegistered,
+    isLoadingIdentity,
+    registerUser,
+    unregisterUser,
+    updateUserId,
     calleeId,
     setCalleeId,
     signalingUrl,
@@ -1381,6 +1549,9 @@ export default function useCallFlow() {
     // UI status
     status,
     callSummary,
+    calleePresence,
+    checkPresence,
+    searchUsers,
 
     // Call history
     callHistory,
