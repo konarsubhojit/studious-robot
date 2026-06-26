@@ -32,6 +32,12 @@ import {
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
+import {
+  endCall as endCallKeepCall,
+  registerCallActionListeners as registerCallKeepListeners,
+  reportCallConnected as reportCallKeepConnected,
+  setupCallKeep,
+} from '../callKeep';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -171,6 +177,10 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
+  // Holds the latest authedFetch implementation so the call-history / contact
+  // helpers (declared earlier in this hook) can issue 401-recovering requests
+  // without referencing the later-declared authedFetch useCallback directly.
+  const authedFetchRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
   const callConnectedAtRef = useRef(null);
@@ -313,10 +323,10 @@ export default function useCallFlow() {
     try {
       const trimmedUrl = signalingUrl.trim();
       const trimmedUserId = userId.trim();
-      const response = await fetch(
-        `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sessionId)}&limit=${limit}`,
-      );
-      if (!response.ok) return;
+      const response = await authedFetchRef.current?.((sid) => ({
+        url: `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
+      }));
+      if (!response || !response.ok) return;
       const data = await response.json();
       if (!Array.isArray(data.calls)) return;
       const entries = data.calls.map((call) => ({
@@ -377,11 +387,13 @@ export default function useCallFlow() {
     const trimmedUrl = (signalingUrl ?? '').trim();
     if (!sessionId || !trimmedUrl) return [];
     try {
-      const params = new URLSearchParams({ sessionId, limit: String(limit) });
       const trimmedQuery = (query ?? '').trim();
-      if (trimmedQuery) params.set('search', trimmedQuery);
-      const response = await fetch(`${trimmedUrl}/users?${params.toString()}`);
-      if (!response.ok) return [];
+      const response = await authedFetchRef.current?.((sid) => {
+        const params = new URLSearchParams({ sessionId: sid, limit: String(limit) });
+        if (trimmedQuery) params.set('search', trimmedQuery);
+        return { url: `${trimmedUrl}/users?${params.toString()}` };
+      });
+      if (!response || !response.ok) return [];
       const data = await response.json();
       return Array.isArray(data.users) ? data.users : [];
     } catch (error) {
@@ -569,6 +581,11 @@ export default function useCallFlow() {
       const callRecord = activeCallRef.current ?? incomingCallRef.current;
       const isCaller = isCallerRef.current;
 
+      // Dismiss any OS-level call UI (CallKeep) shown for this call.
+      if (callRecord?.callId) {
+        endCallKeepCall(callRecord.callId);
+      }
+
       const durationSeconds = callConnectedAtRef.current
         ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
         : null;
@@ -658,6 +675,78 @@ export default function useCallFlow() {
     logInfo('[CallFlow] Session created', { sessionId: data.sessionId, userId: data.userId });
     return data.sessionId;
   }, [signalingUrl, userId]);
+
+  /**
+   * Refresh the current session via `POST /session/refresh`, rotating the
+   * sessionId. On success the new id is stored in `sessionIdRef`; on failure the
+   * stale id is cleared so the next request mints a fresh session. Never throws.
+   *
+   * @returns {Promise<string | null>} the new sessionId, or `null` on failure
+   */
+  const refreshSession = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    const trimmedUrl = (signalingUrl ?? '').trim();
+    if (!sessionId || !trimmedUrl) return null;
+    try {
+      const response = await fetch(`${trimmedUrl}/session/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (!response.ok) {
+        // The session is gone (e.g. server restart with in-memory store, or TTL
+        // expiry): drop it so the next authed request creates a new session.
+        sessionIdRef.current = null;
+        logWarn('[CallFlow] session refresh failed', { status: response.status });
+        return null;
+      }
+      const data = await response.json();
+      sessionIdRef.current = data.sessionId;
+      logInfo('[CallFlow] Session refreshed', { sessionId: data.sessionId });
+      return data.sessionId;
+    } catch (error) {
+      logWarn('[CallFlow] session refresh threw', { message: error?.message });
+      return null;
+    }
+  }, [signalingUrl]);
+
+  /**
+   * Perform an authenticated request with automatic 401 recovery. `buildRequest`
+   * receives the current sessionId and returns `{ url, options? }`. On a 401 the
+   * session is refreshed (or recreated) once and the request is retried with the
+   * new id. Returns the `Response` (possibly still 401), or `null` when no
+   * session could be established. Never throws on refresh; fetch errors
+   * propagate to the caller's existing try/catch.
+   *
+   * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
+   * @returns {Promise<Response | null>}
+   */
+  const authedFetch = useCallback(async (buildRequest) => {
+    let sessionId = sessionIdRef.current;
+    if (!sessionId) {
+      sessionId = await createOrGetSession().catch(() => null);
+    }
+    if (!sessionId) return null;
+
+    let request = buildRequest(sessionId);
+    let response = await fetch(request.url, request.options);
+
+    if (response.status === 401) {
+      // Session expired or was invalidated server-side: refresh once and retry.
+      const refreshedId = await refreshSession();
+      const nextId = refreshedId || (await createOrGetSession().catch(() => null));
+      if (!nextId) return response;
+      request = buildRequest(nextId);
+      response = await fetch(request.url, request.options);
+    }
+
+    return response;
+  }, [createOrGetSession, refreshSession]);
+
+  // Expose authedFetch through a ref for helpers defined earlier in the hook.
+  useEffect(() => {
+    authedFetchRef.current = authedFetch;
+  }, [authedFetch]);
 
   // ─── Socket connection ────────────────────────────────────────────────────
 
@@ -1250,6 +1339,9 @@ export default function useCallFlow() {
       setIncomingCall(null);
       setStatus('Connecting…');
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
+      // Tell the OS call UI (CallKeep) the call is now active so any ringing
+      // system UI shown by a background push transitions to the in-call state.
+      reportCallKeepConnected(call.callId);
       // callPhase advances to in_call via the rtc.offer handler once the caller
       // sends its offer.
     } catch (error) {
@@ -1278,6 +1370,35 @@ export default function useCallFlow() {
 
     endActiveCall('Call declined', 'info', 'declined');
   }, [endActiveCall, incomingCall]);
+
+  // ─── CallKeep: bridge OS answer/end buttons into the call flow ────────────
+  // Keep refs to the latest accept/decline handlers so the (mount-once)
+  // CallKeep listener effect always invokes the current versions.
+  const acceptIncomingCallRef = useRef(acceptIncomingCall);
+  const declineIncomingCallRef = useRef(declineIncomingCall);
+  useEffect(() => {
+    acceptIncomingCallRef.current = acceptIncomingCall;
+    declineIncomingCallRef.current = declineIncomingCall;
+  }, [acceptIncomingCall, declineIncomingCall]);
+
+  useEffect(() => {
+    // Configure CallKeep up front so the system call UI is ready before the
+    // first incoming push; degrades to a no-op when the native module is absent.
+    setupCallKeep().catch(() => {});
+    const unregister = registerCallKeepListeners({
+      onAnswer: () => acceptIncomingCallRef.current?.(),
+      onEnd: () => {
+        if (incomingCallRef.current) {
+          declineIncomingCallRef.current?.();
+        } else {
+          endActiveCallRef.current?.();
+        }
+      },
+    });
+    return unregister;
+    // Run once on mount; handlers are invoked via refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── End active in-call ───────────────────────────────────────────────────
 

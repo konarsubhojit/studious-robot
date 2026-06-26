@@ -83,6 +83,7 @@ jest.mock('../../src/pushNotifications', () => ({
   getInitialCallLink: jest.fn(async () => null),
   addCallLinkListener: jest.fn(() => jest.fn()),
   registerPushToken: jest.fn(async () => true),
+  registerForPushNotifications: jest.fn(async () => true),
   unregisterPushToken: jest.fn(async () => true),
 }));
 
@@ -252,6 +253,56 @@ describe('useCallFlow', () => {
       users = await resultRef.current.searchUsers('bob');
     });
     expect(users).toEqual([]);
+  });
+
+  test('searchUsers refreshes the session and retries once on a 401', async () => {
+    let userRequests = 0;
+    global.fetch = jest.fn(async (url, options) => {
+      if (url.endsWith('/session') && options?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ sessionId: 's1', userId: 'alice' }) };
+      }
+      if (url.includes('/session/refresh')) {
+        return { ok: true, status: 200, json: async () => ({ sessionId: 's2', userId: 'alice' }) };
+      }
+      if (url.includes('/users')) {
+        userRequests += 1;
+        if (url.includes('sessionId=s1')) {
+          return { ok: false, status: 401, json: async () => ({ error: 'invalid session' }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ users: [{ userId: 'bob', status: 'online', online: true }] }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    const { resultRef } = renderHook();
+    // Setting the userId triggers the presence-connect effect, which mints a
+    // session (s1) via POST /session.
+    await act(async () => {
+      resultRef.current.setUserId('alice');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let users;
+    await act(async () => {
+      users = await resultRef.current.searchUsers('bob');
+    });
+
+    // The first request (sessionId=s1) 401s; after a refresh to s2 the retry
+    // succeeds, so searchUsers returns the directory entry.
+    expect(users).toEqual([{ userId: 'bob', status: 'online', online: true }]);
+    expect(userRequests).toBe(2);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/session/refresh'),
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   test('calleePresence ignores stale presence responses for older calleeIds', async () => {

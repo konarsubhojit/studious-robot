@@ -1,8 +1,11 @@
 import { Linking } from 'react-native';
 import {
+  _extractIncomingCallFromMessage,
   addCallLinkListener,
   getInitialCallLink,
   getPushToken,
+  handleBackgroundPushMessage,
+  installBackgroundMessageHandler,
   loadMessaging,
   parseCallDeepLink,
   registerForPushNotifications,
@@ -10,7 +13,7 @@ import {
   unregisterPushToken,
   _resetMessagingCache,
 } from '../src/pushNotifications';
-import { logWarn } from '../src/appLogger';
+import { logInfo, logWarn } from '../src/appLogger';
 
 jest.mock('../src/appLogger', () => ({
   logError: jest.fn(),
@@ -25,6 +28,10 @@ jest.mock('react-native', () => ({
     addEventListener: jest.fn(() => ({ remove: jest.fn() })),
   },
 }));
+
+jest.mock('@react-native-firebase/messaging', () => {
+  throw new Error('missing native module');
+});
 
 // ─── parseCallDeepLink ────────────────────────────────────────────────────────
 
@@ -366,5 +373,88 @@ describe('getPushToken (native module present)', () => {
       );
     });
     delete global.fetch;
+  });
+});
+
+describe('background push handler', () => {
+  const AUTH = { AUTHORIZED: 1, PROVISIONAL: 2, DENIED: 0 };
+
+  beforeEach(() => {
+    _resetMessagingCache();
+    jest.clearAllMocks();
+  });
+
+  test('extracts incoming call payload from data messages', () => {
+    expect(
+      _extractIncomingCallFromMessage({
+        data: { callId: 'call-1', callerId: 'alice', deepLink: 'tcalling://call/call-1' },
+      }),
+    ).toEqual({
+      callId: 'call-1',
+      callerId: 'alice',
+      deepLink: 'tcalling://call/call-1',
+    });
+  });
+
+  test('builds a fallback deep link when deepLink is absent', () => {
+    expect(
+      _extractIncomingCallFromMessage({
+        data: { callId: 'call-2', callerId: 'bob' },
+      }),
+    ).toEqual({
+      callId: 'call-2',
+      callerId: 'bob',
+      deepLink: 'tcalling://call/call-2',
+    });
+  });
+
+  test('returns null when callId is missing', () => {
+    expect(_extractIncomingCallFromMessage({ data: { callerId: 'alice' } })).toBeNull();
+  });
+
+  test('background callback logs and returns parsed call payload', async () => {
+    await expect(
+      handleBackgroundPushMessage({
+        data: { callId: 'call-3', callerId: 'carol' },
+      }),
+    ).resolves.toEqual({
+      callId: 'call-3',
+      callerId: 'carol',
+      deepLink: 'tcalling://call/call-3',
+    });
+    expect(logInfo).toHaveBeenCalledWith('[Push] Background call push received', {
+      callId: 'call-3',
+      callerId: 'carol',
+    });
+  });
+
+  test('installBackgroundMessageHandler wires native background callback', async () => {
+    const setBackgroundMessageHandler = jest.fn();
+    let mod;
+    jest.isolateModules(() => {
+      const messagingFn = jest.fn(() => ({
+        requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
+        getToken: jest.fn().mockResolvedValue('fcm-token'),
+        setBackgroundMessageHandler,
+      }));
+      messagingFn.AuthorizationStatus = AUTH;
+      jest.doMock(
+        '@react-native-firebase/messaging',
+        () => ({ __esModule: true, default: messagingFn }),
+        { virtual: true },
+      );
+      mod = require('../src/pushNotifications');
+      mod._resetMessagingCache();
+    });
+
+    expect(mod.installBackgroundMessageHandler()).toBe(true);
+    expect(setBackgroundMessageHandler).toHaveBeenCalledTimes(1);
+
+    const [handler] = setBackgroundMessageHandler.mock.calls[0];
+    await handler({ data: { callId: 'call-4', callerId: 'dave' } });
+    expect(logInfo).toHaveBeenCalledWith('[Push] Background call push received', {
+      callId: 'call-4',
+      callerId: 'dave',
+    });
   });
 });

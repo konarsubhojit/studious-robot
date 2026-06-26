@@ -1,5 +1,6 @@
 import { Linking, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
+import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
 
 /**
  * Push notification helpers for the TCalling mobile app.
@@ -264,4 +265,85 @@ export async function registerForPushNotifications({ sessionId, signalingUrl }) 
     provider: token.provider,
     pushToken: token.pushToken,
   });
+}
+
+/**
+ * Parse the incoming-call payload from an FCM/APNs data message.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {{ callId: string, callerId: string | null, deepLink: string } | null}
+ */
+export function _extractIncomingCallFromMessage(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
+  if (!callId) return null;
+
+  const parsedCallerId = typeof data.callerId === 'string' ? data.callerId.trim() : '';
+  const parsedDeepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
+
+  return {
+    callId,
+    callerId: parsedCallerId || null,
+    deepLink: parsedDeepLink || `tcalling://call/${callId}`,
+  };
+}
+
+/**
+ * Background push callback used by @react-native-firebase/messaging.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<{ callId: string, callerId: string | null, deepLink: string } | null>}
+ */
+export async function handleBackgroundPushMessage(remoteMessage) {
+  const incoming = _extractIncomingCallFromMessage(remoteMessage);
+  if (!incoming) {
+    logWarn('[Push] Background message missing call payload');
+    return null;
+  }
+
+  logInfo('[Push] Background call push received', {
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  });
+
+  // Surface the OS-level incoming-call UI (CallKeep) so the call rings
+  // full-screen even when the app was cold-started by this push. Degrades to a
+  // no-op when the native callkeep module is not installed.
+  await displayCallKeepIncomingCall({
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  }).catch((error) => {
+    logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
+  });
+
+  return incoming;
+}
+
+/**
+ * Install the Firebase background message handler when the native messaging
+ * module is available.
+ *
+ * @returns {boolean} `true` when a handler was registered
+ */
+export function installBackgroundMessageHandler() {
+  const messaging = loadMessaging();
+  if (!messaging) return false;
+
+  const instance = messaging();
+  if (!instance || typeof instance.setBackgroundMessageHandler !== 'function') {
+    logWarn('[Push] Native messaging module has no background handler API');
+    return false;
+  }
+
+  instance.setBackgroundMessageHandler(async (remoteMessage) => {
+    try {
+      const incoming = await handleBackgroundPushMessage(remoteMessage);
+      if (!incoming) {
+        logWarn('[Push] Background message ignored');
+      }
+    } catch (error) {
+      logError('[Push] Background message handler failed', error);
+    }
+  });
+  return true;
 }
