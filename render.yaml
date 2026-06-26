@@ -24,6 +24,10 @@ services:
           name: studious-robot-redis
           type: keyvalue
           property: connectionString
+      # Session token lifetime (milliseconds).  Clients proactively refresh at
+      # ~83% of this interval (50 min / 60 min).  3 600 000 = 1 hour.
+      - key: SESSION_TTL_MS
+        value: 3600000
 
   # Managed Redis (Render "Key Value") for session/presence persistence and the
   # Socket.IO Redis adapter / cross-instance message bus.

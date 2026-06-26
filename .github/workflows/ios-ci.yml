@@ -1,0 +1,90 @@
+name: iOS CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/ios-ci.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/ios-ci.yml'
+  workflow_dispatch:
+
+# Cancel any in-progress run for the same branch so stale commits don't waste
+# runner time.  workflow_dispatch runs use cancel-in-progress: false so they
+# always complete.
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: iOS simulator build
+    runs-on: macos-15
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      # Cache the CocoaPods download cache and installed Pods to avoid re-fetching
+      # on every run.  The cache key includes the Podfile.lock so it is invalidated
+      # when native dependencies change.
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+            ~/.cocoapods
+          key: cocoapods-${{ hashFiles('mobile/ios/Podfile.lock') }}
+          restore-keys: |
+            cocoapods-
+
+      - name: Install CocoaPods
+        working-directory: mobile/ios
+        run: pod install --repo-update
+
+      # Build the app for the iOS Simulator (no code-signing needed).
+      # xcodebuild fails the step on any build error, surfacing compiler/linker
+      # errors directly in the CI log.  xcpretty formats the verbose build log;
+      # `set -o pipefail` ensures xcodebuild's exit code is propagated even when
+      # piped through xcpretty.
+      - name: Build for simulator
+        env:
+          SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
+          ROOM_ID: ${{ secrets.ROOM_ID }}
+          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
+          TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
+        run: |
+          gem install xcpretty --no-document 2>/dev/null || true
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/StudiousRobot.xcworkspace \
+            -scheme StudiousRobot \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color 2>/dev/null || cat

@@ -31,7 +31,7 @@ import {
 } from '../pushNotifications';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
-import { getIceServers } from '../webrtcConfig';
+import { getIceServers, applyBitrateConstraints } from '../webrtcConfig';
 import {
   endCall as endCallKeepCall,
   registerCallActionListeners as registerCallKeepListeners,
@@ -51,6 +51,18 @@ const HAPTIC_CONNECT_MS = 30;
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
+
+/**
+ * How often to proactively rotate the session token.  Set well below typical
+ * server-side TTLs (e.g. 1 h) so the token never expires mid-call.
+ */
+const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
+
+/**
+ * How many consecutive socket `connect_error` events before the lobby is
+ * considered offline and an offline banner is shown.
+ */
+const OFFLINE_ERROR_THRESHOLD = 3;
 
 /**
  * Call phases that drive which screen the UI renders.
@@ -154,6 +166,13 @@ export default function useCallFlow() {
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
   const [calleePresence, setCalleePresence] = useState(null);
 
+  /**
+   * `true` when repeated socket connect errors suggest the signaling server is
+   * unreachable.  Cleared automatically on a successful connection.  Drives the
+   * persistent offline banner + retry button in the Lobby.
+   */
+  const [isServerUnreachable, setIsServerUnreachable] = useState(false);
+
   // ─── Call history ─────────────────────────────────────────────────────────
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
@@ -198,6 +217,9 @@ export default function useCallFlow() {
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
   const calleePresenceRequestIdRef = useRef(0);
+  // Counts consecutive socket connect_error events; resets on a successful
+  // connect.  Used to flip isServerUnreachable after OFFLINE_ERROR_THRESHOLD.
+  const connectErrorCountRef = useRef(0);
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -436,6 +458,12 @@ export default function useCallFlow() {
       if (!callConnectedAtRef.current) return;
       setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
     }, 1000);
+
+    // Apply bitrate caps now that media is flowing; best-effort.
+    const pc = peerConnectionRef.current;
+    if (pc) {
+      applyBitrateConstraints(pc).catch(() => {});
+    }
   }, []);
 
   const closePeerConnection = useCallback(() => {
@@ -979,6 +1007,9 @@ export default function useCallFlow() {
       // ── Socket lifecycle ──────────────────────────────────────────────
       socket.on('connect', async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
+        // Clear offline indicator on successful connection.
+        connectErrorCountRef.current = 0;
+        setIsServerUnreachable(false);
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -1023,6 +1054,10 @@ export default function useCallFlow() {
           message: error?.message,
           description: error?.description,
         });
+        connectErrorCountRef.current += 1;
+        if (connectErrorCountRef.current >= OFFLINE_ERROR_THRESHOLD) {
+          setIsServerUnreachable(true);
+        }
       });
 
       return socket;
@@ -1180,7 +1215,47 @@ export default function useCallFlow() {
     // a redundant effect cycle but not a correctness problem.
   }, [userId, signalingUrl]); // intentionally omitting createOrGetSession, connectSocket, disconnectSocket
 
-  // ─── Cleanup on unmount ───────────────────────────────────────────────────
+  // ─── Proactive session refresh ────────────────────────────────────────────
+  // Rotate the session token every SESSION_REFRESH_INTERVAL_MS (50 min) while
+  // the user is signed in, so the token never expires mid-call.  The server's
+  // SESSION_TTL_MS should be set well above this interval (e.g. 3600000 = 1 h).
+
+  useEffect(() => {
+    if (!userId.trim() || !signalingUrl.trim()) return undefined;
+
+    const timer = setInterval(async () => {
+      if (!sessionIdRef.current) return;
+      await refreshSession().catch((error) => {
+        logWarn('[CallFlow] Proactive session refresh failed', { message: error?.message });
+        setStatus(
+          'Session refresh failed — your token may expire soon. Reconnect if calls stop working.',
+          'warning',
+        );
+      });
+    }, SESSION_REFRESH_INTERVAL_MS);
+
+    return () => clearInterval(timer);
+  }, [userId, signalingUrl, refreshSession]);
+
+  /**
+   * Manually retry the presence socket connection when the server appears
+   * unreachable.  Resets the offline indicator, creates a fresh session, and
+   * reconnects the socket.
+   */
+  const retryPresenceConnect = useCallback(async () => {
+    if (!userId.trim() || !signalingUrl.trim()) return;
+    setIsServerUnreachable(false);
+    connectErrorCountRef.current = 0;
+    sessionIdRef.current = null;
+    try {
+      const sessionId = await createOrGetSession();
+      connectSocket(sessionId);
+    } catch (error) {
+      logWarn('[CallFlow] retryPresenceConnect failed', { message: error?.message });
+      setIsServerUnreachable(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, signalingUrl]); // createOrGetSession and connectSocket are stable relative to these
 
   useEffect(() => {
     return () => {
@@ -1595,9 +1670,15 @@ export default function useCallFlow() {
         const denominator = totalPacketsReceived + totalPacketsLost;
         const packetLossRatio =
           denominator > 0 ? totalPacketsLost / denominator : undefined;
-        setConnectionQuality(
-          getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }),
-        );
+        const nextQuality = getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps });
+        setConnectionQuality(nextQuality);
+
+        // Surface a status warning when packet loss is severe enough to impair
+        // the call.  Only update status on the downgrade crossing so the message
+        // doesn't flicker; recovery is silent (the bars update speaks for itself).
+        if (nextQuality.bars === 0 && Number.isFinite(packetLossRatio)) {
+          setStatus('Poor connection — high packet loss detected', 'error');
+        }
       } catch (error) {
         logWarn('[CallFlow] Failed to read connection stats', { message: error?.message });
       }
@@ -1673,6 +1754,8 @@ export default function useCallFlow() {
     calleePresence,
     checkPresence,
     searchUsers,
+    isServerUnreachable,
+    retryPresenceConnect,
 
     // Call history
     callHistory,

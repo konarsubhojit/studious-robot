@@ -167,6 +167,9 @@ export default function Lobby({
   onCall,
   calleePresence,
   onOpenSettings,
+  // ── Server connectivity ───────────────────────────────────────────────────
+  isServerUnreachable,
+  onRetryConnect,
   // ── Contact directory ─────────────────────────────────────────────────────
   onSearchUsers,
   onSelectContact,
@@ -228,6 +231,26 @@ export default function Lobby({
           ) : null}
         </View>
         <Text style={styles.subtitle}>Warm, simple one-to-one video calls</Text>
+
+        {/* ── Offline / server-unreachable banner ─────────────────────── */}
+        {isServerUnreachable ? (
+          <View style={styles.offlineBanner} accessibilityRole="alert" testID="offline-banner">
+            <Text style={styles.offlineBannerText}>
+            Cannot reach server - check your connection
+            </Text>
+            {onRetryConnect ? (
+              <Pressable
+                onPress={onRetryConnect}
+                accessibilityRole="button"
+                accessibilityLabel="Retry server connection"
+                testID="offline-retry"
+                style={styles.offlineRetryButton}
+              >
+                <Text style={styles.offlineRetryText}>Retry</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
         {callSummary ? (
           <View style={styles.summaryCard} accessibilityRole="summary">
@@ -450,6 +473,36 @@ const styles = StyleSheet.create({
   },
   gearIcon: {
     fontSize: 18,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(240,141,137,0.15)',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  offlineBannerText: {
+    flex: 1,
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  offlineRetryButton: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: colors.danger,
+  },
+  offlineRetryText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
   },
   presenceRow: {
     flexDirection: 'row',
