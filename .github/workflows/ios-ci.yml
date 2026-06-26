@@ -68,7 +68,9 @@ jobs:
 
       # Build the app for the iOS Simulator (no code-signing needed).
       # xcodebuild fails the step on any build error, surfacing compiler/linker
-      # errors directly in the CI log.
+      # errors directly in the CI log.  xcpretty formats the verbose build log;
+      # `set -o pipefail` ensures xcodebuild's exit code is propagated even when
+      # piped through xcpretty.
       - name: Build for simulator
         env:
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
@@ -76,6 +78,8 @@ jobs:
           TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
           TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
         run: |
+          gem install xcpretty --no-document 2>/dev/null || true
+          set -o pipefail
           xcodebuild \
             -workspace ios/StudiousRobot.xcworkspace \
             -scheme StudiousRobot \
@@ -83,10 +87,4 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
-            | xcpretty --color || xcodebuild \
-              -workspace ios/StudiousRobot.xcworkspace \
-              -scheme StudiousRobot \
-              -sdk iphonesimulator \
-              -configuration Debug \
-              -destination 'generic/platform=iOS Simulator' \
-              CODE_SIGNING_ALLOWED=NO
+            | xcpretty --color 2>/dev/null || cat

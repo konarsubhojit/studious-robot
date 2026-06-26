@@ -236,7 +236,7 @@ export default function Lobby({
         {isServerUnreachable ? (
           <View style={styles.offlineBanner} accessibilityRole="alert" testID="offline-banner">
             <Text style={styles.offlineBannerText}>
-              Cannot reach server — check your connection
+            Cannot reach server - check your connection
             </Text>
             {onRetryConnect ? (
               <Pressable

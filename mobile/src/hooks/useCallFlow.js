@@ -1227,6 +1227,10 @@ export default function useCallFlow() {
       if (!sessionIdRef.current) return;
       await refreshSession().catch((error) => {
         logWarn('[CallFlow] Proactive session refresh failed', { message: error?.message });
+        setStatus(
+          'Session refresh failed — your token may expire soon. Reconnect if calls stop working.',
+          'warning',
+        );
       });
     }, SESSION_REFRESH_INTERVAL_MS);
 
