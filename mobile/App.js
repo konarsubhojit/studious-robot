@@ -212,6 +212,8 @@ export default function App() {
         }}
         calleePresence={callFlow.calleePresence}
         onOpenSettings={() => setShowSettings(true)}
+        isServerUnreachable={callFlow.isServerUnreachable}
+        onRetryConnect={callFlow.retryPresenceConnect}
         onSearchUsers={callFlow.searchUsers}
         onSelectContact={callFlow.setCalleeId}
         developerMode={call.settings.developerModeEnabled}
