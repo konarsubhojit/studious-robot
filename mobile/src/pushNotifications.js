@@ -277,13 +277,13 @@ export function _extractIncomingCallFromMessage(remoteMessage) {
   const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
   if (!callId) return null;
 
-  const callerId = typeof data.callerId === 'string' ? data.callerId.trim() : '';
-  const providedDeepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
+  const parsedCallerId = typeof data.callerId === 'string' ? data.callerId.trim() : '';
+  const parsedDeepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
 
   return {
     callId,
-    callerId: callerId || null,
-    deepLink: providedDeepLink || `tcalling://call/${callId}`,
+    callerId: parsedCallerId || null,
+    deepLink: parsedDeepLink || `tcalling://call/${callId}`,
   };
 }
 
@@ -324,7 +324,14 @@ export function installBackgroundMessageHandler() {
   }
 
   instance.setBackgroundMessageHandler(async (remoteMessage) => {
-    await handleBackgroundPushMessage(remoteMessage);
+    try {
+      const incoming = await handleBackgroundPushMessage(remoteMessage);
+      if (!incoming) {
+        logWarn('[Push] Background message ignored');
+      }
+    } catch (error) {
+      logError('[Push] Background message handler failed', error);
+    }
   });
   return true;
 }
