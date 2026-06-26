@@ -32,6 +32,12 @@ import {
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
+import {
+  endCall as endCallKeepCall,
+  registerCallActionListeners as registerCallKeepListeners,
+  reportCallConnected as reportCallKeepConnected,
+  setupCallKeep,
+} from '../callKeep';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -568,6 +574,11 @@ export default function useCallFlow() {
       // are kept in sync with state throughout the call lifecycle.
       const callRecord = activeCallRef.current ?? incomingCallRef.current;
       const isCaller = isCallerRef.current;
+
+      // Dismiss any OS-level call UI (CallKeep) shown for this call.
+      if (callRecord?.callId) {
+        endCallKeepCall(callRecord.callId);
+      }
 
       const durationSeconds = callConnectedAtRef.current
         ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
@@ -1250,6 +1261,9 @@ export default function useCallFlow() {
       setIncomingCall(null);
       setStatus('Connecting…');
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
+      // Tell the OS call UI (CallKeep) the call is now active so any ringing
+      // system UI shown by a background push transitions to the in-call state.
+      reportCallKeepConnected(call.callId);
       // callPhase advances to in_call via the rtc.offer handler once the caller
       // sends its offer.
     } catch (error) {
@@ -1278,6 +1292,35 @@ export default function useCallFlow() {
 
     endActiveCall('Call declined', 'info', 'declined');
   }, [endActiveCall, incomingCall]);
+
+  // ─── CallKeep: bridge OS answer/end buttons into the call flow ────────────
+  // Keep refs to the latest accept/decline handlers so the (mount-once)
+  // CallKeep listener effect always invokes the current versions.
+  const acceptIncomingCallRef = useRef(acceptIncomingCall);
+  const declineIncomingCallRef = useRef(declineIncomingCall);
+  useEffect(() => {
+    acceptIncomingCallRef.current = acceptIncomingCall;
+    declineIncomingCallRef.current = declineIncomingCall;
+  }, [acceptIncomingCall, declineIncomingCall]);
+
+  useEffect(() => {
+    // Configure CallKeep up front so the system call UI is ready before the
+    // first incoming push; degrades to a no-op when the native module is absent.
+    setupCallKeep().catch(() => {});
+    const unregister = registerCallKeepListeners({
+      onAnswer: () => acceptIncomingCallRef.current?.(),
+      onEnd: () => {
+        if (incomingCallRef.current) {
+          declineIncomingCallRef.current?.();
+        } else {
+          endActiveCallRef.current?.();
+        }
+      },
+    });
+    return unregister;
+    // Run once on mount; handlers are invoked via refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ─── End active in-call ───────────────────────────────────────────────────
 

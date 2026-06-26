@@ -1,5 +1,6 @@
 import { Linking, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
+import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
 
 /**
  * Push notification helpers for the TCalling mobile app.
@@ -304,6 +305,17 @@ export async function handleBackgroundPushMessage(remoteMessage) {
     callId: incoming.callId,
     callerId: incoming.callerId,
   });
+
+  // Surface the OS-level incoming-call UI (CallKeep) so the call rings
+  // full-screen even when the app was cold-started by this push. Degrades to a
+  // no-op when the native callkeep module is not installed.
+  await displayCallKeepIncomingCall({
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  }).catch((error) => {
+    logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
+  });
+
   return incoming;
 }
 
