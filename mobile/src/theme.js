@@ -1,5 +1,5 @@
 /**
- * Centralised design tokens for the TCalling UI.
+ * Centralised design tokens for the WeTalk UI.
  *
  * Colours, spacing, radii and typography were previously hardcoded and
  * repeated across the inline `StyleSheet` in `App.js`.  Collecting them here

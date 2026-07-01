@@ -42,7 +42,7 @@ export default function RegistrationScreen({ onRegister, isLoading = false }) {
         {/* ── Brand / hero section ───────────────────────────────────────── */}
         <View style={styles.hero}>
           <Text style={styles.logoGlyph}>📞</Text>
-          <Text style={styles.appName}>TCalling</Text>
+          <Text style={styles.appName}>WeTalk</Text>
           <Text style={styles.tagline}>Simple, warm one-to-one video calls</Text>
         </View>
 

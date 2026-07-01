@@ -36,13 +36,13 @@ jest.mock('@react-native-firebase/messaging', () => {
 // ─── parseCallDeepLink ────────────────────────────────────────────────────────
 
 describe('parseCallDeepLink', () => {
-  test('parses valid tcalling://call/{callId} URL', () => {
-    expect(parseCallDeepLink('tcalling://call/abc-123')).toEqual({ callId: 'abc-123' });
+  test('parses valid wetalk://call/{callId} URL', () => {
+    expect(parseCallDeepLink('wetalk://call/abc-123')).toEqual({ callId: 'abc-123' });
   });
 
   test('parses URL with UUID callId', () => {
     const id = '550e8400-e29b-41d4-a716-446655440000';
-    expect(parseCallDeepLink(`tcalling://call/${id}`)).toEqual({ callId: id });
+    expect(parseCallDeepLink(`wetalk://call/${id}`)).toEqual({ callId: id });
   });
 
   test('returns null for wrong scheme', () => {
@@ -50,12 +50,12 @@ describe('parseCallDeepLink', () => {
   });
 
   test('returns null for wrong host', () => {
-    expect(parseCallDeepLink('tcalling://join/abc-123')).toBeNull();
+    expect(parseCallDeepLink('wetalk://join/abc-123')).toBeNull();
   });
 
   test('returns null for missing callId', () => {
-    expect(parseCallDeepLink('tcalling://call/')).toBeNull();
-    expect(parseCallDeepLink('tcalling://call')).toBeNull();
+    expect(parseCallDeepLink('wetalk://call/')).toBeNull();
+    expect(parseCallDeepLink('wetalk://call')).toBeNull();
   });
 
   test('returns null for null input', () => {
@@ -78,7 +78,7 @@ describe('getInitialCallLink', () => {
   afterEach(() => jest.clearAllMocks());
 
   test('returns descriptor when app launched from call deep link', async () => {
-    Linking.getInitialURL.mockResolvedValue('tcalling://call/call-id-99');
+    Linking.getInitialURL.mockResolvedValue('wetalk://call/call-id-99');
     const result = await getInitialCallLink();
     expect(result).toEqual({ callId: 'call-id-99' });
   });
@@ -116,7 +116,7 @@ describe('addCallLinkListener', () => {
 
     addCallLinkListener(callback);
 
-    capturedListener({ url: 'tcalling://call/my-call-id' });
+    capturedListener({ url: 'wetalk://call/my-call-id' });
     expect(callback).toHaveBeenCalledWith({ callId: 'my-call-id' });
   });
 
@@ -387,12 +387,12 @@ describe('background push handler', () => {
   test('extracts incoming call payload from data messages', () => {
     expect(
       _extractIncomingCallFromMessage({
-        data: { callId: 'call-1', callerId: 'alice', deepLink: 'tcalling://call/call-1' },
+        data: { callId: 'call-1', callerId: 'alice', deepLink: 'wetalk://call/call-1' },
       }),
     ).toEqual({
       callId: 'call-1',
       callerId: 'alice',
-      deepLink: 'tcalling://call/call-1',
+      deepLink: 'wetalk://call/call-1',
     });
   });
 
@@ -404,7 +404,7 @@ describe('background push handler', () => {
     ).toEqual({
       callId: 'call-2',
       callerId: 'bob',
-      deepLink: 'tcalling://call/call-2',
+      deepLink: 'wetalk://call/call-2',
     });
   });
 
@@ -420,7 +420,7 @@ describe('background push handler', () => {
     ).resolves.toEqual({
       callId: 'call-3',
       callerId: 'carol',
-      deepLink: 'tcalling://call/call-3',
+      deepLink: 'wetalk://call/call-3',
     });
     expect(logInfo).toHaveBeenCalledWith('[Push] Background call push received', {
       callId: 'call-3',

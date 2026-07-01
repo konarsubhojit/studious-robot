@@ -205,7 +205,7 @@ export default function Lobby({
     >
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleRow}>
-          <Text style={styles.title}>TCalling</Text>
+          <Text style={styles.title}>WeTalk</Text>
           {missedCallCount > 0 ? (
             <Pressable
               onPress={onMarkMissedRead}

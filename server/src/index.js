@@ -164,7 +164,7 @@ function createServer(opts = {}) {
     if (state.draining) {
       res.status(503).json({
         status: 'draining',
-        service: 'studious-robot-signaling',
+        service: 'wetalk-signaling',
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
       });
@@ -172,7 +172,7 @@ function createServer(opts = {}) {
     }
     res.status(200).json({
       status: 'ok',
-      service: 'studious-robot-signaling',
+      service: 'wetalk-signaling',
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });

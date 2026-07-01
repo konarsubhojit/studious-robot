@@ -3,10 +3,10 @@ import { logError, logInfo, logWarn } from './appLogger';
 import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
 
 /**
- * Push notification helpers for the TCalling mobile app.
+ * Push notification helpers for the WeTalk mobile app.
  *
  * Provides three capabilities:
- *  1. Deep-link parsing  – convert `tcalling://call/{callId}` URLs into call
+ *  1. Deep-link parsing  – convert `wetalk://call/{callId}` URLs into call
  *     descriptors.
  *  2. App-launch detection – retrieve the URL the app was opened from
  *     (notification tap while the app was killed or backgrounded).
@@ -23,12 +23,12 @@ import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
 
 // ─── Deep-link helpers ────────────────────────────────────────────────────────
 
-const DEEP_LINK_SCHEME = 'tcalling';
+const DEEP_LINK_SCHEME = 'wetalk';
 
 /**
- * Parse a TCalling deep-link URL into a call descriptor.
+ * Parse a WeTalk deep-link URL into a call descriptor.
  *
- * Expected format: `tcalling://call/{callId}`
+ * Expected format: `wetalk://call/{callId}`
  *
  * @param {string | null | undefined} url
  * @returns {{ callId: string } | null}
@@ -45,7 +45,7 @@ export function parseCallDeepLink(url) {
 
   if (parsed.protocol !== `${DEEP_LINK_SCHEME}:`) return null;
 
-  // `tcalling://call/{callId}` → protocol=tcalling:, host=call, pathname=/{callId}
+  // `wetalk://call/{callId}` → protocol=wetalk:, host=call, pathname=/{callId}
   const callId = parsed.pathname?.replace(/^\//, '').trim();
   if (parsed.host === 'call' && callId) {
     return { callId };
@@ -284,7 +284,7 @@ export function _extractIncomingCallFromMessage(remoteMessage) {
   return {
     callId,
     callerId: parsedCallerId || null,
-    deepLink: parsedDeepLink || `tcalling://call/${callId}`,
+    deepLink: parsedDeepLink || `wetalk://call/${callId}`,
   };
 }
 

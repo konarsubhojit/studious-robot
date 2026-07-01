@@ -12,7 +12,7 @@
  *  APNs  APNS_KEY         PEM-encoded EC private key (.p8 file contents)
  *        APNS_KEY_ID      10-character key identifier
  *        APNS_TEAM_ID     10-character Apple team identifier
- *        APNS_BUNDLE_ID   App bundle ID (e.g. com.tcalling)
+ *        APNS_BUNDLE_ID   App bundle ID (e.g. com.wetalk)
  *        APNS_PRODUCTION  Set to 'true' to use the production gateway
  *
  *  FCM   FCM_SERVICE_ACCOUNT_JSON  Firebase service-account credentials (JSON
@@ -289,7 +289,7 @@ function buildApnsPayload(callData) {
     callId: callData.callId,
     callerId: callData.callerId,
     type: 'call.incoming',
-    deepLink: `tcalling://call/${callData.callId}`,
+    deepLink: `wetalk://call/${callData.callId}`,
   });
 }
 
@@ -316,7 +316,7 @@ function buildFcmPayload(pushToken, callData) {
         callId: String(callData.callId),
         callerId: String(callData.callerId),
         type: 'call.incoming',
-        deepLink: `tcalling://call/${callData.callId}`,
+        deepLink: `wetalk://call/${callData.callId}`,
       },
       android: { priority: 'high' },
       apns: { headers: { 'apns-priority': '10' } },

@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 
 /**
- * System-level incoming-call UI for the TCalling mobile app.
+ * System-level incoming-call UI for the WeTalk mobile app.
  *
  * Wraps the optional `react-native-callkeep` native module, which surfaces the
  * OS call UI (Android ConnectionService / iOS CallKit) so an incoming call can
@@ -18,21 +18,21 @@ import { logError, logInfo, logWarn } from './appLogger';
 /** Options passed to `RNCallKeep.setup`; tuned for a VoIP calling app. */
 const CALLKEEP_SETUP_OPTIONS = {
   ios: {
-    appName: 'TCalling',
+    appName: 'WeTalk',
     supportsVideo: true,
     maximumCallGroups: '1',
     maximumCallsPerCallGroup: '1',
   },
   android: {
     alertTitle: 'Permissions required',
-    alertDescription: 'TCalling needs access to your phone-call accounts to show incoming calls',
+    alertDescription: 'WeTalk needs access to your phone-call accounts to show incoming calls',
     cancelButton: 'Cancel',
     okButton: 'OK',
     // Show the OS incoming-call UI even when the app is in the background.
     foregroundService: {
-      channelId: 'com.tcalling.callkeep',
+      channelId: 'com.wetalk.callkeep',
       channelName: 'Incoming calls',
-      notificationTitle: 'TCalling is running',
+      notificationTitle: 'WeTalk is running',
     },
     selfManaged: true,
     additionalPermissions: [],

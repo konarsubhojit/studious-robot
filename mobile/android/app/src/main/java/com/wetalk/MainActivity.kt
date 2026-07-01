@@ -1,4 +1,4 @@
-package com.tcalling
+package com.wetalk
 
 import android.app.PictureInPictureParams
 import android.os.Build
@@ -14,7 +14,7 @@ class MainActivity : ReactActivity() {
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
    */
-  override fun getMainComponentName(): String = "TCalling"
+  override fun getMainComponentName(): String = "WeTalk"
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]

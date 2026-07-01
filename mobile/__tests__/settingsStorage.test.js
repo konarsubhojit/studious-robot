@@ -72,7 +72,7 @@ describe('settingsStorage', () => {
       RNFS.writeFile.mockResolvedValue();
       await expect(saveSettings(DEFAULTS)).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
-        '/docs/tcalling-settings.json',
+        '/docs/wetalk-settings.json',
         JSON.stringify(DEFAULTS),
         'utf8',
       );
@@ -114,7 +114,7 @@ describe('settingsStorage', () => {
       RNFS.writeFile.mockResolvedValue();
       await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
-        '/docs/tcalling-identity.json',
+        '/docs/wetalk-identity.json',
         JSON.stringify({ userId: 'bob' }),
         'utf8',
       );
