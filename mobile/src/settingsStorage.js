@@ -1,7 +1,7 @@
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
 
-const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/tcalling-settings.json`;
+const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
 /**
  * Merge persisted settings onto the defaults, keeping only known keys with the
@@ -74,7 +74,7 @@ export const SETTINGS_FILE_PATH = SETTINGS_FILE;
 // Kept in a separate file so it does not interfere with the app-settings file
 // that useWebRTCCall manages independently.
 
-const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/tcalling-identity.json`;
+const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 
 /**
  * Load the persisted user identity.  Returns `{ userId: '' }` when no identity

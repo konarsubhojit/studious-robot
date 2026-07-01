@@ -14,7 +14,7 @@ test('GET /health returns ok status', async () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.status, 'ok');
-    assert.equal(body.service, 'studious-robot-signaling');
+    assert.equal(body.service, 'wetalk-signaling');
     assert.equal(typeof body.uptime, 'number');
     assert.equal(typeof body.timestamp, 'string');
   } finally {

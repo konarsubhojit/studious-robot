@@ -28,7 +28,7 @@ describe('saveCrashLog', () => {
     expect(RNFS.writeFile).toHaveBeenCalledTimes(1);
 
     const [path, content] = RNFS.writeFile.mock.calls[0];
-    expect(path).toMatch(/studious-robot-crash-\d{8}-\d{6}\.txt$/);
+    expect(path).toMatch(/wetalk-crash-\d{8}-\d{6}\.txt$/);
     expect(content).toContain('test crash');
     expect(content).toContain('app log line');
     expect(content).toContain('isFatal: true');

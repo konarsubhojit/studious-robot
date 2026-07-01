@@ -22,10 +22,10 @@ function formatDateForFile(date = new Date()) {
  * @returns {Promise<{success: boolean, path?: string, label?: string}>}
  */
 export async function saveCrashLog(error, isFatal, getLogsCallback) {
-  const fileName = `studious-robot-crash-${formatDateForFile()}.txt`;
+  const fileName = `wetalk-crash-${formatDateForFile()}.txt`;
 
   const content = [
-    'studious-robot crash report',
+    'WeTalk crash report',
     `crashedAt: ${new Date().toISOString()}`,
     `isFatal: ${Boolean(isFatal)}`,
     `error.name: ${error?.name ?? 'unknown'}`,

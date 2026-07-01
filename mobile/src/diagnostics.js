@@ -133,7 +133,7 @@ export function buildExportHeader({
   socket,
 }) {
   const lines = [
-    'TCalling diagnostic logs',
+    'WeTalk diagnostic logs',
     `exportedAt: ${new Date().toISOString()}`,
     `appName: ${appConfig?.displayName || appConfig?.name || 'unknown'}`,
     `applicationId: ${getApplicationId()}`,
@@ -157,7 +157,7 @@ export function buildExportHeader({
 }
 
 export async function writeLogsFile(content) {
-  const fileName = `tcalling-logs-${formatDateForFile()}.txt`;
+  const fileName = `wetalk-logs-${formatDateForFile()}.txt`;
   const targets = Platform.OS === 'android'
     ? [
         { directory: RNFS.DownloadDirectoryPath, label: 'Downloads', primary: true },

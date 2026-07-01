@@ -1,4 +1,4 @@
-package com.tcalling
+package com.wetalk
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -54,7 +54,7 @@ class CallForegroundService : Service() {
 
   private fun buildNotification(): Notification =
     NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle("TCalling")
+      .setContentTitle("WeTalk")
       .setContentText("Call in progress")
       .setSmallIcon(android.R.drawable.ic_menu_call)
       .setOngoing(true)
@@ -62,7 +62,7 @@ class CallForegroundService : Service() {
       .build()
 
   companion object {
-    const val CHANNEL_ID = "studious_robot_calls"
+    const val CHANNEL_ID = "wetalk_calls"
     // Fixed, app-unique notification id for the single ongoing-call notification.
     const val NOTIFICATION_ID = 4173
   }

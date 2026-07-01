@@ -1,7 +1,7 @@
 {
-  "name": "studious-robot-server",
+  "name": "wetalk-server",
   "version": "0.1.0",
-  "description": "Signaling server (Express + Socket.IO) for studious-robot.",
+  "description": "Signaling server (Express + Socket.IO) for WeTalk.",
   "main": "src/index.js",
   "engines": {
     "node": ">=22"
