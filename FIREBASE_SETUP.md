@@ -12,6 +12,7 @@ Complete step-by-step instructions for wiring Firebase into the WeTalk app (Andr
    - [Register the Android app](#21-register-the-android-app)
    - [Download and place google-services.json](#22-download-and-place-google-servicesjson)
    - [Verify Gradle configuration](#23-verify-gradle-configuration)
+   - [GitHub Actions secret for FCM-enabled APK builds](#24-github-actions-secret-for-fcm-enabled-apk-builds)
 4. [Step 3 — iOS app setup](#step-3--ios-app-setup)
    - [Register the iOS app](#31-register-the-ios-app)
    - [Download and place GoogleService-Info.plist](#32-download-and-place-googleservice-infoplist)
@@ -110,6 +111,25 @@ npx react-native run-android
 # or for a release build:
 cd android && ./gradlew assembleRelease
 ```
+
+### 2.4 GitHub Actions secret for FCM-enabled APK builds
+
+To build Android APK artifacts with Firebase Cloud Messaging enabled in GitHub Actions, configure the repository secret `GOOGLE_SERVICES_JSON_B64`:
+
+1. From the repository root, Base64-encode your Android Firebase config:
+
+   ```bash
+   base64 -w 0 mobile/android/app/google-services.json
+   ```
+
+2. Copy the command output (single line) and set it as the repository secret:
+   - GitHub repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+   - **Name:** `GOOGLE_SERVICES_JSON_B64`
+   - **Value:** paste the Base64 string
+
+3. Run the **Android APK** workflow:
+   - `push` to `master` and `workflow_dispatch` require this secret and will fail with an actionable error if it is missing.
+   - `pull_request` runs continue without failure when the secret is unavailable (non-FCM debug build behavior).
 
 ---
 
