@@ -128,7 +128,7 @@ jobs:
           port: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
           script: |
             set -euo pipefail
-            cd /opt/studious-robot
+            cd ~/repos/studious-robot
             git fetch --quiet origin master
             git reset --hard origin/master
             cd server

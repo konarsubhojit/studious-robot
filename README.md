@@ -219,27 +219,27 @@ SIGNALING_URL=https://<your-signaling-host> ./gradlew assembleRelease
 # => app/build/outputs/apk/release/app-release.apk
 ```
 
-### Render signaling backend
+### Oracle Ampere A1 signaling backend
 
-[`render.yaml`](./render.yaml) configures a Render Web Service that:
+The signaling server runs as a systemd service on an **Oracle Cloud Ampere A1 (arm64) VM**. The `backend-ci.yml` workflow SSHes into the VM on every push to `master` and performs a git-pull → npm-ci → graceful service restart automatically.
 
-- Uses the `server/` sub-directory as the root.
-- Runs `npm install --omit=dev` on build and `npm start` to serve.
-- Exposes `/health` as the health-check path.
+**One-time VM setup:** see [`deploy/README.md`](./deploy/README.md) for the full walkthrough (Node.js install, systemd unit, OCI firewall rules, TLS reverse proxy with Caddy/nginx, sudoers config, and Redis).
 
-**One-time Render setup:**
+Required GitHub secrets for automated deploys:
 
-1. Connect the repository to [Render](https://render.com) and choose
-   *"Use render.yaml"* when creating the service.
-2. In the Render dashboard → Environment, set `CORS_ORIGIN` to your mobile app's
-   origin (or your custom domain).
-3. Copy the **Deploy Hook URL** from the Render service settings and save it as a
-   repository secret named `RENDER_DEPLOY_HOOK_URL` in GitHub.
+| Secret | Description |
+|--------|-------------|
+| `DEPLOY_SSH_KEY` | Private key for the deploy SSH key pair |
+| `DEPLOY_SSH_HOST` | VM public IP or hostname |
+| `DEPLOY_SSH_USER` | VM user (`opc` on Oracle Linux) |
+| `DEPLOY_SSH_PORT` | SSH port (optional, defaults to `22`) |
+| `DATABASE_URL_DIRECT` | Neon direct Postgres URL for CI migrations |
+| `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM push |
 
 Once deployed, verify with:
 
 ```bash
-curl https://<your-render-service>.onrender.com/health
+curl https://signal.yourdomain.com/health
 # => {"status":"ok","service":"studious-robot-signaling", ...}
 ```
 
@@ -248,9 +248,9 @@ curl https://<your-render-service>.onrender.com/health
 [`.github/workflows/backend-ci.yml`](./.github/workflows/backend-ci.yml) runs
 automatically on every pull request and push to `master` that touches `server/`:
 
-1. **test** job — installs deps, runs `npm test` (Node built-in test runner).
-2. **deploy** job — on `master` push only, calls the Render deploy hook
-   (`RENDER_DEPLOY_HOOK_URL` secret) so the live service is always up to date.
+1. **test** job — installs deps, runs schema drift check, applies DB migrations, runs `npm test`.
+2. **deploy** job — on `master` push only, SSHes into the Oracle Ampere A1 VM and runs:
+   `git fetch/reset → npm ci --omit=dev → systemctl reload-or-restart robot-signal`.
 
 ### GitHub Actions — Android APKs
 
@@ -282,11 +282,11 @@ Pull Request opened
     │
     ▼
 Merge to master
-    │  ├─ GitHub Actions: "deploy" job triggers Render redeploy
-    │  │      └─ Render builds from master → /health is live within ~2 min
+    │  ├─ GitHub Actions: backend-ci.yml "deploy" job SSHes into Oracle VM
+    │  │      └─ git pull → npm ci → systemctl reload-or-restart → /health ✓
     │  │
     │  └─ GitHub Actions: android-apk.yml builds debug + release APKs
     │         └─ Download app-release-apk from the Actions artifact, install on device
     ▼
-QA installs release APK (no Metro needed), points app to Render URL, tests end-to-end
+QA installs release APK (no Metro needed), points app to Oracle VM URL, tests end-to-end
 ```

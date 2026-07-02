@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 # Run as the Oracle Linux default user; adjust if your VM user differs.
 User=opc
-WorkingDirectory=/opt/studious-robot/server
+WorkingDirectory=%h/repos/studious-robot/server
 # Adjust the node path if Node is installed elsewhere (e.g. /usr/local/bin/node).
 ExecStart=/usr/bin/node src/index.js
 Restart=on-failure

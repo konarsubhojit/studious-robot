@@ -53,19 +53,19 @@ If `node` ends up at a path other than `/usr/bin/node`, update `ExecStart` in `d
 ## 3. Clone the repository
 
 ```bash
-sudo git clone https://github.com/konarsubhojit/studious-robot.git /opt/studious-robot
-sudo chown -R opc:opc /opt/studious-robot
+mkdir -p ~/repos
+git clone https://github.com/konarsubhojit/studious-robot.git ~/repos/studious-robot
 ```
 
-> **Default deploy path:** `/opt/studious-robot`  
-> **Service user:** `opc` (Oracle Linux default; adjust in the unit file if your user differs)
+> **Repo path:** `~/repos/studious-robot`  
+> **Service user:** `opc` (Oracle Linux default; adjust `User=` in the unit file if your user differs)
 
 ---
 
 ## 4. Install production dependencies
 
 ```bash
-cd /opt/studious-robot/server
+cd ~/repos/studious-robot/server
 npm ci --omit=dev
 ```
 
@@ -74,7 +74,7 @@ npm ci --omit=dev
 ## 5. Install the systemd unit
 
 ```bash
-sudo cp /opt/studious-robot/deploy/robot-signal.service /etc/systemd/system/
+sudo cp ~/repos/studious-robot/deploy/robot-signal.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now robot-signal
 sudo systemctl status robot-signal
@@ -348,7 +348,7 @@ On every push to `master` that touches `server/**` or the workflow file, GitHub 
 
 ```bash
 set -euo pipefail
-cd /opt/studious-robot
+cd ~/repos/studious-robot
 git fetch --quiet origin master
 git reset --hard origin/master
 cd server

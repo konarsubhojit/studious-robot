@@ -98,7 +98,7 @@ opt-in verification code:
 | 4 | **Contact list / discovery** | ✅ Server `GET /users` contact-directory endpoint (auth, `?search=` substring, `?limit=`, presence per user, block-aware) + `searchUsers()` in `useCallFlow` + a **Contacts** search section in the Lobby (debounced lookup, presence-aware rows, tap-to-select callee). Remaining: add QR-pair. |
 | 5 | **Lobby is a dev panel** | ✅ The legacy Join-Room / Signaling-URL fields are now hidden behind a "Developer mode" toggle in Settings (persisted; off by default). |
 | 7 | **Presence before calling** | ✅ basic indicator added; optionally subscribe to live presence over the socket instead of one-shot fetch. |
-| 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.js`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown); `render.yaml` provisions a managed key-value instance and injects `REDIS_URL`. The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
+| 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.js`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown). The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
 
 ---
 
@@ -131,7 +131,7 @@ account deletion/data export (GDPR), app icon & splash, i18n
 - Redis for sessions/presence + multi-instance rate limiting (per-process today).
 - `CORS_ORIGIN` defaults to `*` in `deploy/robot-signal.service` — lock down.
 - Error tracking (Sentry/Bugsnag) — `crashReporter.js` only writes local files.
-- Automate Drizzle migrations in the Render build command (`db:migrate`).
+- Automate Drizzle migrations in the Oracle VM deploy step (`db:migrate` — already done in `backend-ci.yml`).
 - Prometheus scrape + alerting on the existing `/metrics` endpoint.
 
 ---

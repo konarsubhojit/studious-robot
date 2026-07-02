@@ -233,8 +233,8 @@ export FCM_SERVICE_ACCOUNT_JSON
 Add this variable to your server's environment:
 
 - **Local development:** add to `server/.env`
-- **Render.com:** add in the dashboard under **Environment** (mark as secret)
-- **Linux VM:** add to `/etc/robot-signal.env`
+- **Oracle VM:** add `Environment=FCM_SERVICE_ACCOUNT_JSON=<minified-json>` to the `[Service]` block in `/etc/systemd/system/robot-signal.service`, then run `sudo systemctl daemon-reload && sudo systemctl restart robot-signal`
+- **Linux VM (systemd):** add to `/etc/robot-signal.env`
 
 Restart the server after setting the variable. You should see this log line at startup:
 
