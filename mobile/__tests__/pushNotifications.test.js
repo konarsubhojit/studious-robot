@@ -300,11 +300,10 @@ describe('getPushToken (native module present)', () => {
   function withMessaging(instance, run) {
     let mod;
     jest.isolateModules(() => {
-      const messagingFn = jest.fn(() => instance);
-      messagingFn.AuthorizationStatus = AUTH;
+      const messagingModule = { ...instance, AuthorizationStatus: AUTH };
       jest.doMock(
         '@react-native-firebase/messaging',
-        () => ({ __esModule: true, default: messagingFn }),
+        () => ({ __esModule: true, default: messagingModule }),
         { virtual: true },
       );
       mod = require('../src/pushNotifications');
@@ -432,15 +431,15 @@ describe('background push handler', () => {
     const setBackgroundMessageHandler = jest.fn();
     let mod;
     jest.isolateModules(() => {
-      const messagingFn = jest.fn(() => ({
+      const messagingModule = {
         requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
         getToken: jest.fn().mockResolvedValue('fcm-token'),
         setBackgroundMessageHandler,
-      }));
-      messagingFn.AuthorizationStatus = AUTH;
+        AuthorizationStatus: AUTH,
+      };
       jest.doMock(
         '@react-native-firebase/messaging',
-        () => ({ __esModule: true, default: messagingFn }),
+        () => ({ __esModule: true, default: messagingModule }),
         { virtual: true },
       );
       mod = require('../src/pushNotifications');
