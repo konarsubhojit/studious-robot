@@ -220,7 +220,7 @@ export async function getPushToken() {
   if (!messaging) return null;
 
   try {
-    const authStatus = await messaging().requestPermission();
+    const authStatus = await messaging.requestPermission();
     const { AuthorizationStatus } = messaging;
     const granted =
       authStatus === AuthorizationStatus?.AUTHORIZED ||
@@ -231,11 +231,11 @@ export async function getPushToken() {
     }
 
     // On iOS the APNs token must be available before the FCM token can be read.
-    if (Platform.OS === 'ios' && typeof messaging().registerDeviceForRemoteMessages === 'function') {
-      await messaging().registerDeviceForRemoteMessages();
+    if (Platform.OS === 'ios' && typeof messaging.registerDeviceForRemoteMessages === 'function') {
+      await messaging.registerDeviceForRemoteMessages();
     }
 
-    const pushToken = await messaging().getToken();
+    const pushToken = await messaging.getToken();
     if (!pushToken) {
       logWarn('[Push] Native messaging returned an empty token');
       return null;
@@ -329,13 +329,12 @@ export function installBackgroundMessageHandler() {
   const messaging = loadMessaging();
   if (!messaging) return false;
 
-  const instance = messaging();
-  if (!instance || typeof instance.setBackgroundMessageHandler !== 'function') {
+  if (typeof messaging.setBackgroundMessageHandler !== 'function') {
     logWarn('[Push] Native messaging module has no background handler API');
     return false;
   }
 
-  instance.setBackgroundMessageHandler(async (remoteMessage) => {
+  messaging.setBackgroundMessageHandler(async (remoteMessage) => {
     try {
       const incoming = await handleBackgroundPushMessage(remoteMessage);
       if (!incoming) {

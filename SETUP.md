@@ -14,8 +14,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
    - [Redis](#redis)
    - [Push notifications — FCM (Android)](#push-notifications--fcm-android)
    - [Push notifications — APNs (iOS)](#push-notifications--apns-ios)
-   - [Deploying to Render.com](#deploying-to-rendercom)
-   - [Deploying to a Linux VM (systemd)](#deploying-to-a-linux-vm-systemd)
+   - [Deploying to Oracle Ampere A1 VM](#deploying-to-oracle-ampere-a1-vm)
 3. [Mobile App Setup](#mobile-app-setup)
    - [Install JS dependencies](#install-js-dependencies)
    - [Environment variables](#mobile-environment-variables)
@@ -42,7 +41,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
 | Xcode | ≥ 15 | macOS only, required for iOS builds |
 | CocoaPods | ≥ 1.14 | `sudo gem install cocoapods` |
 | PostgreSQL | ≥ 15 | Or a managed service like [Neon](https://neon.tech) |
-| Redis | ≥ 7 | Or Render Key-Value / Upstash |
+| Redis | ≥ 7 | Or Upstash / self-hosted on the VM |
 
 ---
 
@@ -141,7 +140,7 @@ docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```
 
-For Render.com the managed Key-Value service is already wired up in `render.yaml`.
+For a single-VM deployment Redis is optional (in-memory state is used). Install it locally on the VM or use a managed service such as Upstash. See [Deploying to Oracle Ampere A1 VM](#deploying-to-oracle-ampere-a1-vm) for setup instructions.
 
 ### Push notifications — FCM (Android)
 
@@ -172,42 +171,65 @@ APNS_BUNDLE_ID=com.example.tcalling     # must match your app's Bundle Identifie
 APNS_PRODUCTION=false                    # true for production / TestFlight
 ```
 
-### Deploying to Render.com
+### Deploying to Oracle Ampere A1 VM
 
-The `render.yaml` blueprint provisions:
+The signaling server runs as a **systemd service** on an Oracle Cloud Ampere A1 (arm64) instance. Automated deploys are handled by the `backend-ci.yml` GitHub Actions workflow, which SSHes into the VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
 
-- A **Web Service** running the Node.js server.
-- A **Key-Value** (Redis) instance for session/presence persistence.
+**One-time VM setup** is covered in detail in [`deploy/README.md`](./deploy/README.md). The condensed steps are:
 
-```bash
-# 1. Fork / push this repo to GitHub
-# 2. Create a new Blueprint in Render.com from the repo
-# 3. Set the following variables in the Render dashboard (marked sync: false):
-#    CORS_ORIGIN, FCM_SERVICE_ACCOUNT_JSON, APNS_KEY, APNS_KEY_ID,
-#    APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_PRODUCTION, DATABASE_URL
-```
+1. **Provision** an Oracle Cloud Ampere A1 VM (Oracle Linux or Ubuntu) and note its public IP.
+2. **Install Node.js 24** (matching `.nvmrc`) via the NodeSource repo:
 
-### Deploying to a Linux VM (systemd)
+   ```bash
+   # Oracle Linux
+   curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
+   sudo dnf install -y nodejs
+   ```
 
-A ready-made service unit is provided at `deploy/robot-signal.service`.
+3. **Clone the repo** and install production dependencies:
 
-```bash
-# Copy the server to the VM
-rsync -av server/ user@vm:/opt/robot-signal/server/
+   ```bash
+   mkdir -p ~/repos
+   git clone https://github.com/konarsubhojit/studious-robot.git ~/repos/studious-robot
+   cd ~/repos/studious-robot/server && npm ci --omit=dev
+   ```
 
-# Install production dependencies on the VM
-ssh user@vm "cd /opt/robot-signal/server && npm install --omit=dev"
+4. **Install the systemd unit** from `deploy/robot-signal.service`:
 
-# Install the systemd unit
-sudo cp deploy/robot-signal.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now robot-signal
+   ```bash
+   sudo cp ~/repos/studious-robot/deploy/robot-signal.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now robot-signal
+   ```
 
-# View logs
-sudo journalctl -u robot-signal -f
-```
+5. **Open port 4173** in both the OCI Security List and the VM host firewall:
 
-Create `/etc/robot-signal.env` (loaded by the unit file) with all `SERVER ENVIRONMENT VARIABLES` listed above.
+   ```bash
+   # Oracle Linux (firewalld)
+   sudo firewall-cmd --permanent --add-port=4173/tcp && sudo firewall-cmd --reload
+   ```
+
+6. **Add a TLS reverse proxy** (Caddy recommended) so the app can use `wss://`:
+
+   ```caddy
+   # /etc/caddy/Caddyfile
+   signal.yourdomain.com {
+       reverse_proxy 127.0.0.1:4173
+   }
+   ```
+
+7. **Add GitHub secrets** for automated deploys:
+
+   | Secret | Description |
+   |--------|-------------|
+   | `DEPLOY_SSH_KEY` | Private key for the deploy SSH key pair |
+   | `DEPLOY_SSH_HOST` | VM public IP or hostname |
+   | `DEPLOY_SSH_USER` | VM user (`opc` on Oracle Linux) |
+   | `DEPLOY_SSH_PORT` | SSH port (optional, defaults to `22`) |
+   | `DATABASE_URL_DIRECT` | Neon direct Postgres URL for CI migrations |
+   | `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM push |
+
+See [`deploy/README.md`](./deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and OCI networking details.
 
 ---
 
@@ -385,7 +407,7 @@ npx react-native run-ios --simulator="iPhone 16"
 | `mobile-ci.yml` | push/PR to `master` touching `mobile/` | Runs Jest unit tests on Ubuntu |
 | `android-apk.yml` | push/PR + `workflow_dispatch` | Builds debug (PR) + debug+release (push) APKs |
 | `ios-ci.yml` | push/PR + `workflow_dispatch` | Runs Jest tests, `pod install`, then `xcodebuild` for the simulator |
-| `backend-ci.yml` | push/PR touching `server/` | Runs server unit tests |
+| `backend-ci.yml` | push/PR touching `server/` | Runs server unit tests; deploys to Oracle Ampere A1 VM on `master` push |
 
 **Required GitHub secrets** (set in repo Settings → Secrets and variables → Actions):
 
@@ -395,6 +417,12 @@ npx react-native run-ios --simulator="iPhone 16"
 | `ROOM_ID` | Android, iOS | Legacy room ID |
 | `TURN_USERNAME` | Android, iOS | TURN relay username |
 | `TURN_CREDENTIAL` | Android, iOS | TURN relay credential |
+| `DEPLOY_SSH_KEY` | backend-ci | Private key for SSH deploy to Oracle VM |
+| `DEPLOY_SSH_HOST` | backend-ci | Oracle VM public IP or hostname |
+| `DEPLOY_SSH_USER` | backend-ci | VM user (`opc` on Oracle Linux) |
+| `DEPLOY_SSH_PORT` | backend-ci | SSH port (optional, defaults to `22`) |
+| `DATABASE_URL_DIRECT` | backend-ci | Neon direct Postgres URL for CI migrations |
+| `FCM_SERVICE_ACCOUNT_JSON` | backend-ci | Firebase service-account JSON for FCM push |
 
 ---
 
