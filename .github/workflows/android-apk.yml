@@ -131,12 +131,34 @@ jobs:
         if: steps.firebase_config.outputs.fcm_enabled == 'true'
         run: |
           set -euo pipefail
-          VALUES_PATH="android/app/build/generated/res/google-services/release/values/values.xml"
+          SEARCH_ROOT="android/app/build/generated/res"
 
-          if [[ ! -f "$VALUES_PATH" ]]; then
-            echo "::error::Expected Firebase generated resource file was not found: $VALUES_PATH"
+          # The google-services plugin (4.3.4+ / Kotlin rewrite) registers its
+          # output via AGP's addGeneratedSourceDirectory, which writes the
+          # generated values.xml into a directory named after the Gradle task
+          # (processReleaseGoogleServices) rather than the legacy
+          # google-services/release path. Locate the file resiliently so this
+          # check keeps working across plugin/AGP versions.
+          VALUES_PATH=""
+          for candidate in \
+            "$SEARCH_ROOT/processReleaseGoogleServices/values/values.xml" \
+            "$SEARCH_ROOT/google-services/release/values/values.xml"; do
+            if [[ -f "$candidate" ]]; then
+              VALUES_PATH="$candidate"
+              break
+            fi
+          done
+
+          if [[ -z "$VALUES_PATH" ]]; then
+            VALUES_PATH="$(find "$SEARCH_ROOT" -type f -name values.xml -path '*GoogleServices*' 2>/dev/null | sort | head -n 1)"
+          fi
+
+          if [[ -z "$VALUES_PATH" || ! -f "$VALUES_PATH" ]]; then
+            echo "::error::Expected Firebase generated resource file (values.xml) was not found under $SEARCH_ROOT"
             exit 1
           fi
+
+          echo "Verifying Firebase generated resources at $VALUES_PATH"
 
           if ! grep -Fq 'name="google_app_id"' "$VALUES_PATH"; then
             echo "::error::Missing google_app_id in $VALUES_PATH"
