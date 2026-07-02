@@ -53,11 +53,62 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # On pull_request events only the debug APK is built (release adds no value
-      # on a feature branch and would duplicate the master-push build).
-      # On push-to-master and workflow_dispatch both APKs are built in a SINGLE
-      # Gradle invocation so the configuration phase and dependency resolution are
-      # paid only once.
+      - name: Configure Firebase google-services.json
+        id: firebase_config
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          set -euo pipefail
+          TARGET_PATH="android/app/google-services.json"
+          validate_google_services_json() {
+            python - "$1" <<'PY'
+            import json
+            import sys
+
+            path = sys.argv[1]
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            clients = data.get("client", [])
+            has_android_client = any(
+                client.get("client_info", {})
+                .get("android_client_info", {})
+                .get("package_name")
+                == "com.wetalk"
+                for client in clients
+            )
+
+            if not has_android_client:
+                raise SystemExit("google-services.json does not contain an Android client for package com.wetalk")
+            PY
+          }
+
+          if [[ -z "${GOOGLE_SERVICES_JSON_B64:-}" ]]; then
+            if [[ -s "$TARGET_PATH" ]]; then
+              validate_google_services_json "$TARGET_PATH"
+              echo "fcm_enabled=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "::warning::GOOGLE_SERVICES_JSON_B64 is not configured and no pre-existing android/app/google-services.json was found. Continuing with non-FCM APK build behavior."
+            rm -f "$TARGET_PATH"
+            echo "fcm_enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          umask 077
+          printf '%s' "$GOOGLE_SERVICES_JSON_B64" | base64 --decode > "$TARGET_PATH"
+
+          if [[ ! -s "$TARGET_PATH" ]]; then
+            echo "::error::Decoded google-services.json is missing or empty at $TARGET_PATH"
+            exit 1
+          fi
+
+          validate_google_services_json "$TARGET_PATH"
+
+          echo "fcm_enabled=true" >> "$GITHUB_OUTPUT"
+
+      # Build release APK only.
       #
       # -PreactNativeArchitectures=arm64-v8a limits the build to one ABI in CI.
       # All four ABIs (armeabi-v7a, arm64-v8a, x86, x86_64) remain the default
@@ -72,24 +123,39 @@ jobs:
         run: |
           chmod +x android/gradlew
           cd android
-          if [[ "${{ github.event_name }}" == "push" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            ./gradlew assembleDebug assembleRelease \
-              --build-cache --no-daemon \
-              -PreactNativeArchitectures=arm64-v8a
-          else
-            ./gradlew assembleDebug \
-              --build-cache --no-daemon \
-              -PreactNativeArchitectures=arm64-v8a
+          ./gradlew assembleRelease \
+            --build-cache --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a
+
+      - name: Verify Firebase generated resources
+        if: steps.firebase_config.outputs.fcm_enabled == 'true'
+        run: |
+          set -euo pipefail
+          VALUES_PATH="android/app/build/generated/res/google-services/release/values/values.xml"
+
+          if [[ ! -f "$VALUES_PATH" ]]; then
+            echo "::error::Expected Firebase generated resource file was not found: $VALUES_PATH"
+            exit 1
+          fi
+
+          if ! grep -Fq 'name="google_app_id"' "$VALUES_PATH"; then
+            echo "::error::Missing google_app_id in $VALUES_PATH"
+            exit 1
+          fi
+
+          if ! grep -Fq 'name="gcm_defaultSenderId"' "$VALUES_PATH"; then
+            echo "::error::Missing gcm_defaultSenderId in $VALUES_PATH"
+            exit 1
           fi
 
       - name: Verify APK permissions
         run: |
           set -euo pipefail
-          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 
           if [[ ! -f "$APK_PATH" ]]; then
-            echo "::error::Debug APK not found at $APK_PATH"
+            echo "::error::Release APK not found at $APK_PATH"
             exit 1
           fi
 
@@ -126,16 +192,7 @@ jobs:
             fi
           done
 
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-apk
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 3
-          if-no-files-found: error
-
       - name: Upload release APK
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk

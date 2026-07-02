@@ -12,13 +12,14 @@ Complete step-by-step instructions for wiring Firebase into the WeTalk app (Andr
    - [Register the Android app](#21-register-the-android-app)
    - [Download and place google-services.json](#22-download-and-place-google-servicesjson)
    - [Verify Gradle configuration](#23-verify-gradle-configuration)
+   - [GitHub Actions secret for FCM-enabled APK builds](#24-github-actions-secret-for-fcm-enabled-apk-builds)
 4. [Step 3 — iOS app setup](#step-3--ios-app-setup)
    - [Register the iOS app](#31-register-the-ios-app)
    - [Download and place GoogleService-Info.plist](#32-download-and-place-googleservice-infoplist)
    - [Add the file to Xcode](#33-add-the-file-to-xcode)
    - [Enable Push Notifications and Background Modes](#34-enable-push-notifications-and-background-modes)
    - [Upload the APNs key to Firebase](#35-upload-the-apns-key-to-firebase)
-5. [Step 4 — Server: FCM push delivery](#step-4--server-fcm-push-delivery)
+5. [Step 4 — Server: FCM push delivery (optional)](#step-4--server-fcm-push-delivery)
    - [Generate a service account key](#41-generate-a-service-account-key)
    - [Configure the server](#42-configure-the-server)
 6. [Step 5 — Verify the integration](#step-5--verify-the-integration)
@@ -110,6 +111,25 @@ npx react-native run-android
 # or for a release build:
 cd android && ./gradlew assembleRelease
 ```
+
+### 2.4 GitHub Actions secret for FCM-enabled APK builds
+
+To build Android APK artifacts with Firebase Cloud Messaging enabled in GitHub Actions, configure the repository secret `GOOGLE_SERVICES_JSON_B64`:
+
+1. From the repository root, Base64-encode your Android Firebase config:
+
+   ```bash
+   base64 -w 0 mobile/android/app/google-services.json
+   ```
+
+2. Copy the command output (single line) and set it as the repository secret:
+   - GitHub repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+   - **Name:** `GOOGLE_SERVICES_JSON_B64`
+   - **Value:** paste the Base64 string
+
+3. Run the **Android APK** workflow:
+   - If the secret is present, CI writes `android/app/google-services.json` and builds an FCM-enabled APK.
+   - If the secret is missing, CI continues without failure and builds a non-FCM APK (unless your runner already has `android/app/google-services.json` pre-provisioned).
 
 ---
 
@@ -203,6 +223,8 @@ npx react-native run-ios --device "Your iPhone Name"
 ---
 
 ## Step 4 — Server: FCM push delivery
+
+> **Optional** — complete this step only if you want the signaling server to send push notifications through FCM. You can skip it for client-only Firebase setup.
 
 The signaling server sends push notifications directly to FCM using the HTTP v1 API. It authenticates with a **service account** JSON key — not with the `google-services.json` client-side file.
 
