@@ -133,8 +133,9 @@ jobs:
           set -euo pipefail
           SEARCH_ROOT="android/app/build/generated/res"
 
-          # The google-services plugin (4.3.4+ / Kotlin rewrite) registers its
-          # output via AGP's addGeneratedSourceDirectory, which writes the
+          # The pinned google-services plugin (4.4.2, part of the Kotlin
+          # rewrite line introduced in 4.3.4) registers its output via AGP's
+          # addGeneratedSourceDirectory, which writes the
           # generated values.xml into a directory named after the Gradle task
           # (processReleaseGoogleServices) rather than the legacy
           # google-services/release path. Locate the file resiliently so this
@@ -150,7 +151,7 @@ jobs:
           done
 
           if [[ -z "$VALUES_PATH" ]]; then
-            VALUES_PATH="$(find "$SEARCH_ROOT" -type f -name values.xml -path '*GoogleServices*' 2>/dev/null | sort | head -n 1)"
+            VALUES_PATH="$(find "$SEARCH_ROOT" -type f -name values.xml -ipath '*GoogleServices*' 2>/dev/null | sort | head -n 1)"
           fi
 
           if [[ -z "$VALUES_PATH" || ! -f "$VALUES_PATH" ]]; then
