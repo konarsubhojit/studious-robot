@@ -60,17 +60,40 @@ jobs:
         run: |
           set -euo pipefail
           TARGET_PATH="android/app/google-services.json"
+          validate_google_services_json() {
+            python - "$1" <<'PY'
+            import json
+            import sys
+
+            path = sys.argv[1]
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            clients = data.get("client", [])
+            has_android_client = any(
+                client.get("client_info", {})
+                .get("android_client_info", {})
+                .get("package_name")
+                == "com.wetalk"
+                for client in clients
+            )
+
+            if not has_android_client:
+                raise SystemExit("google-services.json does not contain an Android client for package com.wetalk")
+            PY
+          }
 
           if [[ -z "${GOOGLE_SERVICES_JSON_B64:-}" ]]; then
-            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-              echo "::warning::GOOGLE_SERVICES_JSON_B64 is not configured for this pull_request run. Continuing with non-FCM APK build behavior."
-              rm -f "$TARGET_PATH"
-              echo "fcm_enabled=false" >> "$GITHUB_OUTPUT"
+            if [[ -s "$TARGET_PATH" ]]; then
+              validate_google_services_json "$TARGET_PATH"
+              echo "fcm_enabled=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
-            echo "::error::Missing repository secret GOOGLE_SERVICES_JSON_B64. From the repository root, configure it with: base64 -w 0 mobile/android/app/google-services.json. This workflow runs from mobile/ and writes to android/app/google-services.json. This secret is required for FCM-enabled APK builds on push to master and workflow_dispatch."
-            exit 1
+            echo "::warning::GOOGLE_SERVICES_JSON_B64 is not configured and no pre-existing android/app/google-services.json was found. Continuing with non-FCM APK build behavior."
+            rm -f "$TARGET_PATH"
+            echo "fcm_enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           umask 077
@@ -81,26 +104,7 @@ jobs:
             exit 1
           fi
 
-          python - "$TARGET_PATH" <<'PY'
-          import json
-          import sys
-
-          path = sys.argv[1]
-          with open(path, "r", encoding="utf-8") as f:
-              data = json.load(f)
-
-          clients = data.get("client", [])
-          has_android_client = any(
-              client.get("client_info", {})
-              .get("android_client_info", {})
-              .get("package_name")
-              == "com.wetalk"
-              for client in clients
-          )
-
-          if not has_android_client:
-              raise SystemExit("google-services.json does not contain an Android client for package com.wetalk")
-          PY
+          validate_google_services_json "$TARGET_PATH"
 
           echo "fcm_enabled=true" >> "$GITHUB_OUTPUT"
 

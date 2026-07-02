@@ -128,8 +128,8 @@ To build Android APK artifacts with Firebase Cloud Messaging enabled in GitHub A
    - **Value:** paste the Base64 string
 
 3. Run the **Android APK** workflow:
-   - `push` to `master` and `workflow_dispatch` require this secret and will fail with an actionable error if it is missing.
-   - `pull_request` runs continue without failure when the secret is unavailable (non-FCM release build behavior).
+   - If the secret is present, CI writes `android/app/google-services.json` and builds an FCM-enabled APK.
+   - If the secret is missing, CI continues without failure and builds a non-FCM APK (unless your runner already has `android/app/google-services.json` pre-provisioned).
 
 ---
 
