@@ -69,7 +69,7 @@ jobs:
               exit 0
             fi
 
-            echo "::error::Missing repository secret GOOGLE_SERVICES_JSON_B64. Configure it with: base64 -w 0 mobile/android/app/google-services.json. This secret is required for FCM-enabled APK builds on push to master and workflow_dispatch."
+            echo "::error::Missing repository secret GOOGLE_SERVICES_JSON_B64. From the repository root, configure it with: base64 -w 0 mobile/android/app/google-services.json. This workflow runs from mobile/ and writes to android/app/google-services.json. This secret is required for FCM-enabled APK builds on push to master and workflow_dispatch."
             exit 1
           fi
 
@@ -127,28 +127,22 @@ jobs:
         if: steps.firebase_config.outputs.fcm_enabled == 'true'
         run: |
           set -euo pipefail
+          VALUES_PATH="android/app/build/generated/res/google-services/release/values/values.xml"
 
-          verify_variant() {
-            local variant="$1"
-            local values_path="android/app/build/generated/res/google-services/${variant}/values/values.xml"
+          if [[ ! -f "$VALUES_PATH" ]]; then
+            echo "::error::Expected Firebase generated resource file was not found: $VALUES_PATH"
+            exit 1
+          fi
 
-            if [[ ! -f "$values_path" ]]; then
-              echo "::error::Expected Firebase generated resource file was not found: $values_path"
-              exit 1
-            fi
+          if ! grep -Fq 'name="google_app_id"' "$VALUES_PATH"; then
+            echo "::error::Missing google_app_id in $VALUES_PATH"
+            exit 1
+          fi
 
-            if ! grep -Fq 'name="google_app_id"' "$values_path"; then
-              echo "::error::Missing google_app_id in $values_path"
-              exit 1
-            fi
-
-            if ! grep -Fq 'name="gcm_defaultSenderId"' "$values_path"; then
-              echo "::error::Missing gcm_defaultSenderId in $values_path"
-              exit 1
-            fi
-          }
-
-          verify_variant "release"
+          if ! grep -Fq 'name="gcm_defaultSenderId"' "$VALUES_PATH"; then
+            echo "::error::Missing gcm_defaultSenderId in $VALUES_PATH"
+            exit 1
+          fi
 
       - name: Verify APK permissions
         run: |

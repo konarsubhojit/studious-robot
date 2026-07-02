@@ -19,7 +19,7 @@ Complete step-by-step instructions for wiring Firebase into the WeTalk app (Andr
    - [Add the file to Xcode](#33-add-the-file-to-xcode)
    - [Enable Push Notifications and Background Modes](#34-enable-push-notifications-and-background-modes)
    - [Upload the APNs key to Firebase](#35-upload-the-apns-key-to-firebase)
-5. [Step 4 — Server: FCM push delivery](#step-4--server-fcm-push-delivery)
+5. [Step 4 — Server: FCM push delivery (optional)](#step-4--server-fcm-push-delivery)
    - [Generate a service account key](#41-generate-a-service-account-key)
    - [Configure the server](#42-configure-the-server)
 6. [Step 5 — Verify the integration](#step-5--verify-the-integration)
@@ -129,7 +129,7 @@ To build Android APK artifacts with Firebase Cloud Messaging enabled in GitHub A
 
 3. Run the **Android APK** workflow:
    - `push` to `master` and `workflow_dispatch` require this secret and will fail with an actionable error if it is missing.
-   - `pull_request` runs continue without failure when the secret is unavailable (non-FCM debug build behavior).
+   - `pull_request` runs continue without failure when the secret is unavailable (non-FCM release build behavior).
 
 ---
 
@@ -223,6 +223,8 @@ npx react-native run-ios --device "Your iPhone Name"
 ---
 
 ## Step 4 — Server: FCM push delivery
+
+> **Optional** — complete this step only if you want the signaling server to send push notifications through FCM. You can skip it for client-only Firebase setup.
 
 The signaling server sends push notifications directly to FCM using the HTTP v1 API. It authenticates with a **service account** JSON key — not with the `google-services.json` client-side file.
 
