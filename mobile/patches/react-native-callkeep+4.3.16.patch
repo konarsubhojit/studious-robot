@@ -2,19 +2,23 @@ diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/ca
 index 025480a..4034b8b 100644
 --- a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
 +++ b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
-@@ -434,7 +434,6 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+@@ -434,7 +434,8 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
          this.hasListeners = false;
      }
  
 -    @ReactMethod
++    // @ReactMethod intentionally omitted: TurboModule cannot register overloaded method names;
++    // the 4-arg overload below is the sole JS bridge entry point. Do not re-add on upgrade.
      public void displayIncomingCall(String uuid, String number, String callerName) {
          this.displayIncomingCall(uuid, number, callerName, false, null);
      }
-@@ -483,7 +482,6 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+@@ -483,7 +484,8 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
          conn.onAnswer();
      }
  
 -    @ReactMethod
++    // @ReactMethod intentionally omitted: TurboModule cannot register overloaded method names;
++    // the 4-arg overload below is the sole JS bridge entry point. Do not re-add on upgrade.
      public void startCall(String uuid, String number, String callerName) {
          this.startCall(uuid, number, callerName, false, null);
      }
