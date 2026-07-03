@@ -10,3 +10,11 @@ index 025480a..4034b8b 100644
      public void displayIncomingCall(String uuid, String number, String callerName) {
          this.displayIncomingCall(uuid, number, callerName, false, null);
      }
+@@ -483,7 +482,6 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
+         conn.onAnswer();
+     }
+ 
+-    @ReactMethod
+     public void startCall(String uuid, String number, String callerName) {
+         this.startCall(uuid, number, callerName, false, null);
+     }
