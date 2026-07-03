@@ -66,6 +66,10 @@ export function startIncomingRingtone() {
 
   try {
     // `start` with `ringback: '_BUNDLE_'` plays the system ringtone on Android.
+    // On iOS, InCallManager does not provide a separate ringback ringtone via
+    // this API; the iOS CallKit / CallKeep path is the preferred ringing
+    // mechanism.  If CallKeep is unavailable on iOS, this call is a safe no-op
+    // (manager.start runs without error but produces no audible output).
     // The `media: false` flag keeps audio routing in voice-call mode.
     if (typeof manager.start === 'function') {
       manager.start({ media: false, ringback: '_BUNDLE_' });

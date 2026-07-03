@@ -1006,7 +1006,7 @@ export default function useCallFlow() {
         // Show system-level incoming-call UI (CallKeep) and start the JS
         // ringtone fallback when CallKeep is unavailable.  Runs async so UI
         // state updates are never blocked if CallKeep setup is slow.
-        showIncomingCallUi(call).catch(() => {});
+        showIncomingCallUi(call).catch((error) => { logWarn('[CallFlow] showIncomingCallUi unexpected error', { message: error?.message }); });
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
@@ -1295,7 +1295,7 @@ export default function useCallFlow() {
           setIncomingCall(call);
           setCallPhase(CALL_PHASES.INCOMING_RINGING);
           setStatus(`Incoming call from ${call.callerId}`);
-          showIncomingCallUi(call).catch(() => {});
+          showIncomingCallUi(call).catch((error) => { logWarn('[CallFlow] showIncomingCallUi unexpected error', { message: error?.message }); });
 
           // Ensure a socket is live so the user can accept / decline.
           if (!socketRef.current?.connected) {
