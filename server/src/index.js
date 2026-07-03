@@ -119,6 +119,11 @@ function createServer(opts = {}) {
   // inject an alternative backend via opts.stores.
   const stores = createStores({ stores: opts.stores });
 
+  // Optional Drizzle db instance for durable persistence of users and devices.
+  // When null/undefined (tests, no DATABASE_URL) the server operates fully
+  // in-memory and skips all DB writes.
+  const db = opts.db ?? null;
+
   const state = {
     rooms: stores.rooms,
     /** @type {Map<string, object>} userId → claimed-identity record */
@@ -198,6 +203,29 @@ function createServer(opts = {}) {
         code: 'identity_conflict',
       });
       return;
+    }
+
+    // Persist a newly claimed identity to DB so verification survives restarts.
+    if (db && claim.claimed && claim.user) {
+      const { users: usersTable } = require('../db/schema');
+      try {
+        await db.insert(usersTable).values({
+          userId: claim.user.userId,
+          verificationHash: claim.user.verificationHash,
+          verificationSalt: claim.user.verificationSalt,
+          createdAt: new Date(claim.user.createdAt),
+          verifiedAt: claim.user.verifiedAt ? new Date(claim.user.verifiedAt) : null,
+        }).onConflictDoUpdate({
+          target: usersTable.userId,
+          set: {
+            verificationHash: claim.user.verificationHash,
+            verificationSalt: claim.user.verificationSalt,
+            verifiedAt: claim.user.verifiedAt ? new Date(claim.user.verifiedAt) : null,
+          },
+        });
+      } catch (err) {
+        console.error('[session] failed to persist user to DB:', err?.message);
+      }
     }
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
@@ -281,7 +309,7 @@ function createServer(opts = {}) {
     res.status(200).json(newSession);
   });
 
-  app.post('/devices/register', (req, res) => {
+  app.post('/devices/register', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -311,6 +339,36 @@ function createServer(opts = {}) {
       lastUnregisteredAt: null,
     });
 
+    // Persist device push-token registration to DB so it survives restarts.
+    if (db) {
+      const { devices: devicesTable } = require('../db/schema');
+      try {
+        await db.insert(devicesTable).values({
+          deviceId: device.deviceId,
+          userId: device.userId,
+          platform: device.platform ?? null,
+          pushProvider: device.pushProvider ?? null,
+          pushToken: device.pushToken ?? null,
+          lastRegisteredAt: device.lastRegisteredAt ? new Date(device.lastRegisteredAt) : null,
+          lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
+          updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: devicesTable.deviceId,
+          set: {
+            userId: device.userId,
+            platform: device.platform ?? null,
+            pushProvider: device.pushProvider ?? null,
+            pushToken: device.pushToken ?? null,
+            lastRegisteredAt: device.lastRegisteredAt ? new Date(device.lastRegisteredAt) : null,
+            lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
+            updatedAt: new Date(),
+          },
+        });
+      } catch (err) {
+        console.error('[devices] failed to persist device registration to DB:', err?.message);
+      }
+    }
+
     res.status(200).json({
       status: 'registered',
       userId: device.userId,
@@ -319,7 +377,7 @@ function createServer(opts = {}) {
     });
   });
 
-  app.post('/devices/unregister', (req, res) => {
+  app.post('/devices/unregister', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -341,6 +399,37 @@ function createServer(opts = {}) {
       pushToken: null,
       lastUnregisteredAt: new Date().toISOString(),
     });
+
+    // Persist the cleared push-token record to DB so the unregistration
+    // survives restarts and push deliveries stop immediately.
+    if (db) {
+      const { devices: devicesTable } = require('../db/schema');
+      try {
+        await db.insert(devicesTable).values({
+          deviceId: device.deviceId,
+          userId: device.userId,
+          platform: device.platform ?? null,
+          pushProvider: null,
+          pushToken: null,
+          lastRegisteredAt: device.lastRegisteredAt ? new Date(device.lastRegisteredAt) : null,
+          lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
+          updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: devicesTable.deviceId,
+          set: {
+            userId: device.userId,
+            platform: device.platform ?? null,
+            pushProvider: null,
+            pushToken: null,
+            lastRegisteredAt: device.lastRegisteredAt ? new Date(device.lastRegisteredAt) : null,
+            lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
+            updatedAt: new Date(),
+          },
+        });
+      } catch (err) {
+        console.error('[devices] failed to persist device unregistration to DB:', err?.message);
+      }
+    }
 
     res.status(200).json({
       status: 'unregistered',
@@ -1207,12 +1296,92 @@ function createServer(opts = {}) {
      * @returns {number} Number of calls transitioned.
      */
     tickRingingTimeouts: (now = Date.now()) => tickRingingTimeouts(state, now),
+    /**
+     * Populate the in-memory state from the Neon database.
+     *
+     * Loads the `users` and `devices` tables into `state.users`,
+     * `state.devices`, and `state.userDevices` so that identity-verification
+     * and push-notification delivery work correctly across server restarts.
+     * A no-op when no `db` was passed to `createServer`.
+     *
+     * @returns {Promise<void>}
+     */
+    loadPersistedState: () => loadPersistedStateFromDb(db, state),
   };
 }
 
 /**
- * Remove a socket from a room, notify the remaining peer, and clean up the
- * room entry if it becomes empty.
+ * Hydrate the in-memory state from the Neon (Postgres) database.
+ *
+ * Reads the `users` and `devices` tables and populates the corresponding
+ * in-memory Maps so that identity verification and push-notification delivery
+ * work correctly after a cold start or rolling restart.
+ *
+ * This is a best-effort operation: failures are logged but do not prevent the
+ * server from starting.  When `db` is null the function is a no-op (i.e. tests
+ * and deployments without `DATABASE_URL` are unaffected).
+ *
+ * @param {import('drizzle-orm/node-postgres').NodePgDatabase|null} db
+ * @param {object} state
+ * @returns {Promise<void>}
+ */
+async function loadPersistedStateFromDb(db, state) {
+  if (!db) return;
+
+  const { users: usersTable, devices: devicesTable } = require('../db/schema');
+
+  // ── Hydrate claimed identities ──────────────────────────────────────────
+  try {
+    const rows = await db.select().from(usersTable);
+    for (const row of rows) {
+      state.users.set(row.userId, {
+        userId: row.userId,
+        verificationHash: row.verificationHash ?? null,
+        verificationSalt: row.verificationSalt ?? null,
+        createdAt: row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : (row.createdAt ?? null),
+        verifiedAt: row.verifiedAt instanceof Date
+          ? row.verifiedAt.toISOString()
+          : (row.verifiedAt ?? null),
+      });
+    }
+    console.log(`[signaling] hydrated ${rows.length} user record(s) from DB`);
+  } catch (err) {
+    console.error('[signaling] failed to hydrate users from DB:', err?.message);
+  }
+
+  // ── Hydrate device registrations ─────────────────────────────────────────
+  try {
+    const rows = await db.select().from(devicesTable);
+    for (const row of rows) {
+      const device = {
+        deviceId: row.deviceId,
+        userId: row.userId,
+        platform: row.platform ?? null,
+        sessionId: null,
+        pushProvider: row.pushProvider ?? null,
+        pushToken: row.pushToken ?? null,
+        lastRegisteredAt: row.lastRegisteredAt instanceof Date
+          ? row.lastRegisteredAt.toISOString()
+          : (row.lastRegisteredAt ?? null),
+        lastUnregisteredAt: row.lastUnregisteredAt instanceof Date
+          ? row.lastUnregisteredAt.toISOString()
+          : (row.lastUnregisteredAt ?? null),
+      };
+      state.devices.set(device.deviceId, device);
+      if (!state.userDevices.has(device.userId)) {
+        state.userDevices.set(device.userId, new Set());
+      }
+      state.userDevices.get(device.userId).add(device.deviceId);
+    }
+    console.log(`[signaling] hydrated ${rows.length} device record(s) from DB`);
+  } catch (err) {
+    console.error('[signaling] failed to hydrate devices from DB:', err?.message);
+  }
+}
+
+/**
  *
  * @param {import('socket.io').Socket} socket
  * @param {string} roomId
@@ -2054,15 +2223,25 @@ if (require.main === module) {
    * Build the server, wiring a Redis-backed store bundle when `REDIS_URL` is
    * configured so sessions/presence survive restarts and scale across
    * instances. Falls back to the in-memory bundle (single instance) otherwise.
+   * When `DATABASE_URL` is set, users and devices are persisted to (and
+   * hydrated from) the Neon Postgres database at startup.
    *
    * @returns {Promise<{ httpServer: import('http').Server, shutdown: Function, stores?: object }>}
    */
   async function bootstrap() {
+    const db = process.env.DATABASE_URL
+      ? require('../db/client').getDb()
+      : null;
+
+    let server;
     if (process.env.REDIS_URL) {
       try {
         const stores = await createRedisPgStores();
         console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
-        const server = createServer({ stores });
+        server = createServer({ stores, db });
+        if (db) {
+          await server.loadPersistedState();
+        }
         return { ...server, stores };
       } catch (err) {
         // Fail closed on an explicitly configured but unreachable Redis so the
@@ -2071,7 +2250,12 @@ if (require.main === module) {
         throw err;
       }
     }
-    return createServer();
+
+    server = createServer({ db });
+    if (db) {
+      await server.loadPersistedState();
+    }
+    return server;
   }
 
   bootstrap()
