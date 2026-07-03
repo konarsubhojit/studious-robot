@@ -31,6 +31,18 @@ describe('RegistrationScreen', () => {
     expect(buttons[0].props.testID).toBe('registration-submit');
   });
 
+  test('renders optional recovery code input', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <RegistrationScreen onRegister={jest.fn()} />,
+      );
+    });
+    expect(
+      tree.root.findAll((n) => n.props.testID === 'registration-recovery-code-input'),
+    ).toHaveLength(2);
+  });
+
   test('Get Started button is disabled when input is empty', () => {
     let tree;
     act(() => {
@@ -52,5 +64,28 @@ describe('RegistrationScreen', () => {
     const btn = tree.root.findAllByType('AppButton')[0];
     expect(btn.props.title).toBe('Setting up…');
     expect(btn.props.disabled).toBe(true);
+  });
+
+  test('submits the username and optional recovery code', () => {
+    const onRegister = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <RegistrationScreen onRegister={onRegister} />,
+      );
+    });
+
+    act(() => {
+      tree.root.findAll((n) => n.props.testID === 'registration-username-input')[0]
+        .props.onChangeText(' alice ');
+      tree.root.findAll((n) => n.props.testID === 'registration-recovery-code-input')[0]
+        .props.onChangeText(' abcd-efgh ');
+    });
+
+    act(() => {
+      tree.root.findAllByType('AppButton')[0].props.onPress();
+    });
+
+    expect(onRegister).toHaveBeenCalledWith('alice', 'ABCD-EFGH');
   });
 });

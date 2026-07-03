@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { colors, radius, spacing } from '../theme';
 import AppButton from './AppButton';
+import StatusBanner from './StatusBanner';
 
 /**
  * First-launch registration screen.
@@ -20,16 +21,18 @@ import AppButton from './AppButton';
  * Purely presentational – all behaviour is supplied via props.
  *
  * @param {object}   props
- * @param {Function} props.onRegister  - `(userId: string) => void` called on submit.
+ * @param {Function} props.onRegister  - `(userId: string, verificationCode?: string) => void` called on submit.
  * @param {boolean}  [props.isLoading] - Shows a loading state while the server is being reached.
+ * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
  */
-export default function RegistrationScreen({ onRegister, isLoading = false }) {
+export default function RegistrationScreen({ onRegister, isLoading = false, status }) {
   const [name, setName] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
 
   const handleSubmit = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    onRegister(trimmed);
+    onRegister(trimmed, recoveryCode.trim());
   };
 
   return (
@@ -48,6 +51,7 @@ export default function RegistrationScreen({ onRegister, isLoading = false }) {
 
         {/* ── Registration form ──────────────────────────────────────────── */}
         <View style={styles.form}>
+          <StatusBanner status={status} />
           <Text style={styles.formTitle}>Choose your username</Text>
           <Text style={styles.formHint}>
             Other people will call you by this name.
@@ -66,6 +70,24 @@ export default function RegistrationScreen({ onRegister, isLoading = false }) {
             style={styles.input}
             accessibilityLabel="Your username"
             testID="registration-username-input"
+          />
+
+          <Text style={styles.optionalLabel}>Already have a recovery code?</Text>
+          <Text style={styles.optionalHint}>
+            If you already claimed this username on another device, enter its recovery code.
+          </Text>
+          <TextInput
+            value={recoveryCode}
+            onChangeText={(value) => setRecoveryCode(value.toUpperCase())}
+            placeholder="Optional recovery code"
+            placeholderTextColor={colors.textSecondary}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            returnKeyType="done"
+            onSubmitEditing={handleSubmit}
+            style={styles.input}
+            accessibilityLabel="Recovery code"
+            testID="registration-recovery-code-input"
           />
 
           <AppButton
@@ -124,6 +146,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  optionalLabel: {
+    color: colors.textPrimary,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  optionalHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   input: {
     borderRadius: radius.sm,
