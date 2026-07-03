@@ -33,11 +33,13 @@ import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers, applyBitrateConstraints } from '../webrtcConfig';
 import {
+  displayIncomingCall,
   endCall as endCallKeepCall,
   registerCallActionListeners as registerCallKeepListeners,
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
 } from '../callKeep';
+import { startIncomingRingtone, stopIncomingRingtone } from '../ringtone';
 import {
   generateVerificationCode,
   normalizeVerificationCode,
@@ -228,6 +230,9 @@ export default function useCallFlow() {
   // Counts consecutive socket connect_error events; resets on a successful
   // connect.  Used to flip isServerUnreachable after OFFLINE_ERROR_THRESHOLD.
   const connectErrorCountRef = useRef(0);
+  // Tracks callIds for which the incoming-call UI has already been shown so
+  // duplicate socket or push events never trigger a second CallKeep display.
+  const displayedIncomingCallIdsRef = useRef(new Set());
 
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
@@ -696,6 +701,46 @@ export default function useCallFlow() {
     }
   }, [setStatus]);
 
+  // ─── Incoming call UI helper ──────────────────────────────────────────────
+
+  /**
+   * Show the system-level incoming-call UI for `call` (via CallKeep) and start
+   * the JS ringtone fallback when CallKeep is unavailable.  Guards against
+   * duplicate display for the same callId.
+   *
+   * Never throws; failures are logged and degraded gracefully.
+   *
+   * @param {{ callId: string, callerId?: string | null }} call
+   */
+  const showIncomingCallUi = useCallback(async (call) => {
+    if (!call?.callId) return;
+    if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
+    displayedIncomingCallIdsRef.current.add(call.callId);
+
+    haptic(400);
+
+    logInfo('[CallFlow] Requesting incoming-call UI', {
+      callId: call.callId,
+      callerId: call.callerId ?? null,
+    });
+
+    const shown = await displayIncomingCall({
+      callId: call.callId,
+      callerId: call.callerId,
+    }).catch((error) => {
+      logWarn('[CallFlow] displayIncomingCall failed', { message: error?.message });
+      return false;
+    });
+
+    logInfo('[CallFlow] Incoming-call UI result', { callId: call.callId, shown });
+
+    if (!shown) {
+      // CallKeep is unavailable – fall back to a JS ringtone so the user still
+      // hears an audible alert in the foreground.
+      startIncomingRingtone();
+    }
+  }, []);
+
   // ─── Call teardown ────────────────────────────────────────────────────────
 
   /**
@@ -717,7 +762,14 @@ export default function useCallFlow() {
       // Dismiss any OS-level call UI (CallKeep) shown for this call.
       if (callRecord?.callId) {
         endCallKeepCall(callRecord.callId);
+        // Allow the same callId to show the incoming-call UI again if the user
+        // receives a completely new call after this one ends.
+        displayedIncomingCallIdsRef.current.delete(callRecord.callId);
       }
+
+      // Stop any JS-layer fallback ringtone (idempotent).
+      stopIncomingRingtone();
+      logInfo('[CallFlow] Ringing stopped');
 
       const durationSeconds = callConnectedAtRef.current
         ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
@@ -947,11 +999,14 @@ export default function useCallFlow() {
       // ── Incoming call ──────────────────────────────────────────────────
       socket.on('call.incoming', ({ call }) => {
         logInfo('[CallFlow] Incoming call', { callId: call.callId, callerId: call.callerId });
-        haptic(400);
         incomingCallRef.current = call;
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
         setStatus(`Incoming call from ${call.callerId}`);
+        // Show system-level incoming-call UI (CallKeep) and start the JS
+        // ringtone fallback when CallKeep is unavailable.  Runs async so UI
+        // state updates are never blocked if CallKeep setup is slow.
+        showIncomingCallUi(call).catch(() => {});
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
@@ -1179,7 +1234,7 @@ export default function useCallFlow() {
 
       return socket;
     },
-    [disconnectSocket, setStatus, signalingUrl],
+    [disconnectSocket, setStatus, showIncomingCallUi, signalingUrl],
   );
 
   // ─── Call rehydration (push-notification deep link) ───────────────────────
@@ -1236,11 +1291,11 @@ export default function useCallFlow() {
           logInfo('[CallFlow] Rehydrated ringing call; showing incoming screen', {
             callId: call.callId,
           });
-          haptic(400);
           incomingCallRef.current = call;
           setIncomingCall(call);
           setCallPhase(CALL_PHASES.INCOMING_RINGING);
           setStatus(`Incoming call from ${call.callerId}`);
+          showIncomingCallUi(call).catch(() => {});
 
           // Ensure a socket is live so the user can accept / decline.
           if (!socketRef.current?.connected) {
@@ -1527,6 +1582,10 @@ export default function useCallFlow() {
       setIncomingCall(null);
       setStatus('Connecting…');
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
+      // Stop any ringing (CallKeep system UI transitions to in-call state;
+      // JS fallback ringtone stops here in case CallKeep was unavailable).
+      stopIncomingRingtone();
+      logInfo('[CallFlow] Ringing stopped (call accepted)');
       // Tell the OS call UI (CallKeep) the call is now active so any ringing
       // system UI shown by a background push transitions to the in-call state.
       reportCallKeepConnected(call.callId);
@@ -1839,6 +1898,15 @@ export default function useCallFlow() {
       logWarn('[CallFlow] Audio route update failed', { message: result.message });
     }
   }, [isInCall, isSpeakerEnabled]);
+
+  // ─── Ringtone cleanup on unmount ─────────────────────────────────────────
+  // Ensure the fallback ringtone never outlives the component tree in case the
+  // hook is unmounted while an incoming call is still ringing.
+  useEffect(() => {
+    return () => {
+      stopIncomingRingtone();
+    };
+  }, []);
 
   // ─── Public interface ─────────────────────────────────────────────────────
 

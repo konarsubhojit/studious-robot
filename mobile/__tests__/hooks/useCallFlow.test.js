@@ -81,6 +81,20 @@ jest.mock('../../src/socketConfig', () => ({
 
 jest.mock('../../src/webrtcConfig', () => ({ getIceServers: jest.fn(() => []) }));
 
+jest.mock('../../src/callKeep', () => ({
+  displayIncomingCall: jest.fn(async () => true),
+  endCall: jest.fn(() => true),
+  endAllCalls: jest.fn(() => true),
+  registerCallActionListeners: jest.fn(() => jest.fn()),
+  reportCallConnected: jest.fn(() => true),
+  setupCallKeep: jest.fn(async () => true),
+}));
+
+jest.mock('../../src/ringtone', () => ({
+  startIncomingRingtone: jest.fn(),
+  stopIncomingRingtone: jest.fn(),
+}));
+
 jest.mock('../../src/pushNotifications', () => ({
   getInitialCallLink: jest.fn(async () => null),
   addCallLinkListener: jest.fn(() => jest.fn()),
@@ -911,5 +925,253 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
     // replaceTrack is guarded by peerConnectionRef.current being non-null;
     // without an active call the sender is not reached in this test.
     expect(mockReplaceTrack).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Incoming-call ringing ────────────────────────────────────────────────────
+
+describe('useCallFlow incoming-call ringing', () => {
+  /**
+   * Helper: find a handler registered with socket.on(event) on the most
+   * recently created socket from the io() mock.
+   */
+  function getSocketHandler(event) {
+    const { io } = require('socket.io-client');
+    // Find the most-recently created socket mock instance.
+    const socketMock = io.mock.results[io.mock.results.length - 1]?.value;
+    if (!socketMock) return undefined;
+    const call = socketMock.on.mock.calls.find(([e]) => e === event);
+    return call?.[1];
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
+    // Default: CallKeep shows the system UI successfully.
+    require('../../src/callKeep').displayIncomingCall.mockResolvedValue(true);
+  });
+
+  /**
+   * Render the hook and establish a socket by setting a userId so the presence
+   * effect fires.  Returns the hook result ref and renderer tree.
+   */
+  async function renderWithSocket() {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-ring', userId: 'alice' }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    // Setting userId triggers the presence effect → createOrGetSession → connectSocket.
+    await act(async () => { resultRef.current.setUserId('alice'); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    // Flush async socket-connection work.
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    return { resultRef, tree };
+  }
+
+  // ── call.incoming ─────────────────────────────────────────────────────────
+
+  test('call.incoming triggers displayIncomingCall with correct args', async () => {
+    await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    expect(handler).toBeDefined();
+
+    const fakeCall = { callId: 'call-1', callerId: 'bob' };
+    await act(async () => { await handler({ call: fakeCall }); });
+    // Flush microtask queue so the async showIncomingCallUi resolves.
+    await act(async () => {});
+
+    const { displayIncomingCall } = require('../../src/callKeep');
+    expect(displayIncomingCall).toHaveBeenCalledTimes(1);
+    expect(displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'call-1',
+      callerId: 'bob',
+    });
+  });
+
+  test('call.incoming transitions to INCOMING_RINGING phase', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-2', callerId: 'carol' };
+    await act(async () => { await handler({ call: fakeCall }); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.INCOMING_RINGING);
+    expect(resultRef.current.incomingCall).toEqual(fakeCall);
+  });
+
+  test('duplicate call.incoming for the same callId calls displayIncomingCall only once', async () => {
+    await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-dup', callerId: 'dave' };
+
+    await act(async () => { await handler({ call: fakeCall }); });
+    await act(async () => {});
+    await act(async () => { await handler({ call: fakeCall }); });
+    await act(async () => {});
+
+    const { displayIncomingCall } = require('../../src/callKeep');
+    expect(displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  test('starts fallback ringtone when CallKeep returns false', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { startIncomingRingtone } = require('../../src/ringtone');
+    displayIncomingCall.mockResolvedValueOnce(false);
+
+    await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-fallback', callerId: 'eve' };
+    await act(async () => { await handler({ call: fakeCall }); });
+    await act(async () => {});
+
+    expect(startIncomingRingtone).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not start fallback ringtone when CallKeep succeeds', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { startIncomingRingtone } = require('../../src/ringtone');
+    displayIncomingCall.mockResolvedValueOnce(true);
+
+    await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    await act(async () => { await handler({ call: { callId: 'call-ck', callerId: 'frank' } }); });
+    await act(async () => {});
+
+    expect(startIncomingRingtone).not.toHaveBeenCalled();
+  });
+
+  // ── Accept stops ringing ──────────────────────────────────────────────────
+
+  test('accepting an incoming call stops the fallback ringtone', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { stopIncomingRingtone } = require('../../src/ringtone');
+    displayIncomingCall.mockResolvedValueOnce(false); // force ringtone fallback
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    // Simulate an incoming call.
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-accept', callerId: 'grace' };
+    await act(async () => { await handler({ call: fakeCall }); });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    // Set up getUserMedia to unblock acceptIncomingCall.
+    const { mediaDevices } = require('react-native-webrtc');
+    const fakeStream = {
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    };
+    mediaDevices.getUserMedia.mockResolvedValueOnce(fakeStream);
+
+    // Accept call – emitWithAck needs the socket emit to call back.
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call: { callId: 'call-accept', callerId: 'grace' } });
+    });
+
+    await act(async () => { await resultRef.current.acceptIncomingCall(); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(stopIncomingRingtone).toHaveBeenCalled();
+  });
+
+  // ── Decline stops ringing ─────────────────────────────────────────────────
+
+  test('declining an incoming call stops ringing', async () => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-decline', callerId: 'henry' };
+    await act(async () => { await handler({ call: fakeCall }); });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    // Stub socket.emit for the decline ack.
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true });
+    });
+
+    await act(async () => { await resultRef.current.declineIncomingCall(); });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(stopIncomingRingtone).toHaveBeenCalled();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  // ── Terminal call.state_changed stops ringing ─────────────────────────────
+
+  test.each([
+    ['declined', 'Call declined'],
+    ['missed',   'Call not answered'],
+    ['busy',     'Callee is busy'],
+    ['unreachable', 'Callee is unreachable'],
+  ])('call.state_changed "%s" stops ringing', async (callStatus) => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    // Simulate an active incoming call first.
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-state', callerId: 'irene' } });
+    });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    // Fire the terminal state change.
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: callStatus,
+        call: { callId: 'call-state', callerId: 'irene' },
+        reason: callStatus,
+      });
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(stopIncomingRingtone).toHaveBeenCalled();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('call.state_changed "ended" stops ringing', async () => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-ended', callerId: 'joe' } });
+    });
+    await act(async () => {});
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'ended',
+        call: { callId: 'call-ended', callerId: 'joe' },
+        reason: 'ended',
+      });
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(stopIncomingRingtone).toHaveBeenCalled();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
 });
