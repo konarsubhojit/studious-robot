@@ -13,6 +13,8 @@ const baseProps = {
   onSaveSignalingUrl: jest.fn(),
   onSignOut: jest.fn(),
   onClose: jest.fn(),
+  verificationCode: 'ABCD-EFGH',
+  status: { message: '', severity: 'info' },
 };
 
 function findByTestID(tree, id) {
@@ -157,5 +159,26 @@ describe('SettingsScreen', () => {
     });
     const toggle = findByTestID(tree, 'settings-developer-mode')[0];
     expect(toggle.props.accessibilityState).toEqual({ checked: true });
+  });
+
+  test('recovery code is hidden until toggled open', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<SettingsScreen {...baseProps} />);
+    });
+
+    const hiddenText = tree.root.findAll(
+      (n) => n.type === 'Text' && n.props.children === '••••-••••',
+    );
+    expect(hiddenText.length).toBeGreaterThanOrEqual(1);
+
+    act(() => {
+      findByTestID(tree, 'settings-toggle-recovery-code')[0].props.onPress();
+    });
+
+    const shownText = tree.root.findAll(
+      (n) => n.type === 'Text' && n.props.children === 'ABCD-EFGH',
+    );
+    expect(shownText.length).toBeGreaterThanOrEqual(1);
   });
 });

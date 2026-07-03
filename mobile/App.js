@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { Platform, SafeAreaView, StatusBar, StyleSheet, View } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { logError } from './src/appLogger';
 import CallScreen from './src/components/CallScreen';
@@ -90,11 +98,12 @@ export default function App() {
   } else if (!callFlow.isRegistered) {
     screenContent = (
       <RegistrationScreen
-        onRegister={(newUserId) => {
-          callFlow.registerUser(newUserId).catch((error) => {
+        onRegister={(newUserId, verificationCode) => {
+          callFlow.registerUser(newUserId, verificationCode).catch((error) => {
             logError('registerUser failed', error);
           });
         }}
+        status={callFlow.status}
       />
     );
   } else if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {
@@ -186,6 +195,8 @@ export default function App() {
         onSaveUserId={callFlow.updateUserId}
         signalingUrl={callFlow.signalingUrl}
         onSaveSignalingUrl={callFlow.setSignalingUrl}
+        verificationCode={callFlow.verificationCode}
+        status={callFlow.status}
         onSignOut={() => {
           setShowSettings(false);
           callFlow.unregisterUser().catch((error) => {
@@ -202,7 +213,7 @@ export default function App() {
     screenContent = (
       <Lobby
         userId={callFlow.userId}
-        onChangeUserId={callFlow.updateUserId}
+        onChangeUserId={callFlow.editUserId}
         calleeId={callFlow.calleeId}
         onChangeCalleeId={callFlow.setCalleeId}
         onCall={() => {
@@ -254,6 +265,10 @@ export default function App() {
   // Compact (Android PiP) mode: replace SafeAreaView with a plain View so
   // system-inset padding is not applied.
   const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
+  const shouldShowRecoveryCodeNotice =
+    !isCompact &&
+    !callFlow.isLoadingIdentity &&
+    Boolean(callFlow.pendingVerificationCode);
 
   return (
     <GestureHandlerRootView style={isCompact ? styles.containerCompact : styles.container}>
@@ -264,6 +279,24 @@ export default function App() {
       ) : (
         <SafeAreaView style={styles.container}>
           {screenContent}
+          {shouldShowRecoveryCodeNotice ? (
+            <View style={styles.recoveryNotice} testID="recovery-code-notice">
+              <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
+              <Text style={styles.recoveryNoticeCode}>{callFlow.pendingVerificationCode}</Text>
+              <Text style={styles.recoveryNoticeText}>
+                Save this code. You’ll need it to use this username on another device.
+              </Text>
+              <Pressable
+                onPress={callFlow.dismissVerificationCodeNotice}
+                accessibilityRole="button"
+                accessibilityLabel="I saved it"
+                testID="recovery-code-dismiss"
+                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.recoveryNoticeButtonText}>I saved it</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
         </SafeAreaView>
       )}
@@ -280,5 +313,56 @@ const styles = StyleSheet.create({
   containerCompact: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  recoveryNotice: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceRaised,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  recoveryNoticeTitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  recoveryNoticeCode: {
+    color: colors.textPrimary,
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginBottom: 8,
+  },
+  recoveryNoticeText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  recoveryNoticeButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: colors.accentButton,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  recoveryNoticeButtonText: {
+    color: colors.textOnAccent,
+    fontWeight: '700',
+  },
+  pressed: {
+    opacity: 0.82,
   },
 });

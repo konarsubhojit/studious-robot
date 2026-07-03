@@ -10,6 +10,10 @@ const SENSITIVE_FIELDS = new Set([
   'token',
   'secret',
   'authorization',
+  'verificationcode',
+  'verification_code',
+  'recoverycode',
+  'recovery_code',
 ]);
 
 function isSensitiveKey(key) {

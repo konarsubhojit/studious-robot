@@ -77,34 +77,45 @@ export const SETTINGS_FILE_PATH = SETTINGS_FILE;
 const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 
 /**
- * Load the persisted user identity.  Returns `{ userId: '' }` when no identity
- * has been saved yet or the file cannot be read.
+ * Load the persisted user identity.  Returns `{ userId: '', verificationCode: '' }`
+ * when no identity has been saved yet or the file cannot be read.
  *
- * @returns {Promise<{ userId: string }>}
+ * @returns {Promise<{ userId: string, verificationCode: string }>}
  */
 export async function loadIdentity() {
   try {
     const exists = await RNFS.exists(IDENTITY_FILE);
-    if (!exists) return { userId: '' };
+    if (!exists) return { userId: '', verificationCode: '' };
     const content = await RNFS.readFile(IDENTITY_FILE, 'utf8');
     const parsed = JSON.parse(content);
-    return { userId: typeof parsed.userId === 'string' ? parsed.userId : '' };
+    return {
+      userId: typeof parsed.userId === 'string' ? parsed.userId : '',
+      verificationCode: typeof parsed.verificationCode === 'string' ? parsed.verificationCode : '',
+    };
   } catch (error) {
     logError('Failed to load identity; using empty default', { message: error?.message });
-    return { userId: '' };
+    return { userId: '', verificationCode: '' };
   }
 }
 
 /**
  * Persist the user identity to disk.  Failures are logged but never thrown.
  *
- * @param {{ userId: string }} identity
+ * @param {{ userId: string, verificationCode: string }} identity
  * @returns {Promise<boolean>} whether the write succeeded
  */
 export async function saveIdentity(identity) {
   try {
-    await RNFS.writeFile(IDENTITY_FILE, JSON.stringify(identity), 'utf8');
-    logInfo('Identity persisted', { userId: identity.userId });
+    await RNFS.writeFile(IDENTITY_FILE, JSON.stringify({
+      userId: typeof identity?.userId === 'string' ? identity.userId : '',
+      verificationCode: typeof identity?.verificationCode === 'string'
+        ? identity.verificationCode
+        : '',
+    }), 'utf8');
+    logInfo('Identity persisted', {
+      userId: identity?.userId,
+      hasVerificationCode: Boolean(identity?.verificationCode),
+    });
     return true;
   } catch (error) {
     logError('Failed to persist identity', { message: error?.message });

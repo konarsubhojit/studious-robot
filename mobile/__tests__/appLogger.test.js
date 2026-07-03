@@ -28,7 +28,12 @@ describe('appLogger', () => {
       nested: { password: 'hidden' },
     };
 
-    logError('connect error', { authorization: '******', err });
+    logError('connect error', {
+      authorization: '******',
+      verificationCode: 'ABCD-EFGH',
+      nestedRecovery: { recovery_code: 'WXYZ-1234' },
+      err,
+    });
     const logs = getLogsAsText();
 
     expect(logs).toContain('[REDACTED]');
@@ -36,6 +41,8 @@ describe('appLogger', () => {
     expect(logs).not.toContain('secret-token');
     expect(logs).not.toContain('hidden');
     expect(logs).not.toContain('******');
+    expect(logs).not.toContain('ABCD-EFGH');
+    expect(logs).not.toContain('WXYZ-1234');
   });
 
   test('clearLogs removes all entries', () => {

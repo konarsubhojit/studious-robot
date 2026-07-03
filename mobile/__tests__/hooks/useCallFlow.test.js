@@ -1,6 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import { generateVerificationCode } from '../../src/identityVerification';
+import { loadIdentity, saveIdentity } from '../../src/settingsStorage';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -87,8 +89,15 @@ jest.mock('../../src/pushNotifications', () => ({
   unregisterPushToken: jest.fn(async () => true),
 }));
 
+jest.mock('../../src/identityVerification', () => ({
+  generateVerificationCode: jest.fn(() => 'ABCD-EFGH'),
+  normalizeVerificationCode: jest.fn((code) => (
+    typeof code === 'string' ? code.trim().toUpperCase() : ''
+  )),
+}));
+
 jest.mock('../../src/settingsStorage', () => ({
-  loadIdentity: jest.fn(async () => ({ userId: '' })),
+  loadIdentity: jest.fn(async () => ({ userId: '', verificationCode: '' })),
   saveIdentity: jest.fn(async () => true),
   loadSettings: jest.fn(async (defaults) => ({ ...defaults })),
   saveSettings: jest.fn(async () => true),
@@ -179,6 +188,94 @@ describe('useCallFlow', () => {
     // Re-render to pick up new state.
     act(() => { tree.update(<TestHook resultRef={resultRef} />); });
     expect(resultRef.current.userId).toBe('alice');
+  });
+
+  test('registerUser generates and persists a verification code', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      await resultRef.current.registerUser(' alice ');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(generateVerificationCode).toHaveBeenCalledTimes(1);
+    expect(saveIdentity).toHaveBeenCalledWith({
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
+    });
+    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
+    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
+  });
+
+  test('loads a legacy identity, generates a verification code, and persists it', async () => {
+    loadIdentity.mockResolvedValueOnce({ userId: 'alice', verificationCode: '' });
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-legacy', userId: 'alice' }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(generateVerificationCode).toHaveBeenCalledTimes(1);
+    expect(saveIdentity).toHaveBeenCalledWith({
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
+    });
+    expect(resultRef.current.userId).toBe('alice');
+    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
+    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
+  });
+
+  test('session creation sends verificationCode when it exists', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-2', userId: 'alice' }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      await resultRef.current.registerUser('alice');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    const sessionRequest = global.fetch.mock.calls.find(([url]) => String(url).endsWith('/session'));
+    expect(sessionRequest).toBeTruthy();
+    expect(JSON.parse(sessionRequest[1].body)).toMatchObject({
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
+    });
+  });
+
+  test('identity conflicts surface a user-friendly status message', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ code: 'identity_conflict' }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      await resultRef.current.registerUser('alice');
+    });
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {});
+    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+
+    expect(resultRef.current.status.severity).toBe('error');
+    expect(resultRef.current.status.message).toMatch(/already claimed/i);
   });
 
   test('setCalleeId updates the calleeId state', () => {

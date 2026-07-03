@@ -85,44 +85,65 @@ describe('settingsStorage', () => {
   });
 
   describe('loadIdentity', () => {
-    test('returns empty userId when no identity file exists', async () => {
+    test('returns empty identity when no identity file exists', async () => {
       RNFS.exists.mockResolvedValue(false);
-      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+      await expect(loadIdentity()).resolves.toEqual({ userId: '', verificationCode: '' });
     });
 
-    test('returns stored userId when file exists', async () => {
+    test('returns stored identity when file exists', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockResolvedValue(JSON.stringify({
+        userId: 'alice',
+        verificationCode: 'ABCD-EFGH',
+      }));
+      await expect(loadIdentity()).resolves.toEqual({
+        userId: 'alice',
+        verificationCode: 'ABCD-EFGH',
+      });
+    });
+
+    test('backfills an empty verificationCode for legacy identity files', async () => {
       RNFS.exists.mockResolvedValue(true);
       RNFS.readFile.mockResolvedValue(JSON.stringify({ userId: 'alice' }));
-      await expect(loadIdentity()).resolves.toEqual({ userId: 'alice' });
+      await expect(loadIdentity()).resolves.toEqual({
+        userId: 'alice',
+        verificationCode: '',
+      });
     });
 
-    test('falls back to empty userId on read errors', async () => {
+    test('falls back to empty identity on read errors', async () => {
       RNFS.exists.mockResolvedValue(true);
       RNFS.readFile.mockRejectedValue(new Error('read failed'));
-      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+      await expect(loadIdentity()).resolves.toEqual({ userId: '', verificationCode: '' });
     });
 
-    test('ignores non-string userId values', async () => {
+    test('ignores non-string identity values', async () => {
       RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(JSON.stringify({ userId: 42 }));
-      await expect(loadIdentity()).resolves.toEqual({ userId: '' });
+      RNFS.readFile.mockResolvedValue(JSON.stringify({
+        userId: 42,
+        verificationCode: 123456,
+      }));
+      await expect(loadIdentity()).resolves.toEqual({ userId: '', verificationCode: '' });
     });
   });
 
   describe('saveIdentity', () => {
     test('writes JSON and resolves true on success', async () => {
       RNFS.writeFile.mockResolvedValue();
-      await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(true);
+      await expect(saveIdentity({
+        userId: 'bob',
+        verificationCode: 'WXYZ-9876',
+      })).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-identity.json',
-        JSON.stringify({ userId: 'bob' }),
+        JSON.stringify({ userId: 'bob', verificationCode: 'WXYZ-9876' }),
         'utf8',
       );
     });
 
     test('resolves false on write failure', async () => {
       RNFS.writeFile.mockRejectedValue(new Error('disk full'));
-      await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(false);
+      await expect(saveIdentity({ userId: 'bob', verificationCode: 'WXYZ-9876' })).resolves.toBe(false);
     });
   });
 });

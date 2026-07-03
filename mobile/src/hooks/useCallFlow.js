@@ -38,6 +38,10 @@ import {
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
 } from '../callKeep';
+import {
+  generateVerificationCode,
+  normalizeVerificationCode,
+} from '../identityVerification';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -144,6 +148,8 @@ export default function useCallFlow() {
   // ─── Identity / connection ────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
   const [userId, setUserId] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [pendingVerificationCode, setPendingVerificationCode] = useState('');
   const [calleeId, setCalleeId] = useState('');
 
   // true while the identity is being loaded from persistent storage on mount.
@@ -196,6 +202,8 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
+  const verificationCodeRef = useRef('');
+  const committedIdentityRef = useRef({ userId: '', verificationCode: '' });
   // Holds the latest authedFetch implementation so the call-history / contact
   // helpers (declared earlier in this hook) can issue 401-recovering requests
   // without referencing the later-declared authedFetch useCallback directly.
@@ -232,35 +240,124 @@ export default function useCallFlow() {
 
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
 
+  const dismissVerificationCodeNotice = useCallback(() => {
+    setPendingVerificationCode('');
+  }, []);
+
+  const commitIdentity = useCallback(async (
+    nextUserId,
+    nextVerificationCode,
+    { announceVerificationCode = false } = {},
+  ) => {
+    const identity = {
+      userId: (nextUserId ?? '').trim(),
+      verificationCode: normalizeVerificationCode(nextVerificationCode),
+    };
+
+    committedIdentityRef.current = identity;
+    verificationCodeRef.current = identity.verificationCode;
+    setUserId(identity.userId);
+    setVerificationCode(identity.verificationCode);
+    setPendingVerificationCode(announceVerificationCode ? identity.verificationCode : '');
+    await saveIdentity(identity);
+    return identity;
+  }, []);
+
+  const editUserId = useCallback((nextUserId) => {
+    const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
+    const trimmedUserId = rawUserId.trim();
+    const committedIdentity = committedIdentityRef.current;
+    const isCommittedIdentity = trimmedUserId === committedIdentity.userId;
+
+    setUserId(rawUserId);
+    if (isCommittedIdentity) {
+      verificationCodeRef.current = committedIdentity.verificationCode;
+      setVerificationCode(committedIdentity.verificationCode);
+    } else {
+      verificationCodeRef.current = '';
+      setVerificationCode('');
+    }
+    setPendingVerificationCode('');
+  }, []);
+
   // ─── Load persisted identity on mount ────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false;
-    loadIdentity().then(({ userId: savedId }) => {
-      if (cancelled) return;
-      if (savedId) {
-        setUserId(savedId);
+
+    const initialiseIdentity = async () => {
+      try {
+        const storedIdentity = await loadIdentity();
+        if (cancelled) return;
+
+        const savedId = (storedIdentity?.userId ?? '').trim();
+        let savedVerificationCode = normalizeVerificationCode(storedIdentity?.verificationCode);
+
+        if (savedId) {
+          const shouldGenerateVerificationCode = !savedVerificationCode;
+          if (shouldGenerateVerificationCode) {
+            savedVerificationCode = generateVerificationCode();
+          }
+
+          committedIdentityRef.current = {
+            userId: savedId,
+            verificationCode: savedVerificationCode,
+          };
+          verificationCodeRef.current = savedVerificationCode;
+          setUserId(savedId);
+          setVerificationCode(savedVerificationCode);
+
+          if (shouldGenerateVerificationCode) {
+            setPendingVerificationCode(savedVerificationCode);
+            setStatus(
+              'Save your recovery code. You’ll need it to use this username on another device.',
+              'info',
+            );
+            void saveIdentity({
+              userId: savedId,
+              verificationCode: savedVerificationCode,
+            });
+            logInfo('[CallFlow] Recovery code generated for stored identity', {
+              userId: savedId,
+              hasVerificationCode: true,
+            });
+          }
+        }
+      } finally {
+        if (!cancelled) setIsLoadingIdentity(false);
       }
-      setIsLoadingIdentity(false);
-    }).catch(() => {
+    };
+
+    initialiseIdentity().catch(() => {
       if (!cancelled) setIsLoadingIdentity(false);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [setStatus]);
 
   /**
    * Register the local user with the given userId.  Persists the identity to
    * disk and updates the in-memory state so the presence socket connects.
    *
    * @param {string} newUserId
+   * @param {string} [existingVerificationCode]
    */
-  const registerUser = useCallback(async (newUserId) => {
+  const registerUser = useCallback(async (newUserId, existingVerificationCode = '') => {
     const trimmed = (newUserId ?? '').trim();
     if (!trimmed) return;
-    setUserId(trimmed);
-    await saveIdentity({ userId: trimmed });
-    logInfo('[CallFlow] User registered', { userId: trimmed });
-  }, []);
+    const nextVerificationCode =
+      normalizeVerificationCode(existingVerificationCode) || generateVerificationCode();
+    const identity = await commitIdentity(trimmed, nextVerificationCode, {
+      announceVerificationCode: true,
+    });
+    setStatus(
+      'Save your recovery code. You’ll need it to use this username on another device.',
+      'success',
+    );
+    logInfo('[CallFlow] User registered', {
+      userId: identity.userId,
+      hasVerificationCode: true,
+    });
+  }, [commitIdentity, setStatus]);
 
   /**
    * Update the active userId and persist the new value.
@@ -269,15 +366,19 @@ export default function useCallFlow() {
    *
    * @param {string} newUserId
    */
-  const updateUserId = useCallback((newUserId) => {
-    setUserId(newUserId);
+  const updateUserId = useCallback(async (newUserId) => {
     const trimmed = (newUserId ?? '').trim();
-    if (trimmed) {
-      saveIdentity({ userId: trimmed }).catch((error) => {
-        logWarn('[CallFlow] Failed to persist userId update', { message: error?.message });
-      });
-    }
-  }, []);
+    if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
+
+    const identity = await commitIdentity(trimmed, generateVerificationCode(), {
+      announceVerificationCode: true,
+    });
+    setStatus('Username updated. Save your new recovery code.', 'success');
+    logInfo('[CallFlow] Username updated', {
+      userId: identity.userId,
+      hasVerificationCode: true,
+    });
+  }, [commitIdentity, setStatus]);
 
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
@@ -291,8 +392,12 @@ export default function useCallFlow() {
       // stops receiving incoming-call notifications.
       await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
     }
+    committedIdentityRef.current = { userId: '', verificationCode: '' };
+    verificationCodeRef.current = '';
     setUserId('');
-    await saveIdentity({ userId: '' });
+    setVerificationCode('');
+    setPendingVerificationCode('');
+    await saveIdentity({ userId: '', verificationCode: '' });
     logInfo('[CallFlow] User unregistered');
   }, [signalingUrl]);
 
@@ -685,16 +790,28 @@ export default function useCallFlow() {
     if (sessionIdRef.current) return sessionIdRef.current;
 
     const trimmedUrl = signalingUrl.trim();
+    const trimmedVerificationCode = normalizeVerificationCode(verificationCodeRef.current);
+    const requestBody = {
+      userId: userId.trim() || undefined,
+      platform: Platform.OS,
+    };
+    if (trimmedVerificationCode) {
+      requestBody.verificationCode = trimmedVerificationCode;
+    }
     const response = await fetch(`${trimmedUrl}/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: userId.trim() || undefined,
-        platform: Platform.OS,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null);
+      if (response.status === 409 && errorPayload?.code === 'identity_conflict') {
+        setStatus(
+          'This username is already claimed. Sign out and choose another username, or enter the recovery code.',
+          'error',
+        );
+      }
       throw new Error(`Session creation failed (HTTP ${response.status})`);
     }
 
@@ -702,7 +819,7 @@ export default function useCallFlow() {
     sessionIdRef.current = data.sessionId;
     logInfo('[CallFlow] Session created', { sessionId: data.sessionId, userId: data.userId });
     return data.sessionId;
-  }, [signalingUrl, userId]);
+  }, [setStatus, signalingUrl, userId]);
 
   /**
    * Refresh the current session via `POST /session/refresh`, rotating the
@@ -1209,11 +1326,7 @@ export default function useCallFlow() {
       sessionIdRef.current = null;
       disconnectSocket();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    // createOrGetSession and connectSocket are stable relative to userId/signalingUrl
-    // – they update exactly when those values change, so listing them would cause
-    // a redundant effect cycle but not a correctness problem.
-  }, [userId, signalingUrl]); // intentionally omitting createOrGetSession, connectSocket, disconnectSocket
+  }, [connectSocket, createOrGetSession, disconnectSocket, signalingUrl, userId]);
 
   // ─── Proactive session refresh ────────────────────────────────────────────
   // Rotate the session token every SESSION_REFRESH_INTERVAL_MS (50 min) while
@@ -1235,7 +1348,7 @@ export default function useCallFlow() {
     }, SESSION_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [userId, signalingUrl, refreshSession]);
+  }, [userId, signalingUrl, refreshSession, setStatus]);
 
   /**
    * Manually retry the presence socket connection when the server appears
@@ -1690,7 +1803,7 @@ export default function useCallFlow() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [isInCall]);
+  }, [isInCall, setStatus]);
 
   // ─── Audio session & device routing ──────────────────────────────────────
 
@@ -1732,9 +1845,13 @@ export default function useCallFlow() {
   return {
     // Identity / connection config
     userId,
+    verificationCode,
     setUserId,
+    editUserId,
     isRegistered,
     isLoadingIdentity,
+    pendingVerificationCode,
+    dismissVerificationCodeNotice,
     registerUser,
     unregisterUser,
     updateUserId,
