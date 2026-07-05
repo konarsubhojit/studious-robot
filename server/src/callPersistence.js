@@ -27,7 +27,7 @@ function toDateOrNull(value) {
 function persistCallRecord(db, call) {
   if (!db || !call?.callId) return;
   const { calls: callsTable } = require('../db/schema');
-  db.insert(callsTable).values({
+  return db.insert(callsTable).values({
     callId: call.callId,
     callerId: call.callerId,
     calleeId: call.calleeId,
@@ -54,7 +54,8 @@ function persistCallRecord(db, call) {
 function persistCallEvent(db, event) {
   if (!db || !event?.eventId) return;
   const { callEvents: callEventsTable } = require('../db/schema');
-  db.insert(callEventsTable).values({
+  // Runtime call events expose `timestamp`; persist it as `createdAt`.
+  return db.insert(callEventsTable).values({
     eventId: event.eventId,
     callId: event.callId,
     event: event.event,

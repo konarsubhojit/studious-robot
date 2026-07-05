@@ -136,6 +136,7 @@ describe('CallScreen', () => {
     });
 
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
+    expect(tree.root.findAllByType('CallTopBar')).toHaveLength(0);
   });
 
   test('keeps error status messages visible', () => {
@@ -150,5 +151,6 @@ describe('CallScreen', () => {
     });
 
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+    expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
   });
 });

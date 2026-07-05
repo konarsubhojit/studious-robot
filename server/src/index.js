@@ -2110,7 +2110,10 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   if (getActiveCallsForUser(state, calleeId).length > 0) {
     status = 'busy';
     endReason = 'busy';
-  } else if (!state.messageBus && isCalleeUnreachable(state, calleeId)) {
+  // In single-instance mode (no cross-instance bus), we can safely short-circuit
+  // unknown callees as `unreachable`. In multi-instance mode, the callee may be
+  // connected to another node, so we allow ringing delivery via user-room fanout.
+  } else if (isSingleInstanceMode(state) && isCalleeUnreachable(state, calleeId)) {
     status = 'unreachable';
     endReason = 'unreachable';
   }
@@ -2258,6 +2261,10 @@ function getActiveCallsForUser(state, userId) {
  */
 function isCalleeUnreachable(state, calleeId) {
   return resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId);
+}
+
+function isSingleInstanceMode(state) {
+  return !state.messageBus;
 }
 
 /**
