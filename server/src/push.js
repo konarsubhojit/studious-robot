@@ -296,9 +296,15 @@ function buildApnsPayload(callData) {
 /**
  * Build an FCM HTTP v1 `messages:send` request body.
  *
- * v1 requires all `data` values to be strings; the notification block is sent
- * separately so the OS renders a system notification while `data` carries the
- * deep-link payload the app consumes.
+ * This is a *data-only* message (no `notification` block).  A `notification`
+ * payload would make Android deliver the message straight to the system tray
+ * and skip the app's `setBackgroundMessageHandler` whenever the app is
+ * backgrounded or killed — so the CallKeep full-screen incoming-call UI would
+ * never show and the phone would not ring.  Sending data-only with
+ * `android.priority: 'high'` wakes the background handler, which then rings the
+ * call via CallKeep.  The human-readable title/body are carried inside `data`
+ * (v1 requires all `data` values to be strings) so the client can still render
+ * a heads-up notification if it chooses.
  *
  * @param {string} pushToken
  * @param {{ callId: string, callerId: string }} callData
@@ -308,15 +314,13 @@ function buildFcmPayload(pushToken, callData) {
   return JSON.stringify({
     message: {
       token: pushToken,
-      notification: {
-        title: 'Incoming call',
-        body: `Call from ${callData.callerId}`,
-      },
       data: {
         callId: String(callData.callId),
         callerId: String(callData.callerId),
         type: 'call.incoming',
         deepLink: `wetalk://call/${callData.callId}`,
+        title: 'Incoming call',
+        body: `Call from ${callData.callerId}`,
       },
       android: { priority: 'high' },
       apns: { headers: { 'apns-priority': '10' } },

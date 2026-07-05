@@ -133,8 +133,11 @@ test('acquires an OAuth2 token then posts a valid v1 message payload', async () 
 
       const payload = JSON.parse(sendReq.body);
       assert.equal(payload.message.token, 'device-token-123');
-      assert.equal(payload.message.notification.title, 'Incoming call');
-      assert.equal(payload.message.notification.body, 'Call from alice');
+      // Data-only message: no top-level `notification` block, so the app's
+      // background message handler fires CallKeep even when backgrounded/killed.
+      assert.equal(payload.message.notification, undefined);
+      assert.equal(payload.message.data.title, 'Incoming call');
+      assert.equal(payload.message.data.body, 'Call from alice');
       assert.equal(payload.message.data.callId, 'call-abc');
       assert.equal(payload.message.data.callerId, 'alice');
       assert.equal(payload.message.data.type, 'call.incoming');

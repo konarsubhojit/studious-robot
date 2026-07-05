@@ -171,6 +171,27 @@ jobs:
             exit 1
           fi
 
+      - name: Verify bundled icon font
+        run: |
+          set -euo pipefail
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+
+          if [[ ! -f "$APK_PATH" ]]; then
+            echo "::error::Release APK not found at $APK_PATH"
+            exit 1
+          fi
+
+          # react-native-vector-icons/fonts.gradle copies the font into
+          # assets/fonts/ inside the APK.  Confirm the calling-UI icon font is
+          # present so the icons render on-device instead of falling back to emoji.
+          FONT_ENTRY="assets/fonts/MaterialCommunityIcons.ttf"
+          if ! unzip -l "$APK_PATH" | grep -Fq "$FONT_ENTRY"; then
+            echo "::error::Icon font $FONT_ENTRY is missing from the built APK; calling-UI icons will not render"
+            unzip -l "$APK_PATH" | grep -F 'assets/fonts/' || true
+            exit 1
+          fi
+          echo "Verified $FONT_ENTRY is bundled in the APK"
+
       - name: Verify APK permissions
         run: |
           set -euo pipefail

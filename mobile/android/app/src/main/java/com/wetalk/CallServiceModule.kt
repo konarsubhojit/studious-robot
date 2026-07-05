@@ -28,13 +28,25 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
       reactContext.startService(intent)
     }
     isCallActive = true
+    refreshPictureInPictureParams()
   }
 
   @ReactMethod
   fun stopService() {
     isCallActive = false
+    refreshPictureInPictureParams()
     val intent = Intent(reactContext, CallForegroundService::class.java)
     reactContext.stopService(intent)
+  }
+
+  /**
+   * Ask the current [MainActivity] to re-sync its Picture-in-Picture params with
+   * the new call state so Android 12+ auto-enter reflects whether a call is
+   * active. Runs on the UI thread; no-ops when the activity is unavailable.
+   */
+  private fun refreshPictureInPictureParams() {
+    val activity = reactApplicationContext.currentActivity as? MainActivity ?: return
+    activity.runOnUiThread { activity.updatePictureInPictureParams() }
   }
 
   @ReactMethod

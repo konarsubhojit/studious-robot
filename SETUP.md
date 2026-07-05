@@ -310,21 +310,33 @@ The `@react-native-firebase/app` and `@react-native-firebase/messaging` packages
 
 ### Android — Vector icon fonts
 
-`react-native-vector-icons` requires the Material Community Icons font to be copied into the Android assets during the build:
-
-1. Open `android/app/build.gradle` and add inside the `android { ... }` block:
+`react-native-vector-icons` requires the Material Community Icons font to be
+copied into the Android assets during the build. **This is now wired up
+automatically** — `android/app/build.gradle` applies the packaged
+`fonts.gradle` and bundles `MaterialCommunityIcons.ttf` into the APK:
 
 ```groovy
+project.ext.vectoricons = [
+    iconFontNames: ['MaterialCommunityIcons.ttf'],
+]
 apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
 ```
 
-2. Rebuild the app:
+No manual step is required; just rebuild the app:
 
 ```bash
 cd mobile/android && ./gradlew assembleDebug
 ```
 
-If the font is missing at runtime, `IconButton` degrades to emoji icons automatically.
+To confirm the font is actually inside a built APK:
+
+```bash
+unzip -l app-release.apk | grep assets/fonts/MaterialCommunityIcons.ttf
+```
+
+The Android APK CI workflow performs this same check on every build. If the
+font is ever missing at runtime, `IconButton` degrades to emoji icons
+automatically.
 
 ### iOS — Firebase setup
 
@@ -353,9 +365,8 @@ CallKit displays native incoming-call UI and integrates with the system phone ap
 
 ### iOS — Vector icon fonts
 
-1. In Xcode, open the project, then select **File → Add Files to "StudiousRobot"**.
-2. Navigate to `mobile/node_modules/react-native-vector-icons/Fonts/` and add `MaterialCommunityIcons.ttf` to your target.
-3. Open `ios/StudiousRobot/Info.plist` and add the font to `UIAppFonts`:
+`MaterialCommunityIcons.ttf` is already declared in
+`ios/StudiousRobot/Info.plist` under `UIAppFonts`:
 
 ```xml
 <key>UIAppFonts</key>
@@ -364,7 +375,12 @@ CallKit displays native incoming-call UI and integrates with the system phone ap
 </array>
 ```
 
-4. Clean and rebuild (`Cmd + Shift + K`, then `Cmd + B`).
+You still need to add the font file to the Xcode target so it ships in the app
+bundle:
+
+1. In Xcode, open the project, then select **File → Add Files to "StudiousRobot"**.
+2. Navigate to `mobile/node_modules/react-native-vector-icons/Fonts/` and add `MaterialCommunityIcons.ttf` to your target.
+3. Clean and rebuild (`Cmd + Shift + K`, then `Cmd + B`).
 
 If the font file is missing at runtime, `IconButton` degrades to emoji icons automatically.
 
