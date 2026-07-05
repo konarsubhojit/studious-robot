@@ -102,8 +102,6 @@ export default function CallScreen({
     visibleStatus?.severity,
   ]);
 
-  useEffect(() => clearControlsAutoHide, [clearControlsAutoHide]);
-
   return (
     <Pressable
       style={[styles.callScreen, isCompact && styles.callScreenCompact]}

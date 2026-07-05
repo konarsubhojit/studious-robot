@@ -51,12 +51,17 @@ export default function AppButton({
 const styles = StyleSheet.create({
   button: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 48,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accentButton,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.24,
+    shadowRadius: 4,
+    elevation: 3,
   },
   buttonActive: {
     backgroundColor: colors.danger,

@@ -205,9 +205,11 @@ export default function SettingsScreen({
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
+    backgroundColor: colors.background,
   },
   content: {
     padding: spacing.lg,
+    paddingBottom: spacing.xl,
   },
   statusBanner: {
     marginBottom: spacing.sm,

@@ -120,7 +120,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
       {/* ── Action button ─────────────────────────────────────────────────── */}
       <View style={styles.actions}>
         <IconButton
-          icon="✕"
+          icon="callEnd"
           label="Cancel"
           onPress={onCancel}
           variant="danger"

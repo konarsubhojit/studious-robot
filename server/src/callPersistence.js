@@ -54,19 +54,16 @@ function persistCallRecord(db, call) {
 function persistCallEvent(db, event) {
   if (!db || !event?.eventId) return;
   const { callEvents: callEventsTable } = require('../db/schema');
-  const query = db.insert(callEventsTable).values({
+  db.insert(callEventsTable).values({
     eventId: event.eventId,
     callId: event.callId,
     event: event.event,
     actor: event.actor ?? null,
     reason: event.reason ?? null,
     createdAt: toDateOrNull(event.timestamp) ?? new Date(),
+  }).catch((error) => {
+    console.error('[calls] failed to persist call event to DB:', error?.message);
   });
-  if (typeof query?.catch === 'function') {
-    query.catch((error) => {
-      console.error('[calls] failed to persist call event to DB:', error?.message);
-    });
-  }
 }
 
 async function hydrateCallsAndEventsFromDb(db, state) {
