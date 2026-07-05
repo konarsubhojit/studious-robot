@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
 import { colors, radius, spacing } from '../theme';
+import IconButton from './IconButton';
 
 // Speaker and earpiece are always selectable; Bluetooth and wired headset are
 // merged in only when the OS reports them as available.
@@ -42,6 +43,7 @@ export default function AudioOutputMenu({
   const effectiveSelected =
     selected || (isSpeakerEnabled ? AUDIO_ROUTES.SPEAKER_PHONE : AUDIO_ROUTES.EARPIECE);
   const currentLabel = getAudioRouteLabel(effectiveSelected);
+  const currentIcon = effectiveSelected === AUDIO_ROUTES.SPEAKER_PHONE ? 'speaker' : 'speakerOff';
 
   const handleSelect = (route) => {
     setIsOpen(false);
@@ -50,22 +52,15 @@ export default function AudioOutputMenu({
 
   return (
     <>
-      <Pressable
+      <IconButton
+        icon={currentIcon}
         onPress={() => setIsOpen(true)}
         disabled={disabled}
-        accessibilityRole="button"
+        variant="default"
+        size={52}
         accessibilityLabel={`Audio output: ${currentLabel}. Tap to change`}
-        accessibilityState={{ disabled, expanded: isOpen }}
         testID="audio-output-trigger"
-        style={({ pressed }) => [
-          styles.trigger,
-          disabled && styles.triggerDisabled,
-          pressed && styles.triggerPressed,
-        ]}
-      >
-        <Text style={styles.triggerText} numberOfLines={1}>{`🔊 ${currentLabel}`}</Text>
-        <Text style={styles.caret}>▾</Text>
-      </Pressable>
+      />
 
       <Modal
         visible={isOpen}
@@ -108,31 +103,6 @@ export default function AudioOutputMenu({
 }
 
 const styles = StyleSheet.create({
-  trigger: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.accentButton,
-  },
-  triggerDisabled: {
-    opacity: 0.55,
-  },
-  triggerPressed: {
-    opacity: 0.88,
-  },
-  triggerText: {
-    color: colors.textOnAccent,
-    fontWeight: '700',
-  },
-  caret: {
-    color: colors.textOnAccent,
-    fontWeight: '700',
-  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',

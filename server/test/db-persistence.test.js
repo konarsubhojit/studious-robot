@@ -11,6 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
+const schema = require('../db/schema');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,15 +41,20 @@ async function postJson(url, path, body, sessionId) {
  * Build a minimal mock Drizzle db that records every `.insert()` call.
  * The `.select().from()` chain returns the given `selectRows`.
  */
-function buildMockDb({ selectRows = [] } = {}) {
+function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
   const inserts = [];
+  const deletes = [];
 
   const db = {
     inserts,
+    deletes,
 
     select() {
       return {
-        from(_table) {
+        from(table) {
+          if (selectRowsByTable.has(table)) {
+            return Promise.resolve(selectRowsByTable.get(table));
+          }
           return Promise.resolve(selectRows);
         },
       };
@@ -61,11 +67,29 @@ function buildMockDb({ selectRows = [] } = {}) {
         values(v) {
           entry.values = v;
           return {
+            then(resolve, reject) {
+              return Promise.resolve().then(resolve, reject);
+            },
+            catch(reject) {
+              return Promise.resolve().catch(reject);
+            },
             onConflictDoUpdate({ set }) {
               entry.conflictSet = set;
               return Promise.resolve();
             },
+            onConflictDoNothing() {
+              return Promise.resolve();
+            },
           };
+        },
+      };
+    },
+
+    delete(table) {
+      return {
+        where(condition) {
+          deletes.push({ table, condition });
+          return Promise.resolve();
         },
       };
     },
@@ -189,6 +213,36 @@ test('POST /devices/unregister persists the cleared push token to the DB', async
   }
 });
 
+test('POST /calls persists call records and call events to the DB', async () => {
+  const db = buildMockDb();
+  const { url, teardown } = await startServer({ db });
+
+  try {
+    const caller = await postJson(url, '/session', {
+      userId: 'user-call-persist-caller',
+      deviceId: 'device-call-persist-caller',
+    });
+    assert.equal(caller.status, 201);
+
+    const created = await postJson(
+      url,
+      '/calls',
+      { calleeId: 'user-call-persist-callee' },
+      caller.body.sessionId,
+    );
+    assert.equal(created.status, 201);
+
+    const insertsIntoCalls = db.inserts.filter((entry) => entry.table === schema.calls);
+    const insertsIntoCallEvents = db.inserts.filter((entry) => entry.table === schema.callEvents);
+    assert.ok(insertsIntoCalls.length >= 1, 'expected at least one calls table upsert');
+    assert.ok(insertsIntoCallEvents.length >= 1, 'expected at least one call_events insert');
+    assert.equal(insertsIntoCalls[0].values.callerId, 'user-call-persist-caller');
+    assert.equal(insertsIntoCalls[0].values.calleeId, 'user-call-persist-callee');
+  } finally {
+    await teardown();
+  }
+});
+
 // ─── loadPersistedState() – hydrates users and devices from DB ───────────────
 
 test('loadPersistedState() populates state.users from DB rows', async () => {
@@ -222,6 +276,55 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
     server.httpServer.closeAllConnections?.();
     await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
   }
+});
+
+test('loadPersistedState() hydrates calls and call events from DB rows', async () => {
+  const callRows = [
+    {
+      callId: '00000000-0000-4000-8000-000000000111',
+      callerId: 'user-calls-hydrate-a',
+      calleeId: 'user-calls-hydrate-b',
+      status: 'declined',
+      endReason: 'declined',
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+      updatedAt: new Date('2025-01-01T00:01:00Z'),
+      ringTimeoutAt: null,
+    },
+  ];
+  const eventRows = [
+    {
+      eventId: '00000000-0000-4000-8000-000000000112',
+      callId: '00000000-0000-4000-8000-000000000111',
+      event: 'created',
+      actor: 'user-calls-hydrate-a',
+      reason: null,
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+    },
+  ];
+  const blockRows = [{ blockerId: 'user-calls-hydrate-a', blockeeId: 'user-calls-hydrate-b' }];
+  const db = buildMockDb({
+    selectRowsByTable: new Map([
+      [schema.users, []],
+      [schema.devices, []],
+      [schema.calls, callRows],
+      [schema.callEvents, eventRows],
+      [schema.blocks, blockRows],
+    ]),
+  });
+  const server = createServer({ db });
+
+  await server.loadPersistedState();
+
+  const hydratedCall = server.getCall('00000000-0000-4000-8000-000000000111');
+  assert.ok(hydratedCall, 'call should be available after hydration');
+  assert.equal(hydratedCall.status, 'declined');
+
+  const hydratedEvents = server.getCallEvents('00000000-0000-4000-8000-000000000111');
+  assert.equal(hydratedEvents.length, 1);
+  assert.equal(hydratedEvents[0].event, 'created');
+
+  server.httpServer.closeAllConnections?.();
+  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
 });
 
 test('loadPersistedState() populates state.devices and state.userDevices from DB rows', async () => {

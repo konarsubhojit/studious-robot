@@ -26,7 +26,7 @@ describe('callKeep with the native module absent', () => {
     jest.resetModules();
     jest.doMock('react-native-callkeep', () => {
       throw new Error('missing native module');
-    }, { virtual: true });
+    });
     _resetCallKeepCache();
   });
 
@@ -62,7 +62,7 @@ describe('callKeep with the native module present', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
-    jest.doMock('react-native-callkeep', () => ({ default: mockCallKeep }), { virtual: true });
+    jest.doMock('react-native-callkeep', () => ({ default: mockCallKeep }));
     mod = require('../src/callKeep');
     mod._resetCallKeepCache();
   });

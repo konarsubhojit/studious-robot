@@ -1,24 +1,21 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { spacing } from '../theme';
 import CallStage from './CallStage';
+import CallControls from './CallControls';
 import CallTopBar from './CallTopBar';
-import DraggableCallControls from './DraggableCallControls';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
 
 const STATUS_AUTO_HIDE_MS = 3000;
+const CONTROLS_AUTO_HIDE_MS = 3000;
 
 /**
- * Full in-call screen: top bar, reconnect banner, video stage, floating
- * draggable controls, and the status line.  Purely presentational — all
- * behaviour is supplied via props from the useWebRTCCall /
- * usePictureInPicturePip hooks.
+ * Full-screen in-call screen with tap-to-toggle overlay controls.
  */
 export default function CallScreen({
   elapsedCallSeconds,
   connectionQuality,
-  participantLabel,
   isReconnecting,
   onRetry,
   onStageLayout,
@@ -44,6 +41,23 @@ export default function CallScreen({
   isCompact = false,
 }) {
   const [visibleStatus, setVisibleStatus] = useState(null);
+  const [showControlsOverlay, setShowControlsOverlay] = useState(true);
+  const controlsAutoHideTimerRef = useRef(null);
+
+  const clearControlsAutoHide = useCallback(() => {
+    if (controlsAutoHideTimerRef.current) {
+      clearTimeout(controlsAutoHideTimerRef.current);
+      controlsAutoHideTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleControlsAutoHide = useCallback(() => {
+    clearControlsAutoHide();
+    controlsAutoHideTimerRef.current = setTimeout(() => {
+      setShowControlsOverlay(false);
+      controlsAutoHideTimerRef.current = null;
+    }, CONTROLS_AUTO_HIDE_MS);
+  }, [clearControlsAutoHide]);
 
   useEffect(() => {
     const message = status?.message?.trim();
@@ -68,26 +82,32 @@ export default function CallScreen({
     return () => clearTimeout(timeout);
   }, [isCompact, isReconnecting, status?.message, status?.severity]);
 
+  useEffect(() => {
+    if (isCompact) {
+      clearControlsAutoHide();
+      setShowControlsOverlay(false);
+      return undefined;
+    }
+    if (showControlsOverlay && visibleStatus?.severity !== 'error') {
+      scheduleControlsAutoHide();
+    } else {
+      clearControlsAutoHide();
+    }
+    return clearControlsAutoHide;
+  }, [
+    clearControlsAutoHide,
+    isCompact,
+    scheduleControlsAutoHide,
+    showControlsOverlay,
+    visibleStatus?.severity,
+  ]);
+
   return (
-    <View style={[styles.callScreen, isCompact && styles.callScreenCompact]}>
-      {!isCompact ? (
-        <CallTopBar
-          elapsedCallSeconds={elapsedCallSeconds}
-          connectionQuality={connectionQuality}
-          participantLabel={participantLabel}
-        />
-      ) : null}
-
-      {!isCompact && isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
-
-      {!isCompact && visibleStatus ? (
-        <StatusBanner
-          status={visibleStatus}
-          style={styles.inCallStatus}
-          textStyle={styles.inCallStatusText}
-        />
-      ) : null}
-
+    <Pressable
+      style={[styles.callScreen, isCompact && styles.callScreenCompact]}
+      onPress={() => setShowControlsOverlay((prev) => !prev)}
+      testID="call-screen-root"
+    >
       <CallStage
         onLayout={onStageLayout}
         mainStreamUrl={mainStreamUrl}
@@ -103,41 +123,72 @@ export default function CallScreen({
         isCompact={isCompact}
       />
 
-      {!isCompact ? (
-        <DraggableCallControls
-          isMuted={isMuted}
-          isVideoEnabled={isVideoEnabled}
-          hasLocalStream={hasLocalStream}
-          audioDevices={audioDevices}
-          isSpeakerEnabled={isSpeakerEnabled}
-          onMuteToggle={onMuteToggle}
-          onVideoToggle={onVideoToggle}
-          onChooseAudioOutput={onChooseAudioOutput}
-          onCameraSwitch={onCameraSwitch}
-          onLeave={onLeave}
-        />
-      ) : null}
+      {!isCompact && showControlsOverlay ? (
+        <View style={styles.overlay} pointerEvents="box-none">
+          <View style={styles.topOverlay}>
+            <CallTopBar
+              elapsedCallSeconds={elapsedCallSeconds}
+              connectionQuality={connectionQuality}
+            />
+            {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
+            {visibleStatus ? (
+              <StatusBanner
+                status={visibleStatus}
+                style={styles.inCallStatus}
+                textStyle={styles.inCallStatusText}
+              />
+            ) : null}
+          </View>
 
-    </View>
+          <View style={styles.bottomOverlay}>
+            <CallControls
+              isMuted={isMuted}
+              isVideoEnabled={isVideoEnabled}
+              hasLocalStream={hasLocalStream}
+              audioDevices={audioDevices}
+              isSpeakerEnabled={isSpeakerEnabled}
+              onMuteToggle={onMuteToggle}
+              onVideoToggle={onVideoToggle}
+              onChooseAudioOutput={onChooseAudioOutput}
+              onCameraSwitch={onCameraSwitch}
+              onLeave={onLeave}
+            />
+          </View>
+        </View>
+      ) : null}
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   callScreen: {
     flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   callScreenCompact: {
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 0,
   },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+  },
+  topOverlay: {
+    gap: spacing.sm,
+  },
+  bottomOverlay: {
+    alignItems: 'center',
+  },
   inCallStatus: {
     alignSelf: 'flex-start',
     maxWidth: '72%',
-    marginBottom: spacing.sm,
+    marginBottom: 0,
   },
   inCallStatusText: {
     textAlign: 'left',

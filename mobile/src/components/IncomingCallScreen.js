@@ -121,7 +121,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
       {/* ── Action buttons ────────────────────────────────────────────────── */}
       <View style={styles.actions}>
         <IconButton
-          icon="✕"
+          icon="callEnd"
           label="Decline"
           onPress={onDecline}
           variant="danger"
@@ -130,7 +130,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
           testID="incoming-decline"
         />
         <IconButton
-          icon="✓"
+          icon="callAccept"
           label="Accept"
           onPress={onAccept}
           variant="success"

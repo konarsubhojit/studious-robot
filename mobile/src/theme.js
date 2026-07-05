@@ -9,36 +9,36 @@
  */
 
 export const colors = {
-  // Backgrounds / surfaces (warm dark browns)
-  background: '#2d2329',
-  backgroundAlt: '#2e242a',
-  surface: '#45313a',
-  surfaceRaised: '#3d2d35',
-  surfaceControl: '#4b3741',
-  surfaceBanner: '#5a434d',
-  stage: '#3a2c34',
-  stageDark: '#201a1e',
-  pipBackground: '#1f171c',
+  // Backgrounds / surfaces (midnight blue)
+  background: '#0b1020',
+  backgroundAlt: '#121a2e',
+  surface: '#17213b',
+  surfaceRaised: '#1d2947',
+  surfaceControl: '#243154',
+  surfaceBanner: '#2a3a63',
+  stage: '#0f172a',
+  stageDark: '#070b16',
+  pipBackground: '#060a13',
 
   // Borders
-  border: '#6d5057',
-  borderStage: '#7d5962',
-  borderInactiveBar: '#78606b',
+  border: '#33456f',
+  borderStage: '#3a4d7c',
+  borderInactiveBar: '#4a5f8f',
 
   // Text
-  textPrimary: '#fff5e8',
-  textSecondary: '#dec8b5',
-  textMuted: '#f1ddcb',
-  textOnAccent: '#3a2127',
+  textPrimary: '#f6f8ff',
+  textSecondary: '#b6c5ea',
+  textMuted: '#8ca3d5',
+  textOnAccent: '#0d1f4a',
 
   // Accents / semantic
-  accent: '#ffd4a3',
-  accentButton: '#f3cfa9',
-  accentValue: '#ffd4a3',
-  danger: '#f08d89',
-  success: '#8be7a5',
-  warning: '#ffd9a8',
-  blob: '#f9d2a8',
+  accent: '#7cb4ff',
+  accentButton: '#8eb9ff',
+  accentValue: '#98c2ff',
+  danger: '#ff7b8a',
+  success: '#5be2a2',
+  warning: '#ffd27a',
+  blob: '#9ec2ff',
 };
 
 export const spacing = {
@@ -46,6 +46,7 @@ export const spacing = {
   sm: 8,
   md: 12,
   lg: 16,
+  xl: 24,
 };
 
 export const radius = {

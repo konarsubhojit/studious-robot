@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { colors, spacing } from '../theme';
+import { spacing } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
 
@@ -26,8 +26,7 @@ export default function CallControls({
     <View style={styles.controls}>
       <View style={styles.mediaRow}>
         <IconButton
-          icon={isMuted ? '🔇' : '🎤'}
-          label={isMuted ? 'Unmute' : 'Mute'}
+          icon={isMuted ? 'micOff' : 'micOn'}
           onPress={onMuteToggle}
           variant={isMuted ? 'active' : 'default'}
           disabled={!hasLocalStream}
@@ -36,8 +35,7 @@ export default function CallControls({
           testID="control-mute"
         />
         <IconButton
-          icon={isVideoEnabled ? '📷' : '🚫'}
-          label={isVideoEnabled ? 'Video off' : 'Video on'}
+          icon={isVideoEnabled ? 'videoOn' : 'videoOff'}
           onPress={onVideoToggle}
           variant={isVideoEnabled ? 'default' : 'active'}
           disabled={!hasLocalStream}
@@ -52,8 +50,7 @@ export default function CallControls({
           onSelect={onChooseAudioOutput}
         />
         <IconButton
-          icon="🔄"
-          label="Flip"
+          icon="cameraSwitch"
           onPress={onCameraSwitch}
           variant="default"
           disabled={!hasLocalStream}
@@ -64,8 +61,7 @@ export default function CallControls({
       </View>
 
       <IconButton
-        icon="✕"
-        label="Leave"
+        icon="callEnd"
         onPress={onLeave}
         variant="danger"
         size={56}
@@ -89,4 +85,3 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
-

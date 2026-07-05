@@ -1,11 +1,10 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
-import { colors, radius, spacing } from '../theme';
+import { colors } from '../theme';
 import DraggablePip from './DraggablePip';
 
 /**
- * The video stage: cozy background blobs, the primary remote (or swapped local)
- * stream with a waiting placeholder, and the draggable PiP self-view overlay.
+ * The full-screen video stage: primary stream plus optional PiP self-view.
  *
  * @param {object} props
  * @param {(event: object) => void} props.onLayout
@@ -47,8 +46,6 @@ export default function CallStage({
       ]}
       onLayout={onLayout}
     >
-      <View style={[styles.cozyBlob, styles.cozyBlobTop]} />
-      <View style={[styles.cozyBlob, styles.cozyBlobBottom]} />
       {hasMainStream ? (
         <SafeRTCView
           fallbackLabel="Call video unavailable"
@@ -81,13 +78,12 @@ export default function CallStage({
 const styles = StyleSheet.create({
   callStage: {
     flex: 1,
-    minHeight: 280,
-    borderRadius: radius.xl,
+    minHeight: 0,
+    borderRadius: 0,
     overflow: 'hidden',
-    marginBottom: spacing.md,
+    marginBottom: 0,
     backgroundColor: colors.stage,
-    borderWidth: 1,
-    borderColor: colors.borderStage,
+    borderWidth: 0,
   },
   callStageCompact: {
     marginBottom: 0,
@@ -97,22 +93,6 @@ const styles = StyleSheet.create({
   },
   callStageLandscape: {
     minHeight: 120,
-  },
-  cozyBlob: {
-    position: 'absolute',
-    width: 170,
-    height: 170,
-    borderRadius: 85,
-    backgroundColor: colors.blob,
-    opacity: 0.14,
-  },
-  cozyBlobTop: {
-    top: -70,
-    left: -45,
-  },
-  cozyBlobBottom: {
-    bottom: -90,
-    right: -45,
   },
   remoteStream: {
     flex: 1,
