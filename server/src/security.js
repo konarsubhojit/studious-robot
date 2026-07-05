@@ -145,11 +145,43 @@ function listBlocks(blocks, blockerId) {
  *   `block.removed`     – a user unblocked another user
  *   `session.refreshed` – a session token was rotated
  *
+ * When a Drizzle `db` handle is supplied, every recorded event is *also*
+ * persisted (fire-and-forget) to the `audit_log` table so the security trail
+ * survives restarts and is queryable outside this process.  DB failures are
+ * logged but never block the in-memory record or the request that triggered it.
+ *
+ * @param {{ db?: object|null }} [options]
  * @returns {AuditLog}
  */
-function createAuditLog() {
+function createAuditLog({ db = null } = {}) {
   /** @type {Array<{auditId: string, timestamp: string, event: string, actor: string|null, target: string|null, outcome: string, details: object}>} */
   const entries = [];
+
+  /**
+   * Best-effort durable persistence of a single audit record.  No-op when no
+   * `db` is configured (tests / no DATABASE_URL).
+   *
+   * @param {object} entry
+   */
+  function persist(entry) {
+    if (!db) return;
+    try {
+      const { auditLog: auditLogTable } = require('../db/schema');
+      db.insert(auditLogTable).values({
+        auditId: entry.auditId,
+        ts: new Date(entry.timestamp),
+        event: entry.event,
+        actor: entry.actor,
+        target: entry.target,
+        outcome: entry.outcome,
+        details: entry.details ?? {},
+      }).catch((err) => {
+        console.error('[security] failed to persist audit event to DB:', err?.message);
+      });
+    } catch (err) {
+      console.error('[security] failed to persist audit event to DB:', err?.message);
+    }
+  }
 
   return {
     /**
@@ -161,7 +193,7 @@ function createAuditLog() {
       if (entries.length >= MAX_AUDIT_LOG_SIZE) {
         entries.shift();
       }
-      entries.push({
+      const entry = {
         auditId: randomUUID(),
         timestamp: new Date().toISOString(),
         event,
@@ -169,7 +201,9 @@ function createAuditLog() {
         target,
         outcome,
         details,
-      });
+      };
+      entries.push(entry);
+      persist(entry);
     },
 
     /**

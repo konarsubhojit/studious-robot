@@ -1,0 +1,293 @@
+'use strict';
+
+const { MAX_ROOM_SIZE } = require('../config');
+const { normaliseId } = require('../lib/normalize');
+const { isBlocked } = require('../security');
+const { resolveSocketIdentity } = require('../lib/auth');
+const {
+  ensurePresenceRecord,
+  upsertDevice,
+  addConnection,
+  removeConnection,
+  userRoom,
+} = require('../lib/state');
+const { createCallRecord } = require('../domain/calls');
+const { notifyCallCreated } = require('../domain/notifications');
+const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
+const {
+  requireSocketSession,
+  validateSignalingVersion,
+  acknowledgeSuccess,
+  acknowledgeError,
+} = require('./ack');
+const { isPlainObject } = require('../lib/normalize');
+
+/**
+ * Remove `socket` from a legacy signaling room, tidying up the room set and
+ * notifying any remaining peer.
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {string} roomId
+ * @param {Map<string, Set<string>>} rooms
+ */
+function leaveRoom(socket, roomId, rooms) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  room.delete(socket.id);
+  socket.leave(roomId);
+  console.log(`[signaling] leave: socket ${socket.id} left room "${roomId}" (size=${room.size})`);
+
+  if (room.size === 0) {
+    rooms.delete(roomId);
+  } else {
+    // Notify remaining peer(s).
+    socket.to(roomId).emit('peer-left', { id: socket.id });
+  }
+}
+
+/**
+ * Wire up all Socket.IO connection and event handlers.
+ *
+ * @param {import('socket.io').Server} io
+ * @param {{ state: object, ringingTimeoutMs: number }} ctx
+ */
+function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
+  io.on('connection', (socket) => {
+    // Reject connections that race in after shutdown has begun: tell the client
+    // this instance is draining so it can reconnect elsewhere, then disconnect.
+    if (state.draining) {
+      socket.emit('server.draining', { reason: 'shutdown', ts: new Date().toISOString() });
+      socket.disconnect(true);
+      return;
+    }
+
+    const identity = resolveSocketIdentity(socket, state.sessions);
+    socket.data.identity = identity;
+    ensurePresenceRecord(state, identity.userId);
+    upsertDevice(state, identity);
+    addConnection(state, {
+      userId: identity.userId,
+      socketId: socket.id,
+      deviceId: identity.deviceId,
+      sessionId: identity.sessionId,
+      connectedAt: new Date().toISOString(),
+    });
+    // Join a per-user room so call/RTC notifications can be addressed to the
+    // user regardless of which instance their socket(s) live on (the Socket.IO
+    // Redis adapter fans the emit out across instances).
+    socket.join(userRoom(identity.userId));
+
+    console.log(
+      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
+    );
+    // Track which room this socket is currently in (one room per socket).
+    let currentRoom = null;
+
+    socket.on('join-room', (roomId) => {
+      if (typeof roomId !== 'string' || roomId.length === 0) return;
+
+      if (!state.rooms.has(roomId)) {
+        state.rooms.set(roomId, new Set());
+      }
+      const room = state.rooms.get(roomId);
+
+      if (room.size >= MAX_ROOM_SIZE) {
+        console.log(`[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room.size})`);
+        socket.emit('room-full', { roomId });
+        return;
+      }
+
+      // Leave any previous room before joining a new one.
+      if (currentRoom !== null) {
+        leaveRoom(socket, currentRoom, state.rooms);
+      }
+
+      currentRoom = roomId;
+      room.add(socket.id);
+      socket.join(roomId);
+      console.log(`[signaling] join: socket ${socket.id} joined room "${roomId}" (size=${room.size})`);
+
+      // Notify existing peer that a new participant joined.
+      socket.to(roomId).emit('peer-joined', { id: socket.id });
+    });
+
+    socket.on('offer', ({ roomId, sdp } = {}) => {
+      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      console.log(`[signaling] relay offer: from ${socket.id} in room "${roomId}"`);
+      socket.to(roomId).emit('offer', { from: socket.id, sdp });
+    });
+
+    socket.on('answer', ({ roomId, sdp } = {}) => {
+      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      console.log(`[signaling] relay answer: from ${socket.id} in room "${roomId}"`);
+      socket.to(roomId).emit('answer', { from: socket.id, sdp });
+    });
+
+    socket.on('ice-candidate', ({ roomId, candidate } = {}) => {
+      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      console.log(`[signaling] relay ice-candidate: from ${socket.id} in room "${roomId}"`);
+      socket.to(roomId).emit('ice-candidate', { from: socket.id, candidate });
+    });
+
+    socket.on('call.initiate', (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, 'call.initiate')) {
+        return;
+      }
+      if (!validateSignalingVersion(socket, payload, ack, 'call.initiate')) {
+        return;
+      }
+
+      const calleeId = normaliseId(payload.calleeId);
+      if (!calleeId) {
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'calleeId is required', state);
+        return;
+      }
+      if (calleeId === socket.data.identity.userId) {
+        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'cannot call yourself', state);
+        return;
+      }
+
+      // Blocklist: reject when the callee has blocked this caller.
+      if (isBlocked(state.blocks, calleeId, socket.data.identity.userId)) {
+        state.auditLog.record({
+          event: 'call.blocked',
+          actor: socket.data.identity.userId,
+          target: calleeId,
+          outcome: 'rejected',
+          details: { via: 'websocket' },
+        });
+        console.log(
+          `[security] call.blocked callerId=${socket.data.identity.userId} calleeId=${calleeId} via=websocket`,
+        );
+        acknowledgeError(socket, ack, 'call.initiate', 'blocked', 'you are blocked by this user', state);
+        return;
+      }
+
+      // Rate limit: cap call initiations per user per window.
+      const rateCheck = state.callInitRateLimiter.check(socket.data.identity.userId);
+      if (!rateCheck.allowed) {
+        state.auditLog.record({
+          event: 'call.rate_limited',
+          actor: socket.data.identity.userId,
+          outcome: 'rejected',
+          details: { via: 'websocket' },
+        });
+        console.log(`[security] call.rate_limited userId=${socket.data.identity.userId} via=websocket`);
+        acknowledgeError(socket, ack, 'call.initiate', 'rate_limited', 'too many call attempts', state);
+        return;
+      }
+
+      const call = createCallRecord(state, {
+        callerId: socket.data.identity.userId,
+        calleeId,
+        ringingTimeoutMs,
+      });
+      notifyCallCreated(io, state, call);
+      acknowledgeSuccess(socket, ack, 'call.initiate', { call });
+    });
+
+    socket.on('call.accept', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.accept',
+        nextStatus: 'accepted',
+        authorize: (call, userId) => (
+          call.calleeId === userId
+            ? null
+            : 'only the callee can accept a call'
+        ),
+      });
+    });
+
+    socket.on('call.decline', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.decline',
+        nextStatus: 'declined',
+        reason: 'declined',
+        authorize: (call, userId) => (
+          call.calleeId === userId
+            ? null
+            : 'only the callee can decline a call'
+        ),
+      });
+    });
+
+    socket.on('call.cancel', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.cancel',
+        nextStatus: 'ended',
+        reason: 'cancelled',
+        authorize: (call, userId) => (
+          call.callerId === userId
+            ? null
+            : 'only the caller can cancel a call'
+        ),
+      });
+    });
+
+    socket.on('call.end', (payload = {}, ack) => {
+      handleSocketCallTransition(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.end',
+        nextStatus: 'ended',
+        reason: 'ended',
+        authorize: (call, userId) => (
+          call.callerId === userId || call.calleeId === userId
+            ? null
+            : 'not a participant in this call'
+        ),
+      });
+    });
+
+    socket.on('rtc.offer', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.offer',
+        dataKey: 'sdp',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    socket.on('rtc.answer', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.answer',
+        dataKey: 'sdp',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    socket.on('rtc.candidate', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'rtc.candidate',
+        dataKey: 'candidate',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);
+      if (currentRoom !== null) {
+        leaveRoom(socket, currentRoom, state.rooms);
+        currentRoom = null;
+      }
+      removeConnection(state, socket.data.identity?.userId, socket.id);
+    });
+  });
+}
+
+module.exports = {
+  registerSocketHandlers,
+  leaveRoom,
+};
