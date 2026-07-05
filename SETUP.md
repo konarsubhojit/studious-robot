@@ -406,7 +406,6 @@ npx react-native run-ios --simulator="iPhone 16"
 |----------|---------|--------------|
 | `mobile-ci.yml` | push/PR to `master` touching `mobile/` | Runs Jest unit tests on Ubuntu |
 | `android-apk.yml` | push/PR + `workflow_dispatch` | Builds debug (PR) + debug+release (push) APKs |
-| `ios-ci.yml` | push/PR + `workflow_dispatch` | Runs Jest tests, `pod install`, then `xcodebuild` for the simulator |
 | `backend-ci.yml` | push/PR touching `server/` | Runs server unit tests; deploys to Oracle Ampere A1 VM on `master` push |
 
 **Required GitHub secrets** (set in repo Settings → Secrets and variables → Actions):
