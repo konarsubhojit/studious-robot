@@ -1,6 +1,7 @@
 package com.wetalk
 
 import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Rational
 import com.facebook.react.ReactActivity
@@ -24,22 +25,89 @@ class MainActivity : ReactActivity() {
       DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
   /**
+   * Keep the Picture-in-Picture params in sync with the current call state. On
+   * Android 12+ (S) this enables `autoEnterEnabled`, which makes the system move
+   * the activity into PiP automatically on *any* app-leave gesture — including
+   * the Back gesture/button, which never triggers [onUserLeaveHint]. Called
+   * whenever the call becomes active/inactive so PiP works reliably regardless of
+   * how the user leaves the screen.
+   */
+  fun updatePictureInPictureParams() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !supportsPictureInPicture()) {
+      return
+    }
+    try {
+      setPictureInPictureParams(buildPipParams(autoEnter = CallServiceModule.isCallActive))
+    } catch (_: IllegalStateException) {
+      // Activity not in a valid state to update PiP params; ignore.
+    }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    // Re-apply auto-enter on resume so a call started while backgrounded (e.g.
+    // answered from the system UI) still auto-enters PiP on the next app-leave.
+    updatePictureInPictureParams()
+  }
+
+  /**
    * Enter Picture-in-Picture automatically when the user leaves the app (e.g. presses Home)
    * while a call is active, so the call keeps playing in a small floating window.
    */
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && CallServiceModule.isCallActive) {
-      val params =
-        PictureInPictureParams.Builder()
-          .setAspectRatio(
-            Rational(
-              CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
-              CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
-            ),
-          )
-          .build()
-      enterPictureInPictureMode(params)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+        CallServiceModule.isCallActive &&
+        supportsPictureInPicture()) {
+      enterPipSafely()
     }
   }
+
+  /**
+   * The Back gesture/button does not trigger [onUserLeaveHint]. On Android 12+
+   * `autoEnterEnabled` covers Back, but on Android 8–11 we must enter PiP here
+   * explicitly (instead of finishing the activity) so an active call keeps
+   * running in a floating window when the user navigates back.
+   */
+  @Deprecated("Deprecated in Java")
+  @Suppress("DEPRECATION")
+  override fun onBackPressed() {
+    if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S &&
+        CallServiceModule.isCallActive &&
+        supportsPictureInPicture() &&
+        enterPipSafely()) {
+      return
+    }
+    super.onBackPressed()
+  }
+
+  /** Whether this device advertises Picture-in-Picture support. */
+  private fun supportsPictureInPicture(): Boolean =
+      packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+  /** Build PiP params, enabling auto-enter on Android 12+ when requested. */
+  private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
+    val builder =
+        PictureInPictureParams.Builder()
+            .setAspectRatio(
+                Rational(
+                    CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
+                    CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
+                ),
+            )
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      builder.setAutoEnterEnabled(autoEnter)
+    }
+    return builder.build()
+  }
+
+  /** Enter PiP, swallowing device/OEM failures. Returns true when entered. */
+  private fun enterPipSafely(): Boolean =
+      try {
+        enterPictureInPictureMode(buildPipParams(autoEnter = false))
+      } catch (_: IllegalStateException) {
+        false
+      } catch (_: IllegalArgumentException) {
+        false
+      }
 }

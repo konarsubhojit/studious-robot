@@ -5,6 +5,15 @@ if (file("google-services.json").exists()) {
     apply plugin: "com.google.gms.google-services"
 }
 
+// Bundle the vector-icon font(s) used by the calling UI into the APK assets so
+// react-native-vector-icons glyphs render on-device instead of falling back to
+// emoji.  Only MaterialCommunityIcons is used by the app (see mobile/src/vectorIcons.js),
+// so restrict the copy to that font to keep the APK small.
+project.ext.vectoricons = [
+    iconFontNames: ['MaterialCommunityIcons.ttf'],
+]
+apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.

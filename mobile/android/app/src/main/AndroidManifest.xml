@@ -29,6 +29,8 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.audio.output" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- Picture-in-Picture keeps the call video visible when the app is backgrounded. -->
+    <uses-feature android:name="android.software.picture_in_picture" android:required="false" />
 
     <application
       android:name=".MainApplication"

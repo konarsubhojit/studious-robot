@@ -131,13 +131,10 @@ jobs:
             cd ~/repos/studious-robot
             git fetch --quiet origin master
             git reset --hard origin/master
-            cd server
-            npm ci --omit=dev
-            # Graceful, rolling-friendly restart: systemd sends SIGTERM, the app
-            # drains in-flight connections (see TimeoutStopSec in the unit file),
-            # then the new process starts.  reload-or-restart starts the service
-            # if it is not already running.
-            sudo systemctl reload-or-restart robot-signal
-            # Verify the service came back up; fail the job if it did not.
-            sleep 2
-            sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
+            # Install prod deps and restart the service via the shared deploy
+            # script (single source of truth for VM + CI deploys). Graceful,
+            # rolling-friendly restart: systemd sends SIGTERM, the app drains
+            # in-flight connections (see TimeoutStopSec in the unit file), then
+            # the new process starts. The script re-verifies the service is
+            # active afterwards and fails the job if it did not come back up.
+            bash deploy/deploy.sh
