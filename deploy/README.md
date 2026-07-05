@@ -351,11 +351,19 @@ set -euo pipefail
 cd ~/repos/studious-robot
 git fetch --quiet origin master
 git reset --hard origin/master
-cd server
-npm ci --omit=dev
-sudo systemctl reload-or-restart robot-signal
-sleep 2
-sudo systemctl is-active --quiet robot-signal && echo "robot-signal is running"
+# Install prod deps + restart the service (pulls changes, then restarts).
+bash deploy/deploy.sh
+```
+
+`deploy/deploy.sh` is the single source of truth for the deploy cycle and can
+also be run manually over SSH on the VM. It pulls the target branch, installs
+production dependencies, restarts the service **after** pulling the changes, and
+verifies the service came back up:
+
+```bash
+# Manual redeploy on the VM (uses the same script CI runs):
+bash ~/repos/studious-robot/deploy/deploy.sh
+# Optional overrides: REPO_DIR, DEPLOY_BRANCH, SERVICE_NAME
 ```
 
 The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the reload-or-restart.
