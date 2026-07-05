@@ -16,6 +16,13 @@ const {
 } = require('./security');
 const { createStores } = require('./stores');
 const { resolveIdentityClaim } = require('./identity');
+const {
+  getCallHistoryCacheKey,
+  invalidateCallHistoryCache,
+  persistCallRecord,
+  persistCallEvent,
+  hydrateCallsAndEventsFromDb,
+} = require('./callPersistence');
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -138,8 +145,12 @@ function createServer(opts = {}) {
     calls: stores.calls,
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
     callEvents: stores.callEvents,
+    /** Cache of GET /calls responses keyed by userId/status/limit. */
+    callHistoryCache: new Map(),
     /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
     blocks: stores.blocks,
+    /** Optional Drizzle DB handle for durable persistence. */
+    db,
     /** Audit log for security-relevant events. */
     auditLog: createAuditLog(),
     /** Rate limiter for call initiation (HTTP + socket). */
@@ -539,7 +550,7 @@ function createServer(opts = {}) {
    * Body: { blockeeId: string }
    * Response 200: { blockerId, blockeeId }
    */
-  app.post('/blocks', (req, res) => {
+  app.post('/blocks', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -557,6 +568,18 @@ function createServer(opts = {}) {
     }
 
     addBlock(state.blocks, session.userId, blockeeId);
+    if (db) {
+      const { blocks: blocksTable } = require('../db/schema');
+      try {
+        await db.insert(blocksTable).values({
+          blockerId: session.userId,
+          blockeeId,
+          createdAt: new Date(),
+        }).onConflictDoNothing();
+      } catch (error) {
+        console.error('[blocks] failed to persist block to DB:', error?.message);
+      }
+    }
     state.auditLog.record({
       event: 'block.added',
       actor: session.userId,
@@ -576,7 +599,7 @@ function createServer(opts = {}) {
    * Response 200: { blockerId, blockeeId }
    * Response 404: when the block did not exist
    */
-  app.delete('/blocks/:blockeeId', (req, res) => {
+  app.delete('/blocks/:blockeeId', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -593,6 +616,21 @@ function createServer(opts = {}) {
     if (!removed) {
       res.status(404).json({ error: 'block not found' });
       return;
+    }
+
+    if (db) {
+      try {
+        const { and, eq } = require('drizzle-orm');
+        const { blocks: blocksTable } = require('../db/schema');
+        await db
+          .delete(blocksTable)
+          .where(and(
+            eq(blocksTable.blockerId, session.userId),
+            eq(blocksTable.blockeeId, blockeeId),
+          ));
+      } catch (error) {
+        console.error('[blocks] failed to persist unblock to DB:', error?.message);
+      }
     }
 
     state.auditLog.record({
@@ -779,6 +817,13 @@ function createServer(opts = {}) {
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;
+    const cacheKey = getCallHistoryCacheKey(userId, statusFilter, limit);
+    const cached = state.callHistoryCache.get(cacheKey);
+    if (cached) {
+      res.status(200).json(cached);
+      return;
+    }
+
     const userCalls = [];
     for (const call of state.calls.values()) {
       if (call.callerId !== userId && call.calleeId !== userId) continue;
@@ -788,10 +833,12 @@ function createServer(opts = {}) {
 
     userCalls.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    res.status(200).json({
+    const payload = {
       calls: userCalls.slice(0, limit),
       total: userCalls.length,
-    });
+    };
+    state.callHistoryCache.set(cacheKey, payload);
+    res.status(200).json(payload);
   });
 
   app.post('/calls/:callId/accept', (req, res) => {
@@ -1299,9 +1346,9 @@ function createServer(opts = {}) {
     /**
      * Populate the in-memory state from the Neon database.
      *
-     * Loads the `users` and `devices` tables into `state.users`,
-     * `state.devices`, and `state.userDevices` so that identity-verification
-     * and push-notification delivery work correctly across server restarts.
+     * Loads persisted `users`, `devices`, `calls`, `call_events`, and `blocks`
+     * into in-memory caches so identity, push delivery, call history/timelines,
+     * and block rules survive restarts.
      * A no-op when no `db` was passed to `createServer`.
      *
      * @returns {Promise<void>}
@@ -1313,8 +1360,8 @@ function createServer(opts = {}) {
 /**
  * Hydrate the in-memory state from the Neon (Postgres) database.
  *
- * Reads the `users` and `devices` tables and populates the corresponding
- * in-memory Maps so that identity verification and push-notification delivery
+ * Reads persisted tables and populates corresponding in-memory caches so
+ * identity verification, push delivery, call history/events, and block rules
  * work correctly after a cold start or rolling restart.
  *
  * This is a best-effort operation: failures are logged but do not prevent the
@@ -1328,7 +1375,11 @@ function createServer(opts = {}) {
 async function loadPersistedStateFromDb(db, state) {
   if (!db) return;
 
-  const { users: usersTable, devices: devicesTable } = require('../db/schema');
+  const {
+    users: usersTable,
+    devices: devicesTable,
+    blocks: blocksTable,
+  } = require('../db/schema');
 
   // ── Hydrate claimed identities ──────────────────────────────────────────
   try {
@@ -1355,6 +1406,7 @@ async function loadPersistedStateFromDb(db, state) {
   try {
     const rows = await db.select().from(devicesTable);
     for (const row of rows) {
+      if (!row?.deviceId || !row?.userId) continue;
       const device = {
         deviceId: row.deviceId,
         userId: row.userId,
@@ -1378,6 +1430,20 @@ async function loadPersistedStateFromDb(db, state) {
     console.log(`[signaling] hydrated ${rows.length} device record(s) from DB`);
   } catch (err) {
     console.error('[signaling] failed to hydrate devices from DB:', err?.message);
+  }
+
+  await hydrateCallsAndEventsFromDb(db, state);
+
+  // ── Hydrate block relationships ────────────────────────────────────────────
+  try {
+    const rows = await db.select().from(blocksTable);
+    for (const row of rows) {
+      if (!row?.blockerId || !row?.blockeeId) continue;
+      addBlock(state.blocks, row.blockerId, row.blockeeId);
+    }
+    console.log(`[signaling] hydrated ${rows.length} block record(s) from DB`);
+  } catch (err) {
+    console.error('[signaling] failed to hydrate blocks from DB:', err?.message);
   }
 }
 
@@ -2044,7 +2110,7 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   if (getActiveCallsForUser(state, calleeId).length > 0) {
     status = 'busy';
     endReason = 'busy';
-  } else if (isCalleeUnreachable(state, calleeId)) {
+  } else if (!state.messageBus && isCalleeUnreachable(state, calleeId)) {
     status = 'unreachable';
     endReason = 'unreachable';
   }
@@ -2064,6 +2130,8 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
 
   state.calls.set(callId, call);
   state.callEvents.set(callId, []);
+  invalidateCallHistoryCache(state, callerId, calleeId);
+  persistCallRecord(state.db, call);
   appendCallEvent(state, callId, 'created', callerId, null);
   if (status !== 'ringing') {
     appendCallEvent(state, callId, status, null, endReason);
@@ -2124,6 +2192,8 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
     call.ringTimeoutAt = null;
   }
 
+  invalidateCallHistoryCache(state, call.callerId, call.calleeId);
+  persistCallRecord(state.db, call);
   appendCallEvent(state, callId, toStatus, actor, reason);
 
   return { ok: true, call };
@@ -2142,14 +2212,16 @@ function appendCallEvent(state, callId, event, actor, reason) {
   const events = state.callEvents.get(callId);
   if (!events) return;
 
-  events.push({
+  const eventRecord = {
     eventId: randomUUID(),
     callId,
     event,
     actor: actor ?? null,
     reason: reason ?? null,
     timestamp: new Date().toISOString(),
-  });
+  };
+  events.push(eventRecord);
+  persistCallEvent(state.db, eventRecord);
 }
 
 /**
@@ -2207,6 +2279,8 @@ function tickRingingTimeouts(state, now, onTransition) {
     call.endReason = 'timeout';
     call.updatedAt = new Date(now).toISOString();
     call.ringTimeoutAt = null;
+    invalidateCallHistoryCache(state, call.callerId, call.calleeId);
+    persistCallRecord(state.db, call);
     appendCallEvent(state, call.callId, 'missed', null, 'timeout');
     state.telemetry.recordCallTransition(call, previousStatus);
     onTransition?.(call, previousStatus, 'timeout');
