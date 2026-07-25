@@ -32,6 +32,7 @@ import {
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
 import { getIceServers, applyBitrateConstraints } from '../webrtcConfig';
+import useScreenShare from './useScreenShare';
 import {
   displayIncomingCall,
   endCall as endCallKeepCall,
@@ -237,6 +238,53 @@ export default function useCallFlow() {
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
   }, []);
+
+  // Renegotiate the active peer connection (used when screen audio adds or
+  // removes a sender). The remote peer answers renegotiation offers with the
+  // same `rtc.offer` handler used for the initial negotiation.
+  const renegotiate = useCallback(async () => {
+    const pc = peerConnectionRef.current;
+    const socket = socketRef.current;
+    const callId = activeCallIdRef.current;
+    if (!pc || !socket?.connected || !callId) return;
+    if (isNegotiatingRef.current) {
+      logWarn('[CallFlow] Skipping renegotiation while another is in flight');
+      return;
+    }
+    isNegotiatingRef.current = true;
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('rtc.offer', {
+        version: SIGNALING_VERSION,
+        callId,
+        sdp: pc.localDescription ?? offer,
+      }, (ack) => {
+        if (!ack?.ok) logWarn('[CallFlow] renegotiation rtc.offer ack failed', ack?.error);
+      });
+      logInfo('[CallFlow] Renegotiation offer sent');
+    } catch (error) {
+      logError('[CallFlow] Renegotiation failed', error);
+    } finally {
+      isNegotiatingRef.current = false;
+    }
+  }, []);
+
+  const {
+    isScreenSharing,
+    isScreenAudioShared,
+    isScreenAudioEnabled,
+    isScreenShareSupported,
+    handleScreenShareToggle,
+    handleScreenAudioToggle,
+    resetScreenShare,
+  } = useScreenShare({
+    peerConnectionRef,
+    localStreamRef,
+    setLocalStream,
+    setStatus,
+    renegotiate,
+  });
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
 
@@ -829,11 +877,12 @@ export default function useCallFlow() {
       setIsCompactView(false);
       setIsLocalPrimary(false);
       setAudioDevices({ available: [], selected: null });
+      resetScreenShare();
       stopCallService();
       closePeerConnection();
       if (nextMessage) setStatus(nextMessage, severity);
     },
-    [addToHistory, closePeerConnection, setIsCompactView, setStatus],
+    [addToHistory, closePeerConnection, resetScreenShare, setIsCompactView, setStatus],
   );
 
   // ─── Session management ───────────────────────────────────────────────────
@@ -1955,6 +2004,10 @@ export default function useCallFlow() {
     isMuted,
     isVideoEnabled,
     isSpeakerEnabled,
+    isScreenSharing,
+    isScreenAudioShared,
+    isScreenAudioEnabled,
+    isScreenShareSupported,
     isCompactView,
     isLocalPrimary,
     isFrontCamera,
@@ -1975,6 +2028,8 @@ export default function useCallFlow() {
     // In-call controls (identical interface to useWebRTCCall for CallScreen compat)
     handleMuteToggle,
     handleVideoToggle,
+    handleScreenShareToggle,
+    handleScreenAudioToggle,
     handleCameraSwitch,
     handleSwapStreams,
     handleRetryReconnect,

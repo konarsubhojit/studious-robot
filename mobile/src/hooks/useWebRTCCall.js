@@ -33,6 +33,7 @@ import { ensureCallPermissions } from '../permissions';
 import { loadSettings, saveSettings } from '../settingsStorage';
 import { getSocketOptions, isRecoverableDisconnectReason } from '../socketConfig';
 import { getIceServers } from '../webrtcConfig';
+import useScreenShare from './useScreenShare';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 const DEFAULT_ROOM_ID = process.env.ROOM_ID || 'room-1';
@@ -111,6 +112,48 @@ export default function useWebRTCCall() {
   const setStatus = useCallback((message, severity = 'info') => {
     setStatusState({ message, severity });
   }, []);
+
+  // Renegotiate the current peer connection (used when screen audio adds or
+  // removes a sender). The existing `offer` handler on the remote side answers
+  // renegotiation offers just like the initial one.
+  const renegotiate = useCallback(async () => {
+    const peer = peerConnectionRef.current;
+    const socket = socketRef.current;
+    if (!peer || !socket?.connected) {
+      return;
+    }
+    if (isNegotiatingRef.current) {
+      logWarn('Skipping renegotiation while another negotiation is in flight');
+      return;
+    }
+    isNegotiatingRef.current = true;
+    try {
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.emit('offer', { roomId: roomIdRef.current, sdp: peer.localDescription ?? offer });
+      logInfo('Renegotiation offer sent');
+    } catch (error) {
+      logError('Renegotiation failed', error);
+    } finally {
+      isNegotiatingRef.current = false;
+    }
+  }, []);
+
+  const {
+    isScreenSharing,
+    isScreenAudioShared,
+    isScreenAudioEnabled,
+    isScreenShareSupported,
+    handleScreenShareToggle,
+    handleScreenAudioToggle,
+    resetScreenShare,
+  } = useScreenShare({
+    peerConnectionRef,
+    localStreamRef,
+    setLocalStream,
+    setStatus,
+    renegotiate,
+  });
 
   const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef);
 
@@ -210,6 +253,7 @@ export default function useWebRTCCall() {
     setIsCompactView(false);
     setIsLocalPrimary(false);
     setAudioDevices({ available: [], selected: null });
+    resetScreenShare();
     stopCallService();
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -217,7 +261,7 @@ export default function useWebRTCCall() {
     }
     closePeerConnection();
     setStatus(nextStatus, severity);
-  }, [closePeerConnection, setStatus]);
+  }, [closePeerConnection, resetScreenShare, setStatus]);
 
   const ensurePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
@@ -1035,6 +1079,10 @@ export default function useWebRTCCall() {
     isMuted,
     isVideoEnabled,
     isSpeakerEnabled,
+    isScreenSharing,
+    isScreenAudioShared,
+    isScreenAudioEnabled,
+    isScreenShareSupported,
     isCompactView,
     isLocalPrimary,
     isFrontCamera,
@@ -1052,6 +1100,8 @@ export default function useWebRTCCall() {
     handleMuteToggle,
     handleVideoToggle,
     handleSpeakerToggle,
+    handleScreenShareToggle,
+    handleScreenAudioToggle,
     handleCameraSwitch,
     handleSwapStreams,
     handleRetryReconnect,

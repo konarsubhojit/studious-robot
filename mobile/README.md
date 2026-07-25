@@ -44,7 +44,8 @@ switches to a dedicated in-call UI with:
   local/remote focus,
 - call timer + connection quality signal bars (from periodic WebRTC stats),
 - reconnect banner with a manual **Retry** action,
-- in-call controls for mute, video, speaker/earpiece route, and camera switch.
+- in-call controls for mute, video, speaker/earpiece route, camera switch, and
+  screen sharing.
 
 ## Audio routing
 
@@ -68,6 +69,38 @@ Toggling the route does **not** restart the audio session — the speaker
 preference is applied in a dedicated effect that runs independently of the
 session lifecycle.  This means microphone muting continues to work correctly
 regardless of which output route is active.
+
+## Screen sharing
+
+The in-call control deck has a **screen share** button (`src/screenShare.js` +
+`src/hooks/useScreenShare.js`). Tapping it requests the OS screen-capture
+consent dialog through `getDisplayMedia` and, once granted:
+
+- replaces the outgoing camera track with the screen track using
+  `RTCRtpSender.replaceTrack`, so the remote peer sees the screen without any
+  renegotiation;
+- keeps the camera track alive but disabled, so the previous video source is
+  restored instantly when sharing stops (also when the user stops the share
+  from the OS overlay);
+- disables the camera on/off and camera-switch buttons while sharing.
+
+### Optional screen audio
+
+Next to the share button is a **screen audio** toggle, equivalent to the MS
+Teams *Include computer sound* option. It applies to the next share and cannot
+be changed mid-share (that would churn the SDP).
+
+When enabled, the capture requests `{ video: true, audio: true }`. If the
+platform returns an audio track it is added as an **additional** sender — the
+microphone track is untouched, so mute keeps working independently — and a
+single renegotiation round-trip is performed. Stopping the share removes the
+sender and renegotiates once more.
+
+Screen audio is strictly best-effort: many Android builds and iOS (without a
+broadcast upload extension) only return a video track. In that case the share
+still starts and the UI shows a non-fatal *"screen audio unavailable on this
+device"* warning. A denied/cancelled consent dialog is reported as a plain
+status message and leaves the call untouched.
 
 ## ICE restart and reconnection
 
@@ -125,6 +158,9 @@ These features rely on the following permissions declared in
 - `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CAMERA`,
   `FOREGROUND_SERVICE_MICROPHONE` — run the call foreground service with
   camera/microphone access.
+- `FOREGROUND_SERVICE_MEDIA_PROJECTION` — required on Android 14+ so
+  `react-native-webrtc` can run screen capture in a media-projection
+  foreground service.
 - `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
   33) and newer.
 - `VIBRATE` — allow `react-native-incall-manager` to vibrate the device on

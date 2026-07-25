@@ -32,10 +32,16 @@ export default function CallScreen({
   hasLocalStream,
   audioDevices,
   isSpeakerEnabled,
+  isScreenSharing,
+  isScreenAudioEnabled,
+  isScreenAudioShared,
+  isScreenShareSupported,
   onMuteToggle,
   onVideoToggle,
   onChooseAudioOutput,
   onCameraSwitch,
+  onScreenShareToggle,
+  onScreenAudioToggle,
   onLeave,
   status,
   isCompact = false,
@@ -147,10 +153,16 @@ export default function CallScreen({
               hasLocalStream={hasLocalStream}
               audioDevices={audioDevices}
               isSpeakerEnabled={isSpeakerEnabled}
+              isScreenSharing={isScreenSharing}
+              isScreenAudioEnabled={isScreenAudioEnabled}
+              isScreenAudioShared={isScreenAudioShared}
+              isScreenShareSupported={isScreenShareSupported}
               onMuteToggle={onMuteToggle}
               onVideoToggle={onVideoToggle}
               onChooseAudioOutput={onChooseAudioOutput}
               onCameraSwitch={onCameraSwitch}
+              onScreenShareToggle={onScreenShareToggle}
+              onScreenAudioToggle={onScreenAudioToggle}
               onLeave={onLeave}
             />
           </View>

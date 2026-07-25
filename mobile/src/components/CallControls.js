@@ -1,11 +1,11 @@
-import { StyleSheet, View } from 'react-native';
-import { spacing } from '../theme';
+import { StyleSheet, Text, View } from 'react-native';
+import { colors, spacing } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
 
 /**
  * In-call control deck: mute, camera on/off, audio-output picker, camera swap,
- * and leave.
+ * screen sharing (with an optional screen-audio toggle) and leave.
  *
  * All action buttons use icon-only circular IconButton components for a clean,
  * professional look.  The leave button is visually distinct (danger variant).
@@ -16,10 +16,16 @@ export default function CallControls({
   hasLocalStream,
   audioDevices,
   isSpeakerEnabled,
+  isScreenSharing = false,
+  isScreenAudioEnabled = false,
+  isScreenAudioShared = false,
+  isScreenShareSupported = true,
   onMuteToggle,
   onVideoToggle,
   onChooseAudioOutput,
   onCameraSwitch,
+  onScreenShareToggle,
+  onScreenAudioToggle,
   onLeave,
 }) {
   return (
@@ -38,7 +44,7 @@ export default function CallControls({
           icon={isVideoEnabled ? 'videoOn' : 'videoOff'}
           onPress={onVideoToggle}
           variant={isVideoEnabled ? 'default' : 'active'}
-          disabled={!hasLocalStream}
+          disabled={!hasLocalStream || isScreenSharing}
           size={52}
           accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
           testID="control-video"
@@ -53,12 +59,47 @@ export default function CallControls({
           icon="cameraSwitch"
           onPress={onCameraSwitch}
           variant="default"
-          disabled={!hasLocalStream}
+          disabled={!hasLocalStream || isScreenSharing}
           size={52}
           accessibilityLabel="Switch between front and back camera"
           testID="control-swap-camera"
         />
       </View>
+
+      {onScreenShareToggle ? (
+        <View style={styles.mediaRow}>
+          <IconButton
+            icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
+            onPress={onScreenShareToggle}
+            variant={isScreenSharing ? 'active' : 'default'}
+            disabled={!isScreenShareSupported}
+            size={52}
+            accessibilityLabel={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
+            testID="control-screen-share"
+          />
+          {onScreenAudioToggle ? (
+            <IconButton
+              icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
+              onPress={onScreenAudioToggle}
+              variant={isScreenAudioEnabled ? 'active' : 'default'}
+              disabled={!isScreenShareSupported}
+              size={52}
+              accessibilityLabel={
+                isScreenAudioEnabled
+                  ? 'Do not include screen audio when sharing'
+                  : 'Include screen audio when sharing'
+              }
+              testID="control-screen-audio"
+            />
+          ) : null}
+        </View>
+      ) : null}
+
+      {isScreenSharing ? (
+        <Text style={styles.sharingLabel} testID="screen-share-indicator">
+          {isScreenAudioShared ? 'Sharing screen with audio' : 'Sharing screen'}
+        </Text>
+      ) : null}
 
       <IconButton
         icon="callEnd"
@@ -77,6 +118,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.sm,
     alignItems: 'center',
+  },
+  sharingLabel: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
   },
   mediaRow: {
     flexDirection: 'row',
