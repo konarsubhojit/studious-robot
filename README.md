@@ -117,6 +117,8 @@ any failure.  Run them before opening a pull request.
 | `mobile` | `__tests__/hooks/useCallFlow.test.js` | Call phases, push rehydration (all terminal + ringing states), camera switch |
 | `mobile` | `__tests__/hooks/useWebRTCCall.test.js` | WebRTC camera switch hardening                             |
 | `mobile` | `__tests__/hooks/useCompactCallView.test.js` | PiP compact-view logic                               |
+| `mobile` | `__tests__/hooks/useScreenShare.test.js` | Screen sharing start/stop, optional screen audio + renegotiation |
+| `mobile` | `__tests__/screenShare.test.js`       | `getDisplayMedia` capture, audio fallback, cancellation      |
 | `mobile` | `__tests__/components/SettingsScreen.test.js` | Settings screen (username/server edit, sign out) |
 | `mobile` | `__tests__/pushNotifications.test.js`  | Deep links + push-token acquisition/registration            |
 | `mobile` | `__tests__/components/`               | Incoming/outgoing/in-call UI components                      |

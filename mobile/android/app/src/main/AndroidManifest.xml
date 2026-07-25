@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- react-native-webrtc runs screen capture (getDisplayMedia) inside a
+         media-projection foreground service on Android 14+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- react-native-callkeep registers a ConnectionService so incoming pushes can
          show a full-screen system call UI during the ringing phase. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
