@@ -57,7 +57,7 @@ beforeEach(() => {
 });
 
 describe('useScreenShare', () => {
-  test('starts video-only sharing by replacing the camera track without renegotiating', async () => {
+  test('starts video-only sharing by replacing the camera track and renegotiating', async () => {
     const screenVideoTrack = makeTrack('video');
     screenShare.startScreenCapture.mockResolvedValue({
       ok: true,
@@ -78,7 +78,7 @@ describe('useScreenShare', () => {
     expect(cameraTrack.enabled).toBe(false);
     expect(localStream.removeTrack).toHaveBeenCalledWith(cameraTrack);
     expect(localStream.addTrack).toHaveBeenCalledWith(screenVideoTrack);
-    expect(renegotiate).not.toHaveBeenCalled();
+    expect(renegotiate).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(resultRef.current.isScreenAudioShared).toBe(false);
     expect(params.setStatus).toHaveBeenCalledWith('Sharing screen', 'success');
@@ -144,7 +144,8 @@ describe('useScreenShare', () => {
       audioTrack: null,
       audioShared: false,
     });
-    const { resultRef, sender, cameraTrack, localStream } = setup();
+    const renegotiate = jest.fn(() => Promise.resolve());
+    const { resultRef, sender, cameraTrack, localStream } = setup({ renegotiate });
 
     await act(async () => {
       await resultRef.current.handleScreenShareToggle();
@@ -158,6 +159,7 @@ describe('useScreenShare', () => {
     expect(localStream.removeTrack).toHaveBeenCalledWith(screenVideoTrack);
     expect(screenShare.stopScreenCapture).toHaveBeenCalledWith(screenStream);
     expect(resultRef.current.isScreenSharing).toBe(false);
+    expect(renegotiate).toHaveBeenCalledTimes(2);
   });
 
   test('removes the screen audio sender and renegotiates on stop', async () => {
