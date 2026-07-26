@@ -1,0 +1,11 @@
+{
+  "name": "studious-robot",
+  "image": "mcr.microsoft.com/vscode/devcontainers/universal:latest",
+  // Codespace secrets are only exported into login shells via
+  // /etc/profile.d/codespaces.sh, so the VS Code server process never sees them.
+  // Forwarding them through remoteEnv makes them available to the server and to
+  // anything it resolves, including ${env:...} in mcp.json.
+  "remoteEnv": {
+    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+  }
+}

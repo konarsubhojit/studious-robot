@@ -29,7 +29,7 @@ import {
   registerForPushNotifications,
   unregisterPushToken,
 } from "../pushNotifications";
-import { loadIdentity, saveIdentity } from "../settingsStorage";
+import { loadDeviceId, loadIdentity, saveIdentity } from "../settingsStorage";
 import { getSocketOptions } from "../socketConfig";
 import { getIceServers, applyBitrateConstraints } from "../webrtcConfig";
 import useScreenShare from "./useScreenShare";
@@ -215,6 +215,8 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
+  // Stable per-install device id, lazily loaded from disk on first session.
+  const deviceIdRef = useRef(null);
   const verificationCodeRef = useRef("");
   const committedIdentityRef = useRef({ userId: "", verificationCode: "" });
   // Holds the latest authedFetch implementation so the call-history / contact
@@ -991,8 +993,15 @@ export default function useCallFlow() {
     const trimmedVerificationCode = normalizeVerificationCode(
       verificationCodeRef.current,
     );
+    // Reuse this install's device id so the server keeps a single device record
+    // (and a single push registration) instead of minting a new random one on
+    // every session.
+    if (!deviceIdRef.current) {
+      deviceIdRef.current = await loadDeviceId();
+    }
     const requestBody = {
       userId: userId.trim() || undefined,
+      deviceId: deviceIdRef.current,
       platform: Platform.OS,
     };
     if (trimmedVerificationCode) {
@@ -1589,11 +1598,24 @@ export default function useCallFlow() {
           registerForPushNotifications({
             sessionId,
             signalingUrl: trimmedUrl,
-          }).catch((error) => {
-            logWarn("[CallFlow] Push registration failed", {
-              message: error?.message,
+          })
+            .then((registered) => {
+              if (!registered) {
+                // Without a push registration the server has no way to reach
+                // this device while the app is backgrounded/killed, so incoming
+                // calls will silently never ring. Usually means the Firebase
+                // config (google-services.json / GoogleService-Info.plist) is
+                // missing from the build, or notifications were denied.
+                logWarn(
+                  "[CallFlow] No push token registered; incoming calls will not ring while the app is closed",
+                );
+              }
+            })
+            .catch((error) => {
+              logWarn("[CallFlow] Push registration failed", {
+                message: error?.message,
+              });
             });
-          });
         }
       } catch (error) {
         if (!cancelled) {

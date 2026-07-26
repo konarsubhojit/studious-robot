@@ -6,7 +6,7 @@ const { resolveIdentityClaim } = require('../identity');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
 const { addSessionToUser, upsertDevice, ensurePresenceRecord } = require('../lib/state');
-const { persistUser } = require('../lib/persistence');
+const { persistUser, persistDevice } = require('../lib/persistence');
 
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
@@ -58,13 +58,20 @@ function createSessionRouter({ state, db, sessionTtlMs }) {
 
     state.sessions.set(session.sessionId, session);
     addSessionToUser(state, session);
-    upsertDevice(state, {
+    const device = upsertDevice(state, {
       userId,
       deviceId,
       platform,
       sessionId: session.sessionId,
     });
     ensurePresenceRecord(state, userId);
+
+    // Persist the device as soon as it has a session, rather than waiting for
+    // POST /devices/register.  Push-token acquisition can fail or be delayed
+    // (no FCM/APNs credentials on the build, permission denied, …) and without
+    // this the `devices` table would stay empty, leaving no record of which
+    // devices belong to a user.  Push columns are left untouched here.
+    await persistDevice(db, device, 'session');
 
     res.status(201).json(session);
   });

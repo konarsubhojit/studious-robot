@@ -112,19 +112,26 @@ test('POST /session persists a newly claimed identity to the DB', async () => {
     });
     assert.equal(res.status, 201);
 
-    // Exactly one insert (for the user record).
-    assert.equal(db.inserts.length, 1);
-    const insert = db.inserts[0];
+    // Two inserts: the claimed user record and the device record.
+    assert.equal(db.inserts.length, 2);
+    const insert = db.inserts.find((i) => i.table === schema.users);
+    assert.ok(insert, 'a users insert should be present');
     assert.equal(insert.values.userId, 'user-persist-1');
-    assert.ok(typeof insert.values.verificationHash === 'string', 'verificationHash should be a string');
-    assert.ok(typeof insert.values.verificationSalt === 'string', 'verificationSalt should be a string');
+    assert.ok(
+      typeof insert.values.verificationHash === 'string',
+      'verificationHash should be a string',
+    );
+    assert.ok(
+      typeof insert.values.verificationSalt === 'string',
+      'verificationSalt should be a string',
+    );
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
   } finally {
     await teardown();
   }
 });
 
-test('POST /session without a verificationCode does NOT write to DB', async () => {
+test('POST /session persists the device even without a push token', async () => {
   const db = buildMockDb();
   const { url, teardown } = await startServer({ db });
 
@@ -132,9 +139,28 @@ test('POST /session without a verificationCode does NOT write to DB', async () =
     const res = await postJson(url, '/session', {
       userId: 'user-persist-2',
       deviceId: 'device-p2',
+      platform: 'android',
     });
     assert.equal(res.status, 201);
-    assert.equal(db.inserts.length, 0, 'no DB write for unclaimed userId');
+
+    // No user insert (identity is unclaimed) but the device must be recorded so
+    // the `devices` table reflects every device a user has signed in from.
+    const deviceInserts = db.inserts.filter((i) => i.table === schema.devices);
+    assert.equal(deviceInserts.length, 1);
+    assert.equal(deviceInserts[0].values.deviceId, 'device-p2');
+    assert.equal(deviceInserts[0].values.userId, 'user-persist-2');
+    assert.equal(deviceInserts[0].values.platform, 'android');
+    assert.equal(deviceInserts[0].values.pushToken, null);
+    // A session must never clobber an already-registered push token.
+    assert.ok(
+      !('pushToken' in deviceInserts[0].conflictSet),
+      'session persistence must leave push columns untouched on conflict',
+    );
+    assert.equal(
+      db.inserts.filter((i) => i.table === schema.users).length,
+      0,
+      'no user write for an unclaimed userId',
+    );
   } finally {
     await teardown();
   }
@@ -206,7 +232,10 @@ test('POST /devices/unregister persists the cleared push token to the DB', async
     assert.equal(insert.values.deviceId, 'device-unreg-1');
     assert.equal(insert.values.pushProvider, null);
     assert.equal(insert.values.pushToken, null);
-    assert.ok(insert.values.lastUnregisteredAt instanceof Date, 'lastUnregisteredAt should be a Date');
+    assert.ok(
+      insert.values.lastUnregisteredAt instanceof Date,
+      'lastUnregisteredAt should be a Date',
+    );
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
   } finally {
     await teardown();

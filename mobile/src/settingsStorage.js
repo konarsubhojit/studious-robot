@@ -1,5 +1,5 @@
-import RNFS from 'react-native-fs';
-import { logError, logInfo } from './appLogger';
+import RNFS from "react-native-fs";
+import { logError, logInfo } from "./appLogger";
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
@@ -14,7 +14,7 @@ const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
  * @returns {T}
  */
 export function mergeSettings(defaults, loaded) {
-  if (!loaded || typeof loaded !== 'object') {
+  if (!loaded || typeof loaded !== "object") {
     return { ...defaults };
   }
 
@@ -42,10 +42,12 @@ export async function loadSettings(defaults) {
     if (!exists) {
       return { ...defaults };
     }
-    const content = await RNFS.readFile(SETTINGS_FILE, 'utf8');
+    const content = await RNFS.readFile(SETTINGS_FILE, "utf8");
     return mergeSettings(defaults, JSON.parse(content));
   } catch (error) {
-    logError('Failed to load settings; using defaults', { message: error?.message });
+    logError("Failed to load settings; using defaults", {
+      message: error?.message,
+    });
     return { ...defaults };
   }
 }
@@ -59,11 +61,11 @@ export async function loadSettings(defaults) {
  */
 export async function saveSettings(settings) {
   try {
-    await RNFS.writeFile(SETTINGS_FILE, JSON.stringify(settings), 'utf8');
-    logInfo('Settings persisted');
+    await RNFS.writeFile(SETTINGS_FILE, JSON.stringify(settings), "utf8");
+    logInfo("Settings persisted");
     return true;
   } catch (error) {
-    logError('Failed to persist settings', { message: error?.message });
+    logError("Failed to persist settings", { message: error?.message });
     return false;
   }
 }
@@ -85,16 +87,21 @@ const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 export async function loadIdentity() {
   try {
     const exists = await RNFS.exists(IDENTITY_FILE);
-    if (!exists) return { userId: '', verificationCode: '' };
-    const content = await RNFS.readFile(IDENTITY_FILE, 'utf8');
+    if (!exists) return { userId: "", verificationCode: "" };
+    const content = await RNFS.readFile(IDENTITY_FILE, "utf8");
     const parsed = JSON.parse(content);
     return {
-      userId: typeof parsed.userId === 'string' ? parsed.userId : '',
-      verificationCode: typeof parsed.verificationCode === 'string' ? parsed.verificationCode : '',
+      userId: typeof parsed.userId === "string" ? parsed.userId : "",
+      verificationCode:
+        typeof parsed.verificationCode === "string"
+          ? parsed.verificationCode
+          : "",
     };
   } catch (error) {
-    logError('Failed to load identity; using empty default', { message: error?.message });
-    return { userId: '', verificationCode: '' };
+    logError("Failed to load identity; using empty default", {
+      message: error?.message,
+    });
+    return { userId: "", verificationCode: "" };
   }
 }
 
@@ -106,21 +113,91 @@ export async function loadIdentity() {
  */
 export async function saveIdentity(identity) {
   try {
-    await RNFS.writeFile(IDENTITY_FILE, JSON.stringify({
-      userId: typeof identity?.userId === 'string' ? identity.userId : '',
-      verificationCode: typeof identity?.verificationCode === 'string'
-        ? identity.verificationCode
-        : '',
-    }), 'utf8');
-    logInfo('Identity persisted', {
+    await RNFS.writeFile(
+      IDENTITY_FILE,
+      JSON.stringify({
+        userId: typeof identity?.userId === "string" ? identity.userId : "",
+        verificationCode:
+          typeof identity?.verificationCode === "string"
+            ? identity.verificationCode
+            : "",
+      }),
+      "utf8",
+    );
+    logInfo("Identity persisted", {
       userId: identity?.userId,
       hasVerificationCode: Boolean(identity?.verificationCode),
     });
     return true;
   } catch (error) {
-    logError('Failed to persist identity', { message: error?.message });
+    logError("Failed to persist identity", { message: error?.message });
     return false;
   }
 }
 
 export const IDENTITY_FILE_PATH = IDENTITY_FILE;
+
+// ─── Stable device identifier ─────────────────────────────────────────────────
+// The signaling server keys device records (and therefore push registrations)
+// by `deviceId`.  When `POST /session` omits one the server mints a fresh
+// random id, so every app launch would create a brand-new device row and orphan
+// the push token registered by the previous launch.  Persisting the id once per
+// install keeps exactly one device row per device.
+
+const DEVICE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-device.json`;
+
+/**
+ * Generate an opaque per-install device identifier. This is not a credential
+ * (the session token is), it only has to be unique and stable.
+ *
+ * @returns {string}
+ */
+function generateDeviceId() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `device-${hex}`;
+}
+
+/**
+ * Return this install's stable device id, generating and persisting one on
+ * first use.  Never throws: an unwritable file only means the id is not reused
+ * after a restart.
+ *
+ * @returns {Promise<string>}
+ */
+export async function loadDeviceId() {
+  try {
+    const exists = await RNFS.exists(DEVICE_FILE);
+    if (exists) {
+      const content = await RNFS.readFile(DEVICE_FILE, "utf8");
+      const parsed = JSON.parse(content);
+      const stored =
+        typeof parsed?.deviceId === "string" ? parsed.deviceId.trim() : "";
+      if (stored) return stored;
+    }
+  } catch (error) {
+    logError("Failed to load device id; generating a new one", {
+      message: error?.message,
+    });
+  }
+
+  const deviceId = generateDeviceId();
+  try {
+    await RNFS.writeFile(DEVICE_FILE, JSON.stringify({ deviceId }), "utf8");
+    logInfo("Device id generated and persisted");
+  } catch (error) {
+    logError("Failed to persist device id", { message: error?.message });
+  }
+  return deviceId;
+}
+
+export const DEVICE_FILE_PATH = DEVICE_FILE;
