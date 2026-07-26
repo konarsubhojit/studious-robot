@@ -3,11 +3,13 @@
 Bare React Native app (React Native CLI) for the studious-robot project.
 
 ## Requirements
+
 - Node.js (see repo root `.nvmrc`)
 - JDK 17+ and the Android SDK (Android Studio recommended) for Android builds
 - Xcode + CocoaPods for iOS builds (macOS only)
 
 ## Setup
+
 ```bash
 cd mobile
 npm install
@@ -26,6 +28,7 @@ export TURN_CREDENTIAL=<metered_turn_credential>
 If TURN credentials are not provided, TURN support is disabled and only STUN is used.
 
 ## Run
+
 ```bash
 npm start          # start the Metro bundler
 npm run android    # build & launch on a connected Android device/emulator
@@ -62,12 +65,12 @@ The app uses `react-native-incall-manager` (`src/audioRouting.js`) to:
   to earpiece when the handset is held to the ear.
 - **Keep the screen on** throughout the call so the controls remain accessible.
 - **Switch routes on demand** via `setForceSpeakerphoneOn` /
-  `setSpeakerphoneOn`. When a Bluetooth device is paired, choosing *Earpiece*
+  `setSpeakerphoneOn`. When a Bluetooth device is paired, choosing _Earpiece_
   will route through Bluetooth rather than the physical earpiece.
 
 Toggling the route does **not** restart the audio session — the speaker
 preference is applied in a dedicated effect that runs independently of the
-session lifecycle.  This means microphone muting continues to work correctly
+session lifecycle. This means microphone muting continues to work correctly
 regardless of which output route is active.
 
 ## Screen sharing
@@ -87,7 +90,7 @@ consent dialog through `getDisplayMedia` and, once granted:
 ### Optional screen audio
 
 Next to the share button is a **screen audio** toggle, equivalent to the MS
-Teams *Include computer sound* option. It applies to the next share and cannot
+Teams _Include computer sound_ option. It applies to the next share and cannot
 be changed mid-share (that would churn the SDP).
 
 When enabled, the capture requests `{ video: true, audio: true }`. If the
@@ -97,32 +100,53 @@ the share removes the sender and renegotiates once more.
 
 Screen audio is strictly best-effort: many Android builds and iOS (without a
 broadcast upload extension) only return a video track. In that case the share
-still starts and the UI shows a non-fatal *"screen audio unavailable on this
-device"* warning. A denied/cancelled consent dialog is reported as a plain
+still starts and the UI shows a non-fatal _"screen audio unavailable on this
+device"_ warning. A denied/cancelled consent dialog is reported as a plain
 status message and leaves the call untouched.
+
+### Required native setup
+
+`getDisplayMedia` happily resolves with a video track on both platforms even
+when the OS capture pipeline is not wired up — the track then simply never
+produces frames, so the **remote peer sees a blank/black screen** while the
+sharer's UI looks perfectly fine. Both platforms therefore need explicit setup:
+
+- **Android** — MediaProjection only delivers frames while a foreground service
+  of type `mediaProjection` is running (mandatory from Android 14).
+  `react-native-webrtc` bundles that service but keeps it **disabled by
+  default**, so `MainApplication.onCreate` sets
+  `WebRTCModuleOptions.getInstance().enableMediaProjectionService = true` before
+  `loadReactNative`. The service posts a notification whose small icon is
+  resolved by name, so `res/drawable/ic_notification.xml` must exist —
+  `startForeground` fails without it and capture stays black.
+- **iOS** — ReplayKit can only capture the screen from a **Broadcast Upload
+  Extension**; the app process itself cannot. The extension and the host app
+  must share an App Group, and the app's `Info.plist` must declare
+  `RTCAppGroupIdentifier` (plus `RTCScreenSharingExtension` with the extension's
+  bundle id). Until that extension target is added to
+  `ios/StudiousRobot.xcodeproj`, `ScreenCaptureController.startCapture` returns
+  immediately and the shared screen stays blank on the receiving side.
 
 ## ICE restart and reconnection
 
 WebRTC ICE connections can break when the device switches networks (e.g. Wi-Fi
-→ mobile data) or when the device wakes from sleep.  Two mechanisms are in
+→ mobile data) or when the device wakes from sleep. Two mechanisms are in
 place to restore connectivity without ending the call:
 
 1. **Socket.IO reconnect → ICE restart**: when the signaling socket reconnects
    after a transient drop, the app re-emits `join-room` and — if it was the
    original offerer — immediately sends a new WebRTC offer with
-   `{ iceRestart: true }`.  This re-negotiates the ICE candidates over the new
+   `{ iceRestart: true }`. This re-negotiates the ICE candidates over the new
    network path while keeping the existing media tracks and call UI intact.
 
 2. **Automatic ICE failure recovery**: an `oniceconnectionstatechange` handler
-   on the `RTCPeerConnection` watches for the `failed` state.  If reached, and
+   on the `RTCPeerConnection` watches for the `failed` state. If reached, and
    the offerer role is held and the socket is still connected, an ICE-restart
    offer is sent automatically — without any user action required.
 
 > **Note:** Only the side that created the original SDP offer sends ICE-restart
-> offers.  The answerer simply processes the new offer normally.  This
+> offers. The answerer simply processes the new offer normally. This
 > convention avoids signaling races if both peers detect failure simultaneously.
-
-
 
 To keep calls alive when the app is backgrounded, Android uses a lightweight
 foreground service and the system Picture-in-Picture (PiP) window:
@@ -160,8 +184,7 @@ These features rely on the following permissions declared in
 - `FOREGROUND_SERVICE_MEDIA_PROJECTION` — required on Android 14+ so
   `react-native-webrtc` can run screen capture in a media-projection
   foreground service.
-- `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API
-  33) and newer.
+- `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API 33) and newer.
 - `VIBRATE` — allow `react-native-incall-manager` to vibrate the device on
   incoming calls.
 
@@ -211,6 +234,7 @@ Sensitive fields such as TURN credentials, passwords, tokens, authorization
 values, and other secrets are redacted or intentionally not logged.
 
 ## Build a debug APK locally
+
 ```bash
 cd android
 ./gradlew assembleDebug
@@ -219,7 +243,7 @@ cd android
 
 > **Note:** The debug APK loads JavaScript from the Metro bundler at runtime.
 > Installing it on a device without Metro running will produce an
-> *"Unable to load script"* error. Use `assembleRelease` below for a
+> _"Unable to load script"_ error. Use `assembleRelease` below for a
 > self-contained APK.
 
 ## Build a release APK locally
@@ -239,6 +263,7 @@ cd android
 ```
 
 ## Other scripts
+
 ```bash
 npm run lint       # eslint
 npm test           # jest

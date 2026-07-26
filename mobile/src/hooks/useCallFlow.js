@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Vibration } from 'react-native';
-import { io } from 'socket.io-client';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Platform, Vibration } from "react-native";
+import { io } from "socket.io-client";
 import {
   mediaDevices,
   RTCIceCandidate,
   RTCPeerConnection,
   RTCSessionDescription,
-} from 'react-native-webrtc';
-import { logError, logInfo, logWarn } from '../appLogger';
-import * as Telemetry from '../telemetry';
+} from "react-native-webrtc";
+import { logError, logInfo, logWarn } from "../appLogger";
+import * as Telemetry from "../telemetry";
 import {
   AUDIO_ROUTES,
   chooseAudioRoute,
@@ -16,37 +16,38 @@ import {
   startAudioSession,
   stopAudioSession,
   subscribeAudioDevices,
-} from '../audioRouting';
-import { startCallService, stopCallService } from '../callService';
-import useCompactCallView from './useCompactCallView';
-import { getConnectionQuality } from '../callUx';
-import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
-import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
-import { ensureCallPermissions } from '../permissions';
+} from "../audioRouting";
+import { startCallService, stopCallService } from "../callService";
+import useCompactCallView from "./useCompactCallView";
+import { getConnectionQuality } from "../callUx";
+import { getMediaAccessStatus, summarizeIceCandidate } from "../diagnostics";
+import { isTrackEnabled, setTrackEnabled } from "../mediaControls";
+import { ensureCallPermissions } from "../permissions";
 import {
   addCallLinkListener,
   getInitialCallLink,
   registerForPushNotifications,
   unregisterPushToken,
-} from '../pushNotifications';
-import { loadIdentity, saveIdentity } from '../settingsStorage';
-import { getSocketOptions } from '../socketConfig';
-import { getIceServers, applyBitrateConstraints } from '../webrtcConfig';
-import useScreenShare from './useScreenShare';
+} from "../pushNotifications";
+import { loadIdentity, saveIdentity } from "../settingsStorage";
+import { getSocketOptions } from "../socketConfig";
+import { getIceServers, applyBitrateConstraints } from "../webrtcConfig";
+import useScreenShare from "./useScreenShare";
 import {
   displayIncomingCall,
   endCall as endCallKeepCall,
   registerCallActionListeners as registerCallKeepListeners,
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
-} from '../callKeep';
-import { startIncomingRingtone, stopIncomingRingtone } from '../ringtone';
+} from "../callKeep";
+import { startIncomingRingtone, stopIncomingRingtone } from "../ringtone";
 import {
   generateVerificationCode,
   normalizeVerificationCode,
-} from '../identityVerification';
+} from "../identityVerification";
 
-const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
+const DEFAULT_SIGNALING_URL =
+  process.env.SIGNALING_URL || "http://localhost:4173";
 
 /** Server-side signaling protocol version required for call.* and rtc.* events. */
 const SIGNALING_VERSION = 1;
@@ -80,10 +81,10 @@ const OFFLINE_ERROR_THRESHOLD = 3;
  * in_call          – call accepted and media connected
  */
 export const CALL_PHASES = {
-  IDLE: 'idle',
-  OUTGOING_RINGING: 'outgoing_ringing',
-  INCOMING_RINGING: 'incoming_ringing',
-  IN_CALL: 'in_call',
+  IDLE: "idle",
+  OUTGOING_RINGING: "outgoing_ringing",
+  INCOMING_RINGING: "incoming_ringing",
+  IN_CALL: "in_call",
 };
 
 /**
@@ -97,14 +98,14 @@ export const CALL_PHASES = {
  * @type {Record<string, string>}
  */
 export const CALL_END_REASON_LABELS = {
-  ended:       'Call ended',
-  declined:    'Call declined',
-  cancelled:   'Call cancelled',
-  timeout:     'Missed call',
-  missed:      'Missed call',
-  busy:        'Line was busy',
-  unreachable: 'User unavailable',
-  failed:      'Call failed',
+  ended: "Call ended",
+  declined: "Call declined",
+  cancelled: "Call cancelled",
+  timeout: "Missed call",
+  missed: "Missed call",
+  busy: "Line was busy",
+  unreachable: "User unavailable",
+  failed: "Call failed",
 };
 
 function haptic(durationMs) {
@@ -121,13 +122,16 @@ function haptic(durationMs) {
  */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('socket ack timeout')), 10_000);
+    const timer = setTimeout(
+      () => reject(new Error("socket ack timeout")),
+      10_000,
+    );
     socket.emit(event, payload, (ack) => {
       clearTimeout(timer);
       if (ack?.ok) {
         resolve(ack);
       } else {
-        reject(new Error(ack?.error?.message || 'server error'));
+        reject(new Error(ack?.error?.message || "server error"));
       }
     });
   });
@@ -150,10 +154,10 @@ function emitWithAck(socket, event, payload) {
 export default function useCallFlow() {
   // ─── Identity / connection ────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
-  const [userId, setUserId] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [pendingVerificationCode, setPendingVerificationCode] = useState('');
-  const [calleeId, setCalleeId] = useState('');
+  const [userId, setUserId] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [pendingVerificationCode, setPendingVerificationCode] = useState("");
+  const [calleeId, setCalleeId] = useState("");
 
   // true while the identity is being loaded from persistent storage on mount.
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
@@ -168,7 +172,7 @@ export default function useCallFlow() {
   const [pendingPushCallId, setPendingPushCallId] = useState(null);
 
   // ─── UI state ─────────────────────────────────────────────────────────────
-  const [status, setStatusState] = useState({ message: '', severity: 'info' });
+  const [status, setStatusState] = useState({ message: "", severity: "info" });
   const [callSummary, setCallSummary] = useState(null);
 
   // Presence of the user currently entered in `calleeId`, or `null` while
@@ -196,8 +200,14 @@ export default function useCallFlow() {
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
-  const [audioDevices, setAudioDevices] = useState({ available: [], selected: null });
-  const [connectionQuality, setConnectionQuality] = useState({ bars: 0, label: 'No link' });
+  const [audioDevices, setAudioDevices] = useState({
+    available: [],
+    selected: null,
+  });
+  const [connectionQuality, setConnectionQuality] = useState({
+    bars: 0,
+    label: "No link",
+  });
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
@@ -205,8 +215,8 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
-  const verificationCodeRef = useRef('');
-  const committedIdentityRef = useRef({ userId: '', verificationCode: '' });
+  const verificationCodeRef = useRef("");
+  const committedIdentityRef = useRef({ userId: "", verificationCode: "" });
   // Holds the latest authedFetch implementation so the call-history / contact
   // helpers (declared earlier in this hook) can issue 401-recovering requests
   // without referencing the later-declared authedFetch useCallback directly.
@@ -215,8 +225,11 @@ export default function useCallFlow() {
   const isCallerRef = useRef(false);
   const callConnectedAtRef = useRef(null);
   const elapsedTimerRef = useRef(null);
-  const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
-  const connectionStatsRef = useRef({ timestampMs: null, totalBytesReceived: 0 });
+  const connectionQualityRef = useRef({ bars: 0, label: "No link" });
+  const connectionStatsRef = useRef({
+    timestampMs: null,
+    totalBytesReceived: 0,
+  });
   const isInCallRef = useRef(false);
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
@@ -235,7 +248,7 @@ export default function useCallFlow() {
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef(new Set());
 
-  const setStatus = useCallback((message, severity = 'info') => {
+  const setStatus = useCallback((message, severity = "info") => {
     setStatusState({ message, severity });
   }, []);
 
@@ -248,23 +261,31 @@ export default function useCallFlow() {
     const callId = activeCallIdRef.current;
     if (!pc || !socket?.connected || !callId) return;
     if (isNegotiatingRef.current) {
-      logWarn('[CallFlow] Skipping renegotiation while another is in flight');
+      logWarn("[CallFlow] Skipping renegotiation while another is in flight");
       return;
     }
     isNegotiatingRef.current = true;
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit('rtc.offer', {
-        version: SIGNALING_VERSION,
-        callId,
-        sdp: pc.localDescription ?? offer,
-      }, (ack) => {
-        if (!ack?.ok) logWarn('[CallFlow] renegotiation rtc.offer ack failed', ack?.error);
-      });
-      logInfo('[CallFlow] Renegotiation offer sent');
+      socket.emit(
+        "rtc.offer",
+        {
+          version: SIGNALING_VERSION,
+          callId,
+          sdp: pc.localDescription ?? offer,
+        },
+        (ack) => {
+          if (!ack?.ok)
+            logWarn(
+              "[CallFlow] renegotiation rtc.offer ack failed",
+              ack?.error,
+            );
+        },
+      );
+      logInfo("[CallFlow] Renegotiation offer sent");
     } catch (error) {
-      logError('[CallFlow] Renegotiation failed', error);
+      logError("[CallFlow] Renegotiation failed", error);
     } finally {
       isNegotiatingRef.current = false;
     }
@@ -294,30 +315,35 @@ export default function useCallFlow() {
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
 
   const dismissVerificationCodeNotice = useCallback(() => {
-    setPendingVerificationCode('');
+    setPendingVerificationCode("");
   }, []);
 
-  const commitIdentity = useCallback(async (
-    nextUserId,
-    nextVerificationCode,
-    { announceVerificationCode = false } = {},
-  ) => {
-    const identity = {
-      userId: (nextUserId ?? '').trim(),
-      verificationCode: normalizeVerificationCode(nextVerificationCode),
-    };
+  const commitIdentity = useCallback(
+    async (
+      nextUserId,
+      nextVerificationCode,
+      { announceVerificationCode = false } = {},
+    ) => {
+      const identity = {
+        userId: (nextUserId ?? "").trim(),
+        verificationCode: normalizeVerificationCode(nextVerificationCode),
+      };
 
-    committedIdentityRef.current = identity;
-    verificationCodeRef.current = identity.verificationCode;
-    setUserId(identity.userId);
-    setVerificationCode(identity.verificationCode);
-    setPendingVerificationCode(announceVerificationCode ? identity.verificationCode : '');
-    await saveIdentity(identity);
-    return identity;
-  }, []);
+      committedIdentityRef.current = identity;
+      verificationCodeRef.current = identity.verificationCode;
+      setUserId(identity.userId);
+      setVerificationCode(identity.verificationCode);
+      setPendingVerificationCode(
+        announceVerificationCode ? identity.verificationCode : "",
+      );
+      await saveIdentity(identity);
+      return identity;
+    },
+    [],
+  );
 
   const editUserId = useCallback((nextUserId) => {
-    const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
+    const rawUserId = typeof nextUserId === "string" ? nextUserId : "";
     const trimmedUserId = rawUserId.trim();
     const committedIdentity = committedIdentityRef.current;
     const isCommittedIdentity = trimmedUserId === committedIdentity.userId;
@@ -327,10 +353,10 @@ export default function useCallFlow() {
       verificationCodeRef.current = committedIdentity.verificationCode;
       setVerificationCode(committedIdentity.verificationCode);
     } else {
-      verificationCodeRef.current = '';
-      setVerificationCode('');
+      verificationCodeRef.current = "";
+      setVerificationCode("");
     }
-    setPendingVerificationCode('');
+    setPendingVerificationCode("");
   }, []);
 
   // ─── Load persisted identity on mount ────────────────────────────────────
@@ -343,8 +369,10 @@ export default function useCallFlow() {
         const storedIdentity = await loadIdentity();
         if (cancelled) return;
 
-        const savedId = (storedIdentity?.userId ?? '').trim();
-        let savedVerificationCode = normalizeVerificationCode(storedIdentity?.verificationCode);
+        const savedId = (storedIdentity?.userId ?? "").trim();
+        let savedVerificationCode = normalizeVerificationCode(
+          storedIdentity?.verificationCode,
+        );
 
         if (savedId) {
           const shouldGenerateVerificationCode = !savedVerificationCode;
@@ -363,14 +391,14 @@ export default function useCallFlow() {
           if (shouldGenerateVerificationCode) {
             setPendingVerificationCode(savedVerificationCode);
             setStatus(
-              'Save your recovery code. You’ll need it to use this username on another device.',
-              'info',
+              "Save your recovery code. You’ll need it to use this username on another device.",
+              "info",
             );
             void saveIdentity({
               userId: savedId,
               verificationCode: savedVerificationCode,
             });
-            logInfo('[CallFlow] Recovery code generated for stored identity', {
+            logInfo("[CallFlow] Recovery code generated for stored identity", {
               userId: savedId,
               hasVerificationCode: true,
             });
@@ -384,7 +412,9 @@ export default function useCallFlow() {
     initialiseIdentity().catch(() => {
       if (!cancelled) setIsLoadingIdentity(false);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [setStatus]);
 
   /**
@@ -394,23 +424,27 @@ export default function useCallFlow() {
    * @param {string} newUserId
    * @param {string} [existingVerificationCode]
    */
-  const registerUser = useCallback(async (newUserId, existingVerificationCode = '') => {
-    const trimmed = (newUserId ?? '').trim();
-    if (!trimmed) return;
-    const nextVerificationCode =
-      normalizeVerificationCode(existingVerificationCode) || generateVerificationCode();
-    const identity = await commitIdentity(trimmed, nextVerificationCode, {
-      announceVerificationCode: true,
-    });
-    setStatus(
-      'Save your recovery code. You’ll need it to use this username on another device.',
-      'success',
-    );
-    logInfo('[CallFlow] User registered', {
-      userId: identity.userId,
-      hasVerificationCode: true,
-    });
-  }, [commitIdentity, setStatus]);
+  const registerUser = useCallback(
+    async (newUserId, existingVerificationCode = "") => {
+      const trimmed = (newUserId ?? "").trim();
+      if (!trimmed) return;
+      const nextVerificationCode =
+        normalizeVerificationCode(existingVerificationCode) ||
+        generateVerificationCode();
+      const identity = await commitIdentity(trimmed, nextVerificationCode, {
+        announceVerificationCode: true,
+      });
+      setStatus(
+        "Save your recovery code. You’ll need it to use this username on another device.",
+        "success",
+      );
+      logInfo("[CallFlow] User registered", {
+        userId: identity.userId,
+        hasVerificationCode: true,
+      });
+    },
+    [commitIdentity, setStatus],
+  );
 
   /**
    * Update the active userId and persist the new value.
@@ -419,19 +453,26 @@ export default function useCallFlow() {
    *
    * @param {string} newUserId
    */
-  const updateUserId = useCallback(async (newUserId) => {
-    const trimmed = (newUserId ?? '').trim();
-    if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
+  const updateUserId = useCallback(
+    async (newUserId) => {
+      const trimmed = (newUserId ?? "").trim();
+      if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
 
-    const identity = await commitIdentity(trimmed, generateVerificationCode(), {
-      announceVerificationCode: true,
-    });
-    setStatus('Username updated. Save your new recovery code.', 'success');
-    logInfo('[CallFlow] Username updated', {
-      userId: identity.userId,
-      hasVerificationCode: true,
-    });
-  }, [commitIdentity, setStatus]);
+      const identity = await commitIdentity(
+        trimmed,
+        generateVerificationCode(),
+        {
+          announceVerificationCode: true,
+        },
+      );
+      setStatus("Username updated. Save your new recovery code.", "success");
+      logInfo("[CallFlow] Username updated", {
+        userId: identity.userId,
+        hasVerificationCode: true,
+      });
+    },
+    [commitIdentity, setStatus],
+  );
 
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
@@ -439,19 +480,21 @@ export default function useCallFlow() {
    */
   const unregisterUser = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    const trimmedUrl = (signalingUrl ?? '').trim();
+    const trimmedUrl = (signalingUrl ?? "").trim();
     if (sessionId && trimmedUrl) {
       // Best-effort: drop the device push registration so a signed-out device
       // stops receiving incoming-call notifications.
-      await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
+      await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(
+        () => {},
+      );
     }
-    committedIdentityRef.current = { userId: '', verificationCode: '' };
-    verificationCodeRef.current = '';
-    setUserId('');
-    setVerificationCode('');
-    setPendingVerificationCode('');
-    await saveIdentity({ userId: '', verificationCode: '' });
-    logInfo('[CallFlow] User unregistered');
+    committedIdentityRef.current = { userId: "", verificationCode: "" };
+    verificationCodeRef.current = "";
+    setUserId("");
+    setVerificationCode("");
+    setPendingVerificationCode("");
+    await saveIdentity({ userId: "", verificationCode: "" });
+    logInfo("[CallFlow] User unregistered");
   }, [signalingUrl]);
 
   useEffect(() => {
@@ -469,11 +512,13 @@ export default function useCallFlow() {
    * acknowledged by the user.
    */
   const missedCallCount = useMemo(
-    () => callHistory.filter(
-      (e) => e.direction === 'incoming' &&
-             (e.status === 'missed' || e.endReason === 'timeout') &&
-             !e.isRead,
-    ).length,
+    () =>
+      callHistory.filter(
+        (e) =>
+          e.direction === "incoming" &&
+          (e.status === "missed" || e.endReason === "timeout") &&
+          !e.isRead,
+      ).length,
     [callHistory],
   );
 
@@ -497,34 +542,41 @@ export default function useCallFlow() {
    *
    * @param {number} [limit=20]
    */
-  const fetchCallHistory = useCallback(async (limit = 20) => {
-    const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
-    try {
-      const trimmedUrl = signalingUrl.trim();
-      const trimmedUserId = userId.trim();
-      const response = await authedFetchRef.current?.((sid) => ({
-        url: `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
-      }));
-      if (!response || !response.ok) return;
-      const data = await response.json();
-      if (!Array.isArray(data.calls)) return;
-      const entries = data.calls.map((call) => ({
-        callId: call.callId,
-        callerId: call.callerId,
-        calleeId: call.calleeId,
-        direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
-        status: call.status,
-        endReason: call.endReason,
-        createdAt: call.createdAt,
-        durationSeconds: null,
-        isRead: call.status !== 'missed',
-      }));
-      setCallHistory(entries);
-    } catch (error) {
-      logWarn('[CallFlow] fetchCallHistory failed', { message: error?.message });
-    }
-  }, [signalingUrl, userId]);
+  const fetchCallHistory = useCallback(
+    async (limit = 20) => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      try {
+        const trimmedUrl = signalingUrl.trim();
+        const trimmedUserId = userId.trim();
+        const response = await authedFetchRef.current?.((sid) => ({
+          url: `${trimmedUrl}/calls?sessionId=${encodeURIComponent(
+            sid,
+          )}&limit=${limit}`,
+        }));
+        if (!response || !response.ok) return;
+        const data = await response.json();
+        if (!Array.isArray(data.calls)) return;
+        const entries = data.calls.map((call) => ({
+          callId: call.callId,
+          callerId: call.callerId,
+          calleeId: call.calleeId,
+          direction: call.callerId === trimmedUserId ? "outgoing" : "incoming",
+          status: call.status,
+          endReason: call.endReason,
+          createdAt: call.createdAt,
+          durationSeconds: null,
+          isRead: call.status !== "missed",
+        }));
+        setCallHistory(entries);
+      } catch (error) {
+        logWarn("[CallFlow] fetchCallHistory failed", {
+          message: error?.message,
+        });
+      }
+    },
+    [signalingUrl, userId],
+  );
 
   /**
    * Query the signaling server for the online/offline presence of a userId.
@@ -534,23 +586,27 @@ export default function useCallFlow() {
    * @param {string} targetUserId
    * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
    */
-  const checkPresence = useCallback(async (targetUserId) => {
-    const trimmedId = (targetUserId ?? '').trim();
-    const trimmedUrl = (signalingUrl ?? '').trim();
-    if (!trimmedId || !trimmedUrl) return null;
-    try {
-      const response = await fetch(
-        `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`,
-      );
-      if (response.status === 404) return { status: 'offline', online: false, unknown: true };
-      if (!response.ok) return null;
-      const data = await response.json();
-      return { status: data.status, online: Boolean(data.online) };
-    } catch (error) {
-      logWarn('[CallFlow] checkPresence failed', { message: error?.message });
-      return null;
-    }
-  }, [signalingUrl]);
+  const checkPresence = useCallback(
+    async (targetUserId) => {
+      const trimmedId = (targetUserId ?? "").trim();
+      const trimmedUrl = (signalingUrl ?? "").trim();
+      if (!trimmedId || !trimmedUrl) return null;
+      try {
+        const response = await fetch(
+          `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`,
+        );
+        if (response.status === 404)
+          return { status: "offline", online: false, unknown: true };
+        if (!response.ok) return null;
+        const data = await response.json();
+        return { status: data.status, online: Boolean(data.online) };
+      } catch (error) {
+        logWarn("[CallFlow] checkPresence failed", { message: error?.message });
+        return null;
+      }
+    },
+    [signalingUrl],
+  );
 
   /**
    * Search the server's contact directory (`GET /users`) for known users whose
@@ -562,25 +618,31 @@ export default function useCallFlow() {
    * @param {number} [limit=20] max results
    * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
    */
-  const searchUsers = useCallback(async (query = '', limit = 20) => {
-    const sessionId = sessionIdRef.current;
-    const trimmedUrl = (signalingUrl ?? '').trim();
-    if (!sessionId || !trimmedUrl) return [];
-    try {
-      const trimmedQuery = (query ?? '').trim();
-      const response = await authedFetchRef.current?.((sid) => {
-        const params = new URLSearchParams({ sessionId: sid, limit: String(limit) });
-        if (trimmedQuery) params.set('search', trimmedQuery);
-        return { url: `${trimmedUrl}/users?${params.toString()}` };
-      });
-      if (!response || !response.ok) return [];
-      const data = await response.json();
-      return Array.isArray(data.users) ? data.users : [];
-    } catch (error) {
-      logWarn('[CallFlow] searchUsers failed', { message: error?.message });
-      return [];
-    }
-  }, [signalingUrl]);
+  const searchUsers = useCallback(
+    async (query = "", limit = 20) => {
+      const sessionId = sessionIdRef.current;
+      const trimmedUrl = (signalingUrl ?? "").trim();
+      if (!sessionId || !trimmedUrl) return [];
+      try {
+        const trimmedQuery = (query ?? "").trim();
+        const response = await authedFetchRef.current?.((sid) => {
+          const params = new URLSearchParams({
+            sessionId: sid,
+            limit: String(limit),
+          });
+          if (trimmedQuery) params.set("search", trimmedQuery);
+          return { url: `${trimmedUrl}/users?${params.toString()}` };
+        });
+        if (!response || !response.ok) return [];
+        const data = await response.json();
+        return Array.isArray(data.users) ? data.users : [];
+      } catch (error) {
+        logWarn("[CallFlow] searchUsers failed", { message: error?.message });
+        return [];
+      }
+    },
+    [signalingUrl],
+  );
   // can show whether the callee is online before the user presses Call.
   useEffect(() => {
     const trimmedId = calleeId.trim();
@@ -614,7 +676,9 @@ export default function useCallFlow() {
     setElapsedCallSeconds(0);
     elapsedTimerRef.current = setInterval(() => {
       if (!callConnectedAtRef.current) return;
-      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
+      setElapsedCallSeconds(
+        Math.floor((Date.now() - callConnectedAtRef.current) / 1000),
+      );
     }, 1000);
 
     // Apply bitrate caps now that media is flowing; best-effort.
@@ -635,20 +699,22 @@ export default function useCallFlow() {
       peerConnectionRef.current = null;
     }
     setRemoteStream(null);
-    setConnectionQuality({ bars: 0, label: 'No link' });
+    setConnectionQuality({ bars: 0, label: "No link" });
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
   const ensurePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) return peerConnectionRef.current;
 
-    logInfo('[CallFlow] Creating RTCPeerConnection');
+    logInfo("[CallFlow] Creating RTCPeerConnection");
     const pc = new RTCPeerConnection({ iceServers: getIceServers() });
 
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
-      const attachedTracks = (pc.getSenders?.() ?? []).map((s) => s.track).filter(Boolean);
+      const attachedTracks = (pc.getSenders?.() ?? [])
+        .map((s) => s.track)
+        .filter(Boolean);
       localStreamRef.current.getTracks().forEach((track) => {
         if (!attachedTracks.includes(track)) {
           pc.addTrack(track, localStreamRef.current);
@@ -659,8 +725,8 @@ export default function useCallFlow() {
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate || !socketRef.current?.connected) return;
       const summary = summarizeIceCandidate(candidate);
-      logInfo('[CallFlow] ICE candidate sent', summary);
-      socketRef.current.emit('rtc.candidate', {
+      logInfo("[CallFlow] ICE candidate sent", summary);
+      socketRef.current.emit("rtc.candidate", {
         version: SIGNALING_VERSION,
         callId: activeCallIdRef.current,
         candidate,
@@ -670,13 +736,25 @@ export default function useCallFlow() {
     pc.ontrack = ({ streams }) => {
       const [stream] = streams;
       if (stream) {
-        logInfo('[CallFlow] Remote stream connected');
-        setRemoteStream(stream);
+        logInfo("[CallFlow] Remote stream connected");
+        setRemoteStream((current) => {
+          // Screen sharing with screen audio adds a *second* stream that only
+          // carries an audio track. Letting it replace the primary stream would
+          // leave the remote video view with nothing to render (blank screen).
+          if (
+            current &&
+            stream.id !== current.id &&
+            !stream.getVideoTracks?.().length
+          ) {
+            return current;
+          }
+          return stream;
+        });
         if (activeCallIdRef.current) {
           Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
         }
         markCallConnected();
-        setStatus('Call started', 'success');
+        setStatus("Call started", "success");
       }
     };
 
@@ -684,10 +762,10 @@ export default function useCallFlow() {
     // can survive a network handoff without tearing down entirely.
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
-      logInfo('[CallFlow] ICE connection state', { state });
-      if (state !== 'failed') return;
+      logInfo("[CallFlow] ICE connection state", { state });
+      if (state !== "failed") return;
       if (!isCallerRef.current || !socketRef.current?.connected) return;
-      logWarn('[CallFlow] ICE failed; attempting restart');
+      logWarn("[CallFlow] ICE failed; attempting restart");
       if (activeCallIdRef.current) {
         Telemetry.trackIceRestart(activeCallIdRef.current);
       }
@@ -695,15 +773,23 @@ export default function useCallFlow() {
         try {
           const offer = await pc.createOffer({ iceRestart: true });
           await pc.setLocalDescription(offer);
-          socketRef.current?.emit('rtc.offer', {
-            version: SIGNALING_VERSION,
-            callId: activeCallIdRef.current,
-            sdp: pc.localDescription,
-          }, (ack) => {
-            if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
-          });
+          socketRef.current?.emit(
+            "rtc.offer",
+            {
+              version: SIGNALING_VERSION,
+              callId: activeCallIdRef.current,
+              sdp: pc.localDescription,
+            },
+            (ack) => {
+              if (!ack?.ok)
+                logWarn(
+                  "[CallFlow] ICE restart rtc.offer ack failed",
+                  ack?.error,
+                );
+            },
+          );
         } catch (err) {
-          logError('[CallFlow] ICE restart failed', err);
+          logError("[CallFlow] ICE restart failed", err);
         }
       })();
     };
@@ -719,11 +805,11 @@ export default function useCallFlow() {
 
     const permResult = await ensureCallPermissions();
     if (!permResult.ok) {
-      setStatus(permResult.message, 'error');
+      setStatus(permResult.message, "error");
       return null;
     }
     if (permResult.warningMessage) {
-      logWarn('[CallFlow] Optional permission denied', {
+      logWarn("[CallFlow] Optional permission denied", {
         message: permResult.warningMessage,
       });
     }
@@ -731,20 +817,20 @@ export default function useCallFlow() {
     try {
       const stream = await mediaDevices.getUserMedia({
         audio: true,
-        video: { facingMode: 'user' },
+        video: { facingMode: "user" },
       });
-      logInfo('[CallFlow] Local media stream acquired', {
+      logInfo("[CallFlow] Local media stream acquired", {
         audio: stream.getAudioTracks().length,
         video: stream.getVideoTracks().length,
       });
       localStreamRef.current = stream;
       setLocalStream(stream);
-      setIsMuted(!isTrackEnabled(stream, 'audio'));
-      setIsVideoEnabled(isTrackEnabled(stream, 'video'));
+      setIsMuted(!isTrackEnabled(stream, "audio"));
+      setIsVideoEnabled(isTrackEnabled(stream, "video"));
       return stream;
     } catch (error) {
-      logError('[CallFlow] Failed to acquire media', error);
-      setStatus(getMediaAccessStatus(error), 'error');
+      logError("[CallFlow] Failed to acquire media", error);
+      setStatus(getMediaAccessStatus(error), "error");
       throw error;
     }
   }, [setStatus]);
@@ -767,7 +853,7 @@ export default function useCallFlow() {
 
     haptic(400);
 
-    logInfo('[CallFlow] Requesting incoming-call UI', {
+    logInfo("[CallFlow] Requesting incoming-call UI", {
       callId: call.callId,
       callerId: call.callerId ?? null,
     });
@@ -776,11 +862,16 @@ export default function useCallFlow() {
       callId: call.callId,
       callerId: call.callerId,
     }).catch((error) => {
-      logWarn('[CallFlow] displayIncomingCall failed', { message: error?.message });
+      logWarn("[CallFlow] displayIncomingCall failed", {
+        message: error?.message,
+      });
       return false;
     });
 
-    logInfo('[CallFlow] Incoming-call UI result', { callId: call.callId, shown });
+    logInfo("[CallFlow] Incoming-call UI result", {
+      callId: call.callId,
+      shown,
+    });
 
     if (!shown) {
       // CallKeep is unavailable – fall back to a JS ringtone so the user still
@@ -801,7 +892,7 @@ export default function useCallFlow() {
    *   (one of the keys from CALL_END_REASON_LABELS) for history tracking.
    */
   const endActiveCall = useCallback(
-    (nextMessage = 'Call ended', severity = 'info', endReason = null) => {
+    (nextMessage = "Call ended", severity = "info", endReason = null) => {
       // Capture call record before clearing – activeCallRef / incomingCallRef
       // are kept in sync with state throughout the call lifecycle.
       const callRecord = activeCallRef.current ?? incomingCallRef.current;
@@ -817,7 +908,7 @@ export default function useCallFlow() {
 
       // Stop any JS-layer fallback ringtone (idempotent).
       stopIncomingRingtone();
-      logInfo('[CallFlow] Ringing stopped');
+      logInfo("[CallFlow] Ringing stopped");
 
       const durationSeconds = callConnectedAtRef.current
         ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
@@ -826,7 +917,7 @@ export default function useCallFlow() {
       if (callConnectedAtRef.current) {
         setCallSummary({
           durationSeconds,
-          quality: connectionQualityRef.current?.label || 'No link',
+          quality: connectionQualityRef.current?.label || "No link",
         });
       }
 
@@ -834,7 +925,7 @@ export default function useCallFlow() {
       if (callRecord?.callId) {
         const qos = Telemetry.trackCallEnd(callRecord.callId);
         if (qos) {
-          logInfo('[CallFlow] call QoS summary', qos);
+          logInfo("[CallFlow] call QoS summary", qos);
         }
       }
 
@@ -842,14 +933,14 @@ export default function useCallFlow() {
       if (callRecord?.callId) {
         const resolvedReason = endReason ?? callRecord.endReason ?? null;
         const isMissed =
-          resolvedReason === 'missed' ||
-          resolvedReason === 'timeout' ||
-          callRecord.status === 'missed';
+          resolvedReason === "missed" ||
+          resolvedReason === "timeout" ||
+          callRecord.status === "missed";
         addToHistory({
           callId: callRecord.callId,
           callerId: callRecord.callerId,
           calleeId: callRecord.calleeId,
-          direction: isCaller ? 'outgoing' : 'incoming',
+          direction: isCaller ? "outgoing" : "incoming",
           status: callRecord.status,
           endReason: resolvedReason,
           createdAt: callRecord.createdAt,
@@ -882,7 +973,13 @@ export default function useCallFlow() {
       closePeerConnection();
       if (nextMessage) setStatus(nextMessage, severity);
     },
-    [addToHistory, closePeerConnection, resetScreenShare, setIsCompactView, setStatus],
+    [
+      addToHistory,
+      closePeerConnection,
+      resetScreenShare,
+      setIsCompactView,
+      setStatus,
+    ],
   );
 
   // ─── Session management ───────────────────────────────────────────────────
@@ -891,7 +988,9 @@ export default function useCallFlow() {
     if (sessionIdRef.current) return sessionIdRef.current;
 
     const trimmedUrl = signalingUrl.trim();
-    const trimmedVerificationCode = normalizeVerificationCode(verificationCodeRef.current);
+    const trimmedVerificationCode = normalizeVerificationCode(
+      verificationCodeRef.current,
+    );
     const requestBody = {
       userId: userId.trim() || undefined,
       platform: Platform.OS,
@@ -900,17 +999,20 @@ export default function useCallFlow() {
       requestBody.verificationCode = trimmedVerificationCode;
     }
     const response = await fetch(`${trimmedUrl}/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => null);
-      if (response.status === 409 && errorPayload?.code === 'identity_conflict') {
+      if (
+        response.status === 409 &&
+        errorPayload?.code === "identity_conflict"
+      ) {
         setStatus(
-          'This username is already claimed. Sign out and choose another username, or enter the recovery code.',
-          'error',
+          "This username is already claimed. Sign out and choose another username, or enter the recovery code.",
+          "error",
         );
       }
       throw new Error(`Session creation failed (HTTP ${response.status})`);
@@ -918,7 +1020,10 @@ export default function useCallFlow() {
 
     const data = await response.json();
     sessionIdRef.current = data.sessionId;
-    logInfo('[CallFlow] Session created', { sessionId: data.sessionId, userId: data.userId });
+    logInfo("[CallFlow] Session created", {
+      sessionId: data.sessionId,
+      userId: data.userId,
+    });
     return data.sessionId;
   }, [setStatus, signalingUrl, userId]);
 
@@ -931,27 +1036,29 @@ export default function useCallFlow() {
    */
   const refreshSession = useCallback(async () => {
     const sessionId = sessionIdRef.current;
-    const trimmedUrl = (signalingUrl ?? '').trim();
+    const trimmedUrl = (signalingUrl ?? "").trim();
     if (!sessionId || !trimmedUrl) return null;
     try {
       const response = await fetch(`${trimmedUrl}/session/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId }),
       });
       if (!response.ok) {
         // The session is gone (e.g. server restart with in-memory store, or TTL
         // expiry): drop it so the next authed request creates a new session.
         sessionIdRef.current = null;
-        logWarn('[CallFlow] session refresh failed', { status: response.status });
+        logWarn("[CallFlow] session refresh failed", {
+          status: response.status,
+        });
         return null;
       }
       const data = await response.json();
       sessionIdRef.current = data.sessionId;
-      logInfo('[CallFlow] Session refreshed', { sessionId: data.sessionId });
+      logInfo("[CallFlow] Session refreshed", { sessionId: data.sessionId });
       return data.sessionId;
     } catch (error) {
-      logWarn('[CallFlow] session refresh threw', { message: error?.message });
+      logWarn("[CallFlow] session refresh threw", { message: error?.message });
       return null;
     }
   }, [signalingUrl]);
@@ -967,27 +1074,31 @@ export default function useCallFlow() {
    * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
    * @returns {Promise<Response | null>}
    */
-  const authedFetch = useCallback(async (buildRequest) => {
-    let sessionId = sessionIdRef.current;
-    if (!sessionId) {
-      sessionId = await createOrGetSession().catch(() => null);
-    }
-    if (!sessionId) return null;
+  const authedFetch = useCallback(
+    async (buildRequest) => {
+      let sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        sessionId = await createOrGetSession().catch(() => null);
+      }
+      if (!sessionId) return null;
 
-    let request = buildRequest(sessionId);
-    let response = await fetch(request.url, request.options);
+      let request = buildRequest(sessionId);
+      let response = await fetch(request.url, request.options);
 
-    if (response.status === 401) {
-      // Session expired or was invalidated server-side: refresh once and retry.
-      const refreshedId = await refreshSession();
-      const nextId = refreshedId || (await createOrGetSession().catch(() => null));
-      if (!nextId) return response;
-      request = buildRequest(nextId);
-      response = await fetch(request.url, request.options);
-    }
+      if (response.status === 401) {
+        // Session expired or was invalidated server-side: refresh once and retry.
+        const refreshedId = await refreshSession();
+        const nextId =
+          refreshedId || (await createOrGetSession().catch(() => null));
+        if (!nextId) return response;
+        request = buildRequest(nextId);
+        response = await fetch(request.url, request.options);
+      }
 
-    return response;
-  }, [createOrGetSession, refreshSession]);
+      return response;
+    },
+    [createOrGetSession, refreshSession],
+  );
 
   // Expose authedFetch through a ref for helpers defined earlier in the hook.
   useEffect(() => {
@@ -1003,7 +1114,7 @@ export default function useCallFlow() {
    */
   const disconnectSocket = useCallback(() => {
     if (socketRef.current) {
-      logInfo('[CallFlow] Disconnecting socket');
+      logInfo("[CallFlow] Disconnecting socket");
       socketRef.current.off(); // remove all listeners before disconnect
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -1038,7 +1149,7 @@ export default function useCallFlow() {
     (sessionId) => {
       disconnectSocket();
 
-      logInfo('[CallFlow] Connecting socket', { signalingUrl });
+      logInfo("[CallFlow] Connecting socket", { signalingUrl });
       const socket = io(signalingUrl.trim(), {
         ...getSocketOptions(),
         auth: { sessionId },
@@ -1046,8 +1157,11 @@ export default function useCallFlow() {
       socketRef.current = socket;
 
       // ── Incoming call ──────────────────────────────────────────────────
-      socket.on('call.incoming', ({ call }) => {
-        logInfo('[CallFlow] Incoming call', { callId: call.callId, callerId: call.callerId });
+      socket.on("call.incoming", ({ call }) => {
+        logInfo("[CallFlow] Incoming call", {
+          callId: call.callId,
+          callerId: call.callerId,
+        });
         incomingCallRef.current = call;
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
@@ -1055,93 +1169,120 @@ export default function useCallFlow() {
         // Show system-level incoming-call UI (CallKeep) and start the JS
         // ringtone fallback when CallKeep is unavailable.  Runs async so UI
         // state updates are never blocked if CallKeep setup is slow.
-        showIncomingCallUi(call).catch((error) => { logWarn('[CallFlow] showIncomingCallUi unexpected error', { message: error?.message }); });
+        showIncomingCallUi(call).catch((error) => {
+          logWarn("[CallFlow] showIncomingCallUi unexpected error", {
+            message: error?.message,
+          });
+        });
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
-      socket.on('call.ringing', ({ call }) => {
-        logInfo('[CallFlow] Call ringing', { callId: call.callId });
+      socket.on("call.ringing", ({ call }) => {
+        logInfo("[CallFlow] Call ringing", { callId: call.callId });
         activeCallRef.current = call;
         setActiveCall(call);
       });
 
       // ── Call state changes ────────────────────────────────────────────
-      socket.on('call.state_changed', async ({ status: callStatus, call, reason }) => {
-        logInfo('[CallFlow] call.state_changed', { callStatus, callId: call?.callId, reason });
-        if (call) {
-          activeCallRef.current = call;
-          setActiveCall(call);
-        }
-
-        switch (callStatus) {
-          case 'accepted': {
-            setStatus('Call accepted, connecting media…');
-            // Caller is responsible for sending the initial RTC offer.
-            if (isCallerRef.current && call) {
-              activeCallIdRef.current = call.callId;
-              try {
-                await startLocalPreviewRef.current?.();
-                const pc = ensurePeerConnectionRef.current?.();
-                if (!pc) break;
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                socket.emit('rtc.offer', {
-                  version: SIGNALING_VERSION,
-                  callId: call.callId,
-                  sdp: pc.localDescription,
-                }, (ack) => {
-                  if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
-                });
-              } catch (error) {
-                logError('[CallFlow] Failed to create/send RTC offer', error);
-                setStatus('Failed to connect media', 'error');
-                endActiveCallRef.current?.('Failed to connect media', 'error');
-              }
-            }
-            break;
+      socket.on(
+        "call.state_changed",
+        async ({ status: callStatus, call, reason }) => {
+          logInfo("[CallFlow] call.state_changed", {
+            callStatus,
+            callId: call?.callId,
+            reason,
+          });
+          if (call) {
+            activeCallRef.current = call;
+            setActiveCall(call);
           }
 
-          case 'declined':
-            endActiveCallRef.current?.('Call declined', 'info', 'declined');
-            break;
+          switch (callStatus) {
+            case "accepted": {
+              setStatus("Call accepted, connecting media…");
+              // Caller is responsible for sending the initial RTC offer.
+              if (isCallerRef.current && call) {
+                activeCallIdRef.current = call.callId;
+                try {
+                  await startLocalPreviewRef.current?.();
+                  const pc = ensurePeerConnectionRef.current?.();
+                  if (!pc) break;
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  socket.emit(
+                    "rtc.offer",
+                    {
+                      version: SIGNALING_VERSION,
+                      callId: call.callId,
+                      sdp: pc.localDescription,
+                    },
+                    (ack) => {
+                      if (!ack?.ok)
+                        logWarn("[CallFlow] rtc.offer ack failed", ack?.error);
+                    },
+                  );
+                } catch (error) {
+                  logError("[CallFlow] Failed to create/send RTC offer", error);
+                  setStatus("Failed to connect media", "error");
+                  endActiveCallRef.current?.(
+                    "Failed to connect media",
+                    "error",
+                  );
+                }
+              }
+              break;
+            }
 
-          case 'missed':
-            endActiveCallRef.current?.('Call not answered', 'error', 'missed');
-            break;
+            case "declined":
+              endActiveCallRef.current?.("Call declined", "info", "declined");
+              break;
 
-          case 'busy':
-            endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
-            break;
+            case "missed":
+              endActiveCallRef.current?.(
+                "Call not answered",
+                "error",
+                "missed",
+              );
+              break;
 
-          case 'unreachable':
-            endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
-            break;
+            case "busy":
+              endActiveCallRef.current?.("Callee is busy", "error", "busy");
+              break;
 
-          case 'ended':
-            endActiveCallRef.current?.(
-              reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
-              'info',
-              reason ?? 'ended',
-            );
-            break;
+            case "unreachable":
+              endActiveCallRef.current?.(
+                "Callee is unreachable",
+                "error",
+                "unreachable",
+              );
+              break;
 
-          default:
-            break;
-        }
-      });
+            case "ended":
+              endActiveCallRef.current?.(
+                reason === "cancelled" ? "Call cancelled" : "Call ended",
+                "info",
+                reason ?? "ended",
+              );
+              break;
+
+            default:
+              break;
+          }
+        },
+      );
 
       // ── RTC offer (callee receives offer from caller) ─────────────────
-      socket.on('rtc.offer', async ({ sdp, callId }) => {
+      socket.on("rtc.offer", async ({ sdp, callId }) => {
         if (callId !== activeCallIdRef.current) {
-          logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
+          logWarn("[CallFlow] rtc.offer for unknown callId", { callId });
           return;
         }
         if (isNegotiatingRef.current) {
-          logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer');
+          logWarn("[CallFlow] Glare: ignoring concurrent rtc.offer");
           return;
         }
         isNegotiatingRef.current = true;
-        logInfo('[CallFlow] RTC offer received');
+        logInfo("[CallFlow] RTC offer received");
         try {
           const pc = ensurePeerConnectionRef.current?.();
           if (!pc) return;
@@ -1153,36 +1294,43 @@ export default function useCallFlow() {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
             } catch (err) {
-              logWarn('[CallFlow] Failed to add buffered ICE candidate', { message: err?.message });
+              logWarn("[CallFlow] Failed to add buffered ICE candidate", {
+                message: err?.message,
+              });
             }
           }
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          socket.emit('rtc.answer', {
-            version: SIGNALING_VERSION,
-            callId,
-            sdp: pc.localDescription,
-          }, (ack) => {
-            if (!ack?.ok) logWarn('[CallFlow] rtc.answer ack failed', ack?.error);
-          });
+          socket.emit(
+            "rtc.answer",
+            {
+              version: SIGNALING_VERSION,
+              callId,
+              sdp: pc.localDescription,
+            },
+            (ack) => {
+              if (!ack?.ok)
+                logWarn("[CallFlow] rtc.answer ack failed", ack?.error);
+            },
+          );
           setCallPhase(CALL_PHASES.IN_CALL);
           startCallService();
         } catch (error) {
-          logError('[CallFlow] Failed to handle RTC offer', error);
-          setStatus('Failed to connect media', 'error');
-          endActiveCallRef.current?.('Failed to connect media', 'error');
+          logError("[CallFlow] Failed to handle RTC offer", error);
+          setStatus("Failed to connect media", "error");
+          endActiveCallRef.current?.("Failed to connect media", "error");
         } finally {
           isNegotiatingRef.current = false;
         }
       });
 
       // ── RTC answer (caller receives answer from callee) ───────────────
-      socket.on('rtc.answer', async ({ sdp, callId }) => {
+      socket.on("rtc.answer", async ({ sdp, callId }) => {
         if (callId !== activeCallIdRef.current) {
-          logWarn('[CallFlow] rtc.answer for unknown callId', { callId });
+          logWarn("[CallFlow] rtc.answer for unknown callId", { callId });
           return;
         }
-        logInfo('[CallFlow] RTC answer received');
+        logInfo("[CallFlow] RTC answer received");
         try {
           const pc = peerConnectionRef.current;
           if (!pc) return;
@@ -1194,20 +1342,22 @@ export default function useCallFlow() {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(c));
             } catch (err) {
-              logWarn('[CallFlow] Failed to add buffered ICE candidate', { message: err?.message });
+              logWarn("[CallFlow] Failed to add buffered ICE candidate", {
+                message: err?.message,
+              });
             }
           }
           setCallPhase(CALL_PHASES.IN_CALL);
           startCallService();
         } catch (error) {
-          logError('[CallFlow] Failed to handle RTC answer', error);
-          setStatus('Failed to connect media', 'error');
-          endActiveCallRef.current?.('Failed to connect media', 'error');
+          logError("[CallFlow] Failed to handle RTC answer", error);
+          setStatus("Failed to connect media", "error");
+          endActiveCallRef.current?.("Failed to connect media", "error");
         }
       });
 
       // ── RTC ICE candidates ────────────────────────────────────────────
-      socket.on('rtc.candidate', async ({ candidate, callId }) => {
+      socket.on("rtc.candidate", async ({ candidate, callId }) => {
         if (callId !== activeCallIdRef.current) return;
         const pc = peerConnectionRef.current;
         if (!pc) return;
@@ -1215,19 +1365,23 @@ export default function useCallFlow() {
         // a candidate without a remote description throws on all platforms.
         if (!pc.remoteDescription) {
           iceCandidateBufferRef.current.push(candidate);
-          logInfo('[CallFlow] ICE candidate buffered (awaiting remote description)');
+          logInfo(
+            "[CallFlow] ICE candidate buffered (awaiting remote description)",
+          );
           return;
         }
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
-          logWarn('[CallFlow] Failed to add ICE candidate', { message: error?.message });
+          logWarn("[CallFlow] Failed to add ICE candidate", {
+            message: error?.message,
+          });
         }
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
-      socket.on('connect', async () => {
-        logInfo('[CallFlow] Socket connected', { socketId: socket.id });
+      socket.on("connect", async () => {
+        logInfo("[CallFlow] Socket connected", { socketId: socket.id });
         // Clear offline indicator on successful connection.
         connectErrorCountRef.current = 0;
         setIsServerUnreachable(false);
@@ -1242,36 +1396,49 @@ export default function useCallFlow() {
           const pc = peerConnectionRef.current;
           if (pc) {
             try {
-              logInfo('[CallFlow] Sending ICE restart offer after socket reconnect');
+              logInfo(
+                "[CallFlow] Sending ICE restart offer after socket reconnect",
+              );
               if (activeCallIdRef.current) {
                 Telemetry.trackIceRestart(activeCallIdRef.current);
               }
               const offer = await pc.createOffer({ iceRestart: true });
               await pc.setLocalDescription(offer);
-              socket.emit('rtc.offer', {
-                version: SIGNALING_VERSION,
-                callId: activeCallIdRef.current,
-                sdp: pc.localDescription,
-              }, (ack) => {
-                if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
-              });
+              socket.emit(
+                "rtc.offer",
+                {
+                  version: SIGNALING_VERSION,
+                  callId: activeCallIdRef.current,
+                  sdp: pc.localDescription,
+                },
+                (ack) => {
+                  if (!ack?.ok)
+                    logWarn(
+                      "[CallFlow] ICE restart rtc.offer ack failed",
+                      ack?.error,
+                    );
+                },
+              );
             } catch (err) {
-              logError('[CallFlow] ICE restart after socket reconnect failed', err);
+              logError(
+                "[CallFlow] ICE restart after socket reconnect failed",
+                err,
+              );
             }
           }
         }
       });
 
-      socket.on('disconnect', (reason) => {
-        logWarn('[CallFlow] Socket disconnected', { reason });
+      socket.on("disconnect", (reason) => {
+        logWarn("[CallFlow] Socket disconnected", { reason });
         if (isInCallRef.current) {
           setIsReconnecting(true);
-          setStatus('Reconnecting…');
+          setStatus("Reconnecting…");
         }
       });
 
-      socket.on('connect_error', (error) => {
-        logError('[CallFlow] Socket connect error', {
+      socket.on("connect_error", (error) => {
+        logError("[CallFlow] Socket connect error", {
           message: error?.message,
           description: error?.description,
         });
@@ -1307,28 +1474,30 @@ export default function useCallFlow() {
     async (callId) => {
       if (!callId) return;
 
-      const trimmedUserId = (userId ?? '').trim();
-      const trimmedUrl = (signalingUrl ?? '').trim();
+      const trimmedUserId = (userId ?? "").trim();
+      const trimmedUrl = (signalingUrl ?? "").trim();
 
       if (!trimmedUserId || !trimmedUrl) {
-        logInfo('[CallFlow] Deferring push rehydration until identity is set', { callId });
+        logInfo("[CallFlow] Deferring push rehydration until identity is set", {
+          callId,
+        });
         setPendingPushCallId(callId);
         return;
       }
 
-      logInfo('[CallFlow] Rehydrating call from push', { callId });
+      logInfo("[CallFlow] Rehydrating call from push", { callId });
 
       try {
         const sessionId = await createOrGetSession();
 
         const response = await fetch(
           `${trimmedUrl}/calls/${encodeURIComponent(callId)}` +
-          `?sessionId=${encodeURIComponent(sessionId)}`,
+            `?sessionId=${encodeURIComponent(sessionId)}`,
         );
 
         if (!response.ok) {
           if (response.status === 404) {
-            setStatus('Call no longer available', 'info');
+            setStatus("Call no longer available", "info");
             return;
           }
           throw new Error(`HTTP ${response.status}`);
@@ -1336,15 +1505,22 @@ export default function useCallFlow() {
 
         const call = await response.json();
 
-        if (call.status === 'ringing') {
-          logInfo('[CallFlow] Rehydrated ringing call; showing incoming screen', {
-            callId: call.callId,
-          });
+        if (call.status === "ringing") {
+          logInfo(
+            "[CallFlow] Rehydrated ringing call; showing incoming screen",
+            {
+              callId: call.callId,
+            },
+          );
           incomingCallRef.current = call;
           setIncomingCall(call);
           setCallPhase(CALL_PHASES.INCOMING_RINGING);
           setStatus(`Incoming call from ${call.callerId}`);
-          showIncomingCallUi(call).catch((error) => { logWarn('[CallFlow] showIncomingCallUi unexpected error', { message: error?.message }); });
+          showIncomingCallUi(call).catch((error) => {
+            logWarn("[CallFlow] showIncomingCallUi unexpected error", {
+              message: error?.message,
+            });
+          });
 
           // Ensure a socket is live so the user can accept / decline.
           if (!socketRef.current?.connected) {
@@ -1353,22 +1529,23 @@ export default function useCallFlow() {
         } else {
           // Terminal or non-ringing state – inform the user and stay idle.
           const terminalMessages = {
-            missed:      'Missed call',
-            declined:    'Call was declined',
-            ended:       'Call ended',
-            busy:        'Line was busy',
-            unreachable: 'Call unreachable',
+            missed: "Missed call",
+            declined: "Call was declined",
+            ended: "Call ended",
+            busy: "Line was busy",
+            unreachable: "Call unreachable",
           };
-          const message = terminalMessages[call.status] ?? 'Call no longer active';
-          logInfo('[CallFlow] Push call already finished', {
+          const message =
+            terminalMessages[call.status] ?? "Call no longer active";
+          logInfo("[CallFlow] Push call already finished", {
             callId,
             status: call.status,
           });
-          setStatus(message, 'info');
+          setStatus(message, "info");
         }
       } catch (error) {
-        logError('[CallFlow] rehydrateCallFromPush failed', error);
-        setStatus('Unable to retrieve call state', 'error');
+        logError("[CallFlow] rehydrateCallFromPush failed", error);
+        setStatus("Unable to retrieve call state", "error");
       }
     },
     // connectSocket and createOrGetSession are stable relative to userId/signalingUrl
@@ -1409,14 +1586,18 @@ export default function useCallFlow() {
           // Bind this device to the user for offline (push) delivery.  Runs in
           // the background and degrades to a no-op when the native messaging
           // library is not installed, so it never blocks presence connection.
-          registerForPushNotifications({ sessionId, signalingUrl: trimmedUrl })
-            .catch((error) => {
-              logWarn('[CallFlow] Push registration failed', { message: error?.message });
+          registerForPushNotifications({
+            sessionId,
+            signalingUrl: trimmedUrl,
+          }).catch((error) => {
+            logWarn("[CallFlow] Push registration failed", {
+              message: error?.message,
             });
+          });
         }
       } catch (error) {
         if (!cancelled) {
-          logWarn('[CallFlow] Failed to establish presence socket', {
+          logWarn("[CallFlow] Failed to establish presence socket", {
             message: error?.message,
           });
         }
@@ -1430,7 +1611,13 @@ export default function useCallFlow() {
       sessionIdRef.current = null;
       disconnectSocket();
     };
-  }, [connectSocket, createOrGetSession, disconnectSocket, signalingUrl, userId]);
+  }, [
+    connectSocket,
+    createOrGetSession,
+    disconnectSocket,
+    signalingUrl,
+    userId,
+  ]);
 
   // ─── Proactive session refresh ────────────────────────────────────────────
   // Rotate the session token every SESSION_REFRESH_INTERVAL_MS (50 min) while
@@ -1443,10 +1630,12 @@ export default function useCallFlow() {
     const timer = setInterval(async () => {
       if (!sessionIdRef.current) return;
       await refreshSession().catch((error) => {
-        logWarn('[CallFlow] Proactive session refresh failed', { message: error?.message });
+        logWarn("[CallFlow] Proactive session refresh failed", {
+          message: error?.message,
+        });
         setStatus(
-          'Session refresh failed — your token may expire soon. Reconnect if calls stop working.',
-          'warning',
+          "Session refresh failed — your token may expire soon. Reconnect if calls stop working.",
+          "warning",
         );
       });
     }, SESSION_REFRESH_INTERVAL_MS);
@@ -1468,10 +1657,12 @@ export default function useCallFlow() {
       const sessionId = await createOrGetSession();
       connectSocket(sessionId);
     } catch (error) {
-      logWarn('[CallFlow] retryPresenceConnect failed', { message: error?.message });
+      logWarn("[CallFlow] retryPresenceConnect failed", {
+        message: error?.message,
+      });
       setIsServerUnreachable(true);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, signalingUrl]); // createOrGetSession and connectSocket are stable relative to these
 
   useEffect(() => {
@@ -1497,12 +1688,12 @@ export default function useCallFlow() {
     getInitialCallLink()
       .then((descriptor) => {
         if (descriptor?.callId) {
-          logInfo('[CallFlow] App launched from push notification', descriptor);
+          logInfo("[CallFlow] App launched from push notification", descriptor);
           rehydrateCallFromPushRef.current(descriptor.callId);
         }
       })
       .catch((error) => {
-        logError('[CallFlow] Failed to read initial call link', error);
+        logError("[CallFlow] Failed to read initial call link", error);
       });
     // Run only once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1511,7 +1702,7 @@ export default function useCallFlow() {
   // 2. Listen for deep links while the app is already running (background → foreground).
   useEffect(() => {
     const unlisten = addCallLinkListener((descriptor) => {
-      logInfo('[CallFlow] Deep-link received while running', descriptor);
+      logInfo("[CallFlow] Deep-link received while running", descriptor);
       rehydrateCallFromPushRef.current(descriptor.callId);
     });
     return unlisten;
@@ -1522,7 +1713,7 @@ export default function useCallFlow() {
   // 3. Deferred rehydration: once identity is set, process any pending push callId.
   useEffect(() => {
     if (!pendingPushCallId) return;
-    if (!(userId ?? '').trim() || !(signalingUrl ?? '').trim()) return;
+    if (!(userId ?? "").trim() || !(signalingUrl ?? "").trim()) return;
 
     const callId = pendingPushCallId;
     setPendingPushCallId(null);
@@ -1531,56 +1722,78 @@ export default function useCallFlow() {
 
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
-  const placeCall = useCallback(async (explicitCalleeId) => {
-    const explicit = (typeof explicitCalleeId === 'string' ? explicitCalleeId : '').trim();
-    const trimmedCalleeId = explicit || calleeId.trim();
-    if (!trimmedCalleeId) {
-      setStatus('Enter a callee ID to call', 'error');
-      return;
-    }
-    if (!userId.trim()) {
-      setStatus('Enter your user ID first', 'error');
-      return;
-    }
-
-    try {
-      setCallSummary(null);
-
-      const stream = await startLocalPreview();
-      if (!stream) return;
-
-      // Ensure a session and socket exist.
-      let socket = socketRef.current;
-      if (!socket?.connected) {
-        const sessionId = await createOrGetSession();
-        socket = connectSocket(sessionId);
-        // Give the socket a moment to connect.
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('socket connect timeout')), 8_000);
-          socket.once('connect', () => { clearTimeout(timer); resolve(); });
-          socket.once('connect_error', (err) => { clearTimeout(timer); reject(err); });
-        });
+  const placeCall = useCallback(
+    async (explicitCalleeId) => {
+      const explicit = (
+        typeof explicitCalleeId === "string" ? explicitCalleeId : ""
+      ).trim();
+      const trimmedCalleeId = explicit || calleeId.trim();
+      if (!trimmedCalleeId) {
+        setStatus("Enter a callee ID to call", "error");
+        return;
+      }
+      if (!userId.trim()) {
+        setStatus("Enter your user ID first", "error");
+        return;
       }
 
-      setStatus(`Calling ${trimmedCalleeId}…`);
-      const ack = await emitWithAck(socket, 'call.initiate', {
-        version: SIGNALING_VERSION,
-        calleeId: trimmedCalleeId,
-      });
+      try {
+        setCallSummary(null);
 
-      isCallerRef.current = true;
-      activeCallIdRef.current = ack.call.callId;
-      activeCallRef.current = ack.call;
-      setActiveCall(ack.call);
-      setCallPhase(CALL_PHASES.OUTGOING_RINGING);
-      setStatus(`Ringing ${trimmedCalleeId}…`);
-      Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
-    } catch (error) {
-      logError('[CallFlow] placeCall failed', error);
-      setStatus(`Failed to place call: ${error.message}`, 'error');
-      endActiveCall();
-    }
-  }, [calleeId, connectSocket, createOrGetSession, endActiveCall, setStatus, startLocalPreview, userId]);
+        const stream = await startLocalPreview();
+        if (!stream) return;
+
+        // Ensure a session and socket exist.
+        let socket = socketRef.current;
+        if (!socket?.connected) {
+          const sessionId = await createOrGetSession();
+          socket = connectSocket(sessionId);
+          // Give the socket a moment to connect.
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("socket connect timeout")),
+              8_000,
+            );
+            socket.once("connect", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+            socket.once("connect_error", (err) => {
+              clearTimeout(timer);
+              reject(err);
+            });
+          });
+        }
+
+        setStatus(`Calling ${trimmedCalleeId}…`);
+        const ack = await emitWithAck(socket, "call.initiate", {
+          version: SIGNALING_VERSION,
+          calleeId: trimmedCalleeId,
+        });
+
+        isCallerRef.current = true;
+        activeCallIdRef.current = ack.call.callId;
+        activeCallRef.current = ack.call;
+        setActiveCall(ack.call);
+        setCallPhase(CALL_PHASES.OUTGOING_RINGING);
+        setStatus(`Ringing ${trimmedCalleeId}…`);
+        Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
+      } catch (error) {
+        logError("[CallFlow] placeCall failed", error);
+        setStatus(`Failed to place call: ${error.message}`, "error");
+        endActiveCall();
+      }
+    },
+    [
+      calleeId,
+      connectSocket,
+      createOrGetSession,
+      endActiveCall,
+      setStatus,
+      startLocalPreview,
+      userId,
+    ],
+  );
 
   // ─── Cancel outgoing call ─────────────────────────────────────────────────
 
@@ -1589,19 +1802,19 @@ export default function useCallFlow() {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await emitWithAck(socketRef.current, 'call.cancel', {
+        await emitWithAck(socketRef.current, "call.cancel", {
           version: SIGNALING_VERSION,
           callId,
         });
       } catch (error) {
         // Server may already have transitioned; log and continue cleanup.
-        logWarn('[CallFlow] cancel ack failed (call may already be terminal)', {
+        logWarn("[CallFlow] cancel ack failed (call may already be terminal)", {
           message: error?.message,
         });
       }
     }
 
-    endActiveCall('Call cancelled', 'info', 'cancelled');
+    endActiveCall("Call cancelled", "info", "cancelled");
   }, [endActiveCall]);
 
   // ─── Accept incoming call ─────────────────────────────────────────────────
@@ -1620,7 +1833,7 @@ export default function useCallFlow() {
       // Make the peer connection now so tracks are added before the offer arrives.
       ensurePeerConnection();
 
-      const ack = await emitWithAck(socketRef.current, 'call.accept', {
+      const ack = await emitWithAck(socketRef.current, "call.accept", {
         version: SIGNALING_VERSION,
         callId: call.callId,
       });
@@ -1629,23 +1842,29 @@ export default function useCallFlow() {
       setActiveCall(ack.call);
       incomingCallRef.current = null;
       setIncomingCall(null);
-      setStatus('Connecting…');
+      setStatus("Connecting…");
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
       // Stop any ringing (CallKeep system UI transitions to in-call state;
       // JS fallback ringtone stops here in case CallKeep was unavailable).
       stopIncomingRingtone();
-      logInfo('[CallFlow] Ringing stopped (call accepted)');
+      logInfo("[CallFlow] Ringing stopped (call accepted)");
       // Tell the OS call UI (CallKeep) the call is now active so any ringing
       // system UI shown by a background push transitions to the in-call state.
       reportCallKeepConnected(call.callId);
       // callPhase advances to in_call via the rtc.offer handler once the caller
       // sends its offer.
     } catch (error) {
-      logError('[CallFlow] acceptIncomingCall failed', error);
-      setStatus(`Failed to accept call: ${error.message}`, 'error');
+      logError("[CallFlow] acceptIncomingCall failed", error);
+      setStatus(`Failed to accept call: ${error.message}`, "error");
       endActiveCall();
     }
-  }, [endActiveCall, ensurePeerConnection, incomingCall, setStatus, startLocalPreview]);
+  }, [
+    endActiveCall,
+    ensurePeerConnection,
+    incomingCall,
+    setStatus,
+    startLocalPreview,
+  ]);
 
   // ─── Decline incoming call ────────────────────────────────────────────────
 
@@ -1655,16 +1874,16 @@ export default function useCallFlow() {
 
     if (socketRef.current?.connected) {
       try {
-        await emitWithAck(socketRef.current, 'call.decline', {
+        await emitWithAck(socketRef.current, "call.decline", {
           version: SIGNALING_VERSION,
           callId: call.callId,
         });
       } catch (error) {
-        logWarn('[CallFlow] decline ack failed', { message: error?.message });
+        logWarn("[CallFlow] decline ack failed", { message: error?.message });
       }
     }
 
-    endActiveCall('Call declined', 'info', 'declined');
+    endActiveCall("Call declined", "info", "declined");
   }, [endActiveCall, incomingCall]);
 
   // ─── CallKeep: bridge OS answer/end buttons into the call flow ────────────
@@ -1703,39 +1922,39 @@ export default function useCallFlow() {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await emitWithAck(socketRef.current, 'call.end', {
+        await emitWithAck(socketRef.current, "call.end", {
           version: SIGNALING_VERSION,
           callId,
         });
       } catch (error) {
-        logWarn('[CallFlow] end call ack failed', { message: error?.message });
+        logWarn("[CallFlow] end call ack failed", { message: error?.message });
       }
     }
 
-    endActiveCall('Call ended', 'info', 'ended');
+    endActiveCall("Call ended", "info", "ended");
   }, [endActiveCall]);
 
   // ─── Media controls ───────────────────────────────────────────────────────
 
   const handleMuteToggle = useCallback(() => {
     const nextMuted = !isMuted;
-    if (!setTrackEnabled(localStreamRef.current, 'audio', !nextMuted)) {
-      setStatus('Start preview to control audio', 'error');
+    if (!setTrackEnabled(localStreamRef.current, "audio", !nextMuted)) {
+      setStatus("Start preview to control audio", "error");
       return;
     }
     haptic(HAPTIC_TAP_MS);
     setIsMuted(nextMuted);
-    setStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
+    setStatus(nextMuted ? "Muted microphone" : "Unmuted microphone");
   }, [isMuted, setStatus]);
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;
-    if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
-      setStatus('Start preview to control video', 'error');
+    if (!setTrackEnabled(localStreamRef.current, "video", nextVideoEnabled)) {
+      setStatus("Start preview to control video", "error");
       return;
     }
     setIsVideoEnabled(nextVideoEnabled);
-    setStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
+    setStatus(nextVideoEnabled ? "Camera enabled" : "Camera disabled");
   }, [isVideoEnabled, setStatus]);
 
   const handleCameraSwitch = useCallback(async () => {
@@ -1744,17 +1963,17 @@ export default function useCallFlow() {
 
       // Fast path: react-native-webrtc provides an in-place camera flip that
       // keeps the same track object – no renegotiation required.
-      if (typeof videoTrack?._switchCamera === 'function') {
+      if (typeof videoTrack?._switchCamera === "function") {
         videoTrack._switchCamera();
         setIsFrontCamera((prev) => !prev);
-        setStatus('Camera switched');
+        setStatus("Camera switched");
         return;
       }
 
       // Fallback: acquire a new stream with the opposite facing mode and call
       // replaceTrack on the active peer connection sender so the remote peer
       // receives the new camera source without requiring renegotiation.
-      const nextFacingMode = isFrontCamera ? 'environment' : 'user';
+      const nextFacingMode = isFrontCamera ? "environment" : "user";
       const newStream = await mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: nextFacingMode },
@@ -1762,13 +1981,13 @@ export default function useCallFlow() {
       const [newVideoTrack] = newStream.getVideoTracks();
       if (!newVideoTrack) {
         newStream.getTracks().forEach((t) => t.stop());
-        setStatus('Camera switch unavailable', 'error');
+        setStatus("Camera switch unavailable", "error");
         return;
       }
 
       const pc = peerConnectionRef.current;
       if (pc) {
-        const sender = pc.getSenders?.().find((s) => s.track?.kind === 'video');
+        const sender = pc.getSenders?.().find((s) => s.track?.kind === "video");
         if (sender) {
           await sender.replaceTrack(newVideoTrack);
         }
@@ -1781,10 +2000,10 @@ export default function useCallFlow() {
       }
       setLocalStream(localStreamRef.current);
       setIsFrontCamera((prev) => !prev);
-      setStatus('Camera switched');
+      setStatus("Camera switched");
     } catch (error) {
-      logError('[CallFlow] Camera switch failed', error);
-      setStatus('Camera switch unavailable', 'error');
+      logError("[CallFlow] Camera switch failed", error);
+      setStatus("Camera switch unavailable", "error");
     }
   }, [isFrontCamera, setStatus]);
 
@@ -1796,11 +2015,11 @@ export default function useCallFlow() {
   const handleRetryReconnect = useCallback(() => {
     const socket = socketRef.current;
     if (!socket) {
-      setStatus('No active socket', 'error');
+      setStatus("No active socket", "error");
       return;
     }
     setIsReconnecting(true);
-    setStatus('Reconnecting…');
+    setStatus("Reconnecting…");
     socket.disconnect();
     socket.connect();
   }, [setStatus]);
@@ -1810,17 +2029,25 @@ export default function useCallFlow() {
       try {
         const result = await chooseAudioRoute(route);
         if (!result.ok) {
-          setAudioDevices({ available: result.available, selected: result.selected });
+          setAudioDevices({
+            available: result.available,
+            selected: result.selected,
+          });
           setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
-          setStatus(result.message, 'error');
+          setStatus(result.message, "error");
           return;
         }
-        setAudioDevices({ available: result.available, selected: result.selected });
+        setAudioDevices({
+          available: result.available,
+          selected: result.selected,
+        });
         setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
-        setStatus(`Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? 'Speaker' : route}`);
+        setStatus(
+          `Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? "Speaker" : route}`,
+        );
       } catch (error) {
-        logError('[CallFlow] chooseAudioOutput failed', error);
-        setStatus('Unable to switch audio output', 'error');
+        logError("[CallFlow] chooseAudioOutput failed", error);
+        setStatus("Unable to switch audio output", "error");
       }
     },
     [setStatus],
@@ -1834,7 +2061,7 @@ export default function useCallFlow() {
 
   useEffect(() => {
     if (!isInCall) {
-      setConnectionQuality({ bars: 0, label: 'No link' });
+      setConnectionQuality({ bars: 0, label: "No link" });
       connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
       return undefined;
     }
@@ -1842,7 +2069,7 @@ export default function useCallFlow() {
     let cancelled = false;
     const pollStats = async () => {
       const pc = peerConnectionRef.current;
-      if (!pc || typeof pc.getStats !== 'function') return;
+      if (!pc || typeof pc.getStats !== "function") return;
 
       try {
         const report = await pc.getStats();
@@ -1855,18 +2082,18 @@ export default function useCallFlow() {
 
         report.forEach((stat) => {
           if (
-            stat.type === 'candidate-pair' &&
-            stat.state === 'succeeded' &&
+            stat.type === "candidate-pair" &&
+            stat.state === "succeeded" &&
             (stat.nominated || stat.selected)
           ) {
-            if (typeof stat.currentRoundTripTime === 'number') {
+            if (typeof stat.currentRoundTripTime === "number") {
               rttMs = stat.currentRoundTripTime * 1000;
             }
           }
           if (
-            stat.type === 'inbound-rtp' &&
+            stat.type === "inbound-rtp" &&
             !stat.isRemote &&
-            (stat.kind === 'video' || stat.mediaType === 'video')
+            (stat.kind === "video" || stat.mediaType === "video")
           ) {
             totalPacketsLost += Number(stat.packetsLost || 0);
             totalPacketsReceived += Number(stat.packetsReceived || 0);
@@ -1891,17 +2118,23 @@ export default function useCallFlow() {
         const denominator = totalPacketsReceived + totalPacketsLost;
         const packetLossRatio =
           denominator > 0 ? totalPacketsLost / denominator : undefined;
-        const nextQuality = getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps });
+        const nextQuality = getConnectionQuality({
+          rttMs,
+          packetLossRatio,
+          bitrateKbps,
+        });
         setConnectionQuality(nextQuality);
 
         // Surface a status warning when packet loss is severe enough to impair
         // the call.  Only update status on the downgrade crossing so the message
         // doesn't flicker; recovery is silent (the bars update speaks for itself).
         if (nextQuality.bars === 0 && Number.isFinite(packetLossRatio)) {
-          setStatus('Poor connection — high packet loss detected', 'error');
+          setStatus("Poor connection — high packet loss detected", "error");
         }
       } catch (error) {
-        logWarn('[CallFlow] Failed to read connection stats', { message: error?.message });
+        logWarn("[CallFlow] Failed to read connection stats", {
+          message: error?.message,
+        });
       }
     };
 
@@ -1920,14 +2153,18 @@ export default function useCallFlow() {
 
     const result = startAudioSession();
     if (!result.ok) {
-      logWarn('[CallFlow] InCallManager start failed', { message: result.message });
-      setStatus(result.message, 'error');
+      logWarn("[CallFlow] InCallManager start failed", {
+        message: result.message,
+      });
+      setStatus(result.message, "error");
     }
 
     return () => {
       const stopResult = stopAudioSession();
       if (!stopResult.ok) {
-        logWarn('[CallFlow] InCallManager stop failed', { message: stopResult.message });
+        logWarn("[CallFlow] InCallManager stop failed", {
+          message: stopResult.message,
+        });
       }
     };
   }, [isInCall, setStatus]);
@@ -1935,7 +2172,7 @@ export default function useCallFlow() {
   useEffect(() => {
     if (!isInCall) return undefined;
     return subscribeAudioDevices((nextDevices) => {
-      logInfo('[CallFlow] Audio devices changed', nextDevices);
+      logInfo("[CallFlow] Audio devices changed", nextDevices);
       setAudioDevices(nextDevices);
     });
   }, [isInCall]);
@@ -1944,7 +2181,9 @@ export default function useCallFlow() {
     if (!isInCall) return;
     const result = setAudioRoute(isSpeakerEnabled);
     if (!result.ok) {
-      logWarn('[CallFlow] Audio route update failed', { message: result.message });
+      logWarn("[CallFlow] Audio route update failed", {
+        message: result.message,
+      });
     }
   }, [isInCall, isSpeakerEnabled]);
 
