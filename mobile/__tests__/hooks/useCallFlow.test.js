@@ -385,7 +385,7 @@ describe("useCallFlow", () => {
   test("initialises callHistory as an empty array", () => {
     const { resultRef } = renderHook();
     expect(Array.isArray(resultRef.current.callHistory)).toBe(true);
-    expect(resultRef.current.callHistory.length).toBe(0);
+    expect(resultRef.current.callHistory).toHaveLength(0);
   });
 
   test("initialises missedCallCount as 0", () => {
@@ -554,7 +554,7 @@ describe("useCallFlow", () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    expect(resultRef.current.callHistory.length).toBe(0);
+    expect(resultRef.current.callHistory).toHaveLength(0);
     expect(resultRef.current.missedCallCount).toBe(0);
   });
 

@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { randomUUID } = require('crypto');
+const { randomUUID } = require('node:crypto');
 const { resolveIdentityClaim } = require('../identity');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');

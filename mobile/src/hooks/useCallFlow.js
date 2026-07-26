@@ -172,7 +172,9 @@ export default function useCallFlow() {
   const [pendingPushCallId, setPendingPushCallId] = useState(null);
 
   // ─── UI state ─────────────────────────────────────────────────────────────
-  const [status, setStatusState] = useState({ message: "", severity: "info" });
+  // Raw state setter; callers use the `updateStatus(message, severity)` helper
+  // declared below rather than setting the shape by hand.
+  const [status, setStatus] = useState({ message: "", severity: "info" });
   const [callSummary, setCallSummary] = useState(null);
 
   // Presence of the user currently entered in `calleeId`, or `null` while
@@ -250,8 +252,8 @@ export default function useCallFlow() {
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef(new Set());
 
-  const setStatus = useCallback((message, severity = "info") => {
-    setStatusState({ message, severity });
+  const updateStatus = useCallback((message, severity = "info") => {
+    setStatus({ message, severity });
   }, []);
 
   // Renegotiate the active peer connection (used when screen audio adds or
@@ -305,7 +307,7 @@ export default function useCallFlow() {
     peerConnectionRef,
     localStreamRef,
     setLocalStream,
-    setStatus,
+    setStatus: updateStatus,
     renegotiate,
   });
 
@@ -392,7 +394,7 @@ export default function useCallFlow() {
 
           if (shouldGenerateVerificationCode) {
             setPendingVerificationCode(savedVerificationCode);
-            setStatus(
+            updateStatus(
               "Save your recovery code. You’ll need it to use this username on another device.",
               "info",
             );
@@ -417,7 +419,7 @@ export default function useCallFlow() {
     return () => {
       cancelled = true;
     };
-  }, [setStatus]);
+  }, [updateStatus]);
 
   /**
    * Register the local user with the given userId.  Persists the identity to
@@ -436,7 +438,7 @@ export default function useCallFlow() {
       const identity = await commitIdentity(trimmed, nextVerificationCode, {
         announceVerificationCode: true,
       });
-      setStatus(
+      updateStatus(
         "Save your recovery code. You’ll need it to use this username on another device.",
         "success",
       );
@@ -445,7 +447,7 @@ export default function useCallFlow() {
         hasVerificationCode: true,
       });
     },
-    [commitIdentity, setStatus],
+    [commitIdentity, updateStatus],
   );
 
   /**
@@ -467,13 +469,13 @@ export default function useCallFlow() {
           announceVerificationCode: true,
         },
       );
-      setStatus("Username updated. Save your new recovery code.", "success");
+      updateStatus("Username updated. Save your new recovery code.", "success");
       logInfo("[CallFlow] Username updated", {
         userId: identity.userId,
         hasVerificationCode: true,
       });
     },
-    [commitIdentity, setStatus],
+    [commitIdentity, updateStatus],
   );
 
   /**
@@ -556,7 +558,7 @@ export default function useCallFlow() {
             sid,
           )}&limit=${limit}`,
         }));
-        if (!response || !response.ok) return;
+        if (!response?.ok) return;
         const data = await response.json();
         if (!Array.isArray(data.calls)) return;
         const entries = data.calls.map((call) => ({
@@ -635,7 +637,7 @@ export default function useCallFlow() {
           if (trimmedQuery) params.set("search", trimmedQuery);
           return { url: `${trimmedUrl}/users?${params.toString()}` };
         });
-        if (!response || !response.ok) return [];
+        if (!response?.ok) return [];
         const data = await response.json();
         return Array.isArray(data.users) ? data.users : [];
       } catch (error) {
@@ -714,11 +716,11 @@ export default function useCallFlow() {
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
-      const attachedTracks = (pc.getSenders?.() ?? [])
-        .map((s) => s.track)
-        .filter(Boolean);
+      const attachedTracks = new Set(
+        (pc.getSenders?.() ?? []).map((s) => s.track).filter(Boolean),
+      );
       localStreamRef.current.getTracks().forEach((track) => {
-        if (!attachedTracks.includes(track)) {
+        if (!attachedTracks.has(track)) {
           pc.addTrack(track, localStreamRef.current);
         }
       });
@@ -756,7 +758,7 @@ export default function useCallFlow() {
           Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
         }
         markCallConnected();
-        setStatus("Call started", "success");
+        updateStatus("Call started", "success");
       }
     };
 
@@ -798,7 +800,7 @@ export default function useCallFlow() {
 
     peerConnectionRef.current = pc;
     return pc;
-  }, [markCallConnected, setStatus]);
+  }, [markCallConnected, updateStatus]);
 
   // ─── Local media ──────────────────────────────────────────────────────────
 
@@ -807,7 +809,7 @@ export default function useCallFlow() {
 
     const permResult = await ensureCallPermissions();
     if (!permResult.ok) {
-      setStatus(permResult.message, "error");
+      updateStatus(permResult.message, "error");
       return null;
     }
     if (permResult.warningMessage) {
@@ -832,10 +834,10 @@ export default function useCallFlow() {
       return stream;
     } catch (error) {
       logError("[CallFlow] Failed to acquire media", error);
-      setStatus(getMediaAccessStatus(error), "error");
+      updateStatus(getMediaAccessStatus(error), "error");
       throw error;
     }
-  }, [setStatus]);
+  }, [updateStatus]);
 
   // ─── Incoming call UI helper ──────────────────────────────────────────────
 
@@ -973,14 +975,14 @@ export default function useCallFlow() {
       resetScreenShare();
       stopCallService();
       closePeerConnection();
-      if (nextMessage) setStatus(nextMessage, severity);
+      if (nextMessage) updateStatus(nextMessage, severity);
     },
     [
       addToHistory,
       closePeerConnection,
       resetScreenShare,
       setIsCompactView,
-      setStatus,
+      updateStatus,
     ],
   );
 
@@ -1019,7 +1021,7 @@ export default function useCallFlow() {
         response.status === 409 &&
         errorPayload?.code === "identity_conflict"
       ) {
-        setStatus(
+        updateStatus(
           "This username is already claimed. Sign out and choose another username, or enter the recovery code.",
           "error",
         );
@@ -1034,7 +1036,7 @@ export default function useCallFlow() {
       userId: data.userId,
     });
     return data.sessionId;
-  }, [setStatus, signalingUrl, userId]);
+  }, [updateStatus, signalingUrl, userId]);
 
   /**
    * Refresh the current session via `POST /session/refresh`, rotating the
@@ -1174,7 +1176,7 @@ export default function useCallFlow() {
         incomingCallRef.current = call;
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
-        setStatus(`Incoming call from ${call.callerId}`);
+        updateStatus(`Incoming call from ${call.callerId}`);
         // Show system-level incoming-call UI (CallKeep) and start the JS
         // ringtone fallback when CallKeep is unavailable.  Runs async so UI
         // state updates are never blocked if CallKeep setup is slow.
@@ -1208,7 +1210,7 @@ export default function useCallFlow() {
 
           switch (callStatus) {
             case "accepted": {
-              setStatus("Call accepted, connecting media…");
+              updateStatus("Call accepted, connecting media…");
               // Caller is responsible for sending the initial RTC offer.
               if (isCallerRef.current && call) {
                 activeCallIdRef.current = call.callId;
@@ -1232,7 +1234,7 @@ export default function useCallFlow() {
                   );
                 } catch (error) {
                   logError("[CallFlow] Failed to create/send RTC offer", error);
-                  setStatus("Failed to connect media", "error");
+                  updateStatus("Failed to connect media", "error");
                   endActiveCallRef.current?.(
                     "Failed to connect media",
                     "error",
@@ -1326,7 +1328,7 @@ export default function useCallFlow() {
           startCallService();
         } catch (error) {
           logError("[CallFlow] Failed to handle RTC offer", error);
-          setStatus("Failed to connect media", "error");
+          updateStatus("Failed to connect media", "error");
           endActiveCallRef.current?.("Failed to connect media", "error");
         } finally {
           isNegotiatingRef.current = false;
@@ -1360,7 +1362,7 @@ export default function useCallFlow() {
           startCallService();
         } catch (error) {
           logError("[CallFlow] Failed to handle RTC answer", error);
-          setStatus("Failed to connect media", "error");
+          updateStatus("Failed to connect media", "error");
           endActiveCallRef.current?.("Failed to connect media", "error");
         }
       });
@@ -1442,7 +1444,7 @@ export default function useCallFlow() {
         logWarn("[CallFlow] Socket disconnected", { reason });
         if (isInCallRef.current) {
           setIsReconnecting(true);
-          setStatus("Reconnecting…");
+          updateStatus("Reconnecting…");
         }
       });
 
@@ -1459,7 +1461,7 @@ export default function useCallFlow() {
 
       return socket;
     },
-    [disconnectSocket, setStatus, showIncomingCallUi, signalingUrl],
+    [disconnectSocket, updateStatus, showIncomingCallUi, signalingUrl],
   );
 
   // ─── Call rehydration (push-notification deep link) ───────────────────────
@@ -1506,7 +1508,7 @@ export default function useCallFlow() {
 
         if (!response.ok) {
           if (response.status === 404) {
-            setStatus("Call no longer available", "info");
+            updateStatus("Call no longer available", "info");
             return;
           }
           throw new Error(`HTTP ${response.status}`);
@@ -1524,7 +1526,7 @@ export default function useCallFlow() {
           incomingCallRef.current = call;
           setIncomingCall(call);
           setCallPhase(CALL_PHASES.INCOMING_RINGING);
-          setStatus(`Incoming call from ${call.callerId}`);
+          updateStatus(`Incoming call from ${call.callerId}`);
           showIncomingCallUi(call).catch((error) => {
             logWarn("[CallFlow] showIncomingCallUi unexpected error", {
               message: error?.message,
@@ -1550,16 +1552,16 @@ export default function useCallFlow() {
             callId,
             status: call.status,
           });
-          setStatus(message, "info");
+          updateStatus(message, "info");
         }
       } catch (error) {
         logError("[CallFlow] rehydrateCallFromPush failed", error);
-        setStatus("Unable to retrieve call state", "error");
+        updateStatus("Unable to retrieve call state", "error");
       }
     },
     // connectSocket and createOrGetSession are stable relative to userId/signalingUrl
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [userId, signalingUrl, setStatus],
+    [userId, signalingUrl, updateStatus],
   );
 
   // Store in a ref so deep-link effects always call the latest version.
@@ -1655,7 +1657,7 @@ export default function useCallFlow() {
         logWarn("[CallFlow] Proactive session refresh failed", {
           message: error?.message,
         });
-        setStatus(
+        updateStatus(
           "Session refresh failed — your token may expire soon. Reconnect if calls stop working.",
           "warning",
         );
@@ -1663,7 +1665,7 @@ export default function useCallFlow() {
     }, SESSION_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [userId, signalingUrl, refreshSession, setStatus]);
+  }, [userId, signalingUrl, refreshSession, updateStatus]);
 
   /**
    * Manually retry the presence socket connection when the server appears
@@ -1751,11 +1753,11 @@ export default function useCallFlow() {
       ).trim();
       const trimmedCalleeId = explicit || calleeId.trim();
       if (!trimmedCalleeId) {
-        setStatus("Enter a callee ID to call", "error");
+        updateStatus("Enter a callee ID to call", "error");
         return;
       }
       if (!userId.trim()) {
-        setStatus("Enter your user ID first", "error");
+        updateStatus("Enter your user ID first", "error");
         return;
       }
 
@@ -1787,7 +1789,7 @@ export default function useCallFlow() {
           });
         }
 
-        setStatus(`Calling ${trimmedCalleeId}…`);
+        updateStatus(`Calling ${trimmedCalleeId}…`);
         const ack = await emitWithAck(socket, "call.initiate", {
           version: SIGNALING_VERSION,
           calleeId: trimmedCalleeId,
@@ -1798,11 +1800,11 @@ export default function useCallFlow() {
         activeCallRef.current = ack.call;
         setActiveCall(ack.call);
         setCallPhase(CALL_PHASES.OUTGOING_RINGING);
-        setStatus(`Ringing ${trimmedCalleeId}…`);
+        updateStatus(`Ringing ${trimmedCalleeId}…`);
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
       } catch (error) {
         logError("[CallFlow] placeCall failed", error);
-        setStatus(`Failed to place call: ${error.message}`, "error");
+        updateStatus(`Failed to place call: ${error.message}`, "error");
         endActiveCall();
       }
     },
@@ -1811,7 +1813,7 @@ export default function useCallFlow() {
       connectSocket,
       createOrGetSession,
       endActiveCall,
-      setStatus,
+      updateStatus,
       startLocalPreview,
       userId,
     ],
@@ -1864,7 +1866,7 @@ export default function useCallFlow() {
       setActiveCall(ack.call);
       incomingCallRef.current = null;
       setIncomingCall(null);
-      setStatus("Connecting…");
+      updateStatus("Connecting…");
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
       // Stop any ringing (CallKeep system UI transitions to in-call state;
       // JS fallback ringtone stops here in case CallKeep was unavailable).
@@ -1877,14 +1879,14 @@ export default function useCallFlow() {
       // sends its offer.
     } catch (error) {
       logError("[CallFlow] acceptIncomingCall failed", error);
-      setStatus(`Failed to accept call: ${error.message}`, "error");
+      updateStatus(`Failed to accept call: ${error.message}`, "error");
       endActiveCall();
     }
   }, [
     endActiveCall,
     ensurePeerConnection,
     incomingCall,
-    setStatus,
+    updateStatus,
     startLocalPreview,
   ]);
 
@@ -1961,23 +1963,23 @@ export default function useCallFlow() {
   const handleMuteToggle = useCallback(() => {
     const nextMuted = !isMuted;
     if (!setTrackEnabled(localStreamRef.current, "audio", !nextMuted)) {
-      setStatus("Start preview to control audio", "error");
+      updateStatus("Start preview to control audio", "error");
       return;
     }
     haptic(HAPTIC_TAP_MS);
     setIsMuted(nextMuted);
-    setStatus(nextMuted ? "Muted microphone" : "Unmuted microphone");
-  }, [isMuted, setStatus]);
+    updateStatus(nextMuted ? "Muted microphone" : "Unmuted microphone");
+  }, [isMuted, updateStatus]);
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;
     if (!setTrackEnabled(localStreamRef.current, "video", nextVideoEnabled)) {
-      setStatus("Start preview to control video", "error");
+      updateStatus("Start preview to control video", "error");
       return;
     }
     setIsVideoEnabled(nextVideoEnabled);
-    setStatus(nextVideoEnabled ? "Camera enabled" : "Camera disabled");
-  }, [isVideoEnabled, setStatus]);
+    updateStatus(nextVideoEnabled ? "Camera enabled" : "Camera disabled");
+  }, [isVideoEnabled, updateStatus]);
 
   const handleCameraSwitch = useCallback(async () => {
     try {
@@ -1988,7 +1990,7 @@ export default function useCallFlow() {
       if (typeof videoTrack?._switchCamera === "function") {
         videoTrack._switchCamera();
         setIsFrontCamera((prev) => !prev);
-        setStatus("Camera switched");
+        updateStatus("Camera switched");
         return;
       }
 
@@ -2003,7 +2005,7 @@ export default function useCallFlow() {
       const [newVideoTrack] = newStream.getVideoTracks();
       if (!newVideoTrack) {
         newStream.getTracks().forEach((t) => t.stop());
-        setStatus("Camera switch unavailable", "error");
+        updateStatus("Camera switch unavailable", "error");
         return;
       }
 
@@ -2022,12 +2024,12 @@ export default function useCallFlow() {
       }
       setLocalStream(localStreamRef.current);
       setIsFrontCamera((prev) => !prev);
-      setStatus("Camera switched");
+      updateStatus("Camera switched");
     } catch (error) {
       logError("[CallFlow] Camera switch failed", error);
-      setStatus("Camera switch unavailable", "error");
+      updateStatus("Camera switch unavailable", "error");
     }
-  }, [isFrontCamera, setStatus]);
+  }, [isFrontCamera, updateStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) return;
@@ -2037,14 +2039,14 @@ export default function useCallFlow() {
   const handleRetryReconnect = useCallback(() => {
     const socket = socketRef.current;
     if (!socket) {
-      setStatus("No active socket", "error");
+      updateStatus("No active socket", "error");
       return;
     }
     setIsReconnecting(true);
-    setStatus("Reconnecting…");
+    updateStatus("Reconnecting…");
     socket.disconnect();
     socket.connect();
-  }, [setStatus]);
+  }, [updateStatus]);
 
   const chooseAudioOutput = useCallback(
     async (route) => {
@@ -2056,7 +2058,7 @@ export default function useCallFlow() {
             selected: result.selected,
           });
           setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
-          setStatus(result.message, "error");
+          updateStatus(result.message, "error");
           return;
         }
         setAudioDevices({
@@ -2064,15 +2066,15 @@ export default function useCallFlow() {
           selected: result.selected,
         });
         setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
-        setStatus(
+        updateStatus(
           `Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? "Speaker" : route}`,
         );
       } catch (error) {
         logError("[CallFlow] chooseAudioOutput failed", error);
-        setStatus("Unable to switch audio output", "error");
+        updateStatus("Unable to switch audio output", "error");
       }
     },
-    [setStatus],
+    [updateStatus],
   );
 
   const dismissCallSummary = useCallback(() => {
@@ -2151,7 +2153,7 @@ export default function useCallFlow() {
         // the call.  Only update status on the downgrade crossing so the message
         // doesn't flicker; recovery is silent (the bars update speaks for itself).
         if (nextQuality.bars === 0 && Number.isFinite(packetLossRatio)) {
-          setStatus("Poor connection — high packet loss detected", "error");
+          updateStatus("Poor connection — high packet loss detected", "error");
         }
       } catch (error) {
         logWarn("[CallFlow] Failed to read connection stats", {
@@ -2166,7 +2168,7 @@ export default function useCallFlow() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [isInCall, setStatus]);
+  }, [isInCall, updateStatus]);
 
   // ─── Audio session & device routing ──────────────────────────────────────
 
@@ -2178,7 +2180,7 @@ export default function useCallFlow() {
       logWarn("[CallFlow] InCallManager start failed", {
         message: result.message,
       });
-      setStatus(result.message, "error");
+      updateStatus(result.message, "error");
     }
 
     return () => {
@@ -2189,7 +2191,7 @@ export default function useCallFlow() {
         });
       }
     };
-  }, [isInCall, setStatus]);
+  }, [isInCall, updateStatus]);
 
   useEffect(() => {
     if (!isInCall) return undefined;

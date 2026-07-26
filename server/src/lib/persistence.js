@@ -144,6 +144,96 @@ async function deletePersistedBlock(db, blockerId, blockeeId) {
 }
 
 /**
+ * Normalise a timestamp column to an ISO string.
+ *
+ * Drizzle hands back `Date` objects for timestamp columns, but a raw driver row
+ * (or a stubbed db in tests) may yield a string or nothing at all.
+ *
+ * @param {Date|string|null|undefined} value
+ * @returns {string|null}
+ */
+function toIsoString(value) {
+  return value instanceof Date ? value.toISOString() : (value ?? null);
+}
+
+/**
+ * Run a single hydration step, logging the outcome.  Failures are swallowed so
+ * a partial DB outage can never prevent the server from starting.
+ *
+ * @param {string} label singular record name used in the log lines
+ * @param {() => Promise<number>} hydrate resolves to the number of rows read
+ * @returns {Promise<void>}
+ */
+async function runHydrationStep(label, hydrate) {
+  try {
+    const count = await hydrate();
+    console.log(`[signaling] hydrated ${count} ${label} record(s) from DB`);
+  } catch (err) {
+    console.error(`[signaling] failed to hydrate ${label}s from DB:`, err?.message);
+  }
+}
+
+/**
+ * Populate `state.users` with the claimed identities.
+ *
+ * @returns {Promise<number>} number of rows read
+ */
+async function hydrateUsers(db, state, usersTable) {
+  const rows = await db.select().from(usersTable);
+  for (const row of rows) {
+    state.users.set(row.userId, {
+      userId: row.userId,
+      verificationHash: row.verificationHash ?? null,
+      verificationSalt: row.verificationSalt ?? null,
+      createdAt: toIsoString(row.createdAt),
+      verifiedAt: toIsoString(row.verifiedAt),
+    });
+  }
+  return rows.length;
+}
+
+/**
+ * Populate `state.devices` / `state.userDevices` with the device registrations.
+ *
+ * @returns {Promise<number>} number of rows read
+ */
+async function hydrateDevices(db, state, devicesTable) {
+  const rows = await db.select().from(devicesTable);
+  for (const row of rows) {
+    if (!row?.deviceId || !row?.userId) continue;
+    state.devices.set(row.deviceId, {
+      deviceId: row.deviceId,
+      userId: row.userId,
+      platform: row.platform ?? null,
+      sessionId: null,
+      pushProvider: row.pushProvider ?? null,
+      pushToken: row.pushToken ?? null,
+      lastRegisteredAt: toIsoString(row.lastRegisteredAt),
+      lastUnregisteredAt: toIsoString(row.lastUnregisteredAt),
+    });
+    if (!state.userDevices.has(row.userId)) {
+      state.userDevices.set(row.userId, new Set());
+    }
+    state.userDevices.get(row.userId).add(row.deviceId);
+  }
+  return rows.length;
+}
+
+/**
+ * Populate `state.blocks` with the persisted block relationships.
+ *
+ * @returns {Promise<number>} number of rows read
+ */
+async function hydrateBlocks(db, state, blocksTable) {
+  const rows = await db.select().from(blocksTable);
+  for (const row of rows) {
+    if (!row?.blockerId || !row?.blockeeId) continue;
+    addBlock(state.blocks, row.blockerId, row.blockeeId);
+  }
+  return rows.length;
+}
+
+/**
  * Hydrate the in-memory state from the Neon (Postgres) database.
  *
  * Reads persisted tables and populates corresponding in-memory caches so
@@ -167,70 +257,10 @@ async function loadPersistedStateFromDb(db, state) {
     blocks: blocksTable,
   } = require('../../db/schema');
 
-  // ── Hydrate claimed identities ──────────────────────────────────────────
-  try {
-    const rows = await db.select().from(usersTable);
-    for (const row of rows) {
-      state.users.set(row.userId, {
-        userId: row.userId,
-        verificationHash: row.verificationHash ?? null,
-        verificationSalt: row.verificationSalt ?? null,
-        createdAt:
-          row.createdAt instanceof Date ? row.createdAt.toISOString() : (row.createdAt ?? null),
-        verifiedAt:
-          row.verifiedAt instanceof Date ? row.verifiedAt.toISOString() : (row.verifiedAt ?? null),
-      });
-    }
-    console.log(`[signaling] hydrated ${rows.length} user record(s) from DB`);
-  } catch (err) {
-    console.error('[signaling] failed to hydrate users from DB:', err?.message);
-  }
-
-  // ── Hydrate device registrations ─────────────────────────────────────────
-  try {
-    const rows = await db.select().from(devicesTable);
-    for (const row of rows) {
-      if (!row?.deviceId || !row?.userId) continue;
-      const device = {
-        deviceId: row.deviceId,
-        userId: row.userId,
-        platform: row.platform ?? null,
-        sessionId: null,
-        pushProvider: row.pushProvider ?? null,
-        pushToken: row.pushToken ?? null,
-        lastRegisteredAt:
-          row.lastRegisteredAt instanceof Date
-            ? row.lastRegisteredAt.toISOString()
-            : (row.lastRegisteredAt ?? null),
-        lastUnregisteredAt:
-          row.lastUnregisteredAt instanceof Date
-            ? row.lastUnregisteredAt.toISOString()
-            : (row.lastUnregisteredAt ?? null),
-      };
-      state.devices.set(device.deviceId, device);
-      if (!state.userDevices.has(device.userId)) {
-        state.userDevices.set(device.userId, new Set());
-      }
-      state.userDevices.get(device.userId).add(device.deviceId);
-    }
-    console.log(`[signaling] hydrated ${rows.length} device record(s) from DB`);
-  } catch (err) {
-    console.error('[signaling] failed to hydrate devices from DB:', err?.message);
-  }
-
+  await runHydrationStep('user', () => hydrateUsers(db, state, usersTable));
+  await runHydrationStep('device', () => hydrateDevices(db, state, devicesTable));
   await hydrateCallsAndEventsFromDb(db, state);
-
-  // ── Hydrate block relationships ────────────────────────────────────────────
-  try {
-    const rows = await db.select().from(blocksTable);
-    for (const row of rows) {
-      if (!row?.blockerId || !row?.blockeeId) continue;
-      addBlock(state.blocks, row.blockerId, row.blockeeId);
-    }
-    console.log(`[signaling] hydrated ${rows.length} block record(s) from DB`);
-  } catch (err) {
-    console.error('[signaling] failed to hydrate blocks from DB:', err?.message);
-  }
+  await runHydrationStep('block', () => hydrateBlocks(db, state, blocksTable));
 }
 
 module.exports = {

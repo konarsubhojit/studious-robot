@@ -83,7 +83,7 @@ function haptic(durationMs) {
 export default function useWebRTCCall() {
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
   const [roomId, setRoomId] = useState(DEFAULT_ROOM_ID);
-  const [status, setStatusState] = useState({
+  const [status, setStatus] = useState({
     message: "Ready",
     severity: "info",
   });
@@ -131,8 +131,8 @@ export default function useWebRTCCall() {
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
 
-  const setStatus = useCallback((message, severity = "info") => {
-    setStatusState({ message, severity });
+  const updateStatus = useCallback((message, severity = "info") => {
+    setStatus({ message, severity });
   }, []);
 
   // Renegotiate the current peer connection (used when screen audio adds or
@@ -176,7 +176,7 @@ export default function useWebRTCCall() {
     peerConnectionRef,
     localStreamRef,
     setLocalStream,
-    setStatus,
+    setStatus: updateStatus,
     renegotiate,
   });
 
@@ -290,9 +290,9 @@ export default function useWebRTCCall() {
         socketRef.current = null;
       }
       closePeerConnection();
-      setStatus(nextStatus, severity);
+      updateStatus(nextStatus, severity);
     },
-    [closePeerConnection, resetScreenShare, setStatus],
+    [closePeerConnection, resetScreenShare, updateStatus],
   );
 
   const ensurePeerConnection = useCallback(() => {
@@ -305,11 +305,11 @@ export default function useWebRTCCall() {
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
-      const attachedTracks = (connection.getSenders?.() ?? [])
-        .map((s) => s.track)
-        .filter(Boolean);
+      const attachedTracks = new Set(
+        (connection.getSenders?.() ?? []).map((s) => s.track).filter(Boolean),
+      );
       localStreamRef.current.getTracks().forEach((track) => {
-        if (!attachedTracks.includes(track)) {
+        if (!attachedTracks.has(track)) {
           connection.addTrack(track, localStreamRef.current);
         }
       });
@@ -344,7 +344,7 @@ export default function useWebRTCCall() {
           return stream;
         });
         markCallConnected();
-        setStatus("Call started", "success");
+        updateStatus("Call started", "success");
       }
     };
 
@@ -378,7 +378,7 @@ export default function useWebRTCCall() {
 
     peerConnectionRef.current = connection;
     return connection;
-  }, [markCallConnected, setStatus]);
+  }, [markCallConnected, updateStatus]);
 
   const syncMediaState = useCallback((stream) => {
     setIsMuted(!isTrackEnabled(stream, "audio"));
@@ -428,7 +428,7 @@ export default function useWebRTCCall() {
       const permissionResult = await ensureCallPermissions();
       if (!permissionResult.ok) {
         logWarn("Android call permission preflight failed", permissionResult);
-        setStatus(permissionResult.message, "error");
+        updateStatus(permissionResult.message, "error");
         return null;
       }
       if (permissionResult.warningMessage) {
@@ -452,7 +452,7 @@ export default function useWebRTCCall() {
       localStreamRef.current = stream;
       setLocalStream(stream);
       syncMediaState(stream);
-      setStatus("Local preview ready", "success");
+      updateStatus("Local preview ready", "success");
       return stream;
     } catch (error) {
       logError("Failed to access local media stream", {
@@ -460,10 +460,10 @@ export default function useWebRTCCall() {
         message: error?.message,
         stack: error?.stack,
       });
-      setStatus(getMediaAccessStatus(error), "error");
+      updateStatus(getMediaAccessStatus(error), "error");
       throw error;
     }
-  }, [setStatus, syncMediaState]);
+  }, [updateStatus, syncMediaState]);
 
   const joinRoom = useCallback(async () => {
     try {
@@ -475,7 +475,7 @@ export default function useWebRTCCall() {
       });
 
       if (!trimmedSignalingUrl || !trimmedRoomId) {
-        setStatus("Signaling URL and room ID are required", "error");
+        updateStatus("Signaling URL and room ID are required", "error");
         return;
       }
 
@@ -486,7 +486,7 @@ export default function useWebRTCCall() {
       if (!stream) {
         return;
       }
-      setStatus("Connecting…");
+      updateStatus("Connecting…");
 
       logInfo("Socket.IO connection attempt", {
         signalingUrl: sanitizeUrlForLog(trimmedSignalingUrl),
@@ -501,18 +501,18 @@ export default function useWebRTCCall() {
           socketId: socket.id,
           transport: transportName,
         });
-        setStatus("Waiting for peer…");
+        updateStatus("Waiting for peer…");
         setIsInRoom(true);
         setIsReconnecting(false);
         socket.emit("join-room", roomIdRef.current);
         try {
           if (!startCallService()) {
             logWarn("Foreground call service unavailable after connect");
-            setStatus("Background service unavailable", "error");
+            updateStatus("Background service unavailable", "error");
           }
         } catch (error) {
           logError("Foreground call service start failed after connect", error);
-          setStatus("Background service unavailable", "error");
+          updateStatus("Background service unavailable", "error");
         }
       });
 
@@ -521,13 +521,13 @@ export default function useWebRTCCall() {
         manager.on("reconnect_attempt", (attempt) => {
           logWarn("Socket.IO reconnect attempt", { attempt });
           setIsReconnecting(true);
-          setStatus("Reconnecting…");
+          updateStatus("Reconnecting…");
         });
 
         manager.on("reconnect", async (attempt) => {
           logInfo("Socket.IO reconnected", { attempt });
           setIsReconnecting(false);
-          setStatus("Reconnected. Rejoining room...", "success");
+          updateStatus("Reconnected. Rejoining room...", "success");
           socket.emit("join-room", roomIdRef.current);
 
           // If we were the original offerer, send an ICE-restart offer so the
@@ -585,7 +585,7 @@ export default function useWebRTCCall() {
           });
         } catch (error) {
           logError("Failed to create/send offer", error);
-          setStatus("Failed to create offer", "error");
+          updateStatus("Failed to create offer", "error");
         }
       });
 
@@ -623,7 +623,7 @@ export default function useWebRTCCall() {
           });
         } catch (error) {
           logError("Failed to process offer/create answer", error);
-          setStatus("Failed to process offer", "error");
+          updateStatus("Failed to process offer", "error");
         } finally {
           isNegotiatingRef.current = false;
         }
@@ -651,10 +651,10 @@ export default function useWebRTCCall() {
             }
           }
           markCallConnected();
-          setStatus("Call started", "success");
+          updateStatus("Call started", "success");
         } catch (error) {
           logError("Failed to apply remote answer", error);
-          setStatus("Failed to apply answer", "error");
+          updateStatus("Failed to apply answer", "error");
         }
       });
 
@@ -686,21 +686,21 @@ export default function useWebRTCCall() {
       socket.on("peer-left", () => {
         logInfo("peer-left", { roomId: roomIdRef.current });
         closePeerConnection();
-        setStatus("Peer left room");
+        updateStatus("Peer left room");
       });
 
       socket.on("disconnect", (reason) => {
         logWarn("Socket.IO disconnect", { reason });
         if (isRecoverableDisconnectReason(reason)) {
           setIsReconnecting(true);
-          setStatus("Reconnecting…");
+          updateStatus("Reconnecting…");
           return;
         }
         setIsInRoom(false);
         setIsReconnecting(false);
         stopCallService();
         closePeerConnection();
-        setStatus("Socket disconnected", "error");
+        updateStatus("Socket disconnected", "error");
       });
 
       socket.on("connect_error", (error) => {
@@ -715,18 +715,18 @@ export default function useWebRTCCall() {
           // A call is already in progress; let the reconnection policy retry
           // instead of tearing the call down on a transient error.
           setIsReconnecting(true);
-          setStatus("Reconnecting…");
+          updateStatus("Reconnecting…");
           return;
         }
         setIsInRoom(false);
-        setStatus(
+        updateStatus(
           `Unable to connect: ${error?.message || "Unknown error"}`,
           "error",
         );
       });
     } catch (error) {
       logError("joinRoom failed during media/signaling setup", error);
-      setStatus(getMediaAccessStatus(error), "error");
+      updateStatus(getMediaAccessStatus(error), "error");
     }
   }, [
     closePeerConnection,
@@ -735,7 +735,7 @@ export default function useWebRTCCall() {
     markCallConnected,
     roomId,
     settings.speakerEnabledByDefault,
-    setStatus,
+    updateStatus,
     signalingUrl,
     startLocalPreview,
   ]);
@@ -863,7 +863,7 @@ export default function useWebRTCCall() {
         message: result.message,
         nativeMessage: result.error?.message,
       });
-      setStatus(result.message, "error");
+      updateStatus(result.message, "error");
     }
 
     return () => {
@@ -875,7 +875,7 @@ export default function useWebRTCCall() {
         });
       }
     };
-  }, [isInRoom, setStatus]);
+  }, [isInRoom, updateStatus]);
 
   // Subscribe to native audio-device changes (headset/Bluetooth connect or
   // disconnect, route switches) while a call is active so the output picker
@@ -912,9 +912,9 @@ export default function useWebRTCCall() {
         message: routeResult.message,
         nativeMessage: routeResult.error?.message,
       });
-      setStatus(routeResult.message, "error");
+      updateStatus(routeResult.message, "error");
     }
-  }, [isInRoom, isSpeakerEnabled, setStatus]);
+  }, [isInRoom, isSpeakerEnabled, updateStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) {
@@ -926,21 +926,21 @@ export default function useWebRTCCall() {
   const handleRetryReconnect = useCallback(() => {
     const socket = socketRef.current;
     if (!socket) {
-      setStatus("No active socket to reconnect", "error");
+      updateStatus("No active socket to reconnect", "error");
       return;
     }
     logInfo("Manual reconnect requested");
     setIsReconnecting(true);
-    setStatus("Reconnecting…");
+    updateStatus("Reconnecting…");
     socket.disconnect();
     socket.connect();
-  }, [setStatus]);
+  }, [updateStatus]);
 
   const handleSpeakerToggle = useCallback(() => {
     const nextSpeakerEnabled = !isSpeakerEnabled;
     setIsSpeakerEnabled(nextSpeakerEnabled);
-    setStatus(nextSpeakerEnabled ? "Speaker enabled" : "Speaker disabled");
-  }, [isSpeakerEnabled, setStatus]);
+    updateStatus(nextSpeakerEnabled ? "Speaker enabled" : "Speaker disabled");
+  }, [isSpeakerEnabled, updateStatus]);
 
   // Explicitly route audio to a chosen output device (speaker / earpiece /
   // Bluetooth / wired headset).  Keeps the speaker toggle state in sync.
@@ -962,7 +962,7 @@ export default function useWebRTCCall() {
           setIsSpeakerEnabled(
             nextStatus.selected === AUDIO_ROUTES.SPEAKER_PHONE,
           );
-          setStatus(nextStatus.message, "error");
+          updateStatus(nextStatus.message, "error");
           return;
         }
 
@@ -971,7 +971,7 @@ export default function useWebRTCCall() {
           selected: nextStatus.selected,
         });
         setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
-        setStatus(
+        updateStatus(
           `Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? "Speaker" : route}`,
         );
       } catch (error) {
@@ -979,10 +979,10 @@ export default function useWebRTCCall() {
           route,
           message: error?.message,
         });
-        setStatus("Unable to switch audio output", "error");
+        updateStatus("Unable to switch audio output", "error");
       }
     },
-    [setStatus],
+    [updateStatus],
   );
 
   const handleCameraSwitch = useCallback(async () => {
@@ -994,7 +994,7 @@ export default function useWebRTCCall() {
       if (typeof videoTrack?._switchCamera === "function") {
         videoTrack._switchCamera();
         setIsFrontCamera((previous) => !previous);
-        setStatus("Camera switched");
+        updateStatus("Camera switched");
         return;
       }
 
@@ -1009,7 +1009,7 @@ export default function useWebRTCCall() {
       const [newVideoTrack] = newStream.getVideoTracks();
       if (!newVideoTrack) {
         newStream.getTracks().forEach((t) => t.stop());
-        setStatus("Camera switch unavailable", "error");
+        updateStatus("Camera switch unavailable", "error");
         return;
       }
 
@@ -1030,12 +1030,12 @@ export default function useWebRTCCall() {
       }
       setLocalStream(localStreamRef.current);
       setIsFrontCamera((previous) => !previous);
-      setStatus("Camera switched");
+      updateStatus("Camera switched");
     } catch (error) {
       logError("Camera switch failed", error);
-      setStatus("Camera switch unavailable", "error");
+      updateStatus("Camera switch unavailable", "error");
     }
-  }, [isFrontCamera, setStatus]);
+  }, [isFrontCamera, updateStatus]);
 
   const handleRoomButtonPress = useCallback(() => {
     if (isInRoom) {
@@ -1047,9 +1047,9 @@ export default function useWebRTCCall() {
 
     joinRoom().catch((error) => {
       logError("joinRoom unhandled rejection", error);
-      setStatus("Failed to start call", "error");
+      updateStatus("Failed to start call", "error");
     });
-  }, [isInRoom, joinRoom, leaveRoom, setStatus]);
+  }, [isInRoom, joinRoom, leaveRoom, updateStatus]);
 
   const handleAutoLightingToggle = useCallback(() => {
     const nextValue = !settings.autoCameraLightingEnabled;
@@ -1058,12 +1058,12 @@ export default function useWebRTCCall() {
       void saveSettings(next);
       return next;
     });
-    setStatus(
+    updateStatus(
       nextValue
         ? "Auto camera lighting enabled"
         : "Auto camera lighting disabled",
     );
-  }, [settings.autoCameraLightingEnabled, setStatus]);
+  }, [settings.autoCameraLightingEnabled, updateStatus]);
 
   const handleSpeakerDefaultToggle = useCallback(() => {
     const nextValue = !settings.speakerEnabledByDefault;
@@ -1075,10 +1075,10 @@ export default function useWebRTCCall() {
     if (!isInRoom) {
       setIsSpeakerEnabled(nextValue);
     }
-    setStatus(
+    updateStatus(
       nextValue ? "Speaker default enabled" : "Speaker default disabled",
     );
-  }, [isInRoom, settings.speakerEnabledByDefault, setStatus]);
+  }, [isInRoom, settings.speakerEnabledByDefault, updateStatus]);
 
   const handleDeveloperModeToggle = useCallback(() => {
     const nextValue = !settings.developerModeEnabled;
@@ -1087,8 +1087,10 @@ export default function useWebRTCCall() {
       void saveSettings(next);
       return next;
     });
-    setStatus(nextValue ? "Developer mode enabled" : "Developer mode disabled");
-  }, [settings.developerModeEnabled, setStatus]);
+    updateStatus(
+      nextValue ? "Developer mode enabled" : "Developer mode disabled",
+    );
+  }, [settings.developerModeEnabled, updateStatus]);
 
   const handleExportLogs = useCallback(async () => {
     try {
@@ -1114,17 +1116,17 @@ export default function useWebRTCCall() {
           storage: result.label,
           usedFallback: result.usedFallback,
         });
-        setStatus(statusMessage, "success");
+        updateStatus(statusMessage, "success");
       } else {
         logError("Failed to export logs", result.error);
-        setStatus(
+        updateStatus(
           `Failed to export logs: ${result.error?.message || "Unknown error"}`,
           "error",
         );
       }
     } catch (error) {
       logError("Unexpected export logs failure", error);
-      setStatus(
+      updateStatus(
         `Failed to export logs: ${error?.message || "Unknown error"}`,
         "error",
       );
@@ -1134,7 +1136,7 @@ export default function useWebRTCCall() {
     localStream,
     remoteStream,
     roomId,
-    setStatus,
+    updateStatus,
     signalingUrl,
     status.message,
   ]);
@@ -1144,35 +1146,35 @@ export default function useWebRTCCall() {
       const nextMuted = !isMuted;
       logInfo("Mute toggle action", { nextMuted });
       if (!setTrackEnabled(localStreamRef.current, "audio", !nextMuted)) {
-        setStatus("Start preview to control audio", "error");
+        updateStatus("Start preview to control audio", "error");
         return;
       }
 
       haptic(HAPTIC_TAP_MS);
       setIsMuted(nextMuted);
-      setStatus(nextMuted ? "Muted microphone" : "Unmuted microphone");
+      updateStatus(nextMuted ? "Muted microphone" : "Unmuted microphone");
     } catch (error) {
       logError("Mute toggle failed", error);
-      setStatus("Unable to control microphone", "error");
+      updateStatus("Unable to control microphone", "error");
     }
-  }, [isMuted, setStatus]);
+  }, [isMuted, updateStatus]);
 
   const handleVideoToggle = useCallback(() => {
     try {
       const nextVideoEnabled = !isVideoEnabled;
       logInfo("Video toggle action", { nextVideoEnabled });
       if (!setTrackEnabled(localStreamRef.current, "video", nextVideoEnabled)) {
-        setStatus("Start preview to control video", "error");
+        updateStatus("Start preview to control video", "error");
         return;
       }
 
       setIsVideoEnabled(nextVideoEnabled);
-      setStatus(nextVideoEnabled ? "Camera enabled" : "Camera disabled");
+      updateStatus(nextVideoEnabled ? "Camera enabled" : "Camera disabled");
     } catch (error) {
       logError("Video toggle failed", error);
-      setStatus("Unable to control camera", "error");
+      updateStatus("Unable to control camera", "error");
     }
-  }, [isVideoEnabled, setStatus]);
+  }, [isVideoEnabled, updateStatus]);
 
   const dismissCallSummary = useCallback(() => {
     setCallSummary(null);
