@@ -62,7 +62,6 @@ export default function useScreenShare({
     const screenVideoTrack = screenVideoTrackRef.current;
     const cameraTrack = cameraTrackRef.current;
     const audioSender = screenAudioSenderRef.current;
-    const hadAudioSender = Boolean(audioSender);
 
     screenStreamRef.current = null;
     screenVideoTrackRef.current = null;
@@ -117,14 +116,12 @@ export default function useScreenShare({
     logInfo('Screen sharing stopped');
 
     if (!silent) {
-      if (hadAudioSender) {
-        try {
-          await renegotiateRef.current?.();
-        } catch (error) {
-          logWarn('Renegotiation after screen share stop failed', {
-            message: error?.message,
-          });
-        }
+      try {
+        await renegotiateRef.current?.();
+      } catch (error) {
+        logWarn('Renegotiation after screen share stop failed', {
+          message: error?.message,
+        });
       }
       setStatus('Screen sharing stopped');
     }
@@ -203,14 +200,12 @@ export default function useScreenShare({
       setIsScreenSharing(true);
       setIsScreenAudioShared(audioShared);
 
-      if (audioSender) {
-        try {
-          await renegotiateRef.current?.();
-        } catch (error) {
-          logWarn('Renegotiation after screen share start failed', {
-            message: error?.message,
-          });
-        }
+      try {
+        await renegotiateRef.current?.();
+      } catch (error) {
+        logWarn('Renegotiation after screen share start failed', {
+          message: error?.message,
+        });
       }
 
       if (isScreenAudioEnabled && !audioShared) {

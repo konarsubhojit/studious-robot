@@ -77,8 +77,8 @@ The in-call control deck has a **screen share** button (`src/screenShare.js` +
 consent dialog through `getDisplayMedia` and, once granted:
 
 - replaces the outgoing camera track with the screen track using
-  `RTCRtpSender.replaceTrack`, so the remote peer sees the screen without any
-  renegotiation;
+  `RTCRtpSender.replaceTrack` and performs a renegotiation round-trip so the
+  remote peer properly re-initialises its video decoder for the new source;
 - keeps the camera track alive but disabled, so the previous video source is
   restored instantly when sharing stops (also when the user stops the share
   from the OS overlay);
@@ -92,9 +92,8 @@ be changed mid-share (that would churn the SDP).
 
 When enabled, the capture requests `{ video: true, audio: true }`. If the
 platform returns an audio track it is added as an **additional** sender — the
-microphone track is untouched, so mute keeps working independently — and a
-single renegotiation round-trip is performed. Stopping the share removes the
-sender and renegotiates once more.
+microphone track is untouched, so mute keeps working independently. Stopping
+the share removes the sender and renegotiates once more.
 
 Screen audio is strictly best-effort: many Android builds and iOS (without a
 broadcast upload extension) only return a video track. In that case the share
