@@ -115,6 +115,10 @@ export function startOutgoingRingback() {
   if (!manager) return;
 
   try {
+    if (typeof manager.stopRingback !== 'function') {
+      logWarn('[Ringtone] startOutgoingRingback unavailable; native module has no stopRingback');
+      return;
+    }
     if (typeof manager.start === 'function') {
       manager.start({ media: false, ringback: '_BUNDLE_' });
       _isRingbackPlaying = true;
@@ -138,10 +142,10 @@ export function stopOutgoingRingback() {
   try {
     if (typeof manager.stopRingback === 'function') {
       manager.stopRingback();
-    } else if (typeof manager.stop === 'function') {
-      manager.stop();
+      logInfo('[Ringtone] Outgoing ringback stopped');
+    } else {
+      logWarn('[Ringtone] stopOutgoingRingback unavailable; native module has no stopRingback');
     }
-    logInfo('[Ringtone] Outgoing ringback stopped');
   } catch (error) {
     logWarn('[Ringtone] stopOutgoingRingback failed', { message: error?.message });
   }

@@ -127,7 +127,12 @@ function hasLiveConnectionForDevice(state, userId, deviceId) {
 
 function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
   if (call.status !== 'ringing') return;
-  if (call.ringTimeoutAt && new Date(call.ringTimeoutAt).getTime() <= Date.now()) {
+  const ringTimeoutMs = call.ringTimeoutAt ? new Date(call.ringTimeoutAt).getTime() : null;
+  if (ringTimeoutMs !== null && Number.isNaN(ringTimeoutMs)) {
+    logIncomingCallPushSkip(call, 'invalid_ring_timeout', deviceId);
+    return;
+  }
+  if (ringTimeoutMs !== null && ringTimeoutMs <= Date.now()) {
     logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId);
     return;
   }

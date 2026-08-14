@@ -11,6 +11,7 @@ function captureConsoleLog() {
   const lines = [];
   console.log = (...args) => {
     lines.push(args.join(' '));
+    original(...args);
   };
   return {
     lines,
