@@ -96,6 +96,74 @@ function dispatchIncomingCallPushes(state, call) {
   }
 }
 
+function findPushChannelForDevice(state, userId, deviceId) {
+  const device = state.devices.get(deviceId);
+  if (
+    !device ||
+    device.userId !== userId ||
+    !device.pushProvider ||
+    !device.pushToken
+  ) {
+    return null;
+  }
+  return {
+    type: 'push',
+    deviceId,
+    provider: device.pushProvider,
+    pushToken: device.pushToken,
+  };
+}
+
+function hasLiveConnectionForDevice(state, userId, deviceId) {
+  const connections = state.userConnections.get(userId);
+  if (!connections) return false;
+  for (const connection of connections.values()) {
+    if (connection.deviceId === deviceId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
+  if (call.status !== 'ringing') return;
+  if (call.ringTimeoutAt && new Date(call.ringTimeoutAt).getTime() <= Date.now()) {
+    logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId);
+    return;
+  }
+  if (hasLiveConnectionForDevice(state, call.calleeId, deviceId)) {
+    logIncomingCallPushSkip(call, 'callee_online', deviceId);
+    return;
+  }
+
+  const channel = findPushChannelForDevice(state, call.calleeId, deviceId);
+  if (!channel) {
+    logIncomingCallPushSkip(call, 'no_push_token', deviceId);
+    return;
+  }
+
+  console.log(
+    `[push] Attempting call.incoming callId=${call.callId}` +
+    ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
+    (trigger ? ` trigger=${trigger}` : ''),
+  );
+  push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    .catch((err) => {
+      console.error(
+        `[push] Failed call.incoming callId=${call.callId}` +
+        ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+      );
+    });
+}
+
+function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
+  if (!userId || !deviceId) return;
+  for (const call of state.calls.values()) {
+    if (call.calleeId !== userId || call.status !== 'ringing') continue;
+    dispatchIncomingCallPushToDevice(state, call, deviceId, 'socket_disconnected');
+  }
+}
+
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
@@ -188,4 +256,5 @@ module.exports = {
   getCallTransitionEventName,
   notifyCallCreated,
   notifyCallTransition,
+  notifyRingingCallsForDisconnectedDevice,
 };

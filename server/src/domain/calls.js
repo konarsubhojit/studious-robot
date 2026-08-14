@@ -158,8 +158,10 @@ function appendCallEvent(state, callId, event, actor, reason, afterPersist) {
   events.push(eventRecord);
   if (afterPersist) {
     Promise.resolve(afterPersist)
-      .catch(() => {})
-      .then(() => persistCallEvent(state.db, eventRecord));
+      .then(() => persistCallEvent(state.db, eventRecord))
+      .catch((error) => {
+        console.error('[calls] failed to persist call event after call to DB:', error?.message);
+      });
     return;
   }
   persistCallEvent(state.db, eventRecord);

@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 const https = require('node:https');
 const { EventEmitter } = require('node:events');
 const { generateKeyPairSync } = require('node:crypto');
+const { captureConsoleLog } = require('./helpers');
 
 const push = require('../src/push.js');
 
@@ -69,18 +70,6 @@ function mockHttps(handler) {
   return {
     requests,
     restore: () => { https.request = original; },
-  };
-}
-
-function captureConsoleLog() {
-  const original = console.log;
-  const lines = [];
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-  };
-  return {
-    lines,
-    restore: () => { console.log = original; },
   };
 }
 

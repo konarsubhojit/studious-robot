@@ -12,7 +12,7 @@ const {
   userRoom,
 } = require('../lib/state');
 const { createCallRecord } = require('../domain/calls');
-const { notifyCallCreated } = require('../domain/notifications');
+const { notifyCallCreated, notifyRingingCallsForDisconnectedDevice } = require('../domain/notifications');
 const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
 const { registerMessageHandlers } = require('./messageHandlers');
 const {
@@ -294,6 +294,7 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         (identity ? ` user=${identity.userId} device=${identity.deviceId}` : '') +
         ` remainingUserSockets=${remainingConnections}`,
       );
+      notifyRingingCallsForDisconnectedDevice(state, identity?.userId, identity?.deviceId);
     });
   });
 }

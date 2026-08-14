@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { captureConsoleLog } = require('./helpers');
 
 // Resolve the push module's path so we can swap its exports.
 const pushModulePath = require.resolve('../src/push.js');
@@ -41,18 +42,6 @@ function spyOnPush() {
   return {
     calls,
     restore: () => { mod.sendIncomingCallPush = original; },
-  };
-}
-
-function captureConsoleLog() {
-  const original = console.log;
-  const lines = [];
-  console.log = (...args) => {
-    lines.push(args.join(' '));
-  };
-  return {
-    lines,
-    restore: () => { console.log = original; },
   };
 }
 
@@ -277,4 +266,35 @@ test('push fallback: offline devices still get a push while another device is on
   } finally {
     phone.disconnect();
   }
+});
+
+test('push fallback: disconnected ringing device gets a push before timeout', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-kate');
+  const calleeSession = await createSession(url, 'user-louis');
+
+  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'louis-token' }, calleeSession);
+
+  const callee = ioClient(url, { auth: { sessionId: calleeSession } });
+  await new Promise((resolve) => callee.once('connect', resolve));
+
+  const res = await postJson(url, '/calls', { calleeId: 'user-louis' }, callerSession);
+  assert.equal(res.status, 201);
+  assert.equal(res.body.status, 'ringing');
+
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(spy.calls.length, 0, 'connected callee device is not pushed at call creation');
+
+  callee.disconnect();
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(spy.calls.length, 1, 'disconnect during ringing triggers a push to that device');
+  assert.equal(spy.calls[0].channel.deviceId, 'device-user-louis');
+  assert.equal(spy.calls[0].callData.callId, res.body.callId);
 });
