@@ -5,6 +5,7 @@ import {
   getInitialCallLink,
   getPushToken,
   handleBackgroundPushMessage,
+  handleForegroundPushMessage,
   installBackgroundMessageHandler,
   loadMessaging,
   parseCallDeepLink,
@@ -425,6 +426,53 @@ describe('background push handler', () => {
       callId: 'call-3',
       callerId: 'carol',
     });
+  });
+
+  /**
+   * Load the push module with a virtual messaging mock installed, priming the
+   * memoised native lookup while the mock is active (see the identical helper
+   * in the `getPushToken` block).
+   */
+  function withMockedMessaging(instance, run) {
+    let mod;
+    jest.isolateModules(() => {
+      const messagingModule = { ...instance, AuthorizationStatus: AUTH };
+      jest.doMock(
+        '@react-native-firebase/messaging',
+        () => ({ __esModule: true, default: messagingModule }),
+        { virtual: true },
+      );
+      mod = require('../src/pushNotifications');
+      mod._resetMessagingCache();
+      mod.loadMessaging();
+    });
+    return run(mod);
+  }
+
+  test('installForegroundMessageHandler rings pushes that arrive while open', async () => {
+    const onMessage = jest.fn().mockReturnValue(jest.fn());
+    await withMockedMessaging({ onMessage }, async (mod) => {
+      const unsubscribe = mod.installForegroundMessageHandler();
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(typeof unsubscribe).toBe('function');
+
+      const [handler] = onMessage.mock.calls[0];
+      await handler({ data: { callId: 'call-fg', callerId: 'erin' } });
+      expect(logInfo).toHaveBeenCalledWith('[Push] Foreground call push received', {
+        callId: 'call-fg',
+        callerId: 'erin',
+      });
+    });
+  });
+
+  test('installForegroundMessageHandler is a no-op when onMessage is unavailable', async () => {
+    await withMockedMessaging({}, (mod) => {
+      expect(() => mod.installForegroundMessageHandler()()).not.toThrow();
+    });
+  });
+
+  test('foreground handler ignores messages without a call payload', async () => {
+    await expect(handleForegroundPushMessage({ data: {} })).resolves.toBeNull();
   });
 
   test('installBackgroundMessageHandler wires native background callback', async () => {

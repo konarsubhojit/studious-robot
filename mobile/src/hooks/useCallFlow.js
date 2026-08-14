@@ -26,6 +26,7 @@ import { ensureCallPermissions } from "../permissions";
 import {
   addCallLinkListener,
   getInitialCallLink,
+  installForegroundMessageHandler,
   registerForPushNotifications,
   unregisterPushToken,
 } from "../pushNotifications";
@@ -1934,7 +1935,14 @@ export default function useCallFlow() {
         }
       },
     });
-    return unregister;
+    // `setBackgroundMessageHandler` (installed in index.js) only fires when the
+    // app is backgrounded; this covers pushes that land while it is on screen,
+    // e.g. when the socket is mid-reconnect and the call.incoming event is lost.
+    const unsubscribeForegroundPush = installForegroundMessageHandler();
+    return () => {
+      unsubscribeForegroundPush();
+      unregister();
+    };
     // Run once on mount; handlers are invoked via refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

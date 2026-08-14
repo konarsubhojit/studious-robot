@@ -44,6 +44,16 @@ let cachedCallKeep;
 let hasLoggedMissingCallKeep = false;
 /** Whether `setup()` has completed successfully (guards repeated setup). */
 let isConfigured = false;
+/**
+ * Call ids already surfaced to the OS.
+ *
+ * The same call can legitimately arrive over several paths at once — the
+ * `call.incoming` socket event, a foreground push and a background push all
+ * race for the same call — so displaying is deduplicated centrally here rather
+ * than in each caller. Without this the OS would show (and ring) the same
+ * incoming call more than once.
+ */
+const displayedCallIds = new Set();
 
 /**
  * Lazily resolve the optional `react-native-callkeep` default export. Returns
@@ -72,6 +82,17 @@ export function _resetCallKeepCache() {
   cachedCallKeep = undefined;
   hasLoggedMissingCallKeep = false;
   isConfigured = false;
+  displayedCallIds.clear();
+}
+
+/**
+ * Forget that a call was displayed, so a future call reusing the id (or a
+ * retried ring after the call ended) can be surfaced again.
+ *
+ * @param {string} callId
+ */
+export function clearDisplayedCall(callId) {
+  displayedCallIds.delete(callId);
 }
 
 /**
@@ -104,11 +125,18 @@ export async function setupCallKeep() {
  * Display the OS incoming-call UI for a call. Returns `false` (never throws)
  * when CallKeep is unavailable or display fails.
  *
+ * Duplicate calls for the same `callId` are ignored, so it is safe to invoke
+ * this from the socket, foreground-push and background-push paths at once.
+ *
  * @param {{ callId: string, callerId?: string | null, hasVideo?: boolean }} opts
  * @returns {Promise<boolean>} `true` when the system UI was shown
  */
 export async function displayIncomingCall({ callId, callerId, hasVideo = true } = {}) {
   if (!callId) return false;
+  if (displayedCallIds.has(callId)) {
+    logInfo('[CallKeep] Incoming call already displayed; ignoring duplicate', { callId });
+    return true;
+  }
   const ready = await setupCallKeep();
   if (!ready) return false;
 
@@ -116,10 +144,12 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true } 
   try {
     const handle = callerId || callId;
     const name = callerId || 'Incoming call';
+    displayedCallIds.add(callId);
     callKeep.displayIncomingCall(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
     return true;
   } catch (error) {
+    displayedCallIds.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
     return false;
   }
@@ -153,6 +183,8 @@ export function reportCallConnected(callId) {
  */
 export function endCall(callId) {
   if (!callId) return false;
+  // Allow the call id to be displayed again if it ever rings anew.
+  displayedCallIds.delete(callId);
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endCall !== 'function') return false;
   try {
@@ -166,6 +198,7 @@ export function endCall(callId) {
 
 /** Dismiss every active OS call UI (cleanup helper). */
 export function endAllCalls() {
+  displayedCallIds.clear();
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endAllCalls !== 'function') return false;
   try {

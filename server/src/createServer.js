@@ -10,6 +10,8 @@ const {
   DEFAULT_RINGING_TIMEOUT_MS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
+  DEFAULT_SOCKET_PING_INTERVAL_MS,
+  DEFAULT_SOCKET_PING_TIMEOUT_MS,
 } = require('./config');
 const { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } = require('./lib/state');
 const { waitForSocketsToDrain } = require('./lib/lifecycle');
@@ -122,8 +124,13 @@ function createServer(opts = {}) {
     corsOrigin = [];
     console.warn('[signaling] CORS_ORIGIN is not set; rejecting browser origins in production.');
   }
+  // Heartbeat tuning: detect phones that the OS suspended or killed well
+  // inside the ringing window, so the per-device push fallback can take over
+  // instead of the call being emitted into a dead socket (see config.js).
   const io = new Server(httpServer, {
     cors: { origin: corsOrigin },
+    pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS) || DEFAULT_SOCKET_PING_INTERVAL_MS,
+    pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS) || DEFAULT_SOCKET_PING_TIMEOUT_MS,
   });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis

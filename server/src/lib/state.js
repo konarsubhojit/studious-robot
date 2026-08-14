@@ -223,6 +223,30 @@ function resolveReachableChannels(state, userId) {
 }
 
 /**
+ * Resolve the push channels for a user's devices that have **no live socket
+ * connection** of their own.
+ *
+ * Push delivery must be decided per device, not per user: a user who is
+ * connected on one device (say a laptop) is still unreachable on the phone that
+ * is asleep in their pocket, and that phone is exactly the device that needs to
+ * ring.  Gating on "the user has zero connections" silently drops the push for
+ * every other registered device.
+ *
+ * @param {object} state
+ * @param {string} userId
+ * @returns {Array<object>} Push channels for devices without a live socket.
+ */
+function resolveOfflinePushChannels(state, userId) {
+  const connections = state.userConnections.get(userId);
+  const connectedDeviceIds = new Set(
+    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+  );
+
+  return resolveReachableChannels(state, userId)
+    .filter((channel) => channel.type === 'push' && !connectedDeviceIds.has(channel.deviceId));
+}
+
+/**
  * Socket.IO room name that every one of a user's sockets joins on connect.
  *
  * Addressing emits to this room (instead of iterating tracked socket ids) lets
@@ -247,5 +271,6 @@ module.exports = {
   hasKnownUser,
   listKnownUsers,
   resolveReachableChannels,
+  resolveOfflinePushChannels,
   userRoom,
 };
