@@ -198,7 +198,7 @@ test('push fallback: no push when callee is unknown (unreachable)', async (t) =>
     logs.lines.some((line) =>
       line.includes('[push] Skipped call.incoming') &&
       line.includes('user=user-frank') &&
-      line.includes('reason=no_device_row')),
+      line.includes('reason=call_status_unreachable')),
     'missing-device push skip should be logged',
   );
 });

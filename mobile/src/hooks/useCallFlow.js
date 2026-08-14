@@ -41,7 +41,12 @@ import {
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
 } from "../callKeep";
-import { startIncomingRingtone, stopIncomingRingtone } from "../ringtone";
+import {
+  startIncomingRingtone,
+  startOutgoingRingback,
+  stopIncomingRingtone,
+  stopOutgoingRingback,
+} from "../ringtone";
 import {
   generateVerificationCode,
   normalizeVerificationCode,
@@ -759,7 +764,7 @@ export default function useCallFlow() {
           Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
         }
         markCallConnected();
-        updateStatus("Call started", "success");
+        updateStatus("Call connected", "success");
       }
     };
 
@@ -913,6 +918,7 @@ export default function useCallFlow() {
 
       // Stop any JS-layer fallback ringtone (idempotent).
       stopIncomingRingtone();
+      stopOutgoingRingback();
       logInfo("[CallFlow] Ringing stopped");
 
       const durationSeconds = callConnectedAtRef.current
@@ -1211,6 +1217,7 @@ export default function useCallFlow() {
 
           switch (callStatus) {
             case "accepted": {
+              stopOutgoingRingback();
               updateStatus("Call accepted, connecting media…");
               // Caller is responsible for sending the initial RTC offer.
               if (isCallerRef.current && call) {
@@ -1326,6 +1333,7 @@ export default function useCallFlow() {
             },
           );
           setCallPhase(CALL_PHASES.IN_CALL);
+          updateStatus("Connected", "success");
           startCallService();
         } catch (error) {
           logError("[CallFlow] Failed to handle RTC offer", error);
@@ -1360,6 +1368,7 @@ export default function useCallFlow() {
             }
           }
           setCallPhase(CALL_PHASES.IN_CALL);
+          updateStatus("Connected", "success");
           startCallService();
         } catch (error) {
           logError("[CallFlow] Failed to handle RTC answer", error);
@@ -1802,6 +1811,7 @@ export default function useCallFlow() {
         setActiveCall(ack.call);
         setCallPhase(CALL_PHASES.OUTGOING_RINGING);
         updateStatus(`Ringing ${trimmedCalleeId}…`);
+        startOutgoingRingback();
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
       } catch (error) {
         logError("[CallFlow] placeCall failed", error);
@@ -2225,6 +2235,7 @@ export default function useCallFlow() {
   useEffect(() => {
     return () => {
       stopIncomingRingtone();
+      stopOutgoingRingback();
     };
   }, []);
 

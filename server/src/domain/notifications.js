@@ -181,10 +181,7 @@ function notifyCallCreated(io, state, call) {
     // the phone that is asleep in their pocket — the device that has to ring.
     dispatchIncomingCallPushes(state, call);
   } else {
-    const reason = call.status === 'unreachable'
-      ? getNoPushChannelReason(state, call.calleeId)
-      : `call_status_${call.status}`;
-    logIncomingCallPushSkip(call, reason);
+    logIncomingCallPushSkip(call, `call_status_${call.status}`);
   }
 
   notifyCallTransition(io, state, call, {

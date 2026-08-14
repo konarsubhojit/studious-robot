@@ -97,7 +97,9 @@ jest.mock("../../src/callKeep", () => ({
 
 jest.mock("../../src/ringtone", () => ({
   startIncomingRingtone: jest.fn(),
+  startOutgoingRingback: jest.fn(),
   stopIncomingRingtone: jest.fn(),
+  stopOutgoingRingback: jest.fn(),
 }));
 
 jest.mock("../../src/pushNotifications", () => ({
@@ -1244,6 +1246,113 @@ describe("useCallFlow incoming-call ringing", () => {
     await act(async () => {});
 
     expect(startIncomingRingtone).not.toHaveBeenCalled();
+  });
+
+  // ── Outgoing ringback ─────────────────────────────────────────────────────
+
+  test("placeCall starts outgoing ringback after the server reports ringing", async () => {
+    const { startOutgoingRingback } = require("../../src/ringtone");
+    const { mediaDevices } = require("react-native-webrtc");
+    mediaDevices.getUserMedia.mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === "call.initiate") {
+        cb?.({
+          ok: true,
+          call: {
+            callId: "call-outgoing",
+            callerId: "alice",
+            calleeId: "bob",
+            status: "ringing",
+            ringTimeoutAt: new Date(Date.now() + 30_000).toISOString(),
+          },
+        });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.OUTGOING_RINGING);
+    expect(resultRef.current.status.message).toBe("Ringing bob…");
+    expect(startOutgoingRingback).toHaveBeenCalledTimes(1);
+  });
+
+  test('call.state_changed "accepted" stops outgoing ringback and shows connecting status', async () => {
+    const { stopOutgoingRingback } = require("../../src/ringtone");
+    const { resultRef, tree } = await renderWithSocket();
+
+    // Simulate an outgoing ringing call in hook state.
+    await act(async () => {
+      resultRef.current.setCalleeId("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { mediaDevices, RTCPeerConnection } = require("react-native-webrtc");
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    RTCPeerConnection.mockImplementation(() => ({
+      addTrack: jest.fn(),
+      addIceCandidate: jest.fn(),
+      close: jest.fn(),
+      createOffer: jest.fn().mockResolvedValue({ type: "offer", sdp: "" }),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: "offer", sdp: "" },
+      getSenders: jest.fn(() => []),
+    }));
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === "call.initiate") {
+        cb?.({
+          ok: true,
+          call: { callId: "call-accepted", callerId: "alice", calleeId: "bob", status: "ringing" },
+        });
+      } else {
+        cb?.({ ok: true });
+      }
+    });
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+
+    const stateHandler = getSocketHandler("call.state_changed");
+    await act(async () => {
+      await stateHandler({
+        status: "accepted",
+        call: { callId: "call-accepted", callerId: "alice", calleeId: "bob", status: "accepted" },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(stopOutgoingRingback).toHaveBeenCalled();
+    expect(resultRef.current.status.message).toBe("Call accepted, connecting media…");
   });
 
   // ── Accept stops ringing ──────────────────────────────────────────────────
