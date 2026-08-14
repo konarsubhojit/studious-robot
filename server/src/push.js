@@ -19,12 +19,22 @@
  *                                  string, or a path to the JSON file).  Used to
  *                                  mint an OAuth2 access token for the FCM HTTP
  *                                  v1 API (`messages:send`).
+ *
+ *  ANH   AZURE_NOTIFICATION_HUB_CONNECTION_STRING
+ *                                  DefaultFullSharedAccessSignature connection
+ *                                  string of the Notification Hub namespace.
+ *        AZURE_NOTIFICATION_HUB_NAME         Hub name (e.g. `storeman`).
+ *        AZURE_NOTIFICATION_HUB_API_VERSION  REST api-version (default 2015-01).
+ *
+ * When Azure Notification Hubs is configured it is tried first for every
+ * device, regardless of the underlying provider; on any failure delivery falls
+ * back to the direct APNs / FCM paths so nothing breaks when ANH is misconfigured.
  */
 
 const fs = require('fs');
 const http2 = require('http2');
 const https = require('https');
-const { createSign } = require('crypto');
+const { createSign, createHmac } = require('crypto');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -49,6 +59,13 @@ const RETRY_BASE_DELAY_MS = 500;
 
 /** APNs provider tokens are valid for 1 hour; refresh after 50 minutes. */
 const APNS_TOKEN_TTL_SECS = 50 * 60;
+
+/** Default Notification Hubs REST api-version. */
+const NOTIFICATION_HUB_DEFAULT_API_VERSION = '2015-01';
+/** Lifetime of a generated Notification Hubs SAS token. */
+const NOTIFICATION_HUB_TOKEN_TTL_SECS = 60 * 60;
+/** Skew applied to the cached SAS-token expiry check, in seconds. */
+const NOTIFICATION_HUB_TOKEN_SKEW_SECS = 60;
 
 // ─── APNs JWT cache ───────────────────────────────────────────────────────────
 
@@ -273,24 +290,234 @@ function loadFcmConfig() {
   };
 }
 
+// ─── Notification Hubs config + SAS token ─────────────────────────────────────
+
+/**
+ * Parse an Azure Service Bus / Notification Hubs connection string.
+ *
+ * Expected shape:
+ *   `Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=…;SharedAccessKey=…`
+ *
+ * @param {string} connectionString
+ * @returns {{ endpoint: string, keyName: string, key: string } | null}
+ */
+function parseNotificationHubConnectionString(connectionString) {
+  if (typeof connectionString !== 'string' || connectionString.trim().length === 0) {
+    return null;
+  }
+
+  let endpoint = null;
+  let keyName = null;
+  let key = null;
+
+  for (const part of connectionString.split(';')) {
+    const trimmed = part.trim();
+    if (trimmed.length === 0) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    const name = trimmed.slice(0, separator).trim().toLowerCase();
+    const value = trimmed.slice(separator + 1).trim();
+    if (name === 'endpoint') endpoint = value;
+    else if (name === 'sharedaccesskeyname') keyName = value;
+    else if (name === 'sharedaccesskey') key = value;
+  }
+
+  if (!endpoint || !keyName || !key) return null;
+
+  // The REST API is addressed over HTTPS; the connection string advertises the
+  // AMQP (`sb://`) endpoint.
+  const httpsEndpoint = endpoint.replace(/^sb:\/\//i, 'https://');
+  if (!/^https:\/\//i.test(httpsEndpoint)) return null;
+
+  return {
+    endpoint: httpsEndpoint.endsWith('/') ? httpsEndpoint : `${httpsEndpoint}/`,
+    keyName,
+    key,
+  };
+}
+
+/**
+ * Load the Azure Notification Hubs configuration from the environment.
+ *
+ * Returns `null` (so callers can fall back to the direct providers) when the
+ * connection string / hub name are absent or unparseable.
+ *
+ * @returns {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string } | null}
+ */
+function loadNotificationHubConfig() {
+  const connectionString = process.env.AZURE_NOTIFICATION_HUB_CONNECTION_STRING?.trim();
+  const hubName = process.env.AZURE_NOTIFICATION_HUB_NAME?.trim();
+  if (!connectionString || !hubName) return null;
+
+  const parsed = parseNotificationHubConnectionString(connectionString);
+  if (!parsed) {
+    console.warn(
+      '[push] AZURE_NOTIFICATION_HUB_CONNECTION_STRING could not be parsed' +
+      ' (expected Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…)',
+    );
+    return null;
+  }
+
+  return {
+    ...parsed,
+    hubName,
+    apiVersion: process.env.AZURE_NOTIFICATION_HUB_API_VERSION?.trim()
+      || NOTIFICATION_HUB_DEFAULT_API_VERSION,
+  };
+}
+
+let _notificationHubToken = null;
+let _notificationHubTokenExpiresAt = 0;
+let _notificationHubTokenUri = null;
+
+/**
+ * Reset the cached Notification Hubs SAS token.  Intended for tests so
+ * credential changes between cases are not masked by the in-process cache.
+ */
+function _resetNotificationHubTokenCache() {
+  _notificationHubToken = null;
+  _notificationHubTokenExpiresAt = 0;
+  _notificationHubTokenUri = null;
+  _notificationHubUnconfiguredLogged = false;
+}
+
+/**
+ * Build (or return cached) a Service Bus SAS token for the given resource URI.
+ *
+ * Format: `SharedAccessSignature sr={uri}&sig={sig}&se={expiry}&skn={keyName}`
+ *
+ * @param {{ keyName: string, key: string }} config
+ * @param {string} uri - Resource URI the token grants access to.
+ * @returns {string}
+ */
+function buildNotificationHubSasToken(config, uri) {
+  const nowSecs = Math.floor(Date.now() / 1000);
+  if (
+    _notificationHubToken &&
+    _notificationHubTokenUri === uri &&
+    _notificationHubTokenExpiresAt - NOTIFICATION_HUB_TOKEN_SKEW_SECS > nowSecs
+  ) {
+    return _notificationHubToken;
+  }
+
+  const expiry = nowSecs + NOTIFICATION_HUB_TOKEN_TTL_SECS;
+  const encodedUri = encodeURIComponent(uri);
+  const signature = createHmac('sha256', config.key)
+    .update(`${encodedUri}\n${expiry}`)
+    .digest('base64');
+
+  _notificationHubToken =
+    `SharedAccessSignature sr=${encodedUri}` +
+    `&sig=${encodeURIComponent(signature)}` +
+    `&se=${expiry}` +
+    `&skn=${encodeURIComponent(config.keyName)}`;
+  _notificationHubTokenExpiresAt = expiry;
+  _notificationHubTokenUri = uri;
+  return _notificationHubToken;
+}
+
 // ─── Payload builders ─────────────────────────────────────────────────────────
 
-function buildApnsPayload(callData) {
+/**
+ * Transport-neutral description of a push notification.
+ *
+ * @typedef {object} PushEnvelope
+ * @property {string} type      - Client-side event type (e.g. `call.incoming`).
+ * @property {string} title     - Human-readable title.
+ * @property {string} body      - Human-readable body.
+ * @property {string} deepLink  - `wetalk://…` link the client opens on tap.
+ * @property {Record<string, string>} data - Extra event-specific fields.
+ */
+
+/**
+ * Describe an incoming call as a transport-neutral push envelope.
+ *
+ * @param {{ callId: string, callerId: string }} callData
+ * @returns {PushEnvelope}
+ */
+function buildCallEnvelope(callData) {
+  return {
+    type: 'call.incoming',
+    title: 'Incoming call',
+    body: `Call from ${callData.callerId}`,
+    deepLink: `wetalk://call/${callData.callId}`,
+    data: {
+      callId: callData.callId,
+      callerId: callData.callerId,
+    },
+  };
+}
+
+/**
+ * Describe a received text message as a transport-neutral push envelope.
+ *
+ * @param {{ messageId: string, conversationId: string, senderId: string }} messageData
+ * @returns {PushEnvelope}
+ */
+function buildMessageEnvelope(messageData) {
+  return {
+    type: 'message.received',
+    title: 'New message',
+    body: `Message from ${messageData.senderId}`,
+    deepLink: `wetalk://chat/${messageData.conversationId}`,
+    data: {
+      messageId: messageData.messageId,
+      conversationId: messageData.conversationId,
+      senderId: messageData.senderId,
+    },
+  };
+}
+
+/**
+ * Build an APNs payload body for a push envelope.
+ *
+ * @param {PushEnvelope} envelope
+ * @returns {string}
+ */
+function buildApnsEnvelopePayload(envelope) {
   return JSON.stringify({
     aps: {
       alert: {
-        title: 'Incoming call',
-        body: `Call from ${callData.callerId}`,
+        title: envelope.title,
+        body: envelope.body,
       },
       sound: 'default',
       badge: 1,
       'content-available': 1,
     },
-    callId: callData.callId,
-    callerId: callData.callerId,
-    type: 'call.incoming',
-    deepLink: `wetalk://call/${callData.callId}`,
+    ...envelope.data,
+    type: envelope.type,
+    deepLink: envelope.deepLink,
   });
+}
+
+/**
+ * Build the APNs payload for an incoming call.
+ *
+ * @param {{ callId: string, callerId: string }} callData
+ * @returns {string}
+ */
+function buildApnsPayload(callData) {
+  return buildApnsEnvelopePayload(buildCallEnvelope(callData));
+}
+
+/**
+ * Flatten an envelope into the string-valued `data` map shared by the FCM v1
+ * and Notification Hubs (`gcm`) wire formats.
+ *
+ * @param {PushEnvelope} envelope
+ * @returns {Record<string, string>}
+ */
+function buildDataBlock(envelope) {
+  const data = {};
+  for (const [key, value] of Object.entries(envelope.data)) {
+    data[key] = String(value);
+  }
+  data.type = envelope.type;
+  data.deepLink = envelope.deepLink;
+  data.title = envelope.title;
+  data.body = envelope.body;
+  return data;
 }
 
 /**
@@ -311,21 +538,51 @@ function buildApnsPayload(callData) {
  * @returns {string}
  */
 function buildFcmPayload(pushToken, callData) {
+  return buildFcmEnvelopePayload(pushToken, buildCallEnvelope(callData));
+}
+
+/**
+ * Build an FCM HTTP v1 `messages:send` request body from a push envelope.
+ *
+ * @param {string} pushToken
+ * @param {PushEnvelope} envelope
+ * @returns {string}
+ */
+function buildFcmEnvelopePayload(pushToken, envelope) {
   return JSON.stringify({
     message: {
       token: pushToken,
-      data: {
-        callId: String(callData.callId),
-        callerId: String(callData.callerId),
-        type: 'call.incoming',
-        deepLink: `wetalk://call/${callData.callId}`,
-        title: 'Incoming call',
-        body: `Call from ${callData.callerId}`,
-      },
+      data: buildDataBlock(envelope),
       android: { priority: 'high' },
       apns: { headers: { 'apns-priority': '10' } },
     },
   });
+}
+
+/**
+ * Build the Android (`gcm` format) body Notification Hubs forwards to FCM.
+ *
+ * Notification Hubs expects the FCM *legacy* body shape for the `gcm` format.
+ * As with {@link buildFcmPayload} this is deliberately **data-only** — adding a
+ * `notification` block would bypass the app's `setBackgroundMessageHandler` and
+ * break the CallKeep full-screen incoming-call UI.
+ *
+ * @param {{ callId: string, callerId: string }} callData
+ * @returns {{ data: Record<string, string>, priority: string }}
+ */
+function buildNotificationHubAndroidPayload(callData) {
+  return buildNotificationHubAndroidEnvelopePayload(buildCallEnvelope(callData));
+}
+
+/**
+ * @param {PushEnvelope} envelope
+ * @returns {{ data: Record<string, string>, priority: string }}
+ */
+function buildNotificationHubAndroidEnvelopePayload(envelope) {
+  return {
+    data: buildDataBlock(envelope),
+    priority: 'high',
+  };
 }
 
 // ─── Single-attempt senders ───────────────────────────────────────────────────
@@ -333,12 +590,15 @@ function buildFcmPayload(pushToken, callData) {
 /**
  * Perform one APNs HTTP/2 delivery attempt.
  *
+ * @param {object} config
+ * @param {string} pushToken
+ * @param {PushEnvelope} envelope
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
-function sendApnsOnce(config, pushToken, callData) {
+function sendApnsOnce(config, pushToken, envelope) {
   const host    = config.production ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX;
   const jwt     = buildApnsJwt(config);
-  const payload = buildApnsPayload(callData);
+  const payload = buildApnsEnvelopePayload(envelope);
   const payloadLen = Buffer.byteLength(payload).toString();
 
   return new Promise((resolve, reject) => {
@@ -385,9 +645,12 @@ function sendApnsOnce(config, pushToken, callData) {
  * credentials, then POSTs the v1 message to
  * `/v1/projects/{projectId}/messages:send`.
  *
+ * @param {object} config
+ * @param {string} pushToken
+ * @param {PushEnvelope} envelope
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
-async function sendFcmOnce(config, pushToken, callData) {
+async function sendFcmOnce(config, pushToken, envelope) {
   const token = await getFcmAccessToken(config);
   if (!token.ok) {
     // Treat token-endpoint 5xx/429 (or network errors) as retryable; other
@@ -395,7 +658,7 @@ async function sendFcmOnce(config, pushToken, callData) {
     return { ok: false, statusCode: token.statusCode ?? null, reason: token.reason ?? 'token_error' };
   }
 
-  const payload    = buildFcmPayload(pushToken, callData);
+  const payload    = buildFcmEnvelopePayload(pushToken, envelope);
   const payloadLen = Buffer.byteLength(payload);
   const path       = `/v1/projects/${config.projectId}/messages:send`;
 
@@ -425,6 +688,79 @@ async function sendFcmOnce(config, pushToken, callData) {
             const parsed = JSON.parse(body);
             reason = parsed?.error?.status || parsed?.error?.message || 'unknown';
           } catch { /* ignore */ }
+          resolve({ ok: false, statusCode, reason });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+/**
+ * Perform one Azure Notification Hubs **direct send** attempt.
+ *
+ * Direct send targets a single device handle (the token we already store on the
+ * device record) instead of an ANH registration/tag, so no registration
+ * migration is required.  The hub translates the body into a native APNs or
+ * FCM payload according to the `ServiceBusNotification-Format` header.
+ *
+ * @param {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string }} config
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
+ * @param {PushEnvelope} envelope
+ * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
+ */
+function sendNotificationHubOnce(config, channel, envelope) {
+  const isApple = channel.provider === 'apns';
+  const format  = isApple ? 'apple' : 'gcm';
+  const payload = isApple
+    ? buildApnsEnvelopePayload(envelope)
+    : JSON.stringify(buildNotificationHubAndroidEnvelopePayload(envelope));
+
+  const url = new URL(
+    `${config.hubName}/messages/?direct&api-version=${encodeURIComponent(config.apiVersion)}`,
+    config.endpoint,
+  );
+  // The SAS token is scoped to the hub resource, not the per-send query string.
+  const sasToken = buildNotificationHubSasToken(
+    config,
+    new URL(config.hubName, config.endpoint).toString(),
+  );
+  const payloadLen = Buffer.byteLength(payload);
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: {
+          Authorization: sasToken,
+          'Content-Type': 'application/json;charset=utf-8',
+          'Content-Length': payloadLen,
+          'ServiceBusNotification-Format': format,
+          'ServiceBusNotification-DeviceHandle': channel.pushToken,
+        },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          const statusCode = res.statusCode;
+          if (statusCode === 200 || statusCode === 201) {
+            resolve({ ok: true, statusCode });
+            return;
+          }
+          let reason = 'unknown';
+          if (body) {
+            try {
+              const parsed = JSON.parse(body);
+              reason = parsed?.error?.message || parsed?.Message || parsed?.message || body.slice(0, 200);
+            } catch {
+              reason = body.slice(0, 200);
+            }
+          }
           resolve({ ok: false, statusCode, reason });
         });
       },
@@ -486,12 +822,128 @@ async function withRetry(fn, label) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Tracks whether the "Notification Hub not configured" note was already logged. */
+let _notificationHubUnconfiguredLogged = false;
+
 /**
- * Send an incoming-call push notification via APNs or FCM.
+ * Attempt delivery through Azure Notification Hubs.
  *
- * - Skips gracefully when the provider is not configured.
+ * Returns `{ ok: false, reason: 'notification_hub_not_configured' }` without any
+ * network traffic (and without log spam) when ANH is not configured, so callers
+ * can fall straight through to the direct provider path.
+ *
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
+ * @param {PushEnvelope} envelope
+ * @param {string} label
+ * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
+ */
+async function tryNotificationHub(channel, envelope, label) {
+  const config = loadNotificationHubConfig();
+  if (!config) {
+    if (!_notificationHubUnconfiguredLogged) {
+      _notificationHubUnconfiguredLogged = true;
+      console.log(
+        '[push] Notification Hub not configured' +
+        ' (set AZURE_NOTIFICATION_HUB_CONNECTION_STRING and AZURE_NOTIFICATION_HUB_NAME);' +
+        ' using direct APNs/FCM delivery',
+      );
+    }
+    return { ok: false, reason: 'notification_hub_not_configured' };
+  }
+
+  return withRetry(() => sendNotificationHubOnce(config, channel, envelope), `hub:${label}`);
+}
+
+/**
+ * Deliver a push envelope to one device.
+ *
+ * Provider chain: Azure Notification Hubs (when configured) → direct APNs / FCM
+ * → skip.  Never throws; unconfigured providers resolve with a
+ * `*_not_configured` reason.
+ *
+ * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {PushEnvelope} envelope
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   provider: string,
+ *   deviceId: string,
+ *   transport: 'notification_hub'|'direct',
+ *   statusCode?: number,
+ *   reason?: string
+ * }>}
+ */
+async function deliverPush(channel, envelope) {
+  const { provider, pushToken, deviceId } = channel;
+  const label = `${provider}:${deviceId}`;
+
+  // 1. Preferred transport: Azure Notification Hubs (direct send).
+  const hubResult = await tryNotificationHub(channel, envelope, label);
+  if (hubResult.ok) {
+    return { provider, deviceId, transport: 'notification_hub', ...hubResult };
+  }
+  if (hubResult.reason !== 'notification_hub_not_configured') {
+    console.warn(
+      `[push] Notification Hub delivery failed (reason=${hubResult.reason ?? 'unknown'});` +
+      ` falling back to direct ${provider}`,
+    );
+  }
+
+  // 2. Fallback transport: the provider's own API.
+  let result;
+  if (provider === 'apns') {
+    const config = loadApnsConfig();
+    if (!config) {
+      console.warn(
+        `[push] APNs not configured` +
+        ` (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID); skip ${deviceId}`,
+      );
+      return { ok: false, provider, deviceId, transport: 'direct', reason: 'apns_not_configured' };
+    }
+    result = await withRetry(() => sendApnsOnce(config, pushToken, envelope), label);
+  } else if (provider === 'fcm') {
+    const config = loadFcmConfig();
+    if (!config) {
+      console.warn(`[push] FCM not configured (set FCM_SERVICE_ACCOUNT_JSON); skip ${deviceId}`);
+      return { ok: false, provider, deviceId, transport: 'direct', reason: 'fcm_not_configured' };
+    }
+    result = await withRetry(() => sendFcmOnce(config, pushToken, envelope), label);
+  } else {
+    console.warn(`[push] Unknown provider "${provider}" for device ${deviceId}`);
+    return { ok: false, provider, deviceId, transport: 'direct', reason: 'unknown_provider' };
+  }
+
+  return { provider, deviceId, transport: 'direct', ...result };
+}
+
+/**
+ * Log the outcome of a delivery attempt for operational visibility.
+ *
+ * @param {{ ok: boolean, provider: string, deviceId: string, transport: string, statusCode?: number, reason?: string }} outcome
+ * @param {string} description - Event description, e.g. `call.incoming callId=…`.
+ */
+function logDeliveryOutcome(outcome, description) {
+  if (outcome.ok) {
+    console.log(
+      `[push] Delivered ${description}` +
+      ` via ${outcome.provider} (${outcome.transport}) to device=${outcome.deviceId}`,
+    );
+    return;
+  }
+  console.error(
+    `[push] Failed to deliver ${description}` +
+    ` via ${outcome.provider} to device=${outcome.deviceId}` +
+    ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}`,
+  );
+}
+
+/**
+ * Send an incoming-call push notification.
+ *
+ * - Tries Azure Notification Hubs first when configured, falling back to the
+ *   direct APNs / FCM path on any failure.
+ * - Skips gracefully when no provider is configured.
  * - Retries up to MAX_ATTEMPTS times on transient network / server errors.
- * - Logs every delivery outcome (success or failure) for operational visibility.
+ * - Logs every delivery outcome (success or failure).
  * - Never throws.
  *
  * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
@@ -500,58 +952,49 @@ async function withRetry(fn, label) {
  *   ok: boolean,
  *   provider: string,
  *   deviceId: string,
+ *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
  *   reason?: string
  * }>}
  */
 async function sendIncomingCallPush(channel, callData) {
-  const { provider, pushToken, deviceId } = channel;
-  const label = `${provider}:${deviceId}`;
+  const outcome = await deliverPush(channel, buildCallEnvelope(callData));
+  logDeliveryOutcome(outcome, `call.incoming callId=${callData.callId}`);
+  return outcome;
+}
 
-  let result;
-
-  if (provider === 'apns') {
-    const config = loadApnsConfig();
-    if (!config) {
-      console.warn(
-        `[push] APNs not configured` +
-        ` (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID); skip ${deviceId}`,
-      );
-      return { ok: false, provider, deviceId, reason: 'apns_not_configured' };
-    }
-    result = await withRetry(() => sendApnsOnce(config, pushToken, callData), label);
-  } else if (provider === 'fcm') {
-    const config = loadFcmConfig();
-    if (!config) {
-      console.warn(`[push] FCM not configured (set FCM_SERVICE_ACCOUNT_JSON); skip ${deviceId}`);
-      return { ok: false, provider, deviceId, reason: 'fcm_not_configured' };
-    }
-    result = await withRetry(() => sendFcmOnce(config, pushToken, callData), label);
-  } else {
-    console.warn(`[push] Unknown provider "${provider}" for device ${deviceId}`);
-    return { ok: false, provider, deviceId, reason: 'unknown_provider' };
-  }
-
-  const outcome = { provider, deviceId, ...result };
-  if (outcome.ok) {
-    console.log(
-      `[push] Delivered call.incoming callId=${callData.callId}` +
-      ` via ${provider} to device=${deviceId}`,
-    );
-  } else {
-    console.error(
-      `[push] Failed to deliver call.incoming callId=${callData.callId}` +
-      ` via ${provider} to device=${deviceId}` +
-      ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}`,
-    );
-  }
+/**
+ * Send a text-message push notification to an offline recipient.
+ *
+ * Uses the same Notification-Hubs-first chain and data-only payload shape as
+ * {@link sendIncomingCallPush}.  Never throws.
+ *
+ * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ messageId: string, conversationId: string, senderId: string }} messageData
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   provider: string,
+ *   deviceId: string,
+ *   transport: 'notification_hub'|'direct',
+ *   statusCode?: number,
+ *   reason?: string
+ * }>}
+ */
+async function sendMessagePush(channel, messageData) {
+  const outcome = await deliverPush(channel, buildMessageEnvelope(messageData));
+  logDeliveryOutcome(outcome, `message.received messageId=${messageData.messageId}`);
   return outcome;
 }
 
 module.exports = {
   sendIncomingCallPush,
+  sendMessagePush,
   // Exported for unit tests.
   _resetFcmTokenCache,
   _loadFcmConfig: loadFcmConfig,
   _buildFcmPayload: buildFcmPayload,
+  _resetNotificationHubTokenCache,
+  _loadNotificationHubConfig: loadNotificationHubConfig,
+  _buildNotificationHubSasToken: buildNotificationHubSasToken,
+  _buildNotificationHubAndroidPayload: buildNotificationHubAndroidPayload,
 };
