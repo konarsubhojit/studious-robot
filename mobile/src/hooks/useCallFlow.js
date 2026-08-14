@@ -1746,9 +1746,37 @@ export default function useCallFlow() {
         }
       });
 
+      // The server accepted the handshake but the presented sessionId no
+      // longer resolves to a live session (server restart dropped the
+      // in-memory table, TTL expiry, …) and downgraded this connection to a
+      // guest. Re-mint a session and reconnect so the client re-authenticates
+      // immediately, instead of silently operating as an unauthenticated
+      // guest until some later authenticated action (e.g. `call.initiate`) is
+      // rejected.
+      socket.on("session.invalid", async ({ sessionId: staleSessionId } = {}) => {
+        logWarn("[CallFlow] Session invalidated by server; re-minting session", {
+          sessionId: staleSessionId,
+        });
+        sessionIdRef.current = null;
+        try {
+          const newSessionId = await createOrGetSession();
+          // A newer socket may already have replaced this one (e.g. the
+          // presence effect re-ran, or the user signed out) — don't race it.
+          if (socketRef.current !== socket) return;
+          connectSocket(newSessionId);
+        } catch (error) {
+          logError(
+            "[CallFlow] Failed to re-mint session after session.invalid",
+            error,
+          );
+          updateStatus("Session expired — please reconnect.", "error");
+        }
+      });
+
       return socket;
     },
     [
+      createOrGetSession,
       disconnectSocket,
       updateStatus,
       showIncomingCallUi,
