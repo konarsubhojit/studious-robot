@@ -8,6 +8,7 @@ const { createMetricsRouter } = require('./metrics.routes');
 const { createBlocksRouter } = require('./blocks.routes');
 const { createAuditLogRouter } = require('./auditLog.routes');
 const { createCallsRouter } = require('./calls.routes');
+const { createMessagesRouter } = require('./messages.routes');
 
 /**
  * Mount every HTTP router onto the Express app.
@@ -30,6 +31,7 @@ function mountRoutes(app, ctx) {
   app.use(createBlocksRouter({ state, db }));
   app.use(createAuditLogRouter({ state }));
   app.use(createCallsRouter({ state, io, ringingTimeoutMs }));
+  app.use(createMessagesRouter({ state }));
 }
 
 module.exports = { mountRoutes };

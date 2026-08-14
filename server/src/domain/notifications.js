@@ -2,7 +2,7 @@
 
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
-const { resolveReachableChannels, userRoom } = require('../lib/state');
+const { resolveOfflinePushChannels, userRoom } = require('../lib/state');
 
 /**
  * Client-facing call notifications.
@@ -52,21 +52,18 @@ function notifyCallCreated(io, state, call) {
     emitToUserSockets(io, call.calleeId, 'call.incoming', envelope);
     emitToUserSockets(io, call.callerId, 'call.ringing', envelope);
 
-    // Push fallback: if the callee has no active WebSocket connection, deliver
-    // the incoming-call notification via APNs / FCM to every registered device.
-    const calleeConnections = state.userConnections.get(call.calleeId);
-    const calleeIsOffline = !calleeConnections || calleeConnections.size === 0;
-    if (calleeIsOffline) {
-      const pushChannels = resolveReachableChannels(state, call.calleeId)
-        .filter((ch) => ch.type === 'push');
-      for (const channel of pushChannels) {
-        push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
-          .catch((err) => {
-            console.error(
-              `[push] Unhandled error for device ${channel.deviceId}: ${err?.message}`,
-            );
-          });
-      }
+    // Push fallback: deliver the incoming call to every registered device that
+    // has no live socket of its own.  This is decided per device rather than
+    // per user, so a callee who is connected on one device still gets a push on
+    // the phone that is asleep in their pocket — the device that has to ring.
+    const pushChannels = resolveOfflinePushChannels(state, call.calleeId);
+    for (const channel of pushChannels) {
+      push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+        .catch((err) => {
+          console.error(
+            `[push] Unhandled error for device ${channel.deviceId}: ${err?.message}`,
+          );
+        });
     }
   }
 

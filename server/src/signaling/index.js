@@ -14,6 +14,7 @@ const {
 const { createCallRecord } = require('../domain/calls');
 const { notifyCallCreated } = require('../domain/notifications');
 const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
+const { registerMessageHandlers } = require('./messageHandlers');
 const {
   requireSocketSession,
   validateSignalingVersion,
@@ -275,6 +276,8 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         validateData: (value) => isPlainObject(value),
       });
     });
+
+    registerMessageHandlers(socket, { io, state });
 
     socket.on('disconnect', (reason) => {
       console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);

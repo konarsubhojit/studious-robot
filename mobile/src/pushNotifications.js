@@ -346,3 +346,56 @@ export function installBackgroundMessageHandler() {
   });
   return true;
 }
+
+/**
+ * Handle a push that arrived while the app is in the foreground.
+ *
+ * `setBackgroundMessageHandler` is *only* invoked when the app is backgrounded
+ * or killed; without a matching `onMessage` subscription a call push that lands
+ * while the app is open is silently dropped. That is the case whenever the
+ * socket is unhealthy (suspended radio, reconnect in progress) but the app is
+ * on screen — the exact situation in which the callee's phone never rings.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<{ callId: string, callerId: string | null, deepLink: string } | null>}
+ */
+export async function handleForegroundPushMessage(remoteMessage) {
+  const incoming = _extractIncomingCallFromMessage(remoteMessage);
+  if (!incoming) return null;
+
+  logInfo('[Push] Foreground call push received', {
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  });
+
+  // `displayIncomingCall` deduplicates by callId, so this is a no-op when the
+  // socket already surfaced the same call.
+  await displayCallKeepIncomingCall({
+    callId: incoming.callId,
+    callerId: incoming.callerId,
+  }).catch((error) => {
+    logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
+  });
+
+  return incoming;
+}
+
+/**
+ * Subscribe to foreground push messages.
+ *
+ * @returns {() => void} Unsubscribe function; a no-op when messaging is absent.
+ */
+export function installForegroundMessageHandler() {
+  const messaging = loadMessaging();
+  if (!messaging || typeof messaging.onMessage !== 'function') return () => {};
+
+  const unsubscribe = messaging.onMessage(async (remoteMessage) => {
+    try {
+      await handleForegroundPushMessage(remoteMessage);
+    } catch (error) {
+      logError('[Push] Foreground message handler failed', error);
+    }
+  });
+
+  return typeof unsubscribe === 'function' ? unsubscribe : () => {};
+}

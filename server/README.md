@@ -20,7 +20,16 @@ npm test           # node --test
 
 The server listens on `PORT` (default `4173`) and exposes:
 - `GET /health` — liveness/health probe returning JSON `{ status: "ok", ... }`
+- `GET /messages` — paginated text-chat history (see [REST endpoints](#rest-endpoints))
 - Socket.IO endpoint for WebRTC signaling (see events below)
+
+### REST endpoints
+
+Besides the call/session/contact routes, the chat surface adds:
+
+| Method & path | Query | Response | Notes |
+| ------------- | ----- | -------- | ----- |
+| `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
 
 ### Socket.IO signaling events
 
@@ -57,6 +66,35 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 | `rtc.answer`         | `{ version, callId, fromUserId, sdp }` relayed only to the other participant. |
 | `rtc.candidate`      | `{ version, callId, fromUserId, candidate }` relayed only to the other participant. |
 
+#### Text chat contract
+
+Text chat reuses the same versioned envelope and ack conventions as the call
+contract. Messages are persisted through `src/messageStore.js` (in-memory by
+default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
+
+##### Client → Server
+
+| Event          | Payload                              | Ack success                            | Notes |
+| -------------- | ------------------------------------ | -------------------------------------- | ----- |
+| `message.send` | `{ version, recipientId, body }`     | `{ ok, version, event, message }`      | `body` must be a non-empty string of at most **4000** characters. Rejected with `unauthorized` (no session), `unsupported_version`, `bad_request` (missing/self `recipientId`, empty, oversized, or non-string `body`), and `forbidden` when either party has blocked the other. |
+
+##### Server → Client
+
+| Event               | Payload summary |
+| ------------------- | --------------- |
+| `message.received`  | `{ version, message }` emitted to the recipient's `user:<userId>` room, so every one of their devices receives it via the Socket.IO Redis adapter. |
+| `message.delivered` | `{ version, messageId, conversationId, deliveredTo }` emitted back to the sender once the message has been persisted and fanned out. |
+
+The persisted message shape is
+`{ messageId, conversationId, senderId, recipientId, body, createdAt, deliveredTo }`.
+`conversationId` is derived deterministically from the two user ids (sorted and
+joined), so both participants resolve the same conversation. `createdAt` is a
+monotonic ISO timestamp, which keeps the newest-first ordering and the `before`
+cursor exact even for messages sent within the same millisecond.
+
+Recipients with **no live socket** additionally get a data-only push via the
+same provider chain as incoming calls (see [Push notifications](#push-notifications)).
+
 #### Legacy room signaling
 
 Rooms hold at most **2 participants**. These legacy relay events remain available for room-based flows.
@@ -90,21 +128,76 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
 | `SHUTDOWN_DRAIN_MS` | `25000` | Max time (ms) to wait for in-flight socket connections to drain on `SIGTERM`/`SIGINT` before force-closing. Keep below the systemd `TimeoutStopSec`. |
+| `SOCKET_PING_INTERVAL_MS` | `10000` | Engine.IO heartbeat interval. Together with `SOCKET_PING_TIMEOUT_MS` this bounds how long a dead client (e.g. a suspended phone) still looks connected. The defaults detect a drop in ~20s, comfortably inside the 30s ringing timeout, so the callee falls back to push instead of ringing into a dead socket. |
+| `SOCKET_PING_TIMEOUT_MS` | `10000` | Time (ms) to wait for a client's heartbeat response before considering the socket dead. |
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
 | `FCM_SERVICE_ACCOUNT_JSON` | _(unset)_ | Firebase service-account credentials for FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. Absent ⇒ FCM pushes are skipped (`fcm_not_configured`). |
 | `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
+| `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../AZURE_SETUP.md). |
+| `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
+| `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-01` | Notification Hubs REST API version used in the `api-version` query parameter. |
+| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../AZURE_SETUP.md)). Absent ⇒ an in-process memory store is used and the server behaves exactly as before. |
+| `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
+| `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
 | `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
 
 ## Push notifications
 
-Incoming-call pushes are delivered by `src/push.js` to callees with no live
-WebSocket connection. Two providers are supported and both fail gracefully when
-unconfigured (logging and returning a `*_not_configured` reason).
+`src/push.js` delivers data-only pushes to **devices** with no live WebSocket
+connection — both incoming calls (`sendIncomingCallPush`) and text messages
+(`sendMessagePush`). Gating is per **device**, not per user: a user who is online
+on their phone still receives a push on their offline tablet.
 
-### FCM (Firebase Cloud Messaging) — HTTP v1
+### Provider chain
+
+Every send walks the chain below and never throws; each step degrades to the
+next and reports a `*_not_configured` reason when it is not set up.
+
+1. **Azure Notification Hubs (preferred)** — one API for both platforms. Tried
+   first whenever `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` and
+   `AZURE_NOTIFICATION_HUB_NAME` are set, regardless of the device's underlying
+   provider.
+2. **Direct FCM / APNs (fallback)** — used when Notification Hubs is
+   unconfigured *or* a Notification Hubs send fails after retries. The fallback
+   is logged explicitly:
+   `[push] Notification Hub delivery failed (reason=…); falling back to direct fcm`.
+3. **Skip** — if nothing is configured the send resolves to
+   `{ ok: false, reason: '<provider>_not_configured' }` and the call/message
+   still proceeds over the socket path.
+
+The outcome returned to callers carries `transport: 'notification_hub' | 'direct'`
+alongside the existing `provider`, `deviceId`, `ok`, `statusCode`, and `reason`
+fields, so logs and metrics show which leg actually delivered.
+
+Single attempts are wrapped in `withRetry()` (3 attempts, exponential backoff,
+retrying on a missing status code, `429`, or `5xx`).
+
+> **Data-only is deliberate.** Payloads never contain a `notification` block: on
+> Android that would bypass the app's `setBackgroundMessageHandler` and break the
+> CallKeep full-screen incoming-call UI.
+
+### Azure Notification Hubs
+
+Set `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` (the
+**DefaultFullSharedAccessSignature** from the hub's *Access Policies* blade) and
+`AZURE_NOTIFICATION_HUB_NAME`. Optionally override
+`AZURE_NOTIFICATION_HUB_API_VERSION` (default `2015-01`).
+
+The server signs each request with a short-lived SAS token minted from the
+connection string (cached and refreshed before expiry) and uses **direct send**
+(`/messages/?direct`, `ServiceBusNotification-DeviceHandle: <pushToken>`) so it
+keeps targeting the exact device token already stored by `POST /devices/register` —
+no migration to Notification Hubs registrations or tags is required. No Azure SDK
+dependency is needed; the integration is plain `https` + `crypto`.
+
+APNs and FCM credentials still have to be configured **inside the hub** (Apple
+token auth + the Firebase service-account JSON). Step-by-step portal
+instructions live in [`AZURE_SETUP.md`](../AZURE_SETUP.md).
+
+### FCM (Firebase Cloud Messaging) — HTTP v1 (fallback)
 
 The server uses the **FCM HTTP v1 API** (`/v1/projects/{projectId}/messages:send`)
 with OAuth2 service-account authentication. The legacy server-key API is no
@@ -122,10 +215,33 @@ The server mints (and caches) a short-lived OAuth2 access token from the
 service-account key and refreshes it automatically before expiry. If
 `FCM_SERVICE_ACCOUNT_JSON` is absent or invalid, FCM delivery is skipped.
 
-### APNs (Apple Push Notification service)
+### APNs (Apple Push Notification service) — fallback
 
 Set `APNS_KEY` (the `.p8` private key contents), `APNS_KEY_ID`, `APNS_TEAM_ID`,
 and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
+
+## Text-message persistence
+
+`src/messageStore.js` provides a transport-agnostic store with two
+implementations, selected by environment:
+
+- `createMemoryMessageStore()` — array-backed, used when `MONGODB_URI` is unset
+  and throughout the test suite.
+- `createMongoMessageStore({ uri, dbName, collectionName })` — the official
+  `mongodb` driver against **Azure Cosmos DB for MongoDB**.
+
+Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
+(newest-first, `limit` clamped to 1–100, default 50), `markDelivered`, and
+`close()`. The store is created by the composition root (`src/createServer.js`),
+hung off the shared `state` object next to `messageBus`/`telemetry`, and closed
+during the graceful-shutdown drain.
+
+On first connect the Mongo store creates a compound
+`{ conversationId: 1, createdAt: -1 }` index and a unique `{ messageId: 1 }`
+index. Index creation failures are logged and ignored rather than taking the
+server down.
+
+See [`AZURE_SETUP.md`](../AZURE_SETUP.md) for provisioning the Cosmos DB account.
 
 ## Database (Drizzle ORM)
 

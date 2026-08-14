@@ -58,6 +58,22 @@ const CALL_TRANSITIONS = new Map([
 /** How long a call may remain in `ringing` before it becomes `missed`. */
 const DEFAULT_RINGING_TIMEOUT_MS = 30_000;
 
+/**
+ * Socket.IO heartbeat tuning.
+ *
+ * Engine.IO's defaults (25s ping interval + 20s ping timeout) mean a phone that
+ * is killed or suspended by the OS can stay "connected" for up to 45 seconds —
+ * longer than {@link DEFAULT_RINGING_TIMEOUT_MS}.  For that whole window the
+ * server believes the callee is reachable over the socket, so the incoming-call
+ * event is emitted into a dead connection and the push fallback for that device
+ * never fires: the callee's phone simply never rings.
+ *
+ * Halving both values detects a dead client in ~20s, comfortably inside the
+ * ring window, at the cost of one extra heartbeat every 10s.
+ */
+const DEFAULT_SOCKET_PING_INTERVAL_MS = 10_000;
+const DEFAULT_SOCKET_PING_TIMEOUT_MS = 10_000;
+
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;
 
@@ -85,6 +101,8 @@ module.exports = {
   CALL_END_REASONS,
   CALL_TRANSITIONS,
   DEFAULT_RINGING_TIMEOUT_MS,
+  DEFAULT_SOCKET_PING_INTERVAL_MS,
+  DEFAULT_SOCKET_PING_TIMEOUT_MS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   SHUTDOWN_DRAIN_POLL_MS,

@@ -210,3 +210,40 @@ test('push fallback: push payload contains callId and callerId', async (t) => {
   assert.equal(channel.provider, 'fcm');
   assert.equal(channel.pushToken, 'fcm-henry-token');
 });
+
+test('push fallback: offline devices still get a push while another device is online', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-ivan');
+  // The callee has two devices: a phone that stays connected and a tablet that
+  // is only reachable via push.
+  const phoneSession = await createSession(url, 'user-judy', 'device-judy-phone');
+  const tabletSession = await createSession(url, 'user-judy', 'device-judy-tablet');
+
+  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'phone-token' }, phoneSession);
+  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'tablet-token' }, tabletSession);
+
+  const phone = ioClient(url, { auth: { sessionId: phoneSession } });
+  await new Promise((resolve) => phone.once('connect', resolve));
+
+  try {
+    const res = await postJson(url, '/calls', { calleeId: 'user-judy' }, callerSession);
+    assert.equal(res.status, 201);
+    assert.equal(res.body.status, 'ringing');
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The connected phone is reached over its socket, so it must not be pushed;
+    // the tablet has no socket of its own and must be.
+    assert.equal(spy.calls.length, 1, 'exactly one push, for the disconnected device');
+    assert.equal(spy.calls[0].channel.deviceId, 'device-judy-tablet');
+    assert.equal(spy.calls[0].channel.pushToken, 'tablet-token');
+  } finally {
+    phone.disconnect();
+  }
+});

@@ -6,10 +6,13 @@ const { Server } = require('socket.io');
 const { createTelemetry } = require('./telemetry');
 const { createRateLimiter, createAuditLog } = require('./security');
 const { createStores } = require('./stores');
+const { createMessageStore } = require('./messageStore');
 const {
   DEFAULT_RINGING_TIMEOUT_MS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
+  DEFAULT_SOCKET_PING_INTERVAL_MS,
+  DEFAULT_SOCKET_PING_TIMEOUT_MS,
 } = require('./config');
 const { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } = require('./lib/state');
 const { waitForSocketsToDrain } = require('./lib/lifecycle');
@@ -64,6 +67,10 @@ function createServer(opts = {}) {
   // in-memory and skips all DB writes.
   const db = opts.db ?? null;
 
+  // Durable store for text-chat messages.  Defaults to an in-process store, so
+  // the server runs unchanged when MONGODB_URI is not configured.
+  const messageStore = createMessageStore({ messageStore: opts.messageStore });
+
   const state = {
     rooms: stores.rooms,
     /** @type {Map<string, object>} userId → claimed-identity record */
@@ -96,6 +103,8 @@ function createServer(opts = {}) {
     rtcRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
+    /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
+    messageStore,
     /**
      * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
      * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
@@ -122,8 +131,13 @@ function createServer(opts = {}) {
     corsOrigin = [];
     console.warn('[signaling] CORS_ORIGIN is not set; rejecting browser origins in production.');
   }
+  // Heartbeat tuning: detect phones that the OS suspended or killed well
+  // inside the ringing window, so the per-device push fallback can take over
+  // instead of the call being emitted into a dead socket (see config.js).
   const io = new Server(httpServer, {
     cors: { origin: corsOrigin },
+    pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS) || DEFAULT_SOCKET_PING_INTERVAL_MS,
+    pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS) || DEFAULT_SOCKET_PING_TIMEOUT_MS,
   });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
@@ -201,6 +215,11 @@ function createServer(opts = {}) {
       // Close durable stores (Redis/Postgres) if they support it.
       if (typeof stores.close === 'function') {
         await stores.close();
+      }
+
+      // Release the message store's connection pool (no-op for the memory store).
+      if (typeof messageStore.close === 'function') {
+        await messageStore.close();
       }
     })();
 

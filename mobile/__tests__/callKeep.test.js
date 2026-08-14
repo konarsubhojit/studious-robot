@@ -95,6 +95,20 @@ describe('callKeep with the native module present', () => {
     );
   });
 
+  test('displayIncomingCall ignores a duplicate ring for the same call', async () => {
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(true);
+    // A second path (foreground push racing the socket event) rings the same call.
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(true);
+    expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  test('displayIncomingCall rings again after the call was ended', async () => {
+    await mod.displayIncomingCall({ callId: 'again-1', callerId: 'alice' });
+    mod.endCall('again-1');
+    await mod.displayIncomingCall({ callId: 'again-1', callerId: 'alice' });
+    expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledTimes(2);
+  });
+
   test('displayIncomingCall returns false without a callId', async () => {
     await expect(mod.displayIncomingCall({})).resolves.toBe(false);
     expect(mockCallKeep.displayIncomingCall).not.toHaveBeenCalled();

@@ -106,6 +106,7 @@ jest.mock("../../src/pushNotifications", () => ({
   registerPushToken: jest.fn(async () => true),
   registerForPushNotifications: jest.fn(async () => true),
   unregisterPushToken: jest.fn(async () => true),
+  installForegroundMessageHandler: jest.fn(() => jest.fn()),
 }));
 
 jest.mock("../../src/identityVerification", () => ({
