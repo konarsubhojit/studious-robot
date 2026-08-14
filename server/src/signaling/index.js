@@ -280,12 +280,20 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     registerMessageHandlers(socket, { io, state });
 
     socket.on('disconnect', (reason) => {
-      console.log(`[signaling] socket disconnected: ${socket.id}, reason=${reason}`);
+      const identity = socket.data.identity;
       if (currentRoom !== null) {
         leaveRoom(socket, currentRoom, state.rooms);
         currentRoom = null;
       }
-      removeConnection(state, socket.data.identity?.userId, socket.id);
+      removeConnection(state, identity?.userId, socket.id);
+      const remainingConnections = identity?.userId
+        ? state.userConnections.get(identity.userId)?.size ?? 0
+        : 0;
+      console.log(
+        `[signaling] socket disconnected: ${socket.id}, reason=${reason}` +
+        (identity ? ` user=${identity.userId} device=${identity.deviceId}` : '') +
+        ` remainingUserSockets=${remainingConnections}`,
+      );
     });
   });
 }

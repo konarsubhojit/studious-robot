@@ -65,10 +65,10 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   state.calls.set(callId, call);
   state.callEvents.set(callId, []);
   invalidateCallHistoryCache(state, callerId, calleeId);
-  persistCallRecord(state.db, call);
-  appendCallEvent(state, callId, 'created', callerId, null);
+  const persistedCall = persistCallRecord(state.db, call);
+  appendCallEvent(state, callId, 'created', callerId, null, persistedCall);
   if (status !== 'ringing') {
-    appendCallEvent(state, callId, status, null, endReason);
+    appendCallEvent(state, callId, status, null, endReason, persistedCall);
   }
 
   return call;
@@ -141,8 +141,9 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
  * @param {string} event
  * @param {string|null} actor
  * @param {string|null} reason
+ * @param {Promise<unknown>|undefined} [afterPersist]
  */
-function appendCallEvent(state, callId, event, actor, reason) {
+function appendCallEvent(state, callId, event, actor, reason, afterPersist) {
   const events = state.callEvents.get(callId);
   if (!events) return;
 
@@ -155,6 +156,12 @@ function appendCallEvent(state, callId, event, actor, reason) {
     timestamp: new Date().toISOString(),
   };
   events.push(eventRecord);
+  if (afterPersist) {
+    Promise.resolve(afterPersist)
+      .catch(() => {})
+      .then(() => persistCallEvent(state.db, eventRecord));
+    return;
+  }
   persistCallEvent(state.db, eventRecord);
 }
 

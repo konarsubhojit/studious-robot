@@ -44,6 +44,18 @@ function spyOnPush() {
   };
 }
 
+function captureConsoleLog() {
+  const original = console.log;
+  const lines = [];
+  console.log = (...args) => {
+    lines.push(args.join(' '));
+  };
+  return {
+    lines,
+    restore: () => { console.log = original; },
+  };
+}
+
 async function startServer() {
   // Require *after* the spy is installed so `createServer` picks up the mock.
   const { createServer } = require('../src/index.js');
@@ -81,6 +93,8 @@ async function createSession(url, userId, deviceId = `device-${userId}`) {
 test('push fallback: no push sent when callee is online via WebSocket', async (t) => {
   const spy = spyOnPush();
   t.after(() => spy.restore());
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
 
   const { io: ioClient } = require('socket.io-client');
   const { url, teardown } = await startServer();
@@ -110,6 +124,14 @@ test('push fallback: no push sent when callee is online via WebSocket', async (t
     await new Promise((r) => setTimeout(r, 50));
 
     assert.equal(spy.calls.length, 0, 'push should not be sent when callee is online');
+    assert.ok(
+      logs.lines.some((line) =>
+        line.includes('[push] Skipped call.incoming') &&
+        line.includes('user=user-bob') &&
+        line.includes('device=device-user-bob') &&
+        line.includes('reason=callee_online')),
+      'callee-online push skip should be logged',
+    );
   } finally {
     callee.disconnect();
   }
@@ -167,6 +189,8 @@ test('push fallback: push sent to all registered devices when callee is offline'
 test('push fallback: no push when callee is unknown (unreachable)', async (t) => {
   const spy = spyOnPush();
   t.after(() => spy.restore());
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
 
   const { url, teardown } = await startServer();
   t.after(teardown);
@@ -181,6 +205,13 @@ test('push fallback: no push when callee is unknown (unreachable)', async (t) =>
 
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(spy.calls.length, 0, 'push must not be attempted for unreachable calls');
+  assert.ok(
+    logs.lines.some((line) =>
+      line.includes('[push] Skipped call.incoming') &&
+      line.includes('user=user-frank') &&
+      line.includes('reason=no_device_row')),
+    'missing-device push skip should be logged',
+  );
 });
 
 test('push fallback: push payload contains callId and callerId', async (t) => {

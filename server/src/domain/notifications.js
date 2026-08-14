@@ -2,7 +2,7 @@
 
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
-const { resolveOfflinePushChannels, userRoom } = require('../lib/state');
+const { resolveReachableChannels, userRoom } = require('../lib/state');
 
 /**
  * Client-facing call notifications.
@@ -41,6 +41,61 @@ function getCallTransitionEventName(status, reason) {
   return null;
 }
 
+function logIncomingCallPushSkip(call, reason, deviceId = null, details = '') {
+  console.log(
+    `[push] Skipped call.incoming callId=${call.callId} user=${call.calleeId}` +
+    (deviceId ? ` device=${deviceId}` : '') +
+    ` reason=${reason}` +
+    details,
+  );
+}
+
+function getNoPushChannelReason(state, userId) {
+  const deviceIds = state.userDevices.get(userId);
+  if (!deviceIds || deviceIds.size === 0) {
+    return 'no_device_row';
+  }
+  return 'no_push_token';
+}
+
+function dispatchIncomingCallPushes(state, call) {
+  const connections = state.userConnections.get(call.calleeId);
+  const connectedDeviceIds = new Set(
+    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+  );
+  const pushChannels = resolveReachableChannels(state, call.calleeId)
+    .filter((channel) => channel.type === 'push');
+
+  if (pushChannels.length === 0) {
+    logIncomingCallPushSkip(call, getNoPushChannelReason(state, call.calleeId));
+    return;
+  }
+
+  for (const channel of pushChannels) {
+    if (connectedDeviceIds.has(channel.deviceId)) {
+      logIncomingCallPushSkip(
+        call,
+        'callee_online',
+        channel.deviceId,
+        ` activeSockets=${connections?.size ?? 0}`,
+      );
+      continue;
+    }
+
+    console.log(
+      `[push] Attempting call.incoming callId=${call.callId}` +
+      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`,
+    );
+    push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+      .catch((err) => {
+        console.error(
+          `[push] Failed call.incoming callId=${call.callId}` +
+          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+        );
+      });
+  }
+}
+
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
@@ -56,15 +111,12 @@ function notifyCallCreated(io, state, call) {
     // has no live socket of its own.  This is decided per device rather than
     // per user, so a callee who is connected on one device still gets a push on
     // the phone that is asleep in their pocket — the device that has to ring.
-    const pushChannels = resolveOfflinePushChannels(state, call.calleeId);
-    for (const channel of pushChannels) {
-      push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
-        .catch((err) => {
-          console.error(
-            `[push] Unhandled error for device ${channel.deviceId}: ${err?.message}`,
-          );
-        });
-    }
+    dispatchIncomingCallPushes(state, call);
+  } else {
+    const reason = call.status === 'unreachable'
+      ? getNoPushChannelReason(state, call.calleeId)
+      : `call_status_${call.status}`;
+    logIncomingCallPushSkip(call, reason);
   }
 
   notifyCallTransition(io, state, call, {
