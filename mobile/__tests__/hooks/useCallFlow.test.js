@@ -1515,6 +1515,108 @@ describe("useCallFlow incoming-call ringing", () => {
   });
 });
 
+// ─── Session lifecycle (session.invalid) ───────────────────────────────────
+
+describe("useCallFlow session lifecycle", () => {
+  function getSocketHandler(event, socketIndex = -1) {
+    const { io } = require("socket.io-client");
+    const index =
+      socketIndex === -1 ? io.mock.results.length - 1 : socketIndex;
+    const socketMock = io.mock.results[index]?.value;
+    if (!socketMock) return undefined;
+    const call = socketMock.on.mock.calls.find(([e]) => e === event);
+    return call?.[1];
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
+      null,
+    );
+  });
+
+  async function renderWithSocket() {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: "sess-stale", userId: "alice" }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      resultRef.current.setUserId("alice");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    return { resultRef, tree };
+  }
+
+  test("session.invalid re-mints the session and reconnects the socket", async () => {
+    await renderWithSocket();
+
+    const { io } = require("socket.io-client");
+    expect(io).toHaveBeenCalledTimes(1);
+
+    const handler = getSocketHandler("session.invalid");
+    expect(handler).toBeDefined();
+
+    // The server rejects the stale session and hands back a fresh one.
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: "sess-fresh", userId: "alice" }),
+    }));
+
+    await act(async () => {
+      await handler({ sessionId: "sess-stale" });
+    });
+    await act(async () => {});
+
+    // A new session was created and a second socket connection established.
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/session"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(io).toHaveBeenCalledTimes(2);
+    expect(io.mock.calls[1][1]).toEqual(
+      expect.objectContaining({ auth: { sessionId: "sess-fresh" } }),
+    );
+  });
+
+  test("session.invalid surfaces an error status when re-minting fails", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler("session.invalid");
+    expect(handler).toBeDefined();
+
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    }));
+
+    await act(async () => {
+      await handler({ sessionId: "sess-stale" });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require("socket.io-client");
+    // Re-minting failed, so no second socket connection is made.
+    expect(io).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.status.message).toBe(
+      "Session expired — please reconnect.",
+    );
+  });
+});
+
 // ─── Chat & call.media-state ───────────────────────────────────────────────
 
 describe("useCallFlow chat", () => {
