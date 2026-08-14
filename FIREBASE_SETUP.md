@@ -2,6 +2,16 @@
 
 Complete step-by-step instructions for wiring Firebase into the WeTalk app (Android + iOS) and the signaling server (FCM push delivery).
 
+> **📌 Read this first.** Direct FCM/APNs delivery is now the **fallback** path.
+> The server prefers **Azure Notification Hubs**, which fronts both platforms
+> behind one API — see [`AZURE_SETUP.md`](./AZURE_SETUP.md).
+>
+> This guide is still required either way: the mobile app needs
+> `google-services.json` / `GoogleService-Info.plist` to obtain a device token at
+> all, and the credentials generated below are exactly what you upload *into* the
+> notification hub. Configure the server-side pieces here too if you want the
+> fallback leg to work when a hub send fails.
+
 ---
 
 ## Table of Contents
