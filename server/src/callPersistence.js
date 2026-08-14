@@ -51,7 +51,14 @@ function persistCallRecord(db, call) {
       ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
     },
   }).catch((error) => {
-    console.error('[calls] failed to persist call to DB:', error?.message);
+    // Non-fatal: the in-memory call record already reflects reality and the
+    // caller doesn't await this promise. `code` is the Postgres error code
+    // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
+    // it alongside the message makes a recurrence diagnosable without
+    // reproducing it, instead of the bare message alone.
+    console.error(
+      `[calls] failed to persist call to DB: callId=${call.callId} code=${error?.code} ${error?.message}`,
+    );
   });
 }
 
@@ -67,7 +74,14 @@ function persistCallEvent(db, event) {
     reason: emptyStringToNull(event.reason),
     createdAt: toDateOrNull(event.timestamp) ?? new Date(),
   }).catch((error) => {
-    console.error('[calls] failed to persist call event to DB:', error?.message);
+    // Non-fatal by design (an audit-log write failure must never block the
+    // call itself), but this is still a silent audit-trail gap: log the
+    // Postgres error `code` plus the ids involved so a recurrence can be
+    // traced to its exact cause (e.g. a FK violation because the parent call
+    // row hadn't committed yet) rather than only ever seeing the message.
+    console.error(
+      `[calls] failed to persist call event to DB: eventId=${event.eventId} callId=${event.callId} event=${event.event} code=${error?.code} ${error?.message}`,
+    );
   });
 }
 

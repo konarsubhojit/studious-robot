@@ -423,6 +423,60 @@ test('GET /session: returns 401 after session expires', async () => {
   }
 });
 
+test('socket connect: a stale sessionId downgrades to guest and emits session.invalid', async () => {
+  const { url, teardown } = await startServer({ sessionTtlMs: 100 });
+  let socket;
+  try {
+    const sessionId = await createSession(url, 'user-alice');
+
+    // Wait for the session to expire (simulates a server restart wiping the
+    // in-memory session table just as well as a natural TTL expiry).
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Build the client manually (rather than via `connect()`) and register
+    // the `session.invalid` listener before `connect` fires: the server may
+    // emit it immediately after the handshake, arriving in the same read as
+    // the CONNECT packet, so waiting for `connect` to resolve first can lose
+    // the race and miss a `once`-registered listener.
+    socket = ioClient(url, { auth: { sessionId }, forceNew: true, transports: ['websocket'] });
+    const invalidPromise = waitFor(socket, 'session.invalid');
+    await new Promise((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('connect_error', reject);
+    });
+
+    const invalidPayload = await invalidPromise;
+    assert.equal(invalidPayload.sessionId, sessionId);
+
+    // The socket authenticated as a guest, so an authenticated action like
+    // call.initiate is rejected instead of silently using the stale identity.
+    const ack = await emitWithAck(socket, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    assert.equal(ack.ok, false);
+    assert.equal(ack.error.code, 'unauthorized');
+  } finally {
+    await teardown(socket);
+  }
+});
+
+test('socket connect: a fresh guest (no sessionId presented) does not emit session.invalid', async () => {
+  const { url, teardown } = await startServer();
+  let socket;
+  try {
+    socket = await connect(url, { userId: 'user-guest' });
+
+    let receivedInvalid = false;
+    socket.on('session.invalid', () => {
+      receivedInvalid = true;
+    });
+
+    // Give any (incorrect) emission a moment to arrive.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(receivedInvalid, false);
+  } finally {
+    await teardown(socket);
+  }
+});
+
 test('POST /calls: rejects an expired session', async () => {
   const { url, teardown } = await startServer({ sessionTtlMs: 100 });
   try {

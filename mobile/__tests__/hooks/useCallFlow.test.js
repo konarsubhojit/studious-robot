@@ -60,6 +60,13 @@ jest.mock("../../src/callUx", () => ({
   getConnectionQuality: jest.fn(() => ({ bars: 3, label: "Strong" })),
 }));
 
+jest.mock("../../src/screenShare", () => ({
+  SCREEN_SHARE_CANCELLED: "cancelled",
+  isScreenShareSupported: jest.fn(() => true),
+  startScreenCapture: jest.fn(),
+  stopScreenCapture: jest.fn(),
+}));
+
 jest.mock("../../src/diagnostics", () => ({
   buildExportHeader: jest.fn(),
   getMediaAccessStatus: jest.fn((e) => e?.message || "media error"),
@@ -1505,5 +1512,632 @@ describe("useCallFlow incoming-call ringing", () => {
 
     expect(stopIncomingRingtone).toHaveBeenCalled();
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+});
+
+// ─── Chat & call.media-state ───────────────────────────────────────────────
+
+describe("useCallFlow chat", () => {
+  /**
+   * Helper: find a handler registered with socket.on(event) on the most
+   * recently created socket from the io() mock (same helper as the
+   * "incoming-call ringing" describe block above).
+   */
+  function getSocketHandler(event) {
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1]?.value;
+    if (!socketMock) return undefined;
+    const call = socketMock.on.mock.calls.find(([e]) => e === event);
+    return call?.[1];
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
+      null,
+    );
+  });
+
+  /**
+   * Render the hook and establish a socket by setting a userId so the
+   * presence effect fires (mirrors `renderWithSocket` above).
+   */
+  async function renderWithSocket() {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: "sess-chat", userId: "alice" }),
+    }));
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      resultRef.current.setUserId("alice");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    return { resultRef, tree };
+  }
+
+  // ── fetchConversations ────────────────────────────────────────────────────
+
+  test("fetchConversations populates conversations and unreadTotal on success", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    global.fetch = jest.fn(async (url) => {
+      expect(url).toContain("/conversations?sessionId=");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          conversations: [
+            { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 2 },
+            { conversationId: "c2", peerId: "carol", lastMessage: null, unreadCount: 3 },
+          ],
+        }),
+      };
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.conversations).toHaveLength(2);
+    expect(resultRef.current.unreadTotal).toBe(5);
+  });
+
+  test("fetchConversations silently no-ops on a fetch error", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    global.fetch = jest.fn(async () => {
+      throw new Error("network down");
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.conversations).toEqual([]);
+  });
+
+  // ── fetchMessagesForPeer ──────────────────────────────────────────────────
+
+  test("fetchMessagesForPeer sets the first page and pages older messages with `before`", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    global.fetch = jest.fn(async (url) => {
+      expect(url).toContain("/messages?");
+      expect(url).toContain("peerId=bob");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          conversationId: "c1",
+          messages: [
+            { messageId: "m2", senderId: "bob", recipientId: "alice", body: "second", createdAt: "2024-01-02T00:00:00.000Z" },
+            { messageId: "m1", senderId: "bob", recipientId: "alice", body: "first", createdAt: "2024-01-01T00:00:00.000Z" },
+          ],
+          limit: 20,
+        }),
+      };
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
+      "m2",
+      "m1",
+    ]);
+
+    // Page further back with `before`; new (older) messages are appended and
+    // duplicates are deduped by messageId.
+    global.fetch = jest.fn(async (url) => {
+      expect(url).toContain("before=2024-01-01T00%3A00%3A00.000Z");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          conversationId: "c1",
+          messages: [
+            { messageId: "m1", senderId: "bob", recipientId: "alice", body: "first", createdAt: "2024-01-01T00:00:00.000Z" },
+            { messageId: "m0", senderId: "bob", recipientId: "alice", body: "zeroth", createdAt: "2023-12-31T00:00:00.000Z" },
+          ],
+          limit: 20,
+        }),
+      };
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer("bob", {
+        before: "2024-01-01T00:00:00.000Z",
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
+      "m2",
+      "m1",
+      "m0",
+    ]);
+  });
+
+  // ── markConversationRead ──────────────────────────────────────────────────
+
+  test("markConversationRead posts to /messages/read and zeroes the local unread count", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    // Seed a conversation with an unread count.
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        conversations: [
+          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 4 },
+        ],
+      }),
+    }));
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.unreadTotal).toBe(4);
+
+    global.fetch = jest.fn(async (url, options) => {
+      expect(url).toContain("/messages/read");
+      expect(options.method).toBe("POST");
+      expect(JSON.parse(options.body)).toEqual({
+        sessionId: "sess-chat",
+        peerId: "bob",
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ conversationId: "c1", updated: 4 }),
+      };
+    });
+
+    await act(async () => {
+      await resultRef.current.markConversationRead("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.unreadTotal).toBe(0);
+    expect(
+      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
+    ).toBe(0);
+  });
+
+  // ── sendMessage ────────────────────────────────────────────────────────────
+
+  test("sendMessage fails immediately (no optimistic reconciliation) when there is no connected socket", async () => {
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      resultRef.current.setUserId("alice");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    await act(async () => {
+      await resultRef.current.sendMessage("bob", "hi there");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const messages = resultRef.current.messagesByPeer.bob;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ body: "hi there", failed: true, pending: false });
+    expect(resultRef.current.status.severity).toBe("error");
+  });
+
+  test("sendMessage optimistically appends then reconciles with the server-confirmed message on ack", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    let capturedPayload;
+    socketMock.emit.mockImplementation((event, payload, cb) => {
+      if (event === "message.send") {
+        capturedPayload = payload;
+        cb?.({
+          ok: true,
+          version: 1,
+          event: "message.send",
+          message: {
+            messageId: "server-msg-1",
+            conversationId: "conv-1",
+            senderId: "alice",
+            recipientId: "bob",
+            body: "hi there",
+            createdAt: "2024-05-01T00:00:00.000Z",
+            deliveredTo: [],
+            readAt: null,
+          },
+        });
+      }
+    });
+
+    const sendPromise = act(async () => {
+      await resultRef.current.sendMessage("bob", "hi there");
+    });
+    // Immediately after invocation (before the ack resolves within the same
+    // act batch) the optimistic message should already be present.
+    await sendPromise;
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(capturedPayload).toEqual({
+      version: 1,
+      recipientId: "bob",
+      body: "hi there",
+    });
+
+    const messages = resultRef.current.messagesByPeer.bob;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      messageId: "server-msg-1",
+      body: "hi there",
+      pending: false,
+    });
+    expect(messages[0].failed).toBeUndefined();
+  });
+
+  test("sendMessage marks the optimistic message failed and surfaces a status error when the ack rejects", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === "message.send") {
+        cb?.({ ok: false, error: { code: "invalid", message: "body too long" } });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.sendMessage("bob", "hi there");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const messages = resultRef.current.messagesByPeer.bob;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ pending: false, failed: true, body: "hi there" });
+    expect(resultRef.current.status).toEqual({
+      message: "Message failed to send",
+      severity: "error",
+    });
+  });
+
+  test("sendMessage ignores an empty/whitespace-only body", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    await act(async () => {
+      await resultRef.current.sendMessage("bob", "   ");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob).toBeUndefined();
+  });
+
+  // ── message.received socket event ─────────────────────────────────────────
+
+  test("message.received bumps unreadCount for an existing conversation when it is not the active chat", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        conversations: [
+          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 0 },
+        ],
+      }),
+    }));
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const handler = getSocketHandler("message.received");
+    expect(handler).toBeDefined();
+
+    act(() => {
+      handler({
+        conversationId: "c1",
+        message: {
+          messageId: "srv-1",
+          senderId: "bob",
+          recipientId: "alice",
+          body: "hello!",
+          createdAt: "2024-05-01T00:00:00.000Z",
+        },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
+      "srv-1",
+    ]);
+    expect(
+      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
+    ).toBe(1);
+    expect(resultRef.current.unreadTotal).toBe(1);
+  });
+
+  test("message.received auto-marks-read and does not bump unread when the conversation is the active chat", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        conversations: [
+          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 0 },
+        ],
+      }),
+    }));
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      resultRef.current.setActiveChatPeerId("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    // Flush the effect that mirrors activeChatPeerId into the ref read by the
+    // (already-registered) message.received handler.
+    await act(async () => {});
+
+    let readRequestBody = null;
+    global.fetch = jest.fn(async (url, options) => {
+      readRequestBody = JSON.parse(options.body);
+      return { ok: true, status: 200, json: async () => ({ conversationId: "c1", updated: 1 }) };
+    });
+
+    const handler = getSocketHandler("message.received");
+    await act(async () => {
+      handler({
+        conversationId: "c1",
+        message: {
+          messageId: "srv-2",
+          senderId: "bob",
+          recipientId: "alice",
+          body: "still here?",
+          createdAt: "2024-05-01T00:01:00.000Z",
+        },
+      });
+      await Promise.resolve();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(readRequestBody).toEqual({ sessionId: "sess-chat", peerId: "bob" });
+    expect(
+      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
+    ).toBe(0);
+  });
+
+  test("message.received refetches conversations for a brand-new peer not already in the list", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    // No existing conversations.
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ conversations: [] }),
+    }));
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const fetchConversationsSpy = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        conversations: [
+          { conversationId: "c-new", peerId: "dave", lastMessage: null, unreadCount: 1 },
+        ],
+      }),
+    }));
+    global.fetch = fetchConversationsSpy;
+
+    const handler = getSocketHandler("message.received");
+    await act(async () => {
+      handler({
+        conversationId: "c-new",
+        message: {
+          messageId: "srv-3",
+          senderId: "dave",
+          recipientId: "alice",
+          body: "hi, new here",
+          createdAt: "2024-05-01T00:02:00.000Z",
+        },
+      });
+      await Promise.resolve();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(fetchConversationsSpy).toHaveBeenCalled();
+    expect(
+      resultRef.current.conversations.find((c) => c.peerId === "dave"),
+    ).toBeDefined();
+  });
+
+  // ── call.media-state socket event ─────────────────────────────────────────
+
+  test("call.media-state sets isRemoteScreenSharing only for the active call", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { mediaDevices } = require("react-native-webrtc");
+    mediaDevices.getUserMedia.mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === "call.initiate") {
+        cb?.({ ok: true, call: { callId: "call-media-1", callerId: "alice", calleeId: "bob", status: "ringing" } });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.isRemoteScreenSharing).toBe(false);
+
+    const handler = getSocketHandler("call.media-state");
+    expect(handler).toBeDefined();
+
+    // A media-state event for a *different* call is ignored.
+    act(() => {
+      handler({ callId: "some-other-call", mediaState: { isScreenSharing: true } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteScreenSharing).toBe(false);
+
+    // A media-state event for the active call updates the flag.
+    act(() => {
+      handler({ callId: "call-media-1", mediaState: { isScreenSharing: true } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteScreenSharing).toBe(true);
+
+    act(() => {
+      handler({ callId: "call-media-1", mediaState: { isScreenSharing: false } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteScreenSharing).toBe(false);
+  });
+
+  // ── call.media-state emit-on-toggle ───────────────────────────────────────
+
+  test("emits call.media-state whenever local isScreenSharing changes during an active call", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    // Simulate an incoming call and accept it so activeCallIdRef/peerConnectionRef
+    // are populated (mirrors the "accepting an incoming call…" test above).
+    const incomingHandler = getSocketHandler("call.incoming");
+    await act(async () => {
+      await incomingHandler({ call: { callId: "call-share-1", callerId: "bob" } });
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { mediaDevices, RTCPeerConnection } = require("react-native-webrtc");
+    const videoSender = { track: { kind: "video" }, replaceTrack: jest.fn().mockResolvedValue(undefined) };
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    RTCPeerConnection.mockImplementation(() => ({
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => [videoSender]),
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    }));
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    const mediaStateEmits = [];
+    socketMock.emit.mockImplementation((event, payload, cb) => {
+      if (event === "call.accept") {
+        cb?.({ ok: true, call: { callId: "call-share-1", callerId: "bob", calleeId: "alice" } });
+      } else if (event === "call.media-state") {
+        mediaStateEmits.push(payload);
+        cb?.({ ok: true });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { startScreenCapture } = require("../../src/screenShare");
+    startScreenCapture.mockResolvedValue({
+      ok: true,
+      stream: { getTracks: () => [] },
+      videoTrack: { kind: "video", stop: jest.fn() },
+      audioTrack: null,
+      audioShared: false,
+    });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.isScreenSharing).toBe(true);
+    expect(mediaStateEmits).toContainEqual({
+      version: 1,
+      callId: "call-share-1",
+      mediaState: { isScreenSharing: true },
+    });
   });
 });

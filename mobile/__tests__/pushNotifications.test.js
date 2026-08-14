@@ -301,7 +301,12 @@ describe('getPushToken (native module present)', () => {
   function withMessaging(instance, run) {
     let mod;
     jest.isolateModules(() => {
-      const messagingModule = { ...instance, AuthorizationStatus: AUTH };
+      // Real @react-native-firebase/messaging exports a *callable* namespace
+      // (`messaging()` returns the default-app instance); statics like
+      // `AuthorizationStatus` are attached to the callable itself. Mocking it
+      // this way is what makes this suite actually exercise the
+      // `resolveMessagingInstance()` call-site fix instead of masking it.
+      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
       jest.doMock(
         '@react-native-firebase/messaging',
         () => ({ __esModule: true, default: messagingModule }),
@@ -436,7 +441,7 @@ describe('background push handler', () => {
   function withMockedMessaging(instance, run) {
     let mod;
     jest.isolateModules(() => {
-      const messagingModule = { ...instance, AuthorizationStatus: AUTH };
+      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
       jest.doMock(
         '@react-native-firebase/messaging',
         () => ({ __esModule: true, default: messagingModule }),
@@ -479,12 +484,12 @@ describe('background push handler', () => {
     const setBackgroundMessageHandler = jest.fn();
     let mod;
     jest.isolateModules(() => {
-      const messagingModule = {
+      const instance = {
         requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
         getToken: jest.fn().mockResolvedValue('fcm-token'),
         setBackgroundMessageHandler,
-        AuthorizationStatus: AUTH,
       };
+      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
       jest.doMock(
         '@react-native-firebase/messaging',
         () => ({ __esModule: true, default: messagingModule }),

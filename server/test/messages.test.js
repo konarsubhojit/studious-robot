@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Integration tests for the text-chat surface: the `message.*` socket events
- * and the `GET /messages` history endpoint.
+ * Integration tests for the text-chat surface: the `message.*` socket events,
+ * the `GET /messages` history endpoint, the `GET /conversations` chat-list
+ * summary, and the `POST /messages/read` read-receipt endpoint.
  */
 
 const test = require('node:test');
@@ -374,4 +375,143 @@ test('GET /messages does not leak another pair conversation', async (t) => {
   const res = await getJson(url, '/messages?peerId=leak-bob', carolSession);
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.messages, []);
+});
+
+// ─── GET /conversations ───────────────────────────────────────────────────────
+
+test('GET /conversations requires a valid session', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await getJson(url, '/conversations', 'bad-session');
+  assert.equal(res.status, 401);
+});
+
+test('GET /conversations summarises each conversation, most recent first, with unread counts', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'conv-alice');
+  await createSession(url, 'conv-bob');
+  await createSession(url, 'conv-carol');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  // Alice ↔ Bob: two messages, most recent overall.
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'conv-bob', body: 'hi bob' });
+
+  // Alice ↔ Carol: one older message.
+  const carolAck = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'conv-carol',
+    body: 'hi carol',
+  });
+
+  const bobAck = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'conv-bob',
+    body: 'you there?',
+  });
+
+  const res = await getJson(url, '/conversations', aliceSession);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.conversations.length, 2);
+
+  const [first, second] = res.body.conversations;
+  assert.equal(first.peerId, 'conv-bob');
+  assert.equal(first.lastMessage.messageId, bobAck.message.messageId);
+  assert.equal(first.unreadCount, 0, 'alice sent both messages, so nothing is unread for her');
+  assert.equal(second.peerId, 'conv-carol');
+  assert.equal(second.lastMessage.messageId, carolAck.message.messageId);
+
+  // From Bob's perspective the two alice→bob messages are unread.
+  const bobSessionId = (await postJson(url, '/session', { userId: 'conv-bob', deviceId: 'device-conv-bob' })).body.sessionId;
+  const bobRes = await getJson(url, '/conversations', bobSessionId);
+  assert.equal(bobRes.status, 200);
+  assert.equal(bobRes.body.conversations.length, 1);
+  assert.equal(bobRes.body.conversations[0].peerId, 'conv-alice');
+  assert.equal(bobRes.body.conversations[0].unreadCount, 2);
+});
+
+test('GET /conversations excludes conversations with a blocked user', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'convblk-alice');
+  const bobSession = await createSession(url, 'convblk-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'convblk-bob',
+    body: 'hi',
+  });
+
+  // Alice blocks Bob after the fact: the conversation must no longer appear.
+  const blockRes = await postJson(url, '/blocks', { blockeeId: 'convblk-bob' }, aliceSession);
+  assert.equal(blockRes.status, 200);
+
+  const res = await getJson(url, '/conversations', aliceSession);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.conversations, []);
+
+  // The reverse direction is also hidden from Bob's list.
+  const bobRes = await getJson(url, '/conversations', bobSession);
+  assert.equal(bobRes.status, 200);
+  assert.deepEqual(bobRes.body.conversations, []);
+});
+
+// ─── POST /messages/read ──────────────────────────────────────────────────────
+
+test('POST /messages/read requires a valid session', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await postJson(url, '/messages/read', { peerId: 'someone' }, 'bad-session');
+  assert.equal(res.status, 401);
+});
+
+test('POST /messages/read validates peerId', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'read-validate-alice');
+
+  const missing = await postJson(url, '/messages/read', {}, session);
+  assert.equal(missing.status, 400);
+
+  const self = await postJson(url, '/messages/read', { peerId: 'read-validate-alice' }, session);
+  assert.equal(self.status, 400);
+});
+
+test('POST /messages/read marks messages read; unread count drops to 0; idempotent', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'read-alice');
+  const bobSession = await createSession(url, 'read-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'one' });
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'two' });
+
+  const before = await getJson(url, '/conversations', bobSession);
+  assert.equal(before.body.conversations[0].unreadCount, 2);
+
+  const readRes = await postJson(url, '/messages/read', { peerId: 'read-alice' }, bobSession);
+  assert.equal(readRes.status, 200);
+  assert.equal(readRes.body.updated, 2);
+  assert.equal(typeof readRes.body.conversationId, 'string');
+
+  const after = await getJson(url, '/conversations', bobSession);
+  assert.equal(after.body.conversations[0].unreadCount, 0);
+
+  const second = await postJson(url, '/messages/read', { peerId: 'read-alice' }, bobSession);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.updated, 0, 'idempotent: nothing left to mark read');
 });

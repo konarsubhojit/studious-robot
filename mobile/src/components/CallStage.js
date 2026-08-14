@@ -1,6 +1,6 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
-import { colors } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
 
 /**
@@ -19,6 +19,9 @@ import DraggablePip from './DraggablePip';
  * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
  * @param {boolean} [props.isVideoEnabled] - Local camera on/off state (forwarded to PiP overlay).
  * @param {boolean} [props.isCompact]
+ * @param {boolean} [props.isScreenSharing] - Local user is presenting their screen.
+ * @param {boolean} [props.isRemoteScreenSharing] - Remote peer is presenting their screen.
+ * @param {string|null} [props.participantLabel] - Remote participant name/id, used in the "they are presenting" banner.
  */
 export default function CallStage({
   onLayout,
@@ -33,9 +36,19 @@ export default function CallStage({
   isMuted = false,
   isVideoEnabled = true,
   isCompact = false,
+  isScreenSharing = false,
+  isRemoteScreenSharing = false,
+  participantLabel = null,
 }) {
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
+
+  // Local presenting state takes precedence if somehow both are true at once.
+  const presenterBannerText = isScreenSharing
+    ? "You're presenting"
+    : isRemoteScreenSharing
+      ? `${participantLabel || 'They'} are presenting`
+      : null;
 
   return (
     <View
@@ -60,6 +73,12 @@ export default function CallStage({
           <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
         </View>
       )}
+
+      {!isCompact && presenterBannerText ? (
+        <View style={styles.presenterBanner} testID="presenter-banner" pointerEvents="none">
+          <Text style={styles.presenterBannerText}>{presenterBannerText}</Text>
+        </View>
+      ) : null}
 
       {!isCompact && hasPipStream ? (
         <DraggablePip
@@ -107,5 +126,19 @@ const styles = StyleSheet.create({
   remotePlaceholderText: {
     color: colors.textMuted,
     fontSize: 16,
+  },
+  presenterBanner: {
+    position: 'absolute',
+    top: spacing.sm,
+    alignSelf: 'center',
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+  },
+  presenterBannerText: {
+    color: colors.accent,
+    ...typography.hint,
+    fontWeight: '700',
   },
 });

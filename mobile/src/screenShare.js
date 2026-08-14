@@ -10,6 +10,12 @@ import { logInfo, logWarn } from './appLogger';
  * OS versions only hand back a video track.  When that happens the share still
  * starts, and the caller is told that audio could not be included so it can
  * surface a non-fatal warning instead of failing the whole action.
+ *
+ * @remarks Group calls (out of scope today): `isScreenSharing` /
+ * `isRemoteScreenSharing` are single booleans because only one-to-one calls
+ * exist. Supporting more than two participants would need per-participant
+ * maps instead, plus a "N people viewing" count derived from the same
+ * `call.media-state` relay mechanism (see `useCallFlow.js`).
  */
 
 /** Returned when the user dismisses the OS screen-capture consent dialog. */

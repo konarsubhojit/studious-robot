@@ -16,6 +16,7 @@ const CONTROLS_AUTO_HIDE_MS = 3000;
 export default function CallScreen({
   elapsedCallSeconds,
   connectionQuality,
+  participantLabel = null,
   isReconnecting,
   onRetry,
   onStageLayout,
@@ -36,6 +37,7 @@ export default function CallScreen({
   isScreenAudioEnabled,
   isScreenAudioShared,
   isScreenShareSupported,
+  isRemoteScreenSharing = false,
   onMuteToggle,
   onVideoToggle,
   onChooseAudioOutput,
@@ -43,6 +45,7 @@ export default function CallScreen({
   onScreenShareToggle,
   onScreenAudioToggle,
   onLeave,
+  onMinimize,
   status,
   isCompact = false,
 }) {
@@ -127,6 +130,9 @@ export default function CallScreen({
         isMuted={isMuted}
         isVideoEnabled={isVideoEnabled}
         isCompact={isCompact}
+        isScreenSharing={isScreenSharing}
+        isRemoteScreenSharing={isRemoteScreenSharing}
+        participantLabel={participantLabel}
       />
 
       {!isCompact && showControlsOverlay ? (
@@ -135,6 +141,8 @@ export default function CallScreen({
             <CallTopBar
               elapsedCallSeconds={elapsedCallSeconds}
               connectionQuality={connectionQuality}
+              participantLabel={participantLabel}
+              onMinimize={onMinimize}
             />
             {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
             {visibleStatus ? (

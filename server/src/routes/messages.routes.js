@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { isBlocked } = require('../security');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
 const { deriveConversationId } = require('../messageStore');
@@ -74,6 +75,83 @@ function createMessagesRouter({ state }) {
       messages: participantMessages,
       limit: participantMessages.length,
     });
+  });
+
+  /**
+   * GET /conversations
+   *
+   * Chat-list summary for the authenticated user: one entry per conversation
+   * they participate in, newest-activity first, ready to render a Teams/Slack
+   * style contact list without fetching each conversation's full history.
+   *
+   * Applies the same blocklist visibility rule as `GET /users` so a blocked
+   * (or blocking) peer's conversation never appears in the list.
+   *
+   * Response 200: { conversations: Array<{ conversationId, peerId, lastMessage, unreadCount }> }
+   */
+  router.get('/conversations', async (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    let conversations;
+    try {
+      conversations = await state.messageStore.listConversations(session.userId);
+    } catch (error) {
+      console.error(`[messages] conversation summary lookup failed: ${error?.message}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    const visible = conversations.filter((conversation) => (
+      !isBlocked(state.blocks, session.userId, conversation.peerId)
+      && !isBlocked(state.blocks, conversation.peerId, session.userId)
+    ));
+
+    res.status(200).json({ conversations: visible });
+  });
+
+  /**
+   * POST /messages/read
+   *
+   * Mark every unread message the authenticated user has received from
+   * `peerId` as read.  Idempotent: replaying the call once nothing is
+   * outstanding returns `updated: 0`.
+   *
+   * Body: { peerId }
+   * Response 200: { conversationId, updated }
+   */
+  router.post('/messages/read', async (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const peerId = normaliseId(req.body?.peerId);
+    if (!peerId) {
+      res.status(400).json({ error: 'peerId is required' });
+      return;
+    }
+    if (peerId === session.userId) {
+      res.status(400).json({ error: 'peerId must be another user' });
+      return;
+    }
+
+    const conversationId = deriveConversationId(session.userId, peerId);
+
+    let updated;
+    try {
+      updated = await state.messageStore.markRead(conversationId, session.userId);
+    } catch (error) {
+      console.error(`[messages] markRead failed: ${error?.message}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    res.status(200).json({ conversationId, updated });
   });
 
   return router;

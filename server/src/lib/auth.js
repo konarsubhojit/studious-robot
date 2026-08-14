@@ -57,9 +57,24 @@ function getSessionFromRequest(req, sessions) {
  * that session; otherwise a best-effort guest identity is minted from the
  * handshake `auth` fields (or random ids).
  *
+ * When the handshake *did* present a `sessionId` but it no longer resolves to
+ * a live session (e.g. the server restarted and dropped its in-memory session
+ * table, or the TTL expired), the connection still succeeds but silently
+ * downgrades to a guest identity. `presentedSessionId`/`sessionDowngraded`
+ * let the caller detect that downgrade and tell the client, instead of the
+ * client only finding out indirectly when an authenticated action (like
+ * `call.initiate`) is later rejected.
+ *
  * @param {import('socket.io').Socket} socket
  * @param {Map<string, object>} sessions
- * @returns {{ userId: string, deviceId: string, platform: string|null, sessionId: string|null }}
+ * @returns {{
+ *   userId: string,
+ *   deviceId: string,
+ *   platform: string|null,
+ *   sessionId: string|null,
+ *   presentedSessionId: string|null,
+ *   sessionDowngraded: boolean,
+ * }}
  */
 function resolveSocketIdentity(socket, sessions) {
   const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth : {};
@@ -73,6 +88,8 @@ function resolveSocketIdentity(socket, sessions) {
       deviceId: session.deviceId,
       platform: session.platform,
       sessionId: session.sessionId,
+      presentedSessionId: sessionId,
+      sessionDowngraded: false,
     };
   }
 
@@ -81,6 +98,11 @@ function resolveSocketIdentity(socket, sessions) {
     deviceId: normaliseId(auth.deviceId) || `device-${randomUUID()}`,
     platform: normaliseOptionalString(auth.platform),
     sessionId: null,
+    presentedSessionId: sessionId,
+    // A sessionId was presented but didn't resolve to a live session: this is
+    // a genuine downgrade (stale/expired/server-restart), distinct from a
+    // fresh connection that never had a session id to begin with.
+    sessionDowngraded: Boolean(sessionId),
   };
 }
 

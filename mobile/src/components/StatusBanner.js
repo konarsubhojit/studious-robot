@@ -5,21 +5,23 @@ const SEVERITY_COLOR = {
   info: colors.textMuted,
   success: colors.success,
   error: colors.danger,
+  warning: colors.warning,
 };
 
 const SEVERITY_BG = {
   info: null,
   success: 'rgba(139,231,165,0.12)',
   error: 'rgba(240,141,137,0.15)',
+  warning: 'rgba(255,210,122,0.15)',
 };
 
 /**
  * Single-line status message whose colour reflects severity (info / success /
- * error). Non-info messages gain a tinted background so they stand out at a
- * glance, making call state transitions easier to notice.
+ * warning / error). Non-info messages gain a tinted background so they stand
+ * out at a glance, making call state transitions easier to notice.
  *
  * @param {object} props
- * @param {{ message: string, severity?: 'info'|'success'|'error' }} props.status
+ * @param {{ message: string, severity?: 'info'|'success'|'warning'|'error' }} props.status
  * @param {object} [props.style]
  * @param {object} [props.textStyle]
  */
