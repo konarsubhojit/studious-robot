@@ -34,6 +34,7 @@ jest.mock("../../src/appLogger", () => ({
   logDebug: jest.fn(),
   logError: jest.fn(),
   logInfo: jest.fn(),
+  logVerbose: jest.fn(),
   logWarn: jest.fn(),
 }));
 

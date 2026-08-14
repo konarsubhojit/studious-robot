@@ -7,6 +7,8 @@ const SENSITIVE_FIELDS = new Set([
   'turn_credential',
   'credential',
   'password',
+  'pushtoken',
+  'push_token',
   'token',
   'secret',
   'authorization',
@@ -18,6 +20,12 @@ const SENSITIVE_FIELDS = new Set([
 
 function isSensitiveKey(key) {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
+}
+
+function isVerboseLoggingEnabled() {
+  const verbose = process.env.VERBOSE_LOGGING?.trim?.().toLowerCase?.();
+  const logLevel = process.env.LOG_LEVEL?.trim?.().toLowerCase?.();
+  return verbose === '1' || verbose === 'true' || verbose === 'yes' || logLevel === 'debug' || logLevel === 'trace';
 }
 
 function toSafeError(err, seen) {
@@ -136,6 +144,15 @@ export function error(message, metadata) {
 
 export function logDebug(message, metadata) {
   return debug(message, metadata);
+}
+
+export function verbose(message, metadata) {
+  if (!isVerboseLoggingEnabled()) return undefined;
+  return addLog('verbose', message, metadata);
+}
+
+export function logVerbose(message, metadata) {
+  return verbose(message, metadata);
 }
 
 export function logInfo(message, metadata) {

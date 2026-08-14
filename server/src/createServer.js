@@ -21,6 +21,7 @@ const { notifyCallTransition } = require('./domain/notifications');
 const { loadPersistedStateFromDb } = require('./lib/persistence');
 const { mountRoutes } = require('./routes');
 const { registerSocketHandlers } = require('./signaling');
+const { verboseLog } = require('./lib/verbose');
 
 /**
  * Build the Express app and HTTP/Socket.IO server.
@@ -35,6 +36,23 @@ const { registerSocketHandlers } = require('./signaling');
 function createServer(opts = {}) {
   const app = express();
   app.use(express.json());
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    verboseLog('http', 'request.start', {
+      method: req.method,
+      path: req.path,
+      queryKeys: Object.keys(req.query ?? {}),
+    });
+    res.on('finish', () => {
+      verboseLog('http', 'request.finish', {
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+    next();
+  });
 
   const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
 
@@ -119,6 +137,11 @@ function createServer(opts = {}) {
      */
     draining: false,
   };
+  verboseLog('server', 'state.initialized', {
+    storeNames: Object.keys(stores).filter((key) => stores[key] instanceof Map),
+    hasDb: Boolean(db),
+    hasMessageBus: Boolean(opts.messageBus ?? stores.messageBus ?? null),
+  });
 
   const httpServer = http.createServer(app);
   const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();

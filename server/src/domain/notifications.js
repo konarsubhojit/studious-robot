@@ -3,6 +3,7 @@
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
 const { resolveReachableChannels, userRoom } = require('../lib/state');
+const { verboseLog } = require('../lib/verbose');
 
 /**
  * Client-facing call notifications.
@@ -65,6 +66,12 @@ function dispatchIncomingCallPushes(state, call) {
   );
   const pushChannels = resolveReachableChannels(state, call.calleeId)
     .filter((channel) => channel.type === 'push');
+  verboseLog('push', 'call.incoming.channels_resolved', {
+    callId: call.callId,
+    calleeId: call.calleeId,
+    pushChannelCount: pushChannels.length,
+    connectedDeviceCount: connectedDeviceIds.size,
+  });
 
   if (pushChannels.length === 0) {
     logIncomingCallPushSkip(call, getNoPushChannelReason(state, call.calleeId));
@@ -174,6 +181,13 @@ function notifyCallCreated(io, state, call) {
   console.log(
     `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`,
   );
+  verboseLog('calls', 'created', {
+    callId: call.callId,
+    callerId: call.callerId,
+    calleeId: call.calleeId,
+    status: call.status,
+    hasRingTimeout: Boolean(call.ringTimeoutAt),
+  });
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
@@ -204,6 +218,13 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
       (reason ? ` reason=${reason}` : '') +
       (actor ? ` actor=${actor}` : ''),
     );
+    verboseLog('calls', 'transition', {
+      callId: call.callId,
+      previousStatus,
+      status: call.status,
+      reason,
+      actor,
+    });
   }
 
   const statePayload = {

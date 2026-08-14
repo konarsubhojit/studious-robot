@@ -7,7 +7,7 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
 } from "react-native-webrtc";
-import { logError, logInfo, logWarn } from "../appLogger";
+import { logError, logInfo, logVerbose, logWarn } from "../appLogger";
 import * as Telemetry from "../telemetry";
 import {
   AUDIO_ROUTES,
@@ -259,6 +259,7 @@ export default function useCallFlow() {
   const displayedIncomingCallIdsRef = useRef(new Set());
 
   const updateStatus = useCallback((message, severity = "info") => {
+    logVerbose("[CallFlow] Status updated", { message, severity });
     setStatus({ message, severity });
   }, []);
 
@@ -509,7 +510,13 @@ export default function useCallFlow() {
 
   useEffect(() => {
     isInCallRef.current = isInCall;
-  }, [isInCall]);
+    logVerbose("[CallFlow] Phase changed", {
+      callPhase,
+      isInCall,
+      activeCallId: activeCallRef.current?.callId ?? null,
+      incomingCallId: incomingCallRef.current?.callId ?? null,
+    });
+  }, [callPhase, isInCall]);
 
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;

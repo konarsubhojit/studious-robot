@@ -22,6 +22,7 @@ const {
   acknowledgeError,
 } = require('./ack');
 const { isPlainObject } = require('../lib/normalize');
+const { verboseLog } = require('../lib/verbose');
 
 /**
  * Remove `socket` from a legacy signaling room, tidying up the room set and
@@ -82,6 +83,22 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
     );
+    verboseLog('socket', 'connected', {
+      socketId: socket.id,
+      userId: identity.userId,
+      deviceId: identity.deviceId,
+      activeUserSockets: state.userConnections.get(identity.userId)?.size ?? 0,
+    });
+    socket.onAny((eventName, payload) => {
+      verboseLog('socket', 'event.in', {
+        socketId: socket.id,
+        userId: identity.userId,
+        eventName,
+        payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+        callId: payload?.callId ?? null,
+        version: payload?.version ?? null,
+      });
+    });
     // Track which room this socket is currently in (one room per socket).
     let currentRoom = null;
 
@@ -294,6 +311,13 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         (identity ? ` user=${identity.userId} device=${identity.deviceId}` : '') +
         ` remainingUserSockets=${remainingConnections}`,
       );
+      verboseLog('socket', 'disconnected', {
+        socketId: socket.id,
+        reason,
+        userId: identity?.userId ?? null,
+        deviceId: identity?.deviceId ?? null,
+        remainingUserSockets: remainingConnections,
+      });
       notifyRingingCallsForDisconnectedDevice(state, identity?.userId, identity?.deviceId);
     });
   });

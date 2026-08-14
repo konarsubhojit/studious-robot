@@ -1,8 +1,10 @@
-import { clearLogs, getLogsAsText, logError, logInfo } from '../src/appLogger';
+import { clearLogs, getLogsAsText, logError, logInfo, logVerbose } from '../src/appLogger';
 
 describe('appLogger', () => {
   beforeEach(() => {
     clearLogs();
+    delete process.env.VERBOSE_LOGGING;
+    delete process.env.LOG_LEVEL;
   });
 
   test('stores timestamp, level, and message', () => {
@@ -49,5 +51,18 @@ describe('appLogger', () => {
     logInfo('first');
     clearLogs();
     expect(getLogsAsText()).toBe('');
+  });
+
+  test('verbose logs are opt-in and redact push tokens', () => {
+    logVerbose('hidden verbose', { pushToken: 'secret-device-token' });
+    expect(getLogsAsText()).toBe('');
+
+    process.env.VERBOSE_LOGGING = 'true';
+    logVerbose('visible verbose', { pushToken: 'secret-device-token' });
+    const logs = getLogsAsText();
+
+    expect(logs).toContain('[VERBOSE] visible verbose');
+    expect(logs).toContain('[REDACTED]');
+    expect(logs).not.toContain('secret-device-token');
   });
 });
