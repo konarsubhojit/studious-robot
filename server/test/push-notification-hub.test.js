@@ -13,6 +13,7 @@ const assert = require('node:assert/strict');
 const https = require('node:https');
 const { EventEmitter } = require('node:events');
 const { generateKeyPairSync } = require('node:crypto');
+const { captureConsoleLog } = require('./helpers');
 
 const push = require('../src/push.js');
 
@@ -291,6 +292,7 @@ test('goes straight to the direct path when the hub is not configured', async ()
     AZURE_NOTIFICATION_HUB_NAME: undefined,
     FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT),
   }, async () => {
+    const logs = captureConsoleLog();
     const mock = mockHttps((opts) => {
       if (opts.hostname === 'oauth2.googleapis.com') {
         return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test' }) };
@@ -307,7 +309,15 @@ test('goes straight to the direct path when the hub is not configured', async ()
         0,
         'no notification hub request issued',
       );
+      assert.ok(
+        logs.lines.some((line) =>
+          line.includes('[push] Skipped Notification Hub') &&
+          line.includes('device=dev-1') &&
+          line.includes('reason=notification_hub_not_configured')),
+        'hub-not-configured skip should be logged for the device',
+      );
     } finally {
+      logs.restore();
       mock.restore();
     }
   });

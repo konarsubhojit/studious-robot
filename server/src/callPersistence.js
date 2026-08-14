@@ -24,6 +24,10 @@ function toDateOrNull(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function emptyStringToNull(value) {
+  return value === '' ? null : (value ?? null);
+}
+
 function persistCallRecord(db, call) {
   if (!db || !call?.callId) return;
   const { calls: callsTable } = require('../db/schema');
@@ -59,8 +63,8 @@ function persistCallEvent(db, event) {
     eventId: event.eventId,
     callId: event.callId,
     event: event.event,
-    actor: event.actor ?? null,
-    reason: event.reason ?? null,
+    actor: emptyStringToNull(event.actor),
+    reason: emptyStringToNull(event.reason),
     createdAt: toDateOrNull(event.timestamp) ?? new Date(),
   }).catch((error) => {
     console.error('[calls] failed to persist call event to DB:', error?.message);

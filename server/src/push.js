@@ -825,6 +825,22 @@ async function withRetry(fn, label) {
 /** Tracks whether the "Notification Hub not configured" note was already logged. */
 let _notificationHubUnconfiguredLogged = false;
 
+function logNotificationHubNotConfigured() {
+  if (_notificationHubUnconfiguredLogged) return;
+  _notificationHubUnconfiguredLogged = true;
+  console.log(
+    '[push] Notification Hub not configured' +
+    ' (set AZURE_NOTIFICATION_HUB_CONNECTION_STRING and AZURE_NOTIFICATION_HUB_NAME);' +
+    ' using direct APNs/FCM delivery',
+  );
+}
+
+function logNotificationHubStartupStatus() {
+  if (!loadNotificationHubConfig()) {
+    logNotificationHubNotConfigured();
+  }
+}
+
 /**
  * Attempt delivery through Azure Notification Hubs.
  *
@@ -840,14 +856,11 @@ let _notificationHubUnconfiguredLogged = false;
 async function tryNotificationHub(channel, envelope, label) {
   const config = loadNotificationHubConfig();
   if (!config) {
-    if (!_notificationHubUnconfiguredLogged) {
-      _notificationHubUnconfiguredLogged = true;
-      console.log(
-        '[push] Notification Hub not configured' +
-        ' (set AZURE_NOTIFICATION_HUB_CONNECTION_STRING and AZURE_NOTIFICATION_HUB_NAME);' +
-        ' using direct APNs/FCM delivery',
-      );
-    }
+    logNotificationHubNotConfigured();
+    console.log(
+      `[push] Skipped Notification Hub for device=${channel.deviceId}` +
+      ` reason=notification_hub_not_configured; using direct ${channel.provider}`,
+    );
     return { ok: false, reason: 'notification_hub_not_configured' };
   }
 
@@ -989,6 +1002,7 @@ async function sendMessagePush(channel, messageData) {
 module.exports = {
   sendIncomingCallPush,
   sendMessagePush,
+  logNotificationHubStartupStatus,
   // Exported for unit tests.
   _resetFcmTokenCache,
   _loadFcmConfig: loadFcmConfig,

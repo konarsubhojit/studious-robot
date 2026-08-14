@@ -21,6 +21,7 @@ const { createServer } = require('./createServer');
 const { CALL_END_REASONS, CALL_TRANSITION_CHANNEL } = require('./config');
 const { createStores, createRedisPgStores } = require('./stores');
 const { createMemoryMessageBus, createRedisMessageBus } = require('./messageBus');
+const { logNotificationHubStartupStatus } = require('./push');
 
 module.exports = {
   createServer,
@@ -46,6 +47,8 @@ if (require.main === module) {
    * @returns {Promise<{ httpServer: import('http').Server, shutdown: Function, stores?: object }>}
    */
   async function bootstrap() {
+    logNotificationHubStartupStatus();
+
     const db = process.env.DATABASE_URL
       ? require('../db/client').getDb()
       : null;

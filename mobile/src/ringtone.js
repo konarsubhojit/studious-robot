@@ -10,10 +10,10 @@ import { logInfo, logWarn } from './appLogger';
  *
  * Behaviour contract
  * ──────────────────
- * - `startIncomingRingtone()` is idempotent: calling it while already ringing
- *   is a safe no-op.
- * - `stopIncomingRingtone()` is idempotent: calling it when not ringing, or
- *   calling it multiple times, is always safe.
+ * - `startIncomingRingtone()` / `startOutgoingRingback()` are idempotent:
+ *   calling either while already playing is a safe no-op.
+ * - `stopIncomingRingtone()` / `stopOutgoingRingback()` are idempotent: calling
+ *   them when not playing, or calling them multiple times, is always safe.
  * - Both helpers return `void` and never throw.
  * - When the native module is absent the helpers degrade gracefully to no-ops
  *   so the JS bundle still builds and runs without the native dependency.
@@ -50,10 +50,12 @@ export function _resetRingtoneCache() {
   cachedInCallManager = undefined;
   hasLoggedMissingInCallManager = false;
   _isRinging = false;
+  _isRingbackPlaying = false;
 }
 
 /** Tracks whether the fallback ringtone is currently playing. */
 let _isRinging = false;
+let _isRingbackPlaying = false;
 
 /**
  * Start the incoming-call ringtone via InCallManager if available.
@@ -99,5 +101,54 @@ export function stopIncomingRingtone() {
     }
   } catch (error) {
     logWarn('[Ringtone] stopIncomingRingtone failed', { message: error?.message });
+  }
+}
+
+/**
+ * Start an outgoing ringback tone so the caller gets audible feedback while the
+ * remote side is ringing.  Uses the same native module as the incoming fallback
+ * and degrades to a no-op when unavailable.
+ */
+export function startOutgoingRingback() {
+  if (_isRingbackPlaying) return;
+  const manager = loadInCallManager();
+  if (!manager) return;
+
+  try {
+    if (typeof manager.start !== 'function') {
+      logWarn('[Ringtone] startOutgoingRingback unavailable; native module has no start');
+      return;
+    }
+    if (typeof manager.stopRingback !== 'function') {
+      logWarn('[Ringtone] startOutgoingRingback unavailable; native module has no stopRingback');
+      return;
+    }
+    manager.start({ media: false, ringback: '_BUNDLE_' });
+    _isRingbackPlaying = true;
+    logInfo('[Ringtone] Outgoing ringback started');
+  } catch (error) {
+    logWarn('[Ringtone] startOutgoingRingback failed', { message: error?.message });
+  }
+}
+
+/**
+ * Stop the outgoing ringback tone.
+ */
+export function stopOutgoingRingback() {
+  if (!_isRingbackPlaying) return;
+  _isRingbackPlaying = false;
+
+  const manager = loadInCallManager();
+  if (!manager) return;
+
+  try {
+    if (typeof manager.stopRingback === 'function') {
+      manager.stopRingback();
+      logInfo('[Ringtone] Outgoing ringback stopped');
+    } else {
+      logWarn('[Ringtone] stopOutgoingRingback unavailable; native module has no stopRingback');
+    }
+  } catch (error) {
+    logWarn('[Ringtone] stopOutgoingRingback failed', { message: error?.message });
   }
 }

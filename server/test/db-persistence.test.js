@@ -11,6 +11,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
+const { persistCallEvent } = require('../src/callPersistence');
+const { createCallRecord } = require('../src/domain/calls');
 const schema = require('../db/schema');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,6 +98,62 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
   };
 
   return db;
+}
+
+function buildCallEventOrderingDb() {
+  let callPersisted = false;
+  const operations = [];
+
+  return {
+    operations,
+    insert(table) {
+      return {
+        values() {
+          if (table === schema.calls) {
+            return {
+              onConflictDoUpdate() {
+                operations.push('call-start');
+                return new Promise((resolve) => {
+                  setImmediate(() => {
+                    callPersisted = true;
+                    operations.push('call-finish');
+                    resolve();
+                  });
+                });
+              },
+            };
+          }
+          if (table === schema.callEvents) {
+            return {
+              catch(reject) {
+                operations.push(callPersisted ? 'event-after-call' : 'event-before-call');
+                return Promise.resolve().catch(reject);
+              },
+            };
+          }
+          return {
+            onConflictDoUpdate() {
+              return Promise.resolve();
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function buildCallState(db) {
+  return {
+    calls: new Map(),
+    callEvents: new Map(),
+    callHistoryCache: new Map(),
+    userConnections: new Map(),
+    userDevices: new Map(),
+    userSessions: new Map([['callee', new Set(['session-callee'])]]),
+    userPresence: new Map(),
+    devices: new Map(),
+    db,
+  };
 }
 
 // ─── POST /session – claimed identity persisted to DB ─────────────────────────
@@ -270,6 +328,39 @@ test('POST /calls persists call records and call events to the DB', async () => 
   } finally {
     await teardown();
   }
+});
+
+test('persistCallEvent stores absent actor and reason as null, not empty strings', async () => {
+  const db = buildMockDb();
+
+  await persistCallEvent(db, {
+    eventId: '00000000-0000-0000-0000-000000000001',
+    callId: '00000000-0000-0000-0000-000000000002',
+    event: 'created',
+    actor: '',
+    reason: '',
+    timestamp: '2026-08-14T17:28:07.090Z',
+  });
+
+  const insert = db.inserts.find((entry) => entry.table === schema.callEvents);
+  assert.ok(insert, 'expected a call_events insert');
+  assert.equal(insert.values.actor, null);
+  assert.equal(insert.values.reason, null);
+});
+
+test('createCallRecord persists call_events only after the parent call row', async () => {
+  const db = buildCallEventOrderingDb();
+  const state = buildCallState(db);
+
+  createCallRecord(state, {
+    callerId: 'caller',
+    calleeId: 'callee',
+    ringingTimeoutMs: 30_000,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(db.operations, ['call-start', 'call-finish', 'event-after-call']);
 });
 
 // ─── loadPersistedState() – hydrates users and devices from DB ───────────────

@@ -2,7 +2,8 @@
 
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
-const { resolveOfflinePushChannels, userRoom } = require('../lib/state');
+const { resolveReachableChannels, userRoom } = require('../lib/state');
+const { verboseLog } = require('../lib/verbose');
 
 /**
  * Client-facing call notifications.
@@ -41,11 +42,152 @@ function getCallTransitionEventName(status, reason) {
   return null;
 }
 
+function logIncomingCallPushSkip(call, reason, deviceId = null, details = '') {
+  console.log(
+    `[push] Skipped call.incoming callId=${call.callId} user=${call.calleeId}` +
+    (deviceId ? ` device=${deviceId}` : '') +
+    ` reason=${reason}` +
+    details,
+  );
+}
+
+function getNoPushChannelReason(state, userId) {
+  const deviceIds = state.userDevices.get(userId);
+  if (!deviceIds || deviceIds.size === 0) {
+    return 'no_device_row';
+  }
+  return 'no_push_token';
+}
+
+function dispatchIncomingCallPushes(state, call) {
+  const connections = state.userConnections.get(call.calleeId);
+  const connectedDeviceIds = new Set(
+    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+  );
+  const pushChannels = resolveReachableChannels(state, call.calleeId)
+    .filter((channel) => channel.type === 'push');
+  verboseLog('push', 'call.incoming.channels_resolved', {
+    callId: call.callId,
+    calleeId: call.calleeId,
+    pushChannelCount: pushChannels.length,
+    connectedDeviceCount: connectedDeviceIds.size,
+  });
+
+  if (pushChannels.length === 0) {
+    logIncomingCallPushSkip(call, getNoPushChannelReason(state, call.calleeId));
+    return;
+  }
+
+  for (const channel of pushChannels) {
+    if (connectedDeviceIds.has(channel.deviceId)) {
+      logIncomingCallPushSkip(
+        call,
+        'callee_online',
+        channel.deviceId,
+        ` activeSockets=${connections?.size ?? 0}`,
+      );
+      continue;
+    }
+
+    console.log(
+      `[push] Attempting call.incoming callId=${call.callId}` +
+      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`,
+    );
+    push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+      .catch((err) => {
+        console.error(
+          `[push] Failed call.incoming callId=${call.callId}` +
+          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+        );
+      });
+  }
+}
+
+function findPushChannelForDevice(state, userId, deviceId) {
+  const device = state.devices.get(deviceId);
+  if (
+    !device ||
+    device.userId !== userId ||
+    !device.pushProvider ||
+    !device.pushToken
+  ) {
+    return null;
+  }
+  return {
+    type: 'push',
+    deviceId,
+    provider: device.pushProvider,
+    pushToken: device.pushToken,
+  };
+}
+
+function hasLiveConnectionForDevice(state, userId, deviceId) {
+  const connections = state.userConnections.get(userId);
+  if (!connections) return false;
+  for (const connection of connections.values()) {
+    if (connection.deviceId === deviceId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
+  if (call.status !== 'ringing') return;
+  const ringTimeoutMs = call.ringTimeoutAt ? new Date(call.ringTimeoutAt).getTime() : null;
+  if (ringTimeoutMs !== null && Number.isNaN(ringTimeoutMs)) {
+    logIncomingCallPushSkip(call, 'invalid_ring_timeout', deviceId);
+    return;
+  }
+  if (ringTimeoutMs !== null && ringTimeoutMs <= Date.now()) {
+    logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId);
+    return;
+  }
+  if (hasLiveConnectionForDevice(state, call.calleeId, deviceId)) {
+    logIncomingCallPushSkip(call, 'callee_online', deviceId);
+    return;
+  }
+
+  const channel = findPushChannelForDevice(state, call.calleeId, deviceId);
+  if (!channel) {
+    logIncomingCallPushSkip(call, 'no_push_token', deviceId);
+    return;
+  }
+
+  console.log(
+    `[push] Attempting call.incoming callId=${call.callId}` +
+    ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
+    (trigger ? ` trigger=${trigger}` : ''),
+  );
+  push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    .catch((err) => {
+      console.error(
+        `[push] Failed call.incoming callId=${call.callId}` +
+        ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+      );
+    });
+}
+
+function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
+  if (!userId || !deviceId) return;
+  for (const call of state.calls.values()) {
+    if (call.calleeId !== userId || call.status !== 'ringing') continue;
+    dispatchIncomingCallPushToDevice(state, call, deviceId, 'socket_disconnected');
+  }
+}
+
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
     `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`,
   );
+  verboseLog('calls', 'created', {
+    callId: call.callId,
+    callerId: call.callerId,
+    calleeId: call.calleeId,
+    status: call.status,
+    hasRingTimeout: Boolean(call.ringTimeoutAt),
+  });
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
@@ -56,15 +198,9 @@ function notifyCallCreated(io, state, call) {
     // has no live socket of its own.  This is decided per device rather than
     // per user, so a callee who is connected on one device still gets a push on
     // the phone that is asleep in their pocket — the device that has to ring.
-    const pushChannels = resolveOfflinePushChannels(state, call.calleeId);
-    for (const channel of pushChannels) {
-      push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
-        .catch((err) => {
-          console.error(
-            `[push] Unhandled error for device ${channel.deviceId}: ${err?.message}`,
-          );
-        });
-    }
+    dispatchIncomingCallPushes(state, call);
+  } else {
+    logIncomingCallPushSkip(call, `call_status_${call.status}`);
   }
 
   notifyCallTransition(io, state, call, {
@@ -82,6 +218,13 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
       (reason ? ` reason=${reason}` : '') +
       (actor ? ` actor=${actor}` : ''),
     );
+    verboseLog('calls', 'transition', {
+      callId: call.callId,
+      previousStatus,
+      status: call.status,
+      reason,
+      actor,
+    });
   }
 
   const statePayload = {
@@ -136,4 +279,5 @@ module.exports = {
   getCallTransitionEventName,
   notifyCallCreated,
   notifyCallTransition,
+  notifyRingingCallsForDisconnectedDevice,
 };

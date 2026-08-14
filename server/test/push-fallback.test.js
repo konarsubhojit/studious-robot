@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { captureConsoleLog } = require('./helpers');
 
 // Resolve the push module's path so we can swap its exports.
 const pushModulePath = require.resolve('../src/push.js');
@@ -81,6 +82,8 @@ async function createSession(url, userId, deviceId = `device-${userId}`) {
 test('push fallback: no push sent when callee is online via WebSocket', async (t) => {
   const spy = spyOnPush();
   t.after(() => spy.restore());
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
 
   const { io: ioClient } = require('socket.io-client');
   const { url, teardown } = await startServer();
@@ -110,6 +113,14 @@ test('push fallback: no push sent when callee is online via WebSocket', async (t
     await new Promise((r) => setTimeout(r, 50));
 
     assert.equal(spy.calls.length, 0, 'push should not be sent when callee is online');
+    assert.ok(
+      logs.lines.some((line) =>
+        line.includes('[push] Skipped call.incoming') &&
+        line.includes('user=user-bob') &&
+        line.includes('device=device-user-bob') &&
+        line.includes('reason=callee_online')),
+      'callee-online push skip should be logged',
+    );
   } finally {
     callee.disconnect();
   }
@@ -167,6 +178,8 @@ test('push fallback: push sent to all registered devices when callee is offline'
 test('push fallback: no push when callee is unknown (unreachable)', async (t) => {
   const spy = spyOnPush();
   t.after(() => spy.restore());
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
 
   const { url, teardown } = await startServer();
   t.after(teardown);
@@ -181,6 +194,13 @@ test('push fallback: no push when callee is unknown (unreachable)', async (t) =>
 
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(spy.calls.length, 0, 'push must not be attempted for unreachable calls');
+  assert.ok(
+    logs.lines.some((line) =>
+      line.includes('[push] Skipped call.incoming') &&
+      line.includes('user=user-frank') &&
+      line.includes('reason=call_status_unreachable')),
+    'missing-device push skip should be logged',
+  );
 });
 
 test('push fallback: push payload contains callId and callerId', async (t) => {
@@ -246,4 +266,35 @@ test('push fallback: offline devices still get a push while another device is on
   } finally {
     phone.disconnect();
   }
+});
+
+test('push fallback: disconnected ringing device gets a push before timeout', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-kate');
+  const calleeSession = await createSession(url, 'user-louis');
+
+  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'louis-token' }, calleeSession);
+
+  const callee = ioClient(url, { auth: { sessionId: calleeSession } });
+  await new Promise((resolve) => callee.once('connect', resolve));
+
+  const res = await postJson(url, '/calls', { calleeId: 'user-louis' }, callerSession);
+  assert.equal(res.status, 201);
+  assert.equal(res.body.status, 'ringing');
+
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(spy.calls.length, 0, 'connected callee device is not pushed at call creation');
+
+  callee.disconnect();
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(spy.calls.length, 1, 'disconnect during ringing triggers a push to that device');
+  assert.equal(spy.calls[0].channel.deviceId, 'device-user-louis');
+  assert.equal(spy.calls[0].callData.callId, res.body.callId);
 });
