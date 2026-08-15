@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
@@ -17,6 +17,8 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * @param {Function} props.onPress
  * @param {'default'|'danger'|'success'|'active'|'muted'} [props.variant='default']
  * @param {boolean}  [props.disabled=false]
+ * @param {boolean}  [props.loading=false]   - Shows a spinner in place of the icon and
+ *                                            implies `disabled` (e.g. call being initiated).
  * @param {number}   [props.size=64]         - Diameter of the circle in dp.
  * @param {string}   [props.testID]
  * @param {string}   [props.accessibilityLabel]
@@ -27,18 +29,28 @@ export default function IconButton({
   onPress,
   variant = 'default',
   disabled = false,
+  loading = false,
   size = 64,
   testID,
   accessibilityLabel,
 }) {
   const bgColor = VARIANT_COLORS[variant] ?? colors.surfaceControl;
   const iconSize = Math.round(size * 0.42);
+  const isDisabled = disabled || loading;
 
   // Resolve the glyph: try ICONS map first, then render raw.
   const iconDef = ICONS[icon];
   const MCIcon = loadVectorIcons();
   let iconContent;
-  if (iconDef && MCIcon) {
+  if (loading) {
+    iconContent = (
+      <ActivityIndicator
+        size="small"
+        color={ICON_COLORS[variant] ?? colors.textPrimary}
+        testID={testID ? `${testID}-loading` : undefined}
+      />
+    );
+  } else if (iconDef && MCIcon) {
     iconContent = (
       <MCIcon
         name={iconDef.icon}
@@ -57,15 +69,15 @@ export default function IconButton({
     <View style={styles.wrapper}>
       <Pressable
         onPress={onPress}
-        disabled={disabled}
+        disabled={isDisabled}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel ?? label ?? icon}
-        accessibilityState={{ disabled }}
+        accessibilityState={{ disabled: isDisabled, busy: loading }}
         testID={testID}
         style={({ pressed }) => [
           styles.circle,
           { width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor },
-          disabled && styles.disabled,
+          isDisabled && styles.disabled,
           pressed && styles.pressed,
         ]}
       >

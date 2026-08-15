@@ -5,6 +5,9 @@ const { isBlocked } = require('../security');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
 const { deriveConversationId } = require('../messageStore');
+const { emitToUserSockets } = require('../domain/notifications');
+const { getPresenceSnapshot } = require('../lib/state');
+const { SIGNALING_VERSION } = require('../config');
 
 /**
  * Text-chat history endpoints.
@@ -13,10 +16,10 @@ const { deriveConversationId } = require('../messageStore');
  * `getSessionFromRequest`, a missing/expired session is a 401, and access to
  * another user's conversation is a 403.
  *
- * @param {{ state: object }} ctx
+ * @param {{ state: object, io: object }} ctx
  * @returns {import('express').Router}
  */
-function createMessagesRouter({ state }) {
+function createMessagesRouter({ state, io }) {
   const router = express.Router();
 
   /**
@@ -87,7 +90,10 @@ function createMessagesRouter({ state }) {
    * Applies the same blocklist visibility rule as `GET /users` so a blocked
    * (or blocking) peer's conversation never appears in the list.
    *
-   * Response 200: { conversations: Array<{ conversationId, peerId, lastMessage, unreadCount }> }
+   * Each entry's `online` flag mirrors `GET /presence/:userId`, so the chat
+   * list can render a presence dot per row without an extra request.
+   *
+   * Response 200: { conversations: Array<{ conversationId, peerId, lastMessage, unreadCount, online }> }
    */
   router.get('/conversations', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
@@ -105,10 +111,15 @@ function createMessagesRouter({ state }) {
       return;
     }
 
-    const visible = conversations.filter((conversation) => (
-      !isBlocked(state.blocks, session.userId, conversation.peerId)
-      && !isBlocked(state.blocks, conversation.peerId, session.userId)
-    ));
+    const visible = conversations
+      .filter((conversation) => (
+        !isBlocked(state.blocks, session.userId, conversation.peerId)
+        && !isBlocked(state.blocks, conversation.peerId, session.userId)
+      ))
+      .map((conversation) => ({
+        ...conversation,
+        online: getPresenceSnapshot(state, conversation.peerId).online,
+      }));
 
     res.status(200).json({ conversations: visible });
   });
@@ -119,6 +130,11 @@ function createMessagesRouter({ state }) {
    * Mark every unread message the authenticated user has received from
    * `peerId` as read.  Idempotent: replaying the call once nothing is
    * outstanding returns `updated: 0`.
+   *
+   * When at least one message transitions to read, notifies `peerId` (the
+   * original sender of those messages) over their live socket(s) with a
+   * `message.read` event, so their chat UI can flip delivery ticks to "read"
+   * in realtime without waiting for a refetch.
    *
    * Body: { peerId }
    * Response 200: { conversationId, updated }
@@ -149,6 +165,16 @@ function createMessagesRouter({ state }) {
       console.error(`[messages] markRead failed: ${error?.message}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
+    }
+
+    if (updated > 0 && io) {
+      const readAt = new Date().toISOString();
+      emitToUserSockets(io, peerId, 'message.read', {
+        version: SIGNALING_VERSION,
+        conversationId,
+        readerId: session.userId,
+        readAt,
+      });
     }
 
     res.status(200).json({ conversationId, updated });

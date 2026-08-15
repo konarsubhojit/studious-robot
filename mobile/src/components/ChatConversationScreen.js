@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -12,6 +12,12 @@ import {
 import { colors, radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
 
+/** Consecutive own-sender messages within this many minutes are grouped
+ * (only the last bubble in the group shows a timestamp/tick). */
+const GROUP_GAP_MS = 5 * 60 * 1000;
+/** How long after the user stops typing to report "stopped typing". */
+const TYPING_IDLE_MS = 3000;
+
 function formatMessageTimestamp(isoString) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -19,9 +25,64 @@ function formatMessageTimestamp(isoString) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function isSameCalendarDay(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** "Today" / "Yesterday" / a locale date string, for the date separator. */
+function formatDateSeparator(date) {
+  const now = new Date();
+  if (isSameCalendarDay(date, now)) return 'Today';
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameCalendarDay(date, yesterday)) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Turn a flat, oldest-first message array into a render list that interleaves
+ * date separators and flags the last message of each same-sender/time-window
+ * group, so consecutive bubbles from one sender only show a single
+ * timestamp/tick at the bottom of the group (Teams/Slack-style grouping).
+ *
+ * @param {Array<object>} orderedMessages oldest-first
+ * @returns {Array<{ key: string, type: 'date', label: string } | { key: string, type: 'message', message: object, isGroupEnd: boolean }>}
+ */
+function buildListItems(orderedMessages) {
+  const items = [];
+  orderedMessages.forEach((message, index) => {
+    const createdAt = new Date(message.createdAt);
+    const previous = orderedMessages[index - 1];
+    const hasValidDate = !Number.isNaN(createdAt.getTime());
+    if (hasValidDate && (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))) {
+      items.push({ key: `date-${message.messageId}`, type: 'date', label: formatDateSeparator(createdAt) });
+    }
+
+    const next = orderedMessages[index + 1];
+    let isGroupEnd = true;
+    if (next && next.senderId === message.senderId) {
+      const nextCreatedAt = new Date(next.createdAt);
+      const sameDay = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
+        || isSameCalendarDay(createdAt, nextCreatedAt);
+      const withinGap = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
+        || nextCreatedAt.getTime() - createdAt.getTime() <= GROUP_GAP_MS;
+      isGroupEnd = !(sameDay && withinGap);
+    }
+
+    items.push({ key: message.messageId, type: 'message', message, isGroupEnd });
+  });
+  return items;
+}
+
 /**
  * One-to-one conversation window: header (back, presence, call actions),
- * a bubble message list (oldest at top, newest at bottom), and a composer.
+ * a bubble message list (oldest at top, newest at bottom) with date
+ * separators and sender/time grouping, and a composer with a typing
+ * indicator.
  *
  * @param {object} props
  * @param {string} props.peerId
@@ -34,6 +95,10 @@ function formatMessageTimestamp(isoString) {
  * @param {() => void} [props.onStartAudioCall]
  * @param {() => void} [props.onStartVideoCall]
  * @param {boolean} [props.isSending]
+ * @param {boolean} [props.isStartingCall] - True while a call to this peer is being placed;
+ *   shows a loading spinner on the call header buttons instead of the icon.
+ * @param {boolean} [props.isPeerTyping] - Shows a "peer is typing…" hint under the header.
+ * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
  */
 export default function ChatConversationScreen({
   peerId,
@@ -46,20 +111,51 @@ export default function ChatConversationScreen({
   onStartAudioCall,
   onStartVideoCall,
   isSending = false,
+  isStartingCall = false,
+  isPeerTyping = false,
+  onTypingChange,
 }) {
   const [draft, setDraft] = useState('');
   const hasReachedTopRef = useRef(false);
+  const typingIdleTimerRef = useRef(null);
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
   const orderedMessages = [...messages].reverse();
+  const listItems = useMemo(() => buildListItems(orderedMessages), [orderedMessages]);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(typingIdleTimerRef.current);
+    };
+  }, []);
+
+  const reportTyping = useCallback(
+    (isTyping) => {
+      clearTimeout(typingIdleTimerRef.current);
+      onTypingChange?.(isTyping);
+      if (isTyping) {
+        typingIdleTimerRef.current = setTimeout(() => onTypingChange?.(false), TYPING_IDLE_MS);
+      }
+    },
+    [onTypingChange],
+  );
+
+  const handleChangeText = useCallback(
+    (text) => {
+      setDraft(text);
+      reportTyping(Boolean(text.trim()));
+    },
+    [reportTyping],
+  );
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed) return;
     onSendMessage?.(trimmed);
     setDraft('');
-  }, [draft, onSendMessage]);
+    reportTyping(false);
+  }, [draft, onSendMessage, reportTyping]);
 
   const handleRetry = useCallback(
     (body) => {
@@ -82,6 +178,8 @@ export default function ChatConversationScreen({
   );
 
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
+  const isPeerKnownOffline = peerPresence?.online === false;
+  const isCallDisabled = isStartingCall || isPeerKnownOffline;
 
   return (
     <KeyboardAvoidingView
@@ -104,7 +202,13 @@ export default function ChatConversationScreen({
             <Text style={styles.headerTitle} numberOfLines={1}>
               {peerId}
             </Text>
-            {presenceLabel ? <Text style={styles.headerSubtitle}>{presenceLabel}</Text> : null}
+            {isPeerTyping ? (
+              <Text style={styles.headerSubtitle} testID="chat-typing-indicator">
+                typing…
+              </Text>
+            ) : presenceLabel ? (
+              <Text style={styles.headerSubtitle}>{presenceLabel}</Text>
+            ) : null}
           </View>
 
           {onStartAudioCall ? (
@@ -112,6 +216,8 @@ export default function ChatConversationScreen({
               icon="chatAudioCall"
               onPress={onStartAudioCall}
               size={40}
+              disabled={isCallDisabled}
+              loading={isStartingCall}
               accessibilityLabel={`Call ${peerId}`}
               testID="chat-call-audio"
             />
@@ -121,6 +227,8 @@ export default function ChatConversationScreen({
               icon="chatVideoCall"
               onPress={onStartVideoCall}
               size={40}
+              disabled={isCallDisabled}
+              loading={isStartingCall}
               accessibilityLabel={`Video call ${peerId}`}
               testID="chat-call-video"
             />
@@ -129,30 +237,58 @@ export default function ChatConversationScreen({
 
         <FlatList
           testID="chat-message-list"
-          data={orderedMessages}
-          keyExtractor={(item) => item.messageId}
+          data={listItems}
+          keyExtractor={(item) => item.key}
           contentContainerStyle={styles.messageList}
           onScroll={handleScroll}
           scrollEventThrottle={32}
           renderItem={({ item }) => {
-            const isOwn = item.senderId === currentUserId;
+            if (item.type === 'date') {
+              return (
+                <View style={styles.dateSeparator} testID="chat-date-separator">
+                  <Text style={styles.dateSeparatorText}>{item.label}</Text>
+                </View>
+              );
+            }
+
+            const message = item.message;
+            const isOwn = message.senderId === currentUserId;
+            const showFooter = item.isGroupEnd;
+            const isRead = Boolean(message.readAt);
             return (
               <View
                 testID="chat-message-row"
-                style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowPeer]}
+                style={[
+                  styles.messageRow,
+                  isOwn ? styles.messageRowOwn : styles.messageRowPeer,
+                  !item.isGroupEnd && styles.messageRowGrouped,
+                ]}
               >
                 <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
                   <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>
-                    {item.body}
+                    {message.body}
                   </Text>
                 </View>
-                <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
-                  {formatMessageTimestamp(item.createdAt)}
-                </Text>
-                {item.pending ? <Text style={styles.pendingText}>Sending…</Text> : null}
-                {item.failed ? (
+                {showFooter ? (
+                  <View style={styles.messageFooter}>
+                    <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
+                      {formatMessageTimestamp(message.createdAt)}
+                    </Text>
+                    {isOwn && !message.pending && !message.failed ? (
+                      <Text
+                        style={[styles.tick, isRead && styles.tickRead]}
+                        testID="chat-message-tick"
+                        accessibilityLabel={isRead ? 'Read' : 'Sent'}
+                      >
+                        {isRead ? '✓✓' : '✓'}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                {message.pending ? <Text style={styles.pendingText}>Sending…</Text> : null}
+                {message.failed ? (
                   <Pressable
-                    onPress={() => handleRetry(item.body)}
+                    onPress={() => handleRetry(message.body)}
                     accessibilityRole="button"
                     accessibilityLabel="Retry sending message"
                   >
@@ -167,7 +303,7 @@ export default function ChatConversationScreen({
         <View style={styles.composer}>
           <TextInput
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={handleChangeText}
             placeholder="Message"
             placeholderTextColor={colors.textSecondary}
             style={styles.composerInput}
@@ -231,9 +367,25 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.sm,
   },
+  dateSeparator: {
+    alignItems: 'center',
+    marginVertical: spacing.sm,
+  },
+  dateSeparatorText: {
+    ...typography.hint,
+    color: colors.textSecondary,
+    backgroundColor: colors.surfaceRaised,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
   messageRow: {
     marginBottom: spacing.sm,
     maxWidth: '80%',
+  },
+  messageRowGrouped: {
+    marginBottom: 2,
   },
   messageRowOwn: {
     alignSelf: 'flex-end',
@@ -260,13 +412,25 @@ const styles = StyleSheet.create({
   bubbleTextPeer: {
     color: colors.textPrimary,
   },
+  messageFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   timestamp: {
     ...typography.hint,
     color: colors.textMuted,
-    marginTop: 2,
   },
   timestampOwn: {
     textAlign: 'right',
+  },
+  tick: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  tickRead: {
+    color: colors.accentButton,
   },
   pendingText: {
     ...typography.hint,

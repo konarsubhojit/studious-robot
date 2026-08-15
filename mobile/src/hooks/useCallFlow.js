@@ -79,6 +79,17 @@ const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
 const OFFLINE_ERROR_THRESHOLD = 3;
 
 /**
+ * Safety-net timeout for a peer's typing indicator: cleared automatically
+ * this long after the last `isTyping: true` event, in case the corresponding
+ * `isTyping: false` event is dropped (e.g. the peer's app is killed mid-type).
+ */
+const TYPING_INDICATOR_TIMEOUT_MS = 6000;
+
+/** How often `sendTypingIndicator(peerId, true)` may be emitted while the
+ * user keeps typing, so every keystroke doesn't trigger a socket emit. */
+const TYPING_INDICATOR_THROTTLE_MS = 2000;
+
+/**
  * Call phases that drive which screen the UI renders.
  *
  * idle             – no active call; show Lobby
@@ -213,6 +224,18 @@ export default function useCallFlow() {
   // peerId of the conversation currently open in the UI, or null. Drives
   // auto-mark-read for incoming messages from that peer.
   const [activeChatPeerId, setActiveChatPeerId] = useState(null);
+  // True from the moment `placeCall` is invoked until the call reaches
+  // OUTGOING_RINGING (or fails). Lets chat-header call buttons show a brief
+  // loading state instead of appearing to do nothing while the local camera
+  // preview starts and the socket/`call.initiate` round-trip completes.
+  const [isPlacingCall, setIsPlacingCall] = useState(false);
+  // Keyed by peerId → boolean. True while that peer is actively typing in the
+  // open conversation (relayed via the ephemeral `message.typing` socket
+  // event). Cleared on receipt of isTyping:false or after a short timeout, in
+  // case a "stopped typing" event is dropped.
+  const [typingByPeer, setTypingByPeer] = useState({});
+  const typingTimeoutsRef = useRef({});
+  const typingSentAtRef = useRef({});
   // True while the remote participant is screen-sharing (relayed via the
   // `call.media-state` socket event).
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
@@ -251,6 +274,9 @@ export default function useCallFlow() {
   const authedFetchRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
+  // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
+  // (rapid double-tap) without waiting for the state update to flush.
+  const isPlacingCallRef = useRef(false);
   const callConnectedAtRef = useRef(null);
   const elapsedTimerRef = useRef(null);
   const connectionQualityRef = useRef({ bars: 0, label: "No link" });
@@ -868,6 +894,40 @@ export default function useCallFlow() {
     [signalingUrl],
   );
 
+  /**
+   * Notify `peerId` that the local user is (or has stopped) typing in their
+   * conversation, via the ephemeral `message.typing` socket event. Silently a
+   * no-op when there is no connected socket — typing indicators are a
+   * best-effort UI nicety, never worth surfacing an error for.
+   *
+   * Emits are throttled to at most once per {@link TYPING_INDICATOR_THROTTLE_MS}
+   * per peer while `isTyping` stays true, so a fast typist doesn't flood the
+   * socket; the final `isTyping: false` (composer cleared/blurred) always
+   * goes out immediately so the peer's indicator doesn't linger.
+   *
+   * @param {string} peerId
+   * @param {boolean} isTyping
+   */
+  const sendTypingIndicator = useCallback((peerId, isTyping) => {
+    const trimmedPeerId = (peerId ?? "").trim();
+    if (!trimmedPeerId) return;
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+
+    const now = Date.now();
+    if (isTyping) {
+      const lastSentAt = typingSentAtRef.current[trimmedPeerId] ?? 0;
+      if (now - lastSentAt < TYPING_INDICATOR_THROTTLE_MS) return;
+    }
+    typingSentAtRef.current[trimmedPeerId] = now;
+
+    socket.emit("message.typing", {
+      version: SIGNALING_VERSION,
+      recipientId: trimmedPeerId,
+      isTyping: Boolean(isTyping),
+    });
+  }, []);
+
   /** Sum of unreadCount across every conversation; drives the tab badge. */
   const unreadTotal = useMemo(
     () => conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0),
@@ -1359,6 +1419,8 @@ export default function useCallFlow() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
+    Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
+    typingTimeoutsRef.current = {};
   }, []);
 
   // Store mutable callbacks in refs so socket listeners always call the latest
@@ -1669,6 +1731,38 @@ export default function useCallFlow() {
           }
           return { ...prev, [peerId]: [message, ...existing] };
         });
+      });
+
+      socket.on("message.read", ({ readerId, readAt }) => {
+        if (!readerId) return;
+        // `readerId` is the peer who just read our messages; messagesByPeer
+        // is keyed by the other participant regardless of send direction, so
+        // it doubles as the lookup key here.
+        setMessagesByPeer((prev) => {
+          const existing = prev[readerId];
+          if (!existing) return prev;
+          let changed = false;
+          const updated = existing.map((m) => {
+            if (m.senderId === userId && !m.readAt) {
+              changed = true;
+              return { ...m, readAt: readAt ?? new Date().toISOString() };
+            }
+            return m;
+          });
+          return changed ? { ...prev, [readerId]: updated } : prev;
+        });
+      });
+
+      socket.on("message.typing", ({ senderId, isTyping }) => {
+        if (!senderId) return;
+        clearTimeout(typingTimeoutsRef.current[senderId]);
+        setTypingByPeer((prev) => ({ ...prev, [senderId]: Boolean(isTyping) }));
+        if (isTyping) {
+          // Safety net: auto-clear if a "stopped typing" event never arrives.
+          typingTimeoutsRef.current[senderId] = setTimeout(() => {
+            setTypingByPeer((prev) => ({ ...prev, [senderId]: false }));
+          }, TYPING_INDICATOR_TIMEOUT_MS);
+        }
       });
 
       // ── In-call screen-share relay ──────────────────────────────────────
@@ -2070,6 +2164,8 @@ export default function useCallFlow() {
 
   const placeCall = useCallback(
     async (explicitCalleeId) => {
+      if (isPlacingCallRef.current) return;
+
       const explicit = (
         typeof explicitCalleeId === "string" ? explicitCalleeId : ""
       ).trim();
@@ -2083,6 +2179,8 @@ export default function useCallFlow() {
         return;
       }
 
+      isPlacingCallRef.current = true;
+      setIsPlacingCall(true);
       try {
         setCallSummary(null);
 
@@ -2129,6 +2227,9 @@ export default function useCallFlow() {
         logError("[CallFlow] placeCall failed", error);
         updateStatus(`Failed to place call: ${error.message}`, "error");
         endActiveCall();
+      } finally {
+        isPlacingCallRef.current = false;
+        setIsPlacingCall(false);
       }
     },
     [
@@ -2593,6 +2694,7 @@ export default function useCallFlow() {
     callPhase,
     activeCall,
     incomingCall,
+    isPlacingCall,
 
     // UI status
     status,
@@ -2619,6 +2721,8 @@ export default function useCallFlow() {
     fetchMessagesForPeer,
     sendMessage,
     markConversationRead,
+    typingByPeer,
+    sendTypingIndicator,
     isRemoteScreenSharing,
 
     // In-call media state

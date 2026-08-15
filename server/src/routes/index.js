@@ -31,7 +31,7 @@ function mountRoutes(app, ctx) {
   app.use(createBlocksRouter({ state, db }));
   app.use(createAuditLogRouter({ state }));
   app.use(createCallsRouter({ state, io, ringingTimeoutMs }));
-  app.use(createMessagesRouter({ state }));
+  app.use(createMessagesRouter({ state, io }));
 }
 
 module.exports = { mountRoutes };
