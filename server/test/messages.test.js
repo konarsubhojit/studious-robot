@@ -23,7 +23,12 @@ function spyOnMessagePush() {
     calls.push({ channel, messageData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
-  return { calls, restore: () => { mod.sendMessagePush = original; } };
+  return {
+    calls,
+    restore: () => {
+      mod.sendMessagePush = original;
+    },
+  };
 }
 
 async function startServer() {
@@ -91,7 +96,10 @@ test('message.send delivers to the recipient and acks the sender', async (t) => 
 
   const alice = await connectSocket(url, aliceSession);
   const bob = await connectSocket(url, bobSession);
-  t.after(() => { alice.disconnect(); bob.disconnect(); });
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
 
   const received = new Promise((resolve) => bob.once('message.received', resolve));
   const delivered = new Promise((resolve) => alice.once('message.delivered', resolve));
@@ -280,7 +288,10 @@ test('message.send does not push to a recipient who is connected', async (t) => 
 
   const alice = await connectSocket(url, aliceSession);
   const bob = await connectSocket(url, bobSession);
-  t.after(() => { alice.disconnect(); bob.disconnect(); });
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
 
   await emitWithAck(alice, 'message.send', {
     version: VERSION,
@@ -337,16 +348,22 @@ test('GET /messages returns the conversation newest-first with pagination', asyn
   const first = await getJson(url, '/messages?peerId=page-bob&limit=2', aliceSession);
   assert.equal(first.status, 200);
   assert.equal(first.body.messages.length, 2);
-  assert.deepEqual(first.body.messages.map((m) => m.body), ['msg-4', 'msg-3']);
+  assert.deepEqual(
+    first.body.messages.map((m) => m.body),
+    ['msg-4', 'msg-3']
+  );
 
   const cursor = first.body.messages[first.body.messages.length - 1].createdAt;
   const second = await getJson(
     url,
     `/messages?peerId=page-bob&limit=2&before=${encodeURIComponent(cursor)}`,
-    aliceSession,
+    aliceSession
   );
   assert.equal(second.status, 200);
-  assert.deepEqual(second.body.messages.map((m) => m.body), ['msg-2', 'msg-1']);
+  assert.deepEqual(
+    second.body.messages.map((m) => m.body),
+    ['msg-2', 'msg-1']
+  );
 
   // Both participants resolve the same conversation.
   const fromBob = await getJson(url, '/messages?peerId=page-alice', bobSession);
@@ -400,7 +417,11 @@ test('GET /conversations summarises each conversation, most recent first, with u
   t.after(() => alice.disconnect());
 
   // Alice ↔ Bob: two messages, most recent overall.
-  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'conv-bob', body: 'hi bob' });
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'conv-bob',
+    body: 'hi bob',
+  });
 
   // Alice ↔ Carol: one older message.
   const carolAck = await emitWithAck(alice, 'message.send', {
@@ -427,7 +448,9 @@ test('GET /conversations summarises each conversation, most recent first, with u
   assert.equal(second.lastMessage.messageId, carolAck.message.messageId);
 
   // From Bob's perspective the two alice→bob messages are unread.
-  const bobSessionId = (await postJson(url, '/session', { userId: 'conv-bob', deviceId: 'device-conv-bob' })).body.sessionId;
+  const bobSessionId = (
+    await postJson(url, '/session', { userId: 'conv-bob', deviceId: 'device-conv-bob' })
+  ).body.sessionId;
   const bobRes = await getJson(url, '/conversations', bobSessionId);
   assert.equal(bobRes.status, 200);
   assert.equal(bobRes.body.conversations.length, 1);
@@ -435,7 +458,7 @@ test('GET /conversations summarises each conversation, most recent first, with u
   assert.equal(bobRes.body.conversations[0].unreadCount, 2);
 });
 
-test('GET /conversations reports each peer\'s live online status', async (t) => {
+test("GET /conversations reports each peer's live online status", async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
 
@@ -448,8 +471,16 @@ test('GET /conversations reports each peer\'s live online status', async (t) => 
   const bob = await connectSocket(url, bobSession);
   t.after(() => bob.disconnect());
 
-  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'convonline-bob', body: 'hi bob' });
-  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'convonline-carol', body: 'hi carol' });
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'convonline-bob',
+    body: 'hi bob',
+  });
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'convonline-carol',
+    body: 'hi carol',
+  });
 
   const res = await getJson(url, '/conversations', aliceSession);
   assert.equal(res.status, 200);
@@ -521,8 +552,16 @@ test('POST /messages/read marks messages read; unread count drops to 0; idempote
   const alice = await connectSocket(url, aliceSession);
   t.after(() => alice.disconnect());
 
-  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'one' });
-  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'two' });
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'read-bob',
+    body: 'one',
+  });
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'read-bob',
+    body: 'two',
+  });
 
   const before = await getJson(url, '/conversations', bobSession);
   assert.equal(before.body.conversations[0].unreadCount, 2);
@@ -581,7 +620,9 @@ test('POST /messages/read does not emit message.read when nothing was updated', 
   t.after(() => alice.disconnect());
 
   let received = false;
-  alice.on('message.read', () => { received = true; });
+  alice.on('message.read', () => {
+    received = true;
+  });
 
   const readRes = await postJson(url, '/messages/read', { peerId: 'readquiet-alice' }, bobSession);
   assert.equal(readRes.status, 200);
@@ -603,7 +644,10 @@ test('message.typing relays an ephemeral typing indicator to the recipient', asy
 
   const alice = await connectSocket(url, aliceSession);
   const bob = await connectSocket(url, bobSession);
-  t.after(() => { alice.disconnect(); bob.disconnect(); });
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
 
   const typingEvent = new Promise((resolve) => bob.once('message.typing', resolve));
 
@@ -632,11 +676,21 @@ test('message.typing is ignored for an unauthenticated socket, an unsupported ve
   t.after(() => guest.disconnect());
 
   let received = false;
-  alice.on('message.typing', () => { received = true; });
+  alice.on('message.typing', () => {
+    received = true;
+  });
 
-  guest.emit('message.typing', { version: VERSION, recipientId: 'typingguard-alice', isTyping: true });
+  guest.emit('message.typing', {
+    version: VERSION,
+    recipientId: 'typingguard-alice',
+    isTyping: true,
+  });
   alice.emit('message.typing', { version: 99, recipientId: 'typingguard-alice', isTyping: true });
-  alice.emit('message.typing', { version: VERSION, recipientId: 'typingguard-alice', isTyping: true });
+  alice.emit('message.typing', {
+    version: VERSION,
+    recipientId: 'typingguard-alice',
+    isTyping: true,
+  });
 
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(received, false);

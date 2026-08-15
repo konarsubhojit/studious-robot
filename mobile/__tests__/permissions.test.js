@@ -80,10 +80,7 @@ describe('permissions helpers', () => {
   });
 
   test('fails gracefully when a required media permission is denied', async () => {
-    mockCheck
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    mockCheck.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.CAMERA': 'denied',
       'android.permission.RECORD_AUDIO': 'granted',
@@ -97,10 +94,7 @@ describe('permissions helpers', () => {
   });
 
   test('warns but does not block the call when Bluetooth permission is denied', async () => {
-    mockCheck
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+    mockCheck.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.BLUETOOTH_CONNECT': 'denied',
     });

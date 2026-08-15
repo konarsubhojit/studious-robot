@@ -48,7 +48,7 @@ export default function DraggableCallControls({
   // stay accurate when the font size or content size changes.
   const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT_ESTIMATE);
   const handlePanelLayout = useCallback(
-    (event) => {
+    event => {
       const { height } = event.nativeEvent.layout;
       if (height > 0 && height !== panelHeight) {
         setPanelHeight(height);
@@ -81,7 +81,7 @@ export default function DraggableCallControls({
       startX.value = panX.value;
       startY.value = panY.value;
     })
-    .onUpdate((event) => {
+    .onUpdate(event => {
       'worklet';
       const nextX = startX.value + event.translationX;
       const nextY = startY.value + event.translationY;
@@ -99,9 +99,12 @@ export default function DraggableCallControls({
         onLayout={handlePanelLayout}
         style={[styles.panel, { width: panelWidth }, animatedStyle]}
         accessibilityLabel="Call controls. Drag to reposition."
-        testID="draggable-call-controls"
-      >
-        <View style={styles.dragHandle} accessibilityElementsHidden={true} importantForAccessibility="no" />
+        testID="draggable-call-controls">
+        <View
+          style={styles.dragHandle}
+          accessibilityElementsHidden={true}
+          importantForAccessibility="no"
+        />
         <CallControls
           isMuted={isMuted}
           isVideoEnabled={isVideoEnabled}

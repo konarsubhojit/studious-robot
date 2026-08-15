@@ -310,7 +310,10 @@ export function registerCallActionListeners() {
   }
 
   const answerHandler = ({ callUUID } = {}) => {
-    logInfo('[CallKeep] answerCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    logInfo('[CallKeep] answerCall', {
+      callUUID,
+      hasActiveHandler: Boolean(activeCallActionHandlers),
+    });
     dismissIncomingCallNotification(callUUID);
     stopIncomingRingtone();
     if (activeCallActionHandlers?.onAnswer) {
@@ -323,7 +326,10 @@ export function registerCallActionListeners() {
     pendingAnswerCallId = callUUID;
   };
   const endHandler = ({ callUUID } = {}) => {
-    logInfo('[CallKeep] endCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    logInfo('[CallKeep] endCall', {
+      callUUID,
+      hasActiveHandler: Boolean(activeCallActionHandlers),
+    });
     dismissIncomingCallNotification(callUUID);
     stopIncomingRingtone();
     if (pendingAnswerCallId === callUUID) pendingAnswerCallId = null;
@@ -390,7 +396,7 @@ export function registerShowIncomingCallUiListener() {
     const shown = await showIncomingCallNotification({
       callId: callUUID,
       callerId: name || handle,
-    }).catch((error) => {
+    }).catch(error => {
       logError('[CallKeep] showIncomingCallNotification threw', error);
       return false;
     });

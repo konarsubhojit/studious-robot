@@ -14,9 +14,9 @@ import com.facebook.react.bridge.ReactMethod
  * Native bridge that lets JavaScript start/stop the call foreground service and
  * request Picture-in-Picture mode for the current activity.
  */
-class CallServiceModule(private val reactContext: ReactApplicationContext) :
-  ReactContextBaseJavaModule(reactContext) {
-
+class CallServiceModule(
+  private val reactContext: ReactApplicationContext,
+) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = NAME
 
   @ReactMethod
@@ -59,7 +59,8 @@ class CallServiceModule(private val reactContext: ReactApplicationContext) :
 
     try {
       val params =
-        PictureInPictureParams.Builder()
+        PictureInPictureParams
+          .Builder()
           .setAspectRatio(Rational(PIP_ASPECT_RATIO_WIDTH, PIP_ASPECT_RATIO_HEIGHT))
           .build()
       val entered = activity.enterPictureInPictureMode(params)

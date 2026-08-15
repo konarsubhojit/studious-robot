@@ -64,9 +64,9 @@ function getCallTransitionEventName(status, reason) {
 function logIncomingCallPushSkip(call, reason, deviceId = null, details = '') {
   console.log(
     `[push] Skipped call.incoming callId=${call.callId} user=${call.calleeId}` +
-    (deviceId ? ` device=${deviceId}` : '') +
-    ` reason=${reason}` +
-    details,
+      (deviceId ? ` device=${deviceId}` : '') +
+      ` reason=${reason}` +
+      details
   );
 }
 
@@ -81,10 +81,11 @@ function getNoPushChannelReason(state, userId) {
 function dispatchIncomingCallPushes(state, call) {
   const connections = state.userConnections.get(call.calleeId);
   const connectedDeviceIds = new Set(
-    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+    Array.from(connections?.values() || [], (connection) => connection.deviceId)
   );
-  const pushChannels = resolveReachableChannels(state, call.calleeId)
-    .filter((channel) => channel.type === 'push');
+  const pushChannels = resolveReachableChannels(state, call.calleeId).filter(
+    (channel) => channel.type === 'push'
+  );
   verboseLog('push', 'call.incoming.channels_resolved', {
     callId: call.callId,
     calleeId: call.calleeId,
@@ -103,21 +104,22 @@ function dispatchIncomingCallPushes(state, call) {
         call,
         'callee_online',
         channel.deviceId,
-        ` activeSockets=${connections?.size ?? 0}`,
+        ` activeSockets=${connections?.size ?? 0}`
       );
       continue;
     }
 
     console.log(
       `[push] Attempting call.incoming callId=${call.callId}` +
-      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`,
+        ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`
     );
-    push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    push
+      .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
       .then((outcome) => handleDeadTokenOutcome(state, outcome))
       .catch((err) => {
         console.error(
           `[push] Failed call.incoming callId=${call.callId}` +
-          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+            ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
         );
       });
   }
@@ -125,12 +127,7 @@ function dispatchIncomingCallPushes(state, call) {
 
 function findPushChannelForDevice(state, userId, deviceId) {
   const device = state.devices.get(deviceId);
-  if (
-    !device ||
-    device.userId !== userId ||
-    !device.pushProvider ||
-    !device.pushToken
-  ) {
+  if (!device || device.userId !== userId || !device.pushProvider || !device.pushToken) {
     return null;
   }
   return {
@@ -176,15 +173,16 @@ function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
 
   console.log(
     `[push] Attempting call.incoming callId=${call.callId}` +
-    ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
-    (trigger ? ` trigger=${trigger}` : ''),
+      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
+      (trigger ? ` trigger=${trigger}` : '')
   );
-  push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+  push
+    .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
     .then((outcome) => handleDeadTokenOutcome(state, outcome))
     .catch((err) => {
       console.error(
         `[push] Failed call.incoming callId=${call.callId}` +
-        ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`,
+          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
       );
     });
 }
@@ -200,7 +198,7 @@ function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
-    `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`,
+    `[signaling] call.created callId=${call.callId} callerId=${call.callerId} calleeId=${call.calleeId} status=${call.status}`
   );
   verboseLog('calls', 'created', {
     callId: call.callId,
@@ -236,8 +234,8 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     state.telemetry.recordCallTransition(call, previousStatus);
     console.log(
       `[signaling] call.transition callId=${call.callId} ${previousStatus}->${call.status}` +
-      (reason ? ` reason=${reason}` : '') +
-      (actor ? ` actor=${actor}` : ''),
+        (reason ? ` reason=${reason}` : '') +
+        (actor ? ` actor=${actor}` : '')
     );
     verboseLog('calls', 'transition', {
       callId: call.callId,

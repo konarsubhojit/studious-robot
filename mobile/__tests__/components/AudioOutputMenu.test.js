@@ -31,9 +31,13 @@ describe('AudioOutputMenu', () => {
       tree.root.findByProps({ testID: 'audio-output-trigger' }).props.onPress();
     });
 
-    expect(tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.SPEAKER_PHONE}` })).toBeTruthy();
+    expect(
+      tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.SPEAKER_PHONE}` }),
+    ).toBeTruthy();
     expect(tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.EARPIECE}` })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.BLUETOOTH}` })).toBeTruthy();
+    expect(
+      tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.BLUETOOTH}` }),
+    ).toBeTruthy();
   });
 
   test('invokes onSelect with the chosen route', () => {
@@ -41,12 +45,7 @@ describe('AudioOutputMenu', () => {
     let tree;
     act(() => {
       tree = renderer.create(
-        <AudioOutputMenu
-          available={[]}
-          selected={null}
-          isSpeakerEnabled
-          onSelect={onSelect}
-        />,
+        <AudioOutputMenu available={[]} selected={null} isSpeakerEnabled onSelect={onSelect} />,
       );
     });
 

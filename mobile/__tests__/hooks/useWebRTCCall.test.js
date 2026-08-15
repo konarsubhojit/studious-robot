@@ -9,7 +9,9 @@ const mockSocketInstance = {
   connected: false,
   id: null,
   disconnect: jest.fn(),
-  on: jest.fn((event, handler) => { socketHandlers[event] = handler; }),
+  on: jest.fn((event, handler) => {
+    socketHandlers[event] = handler;
+  }),
   emit: jest.fn(),
   io: {
     engine: { on: jest.fn() },
@@ -20,9 +22,9 @@ const mockSocketInstance = {
 jest.mock('socket.io-client', () => ({ io: jest.fn(() => mockSocketInstance) }));
 jest.mock('react-native-webrtc', () => ({
   mediaDevices: { getUserMedia: jest.fn() },
-  RTCIceCandidate: jest.fn((c) => c),
+  RTCIceCandidate: jest.fn(c => c),
   RTCPeerConnection: jest.fn(),
-  RTCSessionDescription: jest.fn((s) => s),
+  RTCSessionDescription: jest.fn(s => s),
 }));
 jest.mock('../../src/appLogger', () => ({
   clearLogs: jest.fn(),
@@ -49,12 +51,14 @@ jest.mock('../../src/hooks/useCompactCallView', () =>
   jest.fn(() => ({ isCompactView: false, setIsCompactView: mockSetIsCompactView })),
 );
 jest.mock('../../src/cameraLighting', () => ({ applyLightingAdjustment: jest.fn() }));
-jest.mock('../../src/callUx', () => ({ getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })) }));
+jest.mock('../../src/callUx', () => ({
+  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })),
+}));
 jest.mock('../../src/diagnostics', () => ({
   buildExportHeader: jest.fn(),
   getMediaAccessStatus: jest.fn(),
   getSocketTransportName: jest.fn(),
-  sanitizeUrlForLog: jest.fn((u) => u),
+  sanitizeUrlForLog: jest.fn(u => u),
   summarizeIceCandidate: jest.fn(),
   writeLogsFile: jest.fn(),
 }));
@@ -64,7 +68,9 @@ jest.mock('../../src/mediaControls', () => ({
 }));
 jest.mock('../../src/permissions', () => ({ ensureCallPermissions: jest.fn() }));
 jest.mock('../../src/settingsStorage', () => ({
-  loadSettings: jest.fn(() => Promise.resolve({ autoCameraLightingEnabled: false, speakerEnabledByDefault: true })),
+  loadSettings: jest.fn(() =>
+    Promise.resolve({ autoCameraLightingEnabled: false, speakerEnabledByDefault: true }),
+  ),
   saveSettings: jest.fn(),
 }));
 jest.mock('../../src/socketConfig', () => ({
@@ -84,7 +90,9 @@ function TestHook({ resultRef }) {
 function renderHook() {
   const resultRef = { current: null };
   let tree;
-  act(() => { tree = renderer.create(<TestHook resultRef={resultRef} />); });
+  act(() => {
+    tree = renderer.create(<TestHook resultRef={resultRef} />);
+  });
   return { resultRef, tree };
 }
 
@@ -163,12 +171,20 @@ describe('useWebRTCCall handleCameraSwitch hardening', () => {
     mediaDevices.getUserMedia.mockResolvedValue(stream);
 
     const { resultRef, tree } = renderHook();
-    await act(async () => { await resultRef.current.startLocalPreview(); });
-    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      await resultRef.current.startLocalPreview();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
 
     const before = resultRef.current.isFrontCamera;
-    await act(async () => { await resultRef.current.handleCameraSwitch(); });
-    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      await resultRef.current.handleCameraSwitch();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
 
     expect(switchCamera).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isFrontCamera).toBe(!before);
@@ -186,19 +202,26 @@ describe('useWebRTCCall handleCameraSwitch hardening', () => {
     };
 
     const { mediaDevices } = require('react-native-webrtc');
-    mediaDevices.getUserMedia
-      .mockResolvedValueOnce(stream)
-      .mockResolvedValueOnce(newStream);
+    mediaDevices.getUserMedia.mockResolvedValueOnce(stream).mockResolvedValueOnce(newStream);
 
     const { resultRef, tree } = renderHook();
-    await act(async () => { await resultRef.current.startLocalPreview(); });
-    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      await resultRef.current.startLocalPreview();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
 
     const before = resultRef.current.isFrontCamera;
-    await act(async () => { await resultRef.current.handleCameraSwitch(); });
-    act(() => { tree.update(<TestHook resultRef={resultRef} />); });
+    await act(async () => {
+      await resultRef.current.handleCameraSwitch();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
 
-    expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(2,
+    expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({ video: { facingMode: 'environment' } }),
     );
     // Old track must be stopped and removed; new track added to the stream.

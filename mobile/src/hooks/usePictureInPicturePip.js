@@ -60,9 +60,18 @@ export default function usePictureInPicturePip({ onTap }) {
     }
     pipX.value = clampedX;
     pipY.value = clampedY;
-  }, [stageSize.width, stageSize.height, pipPosition.x, pipPosition.y, pipX, pipY, pipMaxX, pipMaxY]);
+  }, [
+    stageSize.width,
+    stageSize.height,
+    pipPosition.x,
+    pipPosition.y,
+    pipX,
+    pipY,
+    pipMaxX,
+    pipMaxY,
+  ]);
 
-  const handleCallStageLayout = useCallback((event) => {
+  const handleCallStageLayout = useCallback(event => {
     const { width, height } = event.nativeEvent.layout;
     setStageSize({ width, height });
   }, []);
@@ -85,7 +94,7 @@ export default function usePictureInPicturePip({ onTap }) {
             pipStartX.value = pipX.value;
             pipStartY.value = pipY.value;
           })
-          .onUpdate((event) => {
+          .onUpdate(event => {
             pipX.value = clamp(pipStartX.value + event.translationX, PIP_MARGIN, pipMaxX.value);
             pipY.value = clamp(pipStartY.value + event.translationY, PIP_MARGIN, pipMaxY.value);
           })

@@ -16,7 +16,6 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import io.wazo.callkeep.VoiceConnectionService
 
 class MainActivity : ReactActivity() {
-
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
@@ -28,7 +27,7 @@ class MainActivity : ReactActivity() {
    * which allows you to enable New Architecture with a single boolean flags [fabricEnabled]
    */
   override fun createReactActivityDelegate(): ReactActivityDelegate =
-      DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+    DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -115,8 +114,9 @@ class MainActivity : ReactActivity() {
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-        CallServiceModule.isCallActive &&
-        supportsPictureInPicture()) {
+      CallServiceModule.isCallActive &&
+      supportsPictureInPicture()
+    ) {
       enterPipSafely()
     }
   }
@@ -131,9 +131,10 @@ class MainActivity : ReactActivity() {
   @Suppress("DEPRECATION")
   override fun onBackPressed() {
     if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S &&
-        CallServiceModule.isCallActive &&
-        supportsPictureInPicture() &&
-        enterPipSafely()) {
+      CallServiceModule.isCallActive &&
+      supportsPictureInPicture() &&
+      enterPipSafely()
+    ) {
       return
     }
     super.onBackPressed()
@@ -141,18 +142,19 @@ class MainActivity : ReactActivity() {
 
   /** Whether this device advertises Picture-in-Picture support. */
   private fun supportsPictureInPicture(): Boolean =
-      packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
   /** Build PiP params, enabling auto-enter on Android 12+ when requested. */
   private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
     val builder =
-        PictureInPictureParams.Builder()
-            .setAspectRatio(
-                Rational(
-                    CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
-                    CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
-                ),
-            )
+      PictureInPictureParams
+        .Builder()
+        .setAspectRatio(
+          Rational(
+            CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
+            CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
+          ),
+        )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       builder.setAutoEnterEnabled(autoEnter)
     }
@@ -161,13 +163,13 @@ class MainActivity : ReactActivity() {
 
   /** Enter PiP, swallowing device/OEM failures. Returns true when entered. */
   private fun enterPipSafely(): Boolean =
-      try {
-        enterPictureInPictureMode(buildPipParams(autoEnter = false))
-      } catch (_: IllegalStateException) {
-        false
-      } catch (_: IllegalArgumentException) {
-        false
-      }
+    try {
+      enterPictureInPictureMode(buildPipParams(autoEnter = false))
+    } catch (_: IllegalStateException) {
+      false
+    } catch (_: IllegalArgumentException) {
+      false
+    }
 
   companion object {
     /**

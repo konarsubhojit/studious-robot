@@ -84,7 +84,9 @@ describe('cameraLighting', () => {
     expect(result.applied).toBe(true);
     expect(result.condition).toBe('low');
     expect(applyConstraints).toHaveBeenCalledTimes(1);
-    expect(applyConstraints.mock.calls[0][0].advanced).toContainEqual({ exposureCompensation: 1.5 });
+    expect(applyConstraints.mock.calls[0][0].advanced).toContainEqual({
+      exposureCompensation: 1.5,
+    });
   });
 
   test('applyLightingAdjustment is a no-op when brightness cannot be estimated', async () => {

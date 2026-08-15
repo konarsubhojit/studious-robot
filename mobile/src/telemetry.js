@@ -199,8 +199,7 @@ function buildSummary(entry) {
       startedAtMs !== null && signalingConnectedAtMs !== null
         ? signalingConnectedAtMs - startedAtMs
         : null,
-    durationMs:
-      startedAtMs !== null && endedAtMs !== null ? endedAtMs - startedAtMs : null,
+    durationMs: startedAtMs !== null && endedAtMs !== null ? endedAtMs - startedAtMs : null,
     reconnectCount: entry.reconnectCount,
     iceRestartCount: entry.iceRestartCount,
   };

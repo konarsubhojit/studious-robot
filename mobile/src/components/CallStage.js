@@ -47,8 +47,8 @@ export default function CallStage({
   const presenterBannerText = isScreenSharing
     ? "You're presenting"
     : isRemoteScreenSharing
-      ? `${participantLabel || 'They'} are presenting`
-      : null;
+    ? `${participantLabel || 'They'} are presenting`
+    : null;
 
   return (
     <View
@@ -57,8 +57,7 @@ export default function CallStage({
         isCompact && styles.callStageCompact,
         isLandscape && styles.callStageLandscape,
       ]}
-      onLayout={onLayout}
-    >
+      onLayout={onLayout}>
       {hasMainStream ? (
         <SafeRTCView
           fallbackLabel="Call video unavailable"

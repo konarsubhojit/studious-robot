@@ -29,13 +29,18 @@ import com.facebook.react.bridge.ReactMethod
  * Accept / Decline actions, over a high-importance channel with sound and
  * vibration so the device actually rings.
  */
-class IncomingCallNotificationModule(private val reactContext: ReactApplicationContext) :
-  ReactContextBaseJavaModule(reactContext) {
-
+class IncomingCallNotificationModule(
+  private val reactContext: ReactApplicationContext,
+) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = NAME
 
   @ReactMethod
-  fun show(callId: String, callerName: String, hasVideo: Boolean, promise: Promise) {
+  fun show(
+    callId: String,
+    callerName: String,
+    hasVideo: Boolean,
+    promise: Promise,
+  ) {
     try {
       val manager = notificationManager()
       createNotificationChannel(manager)
@@ -70,7 +75,8 @@ class IncomingCallNotificationModule(private val reactContext: ReactApplicationC
     channel.setBypassDnd(true)
     val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
     val audioAttributes =
-      AudioAttributes.Builder()
+      AudioAttributes
+        .Builder()
         .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
@@ -85,7 +91,8 @@ class IncomingCallNotificationModule(private val reactContext: ReactApplicationC
     manager: NotificationManager,
   ): Notification {
     val builder =
-      NotificationCompat.Builder(reactContext, CHANNEL_ID)
+      NotificationCompat
+        .Builder(reactContext, CHANNEL_ID)
         .setContentTitle(callerName)
         .setContentText(if (hasVideo) "Incoming WeTalk video call" else "Incoming WeTalk call")
         .setSmallIcon(android.R.drawable.ic_menu_call)
@@ -131,7 +138,10 @@ class IncomingCallNotificationModule(private val reactContext: ReactApplicationC
   }
 
   /** Routes a notification action button through [IncomingCallActionReceiver]. */
-  private fun actionPendingIntent(callId: String, action: String): PendingIntent {
+  private fun actionPendingIntent(
+    callId: String,
+    action: String,
+  ): PendingIntent {
     val intent =
       Intent(reactContext, IncomingCallActionReceiver::class.java).apply {
         this.action = action

@@ -333,7 +333,7 @@ export async function handleBackgroundPushMessage(remoteMessage) {
   await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
-  }).catch((error) => {
+  }).catch(error => {
     logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
   });
 
@@ -356,7 +356,7 @@ export function installBackgroundMessageHandler() {
     return false;
   }
 
-  api.setBackgroundMessageHandler(instance, async (remoteMessage) => {
+  api.setBackgroundMessageHandler(instance, async remoteMessage => {
     try {
       const incoming = await handleBackgroundPushMessage(remoteMessage);
       if (!incoming) {
@@ -395,7 +395,7 @@ export async function handleForegroundPushMessage(remoteMessage) {
   await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
-  }).catch((error) => {
+  }).catch(error => {
     logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
   });
 
@@ -414,7 +414,7 @@ export function installForegroundMessageHandler() {
   const { instance, api } = handle;
   if (typeof api.onMessage !== 'function') return () => {};
 
-  const unsubscribe = api.onMessage(instance, async (remoteMessage) => {
+  const unsubscribe = api.onMessage(instance, async remoteMessage => {
     try {
       await handleForegroundPushMessage(remoteMessage);
     } catch (error) {

@@ -39,8 +39,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
           accessibilityRole="button"
           accessibilityLabel={`Clear ${accessibilityLabel}`}
           testID={`${testID}-clear`}
-          style={styles.clearButton}
-        >
+          style={styles.clearButton}>
           <Text style={styles.clearButtonText}>✕</Text>
         </Pressable>
       ) : null}
@@ -62,7 +61,7 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
-    async (term) => {
+    async term => {
       if (typeof onSearchUsers !== 'function') return;
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
@@ -110,21 +109,15 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
         </View>
       ) : null}
       {!isSearching && results.length > 0
-        ? results.map((contact) => (
+        ? results.map(contact => (
             <Pressable
               key={contact.userId}
-              onPress={
-                onSelectContact ? () => onSelectContact(contact.userId) : undefined
-              }
+              onPress={onSelectContact ? () => onSelectContact(contact.userId) : undefined}
               disabled={!onSelectContact}
               accessibilityRole="button"
               accessibilityLabel={`Select ${contact.userId}`}
-              style={({ pressed }) => [
-                styles.contactRow,
-                pressed && styles.historyRowPressed,
-              ]}
-              testID="contact-row"
-            >
+              style={({ pressed }) => [styles.contactRow, pressed && styles.historyRowPressed]}
+              testID="contact-row">
               <View
                 style={[
                   styles.presenceDot,
@@ -133,9 +126,7 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
               />
               <View style={styles.contactText}>
                 <Text style={styles.contactName}>{contact.userId}</Text>
-                <Text style={styles.contactDetail}>
-                  {contact.online ? 'Online' : 'Offline'}
-                </Text>
+                <Text style={styles.contactDetail}>{contact.online ? 'Online' : 'Offline'}</Text>
               </View>
             </Pressable>
           ))
@@ -204,8 +195,7 @@ export default function Lobby({
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleRow}>
           <Text style={styles.title}>WeTalk</Text>
@@ -213,10 +203,11 @@ export default function Lobby({
             <Pressable
               onPress={onMarkMissedRead}
               accessibilityRole="button"
-              accessibilityLabel={`${missedCallCount} missed call${missedCallCount === 1 ? '' : 's'}`}
+              accessibilityLabel={`${missedCallCount} missed call${
+                missedCallCount === 1 ? '' : 's'
+              }`}
               testID="missed-calls-badge"
-              style={styles.missedBadge}
-            >
+              style={styles.missedBadge}>
               <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
             </Pressable>
           ) : null}
@@ -227,8 +218,7 @@ export default function Lobby({
               accessibilityRole="button"
               accessibilityLabel="Settings"
               testID="lobby-open-settings"
-              style={styles.gearButton}
-            >
+              style={styles.gearButton}>
               <Text style={styles.gearIcon}>⚙️</Text>
             </Pressable>
           ) : null}
@@ -239,7 +229,7 @@ export default function Lobby({
         {isServerUnreachable ? (
           <View style={styles.offlineBanner} accessibilityRole="alert" testID="offline-banner">
             <Text style={styles.offlineBannerText}>
-            Cannot reach server - check your connection
+              Cannot reach server - check your connection
             </Text>
             {onRetryConnect ? (
               <Pressable
@@ -247,8 +237,7 @@ export default function Lobby({
                 accessibilityRole="button"
                 accessibilityLabel="Retry server connection"
                 testID="offline-retry"
-                style={styles.offlineRetryButton}
-              >
+                style={styles.offlineRetryButton}>
                 <Text style={styles.offlineRetryText}>Retry</Text>
               </Pressable>
             ) : null}
@@ -260,7 +249,9 @@ export default function Lobby({
             <View style={styles.summaryTextWrap}>
               <Text style={styles.summaryTitle}>Last call ended</Text>
               <Text style={styles.summaryDetail}>
-                {`Duration ${formatCallDuration(callSummary.durationSeconds)} · ${callSummary.quality}`}
+                {`Duration ${formatCallDuration(callSummary.durationSeconds)} · ${
+                  callSummary.quality
+                }`}
               </Text>
             </View>
             <Pressable
@@ -268,8 +259,7 @@ export default function Lobby({
               accessibilityRole="button"
               accessibilityLabel="Dismiss last call summary"
               testID="dismiss-summary"
-              style={styles.summaryDismiss}
-            >
+              style={styles.summaryDismiss}>
               <Text style={styles.summaryDismissText}>✕</Text>
             </Pressable>
           </View>
@@ -278,14 +268,17 @@ export default function Lobby({
         {Array.isArray(callHistory) && callHistory.length > 0 ? (
           <View testID="call-history-section">
             <Text style={styles.sectionTitle}>Recent calls</Text>
-            {callHistory.slice(0, 5).map((entry) => {
+            {callHistory.slice(0, 5).map(entry => {
               const isMissed =
                 entry.direction === 'incoming' &&
                 (entry.status === 'missed' || entry.endReason === 'timeout');
-              const directionIconDef = ICONS[entry.direction === 'outgoing' ? 'callOutgoing' : 'callIncoming'];
+              const directionIconDef =
+                ICONS[entry.direction === 'outgoing' ? 'callOutgoing' : 'callIncoming'];
               const directionColor = isMissed ? colors.danger : colors.textSecondary;
-              const label = CALL_END_REASON_LABELS[entry.endReason] ??
-                            CALL_END_REASON_LABELS[entry.status] ?? 'Call';
+              const label =
+                CALL_END_REASON_LABELS[entry.endReason] ??
+                CALL_END_REASON_LABELS[entry.status] ??
+                'Call';
               const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
               return (
                 <Pressable
@@ -299,8 +292,7 @@ export default function Lobby({
                     isMissed && styles.historyRowMissed,
                     pressed && styles.historyRowPressed,
                   ]}
-                  testID="call-history-row"
-                >
+                  testID="call-history-row">
                   <View style={styles.historyIconWrap}>
                     {directionIconDef && MCIcon ? (
                       <MCIcon name={directionIconDef.icon} size={18} color={directionColor} />
@@ -376,8 +368,8 @@ export default function Lobby({
               {calleePresence.unknown
                 ? 'User not found'
                 : calleePresence.online
-                  ? 'Online'
-                  : 'Offline — they may miss your call'}
+                ? 'Online'
+                : 'Offline — they may miss your call'}
             </Text>
           </View>
         ) : null}
@@ -390,10 +382,7 @@ export default function Lobby({
           style={styles.callButton}
         />
 
-        <ContactDirectory
-          onSearchUsers={onSearchUsers}
-          onSelectContact={onSelectContact}
-        />
+        <ContactDirectory onSearchUsers={onSearchUsers} onSelectContact={onSelectContact} />
 
         {/* ── Legacy room-join section (developer mode only) ─────────────── */}
         {developerMode ? (
@@ -416,7 +405,11 @@ export default function Lobby({
             />
 
             <View style={styles.row}>
-              <AppButton title="Start Preview" onPress={onStartPreview} testID="lobby-start-preview" />
+              <AppButton
+                title="Start Preview"
+                onPress={onStartPreview}
+                testID="lobby-start-preview"
+              />
               <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
             </View>
 

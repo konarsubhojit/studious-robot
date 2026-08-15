@@ -75,7 +75,9 @@ test('session identity remains stable and device push tokens can be registered/u
     assert.equal(createdSession.body.deviceId, 'device-iphone');
     assert.equal(typeof createdSession.body.sessionId, 'string');
 
-    const fetchedSession = await getJson(url, '/session', { sessionId: createdSession.body.sessionId });
+    const fetchedSession = await getJson(url, '/session', {
+      sessionId: createdSession.body.sessionId,
+    });
     assert.equal(fetchedSession.status, 200);
     assert.deepEqual(fetchedSession.body, createdSession.body);
 
@@ -83,7 +85,7 @@ test('session identity remains stable and device push tokens can be registered/u
       url,
       '/devices/register',
       { provider: 'apns', pushToken: 'push-token-1' },
-      { sessionId: createdSession.body.sessionId },
+      { sessionId: createdSession.body.sessionId }
     );
     assert.equal(registered.status, 200);
     assert.deepEqual(registered.body, {
@@ -116,9 +118,14 @@ test('session identity remains stable and device push tokens can be registered/u
       },
     ]);
 
-    const unregistered = await postJson(url, '/devices/unregister', {}, {
-      sessionId: createdSession.body.sessionId,
-    });
+    const unregistered = await postJson(
+      url,
+      '/devices/unregister',
+      {},
+      {
+        sessionId: createdSession.body.sessionId,
+      }
+    );
     assert.equal(unregistered.status, 200);
     assert.deepEqual(unregistered.body, {
       status: 'unregistered',
@@ -154,13 +161,13 @@ test('presence and reachable channels support multiple devices for the same user
       url,
       '/devices/register',
       { provider: 'apns', pushToken: 'push-apns-1' },
-      { sessionId: session1.body.sessionId },
+      { sessionId: session1.body.sessionId }
     );
     await postJson(
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'push-fcm-1' },
-      { sessionId: session2.body.sessionId },
+      { sessionId: session2.body.sessionId }
     );
 
     clients.push(await connect(url, { sessionId: session1.body.sessionId }));
@@ -208,7 +215,7 @@ test('presence and reachable channels support multiple devices for the same user
           provider: 'apns',
           pushToken: 'push-apns-1',
         },
-      ],
+      ]
     );
 
     clients.forEach((client) => client.disconnect());

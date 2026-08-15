@@ -30,17 +30,18 @@ export default function CallTopBar({
             {participantLabel}
           </Text>
         ) : null}
-        <Text style={styles.timerText} accessibilityLabel={`Call duration ${formatCallDuration(elapsedCallSeconds)}`}>
+        <Text
+          style={styles.timerText}
+          accessibilityLabel={`Call duration ${formatCallDuration(elapsedCallSeconds)}`}>
           {formatCallDuration(elapsedCallSeconds)}
         </Text>
       </View>
       <View style={styles.rightGroup}>
         <View
           style={styles.qualityContainer}
-          accessibilityLabel={`Connection quality: ${connectionQuality.label}`}
-        >
+          accessibilityLabel={`Connection quality: ${connectionQuality.label}`}>
           <View style={styles.signalBars}>
-            {[0, 1, 2].map((barIndex) => (
+            {[0, 1, 2].map(barIndex => (
               <View
                 key={barIndex}
                 style={[
@@ -58,8 +59,7 @@ export default function CallTopBar({
             accessibilityRole="button"
             accessibilityLabel="Minimize call"
             testID="call-minimize"
-            style={styles.minimizeButton}
-          >
+            style={styles.minimizeButton}>
             {minimizeIconDef && MCIcon ? (
               <MCIcon name={minimizeIconDef.icon} size={18} color={colors.textPrimary} />
             ) : (

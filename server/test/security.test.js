@@ -270,13 +270,19 @@ test('call.initiate via socket: callee does NOT receive incoming call when calle
   ]);
   try {
     let calleeReceivedIncoming = false;
-    callee.on('call.incoming', () => { calleeReceivedIncoming = true; });
+    callee.on('call.incoming', () => {
+      calleeReceivedIncoming = true;
+    });
 
     await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
 
     // Give the server a moment to deliver any spurious event.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(calleeReceivedIncoming, false, 'callee should not receive incoming call from blocked caller');
+    assert.equal(
+      calleeReceivedIncoming,
+      false,
+      'callee should not receive incoming call from blocked caller'
+    );
   } finally {
     await teardown(caller, callee);
   }
@@ -366,7 +372,10 @@ test('rtc.offer via socket: rate limit is enforced', async () => {
     const ringingP = waitFor(caller, 'call.ringing');
     const callerStateP = waitFor(caller, 'call.state_changed');
     const calleeStateP = waitFor(callee, 'call.state_changed');
-    const initiated = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const initiated = await emitWithAck(caller, 'call.initiate', {
+      version: 1,
+      calleeId: 'user-bob',
+    });
     const callId = initiated.call.callId;
     await Promise.all([incomingP, ringingP, callerStateP, calleeStateP]);
 

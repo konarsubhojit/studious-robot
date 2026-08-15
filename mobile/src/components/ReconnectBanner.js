@@ -16,8 +16,7 @@ export default function ReconnectBanner({ onRetry }) {
         accessibilityRole="button"
         accessibilityLabel="Retry reconnection"
         testID="retry-reconnect"
-        style={styles.retryButton}
-      >
+        style={styles.retryButton}>
         <Text style={styles.retryButtonText}>Retry</Text>
       </Pressable>
     </View>

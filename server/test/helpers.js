@@ -15,7 +15,9 @@ function captureConsoleLog() {
   };
   return {
     lines,
-    restore: () => { console.log = original; },
+    restore: () => {
+      console.log = original;
+    },
   };
 }
 

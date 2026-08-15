@@ -140,7 +140,7 @@ export async function startScreenCapture({ withAudio = false } = {}) {
  */
 export function stopScreenCapture(stream) {
   if (!stream?.getTracks) return;
-  stream.getTracks().forEach((track) => {
+  stream.getTracks().forEach(track => {
     try {
       track.stop();
     } catch {

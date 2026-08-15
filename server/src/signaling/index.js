@@ -12,7 +12,10 @@ const {
   userRoom,
 } = require('../lib/state');
 const { createCallRecord } = require('../domain/calls');
-const { notifyCallCreated, notifyRingingCallsForDisconnectedDevice } = require('../domain/notifications');
+const {
+  notifyCallCreated,
+  notifyRingingCallsForDisconnectedDevice,
+} = require('../domain/notifications');
 const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
 const { registerMessageHandlers } = require('./messageHandlers');
 const {
@@ -89,12 +92,12 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     if (identity.sessionDowngraded) {
       socket.emit('session.invalid', { sessionId: identity.presentedSessionId });
       console.log(
-        `[signaling] socket ${socket.id} presented stale sessionId=${identity.presentedSessionId}; downgraded to guest user=${identity.userId}`,
+        `[signaling] socket ${socket.id} presented stale sessionId=${identity.presentedSessionId}; downgraded to guest user=${identity.userId}`
       );
     }
 
     console.log(
-      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
+      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`
     );
     verboseLog('socket', 'connected', {
       socketId: socket.id,
@@ -124,7 +127,9 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
       const room = state.rooms.get(roomId);
 
       if (room.size >= MAX_ROOM_SIZE) {
-        console.log(`[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room.size})`);
+        console.log(
+          `[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room.size})`
+        );
         socket.emit('room-full', { roomId });
         return;
       }
@@ -137,7 +142,9 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
       currentRoom = roomId;
       room.add(socket.id);
       socket.join(roomId);
-      console.log(`[signaling] join: socket ${socket.id} joined room "${roomId}" (size=${room.size})`);
+      console.log(
+        `[signaling] join: socket ${socket.id} joined room "${roomId}" (size=${room.size})`
+      );
 
       // Notify existing peer that a new participant joined.
       socket.to(roomId).emit('peer-joined', { id: socket.id });
@@ -171,11 +178,25 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
 
       const calleeId = normaliseId(payload.calleeId);
       if (!calleeId) {
-        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'calleeId is required', state);
+        acknowledgeError(
+          socket,
+          ack,
+          'call.initiate',
+          'bad_request',
+          'calleeId is required',
+          state
+        );
         return;
       }
       if (calleeId === socket.data.identity.userId) {
-        acknowledgeError(socket, ack, 'call.initiate', 'bad_request', 'cannot call yourself', state);
+        acknowledgeError(
+          socket,
+          ack,
+          'call.initiate',
+          'bad_request',
+          'cannot call yourself',
+          state
+        );
         return;
       }
 
@@ -189,9 +210,16 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
           details: { via: 'websocket' },
         });
         console.log(
-          `[security] call.blocked callerId=${socket.data.identity.userId} calleeId=${calleeId} via=websocket`,
+          `[security] call.blocked callerId=${socket.data.identity.userId} calleeId=${calleeId} via=websocket`
         );
-        acknowledgeError(socket, ack, 'call.initiate', 'blocked', 'you are blocked by this user', state);
+        acknowledgeError(
+          socket,
+          ack,
+          'call.initiate',
+          'blocked',
+          'you are blocked by this user',
+          state
+        );
         return;
       }
 
@@ -204,8 +232,17 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
           outcome: 'rejected',
           details: { via: 'websocket' },
         });
-        console.log(`[security] call.rate_limited userId=${socket.data.identity.userId} via=websocket`);
-        acknowledgeError(socket, ack, 'call.initiate', 'rate_limited', 'too many call attempts', state);
+        console.log(
+          `[security] call.rate_limited userId=${socket.data.identity.userId} via=websocket`
+        );
+        acknowledgeError(
+          socket,
+          ack,
+          'call.initiate',
+          'rate_limited',
+          'too many call attempts',
+          state
+        );
         return;
       }
 
@@ -224,11 +261,8 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         io,
         eventName: 'call.accept',
         nextStatus: 'accepted',
-        authorize: (call, userId) => (
-          call.calleeId === userId
-            ? null
-            : 'only the callee can accept a call'
-        ),
+        authorize: (call, userId) =>
+          call.calleeId === userId ? null : 'only the callee can accept a call',
       });
     });
 
@@ -239,11 +273,8 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         eventName: 'call.decline',
         nextStatus: 'declined',
         reason: 'declined',
-        authorize: (call, userId) => (
-          call.calleeId === userId
-            ? null
-            : 'only the callee can decline a call'
-        ),
+        authorize: (call, userId) =>
+          call.calleeId === userId ? null : 'only the callee can decline a call',
       });
     });
 
@@ -254,11 +285,8 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         eventName: 'call.cancel',
         nextStatus: 'ended',
         reason: 'cancelled',
-        authorize: (call, userId) => (
-          call.callerId === userId
-            ? null
-            : 'only the caller can cancel a call'
-        ),
+        authorize: (call, userId) =>
+          call.callerId === userId ? null : 'only the caller can cancel a call',
       });
     });
 
@@ -269,11 +297,10 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         eventName: 'call.end',
         nextStatus: 'ended',
         reason: 'ended',
-        authorize: (call, userId) => (
+        authorize: (call, userId) =>
           call.callerId === userId || call.calleeId === userId
             ? null
-            : 'not a participant in this call'
-        ),
+            : 'not a participant in this call',
       });
     });
 
@@ -336,8 +363,8 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         : 0;
       console.log(
         `[signaling] socket disconnected: ${socket.id}, reason=${reason}` +
-        (identity ? ` user=${identity.userId} device=${identity.deviceId}` : '') +
-        ` remainingUserSockets=${remainingConnections}`,
+          (identity ? ` user=${identity.userId} device=${identity.deviceId}` : '') +
+          ` remainingUserSockets=${remainingConnections}`
       );
       verboseLog('socket', 'disconnected', {
         socketId: socket.id,

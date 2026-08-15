@@ -36,8 +36,10 @@ import io.wazo.callkeep.VoiceConnectionService
  * — see the module doc comment in `callKeep.js`).
  */
 class IncomingCallActionReceiver : BroadcastReceiver() {
-
-  override fun onReceive(context: Context, intent: Intent) {
+  override fun onReceive(
+    context: Context,
+    intent: Intent,
+  ) {
     val callId = intent.getStringExtra(EXTRA_CALL_ID) ?: return
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     manager.cancel(IncomingCallNotificationModule.notificationId(callId))

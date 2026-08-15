@@ -3,13 +3,11 @@ import renderer, { act } from 'react-test-renderer';
 import ChatListScreen from '../../src/components/ChatListScreen';
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 function findAllByTestId(tree, testID) {
-  return tree.root.findAll(
-    (node) => node.props?.testID === testID && typeof node.type === 'string',
-  );
+  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string');
 }
 
 function makeConversation(overrides = {}) {
@@ -76,9 +74,7 @@ describe('ChatListScreen', () => {
   test('searching swaps to contact results and tapping a result opens a conversation', async () => {
     jest.useFakeTimers();
     const onOpenConversation = jest.fn();
-    const onSearchUsers = jest.fn().mockResolvedValue([
-      { userId: 'user-dave', online: true },
-    ]);
+    const onSearchUsers = jest.fn().mockResolvedValue([{ userId: 'user-dave', online: true }]);
     const tree = render({
       conversations: [makeConversation()],
       onOpenConversation,

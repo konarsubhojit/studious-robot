@@ -11,7 +11,7 @@ jest.mock('../src/appLogger', () => ({
 }));
 
 jest.mock('react-native-webrtc', () => ({
-  RTCView: jest.fn((props) => {
+  RTCView: jest.fn(props => {
     if (mockShouldThrow) {
       throw new Error('RTCView boom');
     }

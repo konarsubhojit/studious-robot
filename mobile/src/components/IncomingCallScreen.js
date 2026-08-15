@@ -90,7 +90,6 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   return (
     <View style={styles.container} testID="incoming-call-screen">
-
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerLabel}>Incoming call</Text>

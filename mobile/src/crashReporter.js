@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 
 function formatDateForFile(date = new Date()) {
-  const pad = (v) => String(v).padStart(2, '0');
+  const pad = v => String(v).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`

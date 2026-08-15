@@ -83,7 +83,7 @@ export default function CallScreen({
     }
 
     const timeout = setTimeout(() => {
-      setVisibleStatus((current) =>
+      setVisibleStatus(current =>
         current?.message === message && current?.severity === severity ? null : current,
       );
     }, STATUS_AUTO_HIDE_MS);
@@ -114,9 +114,8 @@ export default function CallScreen({
   return (
     <Pressable
       style={[styles.callScreen, isCompact && styles.callScreenCompact]}
-      onPress={() => setShowControlsOverlay((prev) => !prev)}
-      testID="call-screen-root"
-    >
+      onPress={() => setShowControlsOverlay(prev => !prev)}
+      testID="call-screen-root">
       <CallStage
         onLayout={onStageLayout}
         mainStreamUrl={mainStreamUrl}

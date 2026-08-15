@@ -26,7 +26,7 @@ export function generateVerificationCode() {
   const bytes = fillRandomBytes(new Uint8Array(totalCharacters));
   const characters = Array.from(
     bytes,
-    (byte) => VERIFICATION_CODE_ALPHABET[byte % VERIFICATION_CODE_ALPHABET.length],
+    byte => VERIFICATION_CODE_ALPHABET[byte % VERIFICATION_CODE_ALPHABET.length],
   );
 
   return Array.from({ length: CODE_GROUP_COUNT }, (_, groupIndex) => {

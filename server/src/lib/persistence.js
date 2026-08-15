@@ -99,7 +99,12 @@ async function persistDevice(db, device, action = 'registration') {
       await db
         .update(devicesTable)
         .set({ pushProvider: null, pushToken: null, updatedAt: values.updatedAt })
-        .where(and(eq(devicesTable.pushToken, values.pushToken), ne(devicesTable.deviceId, values.deviceId)));
+        .where(
+          and(
+            eq(devicesTable.pushToken, values.pushToken),
+            ne(devicesTable.deviceId, values.deviceId)
+          )
+        );
     }
     await db.insert(devicesTable).values(values).onConflictDoUpdate({
       target: devicesTable.deviceId,
@@ -198,7 +203,7 @@ async function deletePersistedBlock(db, blockerId, blockeeId) {
  * @returns {string|null}
  */
 function toIsoString(value) {
-  return value instanceof Date ? value.toISOString() : (value ?? null);
+  return value instanceof Date ? value.toISOString() : value ?? null;
 }
 
 /**

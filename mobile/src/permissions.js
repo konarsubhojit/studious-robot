@@ -86,7 +86,11 @@ async function getMissingPermissions(permissions) {
 }
 
 export async function ensureCallPermissions() {
-  if (Platform.OS !== 'android' || !PermissionsAndroid?.check || !PermissionsAndroid?.requestMultiple) {
+  if (
+    Platform.OS !== 'android' ||
+    !PermissionsAndroid?.check ||
+    !PermissionsAndroid?.requestMultiple
+  ) {
     return { ok: true, warningMessage: null, deniedPermissions: [] };
   }
 
@@ -103,12 +107,12 @@ export async function ensureCallPermissions() {
 
   const results = await PermissionsAndroid.requestMultiple(missingPermissions);
   const deniedRequiredPermissions = missingPermissions.filter(
-    (permission) =>
+    permission =>
       REQUIRED_CALL_PERMISSIONS.includes(permission) &&
       results[permission] !== PermissionsAndroid.RESULTS.GRANTED,
   );
   const deniedOptionalPermissions = missingPermissions.filter(
-    (permission) =>
+    permission =>
       !REQUIRED_CALL_PERMISSIONS.includes(permission) &&
       results[permission] !== PermissionsAndroid.RESULTS.GRANTED,
   );

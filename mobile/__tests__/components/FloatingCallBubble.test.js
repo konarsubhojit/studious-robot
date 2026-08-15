@@ -3,12 +3,13 @@ import renderer, { act } from 'react-test-renderer';
 import { PanResponder } from 'react-native';
 import FloatingCallBubble from '../../src/components/FloatingCallBubble';
 
-jest.mock('../../src/components/IconButton', () => (props) =>
-  require('react').createElement('IconButton', props),
+jest.mock(
+  '../../src/components/IconButton',
+  () => props => require('react').createElement('IconButton', props),
 );
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 /**
@@ -25,7 +26,7 @@ function getPanResponderConfig() {
 /** Reads the current (x, y) translation applied to the bubble's Animated.View. */
 function readBubbleTranslate(tree) {
   const bubble = findByTestId(tree, 'floating-call-bubble');
-  const transformStyle = bubble.props.style.find((s) => s && s.transform)?.transform;
+  const transformStyle = bubble.props.style.find(s => s && s.transform)?.transform;
   return {
     x: transformStyle[0].translateX.__getValue(),
     y: transformStyle[1].translateY.__getValue(),
@@ -63,15 +64,15 @@ describe('FloatingCallBubble', () => {
 
   test('renders the participant label and formatted duration', () => {
     const tree = render();
-    const text = tree.root.findAll((n) => n.props?.children === '01:05');
+    const text = tree.root.findAll(n => n.props?.children === '01:05');
     expect(text.length).toBeGreaterThan(0);
-    const label = tree.root.findAll((n) => n.props?.children === 'Call with user-bob');
+    const label = tree.root.findAll(n => n.props?.children === 'Call with user-bob');
     expect(label.length).toBeGreaterThan(0);
   });
 
   test('falls back to a generic label when participantLabel is null', () => {
     const tree = render({ participantLabel: null });
-    const label = tree.root.findAll((n) => n.props?.children === 'Call in progress');
+    const label = tree.root.findAll(n => n.props?.children === 'Call in progress');
     expect(label.length).toBeGreaterThan(0);
   });
 

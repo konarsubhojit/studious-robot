@@ -29,10 +29,18 @@ function createFakeRedis() {
   function makeClient() {
     return {
       quit_called: false,
-      on() { /* no-op error listener hook */ },
-      async connect() { this.connected = true; },
-      async quit() { this.quit_called = true; },
-      duplicate() { return makeClient(); },
+      on() {
+        /* no-op error listener hook */
+      },
+      async connect() {
+        this.connected = true;
+      },
+      async quit() {
+        this.quit_called = true;
+      },
+      duplicate() {
+        return makeClient();
+      },
       async publish(channel, message) {
         broker.published.push({ channel, message });
         const set = broker.subs.get(channel);
@@ -164,7 +172,11 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
 
   // attachAdapter wires the Socket.IO adapter onto the io server.
   let attached = null;
-  const fakeIo = { adapter: (a) => { attached = a; } };
+  const fakeIo = {
+    adapter: (a) => {
+      attached = a;
+    },
+  };
   stores.attachAdapter(fakeIo);
   assert.deepEqual(attached, { kind: 'fake-adapter' });
   assert.ok(adapterArgs.pub && adapterArgs.sub, 'adapter built from its own client pair');

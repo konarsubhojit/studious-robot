@@ -10,8 +10,7 @@ function SettingsToggle({ label, hint, value, onPress, testID }) {
       accessibilityHint={hint}
       accessibilityState={{ checked: value }}
       testID={testID}
-      style={({ pressed }) => [styles.settingsOption, pressed && styles.settingsOptionPressed]}
-    >
+      style={({ pressed }) => [styles.settingsOption, pressed && styles.settingsOptionPressed]}>
       <View style={styles.settingsOptionTextWrap}>
         <Text style={styles.settingsOptionLabel}>{label}</Text>
         <Text style={styles.settingsOptionHint}>{hint}</Text>

@@ -2,11 +2,13 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallStage from '../../src/components/CallStage';
 
-jest.mock('../../src/SafeRTCView', () => (props) =>
-  require('react').createElement('SafeRTCView', props),
+jest.mock(
+  '../../src/SafeRTCView',
+  () => props => require('react').createElement('SafeRTCView', props),
 );
-jest.mock('../../src/components/DraggablePip', () => (props) =>
-  require('react').createElement('DraggablePip', props),
+jest.mock(
+  '../../src/components/DraggablePip',
+  () => props => require('react').createElement('DraggablePip', props),
 );
 
 function createProps(overrides = {}) {
@@ -66,13 +68,15 @@ describe('CallStage', () => {
     expect(tree.root.findAllByType('SafeRTCView')).toHaveLength(0);
     const { Text } = require('react-native');
     const texts = tree.root.findAllByType(Text);
-    expect(texts.some((t) => t.props.children === 'Waiting for someone to join…')).toBe(true);
+    expect(texts.some(t => t.props.children === 'Waiting for someone to join…')).toBe(true);
   });
 
   test('forwards isMuted and isVideoEnabled to DraggablePip', () => {
     let tree;
     act(() => {
-      tree = renderer.create(<CallStage {...createProps({ isMuted: true, isVideoEnabled: false })} />);
+      tree = renderer.create(
+        <CallStage {...createProps({ isMuted: true, isVideoEnabled: false })} />,
+      );
     });
 
     const pip = tree.root.findAllByType('DraggablePip')[0];

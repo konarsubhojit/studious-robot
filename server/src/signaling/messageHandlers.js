@@ -68,16 +68,21 @@ function deliverMessage(io, state, message) {
   // decided per device, exactly like the incoming-call fallback.
   const pushChannels = resolveOfflinePushChannels(state, message.recipientId);
   for (const channel of pushChannels) {
-    push.sendMessagePush(channel, {
-      messageId: message.messageId,
-      conversationId: message.conversationId,
-      senderId: message.senderId,
-    }).then((outcome) => {
-      if (!outcome?.deadToken) return;
-      return pruneDeadDevice(state.db, state, outcome.deviceId, outcome.reason ?? 'unknown');
-    }).catch((error) => {
-      console.error(`[messages] Unhandled push error for device ${channel.deviceId}: ${error?.message}`);
-    });
+    push
+      .sendMessagePush(channel, {
+        messageId: message.messageId,
+        conversationId: message.conversationId,
+        senderId: message.senderId,
+      })
+      .then((outcome) => {
+        if (!outcome?.deadToken) return;
+        return pruneDeadDevice(state.db, state, outcome.deviceId, outcome.reason ?? 'unknown');
+      })
+      .catch((error) => {
+        console.error(
+          `[messages] Unhandled push error for device ${channel.deviceId}: ${error?.message}`
+        );
+      });
   }
 }
 
@@ -99,11 +104,25 @@ function registerMessageHandlers(socket, { io, state }) {
     const senderId = socket.data.identity.userId;
     const recipientId = normaliseId(payload.recipientId);
     if (!recipientId) {
-      acknowledgeError(socket, ack, 'message.send', 'bad_request', 'recipientId is required', state);
+      acknowledgeError(
+        socket,
+        ack,
+        'message.send',
+        'bad_request',
+        'recipientId is required',
+        state
+      );
       return;
     }
     if (recipientId === senderId) {
-      acknowledgeError(socket, ack, 'message.send', 'bad_request', 'cannot message yourself', state);
+      acknowledgeError(
+        socket,
+        ack,
+        'message.send',
+        'bad_request',
+        'cannot message yourself',
+        state
+      );
       return;
     }
 
@@ -127,7 +146,14 @@ function registerMessageHandlers(socket, { io, state }) {
         details: { via: 'websocket' },
       });
       console.log(`[security] message.blocked senderId=${senderId} recipientId=${recipientId}`);
-      acknowledgeError(socket, ack, 'message.send', 'forbidden', 'you cannot message this user', state);
+      acknowledgeError(
+        socket,
+        ack,
+        'message.send',
+        'forbidden',
+        'you cannot message this user',
+        state
+      );
       return;
     }
 
@@ -141,13 +167,20 @@ function registerMessageHandlers(socket, { io, state }) {
       });
     } catch (error) {
       console.error(`[messages] failed to persist message: ${error?.message}`);
-      acknowledgeError(socket, ack, 'message.send', 'internal_error', 'could not store message', state);
+      acknowledgeError(
+        socket,
+        ack,
+        'message.send',
+        'internal_error',
+        'could not store message',
+        state
+      );
       return;
     }
 
     console.log(
       `[messages] message.send messageId=${message.messageId}` +
-      ` conversationId=${message.conversationId} senderId=${senderId}`,
+        ` conversationId=${message.conversationId} senderId=${senderId}`
     );
 
     deliverMessage(io, state, message);

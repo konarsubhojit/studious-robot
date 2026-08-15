@@ -63,7 +63,9 @@ function mockHttps(handler) {
 
   return {
     requests,
-    restore: () => { https.request = original; },
+    restore: () => {
+      https.request = original;
+    },
   };
 }
 
@@ -106,10 +108,16 @@ test('acquires an OAuth2 token then posts a valid v1 message payload', async () 
   await withFcmEnv(JSON.stringify(SERVICE_ACCOUNT), async () => {
     const mock = mockHttps((opts) => {
       if (opts.hostname === 'oauth2.googleapis.com') {
-        return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test-token', expires_in: 3599 }) };
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ access_token: 'ya29.test-token', expires_in: 3599 }),
+        };
       }
       // FCM v1 endpoint.
-      return { statusCode: 200, body: JSON.stringify({ name: 'projects/demo-project/messages/1' }) };
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ name: 'projects/demo-project/messages/1' }),
+      };
     });
 
     try {
@@ -122,7 +130,10 @@ test('acquires an OAuth2 token then posts a valid v1 message payload', async () 
 
       const [tokenReq, sendReq] = mock.requests;
       assert.equal(tokenReq.opts.hostname, 'oauth2.googleapis.com');
-      assert.match(tokenReq.body, /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer/);
+      assert.match(
+        tokenReq.body,
+        /grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer/
+      );
       assert.match(tokenReq.body, /assertion=/);
 
       assert.equal(sendReq.opts.hostname, 'fcm.googleapis.com');
@@ -153,7 +164,10 @@ test('reuses the cached access token across sends', async () => {
   await withFcmEnv(JSON.stringify(SERVICE_ACCOUNT), async () => {
     const mock = mockHttps((opts) => {
       if (opts.hostname === 'oauth2.googleapis.com') {
-        return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.cached', expires_in: 3599 }) };
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ access_token: 'ya29.cached', expires_in: 3599 }),
+        };
       }
       return { statusCode: 200, body: '{}' };
     });
@@ -162,7 +176,9 @@ test('reuses the cached access token across sends', async () => {
       await push.sendIncomingCallPush(CHANNEL, CALL);
       await push.sendIncomingCallPush(CHANNEL, CALL);
 
-      const tokenRequests = mock.requests.filter((r) => r.opts.hostname === 'oauth2.googleapis.com');
+      const tokenRequests = mock.requests.filter(
+        (r) => r.opts.hostname === 'oauth2.googleapis.com'
+      );
       const sendRequests = mock.requests.filter((r) => r.opts.hostname === 'fcm.googleapis.com');
       assert.equal(tokenRequests.length, 1, 'token acquired only once');
       assert.equal(sendRequests.length, 2, 'two messages sent');
@@ -180,7 +196,9 @@ test('surfaces the FCM v1 error status on a non-200 send response', async () => 
       }
       return {
         statusCode: 404,
-        body: JSON.stringify({ error: { status: 'NOT_FOUND', message: 'Requested entity was not found.' } }),
+        body: JSON.stringify({
+          error: { status: 'NOT_FOUND', message: 'Requested entity was not found.' },
+        }),
       };
     });
 
@@ -227,7 +245,9 @@ test('flags a 404/UNREGISTERED FCM v1 response as a dead token', async () => {
       }
       return {
         statusCode: 404,
-        body: JSON.stringify({ error: { status: 'UNREGISTERED', message: 'Requested entity was not found.' } }),
+        body: JSON.stringify({
+          error: { status: 'UNREGISTERED', message: 'Requested entity was not found.' },
+        }),
       };
     });
 
@@ -236,7 +256,11 @@ test('flags a 404/UNREGISTERED FCM v1 response as a dead token', async () => {
       assert.equal(result.ok, false);
       assert.equal(result.statusCode, 404);
       assert.equal(result.reason, 'UNREGISTERED');
-      assert.equal(result.deadToken, true, 'a 404/UNREGISTERED response must be flagged as a dead token');
+      assert.equal(
+        result.deadToken,
+        true,
+        'a 404/UNREGISTERED response must be flagged as a dead token'
+      );
     } finally {
       mock.restore();
     }
@@ -251,7 +275,9 @@ test('flags a 400/INVALID_ARGUMENT FCM v1 response as a dead token', async () =>
       }
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: { status: 'INVALID_ARGUMENT', message: 'Invalid registration token.' } }),
+        body: JSON.stringify({
+          error: { status: 'INVALID_ARGUMENT', message: 'Invalid registration token.' },
+        }),
       };
     });
 
@@ -260,7 +286,11 @@ test('flags a 400/INVALID_ARGUMENT FCM v1 response as a dead token', async () =>
       assert.equal(result.ok, false);
       assert.equal(result.statusCode, 400);
       assert.equal(result.reason, 'INVALID_ARGUMENT');
-      assert.equal(result.deadToken, true, 'a 400/INVALID_ARGUMENT response must be flagged as a dead token');
+      assert.equal(
+        result.deadToken,
+        true,
+        'a 400/INVALID_ARGUMENT response must be flagged as a dead token'
+      );
     } finally {
       mock.restore();
     }
@@ -309,12 +339,34 @@ test('does not flag a transient 503 as a dead token, and does not retry a 404', 
 });
 
 test('_isDeadTokenResult recognizes dead-token codes/reasons and rejects others', () => {
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: 404, reason: 'UNREGISTERED' }), true);
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: 400, reason: 'INVALID_ARGUMENT' }), true);
-  assert.equal(push._isDeadTokenResult({ ok: true, statusCode: 404, reason: 'UNREGISTERED' }), false, 'ok results are never dead');
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: 503, reason: 'UNAVAILABLE' }), false);
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: 429, reason: 'RESOURCE_EXHAUSTED' }), false);
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: 404, reason: 'NOT_FOUND' }), false, 'unrelated 404 reasons are not dead tokens');
-  assert.equal(push._isDeadTokenResult({ ok: false, statusCode: null, reason: 'network error' }), false);
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: 404, reason: 'UNREGISTERED' }),
+    true
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: 400, reason: 'INVALID_ARGUMENT' }),
+    true
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: true, statusCode: 404, reason: 'UNREGISTERED' }),
+    false,
+    'ok results are never dead'
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: 503, reason: 'UNAVAILABLE' }),
+    false
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: 429, reason: 'RESOURCE_EXHAUSTED' }),
+    false
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: 404, reason: 'NOT_FOUND' }),
+    false,
+    'unrelated 404 reasons are not dead tokens'
+  );
+  assert.equal(
+    push._isDeadTokenResult({ ok: false, statusCode: null, reason: 'network error' }),
+    false
+  );
 });
-

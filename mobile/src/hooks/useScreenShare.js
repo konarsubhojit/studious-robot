@@ -57,75 +57,78 @@ export default function useScreenShare({
    * @param {{ silent?: boolean }} [options] - `silent` skips status updates and
    *   renegotiation (used during teardown when the call is already ending).
    */
-  const stopScreenShare = useCallback(async ({ silent = false } = {}) => {
-    const screenStream = screenStreamRef.current;
-    const screenVideoTrack = screenVideoTrackRef.current;
-    const cameraTrack = cameraTrackRef.current;
-    const audioSender = screenAudioSenderRef.current;
+  const stopScreenShare = useCallback(
+    async ({ silent = false } = {}) => {
+      const screenStream = screenStreamRef.current;
+      const screenVideoTrack = screenVideoTrackRef.current;
+      const cameraTrack = cameraTrackRef.current;
+      const audioSender = screenAudioSenderRef.current;
 
-    screenStreamRef.current = null;
-    screenVideoTrackRef.current = null;
-    screenAudioSenderRef.current = null;
-    cameraTrackRef.current = null;
+      screenStreamRef.current = null;
+      screenVideoTrackRef.current = null;
+      screenAudioSenderRef.current = null;
+      cameraTrackRef.current = null;
 
-    if (!screenStream && !screenVideoTrack) {
+      if (!screenStream && !screenVideoTrack) {
+        setIsScreenSharing(false);
+        setIsScreenAudioShared(false);
+        return;
+      }
+
+      const pc = peerConnectionRef.current;
+
+      if (pc && audioSender) {
+        try {
+          await audioSender.replaceTrack?.(null);
+          pc.removeTrack?.(audioSender);
+        } catch (error) {
+          logWarn('Failed to remove screen audio sender', { message: error?.message });
+        }
+      }
+
+      if (cameraTrack) {
+        cameraTrack.enabled = true;
+        try {
+          const sender = pc?.getSenders?.().find(s => s.track?.kind === 'video');
+          if (sender) {
+            await sender.replaceTrack(cameraTrack);
+          }
+        } catch (error) {
+          logWarn('Failed to restore camera track after screen share', {
+            message: error?.message,
+          });
+        }
+      }
+
+      const localStream = localStreamRef.current;
+      if (localStream) {
+        if (screenVideoTrack) {
+          localStream.removeTrack?.(screenVideoTrack);
+        }
+        if (cameraTrack) {
+          localStream.addTrack?.(cameraTrack);
+        }
+        setLocalStream(localStream);
+      }
+
+      stopScreenCapture(screenStream);
       setIsScreenSharing(false);
       setIsScreenAudioShared(false);
-      return;
-    }
+      logInfo('Screen sharing stopped');
 
-    const pc = peerConnectionRef.current;
-
-    if (pc && audioSender) {
-      try {
-        await audioSender.replaceTrack?.(null);
-        pc.removeTrack?.(audioSender);
-      } catch (error) {
-        logWarn('Failed to remove screen audio sender', { message: error?.message });
-      }
-    }
-
-    if (cameraTrack) {
-      cameraTrack.enabled = true;
-      try {
-        const sender = pc?.getSenders?.().find((s) => s.track?.kind === 'video');
-        if (sender) {
-          await sender.replaceTrack(cameraTrack);
+      if (!silent) {
+        try {
+          await renegotiateRef.current?.();
+        } catch (error) {
+          logWarn('Renegotiation after screen share stop failed', {
+            message: error?.message,
+          });
         }
-      } catch (error) {
-        logWarn('Failed to restore camera track after screen share', {
-          message: error?.message,
-        });
+        setStatus('Screen sharing stopped');
       }
-    }
-
-    const localStream = localStreamRef.current;
-    if (localStream) {
-      if (screenVideoTrack) {
-        localStream.removeTrack?.(screenVideoTrack);
-      }
-      if (cameraTrack) {
-        localStream.addTrack?.(cameraTrack);
-      }
-      setLocalStream(localStream);
-    }
-
-    stopScreenCapture(screenStream);
-    setIsScreenSharing(false);
-    setIsScreenAudioShared(false);
-    logInfo('Screen sharing stopped');
-
-    if (!silent) {
-      try {
-        await renegotiateRef.current?.();
-      } catch (error) {
-        logWarn('Renegotiation after screen share stop failed', {
-          message: error?.message,
-        });
-      }
-      setStatus('Screen sharing stopped');
-    }
-  }, [localStreamRef, peerConnectionRef, setLocalStream, setStatus]);
+    },
+    [localStreamRef, peerConnectionRef, setLocalStream, setStatus],
+  );
 
   /**
    * Prompt for screen-capture consent and start sharing the screen (plus screen
@@ -155,7 +158,7 @@ export default function useScreenShare({
     const { stream, videoTrack, audioTrack, audioShared } = capture;
 
     try {
-      const videoSender = pc.getSenders?.().find((s) => s.track?.kind === 'video');
+      const videoSender = pc.getSenders?.().find(s => s.track?.kind === 'video');
       const cameraTrack = videoSender?.track ?? null;
       if (videoSender) {
         await videoSender.replaceTrack(videoTrack);
@@ -192,7 +195,7 @@ export default function useScreenShare({
       // The OS "stop sharing" affordance ends the track directly.
       videoTrack.onended = () => {
         logInfo('Screen capture ended by the system');
-        stopScreenShare().catch((error) => {
+        stopScreenShare().catch(error => {
           logError('Failed to stop screen share after system end', error);
         });
       };
@@ -260,7 +263,7 @@ export default function useScreenShare({
       setStatus('Stop sharing to change the screen audio setting');
       return;
     }
-    setIsScreenAudioEnabled((previous) => {
+    setIsScreenAudioEnabled(previous => {
       const next = !previous;
       setStatus(next ? 'Screen audio will be shared' : 'Screen audio will not be shared');
       return next;
@@ -269,7 +272,7 @@ export default function useScreenShare({
 
   /** Release capture resources without touching signaling (call teardown). */
   const resetScreenShare = useCallback(() => {
-    stopScreenShare({ silent: true }).catch((error) => {
+    stopScreenShare({ silent: true }).catch(error => {
       logWarn('Silent screen share stop failed', { message: error?.message });
     });
   }, [stopScreenShare]);

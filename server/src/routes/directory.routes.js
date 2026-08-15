@@ -52,9 +52,10 @@ function createDirectoryRouter({ state }) {
 
     const search = (normaliseOptionalString(req.query?.search) || '').toLowerCase();
     const requestedLimit = Number(req.query?.limit);
-    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
-      ? Math.min(Math.floor(requestedLimit), USER_DIRECTORY_MAX_LIMIT)
-      : USER_DIRECTORY_DEFAULT_LIMIT;
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(Math.floor(requestedLimit), USER_DIRECTORY_MAX_LIMIT)
+        : USER_DIRECTORY_DEFAULT_LIMIT;
 
     const matches = [];
     for (const candidateId of listKnownUsers(state)) {

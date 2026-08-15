@@ -153,7 +153,9 @@ describe('audioRouting', () => {
     });
 
     test('tolerates malformed JSON and missing payloads', () => {
-      expect(parseAudioDeviceStatus({ availableAudioDeviceList: 'not-json' }).available).toEqual([]);
+      expect(parseAudioDeviceStatus({ availableAudioDeviceList: 'not-json' }).available).toEqual(
+        [],
+      );
       expect(parseAudioDeviceStatus(undefined)).toEqual({ available: [], selected: null });
       expect(parseAudioDeviceStatus(null)).toEqual({ available: [], selected: null });
     });
@@ -161,7 +163,11 @@ describe('audioRouting', () => {
 
   describe('chooseAudioRoute', () => {
     beforeEach(() => {
-      mockEnsureBluetoothPermission.mockResolvedValue({ ok: true, granted: true, requested: false });
+      mockEnsureBluetoothPermission.mockResolvedValue({
+        ok: true,
+        granted: true,
+        requested: false,
+      });
     });
 
     test('delegates to InCallManager and returns parsed status', async () => {

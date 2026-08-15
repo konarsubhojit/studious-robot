@@ -3,18 +3,17 @@ import renderer, { act } from 'react-test-renderer';
 import { FlatList, Keyboard } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
 
-jest.mock('../../src/components/IconButton', () => (props) =>
-  require('react').createElement('IconButton', props),
+jest.mock(
+  '../../src/components/IconButton',
+  () => props => require('react').createElement('IconButton', props),
 );
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 function findAllByTestId(tree, testID) {
-  return tree.root.findAll(
-    (node) => node.props?.testID === testID && typeof node.type === 'string',
-  );
+  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string');
 }
 
 function makeMessage(overrides = {}) {
@@ -64,7 +63,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: true },
     });
 
-    const header = tree.root.findAll((n) => n.props?.children === 'user-bob');
+    const header = tree.root.findAll(n => n.props?.children === 'user-bob');
     expect(header.length).toBeGreaterThan(0);
   });
 
@@ -81,8 +80,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((item) => item.type === 'message');
-    expect(messageItems.map((item) => item.message.messageId)).toEqual(['m1', 'm2']);
+    const messageItems = list.props.data.filter(item => item.type === 'message');
+    expect(messageItems.map(item => item.message.messageId)).toEqual(['m1', 'm2']);
   });
 
   test('back button calls onBack', () => {
@@ -191,7 +190,7 @@ describe('ChatConversationScreen', () => {
     expect(rows).toHaveLength(2);
 
     const retryLabel = tree.root.findAll(
-      (n) => n.props?.accessibilityLabel === 'Retry sending message',
+      n => n.props?.accessibilityLabel === 'Retry sending message',
     )[0];
     expect(retryLabel).toBeDefined();
     act(() => {
@@ -231,7 +230,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const dateItems = list.props.data.filter((item) => item.type === 'date');
+    const dateItems = list.props.data.filter(item => item.type === 'date');
     expect(dateItems).toHaveLength(1);
     expect(dateItems[0].label).toBe('Today');
   });
@@ -254,8 +253,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((item) => item.type === 'message');
-    expect(messageItems.map((item) => item.isGroupEnd)).toEqual([false, true]);
+    const messageItems = list.props.data.filter(item => item.type === 'message');
+    expect(messageItems.map(item => item.isGroupEnd)).toEqual([false, true]);
 
     const ticks = findAllByTestId(tree, 'chat-message-tick');
     expect(ticks).toHaveLength(1);
@@ -265,7 +264,11 @@ describe('ChatConversationScreen', () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [
-        makeMessage({ messageId: 'read-1', senderId: 'user-alice', readAt: new Date().toISOString() }),
+        makeMessage({
+          messageId: 'read-1',
+          senderId: 'user-alice',
+          readAt: new Date().toISOString(),
+        }),
       ],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
@@ -299,7 +302,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: true },
     });
     expect(findByTestId(online, 'chat-presence-row')).not.toBeNull();
-    expect(online.root.findAll((n) => n.props?.children === 'Online').length).toBeGreaterThan(0);
+    expect(online.root.findAll(n => n.props?.children === 'Online').length).toBeGreaterThan(0);
 
     const offline = render({
       peerId: 'user-bob',
@@ -310,7 +313,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: false },
     });
     expect(findByTestId(offline, 'chat-presence-row')).not.toBeNull();
-    expect(offline.root.findAll((n) => n.props?.children === 'Offline').length).toBeGreaterThan(0);
+    expect(offline.root.findAll(n => n.props?.children === 'Offline').length).toBeGreaterThan(0);
   });
 
   test('composer input applies a focus style when focused and clears it on blur', () => {
@@ -488,8 +491,8 @@ describe('ChatConversationScreen', () => {
       jest.runOnlyPendingTimers();
     });
 
-    const showListenerCall = addListenerSpy.mock.calls.findLast(([eventName]) =>
-      eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    const showListenerCall = addListenerSpy.mock.calls.findLast(
+      ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
     );
     expect(showListenerCall).toBeDefined();
     const [, showListener] = showListenerCall;
@@ -518,8 +521,8 @@ describe('ChatConversationScreen', () => {
       currentUserId: 'user-alice',
     });
 
-    const showListenerCall = addListenerSpy.mock.calls.findLast(([eventName]) =>
-      eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    const showListenerCall = addListenerSpy.mock.calls.findLast(
+      ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
     );
     const callIndex = addListenerSpy.mock.calls.indexOf(showListenerCall);
     const subscription = addListenerSpy.mock.results[callIndex].value;
@@ -594,7 +597,7 @@ describe('ChatConversationScreen', () => {
     expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
   });
 
-  test('does not show the scroll-to-bottom FAB when the new message is the current user\'s own', () => {
+  test("does not show the scroll-to-bottom FAB when the new message is the current user's own", () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],

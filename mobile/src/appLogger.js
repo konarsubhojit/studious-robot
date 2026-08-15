@@ -25,7 +25,13 @@ function isSensitiveKey(key) {
 function isVerboseLoggingEnabled() {
   const verboseFlag = process.env.VERBOSE_LOGGING?.trim?.().toLowerCase?.();
   const logLevel = process.env.LOG_LEVEL?.trim?.().toLowerCase?.();
-  return verboseFlag === '1' || verboseFlag === 'true' || verboseFlag === 'yes' || logLevel === 'debug' || logLevel === 'trace';
+  return (
+    verboseFlag === '1' ||
+    verboseFlag === 'true' ||
+    verboseFlag === 'yes' ||
+    logLevel === 'debug' ||
+    logLevel === 'trace'
+  );
 }
 
 function toSafeError(err, seen) {
@@ -76,11 +82,11 @@ function toSafeValue(value, key, seen = new WeakSet()) {
   seen.add(value);
 
   if (Array.isArray(value)) {
-    return value.map((item) => toSafeValue(item, undefined, seen));
+    return value.map(item => toSafeValue(item, undefined, seen));
   }
 
   const output = {};
-  Object.keys(value).forEach((childKey) => {
+  Object.keys(value).forEach(childKey => {
     try {
       output[childKey] = toSafeValue(value[childKey], childKey, seen);
     } catch (err) {

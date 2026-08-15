@@ -99,20 +99,20 @@ test('a dead-token outcome from an incoming-call push prunes the device row', as
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'now-dead-token' },
-      callee.body.sessionId,
+      callee.body.sessionId
     );
 
     // Sanity check: the push channel exists before the call is attempted.
     assert.equal(
       resolveReachableChannels('user-prune-callee').filter((c) => c.type === 'push').length,
-      1,
+      1
     );
 
     const created = await postJson(
       url,
       '/calls',
       { calleeId: 'user-prune-callee' },
-      caller.body.sessionId,
+      caller.body.sessionId
     );
     assert.equal(created.status, 201);
 
@@ -125,7 +125,7 @@ test('a dead-token outcome from an incoming-call push prunes the device row', as
     assert.equal(
       resolveReachableChannels('user-prune-callee').filter((c) => c.type === 'push').length,
       0,
-      'the dead-token device must no longer be a reachable push channel',
+      'the dead-token device must no longer be a reachable push channel'
     );
     assert.equal(db.deletes.length, 1, 'the device row must be deleted from the DB');
   } finally {
@@ -163,15 +163,10 @@ test('a transient failure outcome does not prune the device row', async () => {
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'still-alive-token' },
-      callee.body.sessionId,
+      callee.body.sessionId
     );
 
-    await postJson(
-      url,
-      '/calls',
-      { calleeId: 'user-transient-callee' },
-      caller.body.sessionId,
-    );
+    await postJson(url, '/calls', { calleeId: 'user-transient-callee' }, caller.body.sessionId);
 
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -180,7 +175,7 @@ test('a transient failure outcome does not prune the device row', async () => {
     assert.equal(
       resolveReachableChannels('user-transient-callee').filter((c) => c.type === 'push').length,
       1,
-      'a transient failure must not prune the device row',
+      'a transient failure must not prune the device row'
     );
     assert.equal(db.deletes.length, 0);
   } finally {

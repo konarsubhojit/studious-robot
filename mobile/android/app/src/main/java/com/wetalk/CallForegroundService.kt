@@ -17,10 +17,13 @@ import androidx.core.app.NotificationCompat
  * foreground service types so capture can continue in the background.
  */
 class CallForegroundService : Service() {
-
   override fun onBind(intent: Intent?): IBinder? = null
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+  override fun onStartCommand(
+    intent: Intent?,
+    flags: Int,
+    startId: Int,
+  ): Int {
     createNotificationChannel()
     val notification = buildNotification()
 
@@ -53,7 +56,8 @@ class CallForegroundService : Service() {
   }
 
   private fun buildNotification(): Notification =
-    NotificationCompat.Builder(this, CHANNEL_ID)
+    NotificationCompat
+      .Builder(this, CHANNEL_ID)
       .setContentTitle("WeTalk")
       .setContentText("Call in progress")
       .setSmallIcon(android.R.drawable.ic_menu_call)
@@ -63,6 +67,7 @@ class CallForegroundService : Service() {
 
   companion object {
     const val CHANNEL_ID = "wetalk_calls"
+
     // Fixed, app-unique notification id for the single ongoing-call notification.
     const val NOTIFICATION_ID = 4173
   }

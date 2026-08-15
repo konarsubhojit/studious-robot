@@ -63,18 +63,29 @@ function buildListItems(orderedMessages) {
     const createdAt = new Date(message.createdAt);
     const previous = orderedMessages[index - 1];
     const hasValidDate = !Number.isNaN(createdAt.getTime());
-    if (hasValidDate && (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))) {
-      items.push({ key: `date-${message.messageId}`, type: 'date', label: formatDateSeparator(createdAt) });
+    if (
+      hasValidDate &&
+      (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))
+    ) {
+      items.push({
+        key: `date-${message.messageId}`,
+        type: 'date',
+        label: formatDateSeparator(createdAt),
+      });
     }
 
     const next = orderedMessages[index + 1];
     let isGroupEnd = true;
     if (next && next.senderId === message.senderId) {
       const nextCreatedAt = new Date(next.createdAt);
-      const sameDay = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
-        || isSameCalendarDay(createdAt, nextCreatedAt);
-      const withinGap = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
-        || nextCreatedAt.getTime() - createdAt.getTime() <= GROUP_GAP_MS;
+      const sameDay =
+        !hasValidDate ||
+        Number.isNaN(nextCreatedAt.getTime()) ||
+        isSameCalendarDay(createdAt, nextCreatedAt);
+      const withinGap =
+        !hasValidDate ||
+        Number.isNaN(nextCreatedAt.getTime()) ||
+        nextCreatedAt.getTime() - createdAt.getTime() <= GROUP_GAP_MS;
       isGroupEnd = !(sameDay && withinGap);
     }
 
@@ -138,10 +149,7 @@ export default function ChatConversationScreen({
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
-  const listItems = useMemo(
-    () => buildListItems([...messages].reverse()),
-    [messages],
-  );
+  const listItems = useMemo(() => buildListItems([...messages].reverse()), [messages]);
 
   // Keep the newest message in view: scroll to the bottom whenever the
   // newest message changes (a message was sent or received) and the user is
@@ -161,7 +169,7 @@ export default function ChatConversationScreen({
         setNewMessageCount(0);
       } else {
         setShowScrollToBottom(true);
-        setNewMessageCount((count) => count + 1);
+        setNewMessageCount(count => count + 1);
       }
     }
   }, [messages, currentUserId]);
@@ -184,7 +192,7 @@ export default function ChatConversationScreen({
   }, []);
 
   const reportTyping = useCallback(
-    (isTyping) => {
+    isTyping => {
       clearTimeout(typingIdleTimerRef.current);
       onTypingChange?.(isTyping);
       if (isTyping) {
@@ -195,7 +203,7 @@ export default function ChatConversationScreen({
   );
 
   const handleChangeText = useCallback(
-    (text) => {
+    text => {
       setDraft(text);
       reportTyping(Boolean(text.trim()));
     },
@@ -211,14 +219,14 @@ export default function ChatConversationScreen({
   }, [draft, onSendMessage, reportTyping]);
 
   const handleRetry = useCallback(
-    (body) => {
+    body => {
       onSendMessage?.(body);
     },
     [onSendMessage],
   );
 
   const handleScroll = useCallback(
-    (event) => {
+    event => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       if (contentOffset.y <= 0 && !hasReachedTopRef.current) {
         hasReachedTopRef.current = true;
@@ -250,14 +258,15 @@ export default function ChatConversationScreen({
   const isPeerKnownOffline = peerPresence?.online === false;
   const isCallDisabled = isStartingCall || isPeerKnownOffline;
   const MCIcon = loadVectorIcons();
-  const presenceIconDef = peerPresence ? ICONS[peerPresence.online ? 'presenceOnline' : 'presenceOffline'] : null;
+  const presenceIconDef = peerPresence
+    ? ICONS[peerPresence.online ? 'presenceOnline' : 'presenceOffline']
+    : null;
   const presenceColor = peerPresence?.online ? colors.success : colors.textMuted;
 
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.root} testID="chat-conversation-root">
         <View style={styles.header}>
           <Pressable
@@ -265,8 +274,7 @@ export default function ChatConversationScreen({
             accessibilityRole="button"
             accessibilityLabel="Back to chat list"
             testID="chat-back"
-            style={styles.backButton}
-          >
+            style={styles.backButton}>
             <Text style={styles.backButtonText}>‹</Text>
           </Pressable>
 
@@ -321,7 +329,7 @@ export default function ChatConversationScreen({
             ref={listRef}
             testID="chat-message-list"
             data={listItems}
-            keyExtractor={(item) => item.key}
+            keyExtractor={item => item.key}
             contentContainerStyle={styles.messageList}
             onScroll={handleScroll}
             scrollEventThrottle={32}
@@ -346,8 +354,7 @@ export default function ChatConversationScreen({
                     styles.messageRow,
                     isOwn ? styles.messageRowOwn : styles.messageRowPeer,
                     !item.isGroupEnd && styles.messageRowGrouped,
-                  ]}
-                >
+                  ]}>
                   <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
                     <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>
                       {message.body}
@@ -362,8 +369,7 @@ export default function ChatConversationScreen({
                         <Text
                           style={[styles.tick, isRead && styles.tickRead]}
                           testID="chat-message-tick"
-                          accessibilityLabel={isRead ? 'Read' : 'Sent'}
-                        >
+                          accessibilityLabel={isRead ? 'Read' : 'Sent'}>
                           {isRead ? '✓✓' : '✓'}
                         </Text>
                       ) : null}
@@ -374,8 +380,7 @@ export default function ChatConversationScreen({
                     <Pressable
                       onPress={() => handleRetry(message.body)}
                       accessibilityRole="button"
-                      accessibilityLabel="Retry sending message"
-                    >
+                      accessibilityLabel="Retry sending message">
                       <Text style={styles.failedText}>Failed to send · tap to retry</Text>
                     </Pressable>
                   ) : null}
@@ -389,8 +394,7 @@ export default function ChatConversationScreen({
               accessibilityRole="button"
               accessibilityLabel="Scroll to newest message"
               testID="chat-scroll-to-bottom"
-              style={styles.scrollToBottomFab}
-            >
+              style={styles.scrollToBottomFab}>
               <Text style={styles.scrollToBottomIcon}>↓</Text>
               {newMessageCount > 0 ? (
                 <Text style={styles.scrollToBottomText} testID="chat-scroll-to-bottom-count">

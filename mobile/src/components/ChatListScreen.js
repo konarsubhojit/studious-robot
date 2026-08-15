@@ -31,8 +31,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
           accessibilityRole="button"
           accessibilityLabel={`Clear ${accessibilityLabel}`}
           testID={`${testID}-clear`}
-          style={styles.clearButton}
-        >
+          style={styles.clearButton}>
           <Text style={styles.clearButtonText}>✕</Text>
         </Pressable>
       ) : null}
@@ -111,7 +110,7 @@ export default function ChatListScreen({
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
-    async (term) => {
+    async term => {
       if (typeof onSearchUsers !== 'function') return;
       if (!term) {
         setResults([]);
@@ -156,8 +155,7 @@ export default function ChatListScreen({
             accessibilityRole="button"
             accessibilityLabel="Settings"
             testID="chat-list-open-settings"
-            style={styles.gearButton}
-          >
+            style={styles.gearButton}>
             <Text style={styles.gearIcon}>⚙️</Text>
           </Pressable>
         ) : null}
@@ -178,8 +176,7 @@ export default function ChatListScreen({
           onRefresh ? (
             <RefreshControl refreshing={Boolean(isRefreshing)} onRefresh={onRefresh} />
           ) : undefined
-        }
-      >
+        }>
         {isSearchMode ? (
           <>
             {isSearching ? (
@@ -189,16 +186,19 @@ export default function ChatListScreen({
               </View>
             ) : null}
             {!isSearching && results.length > 0
-              ? results.map((contact) => (
+              ? results.map(contact => (
                   <Pressable
                     key={contact.userId}
                     onPress={() => onOpenConversation?.(contact.userId)}
                     accessibilityRole="button"
                     accessibilityLabel={`Chat with ${contact.userId}`}
                     style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-                    testID="chat-list-contact-row"
-                  >
-                    <Avatar id={contact.userId} online={contact.online} testID="chat-list-contact-avatar" />
+                    testID="chat-list-contact-row">
+                    <Avatar
+                      id={contact.userId}
+                      online={contact.online}
+                      testID="chat-list-contact-avatar"
+                    />
                     <View style={styles.rowText}>
                       <Text style={styles.rowTitle}>{contact.userId}</Text>
                       <Text style={styles.rowSubtitle}>
@@ -215,16 +215,19 @@ export default function ChatListScreen({
             ) : null}
           </>
         ) : conversations.length > 0 ? (
-          conversations.map((conversation) => (
+          conversations.map(conversation => (
             <Pressable
               key={conversation.conversationId}
               onPress={() => onOpenConversation?.(conversation.peerId)}
               accessibilityRole="button"
               accessibilityLabel={`Open conversation with ${conversation.peerId}`}
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-              testID="chat-list-row"
-            >
-              <Avatar id={conversation.peerId} online={conversation.online} testID="chat-list-avatar" />
+              testID="chat-list-row">
+              <Avatar
+                id={conversation.peerId}
+                online={conversation.online}
+                testID="chat-list-avatar"
+              />
               <View style={styles.rowText}>
                 <Text style={styles.rowTitle}>{conversation.peerId}</Text>
                 <Text style={styles.rowSubtitle} numberOfLines={1}>

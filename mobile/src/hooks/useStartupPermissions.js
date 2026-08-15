@@ -27,13 +27,17 @@ export default function useStartupPermissions(userId) {
     if (!userId.trim() || hasRequestedRef.current) return;
     hasRequestedRef.current = true;
     ensureCallPermissions()
-      .then((result) => {
+      .then(result => {
         if (result?.warningMessage) {
-          logWarn('[StartupPermissions] Startup permission request', { message: result.warningMessage });
+          logWarn('[StartupPermissions] Startup permission request', {
+            message: result.warningMessage,
+          });
         }
       })
-      .catch((error) => {
-        logWarn('[StartupPermissions] Startup permission request failed', { message: error?.message });
+      .catch(error => {
+        logWarn('[StartupPermissions] Startup permission request failed', {
+          message: error?.message,
+        });
       });
   }, [userId]);
 }

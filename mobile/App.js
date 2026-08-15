@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  BackHandler,
-  Platform,
-  Pressable,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { BackHandler, Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
@@ -90,18 +82,18 @@ function AppShell() {
   const pendingAudioOnlyCallRef = useRef(false);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
-  const callFlowActive =
-    callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
+  const callFlowActive = callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
 
   // True once either flow has a connected (post-ringing) call. Drives the
   // minimize affordances; ringing/dialing screens are never minimizable.
   const isCallConnected = callFlow.isInCall || call.isInRoom;
 
   // Choose which hook provides PiP swap behaviour.
-  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } =
-    usePictureInPicturePip({
+  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip(
+    {
       onTap: callFlowActive ? callFlow.handleSwapStreams : call.handleSwapStreams,
-    });
+    },
+  );
   void stageSize;
 
   // ── Stream helpers for active call ────────────────────────────────────────
@@ -156,7 +148,7 @@ function AppShell() {
       setPeerPresence(null);
       return undefined;
     }
-    callFlow.checkPresence(chatPeerId).then((presence) => {
+    callFlow.checkPresence(chatPeerId).then(presence => {
       if (!cancelled) setPeerPresence(presence);
     });
     return () => {
@@ -187,9 +179,9 @@ function AppShell() {
    * Start a video call with `peerId` (used by both the Lobby redial action and
    * the Chats tab's video-call header button).
    */
-  const startVideoCallWith = (peerId) => {
+  const startVideoCallWith = peerId => {
     callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch((error) => {
+    callFlow.placeCall(peerId).catch(error => {
       logError('placeCall (video) failed', error);
     });
   };
@@ -199,10 +191,10 @@ function AppShell() {
    * type server-side yet, so this places a normal video call and then turns
    * the local camera off once it connects (see the effect below).
    */
-  const startAudioCallWith = (peerId) => {
+  const startAudioCallWith = peerId => {
     pendingAudioOnlyCallRef.current = true;
     callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch((error) => {
+    callFlow.placeCall(peerId).catch(error => {
       logError('placeCall (audio) failed', error);
     });
   };
@@ -228,7 +220,7 @@ function AppShell() {
     return () => subscription.remove();
   }, [isCallConnected, isCallMinimized]);
 
-  const handleChangeTab = (tab) => {
+  const handleChangeTab = tab => {
     if (isCallConnected && !isCallMinimized) {
       setIsCallMinimized(true);
     }
@@ -281,7 +273,7 @@ function AppShell() {
     screenContent = (
       <RegistrationScreen
         onRegister={(newUserId, verificationCode) => {
-          callFlow.registerUser(newUserId, verificationCode).catch((error) => {
+          callFlow.registerUser(newUserId, verificationCode).catch(error => {
             logError('registerUser failed', error);
           });
         }}
@@ -395,7 +387,7 @@ function AppShell() {
         <ChatConversationScreen
           peerId={chatPeerId}
           messages={callFlow.messagesByPeer[chatPeerId] ?? []}
-          onSendMessage={(body) => callFlow.sendMessage(chatPeerId, body)}
+          onSendMessage={body => callFlow.sendMessage(chatPeerId, body)}
           onLoadOlder={handleLoadOlderMessages}
           onBack={() => setChatPeerId(null)}
           currentUserId={callFlow.userId}
@@ -404,12 +396,12 @@ function AppShell() {
           onStartVideoCall={() => startVideoCallWith(chatPeerId)}
           isStartingCall={callFlow.isPlacingCall}
           isPeerTyping={Boolean(callFlow.typingByPeer[chatPeerId])}
-          onTypingChange={(isTyping) => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
+          onTypingChange={isTyping => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
         />
       ) : (
         <ChatListScreen
           conversations={callFlow.conversations}
-          onOpenConversation={(peerId) => setChatPeerId(peerId)}
+          onOpenConversation={peerId => setChatPeerId(peerId)}
           onSearchUsers={callFlow.searchUsers}
           onRefresh={handleRefreshConversations}
           isRefreshing={isRefreshingConversations}
@@ -424,7 +416,7 @@ function AppShell() {
           calleeId={callFlow.calleeId}
           onChangeCalleeId={callFlow.setCalleeId}
           onCall={() => {
-            callFlow.placeCall().catch((error) => {
+            callFlow.placeCall().catch(error => {
               logError('placeCall unhandled rejection', error);
             });
           }}
@@ -442,24 +434,26 @@ function AppShell() {
           localPreviewStreamUrl={localPreviewStreamUrl}
           hasLocalStream={Boolean(call.localStream)}
           onStartPreview={() => {
-            call.startLocalPreview().catch((error) => {
+            call.startLocalPreview().catch(error => {
               logError('startLocalPreview failed (permissions/device)', error);
             });
           }}
           onJoinRoom={call.handleRoomButtonPress}
           isSettingsVisible={call.isSettingsVisible}
-          onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
+          onToggleSettings={() => call.setIsSettingsVisible(previous => !previous)}
           onExportLogs={call.handleExportLogs}
           settings={call.settings}
           onToggleAutoLighting={call.handleAutoLightingToggle}
           onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
           status={callFlow.userId ? callFlow.status : call.status}
           callSummary={callFlow.callSummary ?? call.callSummary}
-          onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
+          onDismissSummary={
+            callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary
+          }
           callHistory={callFlow.callHistory}
           missedCallCount={callFlow.missedCallCount}
           onMarkMissedRead={callFlow.markMissedCallsRead}
-          onRedial={(peerId) => startVideoCallWith(peerId)}
+          onRedial={peerId => startVideoCallWith(peerId)}
         />
       );
     } else {
@@ -473,7 +467,7 @@ function AppShell() {
           status={callFlow.status}
           onSignOut={() => {
             setActiveTab('chats');
-            callFlow.unregisterUser().catch((error) => {
+            callFlow.unregisterUser().catch(error => {
               logError('unregisterUser failed', error);
             });
           }}
@@ -505,8 +499,8 @@ function AppShell() {
             isCallFlowActive
               ? getCallFlowParticipantLabel()
               : call.roomId
-                ? `Room ${call.roomId.trim()}`
-                : null
+              ? `Room ${call.roomId.trim()}`
+              : null
           }
           elapsedCallSeconds={
             isCallFlowActive ? callFlow.elapsedCallSeconds : call.elapsedCallSeconds
@@ -525,9 +519,7 @@ function AppShell() {
   }
 
   const shouldShowRecoveryCodeNotice =
-    !isCompact &&
-    !callFlow.isLoadingIdentity &&
-    Boolean(callFlow.pendingVerificationCode);
+    !isCompact && !callFlow.isLoadingIdentity && Boolean(callFlow.pendingVerificationCode);
 
   // Padding depends on runtime-only values (measured safe-area insets, and
   // whether the tab shell — which pads its own bottom edge — is active), so
@@ -541,20 +533,18 @@ function AppShell() {
   return (
     <GestureHandlerRootView style={isCompact ? styles.containerCompact : styles.container}>
       {isCompact ? (
-        <View style={styles.containerCompact}>
-          {screenContent}
-        </View>
+        <View style={styles.containerCompact}>{screenContent}</View>
       ) : (
-        <View
-          style={[styles.container, rootContainerStyle]}
-        >
+        <View style={[styles.container, rootContainerStyle]}>
           {screenContent}
           {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (
             <View
-              style={[styles.recoveryNotice, { bottom: 16 + (isTabShellActive ? 0 : insets.bottom) }]}
-              testID="recovery-code-notice"
-            >
+              style={[
+                styles.recoveryNotice,
+                { bottom: 16 + (isTabShellActive ? 0 : insets.bottom) },
+              ]}
+              testID="recovery-code-notice">
               <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
               <Text style={styles.recoveryNoticeCode}>{callFlow.pendingVerificationCode}</Text>
               <Text style={styles.recoveryNoticeText}>
@@ -565,13 +555,16 @@ function AppShell() {
                 accessibilityRole="button"
                 accessibilityLabel="I saved it"
                 testID="recovery-code-dismiss"
-                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}
-              >
+                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}>
                 <Text style={styles.recoveryNoticeButtonText}>I saved it</Text>
               </Pressable>
             </View>
           ) : null}
-          <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
+          <StatusBar
+            barStyle="light-content"
+            backgroundColor={colors.background}
+            translucent={false}
+          />
         </View>
       )}
     </GestureHandlerRootView>

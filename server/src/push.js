@@ -38,7 +38,7 @@ const { createSign, createHmac } = require('crypto');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const APNS_HOST_SANDBOX    = 'api.sandbox.push.apple.com';
+const APNS_HOST_SANDBOX = 'api.sandbox.push.apple.com';
 const APNS_HOST_PRODUCTION = 'api.push.apple.com';
 
 const FCM_HOST = 'fcm.googleapis.com';
@@ -91,17 +91,19 @@ function buildApnsJwt(config) {
     return _apnsJwt;
   }
 
-  const header  = Buffer.from(JSON.stringify({ alg: 'ES256', kid: config.keyId })).toString('base64url');
-  const claims  = Buffer.from(JSON.stringify({ iss: config.teamId, iat: nowSecs })).toString('base64url');
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid: config.keyId })).toString(
+    'base64url'
+  );
+  const claims = Buffer.from(JSON.stringify({ iss: config.teamId, iat: nowSecs })).toString(
+    'base64url'
+  );
   const unsigned = `${header}.${claims}`;
 
   const signer = createSign('SHA256');
   signer.update(unsigned);
   // ieee-p1363 encoding produces the fixed-length R||S format required by JWT.
   // This option is available since Node.js 13; this project requires Node >= 22.
-  const sig = signer
-    .sign({ key: config.key, dsaEncoding: 'ieee-p1363' })
-    .toString('base64url');
+  const sig = signer.sign({ key: config.key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
 
   _apnsJwt = `${unsigned}.${sig}`;
   _apnsJwtExpiresAt = nowSecs + APNS_TOKEN_TTL_SECS;
@@ -134,13 +136,15 @@ function _resetFcmTokenCache() {
 function buildFcmAssertion(config) {
   const nowSecs = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const claims = Buffer.from(JSON.stringify({
-    iss: config.clientEmail,
-    scope: FCM_SEND_SCOPE,
-    aud: config.tokenUri,
-    iat: nowSecs,
-    exp: nowSecs + 3600,
-  })).toString('base64url');
+  const claims = Buffer.from(
+    JSON.stringify({
+      iss: config.clientEmail,
+      scope: FCM_SEND_SCOPE,
+      aud: config.tokenUri,
+      iat: nowSecs,
+      exp: nowSecs + 3600,
+    })
+  ).toString('base64url');
   const unsigned = `${header}.${claims}`;
 
   const signer = createSign('RSA-SHA256');
@@ -179,11 +183,17 @@ function requestFcmAccessToken(config) {
       },
       (res) => {
         let raw = '';
-        res.on('data', (chunk) => { raw += chunk; });
+        res.on('data', (chunk) => {
+          raw += chunk;
+        });
         res.on('end', () => {
           const statusCode = res.statusCode;
           let parsed;
-          try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            parsed = {};
+          }
           if (statusCode === 200 && parsed.access_token) {
             resolve({ ok: true, accessToken: parsed.access_token });
             return;
@@ -194,7 +204,7 @@ function requestFcmAccessToken(config) {
             reason: parsed.error || parsed.error_description || 'token_request_failed',
           });
         });
-      },
+      }
     );
     req.on('error', () => {
       resolve({ ok: false, statusCode: null, reason: 'token_request_failed' });
@@ -232,9 +242,9 @@ async function getFcmAccessToken(config) {
 // ─── Config loaders ───────────────────────────────────────────────────────────
 
 function loadApnsConfig() {
-  const key      = process.env.APNS_KEY?.trim();
-  const keyId    = process.env.APNS_KEY_ID?.trim();
-  const teamId   = process.env.APNS_TEAM_ID?.trim();
+  const key = process.env.APNS_KEY?.trim();
+  const keyId = process.env.APNS_KEY_ID?.trim();
+  const teamId = process.env.APNS_TEAM_ID?.trim();
   const bundleId = process.env.APNS_BUNDLE_ID?.trim();
 
   if (!key || !keyId || !teamId || !bundleId) return null;
@@ -360,7 +370,7 @@ function loadNotificationHubConfig() {
   if (!parsed) {
     console.warn(
       '[push] AZURE_NOTIFICATION_HUB_CONNECTION_STRING could not be parsed' +
-      ' (expected Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…)',
+        ' (expected Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…)'
     );
     return null;
   }
@@ -368,8 +378,9 @@ function loadNotificationHubConfig() {
   return {
     ...parsed,
     hubName,
-    apiVersion: process.env.AZURE_NOTIFICATION_HUB_API_VERSION?.trim()
-      || NOTIFICATION_HUB_DEFAULT_API_VERSION,
+    apiVersion:
+      process.env.AZURE_NOTIFICATION_HUB_API_VERSION?.trim() ||
+      NOTIFICATION_HUB_DEFAULT_API_VERSION,
   };
 }
 
@@ -624,8 +635,8 @@ function buildNotificationHubAndroidEnvelopePayload(envelope) {
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
 function sendApnsOnce(config, pushToken, envelope) {
-  const host    = config.production ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX;
-  const jwt     = buildApnsJwt(config);
+  const host = config.production ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX;
+  const jwt = buildApnsJwt(config);
   const payload = buildApnsEnvelopePayload(envelope);
   const payloadLen = Buffer.byteLength(payload).toString();
 
@@ -649,8 +660,12 @@ function sendApnsOnce(config, pushToken, envelope) {
     let body = '';
     let statusCode;
 
-    req.on('response', (headers) => { statusCode = Number(headers[':status']); });
-    req.on('data', (chunk) => { body += chunk; });
+    req.on('response', (headers) => {
+      statusCode = Number(headers[':status']);
+    });
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
     req.on('end', () => {
       client.close();
       if (statusCode === 200) {
@@ -658,7 +673,11 @@ function sendApnsOnce(config, pushToken, envelope) {
         return;
       }
       let reason = 'unknown';
-      try { reason = JSON.parse(body)?.reason ?? 'unknown'; } catch { /* ignore */ }
+      try {
+        reason = JSON.parse(body)?.reason ?? 'unknown';
+      } catch {
+        /* ignore */
+      }
       resolve({ ok: false, statusCode, reason });
     });
     req.on('error', reject);
@@ -683,12 +702,16 @@ async function sendFcmOnce(config, pushToken, envelope) {
   if (!token.ok) {
     // Treat token-endpoint 5xx/429 (or network errors) as retryable; other
     // failures surface their status so withRetry can short-circuit.
-    return { ok: false, statusCode: token.statusCode ?? null, reason: token.reason ?? 'token_error' };
+    return {
+      ok: false,
+      statusCode: token.statusCode ?? null,
+      reason: token.reason ?? 'token_error',
+    };
   }
 
-  const payload    = buildFcmEnvelopePayload(pushToken, envelope);
+  const payload = buildFcmEnvelopePayload(pushToken, envelope);
   const payloadLen = Buffer.byteLength(payload);
-  const path       = `/v1/projects/${config.projectId}/messages:send`;
+  const path = `/v1/projects/${config.projectId}/messages:send`;
 
   return new Promise((resolve, reject) => {
     const req = https.request(
@@ -704,7 +727,9 @@ async function sendFcmOnce(config, pushToken, envelope) {
       },
       (res) => {
         let body = '';
-        res.on('data', (chunk) => { body += chunk; });
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
         res.on('end', () => {
           const statusCode = res.statusCode;
           if (statusCode === 200) {
@@ -715,10 +740,12 @@ async function sendFcmOnce(config, pushToken, envelope) {
           try {
             const parsed = JSON.parse(body);
             reason = parsed?.error?.status || parsed?.error?.message || 'unknown';
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
           resolve({ ok: false, statusCode, reason });
         });
-      },
+      }
     );
     req.on('error', reject);
     req.end(payload);
@@ -742,19 +769,19 @@ async function sendFcmOnce(config, pushToken, envelope) {
  */
 function sendNotificationHubOnce(config, channel, envelope) {
   const isApple = channel.provider === 'apns';
-  const format  = isApple ? 'apple' : 'FcmV1';
+  const format = isApple ? 'apple' : 'FcmV1';
   const payload = isApple
     ? buildApnsEnvelopePayload(envelope)
     : JSON.stringify(buildNotificationHubAndroidEnvelopePayload(envelope));
 
   const url = new URL(
     `${config.hubName}/messages/?direct&api-version=${encodeURIComponent(config.apiVersion)}`,
-    config.endpoint,
+    config.endpoint
   );
   // The SAS token is scoped to the hub resource, not the per-send query string.
   const sasToken = buildNotificationHubSasToken(
     config,
-    new URL(config.hubName, config.endpoint).toString(),
+    new URL(config.hubName, config.endpoint).toString()
   );
   const payloadLen = Buffer.byteLength(payload);
 
@@ -775,7 +802,9 @@ function sendNotificationHubOnce(config, channel, envelope) {
       },
       (res) => {
         let body = '';
-        res.on('data', (chunk) => { body += chunk; });
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
         res.on('end', () => {
           const statusCode = res.statusCode;
           if (statusCode === 200 || statusCode === 201) {
@@ -786,14 +815,15 @@ function sendNotificationHubOnce(config, channel, envelope) {
           if (body) {
             try {
               const parsed = JSON.parse(body);
-              reason = parsed?.error?.message || parsed?.Message || parsed?.message || body.slice(0, 200);
+              reason =
+                parsed?.error?.message || parsed?.Message || parsed?.message || body.slice(0, 200);
             } catch {
               reason = body.slice(0, 200);
             }
           }
           resolve({ ok: false, statusCode, reason });
         });
-      },
+      }
     );
     req.on('error', reject);
     req.end(payload);
@@ -827,7 +857,8 @@ const DEAD_TOKEN_STATUS_CODES = new Set([404, 400]);
  * — plus common human-readable variants Notification Hubs or APNs may wrap
  * the same underlying failure in.
  */
-const DEAD_TOKEN_REASON_PATTERN = /unregistered|invalid_argument|invalid.*registration.*token|baddevicetoken/i;
+const DEAD_TOKEN_REASON_PATTERN =
+  /unregistered|invalid_argument|invalid.*registration.*token|baddevicetoken/i;
 
 /**
  * Determine whether a failed delivery result indicates the push token itself
@@ -863,20 +894,22 @@ async function withRetry(fn, label) {
       if (!isRetryable(result)) {
         console.warn(
           `[push] ${label} non-retryable failure` +
-          ` status=${result.statusCode} reason=${result.reason ?? 'unknown'}`,
+            ` status=${result.statusCode} reason=${result.reason ?? 'unknown'}`
         );
         return result;
       }
 
       last = result;
-      console.warn(`[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} failed status=${result.statusCode}`);
+      console.warn(
+        `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} failed status=${result.statusCode}`
+      );
     } catch (error) {
       last = { ok: false, statusCode: null, reason: error?.message };
       console.error(`[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${error?.message}`);
     }
 
     if (attempt < MAX_ATTEMPTS) {
-      await new Promise((r) => setTimeout(r, RETRY_BASE_DELAY_MS * (2 ** (attempt - 1))));
+      await new Promise((r) => setTimeout(r, RETRY_BASE_DELAY_MS * 2 ** (attempt - 1)));
     }
   }
   return last ?? { ok: false };
@@ -892,8 +925,8 @@ function logNotificationHubNotConfigured() {
   _notificationHubUnconfiguredLogged = true;
   console.log(
     '[push] Notification Hub not configured' +
-    ' (set AZURE_NOTIFICATION_HUB_CONNECTION_STRING and AZURE_NOTIFICATION_HUB_NAME);' +
-    ' using direct APNs/FCM delivery',
+      ' (set AZURE_NOTIFICATION_HUB_CONNECTION_STRING and AZURE_NOTIFICATION_HUB_NAME);' +
+      ' using direct APNs/FCM delivery'
   );
 }
 
@@ -921,7 +954,7 @@ async function tryNotificationHub(channel, envelope, label) {
     logNotificationHubNotConfigured();
     console.log(
       `[push] Skipped Notification Hub for device=${channel.deviceId}` +
-      ` reason=notification_hub_not_configured; using direct ${channel.provider}`,
+        ` reason=notification_hub_not_configured; using direct ${channel.provider}`
     );
     return { ok: false, reason: 'notification_hub_not_configured' };
   }
@@ -959,7 +992,7 @@ async function deliverPush(channel, envelope) {
   if (hubResult.reason !== 'notification_hub_not_configured') {
     console.warn(
       `[push] Notification Hub delivery failed (reason=${hubResult.reason ?? 'unknown'});` +
-      ` falling back to direct ${provider}`,
+        ` falling back to direct ${provider}`
     );
   }
 
@@ -970,7 +1003,7 @@ async function deliverPush(channel, envelope) {
     if (!config) {
       console.warn(
         `[push] APNs not configured` +
-        ` (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID); skip ${deviceId}`,
+          ` (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID); skip ${deviceId}`
       );
       return {
         ok: false,
@@ -998,7 +1031,14 @@ async function deliverPush(channel, envelope) {
     result = await withRetry(() => sendFcmOnce(config, pushToken, envelope), label);
   } else {
     console.warn(`[push] Unknown provider "${provider}" for device ${deviceId}`);
-    return { ok: false, provider, deviceId, transport: 'direct', reason: 'unknown_provider', deadToken: false };
+    return {
+      ok: false,
+      provider,
+      deviceId,
+      transport: 'direct',
+      reason: 'unknown_provider',
+      deadToken: false,
+    };
   }
 
   return {
@@ -1020,15 +1060,15 @@ function logDeliveryOutcome(outcome, description) {
   if (outcome.ok) {
     console.log(
       `[push] Delivered ${description}` +
-      ` via ${outcome.provider} (${outcome.transport}) to device=${outcome.deviceId}`,
+        ` via ${outcome.provider} (${outcome.transport}) to device=${outcome.deviceId}`
     );
     return;
   }
   console.error(
     `[push] Failed to deliver ${description}` +
-    ` via ${outcome.provider} to device=${outcome.deviceId}` +
-    ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}` +
-    (outcome.deadToken ? ' deadToken=true' : ''),
+      ` via ${outcome.provider} to device=${outcome.deviceId}` +
+      ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}` +
+      (outcome.deadToken ? ' deadToken=true' : '')
   );
 }
 

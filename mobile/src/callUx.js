@@ -10,7 +10,9 @@ export function formatCallDuration(totalSeconds) {
   const seconds = safeSeconds % 60;
 
   if (hours > 0) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(
+      seconds,
+    ).padStart(2, '0')}`;
   }
 
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -18,7 +20,10 @@ export function formatCallDuration(totalSeconds) {
 
 export function deriveInitials(id) {
   if (!id) return '?';
-  const parts = id.trim().split(/[\s\-_]+/).filter(Boolean);
+  const parts = id
+    .trim()
+    .split(/[\s\-_]+/)
+    .filter(Boolean);
   if (parts.length >= 2) {
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
@@ -26,7 +31,11 @@ export function deriveInitials(id) {
 }
 
 export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }) {
-  if (!Number.isFinite(rttMs) && !Number.isFinite(packetLossRatio) && !Number.isFinite(bitrateKbps)) {
+  if (
+    !Number.isFinite(rttMs) &&
+    !Number.isFinite(packetLossRatio) &&
+    !Number.isFinite(bitrateKbps)
+  ) {
     return { bars: 0, label: 'No link' };
   }
 

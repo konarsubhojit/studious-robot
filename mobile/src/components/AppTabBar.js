@@ -53,9 +53,8 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
   return (
     <View
       style={[styles.bar, { paddingBottom: spacing.xs + Math.max(bottomInset, 0) }]}
-      testID="app-tab-bar"
-    >
-      {TABS.map((tab) => {
+      testID="app-tab-bar">
+      {TABS.map(tab => {
         const isActive = tab.key === activeTab;
         const iconDef = ICONS[isActive ? tab.iconActive : tab.icon];
         const iconColor = isActive ? colors.textPrimary : colors.textSecondary;
@@ -67,8 +66,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
             accessibilityLabel={tab.label}
             accessibilityState={{ selected: isActive }}
             testID={tab.testID}
-            style={styles.tab}
-          >
+            style={styles.tab}>
             {iconDef && MCIcon ? (
               <MCIcon name={iconDef.icon} size={24} color={iconColor} />
             ) : iconDef ? (

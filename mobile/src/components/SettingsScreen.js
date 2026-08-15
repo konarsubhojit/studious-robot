@@ -87,8 +87,7 @@ export default function SettingsScreen({
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <StatusBanner status={status} style={styles.statusBanner} />
 
@@ -99,8 +98,7 @@ export default function SettingsScreen({
             accessibilityRole="button"
             accessibilityLabel="Back"
             testID="settings-back"
-            style={styles.backButton}
-          >
+            style={styles.backButton}>
             <Text style={styles.backIcon}>‹</Text>
           </Pressable>
           <Text style={styles.title}>Settings</Text>
@@ -158,12 +156,11 @@ export default function SettingsScreen({
               Keep this code private. You’ll need it to use this username on another device.
             </Text>
             <Pressable
-              onPress={() => setShowRecoveryCode((previous) => !previous)}
+              onPress={() => setShowRecoveryCode(previous => !previous)}
               accessibilityRole="button"
               accessibilityLabel={showRecoveryCode ? 'Hide recovery code' : 'Show recovery code'}
               testID="settings-toggle-recovery-code"
-              style={({ pressed }) => [styles.recoveryCodeCard, pressed && styles.pressed]}
-            >
+              style={({ pressed }) => [styles.recoveryCodeCard, pressed && styles.pressed]}>
               <View style={styles.recoveryCodeContent}>
                 <Text style={styles.recoveryCodeLabel}>Current recovery code</Text>
                 <Text style={styles.recoveryCodeValue}>
@@ -186,8 +183,7 @@ export default function SettingsScreen({
               accessibilityHint="Shows the legacy room-join tools in the lobby"
               accessibilityState={{ checked: Boolean(developerModeEnabled) }}
               testID="settings-developer-mode"
-              style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}
-            >
+              style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}>
               <View style={styles.toggleTextWrap}>
                 <Text style={styles.toggleLabel}>Developer mode</Text>
                 <Text style={styles.hint}>
@@ -214,13 +210,12 @@ export default function SettingsScreen({
           accessibilityRole="button"
           accessibilityLabel="Sign out"
           testID="settings-sign-out"
-          style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}
-        >
+          style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
         <Text style={styles.signOutHint}>
-          Signing out clears your identity on this device and stops incoming-call
-          notifications until you register again.
+          Signing out clears your identity on this device and stops incoming-call notifications
+          until you register again.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

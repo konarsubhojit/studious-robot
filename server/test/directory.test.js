@@ -89,7 +89,10 @@ test('GET /users filters by case-insensitive search substring', async () => {
 
     const res = await getJson(url, '/users?search=BOB', aliceSession);
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body.users.map((u) => u.userId), ['bob', 'bobby']);
+    assert.deepEqual(
+      res.body.users.map((u) => u.userId),
+      ['bob', 'bobby']
+    );
   } finally {
     await teardown();
   }
@@ -106,7 +109,10 @@ test('GET /users honours limit and caps total separately', async () => {
     const res = await getJson(url, '/users?limit=2', aliceSession);
     assert.equal(res.status, 200);
     assert.equal(res.body.users.length, 2);
-    assert.deepEqual(res.body.users.map((u) => u.userId), ['bob', 'carol']);
+    assert.deepEqual(
+      res.body.users.map((u) => u.userId),
+      ['bob', 'carol']
+    );
     // total reflects the full match count, not the paginated slice.
     assert.equal(res.body.total, 3);
   } finally {
@@ -124,11 +130,17 @@ test('GET /users hides users in either direction of a block', async () => {
     // Alice blocks bob → bob hidden from alice's directory.
     assert.equal((await postJson(url, '/blocks', { blockeeId: 'bob' }, aliceSession)).status, 200);
     // Carol blocks alice → carol hidden from alice's directory (reverse block).
-    assert.equal((await postJson(url, '/blocks', { blockeeId: 'alice' }, carolSession)).status, 200);
+    assert.equal(
+      (await postJson(url, '/blocks', { blockeeId: 'alice' }, carolSession)).status,
+      200
+    );
 
     const res = await getJson(url, '/users', aliceSession);
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body.users.map((u) => u.userId), []);
+    assert.deepEqual(
+      res.body.users.map((u) => u.userId),
+      []
+    );
   } finally {
     await teardown();
   }

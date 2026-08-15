@@ -57,10 +57,9 @@ describe('useStartupPermissions', () => {
       renderer.create(<TestHook userId="alice" />);
     });
 
-    expect(logWarn).toHaveBeenCalledWith(
-      '[StartupPermissions] Startup permission request',
-      { message: 'uh oh' },
-    );
+    expect(logWarn).toHaveBeenCalledWith('[StartupPermissions] Startup permission request', {
+      message: 'uh oh',
+    });
   });
 
   test('logs a warning instead of throwing when the request rejects', async () => {
@@ -70,9 +69,8 @@ describe('useStartupPermissions', () => {
       renderer.create(<TestHook userId="alice" />);
     });
 
-    expect(logWarn).toHaveBeenCalledWith(
-      '[StartupPermissions] Startup permission request failed',
-      { message: 'boom' },
-    );
+    expect(logWarn).toHaveBeenCalledWith('[StartupPermissions] Startup permission request failed', {
+      message: 'boom',
+    });
   });
 });

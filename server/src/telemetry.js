@@ -67,30 +67,30 @@ function snapshotHistogram(h) {
 function createTelemetry() {
   // ── Counters ──────────────────────────────────────────────────────────────
   const counters = {
-    calls_initiated:   0,  // every POST /calls or call.initiate
-    calls_ringing:     0,  // started in ringing state
-    calls_busy:        0,  // immediately busy (callee has active call)
-    calls_unreachable: 0,  // immediately unreachable (no channels)
-    calls_accepted:    0,  // transitioned to accepted
-    calls_declined:    0,  // transitioned to declined
-    calls_missed:      0,  // ringing timeout → missed
-    calls_cancelled:   0,  // caller cancelled during ringing
-    calls_in_call:     0,  // successfully reached in_call
-    calls_ended:       0,  // reached terminal ended state
-    calls_failed:      0,  // ended with endReason=failed
-    signaling_errors:  0,  // acknowledgeError / error ack responses
+    calls_initiated: 0, // every POST /calls or call.initiate
+    calls_ringing: 0, // started in ringing state
+    calls_busy: 0, // immediately busy (callee has active call)
+    calls_unreachable: 0, // immediately unreachable (no channels)
+    calls_accepted: 0, // transitioned to accepted
+    calls_declined: 0, // transitioned to declined
+    calls_missed: 0, // ringing timeout → missed
+    calls_cancelled: 0, // caller cancelled during ringing
+    calls_in_call: 0, // successfully reached in_call
+    calls_ended: 0, // reached terminal ended state
+    calls_failed: 0, // ended with endReason=failed
+    signaling_errors: 0, // acknowledgeError / error ack responses
   };
 
   // ── Latency histograms ────────────────────────────────────────────────────
   const histograms = {
     /** Time from call created (ringing) to accepted, in ms. */
-    call_setup_latency_ms:   createHistogram(LATENCY_BUCKETS_MS),
+    call_setup_latency_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Time from accepted to in_call (media connected), in ms. */
     call_connect_latency_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Total duration of connected calls (in_call → ended), in ms. */
-    call_duration_ms:        createHistogram(LATENCY_BUCKETS_MS),
+    call_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Time spent ringing before a terminal outcome (for unanswered calls). */
-    call_ring_duration_ms:   createHistogram(LATENCY_BUCKETS_MS),
+    call_ring_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
   };
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
@@ -231,12 +231,10 @@ function createTelemetry() {
 
     // Derived call-funnel rates (null when no calls have been seen yet).
     const { calls_initiated, calls_in_call, calls_ended } = snap.counters;
-    snap.derived.call_connect_rate = calls_initiated > 0
-      ? Number((calls_in_call / calls_initiated).toFixed(4))
-      : null;
-    snap.derived.call_completion_rate = calls_in_call > 0
-      ? Number((calls_ended / calls_in_call).toFixed(4))
-      : null;
+    snap.derived.call_connect_rate =
+      calls_initiated > 0 ? Number((calls_in_call / calls_initiated).toFixed(4)) : null;
+    snap.derived.call_completion_rate =
+      calls_in_call > 0 ? Number((calls_ended / calls_in_call).toFixed(4)) : null;
 
     return snap;
   }

@@ -53,10 +53,7 @@ function connect(url, auth) {
 
 function waitFor(socket, event, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`Timeout waiting for "${event}"`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
     socket.once(event, (payload) => {
       clearTimeout(timer);
       resolve(payload);
@@ -228,7 +225,9 @@ test('reconnect: active call remains in RTC-active state after callee socket dro
     // Exchange offer to move into connecting_media.
     const offerRelayed = waitFor(callee1, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1, callId, sdp: { type: 'offer', sdp: 'initial-offer' },
+      version: 1,
+      callId,
+      sdp: { type: 'offer', sdp: 'initial-offer' },
     });
     await offerRelayed;
 
@@ -241,7 +240,7 @@ test('reconnect: active call remains in RTC-active state after callee socket dro
     const callAfterDrop = getCall(callId);
     assert.ok(
       RTC_ACTIVE.has(callAfterDrop.status),
-      `call must remain RTC-active after socket drop, got: ${callAfterDrop.status}`,
+      `call must remain RTC-active after socket drop, got: ${callAfterDrop.status}`
     );
   } finally {
     await teardown(caller);
@@ -271,7 +270,9 @@ test('reconnect: callee can send a new rtc.offer to restart ICE after reconnecti
 
     const offerRelayed = waitFor(callee1, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1, callId, sdp: { type: 'offer', sdp: 'initial-offer' },
+      version: 1,
+      callId,
+      sdp: { type: 'offer', sdp: 'initial-offer' },
     });
     await offerRelayed;
 
@@ -352,7 +353,9 @@ test('network handoff: call completes cleanly after callee switches networks mid
 
     const firstOfferRelayed = waitFor(calleeFirst, 'rtc.offer');
     await emitWithAck(caller, 'rtc.offer', {
-      version: 1, callId, sdp: { type: 'offer', sdp: 'offer-before-handoff' },
+      version: 1,
+      callId,
+      sdp: { type: 'offer', sdp: 'offer-before-handoff' },
     });
     await firstOfferRelayed;
 
@@ -363,7 +366,7 @@ test('network handoff: call completes cleanly after callee switches networks mid
     const callMidHandoff = getCall(callId);
     assert.ok(
       ['accepted', 'connecting_media', 'in_call'].includes(callMidHandoff.status),
-      `expected active state during handoff, got: ${callMidHandoff.status}`,
+      `expected active state during handoff, got: ${callMidHandoff.status}`
     );
 
     // Step 3: Callee connects on the new network (new socket, same session).
@@ -372,7 +375,9 @@ test('network handoff: call completes cleanly after callee switches networks mid
     // Step 4: Callee restarts ICE by sending a fresh offer.
     const restartOfferRelayed = waitFor(caller, 'rtc.offer');
     const restartAck = await emitWithAck(calleeNew, 'rtc.offer', {
-      version: 1, callId, sdp: { type: 'offer', sdp: 'ice-restart-after-handoff' },
+      version: 1,
+      callId,
+      sdp: { type: 'offer', sdp: 'ice-restart-after-handoff' },
     });
     assert.equal(restartAck.ok, true);
     await restartOfferRelayed;
@@ -380,7 +385,9 @@ test('network handoff: call completes cleanly after callee switches networks mid
     // Step 5: Caller answers the restart offer.
     const restartAnswerRelayed = waitFor(calleeNew, 'rtc.answer');
     const answerAck = await emitWithAck(caller, 'rtc.answer', {
-      version: 1, callId, sdp: { type: 'answer', sdp: 'answer-after-handoff' },
+      version: 1,
+      callId,
+      sdp: { type: 'answer', sdp: 'answer-after-handoff' },
     });
     assert.equal(answerAck.ok, true);
     await restartAnswerRelayed;

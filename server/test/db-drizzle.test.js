@@ -37,7 +37,7 @@ test('generated migrations are present and journalled', () => {
   assert.ok(files.length >= 1, 'at least one generated .sql migration must exist');
 
   const journal = JSON.parse(
-    fs.readFileSync(path.join(MIGRATIONS_DIR, 'meta', '_journal.json'), 'utf8'),
+    fs.readFileSync(path.join(MIGRATIONS_DIR, 'meta', '_journal.json'), 'utf8')
   );
   assert.equal(journal.entries.length, files.length, 'journal must track every migration');
 });
@@ -64,7 +64,7 @@ test('migrations apply and the Drizzle client round-trips', { skip: !HAS_DB }, a
 
     // Every table should exist.
     const { rows } = await pool.query(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
     );
     const tableNames = rows.map((r) => r.table_name);
     for (const expected of ['users', 'calls', 'call_events', 'devices', 'audit_log', 'blocks']) {

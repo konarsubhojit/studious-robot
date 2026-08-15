@@ -119,8 +119,8 @@ function nextTimestamp() {
 function createMessageRecord(message) {
   return {
     messageId: message.messageId || randomUUID(),
-    conversationId: message.conversationId
-      || deriveConversationId(message.senderId, message.recipientId),
+    conversationId:
+      message.conversationId || deriveConversationId(message.senderId, message.recipientId),
     senderId: message.senderId,
     recipientId: message.recipientId,
     body: message.body,
@@ -234,9 +234,9 @@ function createMemoryMessageStore() {
       let updated = 0;
       for (const message of messages) {
         if (
-          message.conversationId === conversationId
-          && message.recipientId === userId
-          && !message.readAt
+          message.conversationId === conversationId &&
+          message.recipientId === userId &&
+          !message.readAt
         ) {
           message.readAt = now;
           updated += 1;
@@ -283,8 +283,9 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
   function connect() {
     if (!clientPromise) {
       clientPromise = (async () => {
-        const mongoClient = client
-          ?? new (require('mongodb').MongoClient)(uri, {
+        const mongoClient =
+          client ??
+          new (require('mongodb').MongoClient)(uri, {
             serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
           });
         if (typeof mongoClient.connect === 'function') {
@@ -302,7 +303,9 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
           console.warn(`[messages] index creation skipped: ${error?.message}`);
         }
 
-        console.log(`[messages] Mongo message store ready (db=${database} collection=${collection})`);
+        console.log(
+          `[messages] Mongo message store ready (db=${database} collection=${collection})`
+        );
         return { mongoClient, messages };
       })().catch((error) => {
         // Reset so a later call can retry rather than caching a failed connect.
@@ -347,7 +350,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       const result = await messages.findOneAndUpdate(
         { messageId },
         { $addToSet: { deliveredTo: userId } },
-        { returnDocument: 'after' },
+        { returnDocument: 'after' }
       );
       const updated = result?.value ?? result;
       if (!updated || !updated.messageId) return null;
@@ -357,26 +360,28 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
 
     async listConversations(userId) {
       const { messages } = await connect();
-      const found = await messages.aggregate([
-        { $match: { $or: [{ senderId: userId }, { recipientId: userId }] } },
-        { $sort: { createdAt: -1, messageId: -1 } },
-        {
-          $group: {
-            _id: '$conversationId',
-            lastMessage: { $first: '$$ROOT' },
-            unreadCount: {
-              $sum: {
-                $cond: [
-                  { $and: [{ $eq: ['$recipientId', userId] }, { $eq: ['$readAt', null] }] },
-                  1,
-                  0,
-                ],
+      const found = await messages
+        .aggregate([
+          { $match: { $or: [{ senderId: userId }, { recipientId: userId }] } },
+          { $sort: { createdAt: -1, messageId: -1 } },
+          {
+            $group: {
+              _id: '$conversationId',
+              lastMessage: { $first: '$$ROOT' },
+              unreadCount: {
+                $sum: {
+                  $cond: [
+                    { $and: [{ $eq: ['$recipientId', userId] }, { $eq: ['$readAt', null] }] },
+                    1,
+                    0,
+                  ],
+                },
               },
             },
           },
-        },
-        { $sort: { 'lastMessage.createdAt': -1, 'lastMessage.messageId': -1 } },
-      ]).toArray();
+          { $sort: { 'lastMessage.createdAt': -1, 'lastMessage.messageId': -1 } },
+        ])
+        .toArray();
 
       return found.map((doc) => {
         // Strip the driver-managed `_id` so the wire shape matches the memory store.
@@ -394,7 +399,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       const { messages } = await connect();
       const result = await messages.updateMany(
         { conversationId, recipientId: userId, readAt: null },
-        { $set: { readAt: nextTimestamp() } },
+        { $set: { readAt: nextTimestamp() } }
       );
       return result?.modifiedCount ?? 0;
     },
@@ -444,7 +449,9 @@ function createMessageStore(opts = {}) {
       client,
     });
   } catch (error) {
-    console.error(`[messages] INVALID MONGODB_URI; using in-memory message store: ${error?.message}`);
+    console.error(
+      `[messages] INVALID MONGODB_URI; using in-memory message store: ${error?.message}`
+    );
     return createMemoryMessageStore();
   }
 }
