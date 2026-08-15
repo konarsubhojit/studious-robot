@@ -138,7 +138,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
 | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../AZURE_SETUP.md). |
 | `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
-| `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-01` | Notification Hubs REST API version used in the `api-version` query parameter. |
+| `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
 | `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../AZURE_SETUP.md)). Absent ⇒ an in-process memory store is used and the server behaves exactly as before. |
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
@@ -184,7 +184,8 @@ retrying on a missing status code, `429`, or `5xx`).
 Set `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` (the
 **DefaultFullSharedAccessSignature** from the hub's *Access Policies* blade) and
 `AZURE_NOTIFICATION_HUB_NAME`. Optionally override
-`AZURE_NOTIFICATION_HUB_API_VERSION` (default `2015-01`).
+`AZURE_NOTIFICATION_HUB_API_VERSION` (default `2015-04`, the latest documented
+data-plane version for the `/messages/?direct` operation).
 
 The server signs each request with a short-lived SAS token minted from the
 connection string (cached and refreshed before expiry) and uses **direct send**
@@ -192,6 +193,14 @@ connection string (cached and refreshed before expiry) and uses **direct send**
 keeps targeting the exact device token already stored by `POST /devices/register` —
 no migration to Notification Hubs registrations or tags is required. No Azure SDK
 dependency is needed; the integration is plain `https` + `crypto`.
+
+The hub translates the data-only body into a native provider payload according
+to `ServiceBusNotification-Format`: `apple` for APNs devices, `FcmV1` for FCM
+devices. Google retired the FCM legacy HTTP protocol (Notification Hubs' `gcm`
+format) in June 2024 — a hub configured with a Google (FCM v1) service-account
+credential rejects `gcm`-format sends with `400 ... no target applications ...
+format is gcm`, so the server always sends the `FcmV1` native `message` envelope
+for Android devices.
 
 APNs and FCM credentials still have to be configured **inside the hub** (Apple
 token auth + the Firebase service-account JSON). Step-by-step portal

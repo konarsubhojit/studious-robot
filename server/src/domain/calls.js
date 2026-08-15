@@ -151,8 +151,8 @@ function appendCallEvent(state, callId, event, actor, reason, afterPersist) {
     eventId: randomUUID(),
     callId,
     event,
-    actor: actor ?? null,
-    reason: reason ?? null,
+    actor: actor === '' ? null : (actor ?? null),
+    reason: reason === '' ? null : (reason ?? null),
     timestamp: new Date().toISOString(),
   };
   events.push(eventRecord);

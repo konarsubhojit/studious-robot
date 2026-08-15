@@ -11,8 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
-const { persistCallEvent } = require('../src/callPersistence');
-const { createCallRecord } = require('../src/domain/calls');
+const { createCallRecord, appendCallEvent } = require('../src/domain/calls');
 const schema = require('../db/schema');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -330,20 +329,19 @@ test('POST /calls persists call records and call events to the DB', async () => 
   }
 });
 
-test('persistCallEvent stores absent actor and reason as null, not empty strings', async () => {
+test('appendCallEvent persists absent actor and reason as null', async () => {
   const db = buildMockDb();
+  const state = buildCallState(db);
+  const callId = '00000000-0000-0000-0000-000000000002';
+  state.callEvents.set(callId, []);
 
-  await persistCallEvent(db, {
-    eventId: '00000000-0000-0000-0000-000000000001',
-    callId: '00000000-0000-0000-0000-000000000002',
-    event: 'created',
-    actor: '',
-    reason: '',
-    timestamp: '2026-08-14T17:28:07.090Z',
-  });
+  appendCallEvent(state, callId, 'created', '', '');
+  await new Promise((resolve) => setImmediate(resolve));
 
+  const event = state.callEvents.get(callId)[0];
   const insert = db.inserts.find((entry) => entry.table === schema.callEvents);
-  assert.ok(insert, 'expected a call_events insert');
+  assert.equal(event.actor, null);
+  assert.equal(event.reason, null);
   assert.equal(insert.values.actor, null);
   assert.equal(insert.values.reason, null);
 });

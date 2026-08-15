@@ -123,6 +123,8 @@ function createServer(opts = {}) {
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
     messageStore,
+    /** Current asynchronous readiness state for the message store. */
+    messageStoreStatus: messageStore.type === 'mongo' ? 'starting' : 'ready',
     /**
      * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
      * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
@@ -137,6 +139,16 @@ function createServer(opts = {}) {
      */
     draining: false,
   };
+  if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
+    Promise.resolve(messageStore.ready())
+      .then(() => {
+        state.messageStoreStatus = 'ready';
+      })
+      .catch((error) => {
+        state.messageStoreStatus = 'unavailable';
+        console.error(`[messages] Mongo message store health check failed: ${error?.message}`);
+      });
+  }
   verboseLog('server', 'state.initialized', {
     storeNames: Object.keys(stores).filter((key) => stores[key] instanceof Map),
     hasDb: Boolean(db),
