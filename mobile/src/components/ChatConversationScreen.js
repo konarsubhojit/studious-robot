@@ -121,8 +121,10 @@ export default function ChatConversationScreen({
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
-  const orderedMessages = [...messages].reverse();
-  const listItems = useMemo(() => buildListItems(orderedMessages), [orderedMessages]);
+  const listItems = useMemo(
+    () => buildListItems([...messages].reverse()),
+    [messages],
+  );
 
   useEffect(() => {
     return () => {

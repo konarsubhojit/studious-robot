@@ -394,11 +394,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.surface,
   },
-  presenceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
   presenceDotOnline: {
     backgroundColor: colors.success,
   },

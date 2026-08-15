@@ -1685,8 +1685,7 @@ export default function useCallFlow() {
       });
 
       // ── Chat ─────────────────────────────────────────────────────────
-      socket.on("message.received", ({ conversationId, message }) => {
-        void conversationId;
+      socket.on("message.received", ({ message }) => {
         if (!message?.senderId) return;
         const senderId = message.senderId;
 
