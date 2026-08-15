@@ -5,14 +5,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import io.wazo.callkeep.VoiceConnectionService
 
 /**
  * Handles the Accept / Decline action buttons on WeTalk's branded
  * incoming-call notification ([IncomingCallNotificationModule]).
  *
  * Acts directly on react-native-callkeep's Android `Connection` for the call
- * (`VoiceConnectionService.getConnection`) — the same object
+ * (via [CallConnections], WeTalk's own seam over
+ * `io.wazo.callkeep.VoiceConnectionService.getConnection`) — the same object
  * `RNCallKeepModule.answerIncomingCall` / `rejectCall` call `onAnswer()` /
  * `onReject()` on from the JS bridge. Doing the same here needs no live
  * React/JS context, so the actions work as soon as the self-managed
@@ -44,14 +44,12 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     manager.cancel(IncomingCallNotificationModule.notificationId(callId))
 
-    // The ConnectionService's Connection for this call may already be gone
-    // (the call ended/timed out elsewhere before the user tapped an action);
-    // there is nothing left to accept or decline in that case.
-    val connection = VoiceConnectionService.getConnection(callId) ?: return
-
     when (intent.action) {
       IncomingCallNotificationModule.ACTION_ACCEPT -> {
-        connection.onAnswer()
+        // The connection may already be gone (the call ended/timed out
+        // elsewhere before the user tapped an action); there is nothing
+        // left to accept in that case.
+        if (!CallConnections.answer(callId)) return
         // Bring the app to the foreground so the user sees the in-call
         // screen once `useCallFlow` picks up the resulting answerCall event.
         val activityIntent =
@@ -63,7 +61,7 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
           }
         context.startActivity(activityIntent)
       }
-      IncomingCallNotificationModule.ACTION_DECLINE -> connection.onReject()
+      IncomingCallNotificationModule.ACTION_DECLINE -> CallConnections.reject(callId)
     }
   }
 

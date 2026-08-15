@@ -15,6 +15,8 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Native module behind WeTalk's own branded incoming-call notification.
@@ -54,6 +56,10 @@ class IncomingCallNotificationModule(
   @ReactMethod
   fun dismiss(callId: String) {
     notificationManager().cancel(notificationId(callId))
+    // The call is over (answered/declined/ended) by the time dismiss() is
+    // called, so its id can be freed instead of growing notificationIds
+    // for the lifetime of the process.
+    notificationIds.remove(callId)
   }
 
   private fun notificationManager(): NotificationManager =
@@ -149,7 +155,7 @@ class IncomingCallNotificationModule(
       }
     return PendingIntent.getBroadcast(
       reactContext,
-      (callId + action).hashCode(),
+      actionRequestCode(callId, action),
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
@@ -162,7 +168,33 @@ class IncomingCallNotificationModule(
     const val ACTION_DECLINE = "com.wetalk.action.DECLINE_CALL"
     private val VIBRATION_PATTERN = longArrayOf(0, 1000, 1000)
 
-    /** Stable, app-unique notification id derived from the call id. */
-    fun notificationId(callId: String): Int = callId.hashCode()
+    /**
+     * Multiplier used to derive an action button's `PendingIntent` request
+     * code from its call's [notificationId], leaving room below it for the
+     * (at most two) action-specific offsets added in [actionRequestCode].
+     */
+    private const val ACTION_REQUEST_CODE_MULTIPLIER = 4
+
+    private val notificationIds = ConcurrentHashMap<String, Int>()
+    private val nextNotificationId = AtomicInteger(1)
+
+    /**
+     * Stable, collision-free notification id for a call, used both as the
+     * Android notification id and as the content `PendingIntent`'s request
+     * code. Each call id is assigned the next small integer the first time
+     * it's seen, instead of hashing it — `String.hashCode()` is only a
+     * 32-bit value, so two different call ids could theoretically collide.
+     */
+    fun notificationId(callId: String): Int =
+      notificationIds.computeIfAbsent(callId) { nextNotificationId.getAndIncrement() }
+
+    /** Collision-free request code for an action button's `PendingIntent`. */
+    private fun actionRequestCode(
+      callId: String,
+      action: String,
+    ): Int {
+      val actionOffset = if (action == ACTION_ACCEPT) 1 else 2
+      return notificationId(callId) * ACTION_REQUEST_CODE_MULTIPLIER + actionOffset
+    }
   }
 }

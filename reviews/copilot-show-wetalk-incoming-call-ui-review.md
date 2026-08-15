@@ -35,7 +35,11 @@ Applied by the `fix-review-findings` skill, in severity order.
 | High | 2 | 0 |
 | Medium | 2 | 0 |
 | Low | 1 | 0 |
-| Nit | 0 | 1 |
+| Nit | 1 | 0 |
+
+> **Follow-up pass:** the Nit (`notificationId` hash-collision risk) was
+> revisited and fixed — see its entry below for details. All in-diff
+> findings are now resolved.
 
 **Pre-existing / whole-app findings** (one-time exception, this run only):
 
@@ -44,7 +48,7 @@ Applied by the `fix-review-findings` skill, in severity order.
 | `useCallFlow.js` / `AppShell` god-object (SOLID) | Deferred — disproportionate blast radius, needs its own PR |
 | `useCompactCallView.js` / `useWebRTCCall.js` exhaustive-deps errors | Fixed |
 | `vectorIcons.js` invalid rule reference | Fixed |
-| `IncomingCallActionReceiver` → `VoiceConnectionService` DIP smell | Deferred — pragmatic native glue, mirrored intentionally |
+| `IncomingCallActionReceiver` → `VoiceConnectionService` DIP smell | Fixed (follow-up pass) — extracted `CallConnections` |
 | `appLogger.js` variable shadowing, unused test import, stale eslint-disable comments (4x) | Fixed |
 | Repo-wide Prettier (mobile + server) and ktlint (Kotlin) formatting | Fixed |
 | `server/.env.tmp` tracked in git, `Math.random()` fallbacks, `npm audit` advisories | Deferred — see rationale below |
@@ -56,6 +60,16 @@ passing. A full Gradle/Kotlin compile of the native fixes could not be run
 in this sandbox (Gradle plugin portal is network-blocked here), so the
 Critical/High native fixes are confirmed correct by careful manual tracing
 of every call site, not by `kotlinc`.
+
+> **Follow-up pass — implementing previously deferred findings:** the
+> `notificationId` Nit and the `VoiceConnectionService` DIP smell (both
+> below) have now been fixed; `useCallFlow.js`/`AppShell` decomposition and
+> `npm audit fix` remain deferred, re-verified with updated, more precise
+> rationale in their entries. Validation for this pass: `npx eslint .` →
+> clean (0 problems); `npx jest` → 36/36 suites, 422/422 tests passing. The
+> Kotlin changes again could not be compiled in this sandbox (same
+> network-blocked Gradle plugin portal) and were verified by manual tracing
+> of every call site instead.
 
 ## Findings
 
@@ -210,6 +224,15 @@ of every call site, not by `kotlinc`.
     app's realistic concurrent-call scale; fixing it would mean introducing
     a new id-allocation scheme disproportionate to a Nit-severity, cosmetic
     concern for this diff.
+  - **Update — Resolution: Fixed.** Implemented the suggested per-call
+    sequence: `notificationId(callId)` now assigns each call id the next
+    `Int` from a `ConcurrentHashMap<String, Int>` (via
+    `computeIfAbsent`/`AtomicInteger`) instead of hashing it, and
+    `dismiss()` frees the entry once the call is over. The action buttons'
+    `PendingIntent` request codes are now derived from that same id
+    (`notificationId(callId) * 4 + actionOffset`) instead of
+    `(callId + action).hashCode()`, removing the theoretical collision risk
+    entirely rather than just shrinking its odds.
 
 ## Out of scope (pre-existing, not graded)
 
@@ -235,6 +258,11 @@ of every call site, not by `kotlinc`.
     this pass; it needs to be its own dedicated, reviewed refactor PR with
     its own test plan, not a rider on a review/formatting pass. Tracked
     here so it isn't lost.
+  - **Update — Resolution: Still deferred.** Re-checked in this follow-up
+    pass: `useCallFlow.js` is now 2693 lines and `App.js` 640. The original
+    rationale still holds — a real decomposition here is a dedicated,
+    reviewed refactor with its own test plan, not something to fold into a
+    review-findings remediation pass. Left untouched.
 - `useCompactCallView.js:39` and `useWebRTCCall.js:295` both have pre-existing
   `react-hooks/exhaustive-deps` lint errors, unchanged by this diff (verified
   against the merge-base build).
@@ -268,6 +296,16 @@ of every call site, not by `kotlinc`.
     future work but would touch three call sites for a third-party
     dependency that is already Android/CallKeep-specific glue; not a
     proportionate fix for this pass.
+  - **Update — Resolution: Fixed.** Added `CallConnections`
+    (`mobile/android/app/src/main/java/com/wetalk/CallConnections.kt`), a
+    small WeTalk-owned object wrapping
+    `VoiceConnectionService.getConnection` behind `isLive`/`answer`/`reject`.
+    Both `IncomingCallActionReceiver` and `MainActivity` now depend on this
+    abstraction instead of importing `io.wazo.callkeep.VoiceConnectionService`
+    directly, confining the third-party dependency to a single file — a
+    two-call-site, low-risk change, smaller than the "three call sites"
+    estimated in the original finding since `answer`/`reject` collapse
+    `getConnection` + `onAnswer`/`onReject` into one call each.
 
 ### Additional pre-existing lint warnings fixed in this pass
 
@@ -359,3 +397,15 @@ whole-app pass (they are diff-scoped by design).
     animation/worklets dependencies blind, which is disproportionate risk
     for a review/formatting pass and needs its own dedicated dependency
     upgrade + regression-test pass.
+  - **Update — Resolution: Still deferred (re-verified).** Re-ran `npm
+    audit fix` in this follow-up pass: it fails with the same `ERESOLVE`,
+    now pinned down precisely — `npm audit fix` wants to bump
+    `react-native-reanimated` to `4.5.3` (still satisfying the root
+    `^4.4.1` range), whose `peerDependencies` require
+    `react-native-worklets@"0.10.x - 0.11.x"`, conflicting with the root's
+    `react-native-worklets@^0.9.2` (currently resolves to `0.9.3`, matching
+    installed `react-native-reanimated@4.4.1`'s own peer requirement of
+    `0.9.x`). Bumping both together untested is exactly the "blind major
+    animation/worklets bump" the original finding warned against, and this
+    sandbox cannot run a native/Reanimated regression pass (no device/
+    emulator, Gradle plugin portal network-blocked). Left deferred.
