@@ -3,13 +3,13 @@ import {
   BackHandler,
   Platform,
   Pressable,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
 import AppTabBar from './src/components/AppTabBar';
 import CallScreen from './src/components/CallScreen';
@@ -54,6 +54,20 @@ import { colors } from './src/theme';
  * All behaviour lives in the hooks; the components are purely presentational.
  */
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppShell />
+    </SafeAreaProvider>
+  );
+}
+
+/**
+ * Everything the composition root used to do, now nested inside
+ * `SafeAreaProvider` so it can read real device insets (status bar / notch,
+ * and the bottom gesture-navigation / 3-button bar) via `useSafeAreaInsets`
+ * instead of the iOS-only, Android-no-op `SafeAreaView` from `react-native`.
+ */
+function AppShell() {
   // ── New server-authoritative call flow ────────────────────────────────────
   const callFlow = useCallFlow();
 
@@ -250,8 +264,14 @@ export default function App() {
   // compact CallScreen, taking precedence over the in-app minimize state.
   const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
 
+  const insets = useSafeAreaInsets();
+
   let screenContent;
   let floatingBubble = null;
+  // True only for the tab-shell branch below; AppTabBar renders its own
+  // bottom-safe-area padding in that case, so the outer container must not
+  // *also* pad for it (that would leave a double gap under the tab bar).
+  let isTabShellActive = false;
 
   if (callFlow.isLoadingIdentity) {
     // Blank screen while identity is being loaded from storage; the app
@@ -368,6 +388,7 @@ export default function App() {
   } else {
     // No full-screen call to show: render the tab shell. A connected call
     // that has been explicitly minimized overlays a FloatingCallBubble on top.
+    isTabShellActive = true;
     let tabContent;
     if (activeTab === 'chats') {
       tabContent = chatPeerId ? (
@@ -471,6 +492,7 @@ export default function App() {
           activeTab={activeTab}
           onChangeTab={handleChangeTab}
           unreadCount={callFlow.unreadTotal}
+          bottomInset={insets.bottom}
         />
       </View>
     );
@@ -514,11 +536,19 @@ export default function App() {
           {screenContent}
         </View>
       ) : (
-        <SafeAreaView style={styles.container}>
+        <View
+          style={[
+            styles.container,
+            { paddingTop: insets.top, paddingBottom: isTabShellActive ? 0 : insets.bottom },
+          ]}
+        >
           {screenContent}
           {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (
-            <View style={styles.recoveryNotice} testID="recovery-code-notice">
+            <View
+              style={[styles.recoveryNotice, { bottom: 16 + (isTabShellActive ? 0 : insets.bottom) }]}
+              testID="recovery-code-notice"
+            >
               <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
               <Text style={styles.recoveryNoticeCode}>{callFlow.pendingVerificationCode}</Text>
               <Text style={styles.recoveryNoticeText}>
@@ -536,7 +566,7 @@ export default function App() {
             </View>
           ) : null}
           <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
-        </SafeAreaView>
+        </View>
       )}
     </GestureHandlerRootView>
   );
@@ -546,7 +576,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
   containerCompact: {
     flex: 1,

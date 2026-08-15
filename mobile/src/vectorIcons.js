@@ -69,4 +69,10 @@ export const ICONS = {
   chatVideoCall:  { icon: 'video',                emoji: '📹' },
   minimize:       { icon: 'chevron-down',         emoji: '⌄' },
   stopShare:      { icon: 'monitor-off',          emoji: '🚫' },
+  tabChats:       { icon: 'chat-outline',          emoji: '💬' },
+  tabChatsActive: { icon: 'chat',                  emoji: '💬' },
+  tabCalls:       { icon: 'phone-outline',          emoji: '📞' },
+  tabCallsActive: { icon: 'phone',                  emoji: '📞' },
+  tabSettings:       { icon: 'cog-outline',         emoji: '⚙️' },
+  tabSettingsActive: { icon: 'cog',                 emoji: '⚙️' },
 };

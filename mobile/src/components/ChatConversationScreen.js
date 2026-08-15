@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -118,6 +119,11 @@ export default function ChatConversationScreen({
   const [draft, setDraft] = useState('');
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef(null);
+  const listRef = useRef(null);
+  // Tracks the newest message's id so the auto-scroll-to-bottom effect below
+  // only fires for a genuinely new/sent message, not when older history is
+  // paged in at the top (which must not yank the scroll position).
+  const newestMessageIdRef = useRef(null);
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
@@ -125,6 +131,29 @@ export default function ChatConversationScreen({
     () => buildListItems([...messages].reverse()),
     [messages],
   );
+
+  // Keep the newest message in view: scroll to the bottom whenever the
+  // newest message changes (a message was sent or received), but not when
+  // `onLoadOlder` prepends older history (which leaves the newest message,
+  // and thus this id, unchanged).
+  useEffect(() => {
+    const newestId = messages[0]?.messageId ?? null;
+    if (newestId !== newestMessageIdRef.current) {
+      newestMessageIdRef.current = newestId;
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    }
+  }, [messages]);
+
+  // Keep the composer and the latest message visible above the keyboard: on
+  // Android in particular, the on-screen keyboard can otherwise cover both
+  // the text being typed and the send button until the keyboard is dismissed.
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const subscription = Keyboard.addListener(showEvent, () => {
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -186,7 +215,7 @@ export default function ChatConversationScreen({
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.root} testID="chat-conversation-root">
         <View style={styles.header}>
@@ -238,12 +267,14 @@ export default function ChatConversationScreen({
         </View>
 
         <FlatList
+          ref={listRef}
           testID="chat-message-list"
           data={listItems}
           keyExtractor={(item) => item.key}
           contentContainerStyle={styles.messageList}
           onScroll={handleScroll}
           scrollEventThrottle={32}
+          keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => {
             if (item.type === 'date') {
               return (

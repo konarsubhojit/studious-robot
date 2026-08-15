@@ -1,11 +1,33 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing } from '../theme';
+import { ICONS, loadVectorIcons } from '../vectorIcons';
 
 const TABS = [
-  { key: 'chats', label: 'Chats', testID: 'app-tab-chats' },
-  { key: 'calls', label: 'Calls', testID: 'app-tab-calls' },
-  { key: 'settings', label: 'Settings', testID: 'app-tab-settings' },
+  {
+    key: 'chats',
+    label: 'Chats',
+    testID: 'app-tab-chats',
+    icon: 'tabChats',
+    iconActive: 'tabChatsActive',
+  },
+  {
+    key: 'calls',
+    label: 'Calls',
+    testID: 'app-tab-calls',
+    icon: 'tabCalls',
+    iconActive: 'tabCallsActive',
+  },
+  {
+    key: 'settings',
+    label: 'Settings',
+    testID: 'app-tab-settings',
+    icon: 'tabSettings',
+    iconActive: 'tabSettingsActive',
+  },
 ];
+
+/** Minimum touch-target height (dp) recommended for reliable thumb taps. */
+const MIN_TAB_HEIGHT = 56;
 
 /**
  * Bottom tab bar for the post-registration app shell: Chats / Calls / Settings.
@@ -13,16 +35,30 @@ const TABS = [
  * A small pill badge (mirroring Lobby's missed-call badge style) is shown on
  * the Chats tab when `unreadCount` is greater than zero.
  *
+ * Pads its own bottom edge by `bottomInset` (the device's safe-area/gesture-
+ * navigation inset) so the bar's background reaches the true screen edge
+ * while the labels/icons stay clear of the system navigation bar, rather than
+ * being overlapped or clipped by it.
+ *
  * @param {object} props
  * @param {'chats'|'calls'|'settings'} props.activeTab
  * @param {(tab: 'chats'|'calls'|'settings') => void} props.onChangeTab
  * @param {number} [props.unreadCount]
+ * @param {number} [props.bottomInset] - Safe-area inset (e.g. from
+ *   `useSafeAreaInsets().bottom`) to add as extra bottom padding.
  */
-export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0 }) {
+export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bottomInset = 0 }) {
+  const MCIcon = loadVectorIcons();
+
   return (
-    <View style={styles.bar} testID="app-tab-bar">
+    <View
+      style={[styles.bar, { paddingBottom: spacing.xs + Math.max(bottomInset, 0) }]}
+      testID="app-tab-bar"
+    >
       {TABS.map((tab) => {
         const isActive = tab.key === activeTab;
+        const iconDef = ICONS[isActive ? tab.iconActive : tab.icon];
+        const iconColor = isActive ? colors.textPrimary : colors.textSecondary;
         return (
           <Pressable
             key={tab.key}
@@ -33,6 +69,11 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0 }) {
             testID={tab.testID}
             style={styles.tab}
           >
+            {iconDef && MCIcon ? (
+              <MCIcon name={iconDef.icon} size={24} color={iconColor} />
+            ) : iconDef ? (
+              <Text style={styles.tabEmoji}>{iconDef.emoji}</Text>
+            ) : null}
             <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
             {tab.key === 'chats' && unreadCount > 0 ? (
               <View style={styles.badge} testID="app-tab-chats-badge">
@@ -55,9 +96,15 @@ const styles = StyleSheet.create({
   },
   tab: {
     flex: 1,
+    minHeight: MIN_TAB_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 2,
     paddingVertical: spacing.sm,
+  },
+  tabEmoji: {
+    fontSize: 20,
+    lineHeight: 24,
   },
   tabLabel: {
     color: colors.textSecondary,

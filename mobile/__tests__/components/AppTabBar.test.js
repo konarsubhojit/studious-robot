@@ -57,4 +57,14 @@ describe('AppTabBar', () => {
       selected: false,
     });
   });
+
+  test('pads the bottom of the bar by bottomInset, so it clears gesture navigation', () => {
+    const flat = (style) => (Array.isArray(style) ? Object.assign({}, ...style) : style);
+
+    const withoutInset = flat(findByTestId(render({ bottomInset: 0 }), 'app-tab-bar').props.style);
+    const withInset = flat(findByTestId(render({ bottomInset: 24 }), 'app-tab-bar').props.style);
+
+    expect(withInset.paddingBottom).toBeGreaterThan(withoutInset.paddingBottom);
+    expect(withInset.paddingBottom).toBeGreaterThanOrEqual(24);
+  });
 });

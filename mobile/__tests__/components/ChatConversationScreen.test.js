@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { FlatList, Keyboard } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
 
 jest.mock('../../src/components/IconButton', () => (props) =>
@@ -342,5 +343,143 @@ describe('ChatConversationScreen', () => {
     });
     expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(true);
     expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
+  });
+
+  // ── Keyboard-aware composer / auto-scroll ──────────────────────────────
+
+  test('the message list allows tapping through an open keyboard (keyboardShouldPersistTaps)', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-list').props.keyboardShouldPersistTaps).toBe('handled');
+  });
+
+  test('auto-scrolls to the newest message when it changes (new message sent/received)', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[makeMessage({ messageId: 'm2' }), makeMessage({ messageId: 'm1' })]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  test('does not auto-scroll when older history is paged in (newest message unchanged)', () => {
+    const newest = makeMessage({ messageId: 'm2' });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [newest, makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    scrollSpy.mockClear();
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[newest, makeMessage({ messageId: 'm1' }), makeMessage({ messageId: 'm0' })]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  test('scrolls the message list to the bottom when the keyboard opens, so the composer stays visible', () => {
+    const addListenerSpy = jest.spyOn(Keyboard, 'addListener');
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const showListenerCall = addListenerSpy.mock.calls.findLast(([eventName]) =>
+      eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    );
+    expect(showListenerCall).toBeDefined();
+    const [, showListener] = showListenerCall;
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    scrollSpy.mockClear();
+
+    act(() => {
+      showListener({ endCoordinates: { height: 300 } });
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  test('unsubscribes the keyboard listener on unmount', () => {
+    const addListenerSpy = jest.spyOn(Keyboard, 'addListener');
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const showListenerCall = addListenerSpy.mock.calls.findLast(([eventName]) =>
+      eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    );
+    const callIndex = addListenerSpy.mock.calls.indexOf(showListenerCall);
+    const subscription = addListenerSpy.mock.results[callIndex].value;
+    const removeSpy = jest.spyOn(subscription, 'remove');
+
+    act(() => {
+      tree.unmount();
+    });
+
+    expect(removeSpy).toHaveBeenCalled();
   });
 });
