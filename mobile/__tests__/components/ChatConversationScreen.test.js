@@ -289,6 +289,55 @@ describe('ChatConversationScreen', () => {
     expect(findByTestId(tree, 'chat-typing-indicator')).not.toBeNull();
   });
 
+  test('renders a presence row with the online/offline label', () => {
+    const online = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: true },
+    });
+    expect(findByTestId(online, 'chat-presence-row')).not.toBeNull();
+    expect(online.root.findAll((n) => n.props?.children === 'Online').length).toBeGreaterThan(0);
+
+    const offline = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: false },
+    });
+    expect(findByTestId(offline, 'chat-presence-row')).not.toBeNull();
+    expect(offline.root.findAll((n) => n.props?.children === 'Offline').length).toBeGreaterThan(0);
+  });
+
+  test('composer input applies a focus style when focused and clears it on blur', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const inputBefore = findByTestId(tree, 'chat-message-input');
+    const unfocusedStyle = [].concat(inputBefore.props.style).flat();
+
+    act(() => {
+      inputBefore.props.onFocus();
+    });
+    const inputFocused = findByTestId(tree, 'chat-message-input');
+    const focusedStyle = [].concat(inputFocused.props.style).flat();
+    expect(focusedStyle).not.toEqual(unfocusedStyle);
+
+    act(() => {
+      inputFocused.props.onBlur();
+    });
+    const inputAfterBlur = findByTestId(tree, 'chat-message-input');
+    expect([].concat(inputAfterBlur.props.style).flat()).toEqual(unfocusedStyle);
+  });
+
   test('reports typing state to onTypingChange while composing and after send', () => {
     const onTypingChange = jest.fn();
     const tree = render({
@@ -481,5 +530,166 @@ describe('ChatConversationScreen', () => {
     });
 
     expect(removeSpy).toHaveBeenCalled();
+  });
+
+  // ── Scroll-to-bottom FAB ────────────────────────────────────────────────
+
+  test('shows a scroll-to-bottom FAB when a peer message arrives while scrolled up, and hides it on tap', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-bob' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const fab = findByTestId(tree, 'chat-scroll-to-bottom');
+    expect(fab).not.toBeNull();
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+
+    act(() => {
+      fab.props.onPress();
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+  });
+
+  test('does not show the scroll-to-bottom FAB when the new message is the current user\'s own', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-alice' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+  });
+
+  test('scrolling back near the bottom clears the scroll-to-bottom FAB', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-bob' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).not.toBeNull();
+
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 490 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
   });
 });

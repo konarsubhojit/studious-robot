@@ -19,19 +19,19 @@ starting checklist for the next session.
 ## Open items for the next revamp pass
 
 ### Chat conversation screen (see reference screenshot)
-- [ ] Increase spacing/contrast between consecutive own-message bubbles vs.
+- [x] Increase spacing/contrast between consecutive own-message bubbles vs.
       the peer's — bubbles currently read a little flat against the dark
       background; consider a subtle border or shadow on own-bubbles.
-- [ ] Timestamp + single/double tick row is easy to miss (small, muted
+- [x] Timestamp + single/double tick row is easy to miss (small, muted
       grey) — consider slightly larger tick glyphs or a clearer "read"
       color state.
-- [ ] Composer input is a plain single-line-looking pill; add a subtle
+- [x] Composer input is a plain single-line-looking pill; add a subtle
       focus-state border/elevation change so it's obvious it's active
       once tapped.
-- [ ] Header presence text ("Offline"/"Online") could use a colored dot
+- [x] Header presence text ("Offline"/"Online") could use a colored dot
       (green/grey) matching the existing `presenceOnline`/`presenceOffline`
       icons already defined in `vectorIcons.js`, instead of text only.
-- [ ] Add a scroll-to-bottom "new message" FAB when the user has scrolled
+- [x] Add a scroll-to-bottom "new message" FAB when the user has scrolled
       up and a new message arrives (currently auto-scroll only triggers
       the jump; there's no manual affordance if auto-scroll is skipped
       because the user is mid-read of older history).
