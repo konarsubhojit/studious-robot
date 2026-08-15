@@ -44,8 +44,9 @@ jest.mock('../../src/callService', () => ({
   startCallService: jest.fn(),
   stopCallService: jest.fn(),
 }));
+const mockSetIsCompactView = jest.fn();
 jest.mock('../../src/hooks/useCompactCallView', () =>
-  jest.fn(() => ({ isCompactView: false, setIsCompactView: jest.fn() })),
+  jest.fn(() => ({ isCompactView: false, setIsCompactView: mockSetIsCompactView })),
 );
 jest.mock('../../src/cameraLighting', () => ({ applyLightingAdjustment: jest.fn() }));
 jest.mock('../../src/callUx', () => ({ getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })) }));

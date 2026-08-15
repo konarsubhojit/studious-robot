@@ -64,7 +64,6 @@ export function getTurnDiagnostics() {
   const turnUrl = readEnv('TURN_URL');
 
   if (!turnUsername || !turnCredential) {
-    // eslint-disable-next-line no-console
     console.warn(
       '[WebRTC] No TURN credentials configured (TURN_USERNAME / TURN_CREDENTIAL). ' +
       'Calls across symmetric NAT will likely fail. ' +

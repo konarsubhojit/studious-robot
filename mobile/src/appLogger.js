@@ -23,9 +23,9 @@ function isSensitiveKey(key) {
 }
 
 function isVerboseLoggingEnabled() {
-  const verbose = process.env.VERBOSE_LOGGING?.trim?.().toLowerCase?.();
+  const verboseFlag = process.env.VERBOSE_LOGGING?.trim?.().toLowerCase?.();
   const logLevel = process.env.LOG_LEVEL?.trim?.().toLowerCase?.();
-  return verbose === '1' || verbose === 'true' || verbose === 'yes' || logLevel === 'debug' || logLevel === 'trace';
+  return verboseFlag === '1' || verboseFlag === 'true' || verboseFlag === 'yes' || logLevel === 'debug' || logLevel === 'trace';
 }
 
 function toSafeError(err, seen) {

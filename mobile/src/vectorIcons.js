@@ -25,7 +25,6 @@ let _cache;
 export function loadVectorIcons() {
   if (_cache !== undefined) return _cache;
   try {
-    // eslint-disable-next-line import/no-extraneous-dependencies
     _cache = require('react-native-vector-icons/MaterialCommunityIcons').default;
   } catch {
     _cache = null;

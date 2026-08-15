@@ -292,7 +292,7 @@ export default function useWebRTCCall() {
       closePeerConnection();
       updateStatus(nextStatus, severity);
     },
-    [closePeerConnection, resetScreenShare, updateStatus],
+    [closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
   );
 
   const ensurePeerConnection = useCallback(() => {

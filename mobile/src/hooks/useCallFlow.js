@@ -2145,7 +2145,6 @@ export default function useCallFlow() {
         logError("[CallFlow] Failed to read initial call link", error);
       });
     // Run only once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 2. Listen for deep links while the app is already running (background → foreground).
@@ -2156,7 +2155,6 @@ export default function useCallFlow() {
     });
     return unlisten;
     // Run only once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 3. Deferred rehydration: once identity is set, process any pending push callId.
@@ -2399,7 +2397,6 @@ export default function useCallFlow() {
       detachCallActionHandlers();
     };
     // Run once on mount; handlers are invoked via refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Replay a recorded `answerCall` once the matching call becomes known to

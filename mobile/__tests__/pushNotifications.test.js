@@ -6,7 +6,6 @@ import {
   getPushToken,
   handleBackgroundPushMessage,
   handleForegroundPushMessage,
-  installBackgroundMessageHandler,
   loadMessaging,
   parseCallDeepLink,
   registerForPushNotifications,
