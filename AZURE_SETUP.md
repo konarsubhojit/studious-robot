@@ -131,8 +131,9 @@ Set these on the signaling server (systemd unit, container env, `.env`, …):
 ```bash
 AZURE_NOTIFICATION_HUB_CONNECTION_STRING='Endpoint=sb://apns-kiyon.servicebus.windows.net/;SharedAccessKeyName=DefaultFullSharedAccessSignature;SharedAccessKey=...'
 AZURE_NOTIFICATION_HUB_NAME='storeman'
-# Optional — defaults to 2015-01
-# AZURE_NOTIFICATION_HUB_API_VERSION='2015-01'
+# Optional — defaults to 2015-04 (the latest documented data-plane api-version
+# for the /messages/?direct operation)
+# AZURE_NOTIFICATION_HUB_API_VERSION='2015-04'
 ```
 
 For CI/CD, add the connection string as a **GitHub Actions secret**:
@@ -155,6 +156,16 @@ The server uses Notification Hubs' **direct send** API
 token already stored by `POST /devices/register`. **You do not need to migrate
 devices to hub registrations or tags.**
 
+The hub is told which native format to translate the data-only body into via
+`ServiceBusNotification-Format`: `apple` for iOS devices, **`FcmV1`** for
+Android/FCM devices. Google retired the FCM legacy HTTP protocol in June 2024,
+and Notification Hubs' legacy `gcm` format sends to it — a hub configured with a
+Google (FCM v1) credential (§1.3) will reject a `gcm`-format send with a `400`
+whose body reads `The notification has no target applications. The
+notification format is gcm.` (see §1.7). The server always sends `FcmV1` with
+the native FCM v1 `{"message": {"android": {"data": …, "priority": "high"}}}`
+envelope, so it matches the hub's FCM v1 credential and stays data-only.
+
 ### 1.6 Free tier limits
 
 The **Free** tier of Notification Hubs allows:
@@ -174,6 +185,7 @@ raises this to 10M pushes and 200k devices.
 | `404 Not Found` | `AZURE_NOTIFICATION_HUB_NAME` doesn't match a hub in the namespace, or the connection string points at a different namespace | Confirm the hub name (`storeman`) and that the `Endpoint=sb://…` host matches the namespace (`apns-kiyon`). |
 | `400 Bad Request` with `Device handle is invalid` | The stored `pushToken` is stale (app reinstalled, token rotated, or an APNs token being sent to the FCM format) | Have the app re-register (`POST /devices/register`); prune tokens that fail repeatedly. |
 | `400` with `The Token obtained from the Token Provider is wrong` | Namespace/hostname mismatch between the SAS scope and the request URI | Re-copy the connection string; don't hand-edit the `Endpoint`. |
+| `400` with `The notification has no target applications. The notification format is gcm.` | The hub only has an FCM v1 (Google) credential (§1.3), but the server sent the retired legacy `gcm` format | Update the server (see `server/src/push.js`) to send `ServiceBusNotification-Format: FcmV1` with the native FCM v1 `message` envelope — this is the format the current server code sends; if you see this error you are running an older build. |
 | Push accepted (`201`) but nothing arrives on the device | Platform credential not configured in the hub, or Sandbox/Production mismatch | Re-check §1.2 / §1.3. Use the hub's **Test Send** blade to isolate hub-vs-server. |
 | Android receives a push but no incoming-call screen | A `notification` block was added to the payload | Payloads must stay **data-only** — a `notification` block makes Android's system tray handle the message and skips `setBackgroundMessageHandler`. |
 

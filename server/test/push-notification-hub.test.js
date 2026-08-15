@@ -108,7 +108,7 @@ test('parses a DefaultFullSharedAccessSignature connection string', async () => 
     assert.equal(config.keyName, 'DefaultFullSharedAccessSignature');
     assert.equal(config.key, 'c2hhcmVkLWFjY2Vzcy1rZXk=');
     assert.equal(config.hubName, 'storeman');
-    assert.equal(config.apiVersion, '2015-01');
+    assert.equal(config.apiVersion, '2015-04');
   });
 });
 
@@ -181,11 +181,12 @@ test('caches the SAS token and refreshes it once expired', async () => {
 
 // ─── Payload shape ────────────────────────────────────────────────────────────
 
-test('android hub payload is data-only and carries the call fields', () => {
+test('android hub payload is FCM v1 native format, data-only, and carries the call fields', () => {
   const payload = push._buildNotificationHubAndroidPayload(CALL);
-  assert.equal(payload.notification, undefined, 'no notification block');
-  assert.equal(payload.priority, 'high');
-  assert.deepEqual(payload.data, {
+  assert.equal(payload.message.notification, undefined, 'no top-level notification block');
+  assert.equal(payload.message.android.notification, undefined, 'no android notification block');
+  assert.equal(payload.message.android.priority, 'high');
+  assert.deepEqual(payload.message.android.data, {
     callId: 'call-abc',
     callerId: 'alice',
     type: 'call.incoming',
@@ -210,16 +211,16 @@ test('delivers through the notification hub when configured', async () => {
       assert.equal(mock.requests.length, 1, 'no direct provider request attempted');
       const [hubReq] = mock.requests;
       assert.equal(hubReq.opts.hostname, HUB_NAMESPACE);
-      assert.equal(hubReq.opts.path, '/storeman/messages/?direct&api-version=2015-01');
-      assert.equal(hubReq.opts.headers['ServiceBusNotification-Format'], 'gcm');
+      assert.equal(hubReq.opts.path, '/storeman/messages/?direct&api-version=2015-04');
+      assert.equal(hubReq.opts.headers['ServiceBusNotification-Format'], 'FcmV1');
       assert.equal(hubReq.opts.headers['ServiceBusNotification-DeviceHandle'], 'device-token-123');
       assert.equal(hubReq.opts.headers['Content-Type'], 'application/json;charset=utf-8');
       assert.ok(String(hubReq.opts.headers.Authorization).startsWith('SharedAccessSignature '));
 
       const body = JSON.parse(hubReq.body);
-      assert.equal(body.notification, undefined);
-      assert.equal(body.data.callId, 'call-abc');
-      assert.equal(body.priority, 'high');
+      assert.equal(body.message.notification, undefined);
+      assert.equal(body.message.android.data.callId, 'call-abc');
+      assert.equal(body.message.android.priority, 'high');
     } finally {
       mock.restore();
     }
@@ -338,10 +339,10 @@ test('sendMessagePush emits a data-only message payload through the hub', async 
       assert.equal(result.transport, 'notification_hub');
 
       const body = JSON.parse(mock.requests[0].body);
-      assert.equal(body.notification, undefined);
-      assert.equal(body.data.type, 'message.received');
-      assert.equal(body.data.messageId, 'msg-1');
-      assert.equal(body.data.deepLink, 'wetalk://chat/alice|bob');
+      assert.equal(body.message.notification, undefined);
+      assert.equal(body.message.android.data.type, 'message.received');
+      assert.equal(body.message.android.data.messageId, 'msg-1');
+      assert.equal(body.message.android.data.deepLink, 'wetalk://chat/alice|bob');
     } finally {
       mock.restore();
     }

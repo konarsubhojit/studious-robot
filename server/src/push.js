@@ -24,7 +24,7 @@
  *                                  DefaultFullSharedAccessSignature connection
  *                                  string of the Notification Hub namespace.
  *        AZURE_NOTIFICATION_HUB_NAME         Hub name (e.g. `storeman`).
- *        AZURE_NOTIFICATION_HUB_API_VERSION  REST api-version (default 2015-01).
+ *        AZURE_NOTIFICATION_HUB_API_VERSION  REST api-version (default 2015-04).
  *
  * When Azure Notification Hubs is configured it is tried first for every
  * device, regardless of the underlying provider; on any failure delivery falls
@@ -60,8 +60,15 @@ const RETRY_BASE_DELAY_MS = 500;
 /** APNs provider tokens are valid for 1 hour; refresh after 50 minutes. */
 const APNS_TOKEN_TTL_SECS = 50 * 60;
 
-/** Default Notification Hubs REST api-version. */
-const NOTIFICATION_HUB_DEFAULT_API_VERSION = '2015-01';
+/**
+ * Default Notification Hubs REST api-version.
+ *
+ * `2015-04` is the latest api-version documented for the data-plane
+ * `/messages/?direct` (direct send) operation — later dated versions exist for
+ * the management plane (hub CRUD) but do not apply here. It is required (not
+ * merely sufficient) for `FcmV1`-format sends.
+ */
+const NOTIFICATION_HUB_DEFAULT_API_VERSION = '2015-04';
 /** Lifetime of a generated Notification Hubs SAS token. */
 const NOTIFICATION_HUB_TOKEN_TTL_SECS = 60 * 60;
 /** Skew applied to the cached SAS-token expiry check, in seconds. */
@@ -502,8 +509,8 @@ function buildApnsPayload(callData) {
 }
 
 /**
- * Flatten an envelope into the string-valued `data` map shared by the FCM v1
- * and Notification Hubs (`gcm`) wire formats.
+ * Flatten an envelope into the string-valued `data` map shared by the direct
+ * FCM v1 and Notification Hubs (`FcmV1`) wire formats.
  *
  * @param {PushEnvelope} envelope
  * @returns {Record<string, string>}
@@ -560,15 +567,21 @@ function buildFcmEnvelopePayload(pushToken, envelope) {
 }
 
 /**
- * Build the Android (`gcm` format) body Notification Hubs forwards to FCM.
+ * Build the Android (`FcmV1` format) body Notification Hubs forwards to FCM.
  *
- * Notification Hubs expects the FCM *legacy* body shape for the `gcm` format.
- * As with {@link buildFcmPayload} this is deliberately **data-only** — adding a
- * `notification` block would bypass the app's `setBackgroundMessageHandler` and
- * break the CallKeep full-screen incoming-call UI.
+ * Google retired the FCM *legacy* HTTP protocol (the `gcm` Notification Hubs
+ * format) in June 2024; hubs configured with a Google (FCM v1) service-account
+ * credential only accept the native FCM v1 `message` envelope — a legacy-shape
+ * body matches no target application and the hub answers "no target
+ * applications ... format is gcm" with a 400. As with {@link buildFcmPayload}
+ * this is deliberately **data-only**: adding a `notification` block would
+ * bypass the app's `setBackgroundMessageHandler` and break the CallKeep
+ * full-screen incoming-call UI. The `token`/`topic`/`condition` target field
+ * required by a standalone FCM v1 call is omitted — Notification Hubs routes
+ * the message using the `ServiceBusNotification-DeviceHandle` header instead.
  *
  * @param {{ callId: string, callerId: string }} callData
- * @returns {{ data: Record<string, string>, priority: string }}
+ * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData) {
   return buildNotificationHubAndroidEnvelopePayload(buildCallEnvelope(callData));
@@ -576,12 +589,16 @@ function buildNotificationHubAndroidPayload(callData) {
 
 /**
  * @param {PushEnvelope} envelope
- * @returns {{ data: Record<string, string>, priority: string }}
+ * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
 function buildNotificationHubAndroidEnvelopePayload(envelope) {
   return {
-    data: buildDataBlock(envelope),
-    priority: 'high',
+    message: {
+      android: {
+        data: buildDataBlock(envelope),
+        priority: 'high',
+      },
+    },
   };
 }
 
@@ -703,7 +720,9 @@ async function sendFcmOnce(config, pushToken, envelope) {
  * Direct send targets a single device handle (the token we already store on the
  * device record) instead of an ANH registration/tag, so no registration
  * migration is required.  The hub translates the body into a native APNs or
- * FCM payload according to the `ServiceBusNotification-Format` header.
+ * FCM v1 payload according to the `ServiceBusNotification-Format` header
+ * (`apple` or `FcmV1` — the legacy `gcm` format targets FCM credentials Google
+ * retired in June 2024 and is no longer accepted).
  *
  * @param {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string }} config
  * @param {{ provider: string, pushToken: string, deviceId: string }} channel
@@ -712,7 +731,7 @@ async function sendFcmOnce(config, pushToken, envelope) {
  */
 function sendNotificationHubOnce(config, channel, envelope) {
   const isApple = channel.provider === 'apns';
-  const format  = isApple ? 'apple' : 'gcm';
+  const format  = isApple ? 'apple' : 'FcmV1';
   const payload = isApple
     ? buildApnsEnvelopePayload(envelope)
     : JSON.stringify(buildNotificationHubAndroidEnvelopePayload(envelope));
