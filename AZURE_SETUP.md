@@ -163,7 +163,7 @@ and Notification Hubs' legacy `gcm` format sends to it — a hub configured with
 Google (FCM v1) credential (§1.3) will reject a `gcm`-format send with a `400`
 whose body reads `The notification has no target applications. The
 notification format is gcm.` (see §1.7). The server always sends `FcmV1` with
-the native FCM v1 `{"message": {"android": {"data": …, "priority": "high"}}}`
+the native FCM v1 `{"message": {"android": {"data": …, "priority": "HIGH"}}}`
 envelope, so it matches the hub's FCM v1 credential and stays data-only.
 
 ### 1.6 Free tier limits

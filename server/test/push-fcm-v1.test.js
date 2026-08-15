@@ -142,7 +142,7 @@ test('acquires an OAuth2 token then posts a valid v1 message payload', async () 
       assert.equal(payload.message.data.callerId, 'alice');
       assert.equal(payload.message.data.type, 'call.incoming');
       assert.equal(payload.message.data.deepLink, 'wetalk://call/call-abc');
-      assert.equal(payload.message.android.priority, 'high');
+      assert.equal(payload.message.android.priority, 'HIGH');
     } finally {
       mock.restore();
     }

@@ -15,6 +15,7 @@ import {
   _resetMessagingCache,
 } from '../src/pushNotifications';
 import { logInfo, logWarn } from '../src/appLogger';
+import * as callKeep from '../src/callKeep';
 
 jest.mock('../src/appLogger', () => ({
   logError: jest.fn(),
@@ -411,6 +412,35 @@ describe('background push handler', () => {
       callerId: 'bob',
       deepLink: 'wetalk://call/call-2',
     });
+  });
+
+  test('rings a verbatim server call.incoming data block', async () => {
+    // Exact `data` map both server transports send (server/src/push.js
+    // `buildDataBlock`); FCM v1 stringifies every value. The server-side
+    // counterpart of this contract lives in
+    // server/test/push-payload-contract.test.js.
+    const displayIncomingCall = jest
+      .spyOn(callKeep, 'displayIncomingCall')
+      .mockResolvedValue(true);
+    const serverData = {
+      callId: 'call-abc',
+      callerId: 'alice',
+      type: 'call.incoming',
+      deepLink: 'wetalk://call/call-abc',
+      title: 'Incoming call',
+      body: 'Call from alice',
+    };
+
+    await expect(handleBackgroundPushMessage({ data: serverData })).resolves.toEqual({
+      callId: 'call-abc',
+      callerId: 'alice',
+      deepLink: 'wetalk://call/call-abc',
+    });
+    expect(displayIncomingCall).toHaveBeenCalledWith({
+      callId: 'call-abc',
+      callerId: 'alice',
+    });
+    displayIncomingCall.mockRestore();
   });
 
   test('returns null when callId is missing', () => {
