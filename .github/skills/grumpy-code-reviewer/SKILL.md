@@ -6,6 +6,11 @@ argument-hint: 'Optional: base branch (default origin/main, falls back to origin
 
 ## When to use
 
+- **Always, automatically, as the last step of any implementation task**
+  (feature work, bug fix, refactor) before considering the work done —
+  run this skill on the diff just produced, then run `fix-review-findings`
+  on its report, and repeat until a final pass reports zero open
+  Critical/High/Medium findings (Low/Nit may remain, explicitly noted).
 - Before merging a feature branch / PR, to get a thorough, no-nonsense review
   of exactly what changed.
 - As a gate before running `fix-review-findings`, which consumes this

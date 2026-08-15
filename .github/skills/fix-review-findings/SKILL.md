@@ -6,6 +6,9 @@ argument-hint: 'Optional: path to the review report (default: most recent review
 
 ## When to use
 
+- **Always, automatically, as the last step of any implementation task**,
+  immediately after `grumpy-code-reviewer` has produced a report for the
+  work just done, to act on it before the task is considered complete.
 - Immediately after `grumpy-code-reviewer` has produced a report, to act on
   it.
 
@@ -88,6 +91,19 @@ Use one of:
 Add a short summary at the top or bottom of the report: how many findings
 were fixed vs. deferred, per severity.
 
+## Step 5 — Re-review gate (no Critical/High/Medium left open)
+
+A single fix pass can introduce its own new issues. Before the task is
+considered done:
+
+1. Re-run `grumpy-code-reviewer` against the same base branch.
+2. If the new report contains any open (non-deferred) Critical, High, or
+   Medium finding, go back to Step 2 and fix it, then repeat this gate.
+3. Only Low/Nit findings (fixed or explicitly deferred with rationale) may
+   remain open in the final report. Do not loop indefinitely chasing Low/Nit
+   items if they're reasonably deferred — the gate is specifically
+   Critical/High/Medium.
+
 ## Rules
 
 - Stay inside the diff's blast radius: touch only files/areas the review
@@ -95,5 +111,5 @@ were fixed vs. deferred, per severity.
   unrelated pre-existing issues you happen to notice while in a file.
 - Every fix must be validated (Step 2.4 / Step 3) before being considered
   done — "I made the edit" is not the same as "I confirmed it works."
-- Do not stop until every non-deferred finding has a `Resolution:` line and
-  the full validation in Step 3 is green.
+- Do not stop until every non-deferred finding has a `Resolution:` line, the
+  full validation in Step 3 is green, and the Step 5 gate is clear.
