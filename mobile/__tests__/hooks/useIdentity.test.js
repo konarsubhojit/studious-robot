@@ -21,7 +21,10 @@ jest.mock('../../src/settingsStorage', () => ({
   saveIdentity: jest.fn(async () => true),
 }));
 
-const { generateVerificationCode, normalizeVerificationCode } = require('../../src/identityVerification');
+const {
+  generateVerificationCode,
+  normalizeVerificationCode,
+} = require('../../src/identityVerification');
 const { loadIdentity, saveIdentity } = require('../../src/settingsStorage');
 
 function TestHook({ resultRef, updateStatus }) {
@@ -151,7 +154,10 @@ describe('useIdentity', () => {
 
     expect(resultRef.current.userId).toBe('alice2');
     expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
-    expect(updateStatus).toHaveBeenCalledWith(expect.stringContaining('Username updated'), 'success');
+    expect(updateStatus).toHaveBeenCalledWith(
+      expect.stringContaining('Username updated'),
+      'success',
+    );
   });
 
   test('updateUserId is a no-op when renaming to the already-committed userId', async () => {

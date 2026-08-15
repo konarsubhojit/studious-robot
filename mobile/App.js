@@ -132,8 +132,12 @@ function AppShell() {
 
   // ── Chat wiring ────────────────────────────────────────────────────────────
 
-  const { peerPresence, isRefreshingConversations, handleRefreshConversations, handleLoadOlderMessages } =
-    useChatSync({
+  const {
+    peerPresence,
+    isRefreshingConversations,
+    handleRefreshConversations,
+    handleLoadOlderMessages,
+  } = useChatSync({
     chatPeerId,
     isRegistered: callFlow.isRegistered,
     messagesByPeer: callFlow.messagesByPeer,

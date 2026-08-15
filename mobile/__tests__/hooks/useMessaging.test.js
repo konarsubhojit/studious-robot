@@ -134,7 +134,9 @@ describe('useMessaging', () => {
     // Seed a conversation via fetchConversations first.
     params.authedFetchRef.current.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 4 }] }),
+      json: async () => ({
+        conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 4 }],
+      }),
     });
     await act(async () => {
       await resultRef.current.fetchConversations();
@@ -162,14 +164,19 @@ describe('useMessaging', () => {
 
   test('sendMessage optimistically appends then reconciles with the server-confirmed message on ack', async () => {
     const confirmedMessage = { messageId: 'm-real', body: 'hi', senderId: 'alice' };
-    const socketRef = { current: makeSocket({ ackResponse: { ok: true, message: confirmedMessage } }) };
+    const socketRef = {
+      current: makeSocket({ ackResponse: { ok: true, message: confirmedMessage } }),
+    };
     const { resultRef } = setup({ socketRef });
 
     await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi');
     });
 
-    expect(resultRef.current.messagesByPeer.bob[0]).toEqual({ ...confirmedMessage, pending: false });
+    expect(resultRef.current.messagesByPeer.bob[0]).toEqual({
+      ...confirmedMessage,
+      pending: false,
+    });
     expect(socketRef.current.emit).toHaveBeenCalledWith(
       'message.send',
       { version: 1, recipientId: 'bob', body: 'hi' },
@@ -178,7 +185,9 @@ describe('useMessaging', () => {
   });
 
   test('sendMessage marks the optimistic message failed when the ack rejects', async () => {
-    const socketRef = { current: makeSocket({ ackResponse: { ok: false, error: { message: 'nope' } } }) };
+    const socketRef = {
+      current: makeSocket({ ackResponse: { ok: false, error: { message: 'nope' } } }),
+    };
     const { resultRef, params } = setup({ socketRef });
 
     await act(async () => {
@@ -249,7 +258,9 @@ describe('useMessaging', () => {
     const { resultRef, params } = setup();
     params.authedFetchRef.current.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 0 }] }),
+      json: async () => ({
+        conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 0 }],
+      }),
     });
     await act(async () => {
       await resultRef.current.fetchConversations();
@@ -271,7 +282,9 @@ describe('useMessaging', () => {
     const { resultRef, params } = setup();
     params.authedFetchRef.current.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 0 }] }),
+      json: async () => ({
+        conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 0 }],
+      }),
     });
     await act(async () => {
       await resultRef.current.fetchConversations();
@@ -291,7 +304,10 @@ describe('useMessaging', () => {
 
   test('handleMessageReceived refetches conversations for a brand-new peer not already in the list', async () => {
     const { resultRef, params } = setup();
-    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ conversations: [] }) });
+    params.authedFetchRef.current.mockResolvedValue({
+      ok: true,
+      json: async () => ({ conversations: [] }),
+    });
 
     await act(async () => {
       resultRef.current.handleMessageReceived({ messageId: 'm1', senderId: 'newpeer', body: 'hi' });
@@ -314,7 +330,12 @@ describe('useMessaging', () => {
   test('handleMessageRead marks own sent messages to that peer as read', () => {
     const { resultRef } = setup();
     act(() => {
-      resultRef.current.handleMessageDelivered({ messageId: 'm1', recipientId: 'bob', senderId: 'alice', readAt: null });
+      resultRef.current.handleMessageDelivered({
+        messageId: 'm1',
+        recipientId: 'bob',
+        senderId: 'alice',
+        readAt: null,
+      });
     });
     act(() => {
       resultRef.current.handleMessageRead({ readerId: 'bob', readAt: '2024-01-01T00:00:00Z' });

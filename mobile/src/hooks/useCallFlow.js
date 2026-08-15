@@ -225,7 +225,7 @@ export default function useCallFlow() {
   // this hook wires them together and layers the call-signaling/WebRTC
   // orchestration that ties them into one coherent call experience.
   const identity = useIdentity(updateStatus);
-  const { userId, verificationCodeRef } = identity;
+  const { userId, verificationCodeRef, unregisterUser: identityUnregisterUser } = identity;
 
   const session = useSession({
     signalingUrl,
@@ -233,8 +233,7 @@ export default function useCallFlow() {
     verificationCodeRef,
     updateStatus,
   });
-  const { sessionIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } =
-    session;
+  const { sessionIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
 
   const callHistory = useCallHistory({
     authedFetchRef,
@@ -250,8 +249,13 @@ export default function useCallFlow() {
     sessionIdRef,
     calleeId,
   });
-  const { checkPresence, recordConnectSuccess, recordConnectError, resetOfflineTracking, markServerUnreachable } =
-    presenceSearch;
+  const {
+    checkPresence,
+    recordConnectSuccess,
+    recordConnectError,
+    resetOfflineTracking,
+    markServerUnreachable,
+  } = presenceSearch;
 
   const messaging = useMessaging({
     authedFetchRef,
@@ -340,8 +344,8 @@ export default function useCallFlow() {
       // stops receiving incoming-call notifications.
       await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
     }
-    await identity.unregisterUser();
-  }, [identity, sessionIdRef, signalingUrl]);
+    await identityUnregisterUser();
+  }, [identityUnregisterUser, sessionIdRef, signalingUrl]);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -1455,7 +1459,14 @@ export default function useCallFlow() {
       updateStatus(`Failed to accept call: ${error.message}`, 'error');
       endActiveCall();
     }
-  }, [endActiveCall, ensurePeerConnection, incomingCall, updateStatus, startLocalPreview, sessionIdRef]);
+  }, [
+    endActiveCall,
+    ensurePeerConnection,
+    incomingCall,
+    updateStatus,
+    startLocalPreview,
+    sessionIdRef,
+  ]);
 
   // ─── Decline incoming call ────────────────────────────────────────────────
 

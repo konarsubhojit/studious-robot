@@ -37,7 +37,10 @@ beforeEach(() => {
 
 describe('usePresenceSearch', () => {
   test('checkPresence returns online/offline snapshot on success', async () => {
-    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'online', online: true }) });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'online', online: true }),
+    });
     const { resultRef } = setup();
 
     let presence;
@@ -137,7 +140,10 @@ describe('usePresenceSearch', () => {
           );
         });
       }
-      return Promise.resolve({ ok: true, json: async () => ({ status: 'offline', online: false }) });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ status: 'offline', online: false }),
+      });
     });
 
     const { resultRef, tree, params } = setup({ calleeId: 'first' });
@@ -171,7 +177,10 @@ describe('usePresenceSearch', () => {
 
   test('clears calleePresence immediately when calleeId is emptied', async () => {
     jest.useFakeTimers();
-    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'online', online: true }) });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'online', online: true }),
+    });
     const { resultRef, tree, params } = setup({ calleeId: 'bob' });
 
     await act(async () => {

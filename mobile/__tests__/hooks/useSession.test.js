@@ -61,7 +61,11 @@ describe('useSession', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(body).toEqual({ userId: 'alice', deviceId: 'device-test-1', platform: expect.any(String) });
+    expect(body).toEqual({
+      userId: 'alice',
+      deviceId: 'device-test-1',
+      platform: expect.any(String),
+    });
   });
 
   test('createOrGetSession returns the cached sessionId without refetching', async () => {
