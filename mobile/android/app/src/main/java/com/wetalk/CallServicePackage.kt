@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class CallServicePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(CallServiceModule(reactContext))
+    listOf(CallServiceModule(reactContext), IncomingCallNotificationModule(reactContext))
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     emptyList()

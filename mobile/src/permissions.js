@@ -3,6 +3,13 @@ import { PermissionsAndroid, Platform } from 'react-native';
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;
 const BLUETOOTH_CONNECT_PERMISSION = PermissionsAndroid?.PERMISSIONS?.BLUETOOTH_CONNECT;
+// react-native-callkeep's self-managed Android phone account (selfManaged: true
+// in callKeep.js) needs this so Telecom can log calls against the account; it
+// is not requested by CallKeep itself (its own permission-request flow is
+// skipped entirely in self-managed mode), and it does not gate ringing or
+// media, so it is requested opportunistically alongside camera/microphone
+// rather than treated as blocking.
+const READ_CALL_LOG_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_CALL_LOG;
 
 const REQUIRED_CALL_PERMISSIONS = [CAMERA_PERMISSION, MICROPHONE_PERMISSION].filter(Boolean);
 
@@ -23,6 +30,9 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   if (requiresBluetoothConnectPermission(androidApiLevel)) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
+  if (READ_CALL_LOG_PERMISSION) {
+    permissions.push(READ_CALL_LOG_PERMISSION);
+  }
   return permissions;
 }
 
@@ -31,6 +41,7 @@ function getRuntimePermissionDeniedMessage(permissions) {
   const deniedCamera = denied.has(CAMERA_PERMISSION);
   const deniedMicrophone = denied.has(MICROPHONE_PERMISSION);
   const deniedBluetooth = denied.has(BLUETOOTH_CONNECT_PERMISSION);
+  const deniedCallLog = denied.has(READ_CALL_LOG_PERMISSION);
 
   if (deniedCamera && deniedMicrophone) {
     return 'Camera and microphone permissions are required to start a call';
@@ -43,6 +54,9 @@ function getRuntimePermissionDeniedMessage(permissions) {
   }
   if (deniedBluetooth) {
     return 'Bluetooth permission denied. Call will stay on speaker or earpiece.';
+  }
+  if (deniedCallLog) {
+    return 'Call log permission denied. Calls will still ring normally.';
   }
   return 'Required Android permissions are missing';
 }

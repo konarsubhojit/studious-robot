@@ -9,6 +9,7 @@ jest.mock('react-native', () => ({
       CAMERA: 'android.permission.CAMERA',
       RECORD_AUDIO: 'android.permission.RECORD_AUDIO',
       BLUETOOTH_CONNECT: 'android.permission.BLUETOOTH_CONNECT',
+      READ_CALL_LOG: 'android.permission.READ_CALL_LOG',
     },
     RESULTS: {
       GRANTED: 'granted',
@@ -42,6 +43,7 @@ describe('permissions helpers', () => {
       'android.permission.CAMERA',
       'android.permission.RECORD_AUDIO',
       'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.READ_CALL_LOG',
     ]);
   });
 
@@ -57,12 +59,13 @@ describe('permissions helpers', () => {
     expect(mockRequestMultiple).not.toHaveBeenCalled();
   });
 
-  test('requests camera, microphone, and Bluetooth permissions when missing', async () => {
+  test('requests camera, microphone, Bluetooth and call-log permissions when missing', async () => {
     mockCheck.mockResolvedValue(false);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.CAMERA': 'granted',
       'android.permission.RECORD_AUDIO': 'granted',
       'android.permission.BLUETOOTH_CONNECT': 'granted',
+      'android.permission.READ_CALL_LOG': 'granted',
     });
 
     await expect(ensureCallPermissions()).resolves.toEqual({
@@ -74,6 +77,7 @@ describe('permissions helpers', () => {
       'android.permission.CAMERA',
       'android.permission.RECORD_AUDIO',
       'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.READ_CALL_LOG',
     ]);
   });
 
@@ -81,6 +85,7 @@ describe('permissions helpers', () => {
     mockCheck
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.CAMERA': 'denied',
@@ -98,7 +103,8 @@ describe('permissions helpers', () => {
     mockCheck
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.BLUETOOTH_CONNECT': 'denied',
     });
@@ -107,6 +113,23 @@ describe('permissions helpers', () => {
       ok: true,
       warningMessage: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
       deniedPermissions: ['android.permission.BLUETOOTH_CONNECT'],
+    });
+  });
+
+  test('warns but does not block the call when call-log permission is denied', async () => {
+    mockCheck
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    mockRequestMultiple.mockResolvedValue({
+      'android.permission.READ_CALL_LOG': 'denied',
+    });
+
+    await expect(ensureCallPermissions()).resolves.toEqual({
+      ok: true,
+      warningMessage: 'Call log permission denied. Calls will still ring normally.',
+      deniedPermissions: ['android.permission.READ_CALL_LOG'],
     });
   });
 

@@ -1,5 +1,10 @@
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
+import {
+  dismissIncomingCallNotification,
+  showIncomingCallNotification,
+} from './incomingCallNotification';
+import { startIncomingRingtone, stopIncomingRingtone } from './ringtone';
 
 /**
  * System-level incoming-call UI for the WeTalk mobile app.
@@ -34,14 +39,20 @@ const CALLKEEP_SETUP_OPTIONS = {
       channelName: 'Incoming calls',
       notificationTitle: 'WeTalk is running',
     },
-    // NOT self-managed: Android Telecom owns the ringing UI. A self-managed
-    // phone account makes Telecom create the connection *without* showing any
-    // UI — the app is then required to render (and ring) its own full-screen
-    // incoming-call notification in response to CallKeep's `showIncomingCallUi`
-    // event. This app has no such handler, so a self-managed account meant a
-    // push could be delivered and `displayIncomingCall` succeed while the
-    // handset stayed silent.
-    selfManaged: false,
+    // Self-managed: Android Telecom creates the connection *without* showing
+    // any UI of its own (that's what buys WeTalk's own branded incoming-call
+    // screen instead of the generic system dialer), which means the app is
+    // *required* to render — and ring — its own full-screen incoming-call
+    // notification in response to CallKeep's `showIncomingCallUi` event.
+    // `registerShowIncomingCallUiListener` below is that handler: it is wired
+    // at module scope from `mobile/index.js` (see its own doc comment for
+    // why), so it exists even in the headless JS context a background push
+    // cold-starts, and it falls back to an audible ringtone
+    // (`startIncomingRingtone`) whenever the branded notification can't be
+    // shown. A previous self-managed attempt regressed to silent incoming
+    // calls precisely because this handler did not exist yet — do not flip
+    // this flag again without it.
+    selfManaged: true,
     additionalPermissions: [],
   },
 };
@@ -244,6 +255,9 @@ export function endCall(callId) {
   if (!callId) return false;
   // Allow the call id to be displayed again if it ever rings anew.
   displayedCallIds.delete(callId);
+  // Idempotent no-ops when nothing was ever shown/started for this call.
+  dismissIncomingCallNotification(callId);
+  stopIncomingRingtone();
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endCall !== 'function') return false;
   try {
@@ -257,7 +271,9 @@ export function endCall(callId) {
 
 /** Dismiss every active OS call UI (cleanup helper). */
 export function endAllCalls() {
+  for (const callId of displayedCallIds) dismissIncomingCallNotification(callId);
   displayedCallIds.clear();
+  stopIncomingRingtone();
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endAllCalls !== 'function') return false;
   try {
@@ -295,6 +311,8 @@ export function registerCallActionListeners() {
 
   const answerHandler = ({ callUUID } = {}) => {
     logInfo('[CallKeep] answerCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    dismissIncomingCallNotification(callUUID);
+    stopIncomingRingtone();
     if (activeCallActionHandlers?.onAnswer) {
       activeCallActionHandlers.onAnswer(callUUID);
       return;
@@ -306,6 +324,8 @@ export function registerCallActionListeners() {
   };
   const endHandler = ({ callUUID } = {}) => {
     logInfo('[CallKeep] endCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    dismissIncomingCallNotification(callUUID);
+    stopIncomingRingtone();
     if (pendingAnswerCallId === callUUID) pendingAnswerCallId = null;
     if (activeCallActionHandlers?.onEnd) {
       activeCallActionHandlers.onEnd(callUUID);
@@ -330,6 +350,69 @@ export function registerCallActionListeners() {
       // unsubscribes by event name only (no handler reference required).
       callKeep.removeEventListener?.('answerCall');
       callKeep.removeEventListener?.('endCall');
+    } catch (error) {
+      logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
+    }
+  };
+}
+
+/**
+ * Wire CallKeep's `showIncomingCallUi` native event — the event a
+ * self-managed Android phone account fires in place of drawing its own
+ * ringing UI (see the `selfManaged` comment in `CALLKEEP_SETUP_OPTIONS`).
+ *
+ * Intended to be called exactly once, at module scope (`mobile/index.js`),
+ * for the same reason as `registerCallActionListeners`: the ConnectionService
+ * that triggers this event runs in-process, so it can fire before any
+ * component — and therefore before any app-level "is my UI ready" state —
+ * has mounted, including in the headless JS context a background push
+ * cold-starts.
+ *
+ * On every `showIncomingCallUi`, WeTalk's own branded, full-screen-intent
+ * notification (`incomingCallNotification.js`) is shown. If that fails for
+ * any reason (module missing, native `show()` throws, OS denial), a plain
+ * audible ringtone (`startIncomingRingtone`) is started instead — a silently
+ * failed branded UI is strictly worse than an ugly one, so this fallback is
+ * unconditional, not best-effort.
+ *
+ * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
+ *
+ * @returns {() => void} unsubscribe function
+ */
+export function registerShowIncomingCallUiListener() {
+  const callKeep = loadCallKeep();
+  if (!callKeep || typeof callKeep.addEventListener !== 'function') {
+    return () => {};
+  }
+
+  const handler = async ({ callUUID, handle, name } = {}) => {
+    logInfo('[CallKeep] showIncomingCallUi', { callUUID });
+    const shown = await showIncomingCallNotification({
+      callId: callUUID,
+      callerId: name || handle,
+    }).catch((error) => {
+      logError('[CallKeep] showIncomingCallNotification threw', error);
+      return false;
+    });
+
+    if (!shown) {
+      logWarn('[CallKeep] Branded incoming-call UI unavailable; falling back to audible ring', {
+        callUUID,
+      });
+      startIncomingRingtone();
+    }
+  };
+
+  try {
+    callKeep.addEventListener('showIncomingCallUi', handler);
+  } catch (error) {
+    logError('[CallKeep] registerShowIncomingCallUiListener failed', error);
+    return () => {};
+  }
+
+  return () => {
+    try {
+      callKeep.removeEventListener?.('showIncomingCallUi');
     } catch (error) {
       logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
     }

@@ -1,9 +1,14 @@
 package com.wetalk
 
+import android.app.KeyguardManager
 import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.util.Rational
+import android.view.WindowManager
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -23,6 +28,47 @@ class MainActivity : ReactActivity() {
    */
   override fun createReactActivityDelegate(): ReactActivityDelegate =
       DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    applyIncomingCallWakeFlags(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    applyIncomingCallWakeFlags(intent)
+  }
+
+  /**
+   * Wake the device and draw over the lock screen when launched from WeTalk's
+   * branded incoming-call notification (`IncomingCallNotificationModule`'s
+   * full-screen intent). Without this the notification can still ring the
+   * device, but tapping it (or the system auto-launching it while locked)
+   * would leave the branded incoming-call screen stuck behind the lock
+   * screen instead of showing it, defeating the point of the full-screen
+   * intent.
+   */
+  private fun applyIncomingCallWakeFlags(intent: Intent?) {
+    if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(true)
+      setTurnScreenOn(true)
+    } else {
+      @Suppress("DEPRECATION")
+      window.addFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+          WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+          WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+          WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+      )
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+      keyguardManager?.requestDismissKeyguard(this, null)
+    }
+  }
 
   /**
    * Keep the Picture-in-Picture params in sync with the current call state. On
@@ -110,4 +156,14 @@ class MainActivity : ReactActivity() {
       } catch (_: IllegalArgumentException) {
         false
       }
+
+  companion object {
+    /**
+     * Intent extra set by [IncomingCallNotificationModule]'s full-screen intent
+     * so [applyIncomingCallWakeFlags] knows to wake the device / draw over the
+     * lock screen. Not set by the ordinary `wetalk://call/{callId}` deep link
+     * used for a plain notification tap.
+     */
+    const val EXTRA_INCOMING_CALL = "com.wetalk.EXTRA_INCOMING_CALL"
+  }
 }

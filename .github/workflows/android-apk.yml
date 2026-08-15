@@ -226,6 +226,8 @@ jobs:
             "android.permission.BLUETOOTH"
             "android.permission.BLUETOOTH_CONNECT"
             "android.permission.VIBRATE"
+            "android.permission.USE_FULL_SCREEN_INTENT"
+            "android.permission.READ_CALL_LOG"
           )
 
           for permission in "${REQUIRED_PERMISSIONS[@]}"; do
