@@ -22,3 +22,27 @@ index 025480a..4034b8b 100644
      public void startCall(String uuid, String number, String callerName) {
          this.startCall(uuid, number, callerName, false, null);
      }
+@@ -1145,7 +1147,22 @@
+ 
+         telephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+ 
+-        telecomManager.registerPhoneAccount(account);
++        try {
++            telecomManager.registerPhoneAccount(account);
++        } catch (IllegalArgumentException e) {
++            // A phone account with this ComponentName may already be registered with a
++            // different "kind" (self-managed vs. call-provider) from a previous app version.
++            // Telecom refuses to change the kind of an existing account in place and throws
++            // here instead, crashing the app on startup. Unregister the stale account and
++            // retry once so the new kind can be registered cleanly.
++            Log.w(TAG, "[RNCallKeepModule] registerPhoneAccount failed, existing account has a different kind; re-registering", e);
++            try {
++                telecomManager.unregisterPhoneAccount(handle);
++                telecomManager.registerPhoneAccount(account);
++            } catch (Exception retryException) {
++                Log.e(TAG, "[RNCallKeepModule] registerPhoneAccount retry failed", retryException);
++            }
++        }
+     }
+ 
+     public void sendEventToJS(String eventName, @Nullable WritableMap params) {
