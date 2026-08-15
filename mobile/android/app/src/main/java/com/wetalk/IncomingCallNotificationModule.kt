@@ -39,7 +39,7 @@ class IncomingCallNotificationModule(private val reactContext: ReactApplicationC
     try {
       val manager = notificationManager()
       createNotificationChannel(manager)
-      manager.notify(notificationId(callId), buildNotification(callId, callerName, manager))
+      manager.notify(notificationId(callId), buildNotification(callId, callerName, hasVideo, manager))
       promise.resolve(true)
     } catch (error: Exception) {
       promise.reject("INCOMING_CALL_NOTIFICATION_SHOW_FAILED", error)
@@ -81,6 +81,7 @@ class IncomingCallNotificationModule(private val reactContext: ReactApplicationC
   private fun buildNotification(
     callId: String,
     callerName: String,
+    hasVideo: Boolean,
     manager: NotificationManager,
   ): Notification {
     val builder =

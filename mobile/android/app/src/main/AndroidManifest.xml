@@ -35,10 +35,6 @@
          falls back to a plain (but still audible) heads-up notification when
          it is denied. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <!-- react-native-callkeep requires this permission when its Android phone
-         account is registered self-managed (selfManaged: true in callKeep.js),
-         so Telecom can associate the call with the account's call log entry. -->
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <!-- react-native-incall-manager vibrates the device on incoming calls. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 

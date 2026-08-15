@@ -83,7 +83,6 @@ jest.mock("../../src/mediaControls", () => ({
 
 jest.mock("../../src/permissions", () => ({
   ensureCallPermissions: jest.fn(() => Promise.resolve({ ok: true })),
-  ensureAllPermissionsOnLaunch: jest.fn(() => Promise.resolve({ ok: true })),
 }));
 
 jest.mock("../../src/socketConfig", () => ({
@@ -1785,16 +1784,16 @@ describe("useCallFlow session lifecycle", () => {
   });
 
   test("requests all runtime permissions once, up front, when an identity is established", async () => {
-    const { ensureAllPermissionsOnLaunch } = require("../../src/permissions");
+    const { ensureCallPermissions } = require("../../src/permissions");
     await renderWithSocket();
 
-    expect(ensureAllPermissionsOnLaunch).toHaveBeenCalledTimes(1);
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
   });
 
   test("does not re-request startup permissions on a session.invalid reconnect", async () => {
-    const { ensureAllPermissionsOnLaunch } = require("../../src/permissions");
+    const { ensureCallPermissions } = require("../../src/permissions");
     await renderWithSocket();
-    expect(ensureAllPermissionsOnLaunch).toHaveBeenCalledTimes(1);
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
 
     const handler = getSocketHandler("session.invalid");
     global.fetch = jest.fn(async () => ({
@@ -1807,7 +1806,7 @@ describe("useCallFlow session lifecycle", () => {
     });
     await act(async () => {});
 
-    expect(ensureAllPermissionsOnLaunch).toHaveBeenCalledTimes(1);
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
   });
 });
 

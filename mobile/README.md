@@ -195,9 +195,6 @@ These features rely on the following permissions declared in
   app special access — `IncomingCallNotificationModule` checks
   `NotificationManager.canUseFullScreenIntent()` and falls back to a plain (but
   still audible, high-importance-channel) heads-up notification when denied.
-- `READ_CALL_LOG` — required by `react-native-callkeep`'s self-managed Android
-  phone account (`selfManaged: true`) so Telecom can log calls against it;
-  requested at runtime alongside camera/microphone, but non-blocking if denied.
 
 The Android APK workflow now inspects the assembled debug APK with `aapt dump
 permissions` and fails CI if any required call permission is missing from the

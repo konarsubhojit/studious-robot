@@ -19,10 +19,11 @@ import {
 } from "../audioRouting";
 import { startCallService, stopCallService } from "../callService";
 import useCompactCallView from "./useCompactCallView";
+import useStartupPermissions from "./useStartupPermissions";
 import { getConnectionQuality } from "../callUx";
 import { getMediaAccessStatus, summarizeIceCandidate } from "../diagnostics";
 import { isTrackEnabled, setTrackEnabled } from "../mediaControls";
-import { ensureAllPermissionsOnLaunch, ensureCallPermissions } from "../permissions";
+import { ensureCallPermissions } from "../permissions";
 import {
   addCallLinkListener,
   getInitialCallLink,
@@ -264,9 +265,6 @@ export default function useCallFlow() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const sessionIdRef = useRef(null);
-  // Guards the one-time upfront permission request below, so a fresh identity
-  // reconnecting (e.g. after a network blip) doesn't re-prompt every time.
-  const hasRequestedStartupPermissionsRef = useRef(false);
   // Stable per-install device id, lazily loaded from disk on first session.
   const deviceIdRef = useRef(null);
   const verificationCodeRef = useRef("");
@@ -2064,26 +2062,11 @@ export default function useCallFlow() {
 
   // ─── Upfront permission request ───────────────────────────────────────────
   // Ask for every runtime permission the app can use (camera, microphone,
-  // Bluetooth audio routing, call log, notifications) once, right after an
-  // identity is established, instead of only prompting the first time each
-  // feature is used. This means a user who grants everything up front never
-  // has to visit OS Settings later to enable something the app needed all
-  // along; a user who declines something here still gets the narrower,
-  // feature-specific prompt/message later (see `ensureCallPermissions` call
-  // sites in this hook and in `useWebRTCCall`).
-  useEffect(() => {
-    if (!userId.trim() || hasRequestedStartupPermissionsRef.current) return;
-    hasRequestedStartupPermissionsRef.current = true;
-    ensureAllPermissionsOnLaunch()
-      .then((result) => {
-        if (result?.warningMessage) {
-          logWarn("[CallFlow] Startup permission request", { message: result.warningMessage });
-        }
-      })
-      .catch((error) => {
-        logWarn("[CallFlow] Startup permission request failed", { message: error?.message });
-      });
-  }, [userId]);
+  // Bluetooth audio routing, notifications) once, right after an identity is
+  // established, instead of only prompting the first time each feature is
+  // used. Extracted into its own hook so this startup concern stays isolated
+  // from this hook's call-lifecycle/session/WebRTC responsibilities.
+  useStartupPermissions(userId);
 
   // ─── Proactive session refresh ────────────────────────────────────────────
   // Rotate the session token every SESSION_REFRESH_INTERVAL_MS (50 min) while

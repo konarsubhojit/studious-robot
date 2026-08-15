@@ -13,6 +13,7 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import io.wazo.callkeep.VoiceConnectionService
 
 class MainActivity : ReactActivity() {
 
@@ -47,9 +48,20 @@ class MainActivity : ReactActivity() {
    * would leave the branded incoming-call screen stuck behind the lock
    * screen instead of showing it, defeating the point of the full-screen
    * intent.
+   *
+   * `MainActivity` is exported (required for the launcher icon) and already
+   * accepts external `wetalk://call/{callId}` deep links, so [EXTRA_INCOMING_CALL]
+   * alone — a plain `Intent` extra, not covered by the intent-filter — cannot
+   * be trusted: any other app could forge it to force a screen wake / keyguard
+   * dismiss with no real call in progress. Guard against that by requiring a
+   * real, currently-live react-native-callkeep connection for the intent's
+   * `callId`, the same check [IncomingCallActionReceiver] already performs
+   * before acting on a notification action.
    */
   private fun applyIncomingCallWakeFlags(intent: Intent?) {
     if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
+    val callId = intent.data?.lastPathSegment ?: return
+    if (VoiceConnectionService.getConnection(callId) == null) return
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)

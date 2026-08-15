@@ -529,6 +529,15 @@ function AppShell() {
     !callFlow.isLoadingIdentity &&
     Boolean(callFlow.pendingVerificationCode);
 
+  // Padding depends on runtime-only values (measured safe-area insets, and
+  // whether the tab shell — which pads its own bottom edge — is active), so
+  // it can't live in the static StyleSheet below; computed once per render
+  // instead of as an inline object literal in JSX.
+  const rootContainerStyle = {
+    paddingTop: insets.top,
+    paddingBottom: isTabShellActive ? 0 : insets.bottom,
+  };
+
   return (
     <GestureHandlerRootView style={isCompact ? styles.containerCompact : styles.container}>
       {isCompact ? (
@@ -537,10 +546,7 @@ function AppShell() {
         </View>
       ) : (
         <View
-          style={[
-            styles.container,
-            { paddingTop: insets.top, paddingBottom: isTabShellActive ? 0 : insets.bottom },
-          ]}
+          style={[styles.container, rootContainerStyle]}
         >
           {screenContent}
           {floatingBubble}

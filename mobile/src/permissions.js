@@ -3,13 +3,6 @@ import { PermissionsAndroid, Platform } from 'react-native';
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;
 const BLUETOOTH_CONNECT_PERMISSION = PermissionsAndroid?.PERMISSIONS?.BLUETOOTH_CONNECT;
-// react-native-callkeep's self-managed Android phone account (selfManaged: true
-// in callKeep.js) needs this so Telecom can log calls against the account; it
-// is not requested by CallKeep itself (its own permission-request flow is
-// skipped entirely in self-managed mode), and it does not gate ringing or
-// media, so it is requested opportunistically alongside camera/microphone
-// rather than treated as blocking.
-const READ_CALL_LOG_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_CALL_LOG;
 // Android 13+ (API 33) requires runtime consent to post any notification,
 // including the branded incoming-call notification (IncomingCallNotificationModule)
 // and ordinary chat push notifications. Not requested automatically by any
@@ -44,9 +37,6 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   if (requiresBluetoothConnectPermission(androidApiLevel)) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
-  if (READ_CALL_LOG_PERMISSION) {
-    permissions.push(READ_CALL_LOG_PERMISSION);
-  }
   if (requiresPostNotificationsPermission(androidApiLevel)) {
     permissions.push(POST_NOTIFICATIONS_PERMISSION);
   }
@@ -58,7 +48,6 @@ function getRuntimePermissionDeniedMessage(permissions) {
   const deniedCamera = denied.has(CAMERA_PERMISSION);
   const deniedMicrophone = denied.has(MICROPHONE_PERMISSION);
   const deniedBluetooth = denied.has(BLUETOOTH_CONNECT_PERMISSION);
-  const deniedCallLog = denied.has(READ_CALL_LOG_PERMISSION);
   const deniedNotifications = denied.has(POST_NOTIFICATIONS_PERMISSION);
 
   if (deniedCamera && deniedMicrophone) {
@@ -72,9 +61,6 @@ function getRuntimePermissionDeniedMessage(permissions) {
   }
   if (deniedBluetooth) {
     return 'Bluetooth permission denied. Call will stay on speaker or earpiece.';
-  }
-  if (deniedCallLog) {
-    return 'Call log permission denied. Calls will still ring normally.';
   }
   if (deniedNotifications) {
     return 'Notification permission denied. You may miss incoming call and message alerts — enable it from Settings to fix this.';
@@ -181,25 +167,4 @@ export async function ensureBluetoothPermission({ requestIfNeeded = false } = {}
     requested: true,
     message: getRuntimePermissionDeniedMessage([BLUETOOTH_CONNECT_PERMISSION]),
   };
-}
-
-/**
- * Request every runtime permission the app can use, all at once. Intended to
- * be called a single time, right after a user identity is established (i.e.
- * effectively "on first app launch" for a fresh install), so a first-time
- * user sees one consolidated system permission flow instead of being asked
- * piecemeal the first time they open a chat, start a call, or receive one —
- * which otherwise means denials can only be fixed by finding the relevant
- * toggle in the OS Settings app after the fact.
- *
- * This is intentionally the same underlying request as `ensureCallPermissions`
- * (camera + microphone required; Bluetooth audio routing, call log, and
- * notifications requested best-effort) — calling it again later (e.g. when
- * the user actually starts a call) is a cheap no-op for anything already
- * granted or already permanently denied.
- *
- * @returns {ReturnType<typeof ensureCallPermissions>}
- */
-export async function ensureAllPermissionsOnLaunch() {
-  return ensureCallPermissions();
 }
