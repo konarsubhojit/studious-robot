@@ -12,6 +12,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
 const { createCallRecord, appendCallEvent } = require('../src/domain/calls');
+const { pruneDeadDevice } = require('../src/lib/persistence');
+const { upsertDevice } = require('../src/lib/state');
+const { createStores } = require('../src/stores');
 const schema = require('../db/schema');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,10 +48,12 @@ async function postJson(url, path, body, sessionId) {
 function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
   const inserts = [];
   const deletes = [];
+  const updates = [];
 
   const db = {
     inserts,
     deletes,
+    updates,
 
     select() {
       return {
@@ -91,6 +96,22 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
         where(condition) {
           deletes.push({ table, condition });
           return Promise.resolve();
+        },
+      };
+    },
+
+    update(table) {
+      const entry = { table, set: null, condition: null };
+      updates.push(entry);
+      return {
+        set(values) {
+          entry.set = values;
+          return {
+            where(condition) {
+              entry.condition = condition;
+              return Promise.resolve();
+            },
+          };
         },
       };
     },
@@ -297,6 +318,139 @@ test('POST /devices/unregister persists the cleared push token to the DB', async
   } finally {
     await teardown();
   }
+});
+
+// ─── Re-registration replaces stale token rows, never appends ─────────────────
+
+test('re-registering the same device_id with a new token replaces the row, not appends', async () => {
+  const db = buildMockDb();
+  const { url, teardown } = await startServer({ db });
+
+  try {
+    const session = await postJson(url, '/session', {
+      userId: 'user-replace-1',
+      deviceId: 'device-replace-1',
+    });
+    assert.equal(session.status, 201);
+
+    await postJson(
+      url,
+      '/devices/register',
+      { provider: 'fcm', pushToken: 'token-A' },
+      session.body.sessionId,
+    );
+    db.inserts.length = 0;
+    db.updates.length = 0;
+
+    const reg2 = await postJson(
+      url,
+      '/devices/register',
+      { provider: 'fcm', pushToken: 'token-B' },
+      session.body.sessionId,
+    );
+    assert.equal(reg2.status, 200);
+
+    // Same device_id → same primary key row is upserted, not duplicated.
+    assert.equal(db.inserts.length, 1);
+    const insert = db.inserts[0];
+    assert.equal(insert.values.deviceId, 'device-replace-1');
+    assert.equal(insert.values.pushToken, 'token-B');
+    assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
+  } finally {
+    await teardown();
+  }
+});
+
+test('registering a token already held by another device_id evicts the prior holder', async () => {
+  const db = buildMockDb();
+  const { url, teardown } = await startServer({ db });
+
+  try {
+    const sessionOld = await postJson(url, '/session', {
+      userId: 'user-old',
+      deviceId: 'device-old',
+    });
+    const sessionNew = await postJson(url, '/session', {
+      userId: 'user-new',
+      deviceId: 'device-new',
+    });
+    assert.equal(sessionOld.status, 201);
+    assert.equal(sessionNew.status, 201);
+
+    await postJson(
+      url,
+      '/devices/register',
+      { provider: 'fcm', pushToken: 'shared-token' },
+      sessionOld.body.sessionId,
+    );
+    db.updates.length = 0;
+
+    const reg = await postJson(
+      url,
+      '/devices/register',
+      { provider: 'fcm', pushToken: 'shared-token' },
+      sessionNew.body.sessionId,
+    );
+    assert.equal(reg.status, 200);
+
+    // The prior holder's row must be evicted (token/provider nulled) at the DB
+    // level so the global unique index on push_token is never violated, and so
+    // the stale row can no longer receive pushes meant for the new device.
+    assert.equal(db.updates.length, 1);
+    const update = db.updates[0];
+    assert.equal(update.set.pushToken, null);
+    assert.equal(update.set.pushProvider, null);
+  } finally {
+    await teardown();
+  }
+});
+
+// ─── Dead-token pruning ────────────────────────────────────────────────────────
+
+function buildMinimalState(db) {
+  return { ...createStores(), db };
+}
+
+test('pruneDeadDevice deletes the device row from the DB and in-memory state', async () => {
+  const db = buildMockDb();
+  const state = buildMinimalState(db);
+  upsertDevice(state, {
+    deviceId: 'device-prune-1',
+    userId: 'user-prune-1',
+    pushProvider: 'fcm',
+    pushToken: 'dead-token',
+  });
+  assert.ok(state.devices.has('device-prune-1'));
+
+  await pruneDeadDevice(db, state, 'device-prune-1', 'UNREGISTERED');
+
+  assert.equal(state.devices.has('device-prune-1'), false, 'in-memory row removed');
+  assert.equal(db.deletes.length, 1);
+  assert.equal(db.deletes[0].table, schema.devices);
+});
+
+test('pruneDeadDevice is a safe no-op on the DB (in-memory only) when db is null', async () => {
+  const state = buildMinimalState(null);
+  upsertDevice(state, {
+    deviceId: 'device-prune-2',
+    userId: 'user-prune-2',
+    pushProvider: 'fcm',
+    pushToken: 'dead-token-2',
+  });
+  assert.ok(state.devices.has('device-prune-2'));
+
+  await assert.doesNotReject(pruneDeadDevice(null, state, 'device-prune-2', 'UNREGISTERED'));
+
+  assert.equal(state.devices.has('device-prune-2'), false);
+});
+
+test('pruneDeadDevice is a no-op when the device is already absent', async () => {
+  const db = buildMockDb();
+  const state = buildMinimalState(db);
+
+  await assert.doesNotReject(pruneDeadDevice(db, state, 'device-never-existed', 'UNREGISTERED'));
+
+  assert.equal(db.deletes.length, 0, 'no DB delete for a device that was never registered');
 });
 
 test('POST /calls persists call records and call events to the DB', async () => {

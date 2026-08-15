@@ -31,6 +31,10 @@ jest.mock('react-native', () => ({
   },
 }));
 
+jest.mock('@react-native-firebase/app', () => ({
+  getApp: jest.fn(() => ({ name: '[DEFAULT]' })),
+}));
+
 jest.mock('@react-native-firebase/messaging', () => {
   throw new Error('missing native module');
 });
@@ -302,17 +306,21 @@ describe('getPushToken (native module present)', () => {
   function withMessaging(instance, run) {
     let mod;
     jest.isolateModules(() => {
-      // Real @react-native-firebase/messaging exports a *callable* namespace
-      // (`messaging()` returns the default-app instance); statics like
-      // `AuthorizationStatus` are attached to the callable itself. Mocking it
-      // this way is what makes this suite actually exercise the
-      // `resolveMessagingInstance()` call-site fix instead of masking it.
-      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
-      jest.doMock(
-        '@react-native-firebase/messaging',
-        () => ({ __esModule: true, default: messagingModule }),
-        { virtual: true },
-      );
+      // Real @react-native-firebase/messaging's modular API exposes free
+      // functions that take the messaging instance as their first argument
+      // (`getMessaging(app)` → instance, `requestPermission(instance)`, …).
+      // Mocking it this way is what makes this suite actually exercise the
+      // modular call sites instead of masking them.
+      const messagingApi = {
+        getMessaging: jest.fn(() => instance),
+        requestPermission: (inst) => inst.requestPermission(),
+        getToken: (inst) => inst.getToken(),
+        registerDeviceForRemoteMessages: (inst) => inst.registerDeviceForRemoteMessages?.(),
+        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
+        onMessage: (inst, handler) => inst.onMessage(handler),
+        AuthorizationStatus: AUTH,
+      };
+      jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
       mod = require('../src/pushNotifications');
       // Prime the memoised native-module lookup while the virtual mock is
       // active; the lazy require would otherwise resolve after isolateModules
@@ -471,12 +479,16 @@ describe('background push handler', () => {
   function withMockedMessaging(instance, run) {
     let mod;
     jest.isolateModules(() => {
-      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
-      jest.doMock(
-        '@react-native-firebase/messaging',
-        () => ({ __esModule: true, default: messagingModule }),
-        { virtual: true },
-      );
+      const messagingApi = {
+        getMessaging: jest.fn(() => instance),
+        requestPermission: (inst) => inst.requestPermission?.(),
+        getToken: (inst) => inst.getToken?.(),
+        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler?.(handler),
+        onMessage: (inst, handler) =>
+          typeof inst.onMessage === 'function' ? inst.onMessage(handler) : undefined,
+        AuthorizationStatus: AUTH,
+      };
+      jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
       mod = require('../src/pushNotifications');
       mod._resetMessagingCache();
       mod.loadMessaging();
@@ -519,12 +531,14 @@ describe('background push handler', () => {
         getToken: jest.fn().mockResolvedValue('fcm-token'),
         setBackgroundMessageHandler,
       };
-      const messagingModule = Object.assign(() => instance, { AuthorizationStatus: AUTH });
-      jest.doMock(
-        '@react-native-firebase/messaging',
-        () => ({ __esModule: true, default: messagingModule }),
-        { virtual: true },
-      );
+      const messagingApi = {
+        getMessaging: jest.fn(() => instance),
+        requestPermission: (inst) => inst.requestPermission(),
+        getToken: (inst) => inst.getToken(),
+        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
+        AuthorizationStatus: AUTH,
+      };
+      jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
       mod = require('../src/pushNotifications');
       mod._resetMessagingCache();
     });

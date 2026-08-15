@@ -99,6 +99,7 @@ jest.mock("../../src/callKeep", () => ({
   endCall: jest.fn(() => true),
   endAllCalls: jest.fn(() => true),
   registerCallActionListeners: jest.fn(() => jest.fn()),
+  setCallActionHandlers: jest.fn(() => jest.fn()),
   reportCallConnected: jest.fn(() => true),
   setupCallKeep: jest.fn(async () => true),
 }));
@@ -1511,6 +1512,172 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     expect(stopIncomingRingtone).toHaveBeenCalled();
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  // ── CallKeep answer/end bridging ──────────────────────────────────────────
+
+  function latestCallActionHandlers() {
+    const { setCallActionHandlers } = require("../../src/callKeep");
+    const { calls } = setCallActionHandlers.mock;
+    return calls[calls.length - 1]?.[0];
+  }
+
+  test("mounting attaches CallKeep handlers via setCallActionHandlers, not registerCallActionListeners", async () => {
+    const { setCallActionHandlers, registerCallActionListeners } =
+      require("../../src/callKeep");
+
+    await renderWithSocket();
+
+    expect(setCallActionHandlers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onAnswer: expect.any(Function),
+        onEnd: expect.any(Function),
+      }),
+    );
+    // The native subscription is wired once, at module scope in index.js -
+    // useCallFlow must never re-register it (that would silently replace it
+    // and, on unmount, remove it).
+    expect(registerCallActionListeners).not.toHaveBeenCalled();
+  });
+
+  test("unmounting detaches the CallKeep handlers without leaving the app unresponsive", async () => {
+    const detach = jest.fn();
+    require("../../src/callKeep").setCallActionHandlers.mockReturnValueOnce(detach);
+
+    const { tree } = await renderWithSocket();
+    act(() => {
+      tree.unmount();
+    });
+
+    // Only the handler hand-off is detached; the native listener wired at
+    // module scope (index.js) is left in place, so a subsequent answerCall
+    // is queued for the next mount rather than going unanswered forever.
+    expect(detach).toHaveBeenCalledTimes(1);
+  });
+
+  test("answerCall for the currently-ringing call accepts immediately", async () => {
+    const { mediaDevices } = require("react-native-webrtc");
+    mediaDevices.getUserMedia.mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler("call.incoming");
+    const fakeCall = { callId: "call-answer-now", callerId: "kate" };
+    await act(async () => {
+      await handler({ call: fakeCall });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call: fakeCall });
+    });
+
+    const { onAnswer } = latestCallActionHandlers();
+    await act(async () => {
+      onAnswer("call-answer-now");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "call.accept",
+      expect.objectContaining({ callId: "call-answer-now" }),
+      expect.any(Function),
+    );
+  });
+
+  test("answerCall received before the matching call.incoming is recorded, not dropped, and replayed", async () => {
+    const { mediaDevices } = require("react-native-webrtc");
+    mediaDevices.getUserMedia.mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+
+    const fakeCall = { callId: "call-headless", callerId: "leo" };
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call: fakeCall });
+    });
+
+    // Simulates the module-scope queue in callKeep.js replaying an
+    // `answerCall` that fired before this hook took over — e.g. the OS
+    // Answer button was tapped during a push cold start, before the socket
+    // even connected.
+    const { onAnswer } = latestCallActionHandlers();
+    act(() => {
+      onAnswer("call-headless");
+    });
+
+    // Nothing to accept yet: the intent must be recorded rather than dropped.
+    expect(socketMock.emit).not.toHaveBeenCalledWith(
+      "call.accept",
+      expect.anything(),
+      expect.anything(),
+    );
+
+    // The socket subsequently connects and delivers the matching call.
+    const handler = getSocketHandler("call.incoming");
+    await act(async () => {
+      await handler({ call: fakeCall });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    // Flush the replay effect and the async acceptIncomingCall it triggers.
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "call.accept",
+      expect.objectContaining({ callId: "call-headless" }),
+      expect.any(Function),
+    );
+  });
+
+  test("endCall from the OS UI declines a ringing call", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler("call.incoming");
+    await act(async () => {
+      await handler({ call: { callId: "call-os-end", callerId: "mia" } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => cb?.({ ok: true }));
+
+    const { onEnd } = latestCallActionHandlers();
+    await act(async () => {
+      onEnd("call-os-end");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      "call.decline",
+      expect.objectContaining({ callId: "call-os-end" }),
+      expect.any(Function),
+    );
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
 });

@@ -189,20 +189,24 @@ test('presence and reachable channels support multiple devices for the same user
 
     const reachableChannels = resolveReachableChannels('user-bob');
     assert.equal(reachableChannels.filter((channel) => channel.type === 'websocket').length, 2);
+    // Push channels are ordered freshest-first (most recently registered/updated
+    // device first) — a safety net so that if multiple stale device rows still
+    // exist for a user, the newest registration is preferred. Here android was
+    // registered after ios, so it sorts first.
     assert.deepEqual(
       reachableChannels.filter((channel) => channel.type === 'push'),
       [
         {
           type: 'push',
-          deviceId: 'device-ios',
-          provider: 'apns',
-          pushToken: 'push-apns-1',
-        },
-        {
-          type: 'push',
           deviceId: 'device-android',
           provider: 'fcm',
           pushToken: 'push-fcm-1',
+        },
+        {
+          type: 'push',
+          deviceId: 'device-ios',
+          provider: 'apns',
+          pushToken: 'push-apns-1',
         },
       ],
     );

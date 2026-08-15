@@ -63,6 +63,32 @@ let isConfigured = false;
 const displayedCallIds = new Set();
 
 /**
+ * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
+ * `endCall` events, or `null` when nothing is attached.
+ *
+ * `registerCallActionListeners` wires the *native* event subscription exactly
+ * once, at module scope (see `mobile/index.js`), so it exists even in the
+ * headless JS context a background push cold-starts — before any component,
+ * and therefore `useCallFlow`, has mounted. `react-native-callkeep` tracks a
+ * single listener per event name and `removeEventListener` unsubscribes by
+ * name only, so re-registering from inside `useCallFlow`'s effect would
+ * silently replace the module-scope handler, and the effect's cleanup would
+ * remove it entirely the moment the component unmounts. Instead, whichever
+ * call-flow consumer is mounted calls `setCallActionHandlers` to take over
+ * routing of the already-subscribed events; the native subscription itself is
+ * never re-registered or torn down.
+ */
+let activeCallActionHandlers = null;
+
+/**
+ * The `callUUID` from an `answerCall` event that fired with no handler
+ * attached — the push-cold-start race, where CallKeep's OS UI can be answered
+ * before `useCallFlow` has mounted and called `setCallActionHandlers`.
+ * Replayed to the next handler that attaches via `setCallActionHandlers`.
+ */
+let pendingAnswerCallId = null;
+
+/**
  * Lazily resolve the optional `react-native-callkeep` default export. Returns
  * the RNCallKeep singleton, or `null` when the package is not installed. The
  * lookup is memoised so a missing module is only logged once.
@@ -90,6 +116,8 @@ export function _resetCallKeepCache() {
   hasLoggedMissingCallKeep = false;
   isConfigured = false;
   displayedCallIds.clear();
+  activeCallActionHandlers = null;
+  pendingAnswerCallId = null;
 }
 
 /**
@@ -242,29 +270,50 @@ export function endAllCalls() {
 }
 
 /**
- * Bridge the OS answer/end buttons into the app's call flow. Registers
- * `answerCall` and `endCall` listeners and returns an unsubscribe function.
- * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
+ * Wire CallKeep's `answerCall` / `endCall` native event subscription.
  *
- * @param {{
- *   onAnswer?: (callId: string) => void,
- *   onEnd?: (callId: string) => void,
- * }} handlers
+ * Intended to be called exactly once, at module scope (`mobile/index.js`),
+ * so the subscription exists even in the headless JS context a background
+ * push cold-starts — long before any component has mounted. Events are
+ * routed to whichever handler `setCallActionHandlers` most recently attached;
+ * when none is attached, an `answerCall` event is queued (see
+ * `pendingAnswerCallId`) rather than dropped, and an `endCall` event just
+ * forgets the call locally so a retried ring can still be displayed.
+ *
+ * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable. The
+ * returned unsubscribe is a last-resort teardown (e.g. app shutdown in
+ * tests); ordinary consumers should use `setCallActionHandlers` instead of
+ * calling this more than once.
+ *
  * @returns {() => void} unsubscribe function
  */
-export function registerCallActionListeners({ onAnswer, onEnd } = {}) {
+export function registerCallActionListeners() {
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.addEventListener !== 'function') {
     return () => {};
   }
 
   const answerHandler = ({ callUUID } = {}) => {
-    logInfo('[CallKeep] answerCall', { callUUID });
-    onAnswer?.(callUUID);
+    logInfo('[CallKeep] answerCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    if (activeCallActionHandlers?.onAnswer) {
+      activeCallActionHandlers.onAnswer(callUUID);
+      return;
+    }
+    logWarn('[CallKeep] answerCall received with no call flow attached; queuing for replay', {
+      callUUID,
+    });
+    pendingAnswerCallId = callUUID;
   };
   const endHandler = ({ callUUID } = {}) => {
-    logInfo('[CallKeep] endCall', { callUUID });
-    onEnd?.(callUUID);
+    logInfo('[CallKeep] endCall', { callUUID, hasActiveHandler: Boolean(activeCallActionHandlers) });
+    if (pendingAnswerCallId === callUUID) pendingAnswerCallId = null;
+    if (activeCallActionHandlers?.onEnd) {
+      activeCallActionHandlers.onEnd(callUUID);
+      return;
+    }
+    // No call flow is attached to notify the server of the decline; forget
+    // the call locally so a retried ring for the same id can still surface.
+    clearDisplayedCall(callUUID);
   };
 
   try {
@@ -283,6 +332,42 @@ export function registerCallActionListeners({ onAnswer, onEnd } = {}) {
       callKeep.removeEventListener?.('endCall');
     } catch (error) {
       logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
+    }
+  };
+}
+
+/**
+ * Attach the call-flow handlers that should act on CallKeep's `answerCall` /
+ * `endCall` events from now on, without touching the native subscription
+ * wired by `registerCallActionListeners`. Intended to be called from
+ * `useCallFlow`'s mount effect, and the returned function from its cleanup.
+ *
+ * If an `answerCall` fired earlier with no handler attached (the push
+ * cold-start race — see `registerCallActionListeners`), it is replayed
+ * synchronously to `onAnswer` here rather than lost.
+ *
+ * @param {{
+ *   onAnswer?: (callId: string) => void,
+ *   onEnd?: (callId: string) => void,
+ * }} handlers
+ * @returns {() => void} detach function; only clears this call's handlers if
+ *   they are still the active ones (a later `setCallActionHandlers` call
+ *   already having taken over is left untouched).
+ */
+export function setCallActionHandlers({ onAnswer, onEnd } = {}) {
+  const handlers = { onAnswer, onEnd };
+  activeCallActionHandlers = handlers;
+
+  if (pendingAnswerCallId) {
+    const callUUID = pendingAnswerCallId;
+    pendingAnswerCallId = null;
+    logInfo('[CallKeep] Replaying queued answerCall', { callUUID });
+    onAnswer?.(callUUID);
+  }
+
+  return () => {
+    if (activeCallActionHandlers === handlers) {
+      activeCallActionHandlers = null;
     }
   };
 }

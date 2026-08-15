@@ -814,6 +814,38 @@ function isRetryable(result) {
 }
 
 /**
+ * Status codes that can carry a dead-token (unregistered / malformed) reason.
+ * Both FCM's direct HTTP v1 path and Azure Notification Hubs' `FcmV1` direct
+ * send relay these same underlying codes/reasons, so the same check applies
+ * to either transport.
+ */
+const DEAD_TOKEN_STATUS_CODES = new Set([404, 400]);
+/**
+ * Matches FCM HTTP v1's canonical error-status enum values for a dead token
+ * (`UNREGISTERED` for a 404, `INVALID_ARGUMENT` for a malformed token on a
+ * 400) — see https://firebase.google.com/docs/reference/fcm/rest/v1/ErrorCode
+ * — plus common human-readable variants Notification Hubs or APNs may wrap
+ * the same underlying failure in.
+ */
+const DEAD_TOKEN_REASON_PATTERN = /unregistered|invalid_argument|invalid.*registration.*token|baddevicetoken/i;
+
+/**
+ * Determine whether a failed delivery result indicates the push token itself
+ * is dead (the app was uninstalled / the token was rotated away) rather than
+ * a transient failure. Dead-token results must never be retried and must
+ * cause the offending device row to be pruned so it stops silently
+ * swallowing future pushes.
+ *
+ * @param {{ ok: boolean, statusCode?: number, reason?: string } | null | undefined} result
+ * @returns {boolean}
+ */
+function isDeadTokenResult(result) {
+  if (!result || result.ok) return false;
+  if (!DEAD_TOKEN_STATUS_CODES.has(result.statusCode)) return false;
+  return typeof result.reason === 'string' && DEAD_TOKEN_REASON_PATTERN.test(result.reason);
+}
+
+/**
  * Call `fn` up to MAX_ATTEMPTS times, backing off exponentially on transient
  * failures.
  *
@@ -922,7 +954,7 @@ async function deliverPush(channel, envelope) {
   // 1. Preferred transport: Azure Notification Hubs (direct send).
   const hubResult = await tryNotificationHub(channel, envelope, label);
   if (hubResult.ok) {
-    return { provider, deviceId, transport: 'notification_hub', ...hubResult };
+    return { provider, deviceId, transport: 'notification_hub', deadToken: false, ...hubResult };
   }
   if (hubResult.reason !== 'notification_hub_not_configured') {
     console.warn(
@@ -940,22 +972,42 @@ async function deliverPush(channel, envelope) {
         `[push] APNs not configured` +
         ` (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID); skip ${deviceId}`,
       );
-      return { ok: false, provider, deviceId, transport: 'direct', reason: 'apns_not_configured' };
+      return {
+        ok: false,
+        provider,
+        deviceId,
+        transport: 'direct',
+        reason: 'apns_not_configured',
+        deadToken: isDeadTokenResult(hubResult),
+      };
     }
     result = await withRetry(() => sendApnsOnce(config, pushToken, envelope), label);
   } else if (provider === 'fcm') {
     const config = loadFcmConfig();
     if (!config) {
       console.warn(`[push] FCM not configured (set FCM_SERVICE_ACCOUNT_JSON); skip ${deviceId}`);
-      return { ok: false, provider, deviceId, transport: 'direct', reason: 'fcm_not_configured' };
+      return {
+        ok: false,
+        provider,
+        deviceId,
+        transport: 'direct',
+        reason: 'fcm_not_configured',
+        deadToken: isDeadTokenResult(hubResult),
+      };
     }
     result = await withRetry(() => sendFcmOnce(config, pushToken, envelope), label);
   } else {
     console.warn(`[push] Unknown provider "${provider}" for device ${deviceId}`);
-    return { ok: false, provider, deviceId, transport: 'direct', reason: 'unknown_provider' };
+    return { ok: false, provider, deviceId, transport: 'direct', reason: 'unknown_provider', deadToken: false };
   }
 
-  return { provider, deviceId, transport: 'direct', ...result };
+  return {
+    provider,
+    deviceId,
+    transport: 'direct',
+    ...result,
+    deadToken: !result.ok && (isDeadTokenResult(result) || isDeadTokenResult(hubResult)),
+  };
 }
 
 /**
@@ -975,7 +1027,8 @@ function logDeliveryOutcome(outcome, description) {
   console.error(
     `[push] Failed to deliver ${description}` +
     ` via ${outcome.provider} to device=${outcome.deviceId}` +
-    ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}`,
+    ` status=${outcome.statusCode ?? 'N/A'} reason=${outcome.reason ?? 'unknown'}` +
+    (outcome.deadToken ? ' deadToken=true' : ''),
   );
 }
 
@@ -997,7 +1050,8 @@ function logDeliveryOutcome(outcome, description) {
  *   deviceId: string,
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
- *   reason?: string
+ *   reason?: string,
+ *   deadToken: boolean
  * }>}
  */
 async function sendIncomingCallPush(channel, callData) {
@@ -1020,7 +1074,8 @@ async function sendIncomingCallPush(channel, callData) {
  *   deviceId: string,
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
- *   reason?: string
+ *   reason?: string,
+ *   deadToken: boolean
  * }>}
  */
 async function sendMessagePush(channel, messageData) {
@@ -1041,4 +1096,5 @@ module.exports = {
   _loadNotificationHubConfig: loadNotificationHubConfig,
   _buildNotificationHubSasToken: buildNotificationHubSasToken,
   _buildNotificationHubAndroidPayload: buildNotificationHubAndroidPayload,
+  _isDeadTokenResult: isDeadTokenResult,
 };
