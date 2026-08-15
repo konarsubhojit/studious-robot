@@ -6,6 +6,7 @@ const { normaliseId } = require('../lib/normalize');
 const { isBlocked } = require('../security');
 const { emitToUserSockets } = require('../domain/notifications');
 const { resolveOfflinePushChannels } = require('../lib/state');
+const { pruneDeadDevice } = require('../lib/persistence');
 const push = require('../push');
 const {
   requireSocketSession,
@@ -71,6 +72,9 @@ function deliverMessage(io, state, message) {
       messageId: message.messageId,
       conversationId: message.conversationId,
       senderId: message.senderId,
+    }).then((outcome) => {
+      if (!outcome?.deadToken) return;
+      return pruneDeadDevice(state.db, state, outcome.deviceId, outcome.reason ?? 'unknown');
     }).catch((error) => {
       console.error(`[messages] Unhandled push error for device ${channel.deviceId}: ${error?.message}`);
     });

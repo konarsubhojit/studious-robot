@@ -37,6 +37,31 @@ function addSessionToUser(state, session) {
 
 // ─── Devices ────────────────────────────────────────────────────────────────
 
+/**
+ * Find another device row (different `deviceId`) currently holding the given
+ * push token, if any.
+ *
+ * A live push token can only ever be delivered to one device. This guards
+ * against the "same physical device signs in as a different user" case: if a
+ * token resurfaces on a new registration, the row that previously held it is
+ * stale and must give it up so it can no longer intercept that device's
+ * pushes. See the matching DB-level unique index in `db/schema.js`.
+ *
+ * @param {object} state
+ * @param {string} pushToken
+ * @param {string} exceptDeviceId
+ * @returns {object | null}
+ */
+function findDeviceHoldingToken(state, pushToken, exceptDeviceId) {
+  if (!pushToken) return null;
+  for (const device of state.devices.values()) {
+    if (device.deviceId !== exceptDeviceId && device.pushToken === pushToken) {
+      return device;
+    }
+  }
+  return null;
+}
+
 function upsertDevice(state, nextDevice) {
   const existing = state.devices.get(nextDevice.deviceId);
   if (existing && existing.userId !== nextDevice.userId) {
@@ -60,7 +85,20 @@ function upsertDevice(state, nextDevice) {
     lastUnregisteredAt: hasOwnProp(nextDevice, 'lastUnregisteredAt')
       ? nextDevice.lastUnregisteredAt
       : existing?.lastUnregisteredAt ?? null,
+    updatedAt: new Date().toISOString(),
   };
+
+  // A freshly-registered token wins: evict it from whichever other row (if
+  // any) previously held it, in memory, so `resolveReachableChannels` never
+  // fans a push out to two rows sharing the same live token.
+  if (device.pushToken) {
+    const holder = findDeviceHoldingToken(state, device.pushToken, device.deviceId);
+    if (holder) {
+      holder.pushToken = null;
+      holder.pushProvider = null;
+      holder.updatedAt = new Date().toISOString();
+    }
+  }
 
   state.devices.set(device.deviceId, device);
   if (!state.userDevices.has(device.userId)) {
@@ -68,6 +106,24 @@ function upsertDevice(state, nextDevice) {
   }
   state.userDevices.get(device.userId).add(device.deviceId);
   return device;
+}
+
+/**
+ * Fully remove a device row — in-memory only. Used when a delivery attempt
+ * proves the device's push token is dead (FCM `UNREGISTERED` /
+ * `INVALID_ARGUMENT`), so the row stops being selected for future pushes and
+ * stops masking real failures as silent no-ops.
+ *
+ * @param {object} state
+ * @param {string} deviceId
+ * @returns {boolean} `true` when a row was found and removed
+ */
+function removeDevice(state, deviceId) {
+  const device = state.devices.get(deviceId);
+  if (!device) return false;
+  state.devices.delete(deviceId);
+  unlinkDeviceFromUser(state, device.userId, deviceId);
+  return true;
 }
 
 function unlinkDeviceFromUser(state, userId, deviceId) {
@@ -203,6 +259,7 @@ function resolveReachableChannels(state, userId) {
   }
 
   const deviceIds = state.userDevices.get(userId);
+  const pushChannels = [];
   if (deviceIds) {
     for (const deviceId of deviceIds) {
       const device = state.devices.get(deviceId);
@@ -210,13 +267,29 @@ function resolveReachableChannels(state, userId) {
         continue;
       }
 
-      channels.push({
+      pushChannels.push({
         type: 'push',
         deviceId,
         provider: device.pushProvider,
         pushToken: device.pushToken,
+        updatedAt: device.updatedAt ?? null,
       });
     }
+  }
+
+  // Safety net: when a user still has more than one push-registered device
+  // (e.g. right after a reinstall, before the old row's dead token is pruned
+  // — see removeDevice / server/src/push.js), prefer the most recently
+  // updated row first. Registration dedupe (upsertDevice evicting a reused
+  // token) and dead-token pruning should make this rarely load-bearing.
+  pushChannels.sort((a, b) => {
+    const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return bTime - aTime;
+  });
+
+  for (const { updatedAt: _updatedAt, ...channel } of pushChannels) {
+    channels.push(channel);
   }
 
   return channels;
@@ -263,6 +336,7 @@ module.exports = {
   ensurePresenceRecord,
   addSessionToUser,
   upsertDevice,
+  removeDevice,
   unlinkDeviceFromUser,
   addConnection,
   removeConnection,

@@ -3,6 +3,7 @@
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
 const { resolveReachableChannels, userRoom } = require('../lib/state');
+const { pruneDeadDevice } = require('../lib/persistence');
 const { verboseLog } = require('../lib/verbose');
 
 /**
@@ -13,6 +14,24 @@ const { verboseLog } = require('../lib/verbose');
  * broadcasts.  Kept separate from the `calls` state machine so the machine has
  * no Socket.IO dependency.
  */
+
+/**
+ * Prune the device row when a push delivery outcome proves its token is dead.
+ * Never throws — a failure to prune must not affect the caller's own
+ * success/failure handling for the push it just attempted.
+ *
+ * @param {object} state
+ * @param {{ deviceId: string, deadToken?: boolean, reason?: string }} outcome
+ * @returns {Promise<void>}
+ */
+async function handleDeadTokenOutcome(state, outcome) {
+  if (!outcome?.deadToken) return;
+  try {
+    await pruneDeadDevice(state.db, state, outcome.deviceId, outcome.reason ?? 'unknown');
+  } catch (err) {
+    console.error(`[push] failed to prune dead device ${outcome.deviceId}:`, err?.message);
+  }
+}
 
 function emitToUserSockets(io, userId, eventName, payload) {
   // Emit to the user's room: locally this reaches every tracked socket, and
@@ -94,6 +113,7 @@ function dispatchIncomingCallPushes(state, call) {
       ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`,
     );
     push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+      .then((outcome) => handleDeadTokenOutcome(state, outcome))
       .catch((err) => {
         console.error(
           `[push] Failed call.incoming callId=${call.callId}` +
@@ -160,6 +180,7 @@ function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
     (trigger ? ` trigger=${trigger}` : ''),
   );
   push.sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    .then((outcome) => handleDeadTokenOutcome(state, outcome))
     .catch((err) => {
       console.error(
         `[push] Failed call.incoming callId=${call.callId}` +

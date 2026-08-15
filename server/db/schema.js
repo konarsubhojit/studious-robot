@@ -24,7 +24,9 @@ const {
   jsonb,
   index,
   primaryKey,
+  uniqueIndex,
 } = require('drizzle-orm/pg-core');
+const { sql } = require('drizzle-orm');
 
 /**
  * Claimed identities.
@@ -78,6 +80,32 @@ const callEvents = pgTable(
   (t) => [index('idx_call_events_call').on(t.callId, t.createdAt)],
 );
 
+/**
+ * Push-notification device registrations.
+ *
+ * Uniqueness semantics (see the stale-token incident write-up in
+ * `server/src/push.js` and the PR that introduced this index):
+ *
+ *  - `device_id` is the **per-install** identity and is already the primary
+ *    key, so `POST /devices/register` upserting on `deviceId` (see
+ *    `persistDevice`) already replaces — never duplicates — the row for a
+ *    given (user_id, device_id). Re-registering the same install with a
+ *    fresh token overwrites the old one in place.
+ *  - A push **token** is additionally unique **globally** (the partial index
+ *    below, `WHERE push_token IS NOT NULL`): a live FCM/APNs token can only
+ *    ever belong to one row. This matters when the *same physical device*
+ *    (same install, e.g. no reinstall) signs in as a different user — the
+ *    previous owner's row must not keep holding a token that would let it
+ *    keep receiving that device's calls. `persistDevice` clears the token
+ *    from any other row before writing the new registration.
+ *  - What this index does *not* solve: an app reinstall wipes the
+ *    client-persisted `device_id`, so the same physical handset registers as
+ *    a brand-new row with a brand-new token, orphaning the old row (which
+ *    keeps its now-dead token forever otherwise). That is handled instead by
+ *    dead-token pruning on delivery failure (`server/src/push.js`) and by
+ *    preferring the most-recently-updated device when a user still has
+ *    multiple push-registered rows (see `resolveReachableChannels`).
+ */
 const devices = pgTable(
   'devices',
   {
@@ -90,7 +118,12 @@ const devices = pgTable(
     lastUnregisteredAt: timestamp('last_unregistered_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('idx_devices_user').on(t.userId)],
+  (t) => [
+    index('idx_devices_user').on(t.userId),
+    uniqueIndex('idx_devices_push_token_unique')
+      .on(t.pushToken)
+      .where(sql`${t.pushToken} is not null`),
+  ],
 );
 
 const auditLog = pgTable(

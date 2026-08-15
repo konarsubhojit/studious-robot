@@ -88,6 +88,19 @@ async function persistDevice(db, device, action = 'registration') {
     set.lastUnregisteredAt = values.lastUnregisteredAt;
   }
   try {
+    if (action === 'registration' && values.pushToken) {
+      // A live push token can only belong to one row (see the partial unique
+      // index on `push_token` in db/schema.js). Evict it from any other
+      // device first so this registration's upsert below never trips that
+      // constraint, and so the previous holder — stale, or another user's row
+      // if this physical device switched accounts — stops receiving pushes
+      // meant for this token.
+      const { and, eq, ne } = require('drizzle-orm');
+      await db
+        .update(devicesTable)
+        .set({ pushProvider: null, pushToken: null, updatedAt: values.updatedAt })
+        .where(and(eq(devicesTable.pushToken, values.pushToken), ne(devicesTable.deviceId, values.deviceId)));
+    }
     await db.insert(devicesTable).values(values).onConflictDoUpdate({
       target: devicesTable.deviceId,
       set,
@@ -95,6 +108,38 @@ async function persistDevice(db, device, action = 'registration') {
   } catch (err) {
     console.error(`[devices] failed to persist device ${action} to DB:`, err?.message);
   }
+}
+
+/**
+ * Delete a device row after a push delivery attempt proves its token is dead
+ * (FCM `UNREGISTERED` / `INVALID_ARGUMENT` — see `server/src/push.js`).
+ *
+ * Removes the row from both the in-memory state and (best-effort) the DB, and
+ * logs the prune explicitly so a dead token is never again indistinguishable
+ * from a successful delivery in the logs. Never logs the token itself.
+ *
+ * @param {object|null} db
+ * @param {object} state
+ * @param {string} deviceId
+ * @param {string} reason - e.g. `'UNREGISTERED'` or `'INVALID_ARGUMENT'`.
+ * @returns {Promise<void>}
+ */
+async function pruneDeadDevice(db, state, deviceId, reason) {
+  const { removeDevice } = require('./state');
+  const removed = removeDevice(state, deviceId);
+  if (!removed) return;
+
+  if (db) {
+    try {
+      const { eq } = require('drizzle-orm');
+      const { devices: devicesTable } = require('../../db/schema');
+      await db.delete(devicesTable).where(eq(devicesTable.deviceId, deviceId));
+    } catch (err) {
+      console.error(`[push] failed to prune device ${deviceId} from DB:`, err?.message);
+    }
+  }
+
+  console.log(`[push] Pruned unregistered token device=${deviceId} reason=${reason}`);
 }
 
 /**
@@ -210,6 +255,7 @@ async function hydrateDevices(db, state, devicesTable) {
       pushToken: row.pushToken ?? null,
       lastRegisteredAt: toIsoString(row.lastRegisteredAt),
       lastUnregisteredAt: toIsoString(row.lastUnregisteredAt),
+      updatedAt: toIsoString(row.updatedAt),
     });
     if (!state.userDevices.has(row.userId)) {
       state.userDevices.set(row.userId, new Set());
@@ -266,6 +312,7 @@ async function loadPersistedStateFromDb(db, state) {
 module.exports = {
   persistUser,
   persistDevice,
+  pruneDeadDevice,
   persistBlock,
   deletePersistedBlock,
   loadPersistedStateFromDb,
