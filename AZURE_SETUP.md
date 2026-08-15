@@ -182,61 +182,46 @@ prove the hub credentials work independently of the server.
 
 ---
 
-## Part 2 — Azure Cosmos DB for MongoDB
+## Part 2 — Azure Cosmos DB for MongoDB vCore
 
 ### 2.1 Locate the account
 
 1. In the [Azure portal](https://portal.azure.com) search for **Azure Cosmos DB**.
 2. Open the account **`doctor-pps`** (resource group **`sql`**).
-3. Confirm the API. The overview blade shows the API next to the account name —
-   this resource is the **Azure Cosmos DB for MongoDB** API.
+3. Confirm the cluster is **Azure Cosmos DB for MongoDB vCore**. This deployment
+   uses MongoDB's SRV connection format and SCRAM-SHA-256 authentication; it is
+   not the RU-based Cosmos DB Mongo API.
 
-> Cosmos DB accounts are **single-API**: an account created for NoSQL/Core,
-> Cassandra, or Gremlin cannot serve MongoDB traffic. If `doctor-pps` is not a
-> Mongo-API account you must create a new account and choose
-> **Azure Cosmos DB for MongoDB** during creation.
+> Do not use the `mongodb://…:10255/?ssl=true&replicaSet=globaldb` string from
+> the RU-based API documentation. It is for a different Cosmos product.
 
 ### 2.2 Copy the connection string
 
-1. In the account's left menu choose **Settings → Connection strings**.
-2. Copy the **PRIMARY CONNECTION STRING**. It looks like:
+1. In the cluster's left menu choose **Settings → Connection strings**.
+2. Copy the vCore connection string. It has this form:
 
    ```
-   mongodb://doctor-pps:<key>@doctor-pps.mongo.cosmos.azure.com:10255/?ssl=true&replicaSet=globaldb&retrywrites=false&maxIdleTimeMS=120000&appName=@doctor-pps@
+   mongodb+srv://doctor-pps:<password>@doctor-pps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retryWrites=false
    ```
 
-3. **Verify that `retrywrites=false` is present.**
+   There is no explicit port or `replicaSet=globaldb`: SRV resolves the vCore
+   host to port 10260.
 
-> ⚠️ **`retrywrites=false` is mandatory.** The Cosmos DB Mongo API does not
-> support retryable writes, and modern MongoDB drivers enable them by default. If
-> the parameter is missing, every insert fails with
-> `This MongoDB deployment does not support retryable writes` (or a bare
-> `MongoServerError: Retryable writes are not supported`). Azure's copyable
-> string normally includes it — if you build the URI by hand, append
-> `&retrywrites=false`.
+> ⚠️ **Percent-encode reserved password characters.** An `@` in a password is
+> parsed as the end of user information and produces `Invalid connection string`
+> before any network I/O. Encode `@` → `%40`, `:` → `%3A`, `/` → `%2F`, `?` →
+> `%3F`, `#` → `%23`, `&` → `%26`, and `%` → `%25`. Prefer alphanumeric-only
+> passwords/keys where possible to avoid this trap.
 
 ### 2.3 Create the database and collection
 
-You can let the driver create both on first write, but creating them explicitly
-lets you set the throughput and shard key deliberately.
+You can let the driver create both on first write, or create them in the vCore
+cluster's Data Explorer ahead of time.
 
 1. In the account's left menu choose **Data Explorer**.
 2. Click **New Collection**.
-3. Fill in:
-   - **Database id** — `wetalk` (choose *Create new*).
-   - **Share throughput across collections** — recommended on the free tier, so
-     the 1000 RU/s allowance is pooled.
-   - **Collection id** — `messages`.
-   - **Shard key** — `conversationId`.
-   - **Provision dedicated throughput for this collection** — leave unchecked if
-     you enabled shared database throughput above.
+3. Create database **`wetalk`** and collection **`messages`**.
 4. Click **OK**.
-
-> **Why `conversationId` as the shard key?** All reads are "give me the history
-> of one conversation", so partitioning by `conversationId` keeps every query
-> single-partition (cheap in RU) and spreads writes evenly across conversations.
-> Sharding by `senderId` would hot-spot on chatty users; sharding by `messageId`
-> would turn every history read into a cross-partition fan-out.
 
 On first connect the server creates two indexes idempotently:
 
@@ -250,41 +235,49 @@ and keeps running.
 ### 2.4 Configure the server
 
 ```bash
-MONGODB_URI='mongodb://doctor-pps:<key>@doctor-pps.mongo.cosmos.azure.com:10255/?ssl=true&replicaSet=globaldb&retrywrites=false&maxIdleTimeMS=120000&appName=@doctor-pps@'
+MONGODB_URI='mongodb+srv://doctor-pps:<percent-encoded-password>@doctor-pps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retryWrites=false'
 # Optional — these are the defaults
 # MONGODB_DB_NAME='wetalk'
 # MONGODB_MESSAGES_COLLECTION='messages'
 ```
 
-Add `MONGODB_URI` as a **GitHub Actions secret** exactly as in §1.5 — it embeds
-the account's primary key and grants full read/write access.
+The single quotes are required in a systemd environment assignment when the URI
+contains `&`; otherwise systemd/the shell treats it as a separator. Add
+`MONGODB_URI` as a **GitHub Actions secret** exactly as in §1.5 — it embeds a
+credential with full read/write access.
 
 When `MONGODB_URI` is unset the server uses `createMemoryMessageStore()`. Chat
 still works end-to-end; history simply does not survive a restart. This is the
-configuration the test suite runs in.
+configuration the test suite runs in. A malformed URI is logged loudly at
+startup and uses the same memory-store fallback. A valid URI is checked
+asynchronously at startup with a bounded five-second server-selection timeout;
+the signaling server continues serving calls if that check fails. `/health`
+includes the message-store type and `ready`, `starting`, or `unavailable` status.
 
-### 2.5 Free tier limits
+### 2.5 Networking
 
-The Cosmos DB **free tier** (one account per Azure subscription) provides:
+vCore denies public network access by default. Its DNS commonly resolves through
+`global.privatelink.mongocluster.cosmos.azure.com`; DNS can succeed while TCP to
+port 10260 times out. Verify the route from the server:
 
-- **1000 RU/s** of provisioned throughput, and
-- **25 GB** of storage,
+```bash
+dig +short SRV _mongodb._tcp.doctor-pps.global.mongocluster.cosmos.azure.com
+nc -zv <resolved-host> 10260
+```
 
-free forever. Exceeding the provisioned RU/s returns HTTP 429 / `TooManyRequests`;
-the `mongodb` driver surfaces this as a `MongoServerError` with code `16500`.
-Chat traffic is tiny per message, so 1000 RU/s covers a small deployment
-comfortably — but a cross-partition or unindexed query can burn the entire budget
-in one request, which is why the shard key and indexes above matter.
+To permit a public server, open the Azure portal → cluster → **Settings** →
+**Networking**, then add the server's egress IP. Prefer private networking where
+available.
 
 ### 2.6 Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `MongoServerError: Retryable writes are not supported` | `retrywrites=false` missing from the URI | Append `&retrywrites=false` (see §2.2). |
-| `MongoServerError` code `16500` / `TooManyRequests` | RU/s budget exceeded | Raise throughput, or check for a query missing the `conversationId` filter. |
-| `MongoServerSelectionError` after ~30s | Firewall/VNet rules, or `ssl=true` stripped from the URI | In **Networking**, allow the server's public IP (or "Allow access from Azure portal + all networks" for a quick test). Keep `ssl=true`. |
-| Server logs `[messages] index creation failed` | The account key lacks DDL rights, or the collection is sharded differently | Non-fatal. Create the indexes manually in Data Explorer. |
-| History is empty after a restart | `MONGODB_URI` is not actually reaching the process | Check the startup log for the store selection line; an unset URI silently uses the memory store by design. |
+| `[messages] INVALID MONGODB_URI` at startup | Reserved password character was not encoded, or the URI is not `mongodb+srv://` | Percent-encode the password and use the vCore URI in §2.2. This is a parse error, not a network error. |
+| `[messages] Mongo message store health check failed` after about 5 seconds | Public networking/firewall path to vCore is blocked | Verify SRV and TCP as in §2.5, then add the server egress IP in **Networking**. |
+| `/health` reports `messageStore.status: "unavailable"` | The startup connectivity check failed | Calls/signaling remain available; correct the URI or network path before relying on persistent chat. |
+| Server logs `[messages] index creation skipped` | The account credential lacks index privileges | Non-fatal. Create the indexes manually with a suitably privileged vCore user. |
+| History is empty after a restart | The memory store is active | Check the explicit memory-store startup log and correct `MONGODB_URI` if persistence is required. |
 
 ---
 

@@ -24,10 +24,6 @@ function toDateOrNull(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function emptyStringToNull(value) {
-  return value === '' ? null : (value ?? null);
-}
-
 function persistCallRecord(db, call) {
   if (!db || !call?.callId) return;
   const { calls: callsTable } = require('../db/schema');
@@ -70,8 +66,8 @@ function persistCallEvent(db, event) {
     eventId: event.eventId,
     callId: event.callId,
     event: event.event,
-    actor: emptyStringToNull(event.actor),
-    reason: emptyStringToNull(event.reason),
+    actor: event.actor,
+    reason: event.reason,
     createdAt: toDateOrNull(event.timestamp) ?? new Date(),
   }).catch((error) => {
     // Non-fatal by design (an audit-log write failure must never block the

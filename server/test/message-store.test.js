@@ -289,6 +289,17 @@ test('createMessageStore returns the memory store when MONGODB_URI is unset', ()
   }
 });
 
+test('createMessageStore falls back to memory for a malformed MONGODB_URI', () => {
+  const previous = process.env.MONGODB_URI;
+  process.env.MONGODB_URI = 'not a uri';
+  try {
+    assert.equal(createMessageStore().type, 'memory');
+  } finally {
+    if (previous === undefined) delete process.env.MONGODB_URI;
+    else process.env.MONGODB_URI = previous;
+  }
+});
+
 test('createMessageStore honours an injected store', () => {
   const injected = createMemoryMessageStore();
   assert.equal(createMessageStore({ messageStore: injected }), injected);
@@ -402,6 +413,19 @@ test('mongo store creates its indexes on first use', async () => {
   assert.deepEqual(fake.createdIndexes[1].options, { unique: true });
   await store.close();
   assert.equal(fake.isClosed(), true);
+});
+
+test('mongo store readiness check connects before the first message operation', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+
+  await store.ready();
+
+  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
+    { conversationId: 1, createdAt: -1 },
+    { messageId: 1 },
+  ]);
+  await store.close();
 });
 
 test('mongo store round-trips messages and strips the driver _id', async () => {

@@ -29,6 +29,10 @@ function createHealthRouter({ state }) {
     res.status(200).json({
       status: 'ok',
       service: 'wetalk-signaling',
+      messageStore: {
+        type: state.messageStore.type,
+        status: state.messageStoreStatus,
+      },
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });

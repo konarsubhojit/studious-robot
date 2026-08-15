@@ -60,6 +60,7 @@ const MAX_MESSAGE_BODY_LENGTH = 4000;
 
 const DEFAULT_DB_NAME = 'wetalk';
 const DEFAULT_COLLECTION_NAME = 'messages';
+const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -169,6 +170,8 @@ function createMemoryMessageStore() {
 
   return {
     type: 'memory',
+
+    async ready() {},
 
     async saveMessage(message) {
       const record = createMessageRecord(message);
@@ -281,7 +284,9 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
     if (!clientPromise) {
       clientPromise = (async () => {
         const mongoClient = client
-          ?? new (require('mongodb').MongoClient)(uri);
+          ?? new (require('mongodb').MongoClient)(uri, {
+            serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+          });
         if (typeof mongoClient.connect === 'function') {
           await mongoClient.connect();
         }
@@ -310,6 +315,8 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
 
   return {
     type: 'mongo',
+
+    ready: connect,
 
     async saveMessage(message) {
       const record = createMessageRecord(message);
@@ -422,17 +429,22 @@ function createMessageStore(opts = {}) {
 
   const uri = process.env.MONGODB_URI?.trim();
   if (!uri) {
+    console.log('[messages] using in-memory message store (MONGODB_URI is not set)');
     return createMemoryMessageStore();
   }
 
   try {
+    const client = new (require('mongodb').MongoClient)(uri, {
+      serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+    });
     return createMongoMessageStore({
       uri,
       dbName: process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME,
       collectionName: process.env.MONGODB_MESSAGES_COLLECTION?.trim() || DEFAULT_COLLECTION_NAME,
+      client,
     });
   } catch (error) {
-    console.warn(`[messages] Mongo store unavailable (${error?.message}); using in-memory store`);
+    console.error(`[messages] INVALID MONGODB_URI; using in-memory message store: ${error?.message}`);
     return createMemoryMessageStore();
   }
 }
@@ -441,6 +453,7 @@ module.exports = {
   DEFAULT_MESSAGE_LIMIT,
   MAX_MESSAGE_LIMIT,
   MAX_MESSAGE_BODY_LENGTH,
+  DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
   deriveConversationId,
   createMessageRecord,
   createMemoryMessageStore,
