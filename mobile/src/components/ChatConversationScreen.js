@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -10,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { colors, radius, spacing, typography } from '../theme';
+import { ICONS, loadVectorIcons } from '../vectorIcons';
 import IconButton from './IconButton';
 
 /** Consecutive own-sender messages within this many minutes are grouped
@@ -17,6 +19,9 @@ import IconButton from './IconButton';
 const GROUP_GAP_MS = 5 * 60 * 1000;
 /** How long after the user stops typing to report "stopped typing". */
 const TYPING_IDLE_MS = 3000;
+/** Distance (px) from the bottom of the message list still considered
+ * "at the bottom" for auto-scroll / scroll-to-bottom-FAB purposes. */
+const NEAR_BOTTOM_THRESHOLD = 80;
 
 function formatMessageTimestamp(isoString) {
   if (!isoString) return '';
@@ -58,18 +63,29 @@ function buildListItems(orderedMessages) {
     const createdAt = new Date(message.createdAt);
     const previous = orderedMessages[index - 1];
     const hasValidDate = !Number.isNaN(createdAt.getTime());
-    if (hasValidDate && (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))) {
-      items.push({ key: `date-${message.messageId}`, type: 'date', label: formatDateSeparator(createdAt) });
+    if (
+      hasValidDate &&
+      (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))
+    ) {
+      items.push({
+        key: `date-${message.messageId}`,
+        type: 'date',
+        label: formatDateSeparator(createdAt),
+      });
     }
 
     const next = orderedMessages[index + 1];
     let isGroupEnd = true;
     if (next && next.senderId === message.senderId) {
       const nextCreatedAt = new Date(next.createdAt);
-      const sameDay = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
-        || isSameCalendarDay(createdAt, nextCreatedAt);
-      const withinGap = !hasValidDate || Number.isNaN(nextCreatedAt.getTime())
-        || nextCreatedAt.getTime() - createdAt.getTime() <= GROUP_GAP_MS;
+      const sameDay =
+        !hasValidDate ||
+        Number.isNaN(nextCreatedAt.getTime()) ||
+        isSameCalendarDay(createdAt, nextCreatedAt);
+      const withinGap =
+        !hasValidDate ||
+        Number.isNaN(nextCreatedAt.getTime()) ||
+        nextCreatedAt.getTime() - createdAt.getTime() <= GROUP_GAP_MS;
       isGroupEnd = !(sameDay && withinGap);
     }
 
@@ -116,15 +132,58 @@ export default function ChatConversationScreen({
   onTypingChange,
 }) {
   const [draft, setDraft] = useState('');
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef(null);
+  const listRef = useRef(null);
+  // Tracks the newest message's id so the auto-scroll-to-bottom effect below
+  // only fires for a genuinely new/sent message, not when older history is
+  // paged in at the top (which must not yank the scroll position).
+  const newestMessageIdRef = useRef(null);
+  // Whether the list is currently scrolled near its bottom edge; used to
+  // decide whether an incoming message should auto-scroll or instead surface
+  // the "scroll to bottom" FAB so mid-history reading isn't interrupted.
+  const isNearBottomRef = useRef(true);
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
-  const listItems = useMemo(
-    () => buildListItems([...messages].reverse()),
-    [messages],
-  );
+  const listItems = useMemo(() => buildListItems([...messages].reverse()), [messages]);
+
+  // Keep the newest message in view: scroll to the bottom whenever the
+  // newest message changes (a message was sent or received) and the user is
+  // already near the bottom, or the new message is the current user's own
+  // (e.g. just sent). Otherwise (user is reading older history and a peer
+  // message arrives) leave the scroll position alone and surface the
+  // "scroll to bottom" FAB instead of yanking the view.
+  useEffect(() => {
+    const newestMessage = messages[0] ?? null;
+    const newestId = newestMessage?.messageId ?? null;
+    if (newestId !== newestMessageIdRef.current) {
+      newestMessageIdRef.current = newestId;
+      const isOwnMessage = newestMessage?.senderId === currentUserId;
+      if (isNearBottomRef.current || isOwnMessage) {
+        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+        setShowScrollToBottom(false);
+        setNewMessageCount(0);
+      } else {
+        setShowScrollToBottom(true);
+        setNewMessageCount(count => count + 1);
+      }
+    }
+  }, [messages, currentUserId]);
+
+  // Keep the composer and the latest message visible above the keyboard: on
+  // Android in particular, the on-screen keyboard can otherwise cover both
+  // the text being typed and the send button until the keyboard is dismissed.
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const subscription = Keyboard.addListener(showEvent, () => {
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -133,7 +192,7 @@ export default function ChatConversationScreen({
   }, []);
 
   const reportTyping = useCallback(
-    (isTyping) => {
+    isTyping => {
       clearTimeout(typingIdleTimerRef.current);
       onTypingChange?.(isTyping);
       if (isTyping) {
@@ -144,7 +203,7 @@ export default function ChatConversationScreen({
   );
 
   const handleChangeText = useCallback(
-    (text) => {
+    text => {
       setDraft(text);
       reportTyping(Boolean(text.trim()));
     },
@@ -160,34 +219,54 @@ export default function ChatConversationScreen({
   }, [draft, onSendMessage, reportTyping]);
 
   const handleRetry = useCallback(
-    (body) => {
+    body => {
       onSendMessage?.(body);
     },
     [onSendMessage],
   );
 
   const handleScroll = useCallback(
-    (event) => {
-      const { contentOffset } = event.nativeEvent;
+    event => {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       if (contentOffset.y <= 0 && !hasReachedTopRef.current) {
         hasReachedTopRef.current = true;
         onLoadOlder?.();
       } else if (contentOffset.y > 0) {
         hasReachedTopRef.current = false;
       }
+
+      if (contentSize && layoutMeasurement) {
+        const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+        const isNearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD;
+        isNearBottomRef.current = isNearBottom;
+        if (isNearBottom) {
+          setShowScrollToBottom(false);
+          setNewMessageCount(0);
+        }
+      }
     },
     [onLoadOlder],
   );
 
+  const handleScrollToBottomPress = useCallback(() => {
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    setShowScrollToBottom(false);
+    setNewMessageCount(0);
+  }, []);
+
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
   const isPeerKnownOffline = peerPresence?.online === false;
   const isCallDisabled = isStartingCall || isPeerKnownOffline;
+  const MCIcon = loadVectorIcons();
+  const presenceIconDef = peerPresence
+    ? ICONS[peerPresence.online ? 'presenceOnline' : 'presenceOffline']
+    : null;
+  const presenceColor = peerPresence?.online ? colors.success : colors.textMuted;
 
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={styles.root} testID="chat-conversation-root">
         <View style={styles.header}>
           <Pressable
@@ -195,8 +274,7 @@ export default function ChatConversationScreen({
             accessibilityRole="button"
             accessibilityLabel="Back to chat list"
             testID="chat-back"
-            style={styles.backButton}
-          >
+            style={styles.backButton}>
             <Text style={styles.backButtonText}>‹</Text>
           </Pressable>
 
@@ -209,7 +287,16 @@ export default function ChatConversationScreen({
                 typing…
               </Text>
             ) : presenceLabel ? (
-              <Text style={styles.headerSubtitle}>{presenceLabel}</Text>
+              <View style={styles.presenceRow} testID="chat-presence-row">
+                {presenceIconDef && MCIcon ? (
+                  <MCIcon name={presenceIconDef.icon} size={8} color={presenceColor} />
+                ) : (
+                  <Text style={[styles.presenceDotText, { color: presenceColor }]}>
+                    {presenceIconDef?.emoji ?? '●'}
+                  </Text>
+                )}
+                <Text style={styles.headerSubtitle}>{presenceLabel}</Text>
+              </View>
             ) : null}
           </View>
 
@@ -237,78 +324,96 @@ export default function ChatConversationScreen({
           ) : null}
         </View>
 
-        <FlatList
-          testID="chat-message-list"
-          data={listItems}
-          keyExtractor={(item) => item.key}
-          contentContainerStyle={styles.messageList}
-          onScroll={handleScroll}
-          scrollEventThrottle={32}
-          renderItem={({ item }) => {
-            if (item.type === 'date') {
+        <View style={styles.listContainer}>
+          <FlatList
+            ref={listRef}
+            testID="chat-message-list"
+            data={listItems}
+            keyExtractor={item => item.key}
+            contentContainerStyle={styles.messageList}
+            onScroll={handleScroll}
+            scrollEventThrottle={32}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => {
+              if (item.type === 'date') {
+                return (
+                  <View style={styles.dateSeparator} testID="chat-date-separator">
+                    <Text style={styles.dateSeparatorText}>{item.label}</Text>
+                  </View>
+                );
+              }
+
+              const message = item.message;
+              const isOwn = message.senderId === currentUserId;
+              const showFooter = item.isGroupEnd;
+              const isRead = Boolean(message.readAt);
               return (
-                <View style={styles.dateSeparator} testID="chat-date-separator">
-                  <Text style={styles.dateSeparatorText}>{item.label}</Text>
+                <View
+                  testID="chat-message-row"
+                  style={[
+                    styles.messageRow,
+                    isOwn ? styles.messageRowOwn : styles.messageRowPeer,
+                    !item.isGroupEnd && styles.messageRowGrouped,
+                  ]}>
+                  <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
+                    <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>
+                      {message.body}
+                    </Text>
+                  </View>
+                  {showFooter ? (
+                    <View style={styles.messageFooter}>
+                      <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
+                        {formatMessageTimestamp(message.createdAt)}
+                      </Text>
+                      {isOwn && !message.pending && !message.failed ? (
+                        <Text
+                          style={[styles.tick, isRead && styles.tickRead]}
+                          testID="chat-message-tick"
+                          accessibilityLabel={isRead ? 'Read' : 'Sent'}>
+                          {isRead ? '✓✓' : '✓'}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {message.pending ? <Text style={styles.pendingText}>Sending…</Text> : null}
+                  {message.failed ? (
+                    <Pressable
+                      onPress={() => handleRetry(message.body)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry sending message">
+                      <Text style={styles.failedText}>Failed to send · tap to retry</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               );
-            }
+            }}
+          />
+          {showScrollToBottom ? (
+            <Pressable
+              onPress={handleScrollToBottomPress}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to newest message"
+              testID="chat-scroll-to-bottom"
+              style={styles.scrollToBottomFab}>
+              <Text style={styles.scrollToBottomIcon}>↓</Text>
+              {newMessageCount > 0 ? (
+                <Text style={styles.scrollToBottomText} testID="chat-scroll-to-bottom-count">
+                  {newMessageCount > 9 ? '9+' : newMessageCount} new
+                </Text>
+              ) : null}
+            </Pressable>
+          ) : null}
+        </View>
 
-            const message = item.message;
-            const isOwn = message.senderId === currentUserId;
-            const showFooter = item.isGroupEnd;
-            const isRead = Boolean(message.readAt);
-            return (
-              <View
-                testID="chat-message-row"
-                style={[
-                  styles.messageRow,
-                  isOwn ? styles.messageRowOwn : styles.messageRowPeer,
-                  !item.isGroupEnd && styles.messageRowGrouped,
-                ]}
-              >
-                <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
-                  <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>
-                    {message.body}
-                  </Text>
-                </View>
-                {showFooter ? (
-                  <View style={styles.messageFooter}>
-                    <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
-                      {formatMessageTimestamp(message.createdAt)}
-                    </Text>
-                    {isOwn && !message.pending && !message.failed ? (
-                      <Text
-                        style={[styles.tick, isRead && styles.tickRead]}
-                        testID="chat-message-tick"
-                        accessibilityLabel={isRead ? 'Read' : 'Sent'}
-                      >
-                        {isRead ? '✓✓' : '✓'}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
-                {message.pending ? <Text style={styles.pendingText}>Sending…</Text> : null}
-                {message.failed ? (
-                  <Pressable
-                    onPress={() => handleRetry(message.body)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry sending message"
-                  >
-                    <Text style={styles.failedText}>Failed to send · tap to retry</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            );
-          }}
-        />
-
-        <View style={styles.composer}>
+        <View style={[styles.composer, isComposerFocused && styles.composerFocused]}>
           <TextInput
             value={draft}
             onChangeText={handleChangeText}
+            onFocus={() => setIsComposerFocused(true)}
+            onBlur={() => setIsComposerFocused(false)}
             placeholder="Message"
             placeholderTextColor={colors.textSecondary}
-            style={styles.composerInput}
+            style={[styles.composerInput, isComposerFocused && styles.composerInputFocused]}
             multiline
             testID="chat-message-input"
           />
@@ -365,6 +470,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 1,
   },
+  presenceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+  },
+  presenceDotText: {
+    fontSize: 8,
+  },
+  listContainer: {
+    flex: 1,
+  },
   messageList: {
     padding: spacing.md,
     gap: spacing.sm,
@@ -404,9 +521,18 @@ const styles = StyleSheet.create({
   },
   bubbleOwn: {
     backgroundColor: colors.accentButton,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    elevation: 2,
   },
   bubblePeer: {
     backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   bubbleTextOwn: {
     color: colors.textOnAccent,
@@ -428,11 +554,11 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   tick: {
-    fontSize: 12,
+    fontSize: 14,
     color: colors.textMuted,
   },
   tickRead: {
-    color: colors.accentButton,
+    color: colors.success,
   },
   pendingText: {
     ...typography.hint,
@@ -444,6 +570,35 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontWeight: '600',
   },
+  scrollToBottomFab: {
+    position: 'absolute',
+    right: spacing.md,
+    bottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.surfaceControl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  scrollToBottomIcon: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    lineHeight: 18,
+  },
+  scrollToBottomText: {
+    ...typography.hint,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -451,6 +606,9 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+  },
+  composerFocused: {
+    backgroundColor: colors.backgroundAlt,
   },
   composerInput: {
     flex: 1,
@@ -462,5 +620,14 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  composerInputFocused: {
+    borderColor: colors.accent,
+    borderWidth: 2,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 2,
   },
 });

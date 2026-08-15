@@ -25,7 +25,13 @@ function validateSignalingVersion(socket, payload, ack, eventName) {
     return true;
   }
 
-  acknowledgeError(socket, ack, eventName, 'unsupported_version', `version ${SIGNALING_VERSION} is required`);
+  acknowledgeError(
+    socket,
+    ack,
+    eventName,
+    'unsupported_version',
+    `version ${SIGNALING_VERSION} is required`
+  );
   return false;
 }
 

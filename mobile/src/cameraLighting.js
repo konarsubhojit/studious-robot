@@ -114,10 +114,7 @@ export function estimateSceneBrightness(settings, capabilities) {
 
   // Fall back to exposure compensation: the camera dials it up to brighten a dark
   // scene, so a high compensation implies low ambient brightness (hence 1 - x).
-  if (
-    typeof settings.exposureCompensation === 'number' &&
-    capabilities.exposureCompensation
-  ) {
+  if (typeof settings.exposureCompensation === 'number' && capabilities.exposureCompensation) {
     const normalized = normalizeToUnitRange(
       settings.exposureCompensation,
       capabilities.exposureCompensation,

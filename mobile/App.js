@@ -1,15 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  BackHandler,
-  Platform,
-  Pressable,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { BackHandler, Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
 import AppTabBar from './src/components/AppTabBar';
 import CallScreen from './src/components/CallScreen';
@@ -54,6 +46,20 @@ import { colors } from './src/theme';
  * All behaviour lives in the hooks; the components are purely presentational.
  */
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppShell />
+    </SafeAreaProvider>
+  );
+}
+
+/**
+ * Everything the composition root used to do, now nested inside
+ * `SafeAreaProvider` so it can read real device insets (status bar / notch,
+ * and the bottom gesture-navigation / 3-button bar) via `useSafeAreaInsets`
+ * instead of the iOS-only, Android-no-op `SafeAreaView` from `react-native`.
+ */
+function AppShell() {
   // ── New server-authoritative call flow ────────────────────────────────────
   const callFlow = useCallFlow();
 
@@ -76,18 +82,18 @@ export default function App() {
   const pendingAudioOnlyCallRef = useRef(false);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
-  const callFlowActive =
-    callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
+  const callFlowActive = callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
 
   // True once either flow has a connected (post-ringing) call. Drives the
   // minimize affordances; ringing/dialing screens are never minimizable.
   const isCallConnected = callFlow.isInCall || call.isInRoom;
 
   // Choose which hook provides PiP swap behaviour.
-  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } =
-    usePictureInPicturePip({
+  const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip(
+    {
       onTap: callFlowActive ? callFlow.handleSwapStreams : call.handleSwapStreams,
-    });
+    },
+  );
   void stageSize;
 
   // ── Stream helpers for active call ────────────────────────────────────────
@@ -142,7 +148,7 @@ export default function App() {
       setPeerPresence(null);
       return undefined;
     }
-    callFlow.checkPresence(chatPeerId).then((presence) => {
+    callFlow.checkPresence(chatPeerId).then(presence => {
       if (!cancelled) setPeerPresence(presence);
     });
     return () => {
@@ -173,9 +179,9 @@ export default function App() {
    * Start a video call with `peerId` (used by both the Lobby redial action and
    * the Chats tab's video-call header button).
    */
-  const startVideoCallWith = (peerId) => {
+  const startVideoCallWith = peerId => {
     callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch((error) => {
+    callFlow.placeCall(peerId).catch(error => {
       logError('placeCall (video) failed', error);
     });
   };
@@ -185,10 +191,10 @@ export default function App() {
    * type server-side yet, so this places a normal video call and then turns
    * the local camera off once it connects (see the effect below).
    */
-  const startAudioCallWith = (peerId) => {
+  const startAudioCallWith = peerId => {
     pendingAudioOnlyCallRef.current = true;
     callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch((error) => {
+    callFlow.placeCall(peerId).catch(error => {
       logError('placeCall (audio) failed', error);
     });
   };
@@ -214,7 +220,7 @@ export default function App() {
     return () => subscription.remove();
   }, [isCallConnected, isCallMinimized]);
 
-  const handleChangeTab = (tab) => {
+  const handleChangeTab = tab => {
     if (isCallConnected && !isCallMinimized) {
       setIsCallMinimized(true);
     }
@@ -250,8 +256,14 @@ export default function App() {
   // compact CallScreen, taking precedence over the in-app minimize state.
   const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
 
+  const insets = useSafeAreaInsets();
+
   let screenContent;
   let floatingBubble = null;
+  // True only for the tab-shell branch below; AppTabBar renders its own
+  // bottom-safe-area padding in that case, so the outer container must not
+  // *also* pad for it (that would leave a double gap under the tab bar).
+  let isTabShellActive = false;
 
   if (callFlow.isLoadingIdentity) {
     // Blank screen while identity is being loaded from storage; the app
@@ -261,7 +273,7 @@ export default function App() {
     screenContent = (
       <RegistrationScreen
         onRegister={(newUserId, verificationCode) => {
-          callFlow.registerUser(newUserId, verificationCode).catch((error) => {
+          callFlow.registerUser(newUserId, verificationCode).catch(error => {
             logError('registerUser failed', error);
           });
         }}
@@ -368,13 +380,14 @@ export default function App() {
   } else {
     // No full-screen call to show: render the tab shell. A connected call
     // that has been explicitly minimized overlays a FloatingCallBubble on top.
+    isTabShellActive = true;
     let tabContent;
     if (activeTab === 'chats') {
       tabContent = chatPeerId ? (
         <ChatConversationScreen
           peerId={chatPeerId}
           messages={callFlow.messagesByPeer[chatPeerId] ?? []}
-          onSendMessage={(body) => callFlow.sendMessage(chatPeerId, body)}
+          onSendMessage={body => callFlow.sendMessage(chatPeerId, body)}
           onLoadOlder={handleLoadOlderMessages}
           onBack={() => setChatPeerId(null)}
           currentUserId={callFlow.userId}
@@ -383,12 +396,12 @@ export default function App() {
           onStartVideoCall={() => startVideoCallWith(chatPeerId)}
           isStartingCall={callFlow.isPlacingCall}
           isPeerTyping={Boolean(callFlow.typingByPeer[chatPeerId])}
-          onTypingChange={(isTyping) => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
+          onTypingChange={isTyping => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
         />
       ) : (
         <ChatListScreen
           conversations={callFlow.conversations}
-          onOpenConversation={(peerId) => setChatPeerId(peerId)}
+          onOpenConversation={peerId => setChatPeerId(peerId)}
           onSearchUsers={callFlow.searchUsers}
           onRefresh={handleRefreshConversations}
           isRefreshing={isRefreshingConversations}
@@ -403,7 +416,7 @@ export default function App() {
           calleeId={callFlow.calleeId}
           onChangeCalleeId={callFlow.setCalleeId}
           onCall={() => {
-            callFlow.placeCall().catch((error) => {
+            callFlow.placeCall().catch(error => {
               logError('placeCall unhandled rejection', error);
             });
           }}
@@ -421,24 +434,26 @@ export default function App() {
           localPreviewStreamUrl={localPreviewStreamUrl}
           hasLocalStream={Boolean(call.localStream)}
           onStartPreview={() => {
-            call.startLocalPreview().catch((error) => {
+            call.startLocalPreview().catch(error => {
               logError('startLocalPreview failed (permissions/device)', error);
             });
           }}
           onJoinRoom={call.handleRoomButtonPress}
           isSettingsVisible={call.isSettingsVisible}
-          onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
+          onToggleSettings={() => call.setIsSettingsVisible(previous => !previous)}
           onExportLogs={call.handleExportLogs}
           settings={call.settings}
           onToggleAutoLighting={call.handleAutoLightingToggle}
           onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
           status={callFlow.userId ? callFlow.status : call.status}
           callSummary={callFlow.callSummary ?? call.callSummary}
-          onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
+          onDismissSummary={
+            callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary
+          }
           callHistory={callFlow.callHistory}
           missedCallCount={callFlow.missedCallCount}
           onMarkMissedRead={callFlow.markMissedCallsRead}
-          onRedial={(peerId) => startVideoCallWith(peerId)}
+          onRedial={peerId => startVideoCallWith(peerId)}
         />
       );
     } else {
@@ -452,7 +467,7 @@ export default function App() {
           status={callFlow.status}
           onSignOut={() => {
             setActiveTab('chats');
-            callFlow.unregisterUser().catch((error) => {
+            callFlow.unregisterUser().catch(error => {
               logError('unregisterUser failed', error);
             });
           }}
@@ -471,6 +486,7 @@ export default function App() {
           activeTab={activeTab}
           onChangeTab={handleChangeTab}
           unreadCount={callFlow.unreadTotal}
+          bottomInset={insets.bottom}
         />
       </View>
     );
@@ -483,8 +499,8 @@ export default function App() {
             isCallFlowActive
               ? getCallFlowParticipantLabel()
               : call.roomId
-                ? `Room ${call.roomId.trim()}`
-                : null
+              ? `Room ${call.roomId.trim()}`
+              : null
           }
           elapsedCallSeconds={
             isCallFlowActive ? callFlow.elapsedCallSeconds : call.elapsedCallSeconds
@@ -503,22 +519,32 @@ export default function App() {
   }
 
   const shouldShowRecoveryCodeNotice =
-    !isCompact &&
-    !callFlow.isLoadingIdentity &&
-    Boolean(callFlow.pendingVerificationCode);
+    !isCompact && !callFlow.isLoadingIdentity && Boolean(callFlow.pendingVerificationCode);
+
+  // Padding depends on runtime-only values (measured safe-area insets, and
+  // whether the tab shell — which pads its own bottom edge — is active), so
+  // it can't live in the static StyleSheet below; computed once per render
+  // instead of as an inline object literal in JSX.
+  const rootContainerStyle = {
+    paddingTop: insets.top,
+    paddingBottom: isTabShellActive ? 0 : insets.bottom,
+  };
 
   return (
     <GestureHandlerRootView style={isCompact ? styles.containerCompact : styles.container}>
       {isCompact ? (
-        <View style={styles.containerCompact}>
-          {screenContent}
-        </View>
+        <View style={styles.containerCompact}>{screenContent}</View>
       ) : (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, rootContainerStyle]}>
           {screenContent}
           {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (
-            <View style={styles.recoveryNotice} testID="recovery-code-notice">
+            <View
+              style={[
+                styles.recoveryNotice,
+                { bottom: 16 + (isTabShellActive ? 0 : insets.bottom) },
+              ]}
+              testID="recovery-code-notice">
               <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
               <Text style={styles.recoveryNoticeCode}>{callFlow.pendingVerificationCode}</Text>
               <Text style={styles.recoveryNoticeText}>
@@ -529,14 +555,17 @@ export default function App() {
                 accessibilityRole="button"
                 accessibilityLabel="I saved it"
                 testID="recovery-code-dismiss"
-                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}
-              >
+                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}>
                 <Text style={styles.recoveryNoticeButtonText}>I saved it</Text>
               </Pressable>
             </View>
           ) : null}
-          <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
-        </SafeAreaView>
+          <StatusBar
+            barStyle="light-content"
+            backgroundColor={colors.background}
+            translucent={false}
+          />
+        </View>
       )}
     </GestureHandlerRootView>
   );
@@ -546,7 +575,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 0 : 0,
   },
   containerCompact: {
     flex: 1,

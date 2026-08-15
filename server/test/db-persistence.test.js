@@ -197,11 +197,11 @@ test('POST /session persists a newly claimed identity to the DB', async () => {
     assert.equal(insert.values.userId, 'user-persist-1');
     assert.ok(
       typeof insert.values.verificationHash === 'string',
-      'verificationHash should be a string',
+      'verificationHash should be a string'
     );
     assert.ok(
       typeof insert.values.verificationSalt === 'string',
-      'verificationSalt should be a string',
+      'verificationSalt should be a string'
     );
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
   } finally {
@@ -232,12 +232,12 @@ test('POST /session persists the device even without a push token', async () => 
     // A session must never clobber an already-registered push token.
     assert.ok(
       !('pushToken' in deviceInserts[0].conflictSet),
-      'session persistence must leave push columns untouched on conflict',
+      'session persistence must leave push columns untouched on conflict'
     );
     assert.equal(
       db.inserts.filter((i) => i.table === schema.users).length,
       0,
-      'no user write for an unclaimed userId',
+      'no user write for an unclaimed userId'
     );
   } finally {
     await teardown();
@@ -265,7 +265,7 @@ test('POST /devices/register persists the device push token to the DB', async ()
       url,
       '/devices/register',
       { provider: 'apns', pushToken: 'apns-token-xyz' },
-      session.body.sessionId,
+      session.body.sessionId
     );
     assert.equal(reg.status, 200);
 
@@ -298,7 +298,7 @@ test('POST /devices/unregister persists the cleared push token to the DB', async
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'fcm-token-abc' },
-      session.body.sessionId,
+      session.body.sessionId
     );
     db.inserts.length = 0;
 
@@ -312,7 +312,7 @@ test('POST /devices/unregister persists the cleared push token to the DB', async
     assert.equal(insert.values.pushToken, null);
     assert.ok(
       insert.values.lastUnregisteredAt instanceof Date,
-      'lastUnregisteredAt should be a Date',
+      'lastUnregisteredAt should be a Date'
     );
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
   } finally {
@@ -337,7 +337,7 @@ test('re-registering the same device_id with a new token replaces the row, not a
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'token-A' },
-      session.body.sessionId,
+      session.body.sessionId
     );
     db.inserts.length = 0;
     db.updates.length = 0;
@@ -346,7 +346,7 @@ test('re-registering the same device_id with a new token replaces the row, not a
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'token-B' },
-      session.body.sessionId,
+      session.body.sessionId
     );
     assert.equal(reg2.status, 200);
 
@@ -381,7 +381,7 @@ test('registering a token already held by another device_id evicts the prior hol
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'shared-token' },
-      sessionOld.body.sessionId,
+      sessionOld.body.sessionId
     );
     db.updates.length = 0;
 
@@ -389,7 +389,7 @@ test('registering a token already held by another device_id evicts the prior hol
       url,
       '/devices/register',
       { provider: 'fcm', pushToken: 'shared-token' },
-      sessionNew.body.sessionId,
+      sessionNew.body.sessionId
     );
     assert.equal(reg.status, 200);
 
@@ -468,7 +468,7 @@ test('POST /calls persists call records and call events to the DB', async () => 
       url,
       '/calls',
       { calleeId: 'user-call-persist-callee' },
-      caller.body.sessionId,
+      caller.body.sessionId
     );
     assert.equal(created.status, 201);
 

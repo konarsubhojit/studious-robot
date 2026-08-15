@@ -32,7 +32,7 @@ const CONNECTION_STRING =
   `Endpoint=sb://${HUB_NAMESPACE}/;SharedAccessKeyName=DefaultFullSharedAccessSignature;` +
   'SharedAccessKey=c2hhcmVkLWFjY2Vzcy1rZXk=';
 
-const CHANNEL_FCM  = { provider: 'fcm', pushToken: 'device-token-123', deviceId: 'dev-1' };
+const CHANNEL_FCM = { provider: 'fcm', pushToken: 'device-token-123', deviceId: 'dev-1' };
 const CHANNEL_APNS = { provider: 'apns', pushToken: 'apns-token-123', deviceId: 'dev-2' };
 const CALL = { callId: 'call-abc', callerId: 'alice' };
 
@@ -69,7 +69,9 @@ function mockHttps(handler) {
 
   return {
     requests,
-    restore: () => { https.request = original; },
+    restore: () => {
+      https.request = original;
+    },
   };
 }
 
@@ -134,7 +136,7 @@ test('returns null when the connection string is malformed', async () => {
   const malformed = [
     'not-a-connection-string',
     `Endpoint=sb://${HUB_NAMESPACE}/;SharedAccessKeyName=policy`, // no key
-    'SharedAccessKeyName=policy;SharedAccessKey=abc',            // no endpoint
+    'SharedAccessKeyName=policy;SharedAccessKey=abc', // no endpoint
   ];
   for (const value of malformed) {
     await withEnv({ ...HUB_ENV, AZURE_NOTIFICATION_HUB_CONNECTION_STRING: value }, () => {
@@ -199,32 +201,38 @@ test('android hub payload is FCM v1 native format, data-only, and carries the ca
 // ─── Delivery / fallback ──────────────────────────────────────────────────────
 
 test('delivers through the notification hub when configured', async () => {
-  await withEnv({ ...HUB_ENV, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT) }, async () => {
-    const mock = mockHttps(() => ({ statusCode: 201, body: '' }));
-    try {
-      const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
-      assert.equal(result.ok, true);
-      assert.equal(result.transport, 'notification_hub');
-      assert.equal(result.provider, 'fcm');
-      assert.equal(result.deviceId, 'dev-1');
+  await withEnv(
+    { ...HUB_ENV, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT) },
+    async () => {
+      const mock = mockHttps(() => ({ statusCode: 201, body: '' }));
+      try {
+        const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
+        assert.equal(result.ok, true);
+        assert.equal(result.transport, 'notification_hub');
+        assert.equal(result.provider, 'fcm');
+        assert.equal(result.deviceId, 'dev-1');
 
-      assert.equal(mock.requests.length, 1, 'no direct provider request attempted');
-      const [hubReq] = mock.requests;
-      assert.equal(hubReq.opts.hostname, HUB_NAMESPACE);
-      assert.equal(hubReq.opts.path, '/storeman/messages/?direct&api-version=2015-04');
-      assert.equal(hubReq.opts.headers['ServiceBusNotification-Format'], 'FcmV1');
-      assert.equal(hubReq.opts.headers['ServiceBusNotification-DeviceHandle'], 'device-token-123');
-      assert.equal(hubReq.opts.headers['Content-Type'], 'application/json;charset=utf-8');
-      assert.ok(String(hubReq.opts.headers.Authorization).startsWith('SharedAccessSignature '));
+        assert.equal(mock.requests.length, 1, 'no direct provider request attempted');
+        const [hubReq] = mock.requests;
+        assert.equal(hubReq.opts.hostname, HUB_NAMESPACE);
+        assert.equal(hubReq.opts.path, '/storeman/messages/?direct&api-version=2015-04');
+        assert.equal(hubReq.opts.headers['ServiceBusNotification-Format'], 'FcmV1');
+        assert.equal(
+          hubReq.opts.headers['ServiceBusNotification-DeviceHandle'],
+          'device-token-123'
+        );
+        assert.equal(hubReq.opts.headers['Content-Type'], 'application/json;charset=utf-8');
+        assert.ok(String(hubReq.opts.headers.Authorization).startsWith('SharedAccessSignature '));
 
-      const body = JSON.parse(hubReq.body);
-      assert.equal(body.message.notification, undefined);
-      assert.equal(body.message.android.data.callId, 'call-abc');
-      assert.equal(body.message.android.priority, 'HIGH');
-    } finally {
-      mock.restore();
+        const body = JSON.parse(hubReq.body);
+        assert.equal(body.message.notification, undefined);
+        assert.equal(body.message.android.data.callId, 'call-abc');
+        assert.equal(body.message.android.priority, 'HIGH');
+      } finally {
+        mock.restore();
+      }
     }
-  });
+  );
 });
 
 test('uses the apple format for APNs devices', async () => {
@@ -247,30 +255,36 @@ test('uses the apple format for APNs devices', async () => {
 });
 
 test('falls back to direct FCM when the notification hub rejects the send', async () => {
-  await withEnv({ ...HUB_ENV, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT) }, async () => {
-    const mock = mockHttps((opts) => {
-      if (opts.hostname === HUB_NAMESPACE) {
-        return { statusCode: 400, body: JSON.stringify({ Message: 'Device handle is invalid.' }) };
-      }
-      if (opts.hostname === 'oauth2.googleapis.com') {
-        return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test' }) };
-      }
-      return { statusCode: 200, body: '{}' };
-    });
+  await withEnv(
+    { ...HUB_ENV, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT) },
+    async () => {
+      const mock = mockHttps((opts) => {
+        if (opts.hostname === HUB_NAMESPACE) {
+          return {
+            statusCode: 400,
+            body: JSON.stringify({ Message: 'Device handle is invalid.' }),
+          };
+        }
+        if (opts.hostname === 'oauth2.googleapis.com') {
+          return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test' }) };
+        }
+        return { statusCode: 200, body: '{}' };
+      });
 
-    try {
-      const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
-      assert.equal(result.ok, true, 'direct FCM delivered the message');
-      assert.equal(result.transport, 'direct');
+      try {
+        const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
+        assert.equal(result.ok, true, 'direct FCM delivered the message');
+        assert.equal(result.transport, 'direct');
 
-      const hubRequests = mock.requests.filter((r) => r.opts.hostname === HUB_NAMESPACE);
-      const fcmRequests = mock.requests.filter((r) => r.opts.hostname === 'fcm.googleapis.com');
-      assert.equal(hubRequests.length, 1, '400 is not retried');
-      assert.equal(fcmRequests.length, 1, 'fell back to the direct provider');
-    } finally {
-      mock.restore();
+        const hubRequests = mock.requests.filter((r) => r.opts.hostname === HUB_NAMESPACE);
+        const fcmRequests = mock.requests.filter((r) => r.opts.hostname === 'fcm.googleapis.com');
+        assert.equal(hubRequests.length, 1, '400 is not retried');
+        assert.equal(fcmRequests.length, 1, 'fell back to the direct provider');
+      } finally {
+        mock.restore();
+      }
     }
-  });
+  );
 });
 
 test('surfaces the direct failure when both transports fail', async () => {
@@ -288,40 +302,45 @@ test('surfaces the direct failure when both transports fail', async () => {
 });
 
 test('goes straight to the direct path when the hub is not configured', async () => {
-  await withEnv({
-    AZURE_NOTIFICATION_HUB_CONNECTION_STRING: undefined,
-    AZURE_NOTIFICATION_HUB_NAME: undefined,
-    FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT),
-  }, async () => {
-    const logs = captureConsoleLog();
-    const mock = mockHttps((opts) => {
-      if (opts.hostname === 'oauth2.googleapis.com') {
-        return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test' }) };
-      }
-      return { statusCode: 200, body: '{}' };
-    });
+  await withEnv(
+    {
+      AZURE_NOTIFICATION_HUB_CONNECTION_STRING: undefined,
+      AZURE_NOTIFICATION_HUB_NAME: undefined,
+      FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT),
+    },
+    async () => {
+      const logs = captureConsoleLog();
+      const mock = mockHttps((opts) => {
+        if (opts.hostname === 'oauth2.googleapis.com') {
+          return { statusCode: 200, body: JSON.stringify({ access_token: 'ya29.test' }) };
+        }
+        return { statusCode: 200, body: '{}' };
+      });
 
-    try {
-      const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
-      assert.equal(result.ok, true);
-      assert.equal(result.transport, 'direct');
-      assert.equal(
-        mock.requests.filter((r) => r.opts.hostname === HUB_NAMESPACE).length,
-        0,
-        'no notification hub request issued',
-      );
-      assert.ok(
-        logs.lines.some((line) =>
-          line.includes('[push] Skipped Notification Hub') &&
-          line.includes('device=dev-1') &&
-          line.includes('reason=notification_hub_not_configured')),
-        'hub-not-configured skip should be logged for the device',
-      );
-    } finally {
-      logs.restore();
-      mock.restore();
+      try {
+        const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
+        assert.equal(result.ok, true);
+        assert.equal(result.transport, 'direct');
+        assert.equal(
+          mock.requests.filter((r) => r.opts.hostname === HUB_NAMESPACE).length,
+          0,
+          'no notification hub request issued'
+        );
+        assert.ok(
+          logs.lines.some(
+            (line) =>
+              line.includes('[push] Skipped Notification Hub') &&
+              line.includes('device=dev-1') &&
+              line.includes('reason=notification_hub_not_configured')
+          ),
+          'hub-not-configured skip should be logged for the device'
+        );
+      } finally {
+        logs.restore();
+        mock.restore();
+      }
     }
-  });
+  );
 });
 
 // ─── Message pushes ───────────────────────────────────────────────────────────

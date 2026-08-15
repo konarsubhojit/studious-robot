@@ -16,7 +16,13 @@ const SENSITIVE_FIELDS = new Set([
 function isVerboseLoggingEnabled() {
   const verbose = process.env.VERBOSE_LOGGING?.trim().toLowerCase();
   const logLevel = process.env.LOG_LEVEL?.trim().toLowerCase();
-  return verbose === '1' || verbose === 'true' || verbose === 'yes' || logLevel === 'debug' || logLevel === 'trace';
+  return (
+    verbose === '1' ||
+    verbose === 'true' ||
+    verbose === 'yes' ||
+    logLevel === 'debug' ||
+    logLevel === 'trace'
+  );
 }
 
 function isSensitiveKey(key) {

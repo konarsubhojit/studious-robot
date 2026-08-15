@@ -83,7 +83,7 @@ export default function CallScreen({
     }
 
     const timeout = setTimeout(() => {
-      setVisibleStatus((current) =>
+      setVisibleStatus(current =>
         current?.message === message && current?.severity === severity ? null : current,
       );
     }, STATUS_AUTO_HIDE_MS);
@@ -114,9 +114,8 @@ export default function CallScreen({
   return (
     <Pressable
       style={[styles.callScreen, isCompact && styles.callScreenCompact]}
-      onPress={() => setShowControlsOverlay((prev) => !prev)}
-      testID="call-screen-root"
-    >
+      onPress={() => setShowControlsOverlay(prev => !prev)}
+      testID="call-screen-root">
       <CallStage
         onLayout={onStageLayout}
         mainStreamUrl={mainStreamUrl}
@@ -154,6 +153,11 @@ export default function CallScreen({
             ) : null}
           </View>
 
+          {/* No extra bottom safe-area padding is added here: the app-level
+              root container (App.js) already pads its bottom edge by the
+              device's safe-area/gesture-navigation inset whenever a
+              non-compact CallScreen is on screen, so these controls never
+              sit under the system nav bar. */}
           <View style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}

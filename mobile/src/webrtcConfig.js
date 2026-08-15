@@ -35,7 +35,10 @@ export function getIceServers() {
     let turnUrls;
     if (turnUrl) {
       // Self-hosted TURN: comma-separated URIs from the env var.
-      turnUrls = turnUrl.split(',').map((u) => u.trim()).filter(Boolean);
+      turnUrls = turnUrl
+        .split(',')
+        .map(u => u.trim())
+        .filter(Boolean);
     } else {
       // Metered.ca hosted TURN (default when no custom URL is set).
       turnUrls = [
@@ -64,12 +67,11 @@ export function getTurnDiagnostics() {
   const turnUrl = readEnv('TURN_URL');
 
   if (!turnUsername || !turnCredential) {
-    // eslint-disable-next-line no-console
     console.warn(
       '[WebRTC] No TURN credentials configured (TURN_USERNAME / TURN_CREDENTIAL). ' +
-      'Calls across symmetric NAT will likely fail. ' +
-      'Set TURN_URL + TURN_USERNAME + TURN_CREDENTIAL for self-hosted relay, ' +
-      'or TURN_USERNAME + TURN_CREDENTIAL for the metered.ca default.',
+        'Calls across symmetric NAT will likely fail. ' +
+        'Set TURN_URL + TURN_USERNAME + TURN_CREDENTIAL for self-hosted relay, ' +
+        'or TURN_USERNAME + TURN_CREDENTIAL for the metered.ca default.',
     );
     return { configured: false, provider: 'none', description: 'STUN only (no TURN relay)' };
   }
@@ -101,15 +103,14 @@ export async function applyBitrateConstraints(pc, opts = {}) {
 
   const senders = pc.getSenders?.() ?? [];
   await Promise.all(
-    senders.map(async (sender) => {
+    senders.map(async sender => {
       try {
         const params = sender.getParameters?.();
         if (!params) return;
         if (!Array.isArray(params.encodings) || params.encodings.length === 0) {
           params.encodings = [{}];
         }
-        const maxBitrate =
-          sender.track?.kind === 'audio' ? audioMaxBps : videoMaxBps;
+        const maxBitrate = sender.track?.kind === 'audio' ? audioMaxBps : videoMaxBps;
         params.encodings[0] = { ...params.encodings[0], maxBitrate };
         await sender.setParameters(params);
       } catch {

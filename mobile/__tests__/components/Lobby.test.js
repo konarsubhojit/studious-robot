@@ -12,14 +12,14 @@ jest.mock('../../src/SafeRTCView', () => 'SafeRTCView');
 
 jest.mock('../../src/hooks/useCallFlow', () => ({
   CALL_END_REASON_LABELS: {
-    ended:       'Call ended',
-    declined:    'Call declined',
-    cancelled:   'Call cancelled',
-    timeout:     'Missed call',
-    missed:      'Missed call',
-    busy:        'Line was busy',
+    ended: 'Call ended',
+    declined: 'Call declined',
+    cancelled: 'Call cancelled',
+    timeout: 'Missed call',
+    missed: 'Missed call',
+    busy: 'Line was busy',
     unreachable: 'User unavailable',
-    failed:      'Call failed',
+    failed: 'Call failed',
   },
 }));
 
@@ -64,7 +64,7 @@ describe('Lobby – missed call badge', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} missedCallCount={0} />);
     });
-    const badge = tree.root.findAll((n) => n.props.testID === 'missed-calls-badge');
+    const badge = tree.root.findAll(n => n.props.testID === 'missed-calls-badge');
     expect(badge.length).toBe(0);
   });
 
@@ -73,12 +73,10 @@ describe('Lobby – missed call badge', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} missedCallCount={3} />);
     });
-    const badge = tree.root.findAll((n) => n.props.testID === 'missed-calls-badge');
+    const badge = tree.root.findAll(n => n.props.testID === 'missed-calls-badge');
     expect(badge.length).toBeGreaterThanOrEqual(1);
     // The badge text should contain the count.
-    const texts = tree.root.findAll(
-      (n) => n.type === 'Text' && String(n.props.children) === '3',
-    );
+    const texts = tree.root.findAll(n => n.type === 'Text' && String(n.props.children) === '3');
     expect(texts.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -90,9 +88,11 @@ describe('Lobby – missed call badge', () => {
         <Lobby {...baseProps} missedCallCount={2} onMarkMissedRead={onMarkMissedRead} />,
       );
     });
-    const badge = tree.root.findAll((n) => n.props.testID === 'missed-calls-badge');
+    const badge = tree.root.findAll(n => n.props.testID === 'missed-calls-badge');
     expect(badge.length).toBeGreaterThanOrEqual(1);
-    act(() => { badge[0].props.onPress(); });
+    act(() => {
+      badge[0].props.onPress();
+    });
     expect(onMarkMissedRead).toHaveBeenCalledTimes(1);
   });
 });
@@ -105,7 +105,7 @@ describe('Lobby – call history section', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} callHistory={[]} />);
     });
-    const section = tree.root.findAll((n) => n.props.testID === 'call-history-section');
+    const section = tree.root.findAll(n => n.props.testID === 'call-history-section');
     expect(section.length).toBe(0);
   });
 
@@ -127,11 +127,43 @@ describe('Lobby – call history section', () => {
       tree = renderer.create(<Lobby {...baseProps} callHistory={history} />);
     });
 
-    const rows = tree.root.findAll((n) => n.props.testID === 'call-history-row');
+    const rows = tree.root.findAll(n => n.props.testID === 'call-history-row');
     // Only up to 5 rows should be shown; findAll returns multiple fibers per
     // Pressable row (composite + host + inner), so allow up to 5 × 3.
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows.length).toBeLessThanOrEqual(15);
+  });
+
+  test('history rows meet the minimum touch-target height and show a redial affordance', () => {
+    const history = [
+      {
+        callId: 'call-1',
+        callerId: 'user-alice',
+        calleeId: 'user-bob',
+        direction: 'outgoing',
+        status: 'ended',
+        endReason: 'ended',
+        createdAt: new Date().toISOString(),
+        durationSeconds: 60,
+        isRead: true,
+      },
+    ];
+    const onRedial = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} callHistory={history} onRedial={onRedial} />);
+    });
+
+    const rowNodes = tree.root.findAll(n => n.props.testID === 'call-history-row');
+    const hostRow = rowNodes.find(n => typeof n.type === 'string');
+    const flatStyle = [].concat(hostRow.props.style).flat();
+    expect(flatStyle.some(s => s?.minHeight === 56)).toBe(true);
+
+    const pressableRow = rowNodes.find(n => typeof n.props.onPress === 'function');
+    act(() => {
+      pressableRow.props.onPress();
+    });
+    expect(onRedial).toHaveBeenCalledWith('user-bob');
   });
 
   test('missed incoming calls are visually distinguished', () => {
@@ -152,12 +184,10 @@ describe('Lobby – call history section', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} callHistory={history} />);
     });
-    const section = tree.root.findAll((n) => n.props.testID === 'call-history-section');
+    const section = tree.root.findAll(n => n.props.testID === 'call-history-section');
     expect(section.length).toBeGreaterThanOrEqual(1);
     // The peer label should show the caller's ID.
-    const texts = tree.root.findAll(
-      (n) => n.type === 'Text' && n.props.children === 'user-bob',
-    );
+    const texts = tree.root.findAll(n => n.type === 'Text' && n.props.children === 'user-bob');
     expect(texts.length).toBeGreaterThanOrEqual(1);
   });
 });
@@ -170,10 +200,10 @@ describe('Lobby – developer mode (legacy room-join section)', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
     });
-    expect(tree.root.findAll((n) => n.props.testID === 'developer-room-section')).toHaveLength(0);
-    expect(tree.root.findAll((n) => n.props.testID === 'input-signaling-url')).toHaveLength(0);
-    expect(tree.root.findAll((n) => n.props.testID === 'input-room-id')).toHaveLength(0);
-    expect(tree.root.findAll((n) => n.props.testID === 'lobby-join-room')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'developer-room-section')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'input-signaling-url')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'input-room-id')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-join-room')).toHaveLength(0);
   });
 
   test('shows the legacy room-join section when developerMode is on', () => {
@@ -182,13 +212,13 @@ describe('Lobby – developer mode (legacy room-join section)', () => {
       tree = renderer.create(<Lobby {...baseProps} developerMode />);
     });
     expect(
-      tree.root.findAll((n) => n.props.testID === 'developer-room-section').length,
+      tree.root.findAll(n => n.props.testID === 'developer-room-section').length,
     ).toBeGreaterThanOrEqual(1);
     expect(
-      tree.root.findAll((n) => n.props.testID === 'input-signaling-url').length,
+      tree.root.findAll(n => n.props.testID === 'input-signaling-url').length,
     ).toBeGreaterThanOrEqual(1);
     expect(
-      tree.root.findAll((n) => n.props.testID === 'lobby-join-room').length,
+      tree.root.findAll(n => n.props.testID === 'lobby-join-room').length,
     ).toBeGreaterThanOrEqual(1);
   });
 
@@ -197,9 +227,9 @@ describe('Lobby – developer mode (legacy room-join section)', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
     });
-    expect(
-      tree.root.findAll((n) => n.props.testID === 'lobby-call').length,
-    ).toBeGreaterThanOrEqual(1);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-call').length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 });
 
@@ -211,7 +241,7 @@ describe('Lobby – contact directory', () => {
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} onSearchUsers={undefined} />);
     });
-    expect(tree.root.findAll((n) => n.props.testID === 'contact-directory')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'contact-directory')).toHaveLength(0);
   });
 
   test('renders the contacts search input when onSearchUsers is provided', () => {
@@ -222,33 +252,29 @@ describe('Lobby – contact directory', () => {
       );
     });
     expect(
-      tree.root.findAll((n) => n.props.testID === 'input-contact-search').length,
+      tree.root.findAll(n => n.props.testID === 'input-contact-search').length,
     ).toBeGreaterThanOrEqual(1);
   });
 
   test('debounces, lists results, and selects a contact on press', async () => {
     jest.useFakeTimers();
-    const onSearchUsers = jest
-      .fn()
-      .mockResolvedValue([
-        { userId: 'user-carol', online: true },
-        { userId: 'user-dave', online: false },
-      ]);
+    const onSearchUsers = jest.fn().mockResolvedValue([
+      { userId: 'user-carol', online: true },
+      { userId: 'user-dave', online: false },
+    ]);
     const onSelectContact = jest.fn();
 
     let tree;
     act(() => {
       tree = renderer.create(
-        <Lobby
-          {...baseProps}
-          onSearchUsers={onSearchUsers}
-          onSelectContact={onSelectContact}
-        />,
+        <Lobby {...baseProps} onSearchUsers={onSearchUsers} onSelectContact={onSelectContact} />,
       );
     });
 
-    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
-    act(() => { input.props.onChangeText('user'); });
+    const input = tree.root.findAll(n => n.props.testID === 'input-contact-search')[0];
+    act(() => {
+      input.props.onChangeText('user');
+    });
 
     // Before the debounce window elapses, no request should fire.
     expect(onSearchUsers).not.toHaveBeenCalled();
@@ -259,10 +285,12 @@ describe('Lobby – contact directory', () => {
 
     expect(onSearchUsers).toHaveBeenCalledWith('user');
 
-    const rows = tree.root.findAll((n) => n.props.testID === 'contact-row');
+    const rows = tree.root.findAll(n => n.props.testID === 'contact-row');
     expect(rows.length).toBeGreaterThanOrEqual(1);
 
-    act(() => { rows[0].props.onPress(); });
+    act(() => {
+      rows[0].props.onPress();
+    });
     expect(onSelectContact).toHaveBeenCalledWith('user-carol');
 
     jest.useRealTimers();
@@ -279,15 +307,17 @@ describe('Lobby – contact directory', () => {
       );
     });
 
-    const input = tree.root.findAll((n) => n.props.testID === 'input-contact-search')[0];
-    act(() => { input.props.onChangeText('nobody'); });
+    const input = tree.root.findAll(n => n.props.testID === 'input-contact-search')[0];
+    act(() => {
+      input.props.onChangeText('nobody');
+    });
 
     await act(async () => {
       jest.advanceTimersByTime(300);
     });
 
     expect(
-      tree.root.findAll((n) => n.props.testID === 'contact-empty').length,
+      tree.root.findAll(n => n.props.testID === 'contact-empty').length,
     ).toBeGreaterThanOrEqual(1);
 
     jest.useRealTimers();

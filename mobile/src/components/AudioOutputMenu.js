@@ -10,7 +10,7 @@ const BASE_ROUTES = [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE];
 
 function buildRouteList(available) {
   const routes = [...BASE_ROUTES];
-  (available || []).forEach((route) => {
+  (available || []).forEach(route => {
     if (!routes.includes(route)) {
       routes.push(route);
     }
@@ -45,7 +45,7 @@ export default function AudioOutputMenu({
   const currentLabel = getAudioRouteLabel(effectiveSelected);
   const currentIcon = effectiveSelected === AUDIO_ROUTES.SPEAKER_PHONE ? 'speaker' : 'speakerOff';
 
-  const handleSelect = (route) => {
+  const handleSelect = route => {
     setIsOpen(false);
     onSelect(route);
   };
@@ -57,7 +57,7 @@ export default function AudioOutputMenu({
         onPress={() => setIsOpen(true)}
         disabled={disabled}
         variant="default"
-        size={52}
+        size={56}
         accessibilityLabel={`Audio output: ${currentLabel}. Tap to change`}
         testID="audio-output-trigger"
       />
@@ -66,16 +66,14 @@ export default function AudioOutputMenu({
         visible={isOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setIsOpen(false)}
-      >
+        onRequestClose={() => setIsOpen(false)}>
         <Pressable
           style={styles.backdrop}
           accessibilityLabel="Close audio output menu"
-          onPress={() => setIsOpen(false)}
-        >
+          onPress={() => setIsOpen(false)}>
           <View style={styles.menu} accessibilityRole="menu">
             <Text style={styles.menuTitle}>Audio output</Text>
-            {routes.map((route) => {
+            {routes.map(route => {
               const isActive = route === effectiveSelected;
               return (
                 <Pressable
@@ -88,8 +86,7 @@ export default function AudioOutputMenu({
                     styles.menuItem,
                     isActive && styles.menuItemActive,
                     pressed && styles.menuItemPressed,
-                  ]}
-                >
+                  ]}>
                   <Text style={styles.menuItemText}>{getAudioRouteLabel(route)}</Text>
                   {isActive ? <Text style={styles.menuItemCheck}>✓</Text> : null}
                 </Pressable>

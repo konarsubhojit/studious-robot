@@ -10,6 +10,20 @@ jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));
 
+const mockShowIncomingCallNotification = jest.fn().mockResolvedValue(true);
+const mockDismissIncomingCallNotification = jest.fn();
+jest.mock('../src/incomingCallNotification', () => ({
+  showIncomingCallNotification: (...args) => mockShowIncomingCallNotification(...args),
+  dismissIncomingCallNotification: (...args) => mockDismissIncomingCallNotification(...args),
+}));
+
+const mockStartIncomingRingtone = jest.fn();
+const mockStopIncomingRingtone = jest.fn();
+jest.mock('../src/ringtone', () => ({
+  startIncomingRingtone: (...args) => mockStartIncomingRingtone(...args),
+  stopIncomingRingtone: (...args) => mockStopIncomingRingtone(...args),
+}));
+
 const mockCallKeep = {
   setup: jest.fn().mockResolvedValue(undefined),
   setAvailable: jest.fn(),
@@ -53,6 +67,7 @@ describe('callKeep with the native module absent', () => {
     expect(mod.endAllCalls()).toBe(false);
     // Unsubscribe is always callable.
     expect(typeof mod.registerCallActionListeners()).toBe('function');
+    expect(typeof mod.registerShowIncomingCallUiListener()).toBe('function');
     // Attaching handlers is safe even with no native module to route events
     // from; it just never gets to fire them.
     expect(typeof mod.setCallActionHandlers({})).toBe('function');
@@ -85,13 +100,16 @@ describe('callKeep with the native module present', () => {
     expect(mockCallKeep.setAvailable).toHaveBeenCalledWith(true);
   });
 
-  test('setupCallKeep does not request a self-managed phone account', async () => {
-    // A self-managed account makes Telecom skip its own ringing UI and requires
-    // the app to render one from the `showIncomingCallUi` event, which it does
-    // not do — the push would then be delivered without the handset ringing.
+  test('setupCallKeep requests a self-managed phone account, with a showIncomingCallUi handler to back it', async () => {
+    // Self-managed lets WeTalk draw its own branded incoming-call UI instead
+    // of the generic system dialer, but only because
+    // `registerShowIncomingCallUiListener` (asserted below) exists to answer
+    // the `showIncomingCallUi` event Telecom fires in place of its own UI —
+    // flipping this back to self-managed without that handler is exactly the
+    // regression that silenced incoming calls previously.
     await mod.setupCallKeep();
     const [options] = mockCallKeep.setup.mock.calls[0];
-    expect(options.android.selfManaged).toBe(false);
+    expect(options.android.selfManaged).toBe(true);
   });
 
   test('setupCallKeep survives the Activity-less background push context', async () => {
@@ -110,9 +128,9 @@ describe('callKeep with the native module present', () => {
   });
 
   test('displayIncomingCall shows the system UI with caller details', async () => {
-    await expect(
-      mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' }),
-    ).resolves.toBe(true);
+    await expect(mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' })).resolves.toBe(
+      true,
+    );
     expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledWith(
       'call-1',
       'alice',
@@ -123,9 +141,13 @@ describe('callKeep with the native module present', () => {
   });
 
   test('displayIncomingCall ignores a duplicate ring for the same call', async () => {
-    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(true);
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(
+      true,
+    );
     // A second path (foreground push racing the socket event) rings the same call.
-    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(true);
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(
+      true,
+    );
     expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
   });
 
@@ -160,7 +182,7 @@ describe('callKeep with the native module present', () => {
 
   test('answerCall received with no call flow attached is queued, not dropped', () => {
     mod.registerCallActionListeners();
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
 
     // Simulates the OS Answer button being tapped during a push cold start,
     // before `useCallFlow` has mounted and called `setCallActionHandlers`.
@@ -179,8 +201,8 @@ describe('callKeep with the native module present', () => {
     const onEnd = jest.fn();
     mod.setCallActionHandlers({ onAnswer, onEnd });
 
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
-    const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
     answerCb({ callUUID: 'call-2' });
     endCb({ callUUID: 'call-2' });
 
@@ -202,7 +224,7 @@ describe('callKeep with the native module present', () => {
 
     // A later event with nothing attached is queued again, exactly like the
     // original push-cold-start race.
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
     const onAnswer = jest.fn();
     answerCb({ callUUID: 'call-3' });
     mod.setCallActionHandlers({ onAnswer, onEnd: jest.fn() });
@@ -225,7 +247,7 @@ describe('callKeep with the native module present', () => {
     // replaced by the new mount's own setCallActionHandlers call.
     detachFirst();
 
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
     answerCb({ callUUID: 'call-4' });
 
     expect(secondOnAnswer).toHaveBeenCalledWith('call-4');
@@ -236,7 +258,7 @@ describe('callKeep with the native module present', () => {
     mod.registerCallActionListeners();
     await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
 
-    const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
     endCb({ callUUID: 'end-headless' });
 
     await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
@@ -248,9 +270,77 @@ describe('callKeep with the native module present', () => {
     const onEnd = jest.fn();
     mod.setCallActionHandlers({ onAnswer: jest.fn(), onEnd });
 
-    const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
     endCb({ callUUID: 'call-5' });
 
     expect(onEnd).toHaveBeenCalledWith('call-5');
+  });
+
+  test('registerShowIncomingCallUiListener subscribes at module scope', () => {
+    const unregister = mod.registerShowIncomingCallUiListener();
+    expect(mockCallKeep.addEventListener).toHaveBeenCalledWith(
+      'showIncomingCallUi',
+      expect.any(Function),
+    );
+    expect(typeof unregister).toBe('function');
+  });
+
+  test('showIncomingCallUi shows the branded notification with the caller identity', async () => {
+    mod.registerShowIncomingCallUiListener();
+    const handler = mockCallKeep.addEventListener.mock.calls.find(
+      c => c[0] === 'showIncomingCallUi',
+    )[1];
+
+    await handler({ callUUID: 'call-6', handle: 'alice', name: 'Alice' });
+
+    expect(mockShowIncomingCallNotification).toHaveBeenCalledWith({
+      callId: 'call-6',
+      callerId: 'Alice',
+    });
+    expect(mockStartIncomingRingtone).not.toHaveBeenCalled();
+  });
+
+  test('showIncomingCallUi falls back to an audible ring when the branded notification cannot be shown', async () => {
+    mockShowIncomingCallNotification.mockResolvedValueOnce(false);
+    mod.registerShowIncomingCallUiListener();
+    const handler = mockCallKeep.addEventListener.mock.calls.find(
+      c => c[0] === 'showIncomingCallUi',
+    )[1];
+
+    await handler({ callUUID: 'call-7', name: 'Bob' });
+
+    expect(mockStartIncomingRingtone).toHaveBeenCalledTimes(1);
+  });
+
+  test('showIncomingCallUi falls back to an audible ring when showing throws', async () => {
+    mockShowIncomingCallNotification.mockRejectedValueOnce(new Error('boom'));
+    mod.registerShowIncomingCallUiListener();
+    const handler = mockCallKeep.addEventListener.mock.calls.find(
+      c => c[0] === 'showIncomingCallUi',
+    )[1];
+
+    await handler({ callUUID: 'call-8', name: 'Carol' });
+
+    expect(mockStartIncomingRingtone).toHaveBeenCalledTimes(1);
+  });
+
+  test('answerCall dismisses the branded notification and stops the fallback ringtone', () => {
+    mod.registerCallActionListeners();
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+
+    answerCb({ callUUID: 'call-9' });
+
+    expect(mockDismissIncomingCallNotification).toHaveBeenCalledWith('call-9');
+    expect(mockStopIncomingRingtone).toHaveBeenCalledTimes(1);
+  });
+
+  test('endCall dismisses the branded notification and stops the fallback ringtone', () => {
+    mod.registerCallActionListeners();
+    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
+
+    endCb({ callUUID: 'call-10' });
+
+    expect(mockDismissIncomingCallNotification).toHaveBeenCalledWith('call-10');
+    expect(mockStopIncomingRingtone).toHaveBeenCalledTimes(1);
   });
 });

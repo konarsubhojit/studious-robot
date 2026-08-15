@@ -378,7 +378,7 @@ test('GET /calls/:callId/events events are in chronological order', async () => 
     for (let i = 1; i < events.length; i++) {
       assert.ok(
         new Date(events[i].timestamp) >= new Date(events[i - 1].timestamp),
-        `event[${i}] timestamp should be >= event[${i - 1}] timestamp`,
+        `event[${i}] timestamp should be >= event[${i - 1}] timestamp`
       );
     }
   } finally {

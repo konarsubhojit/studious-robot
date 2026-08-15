@@ -41,7 +41,9 @@ function spyOnPush() {
   };
   return {
     calls,
-    restore: () => { mod.sendIncomingCallPush = original; },
+    restore: () => {
+      mod.sendIncomingCallPush = original;
+    },
   };
 }
 
@@ -97,7 +99,7 @@ test('push fallback: no push sent when callee is online via WebSocket', async (t
     url,
     '/devices/register',
     { provider: 'fcm', pushToken: 'test-fcm-token' },
-    calleeSession,
+    calleeSession
   );
 
   // Connect callee via WebSocket (callee is now "online")
@@ -114,12 +116,14 @@ test('push fallback: no push sent when callee is online via WebSocket', async (t
 
     assert.equal(spy.calls.length, 0, 'push should not be sent when callee is online');
     assert.ok(
-      logs.lines.some((line) =>
-        line.includes('[push] Skipped call.incoming') &&
-        line.includes('user=user-bob') &&
-        line.includes('device=device-user-bob') &&
-        line.includes('reason=callee_online')),
-      'callee-online push skip should be logged',
+      logs.lines.some(
+        (line) =>
+          line.includes('[push] Skipped call.incoming') &&
+          line.includes('user=user-bob') &&
+          line.includes('device=device-user-bob') &&
+          line.includes('reason=callee_online')
+      ),
+      'callee-online push skip should be logged'
     );
   } finally {
     callee.disconnect();
@@ -141,7 +145,7 @@ test('push fallback: push sent to all registered devices when callee is offline'
     url,
     '/devices/register',
     { provider: 'apns', pushToken: 'apns-token-1' },
-    calleeSession,
+    calleeSession
   );
 
   // Register a second device / session
@@ -152,7 +156,7 @@ test('push fallback: push sent to all registered devices when callee is offline'
     url,
     '/devices/register',
     { provider: 'fcm', pushToken: 'fcm-token-2' },
-    calleeSession2,
+    calleeSession2
   );
 
   // Callee is offline (no WebSocket connection)
@@ -195,11 +199,13 @@ test('push fallback: no push when callee is unknown (unreachable)', async (t) =>
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(spy.calls.length, 0, 'push must not be attempted for unreachable calls');
   assert.ok(
-    logs.lines.some((line) =>
-      line.includes('[push] Skipped call.incoming') &&
-      line.includes('user=user-frank') &&
-      line.includes('reason=call_status_unreachable')),
-    'missing-device push skip should be logged',
+    logs.lines.some(
+      (line) =>
+        line.includes('[push] Skipped call.incoming') &&
+        line.includes('user=user-frank') &&
+        line.includes('reason=call_status_unreachable')
+    ),
+    'missing-device push skip should be logged'
   );
 });
 
@@ -217,7 +223,7 @@ test('push fallback: push payload contains callId and callerId', async (t) => {
     url,
     '/devices/register',
     { provider: 'fcm', pushToken: 'fcm-henry-token' },
-    calleeSession,
+    calleeSession
   );
 
   const res = await postJson(url, '/calls', { calleeId: 'user-henry' }, callerSession);
@@ -245,8 +251,18 @@ test('push fallback: offline devices still get a push while another device is on
   const phoneSession = await createSession(url, 'user-judy', 'device-judy-phone');
   const tabletSession = await createSession(url, 'user-judy', 'device-judy-tablet');
 
-  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'phone-token' }, phoneSession);
-  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'tablet-token' }, tabletSession);
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'phone-token' },
+    phoneSession
+  );
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'tablet-token' },
+    tabletSession
+  );
 
   const phone = ioClient(url, { auth: { sessionId: phoneSession } });
   await new Promise((resolve) => phone.once('connect', resolve));
@@ -279,7 +295,12 @@ test('push fallback: disconnected ringing device gets a push before timeout', as
   const callerSession = await createSession(url, 'user-kate');
   const calleeSession = await createSession(url, 'user-louis');
 
-  await postJson(url, '/devices/register', { provider: 'fcm', pushToken: 'louis-token' }, calleeSession);
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'louis-token' },
+    calleeSession
+  );
 
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
   await new Promise((resolve) => callee.once('connect', resolve));

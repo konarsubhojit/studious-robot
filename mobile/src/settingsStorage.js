@@ -1,5 +1,5 @@
-import RNFS from "react-native-fs";
-import { logError, logInfo } from "./appLogger";
+import RNFS from 'react-native-fs';
+import { logError, logInfo } from './appLogger';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
@@ -14,12 +14,12 @@ const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
  * @returns {T}
  */
 export function mergeSettings(defaults, loaded) {
-  if (!loaded || typeof loaded !== "object") {
+  if (!loaded || typeof loaded !== 'object') {
     return { ...defaults };
   }
 
   const merged = { ...defaults };
-  Object.keys(defaults).forEach((key) => {
+  Object.keys(defaults).forEach(key => {
     const value = loaded[key];
     if (typeof value === typeof defaults[key]) {
       merged[key] = value;
@@ -42,10 +42,10 @@ export async function loadSettings(defaults) {
     if (!exists) {
       return { ...defaults };
     }
-    const content = await RNFS.readFile(SETTINGS_FILE, "utf8");
+    const content = await RNFS.readFile(SETTINGS_FILE, 'utf8');
     return mergeSettings(defaults, JSON.parse(content));
   } catch (error) {
-    logError("Failed to load settings; using defaults", {
+    logError('Failed to load settings; using defaults', {
       message: error?.message,
     });
     return { ...defaults };
@@ -61,11 +61,11 @@ export async function loadSettings(defaults) {
  */
 export async function saveSettings(settings) {
   try {
-    await RNFS.writeFile(SETTINGS_FILE, JSON.stringify(settings), "utf8");
-    logInfo("Settings persisted");
+    await RNFS.writeFile(SETTINGS_FILE, JSON.stringify(settings), 'utf8');
+    logInfo('Settings persisted');
     return true;
   } catch (error) {
-    logError("Failed to persist settings", { message: error?.message });
+    logError('Failed to persist settings', { message: error?.message });
     return false;
   }
 }
@@ -87,21 +87,18 @@ const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 export async function loadIdentity() {
   try {
     const exists = await RNFS.exists(IDENTITY_FILE);
-    if (!exists) return { userId: "", verificationCode: "" };
-    const content = await RNFS.readFile(IDENTITY_FILE, "utf8");
+    if (!exists) return { userId: '', verificationCode: '' };
+    const content = await RNFS.readFile(IDENTITY_FILE, 'utf8');
     const parsed = JSON.parse(content);
     return {
-      userId: typeof parsed.userId === "string" ? parsed.userId : "",
-      verificationCode:
-        typeof parsed.verificationCode === "string"
-          ? parsed.verificationCode
-          : "",
+      userId: typeof parsed.userId === 'string' ? parsed.userId : '',
+      verificationCode: typeof parsed.verificationCode === 'string' ? parsed.verificationCode : '',
     };
   } catch (error) {
-    logError("Failed to load identity; using empty default", {
+    logError('Failed to load identity; using empty default', {
       message: error?.message,
     });
-    return { userId: "", verificationCode: "" };
+    return { userId: '', verificationCode: '' };
   }
 }
 
@@ -116,21 +113,19 @@ export async function saveIdentity(identity) {
     await RNFS.writeFile(
       IDENTITY_FILE,
       JSON.stringify({
-        userId: typeof identity?.userId === "string" ? identity.userId : "",
+        userId: typeof identity?.userId === 'string' ? identity.userId : '',
         verificationCode:
-          typeof identity?.verificationCode === "string"
-            ? identity.verificationCode
-            : "",
+          typeof identity?.verificationCode === 'string' ? identity.verificationCode : '',
       }),
-      "utf8",
+      'utf8',
     );
-    logInfo("Identity persisted", {
+    logInfo('Identity persisted', {
       userId: identity?.userId,
       hasVerificationCode: Boolean(identity?.verificationCode),
     });
     return true;
   } catch (error) {
-    logError("Failed to persist identity", { message: error?.message });
+    logError('Failed to persist identity', { message: error?.message });
     return false;
   }
 }
@@ -161,9 +156,7 @@ function generateDeviceId() {
       bytes[index] = Math.floor(Math.random() * 256);
     }
   }
-  const hex = Array.from(bytes, (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
   return `device-${hex}`;
 }
 
@@ -178,24 +171,23 @@ export async function loadDeviceId() {
   try {
     const exists = await RNFS.exists(DEVICE_FILE);
     if (exists) {
-      const content = await RNFS.readFile(DEVICE_FILE, "utf8");
+      const content = await RNFS.readFile(DEVICE_FILE, 'utf8');
       const parsed = JSON.parse(content);
-      const stored =
-        typeof parsed?.deviceId === "string" ? parsed.deviceId.trim() : "";
+      const stored = typeof parsed?.deviceId === 'string' ? parsed.deviceId.trim() : '';
       if (stored) return stored;
     }
   } catch (error) {
-    logError("Failed to load device id; generating a new one", {
+    logError('Failed to load device id; generating a new one', {
       message: error?.message,
     });
   }
 
   const deviceId = generateDeviceId();
   try {
-    await RNFS.writeFile(DEVICE_FILE, JSON.stringify({ deviceId }), "utf8");
-    logInfo("Device id generated and persisted");
+    await RNFS.writeFile(DEVICE_FILE, JSON.stringify({ deviceId }), 'utf8');
+    logInfo('Device id generated and persisted');
   } catch (error) {
-    logError("Failed to persist device id", { message: error?.message });
+    logError('Failed to persist device id', { message: error?.message });
   }
   return deviceId;
 }

@@ -1,19 +1,19 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { FlatList, Keyboard } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
 
-jest.mock('../../src/components/IconButton', () => (props) =>
-  require('react').createElement('IconButton', props),
+jest.mock(
+  '../../src/components/IconButton',
+  () => props => require('react').createElement('IconButton', props),
 );
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 function findAllByTestId(tree, testID) {
-  return tree.root.findAll(
-    (node) => node.props?.testID === testID && typeof node.type === 'string',
-  );
+  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string');
 }
 
 function makeMessage(overrides = {}) {
@@ -63,7 +63,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: true },
     });
 
-    const header = tree.root.findAll((n) => n.props?.children === 'user-bob');
+    const header = tree.root.findAll(n => n.props?.children === 'user-bob');
     expect(header.length).toBeGreaterThan(0);
   });
 
@@ -80,8 +80,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((item) => item.type === 'message');
-    expect(messageItems.map((item) => item.message.messageId)).toEqual(['m1', 'm2']);
+    const messageItems = list.props.data.filter(item => item.type === 'message');
+    expect(messageItems.map(item => item.message.messageId)).toEqual(['m1', 'm2']);
   });
 
   test('back button calls onBack', () => {
@@ -190,7 +190,7 @@ describe('ChatConversationScreen', () => {
     expect(rows).toHaveLength(2);
 
     const retryLabel = tree.root.findAll(
-      (n) => n.props?.accessibilityLabel === 'Retry sending message',
+      n => n.props?.accessibilityLabel === 'Retry sending message',
     )[0];
     expect(retryLabel).toBeDefined();
     act(() => {
@@ -230,7 +230,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const dateItems = list.props.data.filter((item) => item.type === 'date');
+    const dateItems = list.props.data.filter(item => item.type === 'date');
     expect(dateItems).toHaveLength(1);
     expect(dateItems[0].label).toBe('Today');
   });
@@ -253,8 +253,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((item) => item.type === 'message');
-    expect(messageItems.map((item) => item.isGroupEnd)).toEqual([false, true]);
+    const messageItems = list.props.data.filter(item => item.type === 'message');
+    expect(messageItems.map(item => item.isGroupEnd)).toEqual([false, true]);
 
     const ticks = findAllByTestId(tree, 'chat-message-tick');
     expect(ticks).toHaveLength(1);
@@ -264,7 +264,11 @@ describe('ChatConversationScreen', () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [
-        makeMessage({ messageId: 'read-1', senderId: 'user-alice', readAt: new Date().toISOString() }),
+        makeMessage({
+          messageId: 'read-1',
+          senderId: 'user-alice',
+          readAt: new Date().toISOString(),
+        }),
       ],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
@@ -286,6 +290,55 @@ describe('ChatConversationScreen', () => {
       isPeerTyping: true,
     });
     expect(findByTestId(tree, 'chat-typing-indicator')).not.toBeNull();
+  });
+
+  test('renders a presence row with the online/offline label', () => {
+    const online = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: true },
+    });
+    expect(findByTestId(online, 'chat-presence-row')).not.toBeNull();
+    expect(online.root.findAll(n => n.props?.children === 'Online').length).toBeGreaterThan(0);
+
+    const offline = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: false },
+    });
+    expect(findByTestId(offline, 'chat-presence-row')).not.toBeNull();
+    expect(offline.root.findAll(n => n.props?.children === 'Offline').length).toBeGreaterThan(0);
+  });
+
+  test('composer input applies a focus style when focused and clears it on blur', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const inputBefore = findByTestId(tree, 'chat-message-input');
+    const unfocusedStyle = [].concat(inputBefore.props.style).flat();
+
+    act(() => {
+      inputBefore.props.onFocus();
+    });
+    const inputFocused = findByTestId(tree, 'chat-message-input');
+    const focusedStyle = [].concat(inputFocused.props.style).flat();
+    expect(focusedStyle).not.toEqual(unfocusedStyle);
+
+    act(() => {
+      inputFocused.props.onBlur();
+    });
+    const inputAfterBlur = findByTestId(tree, 'chat-message-input');
+    expect([].concat(inputAfterBlur.props.style).flat()).toEqual(unfocusedStyle);
   });
 
   test('reports typing state to onTypingChange while composing and after send', () => {
@@ -342,5 +395,304 @@ describe('ChatConversationScreen', () => {
     });
     expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(true);
     expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
+  });
+
+  // ── Keyboard-aware composer / auto-scroll ──────────────────────────────
+
+  test('the message list allows tapping through an open keyboard (keyboardShouldPersistTaps)', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-list').props.keyboardShouldPersistTaps).toBe('handled');
+  });
+
+  test('auto-scrolls to the newest message when it changes (new message sent/received)', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[makeMessage({ messageId: 'm2' }), makeMessage({ messageId: 'm1' })]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  test('does not auto-scroll when older history is paged in (newest message unchanged)', () => {
+    const newest = makeMessage({ messageId: 'm2' });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [newest, makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    scrollSpy.mockClear();
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[newest, makeMessage({ messageId: 'm1' }), makeMessage({ messageId: 'm0' })]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).not.toHaveBeenCalled();
+  });
+
+  test('scrolls the message list to the bottom when the keyboard opens, so the composer stays visible', () => {
+    const addListenerSpy = jest.spyOn(Keyboard, 'addListener');
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const showListenerCall = addListenerSpy.mock.calls.findLast(
+      ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    );
+    expect(showListenerCall).toBeDefined();
+    const [, showListener] = showListenerCall;
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    scrollSpy.mockClear();
+
+    act(() => {
+      showListener({ endCoordinates: { height: 300 } });
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  test('unsubscribes the keyboard listener on unmount', () => {
+    const addListenerSpy = jest.spyOn(Keyboard, 'addListener');
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const showListenerCall = addListenerSpy.mock.calls.findLast(
+      ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
+    );
+    const callIndex = addListenerSpy.mock.calls.indexOf(showListenerCall);
+    const subscription = addListenerSpy.mock.results[callIndex].value;
+    const removeSpy = jest.spyOn(subscription, 'remove');
+
+    act(() => {
+      tree.unmount();
+    });
+
+    expect(removeSpy).toHaveBeenCalled();
+  });
+
+  // ── Scroll-to-bottom FAB ────────────────────────────────────────────────
+
+  test('shows a scroll-to-bottom FAB when a peer message arrives while scrolled up, and hides it on tap', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-bob' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const fab = findByTestId(tree, 'chat-scroll-to-bottom');
+    expect(fab).not.toBeNull();
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+
+    act(() => {
+      fab.props.onPress();
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+  });
+
+  test("does not show the scroll-to-bottom FAB when the new message is the current user's own", () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-alice' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
+  });
+
+  test('scrolling back near the bottom clears the scroll-to-bottom FAB', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1', senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 200 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[
+            makeMessage({ messageId: 'm2', senderId: 'user-bob' }),
+            makeMessage({ messageId: 'm1', senderId: 'user-bob' }),
+          ]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).not.toBeNull();
+
+    act(() => {
+      list.props.onScroll({
+        nativeEvent: {
+          contentOffset: { y: 490 },
+          contentSize: { height: 1000 },
+          layoutMeasurement: { height: 500 },
+        },
+      });
+    });
+
+    expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
   });
 });

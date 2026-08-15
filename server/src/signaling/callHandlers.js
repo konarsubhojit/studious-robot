@@ -36,19 +36,40 @@ function handleSocketCallTransition(socket, ack, payload, options) {
 
   const callId = normaliseId(payload.callId);
   if (!callId) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'bad_request',
+      'callId is required',
+      options.state
+    );
     return;
   }
 
   const call = options.state.calls.get(callId);
   if (!call) {
-    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'call_not_found',
+      'call not found',
+      options.state
+    );
     return;
   }
 
   const authorizationError = options.authorize(call, socket.data.identity.userId);
   if (authorizationError) {
-    acknowledgeError(socket, ack, options.eventName, 'forbidden', authorizationError, options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'forbidden',
+      authorizationError,
+      options.state
+    );
     return;
   }
 
@@ -58,7 +79,14 @@ function handleSocketCallTransition(socket, ack, payload, options) {
     reason: options.reason ?? null,
   });
   if (!result.ok) {
-    acknowledgeError(socket, ack, options.eventName, 'invalid_state', result.message || result.error, options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'invalid_state',
+      result.message || result.error,
+      options.state
+    );
     return;
   }
 
@@ -102,34 +130,76 @@ function handleRtcRelay(socket, ack, payload, options) {
       details: { event: options.eventName },
     });
     console.log(`[security] rtc.rate_limited userId=${userId} event=${options.eventName}`);
-    acknowledgeError(socket, ack, options.eventName, 'rate_limited', 'too many signaling events', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'rate_limited',
+      'too many signaling events',
+      options.state
+    );
     return;
   }
 
   const callId = normaliseId(payload.callId);
   if (!callId) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', 'callId is required', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'bad_request',
+      'callId is required',
+      options.state
+    );
     return;
   }
 
   const value = payload[options.dataKey];
   if (!options.validateData(value)) {
-    acknowledgeError(socket, ack, options.eventName, 'bad_request', `${options.dataKey} is required`, options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'bad_request',
+      `${options.dataKey} is required`,
+      options.state
+    );
     return;
   }
 
   const call = options.state.calls.get(callId);
   if (!call) {
-    acknowledgeError(socket, ack, options.eventName, 'call_not_found', 'call not found', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'call_not_found',
+      'call not found',
+      options.state
+    );
     return;
   }
 
   if (call.callerId !== userId && call.calleeId !== userId) {
-    acknowledgeError(socket, ack, options.eventName, 'forbidden', 'not a participant in this call', options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'forbidden',
+      'not a participant in this call',
+      options.state
+    );
     return;
   }
   if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
-    acknowledgeError(socket, ack, options.eventName, 'stale_call_state', `call is not ready for RTC in state: ${call.status}`, options.state);
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'stale_call_state',
+      `call is not ready for RTC in state: ${call.status}`,
+      options.state
+    );
     return;
   }
 

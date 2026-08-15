@@ -9,6 +9,7 @@ jest.mock('react-native', () => ({
       CAMERA: 'android.permission.CAMERA',
       RECORD_AUDIO: 'android.permission.RECORD_AUDIO',
       BLUETOOTH_CONNECT: 'android.permission.BLUETOOTH_CONNECT',
+      POST_NOTIFICATIONS: 'android.permission.POST_NOTIFICATIONS',
     },
     RESULTS: {
       GRANTED: 'granted',
@@ -28,6 +29,7 @@ import {
   ensureCallPermissions,
   getCallRuntimePermissions,
   requiresBluetoothConnectPermission,
+  requiresPostNotificationsPermission,
 } from '../src/permissions';
 
 describe('permissions helpers', () => {
@@ -57,7 +59,7 @@ describe('permissions helpers', () => {
     expect(mockRequestMultiple).not.toHaveBeenCalled();
   });
 
-  test('requests camera, microphone, and Bluetooth permissions when missing', async () => {
+  test('requests camera, microphone and Bluetooth permissions when missing', async () => {
     mockCheck.mockResolvedValue(false);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.CAMERA': 'granted',
@@ -78,10 +80,7 @@ describe('permissions helpers', () => {
   });
 
   test('fails gracefully when a required media permission is denied', async () => {
-    mockCheck
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    mockCheck.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.CAMERA': 'denied',
       'android.permission.RECORD_AUDIO': 'granted',
@@ -95,10 +94,7 @@ describe('permissions helpers', () => {
   });
 
   test('warns but does not block the call when Bluetooth permission is denied', async () => {
-    mockCheck
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+    mockCheck.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     mockRequestMultiple.mockResolvedValue({
       'android.permission.BLUETOOTH_CONNECT': 'denied',
     });
@@ -113,6 +109,38 @@ describe('permissions helpers', () => {
   test('does not require Bluetooth runtime permission before Android 12', () => {
     Platform.Version = 30;
     expect(requiresBluetoothConnectPermission()).toBe(false);
+  });
+
+  test('does not require the notifications runtime permission before Android 13', () => {
+    Platform.Version = 32;
+    expect(requiresPostNotificationsPermission()).toBe(false);
+    expect(getCallRuntimePermissions()).not.toContain('android.permission.POST_NOTIFICATIONS');
+  });
+
+  test('requests notifications permission from Android 13 onward, alongside the rest', async () => {
+    Platform.Version = 33;
+    expect(requiresPostNotificationsPermission()).toBe(true);
+    expect(getCallRuntimePermissions()).toEqual([
+      'android.permission.CAMERA',
+      'android.permission.RECORD_AUDIO',
+      'android.permission.BLUETOOTH_CONNECT',
+      'android.permission.POST_NOTIFICATIONS',
+    ]);
+
+    mockCheck.mockResolvedValue(false);
+    mockRequestMultiple.mockResolvedValue({
+      'android.permission.CAMERA': 'granted',
+      'android.permission.RECORD_AUDIO': 'granted',
+      'android.permission.BLUETOOTH_CONNECT': 'granted',
+      'android.permission.POST_NOTIFICATIONS': 'denied',
+    });
+
+    await expect(ensureCallPermissions()).resolves.toEqual({
+      ok: true,
+      warningMessage:
+        'Notification permission denied. You may miss incoming call and message alerts — enable it from Settings to fix this.',
+      deniedPermissions: ['android.permission.POST_NOTIFICATIONS'],
+    });
   });
 
   test('requests Bluetooth permission on demand for route changes', async () => {

@@ -25,9 +25,15 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Android 14+ gates the heads-up/full-screen incoming-call notification the
-         Telecom ring-phase UI posts behind this permission; without it a push
-         that arrives while the screen is locked never rings full-screen. -->
+    <!-- Required to post a full-screen-intent notification (the branded
+         incoming-call screen shown from CallKeep's self-managed
+         `showIncomingCallUi` event, see IncomingCallNotificationModule /
+         mobile/src/callKeep.js); without it a call that arrives while the
+         screen is locked never wakes/unlocks to that screen. Android 14+
+         restricts this to apps the user has granted special access to —
+         IncomingCallNotificationModule checks `canUseFullScreenIntent()` and
+         falls back to a plain (but still audible) heads-up notification when
+         it is denied. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- react-native-incall-manager vibrates the device on incoming calls. -->
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -87,5 +93,11 @@
           <action android:name="android.telecom.ConnectionService" />
         </intent-filter>
       </service>
+      <!-- Handles the Accept / Decline actions on WeTalk's branded incoming-call
+           notification (IncomingCallNotificationModule). Not exported: only this
+           app's own PendingIntents target it. -->
+      <receiver
+        android:name=".IncomingCallActionReceiver"
+        android:exported="false" />
     </application>
 </manifest>

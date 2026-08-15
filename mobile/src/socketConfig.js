@@ -16,10 +16,7 @@ export function getSocketOptions(overrides = {}) {
   };
 }
 
-const UNRECOVERABLE_DISCONNECT_REASONS = new Set([
-  'io client disconnect',
-  'io server disconnect',
-]);
+const UNRECOVERABLE_DISCONNECT_REASONS = new Set(['io client disconnect', 'io server disconnect']);
 
 export function isRecoverableDisconnectReason(reason) {
   return !UNRECOVERABLE_DISCONNECT_REASONS.has(reason);

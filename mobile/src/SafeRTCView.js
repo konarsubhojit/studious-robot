@@ -48,9 +48,7 @@ export default class SafeRTCView extends React.Component {
     if (this.state.hasError) {
       return (
         <View style={[styles.fallback, style]}>
-          <Text style={styles.fallbackText}>
-            {fallbackLabel || 'Video unavailable'}
-          </Text>
+          <Text style={styles.fallbackText}>{fallbackLabel || 'Video unavailable'}</Text>
         </View>
       );
     }

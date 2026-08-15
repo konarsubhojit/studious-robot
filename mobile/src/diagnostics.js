@@ -10,8 +10,10 @@ import { logError } from './appLogger';
  */
 
 export function formatDateForFile(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
+    date.getHours(),
+  )}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 export function getReactNativeVersion() {
@@ -158,13 +160,14 @@ export function buildExportHeader({
 
 export async function writeLogsFile(content) {
   const fileName = `wetalk-logs-${formatDateForFile()}.txt`;
-  const targets = Platform.OS === 'android'
-    ? [
-        { directory: RNFS.DownloadDirectoryPath, label: 'Downloads', primary: true },
-        { directory: RNFS.ExternalDirectoryPath, label: 'app external storage', primary: false },
-        { directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: false },
-      ]
-    : [{ directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: true }];
+  const targets =
+    Platform.OS === 'android'
+      ? [
+          { directory: RNFS.DownloadDirectoryPath, label: 'Downloads', primary: true },
+          { directory: RNFS.ExternalDirectoryPath, label: 'app external storage', primary: false },
+          { directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: false },
+        ]
+      : [{ directory: RNFS.DocumentDirectoryPath, label: 'app documents', primary: true }];
 
   let firstError;
 

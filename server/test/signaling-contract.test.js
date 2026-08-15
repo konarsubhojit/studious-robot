@@ -136,7 +136,12 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
       calleeId: 'user-bob',
     });
     const callId = initiateAck.call.callId;
-    await Promise.all([incomingPromise, ringingPromise, callerRingingStatePromise, calleeRingingStatePromise]);
+    await Promise.all([
+      incomingPromise,
+      ringingPromise,
+      callerRingingStatePromise,
+      calleeRingingStatePromise,
+    ]);
 
     const acceptEventPromise = waitFor(caller, 'call.accept');
     const acceptCallerStatePromise = waitFor(caller, 'call.state_changed');
@@ -162,7 +167,9 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     assert.equal(acceptCalleeState.status, 'accepted');
 
     let intruderSawOffer = false;
-    intruder.once('rtc.offer', () => { intruderSawOffer = true; });
+    intruder.once('rtc.offer', () => {
+      intruderSawOffer = true;
+    });
 
     const offerPromise = waitFor(callee, 'rtc.offer');
     const mediaCallerStatePromise = waitFor(caller, 'call.state_changed');
@@ -275,7 +282,12 @@ test('unauthorized, invalid-version, forbidden, and stale rtc events are rejecte
       calleeId: 'user-bob',
     });
     const callId = initiated.call.callId;
-    await Promise.all([incomingPromise, ringingPromise, callerRingingStatePromise, calleeRingingStatePromise]);
+    await Promise.all([
+      incomingPromise,
+      ringingPromise,
+      callerRingingStatePromise,
+      calleeRingingStatePromise,
+    ]);
 
     const staleOffer = await emitWithAck(caller, 'rtc.offer', {
       version: 1,

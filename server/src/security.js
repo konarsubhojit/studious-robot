@@ -51,7 +51,11 @@ function createRateLimiter({ maxRequests, windowMs }) {
         return { allowed: false, remaining: 0, resetAt: bucket.windowStart + windowMs };
       }
       bucket.count += 1;
-      return { allowed: true, remaining: maxRequests - bucket.count, resetAt: bucket.windowStart + windowMs };
+      return {
+        allowed: true,
+        remaining: maxRequests - bucket.count,
+        resetAt: bucket.windowStart + windowMs,
+      };
     },
 
     /**
@@ -167,17 +171,19 @@ function createAuditLog({ db = null } = {}) {
     if (!db) return;
     try {
       const { auditLog: auditLogTable } = require('../db/schema');
-      db.insert(auditLogTable).values({
-        auditId: entry.auditId,
-        ts: new Date(entry.timestamp),
-        event: entry.event,
-        actor: entry.actor,
-        target: entry.target,
-        outcome: entry.outcome,
-        details: entry.details ?? {},
-      }).catch((err) => {
-        console.error('[security] failed to persist audit event to DB:', err?.message);
-      });
+      db.insert(auditLogTable)
+        .values({
+          auditId: entry.auditId,
+          ts: new Date(entry.timestamp),
+          event: entry.event,
+          actor: entry.actor,
+          target: entry.target,
+          outcome: entry.outcome,
+          details: entry.details ?? {},
+        })
+        .catch((err) => {
+          console.error('[security] failed to persist audit event to DB:', err?.message);
+        });
     } catch (err) {
       console.error('[security] failed to persist audit event to DB:', err?.message);
     }
@@ -227,4 +233,11 @@ function createAuditLog({ db = null } = {}) {
   };
 }
 
-module.exports = { createRateLimiter, isBlocked, addBlock, removeBlock, listBlocks, createAuditLog };
+module.exports = {
+  createRateLimiter,
+  isBlocked,
+  addBlock,
+  removeBlock,
+  listBlocks,
+  createAuditLog,
+};

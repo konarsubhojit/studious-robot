@@ -2,8 +2,9 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SettingsScreen from '../../src/components/SettingsScreen';
 
-jest.mock('../../src/components/AppButton', () => (props) =>
-  require('react').createElement('AppButton', props),
+jest.mock(
+  '../../src/components/AppButton',
+  () => props => require('react').createElement('AppButton', props),
 );
 
 const baseProps = {
@@ -18,7 +19,7 @@ const baseProps = {
 };
 
 function findByTestID(tree, id) {
-  return tree.root.findAll((n) => n.props.testID === id);
+  return tree.root.findAll(n => n.props.testID === id);
 }
 
 describe('SettingsScreen', () => {
@@ -42,7 +43,7 @@ describe('SettingsScreen', () => {
     });
     const saveBtn = tree.root
       .findAllByType('AppButton')
-      .find((b) => b.props.testID === 'settings-save-username');
+      .find(b => b.props.testID === 'settings-save-username');
     expect(saveBtn.props.disabled).toBe(true);
 
     act(() => {
@@ -50,7 +51,7 @@ describe('SettingsScreen', () => {
     });
     const saveBtnAfter = tree.root
       .findAllByType('AppButton')
-      .find((b) => b.props.testID === 'settings-save-username');
+      .find(b => b.props.testID === 'settings-save-username');
     expect(saveBtnAfter.props.disabled).toBe(false);
   });
 
@@ -65,7 +66,7 @@ describe('SettingsScreen', () => {
     act(() => {
       tree.root
         .findAllByType('AppButton')
-        .find((b) => b.props.testID === 'settings-save-username')
+        .find(b => b.props.testID === 'settings-save-username')
         .props.onPress();
     });
     expect(baseProps.onSaveUserId).toHaveBeenCalledWith('bob');
@@ -78,7 +79,7 @@ describe('SettingsScreen', () => {
     });
     const saveBtn = tree.root
       .findAllByType('AppButton')
-      .find((b) => b.props.testID === 'settings-save-signaling');
+      .find(b => b.props.testID === 'settings-save-signaling');
     expect(saveBtn.props.disabled).toBe(true);
   });
 
@@ -107,14 +108,12 @@ describe('SettingsScreen', () => {
     let withTree;
     const onExportLogs = jest.fn();
     act(() => {
-      withTree = renderer.create(
-        <SettingsScreen {...baseProps} onExportLogs={onExportLogs} />,
-      );
+      withTree = renderer.create(<SettingsScreen {...baseProps} onExportLogs={onExportLogs} />);
     });
     act(() => {
       withTree.root
         .findAllByType('AppButton')
-        .find((b) => b.props.testID === 'settings-export-logs')
+        .find(b => b.props.testID === 'settings-export-logs')
         .props.onPress();
     });
     expect(onExportLogs).toHaveBeenCalled();
@@ -150,11 +149,7 @@ describe('SettingsScreen', () => {
     let tree;
     act(() => {
       tree = renderer.create(
-        <SettingsScreen
-          {...baseProps}
-          developerModeEnabled
-          onToggleDeveloperMode={jest.fn()}
-        />,
+        <SettingsScreen {...baseProps} developerModeEnabled onToggleDeveloperMode={jest.fn()} />,
       );
     });
     const toggle = findByTestID(tree, 'settings-developer-mode')[0];
@@ -168,7 +163,7 @@ describe('SettingsScreen', () => {
     });
 
     const hiddenText = tree.root.findAll(
-      (n) => n.type === 'Text' && n.props.children === '••••-••••',
+      n => n.type === 'Text' && n.props.children === '••••-••••',
     );
     expect(hiddenText.length).toBeGreaterThanOrEqual(1);
 
@@ -176,9 +171,26 @@ describe('SettingsScreen', () => {
       findByTestID(tree, 'settings-toggle-recovery-code')[0].props.onPress();
     });
 
-    const shownText = tree.root.findAll(
-      (n) => n.type === 'Text' && n.props.children === 'ABCD-EFGH',
-    );
+    const shownText = tree.root.findAll(n => n.type === 'Text' && n.props.children === 'ABCD-EFGH');
     expect(shownText.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('renders section labels with the expected text for each visible section', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          onExportLogs={jest.fn()}
+          developerModeEnabled
+          onToggleDeveloperMode={jest.fn()}
+        />,
+      );
+    });
+
+    ['Username', 'Signaling server', 'Recovery code', 'Developer', 'Account'].forEach(label => {
+      const match = tree.root.findAll(n => n.type === 'Text' && n.props.children === label);
+      expect(match.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });

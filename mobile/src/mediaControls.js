@@ -3,8 +3,8 @@ export function setTrackEnabled(stream, kind, enabled) {
     return false;
   }
 
-  const tracks = stream.getTracks().filter((track) => track.kind === kind);
-  tracks.forEach((track) => {
+  const tracks = stream.getTracks().filter(track => track.kind === kind);
+  tracks.forEach(track => {
     track.enabled = enabled;
   });
 
@@ -16,6 +16,6 @@ export function isTrackEnabled(stream, kind) {
     return false;
   }
 
-  const track = stream.getTracks().find((candidate) => candidate.kind === kind);
+  const track = stream.getTracks().find(candidate => candidate.kind === kind);
   return Boolean(track?.enabled);
 }

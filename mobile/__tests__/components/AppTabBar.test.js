@@ -3,15 +3,13 @@ import renderer, { act } from 'react-test-renderer';
 import AppTabBar from '../../src/components/AppTabBar';
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 function render(props) {
   let tree;
   act(() => {
-    tree = renderer.create(
-      <AppTabBar activeTab="chats" onChangeTab={jest.fn()} {...props} />,
-    );
+    tree = renderer.create(<AppTabBar activeTab="chats" onChangeTab={jest.fn()} {...props} />);
   });
   return tree;
 }
@@ -44,7 +42,7 @@ describe('AppTabBar', () => {
 
   test('caps the badge label at 99+', () => {
     const tree = render({ unreadCount: 150 });
-    const badgeText = tree.root.findAll((n) => n.props?.children === '99+');
+    const badgeText = tree.root.findAll(n => n.props?.children === '99+');
     expect(badgeText.length).toBeGreaterThan(0);
   });
 
@@ -56,5 +54,15 @@ describe('AppTabBar', () => {
     expect(findByTestId(tree, 'app-tab-chats').props.accessibilityState).toEqual({
       selected: false,
     });
+  });
+
+  test('pads the bottom of the bar by bottomInset, so it clears gesture navigation', () => {
+    const flat = style => (Array.isArray(style) ? Object.assign({}, ...style) : style);
+
+    const withoutInset = flat(findByTestId(render({ bottomInset: 0 }), 'app-tab-bar').props.style);
+    const withInset = flat(findByTestId(render({ bottomInset: 24 }), 'app-tab-bar').props.style);
+
+    expect(withInset.paddingBottom).toBeGreaterThan(withoutInset.paddingBottom);
+    expect(withInset.paddingBottom).toBeGreaterThanOrEqual(24);
   });
 });

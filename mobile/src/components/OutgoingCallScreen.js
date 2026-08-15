@@ -89,7 +89,6 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
 
   return (
     <View style={styles.container} testID="outgoing-call-screen">
-
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerLabel}>Calling…</Text>

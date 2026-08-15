@@ -108,7 +108,7 @@ describe('installCrashHandler', () => {
     let installedHandler;
     global.ErrorUtils = {
       getGlobalHandler: jest.fn().mockReturnValue(original),
-      setGlobalHandler: jest.fn((handler) => {
+      setGlobalHandler: jest.fn(handler => {
         installedHandler = handler;
       }),
     };
@@ -120,7 +120,7 @@ describe('installCrashHandler', () => {
     installedHandler(error, true);
 
     // Allow the async saveCrashLog to settle.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
 
     expect(original).toHaveBeenCalledWith(error, true);
   });

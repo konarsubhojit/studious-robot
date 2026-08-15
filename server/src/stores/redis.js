@@ -71,8 +71,7 @@ async function createRedisPgStores(opts = {}) {
     throw new Error('createRedisPgStores: set REDIS_URL or pass opts.createClient');
   }
 
-  const createClient =
-    opts.createClient || (() => require('redis').createClient({ url }));
+  const createClient = opts.createClient || (() => require('redis').createClient({ url }));
 
   /** @type {any[]} Every Redis client opened here, for orderly shutdown. */
   const clients = [];
@@ -111,8 +110,7 @@ async function createRedisPgStores(opts = {}) {
    * @param {any} io  Socket.IO server.
    */
   bundle.attachAdapter = (io) => {
-    const createAdapter =
-      opts.createAdapter || require('@socket.io/redis-adapter').createAdapter;
+    const createAdapter = opts.createAdapter || require('@socket.io/redis-adapter').createAdapter;
     io.adapter(createAdapter(adapterPub, adapterSub));
   };
 

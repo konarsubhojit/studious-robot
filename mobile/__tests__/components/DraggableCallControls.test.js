@@ -28,18 +28,19 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View },
-    useSharedValue: (init) => {
+    useSharedValue: init => {
       const sharedValue = { value: init };
       mockSharedValues.push(sharedValue);
       return sharedValue;
     },
-    useAnimatedStyle: (fn) => fn(),
-    runOnJS: (fn) => fn,
+    useAnimatedStyle: fn => fn(),
+    runOnJS: fn => fn,
   };
 });
 
-jest.mock('../../src/components/CallControls', () => (props) =>
-  require('react').createElement('CallControls', props),
+jest.mock(
+  '../../src/components/CallControls',
+  () => props => require('react').createElement('CallControls', props),
 );
 
 function createProps(overrides = {}) {
@@ -78,7 +79,9 @@ describe('DraggableCallControls', () => {
 
     // findAllByProps returns one entry per fiber level (component + host);
     // assert at least one node carries the testID.
-    expect(tree.root.findAllByProps({ testID: 'draggable-call-controls' }).length).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAllByProps({ testID: 'draggable-call-controls' }).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   test('forwards all control props to CallControls', () => {
@@ -87,9 +90,7 @@ describe('DraggableCallControls', () => {
     let tree;
     act(() => {
       tree = renderer.create(
-        <DraggableCallControls
-          {...createProps({ isMuted: true, onMuteToggle, onLeave })}
-        />,
+        <DraggableCallControls {...createProps({ isMuted: true, onMuteToggle, onLeave })} />,
       );
     });
 
@@ -110,9 +111,8 @@ describe('DraggableCallControls', () => {
     const { View } = require('react-native');
     const views = tree.root.findAllByType(View);
     const handleViews = views.filter(
-      (v) =>
-        v.props.accessibilityElementsHidden === true &&
-        v.props.importantForAccessibility === 'no',
+      v =>
+        v.props.accessibilityElementsHidden === true && v.props.importantForAccessibility === 'no',
     );
     expect(handleViews).toHaveLength(1);
   });
@@ -143,9 +143,9 @@ describe('DraggableCallControls', () => {
       mockPanCallbacks.onUpdate({ translationX: -1000, translationY: -1000 });
     });
 
-    const numericValues = mockSharedValues.map((sharedValue) => sharedValue.value);
+    const numericValues = mockSharedValues.map(sharedValue => sharedValue.value);
     expect(numericValues.every(Number.isFinite)).toBe(true);
-    expect(numericValues.some((value) => value === 0)).toBe(true);
-    expect(numericValues.every((value) => value >= 0)).toBe(true);
+    expect(numericValues.some(value => value === 0)).toBe(true);
+    expect(numericValues.every(value => value >= 0)).toBe(true);
   });
 });

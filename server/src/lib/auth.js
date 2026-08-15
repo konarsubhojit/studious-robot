@@ -39,9 +39,10 @@ function parseBearerToken(header) {
  * @returns {object|null}
  */
 function getSessionFromRequest(req, sessions) {
-  const sessionId = normaliseId(parseBearerToken(req.headers.authorization))
-    || normaliseId(req.body?.sessionId)
-    || normaliseId(req.query?.sessionId);
+  const sessionId =
+    normaliseId(parseBearerToken(req.headers.authorization)) ||
+    normaliseId(req.body?.sessionId) ||
+    normaliseId(req.query?.sessionId);
 
   if (!sessionId) return null;
   const session = sessions.get(sessionId) || null;

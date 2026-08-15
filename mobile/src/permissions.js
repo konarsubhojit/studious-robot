@@ -3,6 +3,12 @@ import { PermissionsAndroid, Platform } from 'react-native';
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;
 const BLUETOOTH_CONNECT_PERMISSION = PermissionsAndroid?.PERMISSIONS?.BLUETOOTH_CONNECT;
+// Android 13+ (API 33) requires runtime consent to post any notification,
+// including the branded incoming-call notification (IncomingCallNotificationModule)
+// and ordinary chat push notifications. Not requested automatically by any
+// native module used here, so it is requested alongside the other runtime
+// permissions rather than left until the OS silently drops notifications.
+const POST_NOTIFICATIONS_PERMISSION = PermissionsAndroid?.PERMISSIONS?.POST_NOTIFICATIONS;
 
 const REQUIRED_CALL_PERMISSIONS = [CAMERA_PERMISSION, MICROPHONE_PERMISSION].filter(Boolean);
 
@@ -11,6 +17,14 @@ export function requiresBluetoothConnectPermission(androidApiLevel = Platform.Ve
     Platform.OS === 'android' &&
     Number(androidApiLevel) >= 31 &&
     Boolean(BLUETOOTH_CONNECT_PERMISSION)
+  );
+}
+
+export function requiresPostNotificationsPermission(androidApiLevel = Platform.Version) {
+  return (
+    Platform.OS === 'android' &&
+    Number(androidApiLevel) >= 33 &&
+    Boolean(POST_NOTIFICATIONS_PERMISSION)
   );
 }
 
@@ -23,6 +37,9 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   if (requiresBluetoothConnectPermission(androidApiLevel)) {
     permissions.push(BLUETOOTH_CONNECT_PERMISSION);
   }
+  if (requiresPostNotificationsPermission(androidApiLevel)) {
+    permissions.push(POST_NOTIFICATIONS_PERMISSION);
+  }
   return permissions;
 }
 
@@ -31,6 +48,7 @@ function getRuntimePermissionDeniedMessage(permissions) {
   const deniedCamera = denied.has(CAMERA_PERMISSION);
   const deniedMicrophone = denied.has(MICROPHONE_PERMISSION);
   const deniedBluetooth = denied.has(BLUETOOTH_CONNECT_PERMISSION);
+  const deniedNotifications = denied.has(POST_NOTIFICATIONS_PERMISSION);
 
   if (deniedCamera && deniedMicrophone) {
     return 'Camera and microphone permissions are required to start a call';
@@ -43,6 +61,9 @@ function getRuntimePermissionDeniedMessage(permissions) {
   }
   if (deniedBluetooth) {
     return 'Bluetooth permission denied. Call will stay on speaker or earpiece.';
+  }
+  if (deniedNotifications) {
+    return 'Notification permission denied. You may miss incoming call and message alerts — enable it from Settings to fix this.';
   }
   return 'Required Android permissions are missing';
 }
@@ -65,7 +86,11 @@ async function getMissingPermissions(permissions) {
 }
 
 export async function ensureCallPermissions() {
-  if (Platform.OS !== 'android' || !PermissionsAndroid?.check || !PermissionsAndroid?.requestMultiple) {
+  if (
+    Platform.OS !== 'android' ||
+    !PermissionsAndroid?.check ||
+    !PermissionsAndroid?.requestMultiple
+  ) {
     return { ok: true, warningMessage: null, deniedPermissions: [] };
   }
 
@@ -82,12 +107,12 @@ export async function ensureCallPermissions() {
 
   const results = await PermissionsAndroid.requestMultiple(missingPermissions);
   const deniedRequiredPermissions = missingPermissions.filter(
-    (permission) =>
+    permission =>
       REQUIRED_CALL_PERMISSIONS.includes(permission) &&
       results[permission] !== PermissionsAndroid.RESULTS.GRANTED,
   );
   const deniedOptionalPermissions = missingPermissions.filter(
-    (permission) =>
+    permission =>
       !REQUIRED_CALL_PERMISSIONS.includes(permission) &&
       results[permission] !== PermissionsAndroid.RESULTS.GRANTED,
   );

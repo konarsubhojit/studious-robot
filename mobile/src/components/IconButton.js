@@ -60,9 +60,7 @@ export default function IconButton({
     );
   } else {
     const glyph = iconDef ? iconDef.emoji : icon;
-    iconContent = (
-      <Text style={[styles.icon, { fontSize: iconSize }]}>{glyph}</Text>
-    );
+    iconContent = <Text style={[styles.icon, { fontSize: iconSize }]}>{glyph}</Text>;
   }
 
   return (
@@ -79,30 +77,33 @@ export default function IconButton({
           { width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor },
           isDisabled && styles.disabled,
           pressed && styles.pressed,
-        ]}
-      >
+        ]}>
         {iconContent}
       </Pressable>
-      {label ? <Text style={styles.label} numberOfLines={1}>{label}</Text> : null}
+      {label ? (
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
+      ) : null}
     </View>
   );
 }
 
 const VARIANT_COLORS = {
   default: colors.surfaceControl,
-  danger:  colors.danger,
+  danger: colors.danger,
   success: colors.success,
-  active:  colors.accentButton,
-  muted:   colors.surfaceBanner,
+  active: colors.accentButton,
+  muted: colors.surfaceBanner,
 };
 
 /** Foreground colour for vector icon glyphs per variant. */
 const ICON_COLORS = {
   default: colors.textPrimary,
-  danger:  '#fff',
+  danger: '#fff',
   success: '#fff',
-  active:  colors.textOnAccent,
-  muted:   colors.textSecondary,
+  active: colors.textOnAccent,
+  muted: colors.textSecondary,
 };
 
 const styles = StyleSheet.create({

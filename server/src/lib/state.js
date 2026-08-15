@@ -190,7 +190,7 @@ function getPresenceSnapshot(state, userId) {
   const online = Boolean(connections && connections.size > 0);
   const deviceIds = state.userDevices.get(userId) || new Set();
   const connectedDeviceIds = new Set(
-    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+    Array.from(connections?.values() || [], (connection) => connection.deviceId)
   );
 
   return {
@@ -212,7 +212,11 @@ function getPresenceSnapshot(state, userId) {
 }
 
 function hasKnownUser(state, userId) {
-  if (state.userConnections.has(userId) || state.userDevices.has(userId) || state.userSessions.has(userId)) {
+  if (
+    state.userConnections.has(userId) ||
+    state.userDevices.has(userId) ||
+    state.userSessions.has(userId)
+  ) {
     return true;
   }
 
@@ -312,11 +316,12 @@ function resolveReachableChannels(state, userId) {
 function resolveOfflinePushChannels(state, userId) {
   const connections = state.userConnections.get(userId);
   const connectedDeviceIds = new Set(
-    Array.from(connections?.values() || [], (connection) => connection.deviceId),
+    Array.from(connections?.values() || [], (connection) => connection.deviceId)
   );
 
-  return resolveReachableChannels(state, userId)
-    .filter((channel) => channel.type === 'push' && !connectedDeviceIds.has(channel.deviceId));
+  return resolveReachableChannels(state, userId).filter(
+    (channel) => channel.type === 'push' && !connectedDeviceIds.has(channel.deviceId)
+  );
 }
 
 /**

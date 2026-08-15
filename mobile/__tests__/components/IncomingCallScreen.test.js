@@ -2,11 +2,13 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import IncomingCallScreen from '../../src/components/IncomingCallScreen';
 
-jest.mock('../../src/components/IconButton', () => (props) =>
-  require('react').createElement('IconButton', props),
+jest.mock(
+  '../../src/components/IconButton',
+  () => props => require('react').createElement('IconButton', props),
 );
-jest.mock('../../src/components/StatusBanner', () => (props) =>
-  require('react').createElement('StatusBanner', props),
+jest.mock(
+  '../../src/components/StatusBanner',
+  () => props => require('react').createElement('StatusBanner', props),
 );
 
 const DEFAULT_STATUS = { message: 'Incoming call from alice', severity: 'info' };
@@ -54,7 +56,7 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll((n) => n.props.testID === 'incoming-caller-id');
+    const nodes = tree.root.findAll(n => n.props.testID === 'incoming-caller-id');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
     expect(nodes[0].props.children).toBe('charlie');
   });
@@ -71,9 +73,9 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    expect(
-      tree.root.findAll((node) => node.props.children === 'CB').length,
-    ).toBeGreaterThanOrEqual(1);
+    expect(tree.root.findAll(node => node.props.children === 'CB').length).toBeGreaterThanOrEqual(
+      1,
+    );
   });
 
   test('renders Accept and Decline icon buttons', () => {
@@ -90,7 +92,7 @@ describe('IncomingCallScreen', () => {
     });
     const buttons = tree.root.findAllByType('IconButton');
     expect(buttons).toHaveLength(2);
-    const testIDs = buttons.map((b) => b.props.testID);
+    const testIDs = buttons.map(b => b.props.testID);
     expect(testIDs).toContain('incoming-decline');
     expect(testIDs).toContain('incoming-accept');
   });
@@ -109,9 +111,9 @@ describe('IncomingCallScreen', () => {
       );
     });
     act(() => {
-      const acceptBtn = tree.root.findAllByType('IconButton').find(
-        (b) => b.props.testID === 'incoming-accept',
-      );
+      const acceptBtn = tree.root
+        .findAllByType('IconButton')
+        .find(b => b.props.testID === 'incoming-accept');
       acceptBtn.props.onPress();
     });
     expect(onAccept).toHaveBeenCalledTimes(1);
@@ -131,9 +133,9 @@ describe('IncomingCallScreen', () => {
       );
     });
     act(() => {
-      const declineBtn = tree.root.findAllByType('IconButton').find(
-        (b) => b.props.testID === 'incoming-decline',
-      );
+      const declineBtn = tree.root
+        .findAllByType('IconButton')
+        .find(b => b.props.testID === 'incoming-decline');
       declineBtn.props.onPress();
     });
     expect(onDecline).toHaveBeenCalledTimes(1);
@@ -151,7 +153,7 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll((n) => n.props.testID === 'incoming-countdown');
+    const nodes = tree.root.findAll(n => n.props.testID === 'incoming-countdown');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -167,7 +169,7 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    expect(tree.root.findAll((n) => n.props.testID === 'incoming-countdown')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'incoming-countdown')).toHaveLength(0);
   });
 
   test('falls back to "Unknown" caller ID when incomingCall is null', () => {
@@ -182,7 +184,7 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll((n) => n.props.testID === 'incoming-caller-id');
+    const nodes = tree.root.findAll(n => n.props.testID === 'incoming-caller-id');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
     expect(nodes[0].props.children).toBe('Unknown');
   });

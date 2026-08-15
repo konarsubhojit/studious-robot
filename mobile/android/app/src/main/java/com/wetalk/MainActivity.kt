@@ -1,16 +1,21 @@
 package com.wetalk
 
+import android.app.KeyguardManager
 import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.util.Rational
+import android.view.WindowManager
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import io.wazo.callkeep.VoiceConnectionService
 
 class MainActivity : ReactActivity() {
-
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
@@ -22,7 +27,59 @@ class MainActivity : ReactActivity() {
    * which allows you to enable New Architecture with a single boolean flags [fabricEnabled]
    */
   override fun createReactActivityDelegate(): ReactActivityDelegate =
-      DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+    DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    applyIncomingCallWakeFlags(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    applyIncomingCallWakeFlags(intent)
+  }
+
+  /**
+   * Wake the device and draw over the lock screen when launched from WeTalk's
+   * branded incoming-call notification (`IncomingCallNotificationModule`'s
+   * full-screen intent). Without this the notification can still ring the
+   * device, but tapping it (or the system auto-launching it while locked)
+   * would leave the branded incoming-call screen stuck behind the lock
+   * screen instead of showing it, defeating the point of the full-screen
+   * intent.
+   *
+   * `MainActivity` is exported (required for the launcher icon) and already
+   * accepts external `wetalk://call/{callId}` deep links, so [EXTRA_INCOMING_CALL]
+   * alone — a plain `Intent` extra, not covered by the intent-filter — cannot
+   * be trusted: any other app could forge it to force a screen wake / keyguard
+   * dismiss with no real call in progress. Guard against that by requiring a
+   * real, currently-live react-native-callkeep connection for the intent's
+   * `callId`, the same check [IncomingCallActionReceiver] already performs
+   * before acting on a notification action.
+   */
+  private fun applyIncomingCallWakeFlags(intent: Intent?) {
+    if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
+    val callId = intent.data?.lastPathSegment ?: return
+    if (VoiceConnectionService.getConnection(callId) == null) return
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(true)
+      setTurnScreenOn(true)
+    } else {
+      @Suppress("DEPRECATION")
+      window.addFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+          WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+          WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+          WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+      )
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+      keyguardManager?.requestDismissKeyguard(this, null)
+    }
+  }
 
   /**
    * Keep the Picture-in-Picture params in sync with the current call state. On
@@ -57,8 +114,9 @@ class MainActivity : ReactActivity() {
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-        CallServiceModule.isCallActive &&
-        supportsPictureInPicture()) {
+      CallServiceModule.isCallActive &&
+      supportsPictureInPicture()
+    ) {
       enterPipSafely()
     }
   }
@@ -73,9 +131,10 @@ class MainActivity : ReactActivity() {
   @Suppress("DEPRECATION")
   override fun onBackPressed() {
     if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S &&
-        CallServiceModule.isCallActive &&
-        supportsPictureInPicture() &&
-        enterPipSafely()) {
+      CallServiceModule.isCallActive &&
+      supportsPictureInPicture() &&
+      enterPipSafely()
+    ) {
       return
     }
     super.onBackPressed()
@@ -83,18 +142,19 @@ class MainActivity : ReactActivity() {
 
   /** Whether this device advertises Picture-in-Picture support. */
   private fun supportsPictureInPicture(): Boolean =
-      packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
   /** Build PiP params, enabling auto-enter on Android 12+ when requested. */
   private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
     val builder =
-        PictureInPictureParams.Builder()
-            .setAspectRatio(
-                Rational(
-                    CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
-                    CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
-                ),
-            )
+      PictureInPictureParams
+        .Builder()
+        .setAspectRatio(
+          Rational(
+            CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
+            CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
+          ),
+        )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       builder.setAutoEnterEnabled(autoEnter)
     }
@@ -103,11 +163,21 @@ class MainActivity : ReactActivity() {
 
   /** Enter PiP, swallowing device/OEM failures. Returns true when entered. */
   private fun enterPipSafely(): Boolean =
-      try {
-        enterPictureInPictureMode(buildPipParams(autoEnter = false))
-      } catch (_: IllegalStateException) {
-        false
-      } catch (_: IllegalArgumentException) {
-        false
-      }
+    try {
+      enterPictureInPictureMode(buildPipParams(autoEnter = false))
+    } catch (_: IllegalStateException) {
+      false
+    } catch (_: IllegalArgumentException) {
+      false
+    }
+
+  companion object {
+    /**
+     * Intent extra set by [IncomingCallNotificationModule]'s full-screen intent
+     * so [applyIncomingCallWakeFlags] knows to wake the device / draw over the
+     * lock screen. Not set by the ordinary `wetalk://call/{callId}` deep link
+     * used for a plain notification tap.
+     */
+    const val EXTRA_INCOMING_CALL = "com.wetalk.EXTRA_INCOMING_CALL"
+  }
 }

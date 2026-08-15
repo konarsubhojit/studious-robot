@@ -2,20 +2,25 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallScreen from '../../src/components/CallScreen';
 
-jest.mock('../../src/components/CallTopBar', () => (props) =>
-  require('react').createElement('CallTopBar', props),
+jest.mock(
+  '../../src/components/CallTopBar',
+  () => props => require('react').createElement('CallTopBar', props),
 );
-jest.mock('../../src/components/ReconnectBanner', () => (props) =>
-  require('react').createElement('ReconnectBanner', props),
+jest.mock(
+  '../../src/components/ReconnectBanner',
+  () => props => require('react').createElement('ReconnectBanner', props),
 );
-jest.mock('../../src/components/CallStage', () => (props) =>
-  require('react').createElement('CallStage', props),
+jest.mock(
+  '../../src/components/CallStage',
+  () => props => require('react').createElement('CallStage', props),
 );
-jest.mock('../../src/components/CallControls', () => (props) =>
-  require('react').createElement('CallControls', props),
+jest.mock(
+  '../../src/components/CallControls',
+  () => props => require('react').createElement('CallControls', props),
 );
-jest.mock('../../src/components/StatusBanner', () => (props) =>
-  require('react').createElement('StatusBanner', props),
+jest.mock(
+  '../../src/components/StatusBanner',
+  () => props => require('react').createElement('StatusBanner', props),
 );
 
 function createProps(overrides = {}) {
@@ -75,7 +80,9 @@ describe('CallScreen', () => {
 
   test('hides top chrome in compact PiP mode but keeps stage visible', () => {
     act(() => {
-      tree = renderer.create(<CallScreen {...createProps({ isCompact: true, isReconnecting: true })} />);
+      tree = renderer.create(
+        <CallScreen {...createProps({ isCompact: true, isReconnecting: true })} />,
+      );
     });
 
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(0);
@@ -104,7 +111,9 @@ describe('CallScreen', () => {
 
   test('forwards isMuted and isVideoEnabled to CallStage', () => {
     act(() => {
-      tree = renderer.create(<CallScreen {...createProps({ isMuted: true, isVideoEnabled: false })} />);
+      tree = renderer.create(
+        <CallScreen {...createProps({ isMuted: true, isVideoEnabled: false })} />,
+      );
     });
 
     const stage = tree.root.findAllByType('CallStage')[0];
@@ -114,7 +123,9 @@ describe('CallScreen', () => {
 
   test('forwards mirrorPip and mirrorMain to CallStage', () => {
     act(() => {
-      tree = renderer.create(<CallScreen {...createProps({ mirrorPip: false, mirrorMain: true })} />);
+      tree = renderer.create(
+        <CallScreen {...createProps({ mirrorPip: false, mirrorMain: true })} />,
+      );
     });
 
     const stage = tree.root.findAllByType('CallStage')[0];
@@ -126,7 +137,11 @@ describe('CallScreen', () => {
     jest.useFakeTimers();
 
     act(() => {
-      tree = renderer.create(<CallScreen {...createProps({ status: { message: 'Waiting for peer…', severity: 'info' } })} />);
+      tree = renderer.create(
+        <CallScreen
+          {...createProps({ status: { message: 'Waiting for peer…', severity: 'info' } })}
+        />,
+      );
     });
 
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
@@ -143,7 +158,11 @@ describe('CallScreen', () => {
     jest.useFakeTimers();
 
     act(() => {
-      tree = renderer.create(<CallScreen {...createProps({ status: { message: 'Failed to create offer', severity: 'error' } })} />);
+      tree = renderer.create(
+        <CallScreen
+          {...createProps({ status: { message: 'Failed to create offer', severity: 'error' } })}
+        />,
+      );
     });
 
     act(() => {

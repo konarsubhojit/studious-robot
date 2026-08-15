@@ -47,7 +47,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
         outcome: 'rejected',
         details: { via: 'http' },
       });
-      console.log(`[security] call.blocked callerId=${session.userId} calleeId=${calleeId} via=http`);
+      console.log(
+        `[security] call.blocked callerId=${session.userId} calleeId=${calleeId} via=http`
+      );
       res.status(403).json({ error: 'blocked' });
       return;
     }
@@ -148,9 +150,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
     }
 
     const limitParam = parseInt(req.query.limit, 10);
-    const limit = Number.isFinite(limitParam) && limitParam > 0
-      ? Math.min(limitParam, 100)
-      : 20;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 100) : 20;
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;

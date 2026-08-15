@@ -40,13 +40,17 @@ function waitFor(socket, event, timeoutMs = 1000) {
 /** Simple GET helper returning { status, body }. */
 function getJson(url) {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
-      let raw = '';
-      res.on('data', (chunk) => { raw += chunk; });
-      res.on('end', () => {
-        resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : null });
-      });
-    }).on('error', reject);
+    http
+      .get(url, (res) => {
+        let raw = '';
+        res.on('data', (chunk) => {
+          raw += chunk;
+        });
+        res.on('end', () => {
+          resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : null });
+        });
+      })
+      .on('error', reject);
   });
 }
 
@@ -100,7 +104,7 @@ test('shutdown() closes the HTTP server so it stops listening', async () => {
   await assert.rejects(
     () => getJson(`${server.url}/health`),
     /ECONNREFUSED/,
-    'health endpoint is unreachable after shutdown',
+    'health endpoint is unreachable after shutdown'
   );
 });
 
@@ -158,7 +162,9 @@ test('shutdown() closes pluggable stores that expose close()', async () => {
   const { createMemoryStores } = require('../src/stores');
   const stores = createMemoryStores();
   let closed = false;
-  stores.close = async () => { closed = true; };
+  stores.close = async () => {
+    closed = true;
+  };
 
   const server = await startServer({ stores });
   await server.shutdown();

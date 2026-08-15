@@ -41,8 +41,7 @@ export default function AppButton({
         disabled && styles.buttonDisabled,
         pressed && styles.buttonPressed,
         style,
-      ]}
-    >
+      ]}>
       <Text style={styles.buttonText}>{title}</Text>
     </Pressable>
   );

@@ -41,9 +41,9 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   if (getActiveCallsForUser(state, calleeId).length > 0) {
     status = 'busy';
     endReason = 'busy';
-  // In single-instance mode (no cross-instance bus), we can safely short-circuit
-  // unknown callees as `unreachable`. In multi-instance mode, the callee may be
-  // connected to another node, so we allow ringing delivery via user-room fanout.
+    // In single-instance mode (no cross-instance bus), we can safely short-circuit
+    // unknown callees as `unreachable`. In multi-instance mode, the callee may be
+    // connected to another node, so we allow ringing delivery via user-room fanout.
   } else if (isSingleInstanceMode(state) && isCalleeUnreachable(state, calleeId)) {
     status = 'unreachable';
     endReason = 'unreachable';
@@ -57,9 +57,8 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
     endReason,
     createdAt: now,
     updatedAt: now,
-    ringTimeoutAt: status === 'ringing'
-      ? new Date(Date.now() + ringingTimeoutMs).toISOString()
-      : null,
+    ringTimeoutAt:
+      status === 'ringing' ? new Date(Date.now() + ringingTimeoutMs).toISOString() : null,
   };
 
   state.calls.set(callId, call);
@@ -120,7 +119,7 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
 
   call.status = toStatus;
   const isTerminal = TERMINAL_CALL_STATES.has(toStatus);
-  call.endReason = isTerminal ? (reason ?? null) : null;
+  call.endReason = isTerminal ? reason ?? null : null;
   call.updatedAt = new Date().toISOString();
   if (isTerminal) {
     call.ringTimeoutAt = null;
@@ -151,8 +150,8 @@ function appendCallEvent(state, callId, event, actor, reason, afterPersist) {
     eventId: randomUUID(),
     callId,
     event,
-    actor: actor === '' ? null : (actor ?? null),
-    reason: reason === '' ? null : (reason ?? null),
+    actor: actor === '' ? null : actor ?? null,
+    reason: reason === '' ? null : reason ?? null,
     timestamp: new Date().toISOString(),
   };
   events.push(eventRecord);
@@ -178,8 +177,8 @@ function getActiveCallsForUser(state, userId) {
   const active = [];
   for (const call of state.calls.values()) {
     if (
-      !TERMINAL_CALL_STATES.has(call.status)
-      && (call.callerId === userId || call.calleeId === userId)
+      !TERMINAL_CALL_STATES.has(call.status) &&
+      (call.callerId === userId || call.calleeId === userId)
     ) {
       active.push(call);
     }

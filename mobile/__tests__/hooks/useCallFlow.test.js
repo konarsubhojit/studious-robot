@@ -1,18 +1,15 @@
-import React from "react";
-import renderer, { act } from "react-test-renderer";
-import useCallFlow, {
-  CALL_PHASES,
-  CALL_END_REASON_LABELS,
-} from "../../src/hooks/useCallFlow";
-import { generateVerificationCode } from "../../src/identityVerification";
-import { loadIdentity, saveIdentity } from "../../src/settingsStorage";
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import { generateVerificationCode } from '../../src/identityVerification';
+import { loadIdentity, saveIdentity } from '../../src/settingsStorage';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-jest.mock("socket.io-client", () => ({
+jest.mock('socket.io-client', () => ({
   io: jest.fn(() => ({
     connected: true,
-    id: "mock-socket-id",
+    id: 'mock-socket-id',
     disconnect: jest.fn(),
     off: jest.fn(),
     on: jest.fn(),
@@ -21,14 +18,14 @@ jest.mock("socket.io-client", () => ({
   })),
 }));
 
-jest.mock("react-native-webrtc", () => ({
+jest.mock('react-native-webrtc', () => ({
   mediaDevices: { getUserMedia: jest.fn() },
   RTCIceCandidate: jest.fn(),
   RTCPeerConnection: jest.fn(),
   RTCSessionDescription: jest.fn(),
 }));
 
-jest.mock("../../src/appLogger", () => ({
+jest.mock('../../src/appLogger', () => ({
   clearLogs: jest.fn(),
   getLogsAsText: jest.fn(),
   logDebug: jest.fn(),
@@ -38,8 +35,8 @@ jest.mock("../../src/appLogger", () => ({
   logWarn: jest.fn(),
 }));
 
-jest.mock("../../src/audioRouting", () => ({
-  AUDIO_ROUTES: { SPEAKER_PHONE: "speakerphone" },
+jest.mock('../../src/audioRouting', () => ({
+  AUDIO_ROUTES: { SPEAKER_PHONE: 'speakerphone' },
   chooseAudioRoute: jest.fn(),
   setAudioRoute: jest.fn(() => ({ ok: true })),
   startAudioSession: jest.fn(() => ({ ok: true })),
@@ -47,54 +44,54 @@ jest.mock("../../src/audioRouting", () => ({
   subscribeAudioDevices: jest.fn(() => jest.fn()),
 }));
 
-jest.mock("../../src/callService", () => ({
+jest.mock('../../src/callService', () => ({
   startCallService: jest.fn(() => true),
   stopCallService: jest.fn(),
 }));
 
-jest.mock("../../src/hooks/useCompactCallView", () =>
+jest.mock('../../src/hooks/useCompactCallView', () =>
   jest.fn(() => ({ isCompactView: false, setIsCompactView: jest.fn() })),
 );
 
-jest.mock("../../src/callUx", () => ({
-  getConnectionQuality: jest.fn(() => ({ bars: 3, label: "Strong" })),
+jest.mock('../../src/callUx', () => ({
+  getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })),
 }));
 
-jest.mock("../../src/screenShare", () => ({
-  SCREEN_SHARE_CANCELLED: "cancelled",
+jest.mock('../../src/screenShare', () => ({
+  SCREEN_SHARE_CANCELLED: 'cancelled',
   isScreenShareSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
 }));
 
-jest.mock("../../src/diagnostics", () => ({
+jest.mock('../../src/diagnostics', () => ({
   buildExportHeader: jest.fn(),
-  getMediaAccessStatus: jest.fn((e) => e?.message || "media error"),
+  getMediaAccessStatus: jest.fn(e => e?.message || 'media error'),
   getSocketTransportName: jest.fn(),
-  sanitizeUrlForLog: jest.fn((u) => u),
+  sanitizeUrlForLog: jest.fn(u => u),
   summarizeIceCandidate: jest.fn(),
   writeLogsFile: jest.fn(),
 }));
 
-jest.mock("../../src/mediaControls", () => ({
+jest.mock('../../src/mediaControls', () => ({
   isTrackEnabled: jest.fn(() => true),
   setTrackEnabled: jest.fn(() => true),
 }));
 
-jest.mock("../../src/permissions", () => ({
+jest.mock('../../src/permissions', () => ({
   ensureCallPermissions: jest.fn(() => Promise.resolve({ ok: true })),
 }));
 
-jest.mock("../../src/socketConfig", () => ({
+jest.mock('../../src/socketConfig', () => ({
   getSocketOptions: jest.fn(() => ({})),
   isRecoverableDisconnectReason: jest.fn(),
 }));
 
-jest.mock("../../src/webrtcConfig", () => ({
+jest.mock('../../src/webrtcConfig', () => ({
   getIceServers: jest.fn(() => []),
 }));
 
-jest.mock("../../src/callKeep", () => ({
+jest.mock('../../src/callKeep', () => ({
   displayIncomingCall: jest.fn(async () => true),
   endCall: jest.fn(() => true),
   endAllCalls: jest.fn(() => true),
@@ -104,14 +101,14 @@ jest.mock("../../src/callKeep", () => ({
   setupCallKeep: jest.fn(async () => true),
 }));
 
-jest.mock("../../src/ringtone", () => ({
+jest.mock('../../src/ringtone', () => ({
   startIncomingRingtone: jest.fn(),
   startOutgoingRingback: jest.fn(),
   stopIncomingRingtone: jest.fn(),
   stopOutgoingRingback: jest.fn(),
 }));
 
-jest.mock("../../src/pushNotifications", () => ({
+jest.mock('../../src/pushNotifications', () => ({
   getInitialCallLink: jest.fn(async () => null),
   addCallLinkListener: jest.fn(() => jest.fn()),
   registerPushToken: jest.fn(async () => true),
@@ -120,18 +117,18 @@ jest.mock("../../src/pushNotifications", () => ({
   installForegroundMessageHandler: jest.fn(() => jest.fn()),
 }));
 
-jest.mock("../../src/identityVerification", () => ({
-  generateVerificationCode: jest.fn(() => "ABCD-EFGH"),
-  normalizeVerificationCode: jest.fn((code) =>
-    typeof code === "string" ? code.trim().toUpperCase() : "",
+jest.mock('../../src/identityVerification', () => ({
+  generateVerificationCode: jest.fn(() => 'ABCD-EFGH'),
+  normalizeVerificationCode: jest.fn(code =>
+    typeof code === 'string' ? code.trim().toUpperCase() : '',
   ),
 }));
 
-jest.mock("../../src/settingsStorage", () => ({
-  loadIdentity: jest.fn(async () => ({ userId: "", verificationCode: "" })),
+jest.mock('../../src/settingsStorage', () => ({
+  loadIdentity: jest.fn(async () => ({ userId: '', verificationCode: '' })),
   saveIdentity: jest.fn(async () => true),
-  loadDeviceId: jest.fn(async () => "device-test-1"),
-  loadSettings: jest.fn(async (defaults) => ({ ...defaults })),
+  loadDeviceId: jest.fn(async () => 'device-test-1'),
+  loadSettings: jest.fn(async defaults => ({ ...defaults })),
   saveSettings: jest.fn(async () => true),
 }));
 
@@ -154,14 +151,14 @@ function renderHook() {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("useCallFlow", () => {
+describe('useCallFlow', () => {
   afterEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
     delete global.fetch;
   });
 
-  test("initialises with idle callPhase", () => {
+  test('initialises with idle callPhase', () => {
     const { resultRef } = renderHook();
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
     expect(resultRef.current.isInCall).toBe(false);
@@ -169,74 +166,74 @@ describe("useCallFlow", () => {
     expect(resultRef.current.incomingCall).toBeNull();
   });
 
-  test("initialises connectionQuality with no-link defaults", () => {
+  test('initialises connectionQuality with no-link defaults', () => {
     const { resultRef } = renderHook();
     expect(resultRef.current.connectionQuality).toEqual({
       bars: 0,
-      label: "No link",
+      label: 'No link',
     });
   });
 
-  test("exposes identity setters", () => {
+  test('exposes identity setters', () => {
     const { resultRef } = renderHook();
-    expect(typeof resultRef.current.setUserId).toBe("function");
-    expect(typeof resultRef.current.setCalleeId).toBe("function");
-    expect(typeof resultRef.current.setSignalingUrl).toBe("function");
+    expect(typeof resultRef.current.setUserId).toBe('function');
+    expect(typeof resultRef.current.setCalleeId).toBe('function');
+    expect(typeof resultRef.current.setSignalingUrl).toBe('function');
   });
 
-  test("exposes all required call action callbacks", () => {
+  test('exposes all required call action callbacks', () => {
     const { resultRef } = renderHook();
     const required = [
-      "placeCall",
-      "cancelOutgoingCall",
-      "acceptIncomingCall",
-      "declineIncomingCall",
-      "handleEndCall",
-      "startLocalPreview",
+      'placeCall',
+      'cancelOutgoingCall',
+      'acceptIncomingCall',
+      'declineIncomingCall',
+      'handleEndCall',
+      'startLocalPreview',
     ];
     for (const fn of required) {
-      expect(typeof resultRef.current[fn]).toBe("function");
+      expect(typeof resultRef.current[fn]).toBe('function');
     }
   });
 
-  test("exposes all required in-call control callbacks", () => {
+  test('exposes all required in-call control callbacks', () => {
     const { resultRef } = renderHook();
     const required = [
-      "handleMuteToggle",
-      "handleVideoToggle",
-      "handleCameraSwitch",
-      "handleSwapStreams",
-      "handleRetryReconnect",
-      "chooseAudioOutput",
-      "dismissCallSummary",
+      'handleMuteToggle',
+      'handleVideoToggle',
+      'handleCameraSwitch',
+      'handleSwapStreams',
+      'handleRetryReconnect',
+      'chooseAudioOutput',
+      'dismissCallSummary',
     ];
     for (const fn of required) {
-      expect(typeof resultRef.current[fn]).toBe("function");
+      expect(typeof resultRef.current[fn]).toBe('function');
     }
   });
 
-  test("setUserId updates the userId state", () => {
+  test('setUserId updates the userId state', () => {
     const { resultRef, tree } = renderHook();
     act(() => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     // Re-render to pick up new state.
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    expect(resultRef.current.userId).toBe("alice");
+    expect(resultRef.current.userId).toBe('alice');
   });
 
-  test("registerUser generates and persists a verification code", async () => {
+  test('registerUser generates and persists a verification code', async () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-1", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      await resultRef.current.registerUser(" alice ");
+      await resultRef.current.registerUser(' alice ');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -248,22 +245,22 @@ describe("useCallFlow", () => {
 
     expect(generateVerificationCode).toHaveBeenCalledTimes(1);
     expect(saveIdentity).toHaveBeenCalledWith({
-      userId: "alice",
-      verificationCode: "ABCD-EFGH",
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
     });
-    expect(resultRef.current.verificationCode).toBe("ABCD-EFGH");
-    expect(resultRef.current.pendingVerificationCode).toBe("ABCD-EFGH");
+    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
+    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
   });
 
-  test("loads a legacy identity, generates a verification code, and persists it", async () => {
+  test('loads a legacy identity, generates a verification code, and persists it', async () => {
     loadIdentity.mockResolvedValueOnce({
-      userId: "alice",
-      verificationCode: "",
+      userId: 'alice',
+      verificationCode: '',
     });
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-legacy", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-legacy', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
@@ -274,24 +271,24 @@ describe("useCallFlow", () => {
 
     expect(generateVerificationCode).toHaveBeenCalledTimes(1);
     expect(saveIdentity).toHaveBeenCalledWith({
-      userId: "alice",
-      verificationCode: "ABCD-EFGH",
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
     });
-    expect(resultRef.current.userId).toBe("alice");
-    expect(resultRef.current.verificationCode).toBe("ABCD-EFGH");
-    expect(resultRef.current.pendingVerificationCode).toBe("ABCD-EFGH");
+    expect(resultRef.current.userId).toBe('alice');
+    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
+    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
   });
 
-  test("session creation sends verificationCode when it exists", async () => {
+  test('session creation sends verificationCode when it exists', async () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-2", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-2', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      await resultRef.current.registerUser("alice");
+      await resultRef.current.registerUser('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -302,25 +299,25 @@ describe("useCallFlow", () => {
     });
 
     const sessionRequest = global.fetch.mock.calls.find(([url]) =>
-      String(url).endsWith("/session"),
+      String(url).endsWith('/session'),
     );
     expect(sessionRequest).toBeTruthy();
     expect(JSON.parse(sessionRequest[1].body)).toMatchObject({
-      userId: "alice",
-      verificationCode: "ABCD-EFGH",
+      userId: 'alice',
+      verificationCode: 'ABCD-EFGH',
     });
   });
 
-  test("identity conflicts surface a user-friendly status message", async () => {
+  test('identity conflicts surface a user-friendly status message', async () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 409,
-      json: async () => ({ code: "identity_conflict" }),
+      json: async () => ({ code: 'identity_conflict' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      await resultRef.current.registerUser("alice");
+      await resultRef.current.registerUser('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -330,22 +327,22 @@ describe("useCallFlow", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.status.severity).toBe("error");
+    expect(resultRef.current.status.severity).toBe('error');
     expect(resultRef.current.status.message).toMatch(/already claimed/i);
   });
 
-  test("setCalleeId updates the calleeId state", () => {
+  test('setCalleeId updates the calleeId state', () => {
     const { resultRef, tree } = renderHook();
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    expect(resultRef.current.calleeId).toBe("bob");
+    expect(resultRef.current.calleeId).toBe('bob');
   });
 
-  test("placeCall sets error status when calleeId is empty", async () => {
+  test('placeCall sets error status when calleeId is empty', async () => {
     const { resultRef, tree } = renderHook();
     await act(async () => {
       await resultRef.current.placeCall();
@@ -353,13 +350,13 @@ describe("useCallFlow", () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    expect(resultRef.current.status.severity).toBe("error");
+    expect(resultRef.current.status.severity).toBe('error');
   });
 
-  test("placeCall sets error status when userId is empty", async () => {
+  test('placeCall sets error status when userId is empty', async () => {
     const { resultRef, tree } = renderHook();
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     await act(async () => {
       await resultRef.current.placeCall();
@@ -367,95 +364,95 @@ describe("useCallFlow", () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    expect(resultRef.current.status.severity).toBe("error");
+    expect(resultRef.current.status.severity).toBe('error');
   });
 
-  test("CALL_PHASES exports the expected values", () => {
-    expect(CALL_PHASES.IDLE).toBe("idle");
-    expect(CALL_PHASES.OUTGOING_RINGING).toBe("outgoing_ringing");
-    expect(CALL_PHASES.INCOMING_RINGING).toBe("incoming_ringing");
-    expect(CALL_PHASES.IN_CALL).toBe("in_call");
+  test('CALL_PHASES exports the expected values', () => {
+    expect(CALL_PHASES.IDLE).toBe('idle');
+    expect(CALL_PHASES.OUTGOING_RINGING).toBe('outgoing_ringing');
+    expect(CALL_PHASES.INCOMING_RINGING).toBe('incoming_ringing');
+    expect(CALL_PHASES.IN_CALL).toBe('in_call');
   });
 
-  test("CALL_END_REASON_LABELS exports string labels for all expected reason codes", () => {
+  test('CALL_END_REASON_LABELS exports string labels for all expected reason codes', () => {
     const expectedReasons = [
-      "ended",
-      "declined",
-      "cancelled",
-      "timeout",
-      "missed",
-      "busy",
-      "unreachable",
-      "failed",
+      'ended',
+      'declined',
+      'cancelled',
+      'timeout',
+      'missed',
+      'busy',
+      'unreachable',
+      'failed',
     ];
     for (const reason of expectedReasons) {
-      expect(typeof CALL_END_REASON_LABELS[reason]).toBe("string");
+      expect(typeof CALL_END_REASON_LABELS[reason]).toBe('string');
       expect(CALL_END_REASON_LABELS[reason].length).toBeGreaterThan(0);
     }
   });
 
-  test("initialises callHistory as an empty array", () => {
+  test('initialises callHistory as an empty array', () => {
     const { resultRef } = renderHook();
     expect(Array.isArray(resultRef.current.callHistory)).toBe(true);
     expect(resultRef.current.callHistory).toHaveLength(0);
   });
 
-  test("initialises missedCallCount as 0", () => {
+  test('initialises missedCallCount as 0', () => {
     const { resultRef } = renderHook();
     expect(resultRef.current.missedCallCount).toBe(0);
   });
 
-  test("exposes markMissedCallsRead and fetchCallHistory as functions", () => {
+  test('exposes markMissedCallsRead and fetchCallHistory as functions', () => {
     const { resultRef } = renderHook();
-    expect(typeof resultRef.current.markMissedCallsRead).toBe("function");
-    expect(typeof resultRef.current.fetchCallHistory).toBe("function");
+    expect(typeof resultRef.current.markMissedCallsRead).toBe('function');
+    expect(typeof resultRef.current.fetchCallHistory).toBe('function');
   });
 
-  test("exposes searchUsers as a function", () => {
+  test('exposes searchUsers as a function', () => {
     const { resultRef } = renderHook();
-    expect(typeof resultRef.current.searchUsers).toBe("function");
+    expect(typeof resultRef.current.searchUsers).toBe('function');
   });
 
-  test("searchUsers resolves to an empty array when there is no session", async () => {
+  test('searchUsers resolves to an empty array when there is no session', async () => {
     const { resultRef } = renderHook();
     let users;
     await act(async () => {
-      users = await resultRef.current.searchUsers("bob");
+      users = await resultRef.current.searchUsers('bob');
     });
     expect(users).toEqual([]);
   });
 
-  test("searchUsers refreshes the session and retries once on a 401", async () => {
+  test('searchUsers refreshes the session and retries once on a 401', async () => {
     let userRequests = 0;
     global.fetch = jest.fn(async (url, options) => {
-      if (url.endsWith("/session") && options?.method === "POST") {
+      if (url.endsWith('/session') && options?.method === 'POST') {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ sessionId: "s1", userId: "alice" }),
+          json: async () => ({ sessionId: 's1', userId: 'alice' }),
         };
       }
-      if (url.includes("/session/refresh")) {
+      if (url.includes('/session/refresh')) {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ sessionId: "s2", userId: "alice" }),
+          json: async () => ({ sessionId: 's2', userId: 'alice' }),
         };
       }
-      if (url.includes("/users")) {
+      if (url.includes('/users')) {
         userRequests += 1;
-        if (url.includes("sessionId=s1")) {
+        if (url.includes('sessionId=s1')) {
           return {
             ok: false,
             status: 401,
-            json: async () => ({ error: "invalid session" }),
+            json: async () => ({ error: 'invalid session' }),
           };
         }
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            users: [{ userId: "bob", status: "online", online: true }],
+            users: [{ userId: 'bob', status: 'online', online: true }],
           }),
         };
       }
@@ -466,7 +463,7 @@ describe("useCallFlow", () => {
     // Setting the userId triggers the presence-connect effect, which mints a
     // session (s1) via POST /session.
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
       await Promise.resolve();
     });
     await act(async () => {
@@ -476,25 +473,25 @@ describe("useCallFlow", () => {
 
     let users;
     await act(async () => {
-      users = await resultRef.current.searchUsers("bob");
+      users = await resultRef.current.searchUsers('bob');
     });
 
     // The first request (sessionId=s1) 401s; after a refresh to s2 the retry
     // succeeds, so searchUsers returns the directory entry.
-    expect(users).toEqual([{ userId: "bob", status: "online", online: true }]);
+    expect(users).toEqual([{ userId: 'bob', status: 'online', online: true }]);
     expect(userRequests).toBe(2);
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/session/refresh"),
-      expect.objectContaining({ method: "POST" }),
+      expect.stringContaining('/session/refresh'),
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 
-  test("calleePresence ignores stale presence responses for older calleeIds", async () => {
+  test('calleePresence ignores stale presence responses for older calleeIds', async () => {
     jest.useFakeTimers();
     const pending = [];
     global.fetch = jest.fn(
-      (url) =>
-        new Promise((resolve) => {
+      url =>
+        new Promise(resolve => {
           pending.push({ url, resolve });
         }),
     );
@@ -502,7 +499,7 @@ describe("useCallFlow", () => {
     const { resultRef, tree } = renderHook();
 
     act(() => {
-      resultRef.current.setCalleeId("alice");
+      resultRef.current.setCalleeId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -512,7 +509,7 @@ describe("useCallFlow", () => {
     });
 
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -522,13 +519,13 @@ describe("useCallFlow", () => {
     });
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(pending[0].url).toContain("/presence/alice");
-    expect(pending[1].url).toContain("/presence/bob");
+    expect(pending[0].url).toContain('/presence/alice');
+    expect(pending[1].url).toContain('/presence/bob');
 
     await act(async () => {
       pending[1].resolve({
         ok: true,
-        json: async () => ({ status: "online", online: true }),
+        json: async () => ({ status: 'online', online: true }),
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -537,14 +534,14 @@ describe("useCallFlow", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
     expect(resultRef.current.calleePresence).toEqual({
-      status: "online",
+      status: 'online',
       online: true,
     });
 
     await act(async () => {
       pending[0].resolve({
         ok: true,
-        json: async () => ({ status: "offline", online: false }),
+        json: async () => ({ status: 'offline', online: false }),
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -553,12 +550,12 @@ describe("useCallFlow", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
     expect(resultRef.current.calleePresence).toEqual({
-      status: "online",
+      status: 'online',
       online: true,
     });
   });
 
-  test("markMissedCallsRead is safe to call on an empty history", () => {
+  test('markMissedCallsRead is safe to call on an empty history', () => {
     const { resultRef, tree } = renderHook();
     act(() => {
       resultRef.current.markMissedCallsRead();
@@ -570,7 +567,7 @@ describe("useCallFlow", () => {
     expect(resultRef.current.missedCallCount).toBe(0);
   });
 
-  test("dismissCallSummary clears callSummary", () => {
+  test('dismissCallSummary clears callSummary', () => {
     const { resultRef, tree } = renderHook();
     // callSummary starts null; dismissing a null summary is safe.
     act(() => {
@@ -585,30 +582,28 @@ describe("useCallFlow", () => {
 
 // ─── rehydrateCallFromPush ────────────────────────────────────────────────────
 
-describe("rehydrateCallFromPush", () => {
+describe('rehydrateCallFromPush', () => {
   beforeEach(() => {
     global.fetch = jest.fn();
     jest.clearAllMocks();
     // Reset the pushNotifications mock to return null for initial URL by default.
-    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
-      null,
-    );
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
   });
 
   afterEach(() => {
     delete global.fetch;
   });
 
-  test("exposes rehydrateCallFromPush as a function", () => {
+  test('exposes rehydrateCallFromPush as a function', () => {
     const { resultRef } = renderHook();
-    expect(typeof resultRef.current.rehydrateCallFromPush).toBe("function");
+    expect(typeof resultRef.current.rehydrateCallFromPush).toBe('function');
   });
 
-  test("defers rehydration and stores pendingPushCallId when userId is not set", async () => {
+  test('defers rehydration and stores pendingPushCallId when userId is not set', async () => {
     const { resultRef } = renderHook();
     // userId is empty – rehydrateCallFromPush should not call fetch yet
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-123");
+      await resultRef.current.rehydrateCallFromPush('call-123');
     });
     expect(global.fetch).not.toHaveBeenCalled();
   });
@@ -619,7 +614,7 @@ describe("rehydrateCallFromPush", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-1", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: false,
@@ -631,14 +626,14 @@ describe("rehydrateCallFromPush", () => {
 
     // Await so the presence effect (createOrGetSession → fetch /session) completes.
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-does-not-exist");
+      await resultRef.current.rehydrateCallFromPush('call-does-not-exist');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -647,12 +642,12 @@ describe("rehydrateCallFromPush", () => {
     expect(resultRef.current.status.message).toMatch(/no longer available/i);
   });
 
-  test("shows IncomingCallScreen for a still-ringing rehydrated call", async () => {
+  test('shows IncomingCallScreen for a still-ringing rehydrated call', async () => {
     const fakeCall = {
-      callId: "call-456",
-      callerId: "user-bob",
-      calleeId: "user-alice",
-      status: "ringing",
+      callId: 'call-456',
+      callerId: 'user-bob',
+      calleeId: 'user-alice',
+      status: 'ringing',
     };
 
     // Mock: POST /session (presence effect), then GET /calls/:id → ringing call
@@ -660,7 +655,7 @@ describe("rehydrateCallFromPush", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-2", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-2', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -670,14 +665,14 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-456");
+      await resultRef.current.rehydrateCallFromPush('call-456');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -687,13 +682,13 @@ describe("rehydrateCallFromPush", () => {
     expect(resultRef.current.incomingCall).toEqual(fakeCall);
   });
 
-  test("sets informational status for a missed call", async () => {
+  test('sets informational status for a missed call', async () => {
     const fakeCall = {
-      callId: "call-789",
-      callerId: "user-carol",
-      calleeId: "user-alice",
-      status: "missed",
-      endReason: "timeout",
+      callId: 'call-789',
+      callerId: 'user-carol',
+      calleeId: 'user-alice',
+      status: 'missed',
+      endReason: 'timeout',
     };
 
     // Mock: POST /session (presence effect), then GET /calls/:id → missed call
@@ -701,7 +696,7 @@ describe("rehydrateCallFromPush", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-3", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-3', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -711,14 +706,14 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-789");
+      await resultRef.current.rehydrateCallFromPush('call-789');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -732,18 +727,18 @@ describe("rehydrateCallFromPush", () => {
 
   test('shows "Call was declined" status for a declined call', async () => {
     const fakeCall = {
-      callId: "call-declined",
-      callerId: "user-dave",
-      calleeId: "user-alice",
-      status: "declined",
-      endReason: "declined",
+      callId: 'call-declined',
+      callerId: 'user-dave',
+      calleeId: 'user-alice',
+      status: 'declined',
+      endReason: 'declined',
     };
 
     global.fetch
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-4", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-4', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -753,14 +748,14 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-declined");
+      await resultRef.current.rehydrateCallFromPush('call-declined');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -772,18 +767,18 @@ describe("rehydrateCallFromPush", () => {
 
   test('shows "Call ended" status for an already-ended call', async () => {
     const fakeCall = {
-      callId: "call-ended",
-      callerId: "user-eve",
-      calleeId: "user-alice",
-      status: "ended",
-      endReason: "ended",
+      callId: 'call-ended',
+      callerId: 'user-eve',
+      calleeId: 'user-alice',
+      status: 'ended',
+      endReason: 'ended',
     };
 
     global.fetch
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-5", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-5', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -793,14 +788,14 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-ended");
+      await resultRef.current.rehydrateCallFromPush('call-ended');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -810,23 +805,23 @@ describe("rehydrateCallFromPush", () => {
     expect(resultRef.current.status.message).toMatch(/call ended/i);
   });
 
-  test("shows fallback status for an accepted call (background restore bridge)", async () => {
+  test('shows fallback status for an accepted call (background restore bridge)', async () => {
     // When the app is backgrounded during a call, the server-side status may be
     // "accepted" or "connecting_media".  These active states are not ringing and
     // not yet terminal; the current rehydration path reports a fallback message
     // so the user knows the call is no longer available in this session.
     const fakeCall = {
-      callId: "call-accepted",
-      callerId: "user-frank",
-      calleeId: "user-alice",
-      status: "accepted",
+      callId: 'call-accepted',
+      callerId: 'user-frank',
+      calleeId: 'user-alice',
+      status: 'accepted',
     };
 
     global.fetch
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-6", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-6', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -836,14 +831,14 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-accepted");
+      await resultRef.current.rehydrateCallFromPush('call-accepted');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -851,23 +846,23 @@ describe("rehydrateCallFromPush", () => {
 
     // Call remains idle; a descriptive status message is shown.
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
-    expect(typeof resultRef.current.status.message).toBe("string");
+    expect(typeof resultRef.current.status.message).toBe('string');
     expect(resultRef.current.status.message.length).toBeGreaterThan(0);
   });
 
-  test("shows fallback status for an in_call call (background restore bridge)", async () => {
+  test('shows fallback status for an in_call call (background restore bridge)', async () => {
     const fakeCall = {
-      callId: "call-in-call",
-      callerId: "user-grace",
-      calleeId: "user-alice",
-      status: "in_call",
+      callId: 'call-in-call',
+      callerId: 'user-grace',
+      calleeId: 'user-alice',
+      status: 'in_call',
     };
 
     global.fetch
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-7", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-7', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -877,30 +872,30 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-in-call");
+      await resultRef.current.rehydrateCallFromPush('call-in-call');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
-    expect(typeof resultRef.current.status.message).toBe("string");
+    expect(typeof resultRef.current.status.message).toBe('string');
     expect(resultRef.current.status.message.length).toBeGreaterThan(0);
   });
 
-  test("shows error status when the server returns a non-404 HTTP error", async () => {
+  test('shows error status when the server returns a non-404 HTTP error', async () => {
     global.fetch
       .mockResolvedValueOnce({
         ok: true,
         status: 201,
-        json: async () => ({ sessionId: "sess-8", userId: "alice" }),
+        json: async () => ({ sessionId: 'sess-8', userId: 'alice' }),
       })
       .mockResolvedValueOnce({
         ok: false,
@@ -910,29 +905,29 @@ describe("rehydrateCallFromPush", () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.rehydrateCallFromPush("call-server-error");
+      await resultRef.current.rehydrateCallFromPush('call-server-error');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
-    expect(resultRef.current.status.severity).toBe("error");
+    expect(resultRef.current.status.severity).toBe('error');
   });
 });
 
 // ─── WebRTC hardening: camera switch ─────────────────────────────────────────
 
-describe("useCallFlow handleCameraSwitch hardening", () => {
+describe('useCallFlow handleCameraSwitch hardening', () => {
   function makeVideoTrack(extra = {}) {
-    return { kind: "video", enabled: true, stop: jest.fn(), ...extra };
+    return { kind: 'video', enabled: true, stop: jest.fn(), ...extra };
   }
 
   function makeStream(videoTrack) {
@@ -948,13 +943,11 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     // Reset push mock so the presence effect doesn't fire a fetch.
-    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
-      null,
-    );
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
 
     // Provide a minimal RTCPeerConnection stub so ensurePeerConnection succeeds
     // if it is exercised by a test.
-    const { RTCPeerConnection } = require("react-native-webrtc");
+    const { RTCPeerConnection } = require('react-native-webrtc');
     RTCPeerConnection.mockImplementation(() => ({
       addTrack: jest.fn(),
       getSenders: jest.fn(() => []),
@@ -962,21 +955,21 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
       ontrack: null,
       oniceconnectionstatechange: null,
       close: jest.fn(),
-      createOffer: jest.fn().mockResolvedValue({ type: "offer", sdp: "" }),
-      createAnswer: jest.fn().mockResolvedValue({ type: "answer", sdp: "" }),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: '' }),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       remoteDescription: null,
-      iceConnectionState: "new",
+      iceConnectionState: 'new',
       getStats: jest.fn().mockResolvedValue(new Map()),
     }));
   });
 
-  test("uses _switchCamera fast path and toggles isFrontCamera", async () => {
+  test('uses _switchCamera fast path and toggles isFrontCamera', async () => {
     const switchCamera = jest.fn();
     const videoTrack = makeVideoTrack({ _switchCamera: switchCamera });
     const stream = makeStream(videoTrack);
-    const { mediaDevices } = require("react-native-webrtc");
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValue(stream);
 
     const { resultRef, tree } = renderHook();
@@ -997,10 +990,10 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
 
     expect(switchCamera).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isFrontCamera).toBe(!before);
-    expect(resultRef.current.status.message).toBe("Camera switched");
+    expect(resultRef.current.status.message).toBe('Camera switched');
   });
 
-  test("calls getUserMedia with opposite facingMode when _switchCamera is absent", async () => {
+  test('calls getUserMedia with opposite facingMode when _switchCamera is absent', async () => {
     const videoTrack = makeVideoTrack(); // no _switchCamera
     const stream = makeStream(videoTrack);
     const newVideoTrack = makeVideoTrack();
@@ -1010,7 +1003,7 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
       getAudioTracks: () => [],
     };
 
-    const { mediaDevices } = require("react-native-webrtc");
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia
       .mockResolvedValueOnce(stream) // startLocalPreview
       .mockResolvedValueOnce(newStream); // camera switch fallback
@@ -1034,17 +1027,17 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
 
     expect(mediaDevices.getUserMedia).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ video: { facingMode: "environment" } }),
+      expect.objectContaining({ video: { facingMode: 'environment' } }),
     );
     // Old track must be stopped and removed; new track added to the stream.
     expect(videoTrack.stop).toHaveBeenCalled();
     expect(stream.removeTrack).toHaveBeenCalledWith(videoTrack);
     expect(stream.addTrack).toHaveBeenCalledWith(newVideoTrack);
     expect(resultRef.current.isFrontCamera).toBe(!before);
-    expect(resultRef.current.status.message).toBe("Camera switched");
+    expect(resultRef.current.status.message).toBe('Camera switched');
   });
 
-  test("replaceTrack is called on video sender during fallback when peer connection exists", async () => {
+  test('replaceTrack is called on video sender during fallback when peer connection exists', async () => {
     const mockReplaceTrack = jest.fn().mockResolvedValue(undefined);
     const videoTrack = makeVideoTrack(); // no _switchCamera
     const stream = makeStream(videoTrack);
@@ -1055,27 +1048,23 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
       getAudioTracks: () => [],
     };
 
-    const { mediaDevices, RTCPeerConnection } = require("react-native-webrtc");
-    mediaDevices.getUserMedia
-      .mockResolvedValueOnce(stream)
-      .mockResolvedValueOnce(newStream);
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    mediaDevices.getUserMedia.mockResolvedValueOnce(stream).mockResolvedValueOnce(newStream);
 
     // Provide a sender so the replaceTrack branch is exercised.
     RTCPeerConnection.mockImplementation(() => ({
       addTrack: jest.fn(),
-      getSenders: jest.fn(() => [
-        { track: videoTrack, replaceTrack: mockReplaceTrack },
-      ]),
+      getSenders: jest.fn(() => [{ track: videoTrack, replaceTrack: mockReplaceTrack }]),
       onicecandidate: null,
       ontrack: null,
       oniceconnectionstatechange: null,
       close: jest.fn(),
-      createOffer: jest.fn().mockResolvedValue({ type: "offer", sdp: "" }),
-      createAnswer: jest.fn().mockResolvedValue({ type: "answer", sdp: "" }),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: '' }),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       remoteDescription: null,
-      iceConnectionState: "new",
+      iceConnectionState: 'new',
       getStats: jest.fn().mockResolvedValue(new Map()),
     }));
 
@@ -1106,7 +1095,7 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
     });
 
     expect(resultRef.current.isFrontCamera).toBe(false);
-    expect(resultRef.current.status.message).toBe("Camera switched");
+    expect(resultRef.current.status.message).toBe('Camera switched');
     // replaceTrack is guarded by peerConnectionRef.current being non-null;
     // without an active call the sender is not reached in this test.
     expect(mockReplaceTrack).not.toHaveBeenCalled();
@@ -1115,13 +1104,13 @@ describe("useCallFlow handleCameraSwitch hardening", () => {
 
 // ─── Incoming-call ringing ────────────────────────────────────────────────────
 
-describe("useCallFlow incoming-call ringing", () => {
+describe('useCallFlow incoming-call ringing', () => {
   /**
    * Helper: find a handler registered with socket.on(event) on the most
    * recently created socket from the io() mock.
    */
   function getSocketHandler(event) {
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     // Find the most-recently created socket mock instance.
     const socketMock = io.mock.results[io.mock.results.length - 1]?.value;
     if (!socketMock) return undefined;
@@ -1131,11 +1120,9 @@ describe("useCallFlow incoming-call ringing", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
-      null,
-    );
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
     // Default: CallKeep shows the system UI successfully.
-    require("../../src/callKeep").displayIncomingCall.mockResolvedValue(true);
+    require('../../src/callKeep').displayIncomingCall.mockResolvedValue(true);
   });
 
   /**
@@ -1146,13 +1133,13 @@ describe("useCallFlow incoming-call ringing", () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-ring", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-ring', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
     // Setting userId triggers the presence effect → createOrGetSession → connectSocket.
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -1168,32 +1155,32 @@ describe("useCallFlow incoming-call ringing", () => {
 
   // ── call.incoming ─────────────────────────────────────────────────────────
 
-  test("call.incoming triggers displayIncomingCall with correct args", async () => {
+  test('call.incoming triggers displayIncomingCall with correct args', async () => {
     await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
+    const handler = getSocketHandler('call.incoming');
     expect(handler).toBeDefined();
 
-    const fakeCall = { callId: "call-1", callerId: "bob" };
+    const fakeCall = { callId: 'call-1', callerId: 'bob' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
     // Flush microtask queue so the async showIncomingCallUi resolves.
     await act(async () => {});
 
-    const { displayIncomingCall } = require("../../src/callKeep");
+    const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalledTimes(1);
     expect(displayIncomingCall).toHaveBeenCalledWith({
-      callId: "call-1",
-      callerId: "bob",
+      callId: 'call-1',
+      callerId: 'bob',
     });
   });
 
-  test("call.incoming transitions to INCOMING_RINGING phase", async () => {
+  test('call.incoming transitions to INCOMING_RINGING phase', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-2", callerId: "carol" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-2', callerId: 'carol' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1205,11 +1192,11 @@ describe("useCallFlow incoming-call ringing", () => {
     expect(resultRef.current.incomingCall).toEqual(fakeCall);
   });
 
-  test("duplicate call.incoming for the same callId calls displayIncomingCall only once", async () => {
+  test('duplicate call.incoming for the same callId calls displayIncomingCall only once', async () => {
     await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-dup", callerId: "dave" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-dup', callerId: 'dave' };
 
     await act(async () => {
       await handler({ call: fakeCall });
@@ -1220,19 +1207,19 @@ describe("useCallFlow incoming-call ringing", () => {
     });
     await act(async () => {});
 
-    const { displayIncomingCall } = require("../../src/callKeep");
+    const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalledTimes(1);
   });
 
-  test("starts fallback ringtone when CallKeep returns false", async () => {
-    const { displayIncomingCall } = require("../../src/callKeep");
-    const { startIncomingRingtone } = require("../../src/ringtone");
+  test('starts fallback ringtone when CallKeep returns false', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { startIncomingRingtone } = require('../../src/ringtone');
     displayIncomingCall.mockResolvedValueOnce(false);
 
     await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-fallback", callerId: "eve" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-fallback', callerId: 'eve' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1241,16 +1228,16 @@ describe("useCallFlow incoming-call ringing", () => {
     expect(startIncomingRingtone).toHaveBeenCalledTimes(1);
   });
 
-  test("does not start fallback ringtone when CallKeep succeeds", async () => {
-    const { displayIncomingCall } = require("../../src/callKeep");
-    const { startIncomingRingtone } = require("../../src/ringtone");
+  test('does not start fallback ringtone when CallKeep succeeds', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { startIncomingRingtone } = require('../../src/ringtone');
     displayIncomingCall.mockResolvedValueOnce(true);
 
     await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
+    const handler = getSocketHandler('call.incoming');
     await act(async () => {
-      await handler({ call: { callId: "call-ck", callerId: "frank" } });
+      await handler({ call: { callId: 'call-ck', callerId: 'frank' } });
     });
     await act(async () => {});
 
@@ -1259,9 +1246,9 @@ describe("useCallFlow incoming-call ringing", () => {
 
   // ── Outgoing ringback ─────────────────────────────────────────────────────
 
-  test("placeCall starts outgoing ringback after the server reports ringing", async () => {
-    const { startOutgoingRingback } = require("../../src/ringtone");
-    const { mediaDevices } = require("react-native-webrtc");
+  test('placeCall starts outgoing ringback after the server reports ringing', async () => {
+    const { startOutgoingRingback } = require('../../src/ringtone');
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValueOnce({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -1270,23 +1257,23 @@ describe("useCallFlow incoming-call ringing", () => {
 
     const { resultRef, tree } = await renderWithSocket();
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((event, _payload, cb) => {
-      if (event === "call.initiate") {
+      if (event === 'call.initiate') {
         cb?.({
           ok: true,
           call: {
-            callId: "call-outgoing",
-            callerId: "alice",
-            calleeId: "bob",
-            status: "ringing",
+            callId: 'call-outgoing',
+            callerId: 'alice',
+            calleeId: 'bob',
+            status: 'ringing',
             ringTimeoutAt: new Date(Date.now() + 30_000).toISOString(),
           },
         });
@@ -1301,23 +1288,23 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.OUTGOING_RINGING);
-    expect(resultRef.current.status.message).toBe("Ringing bob…");
+    expect(resultRef.current.status.message).toBe('Ringing bob…');
     expect(startOutgoingRingback).toHaveBeenCalledTimes(1);
   });
 
   test('call.state_changed "accepted" stops outgoing ringback and shows connecting status', async () => {
-    const { stopOutgoingRingback } = require("../../src/ringtone");
+    const { stopOutgoingRingback } = require('../../src/ringtone');
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an outgoing ringing call in hook state.
     await act(async () => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { mediaDevices, RTCPeerConnection } = require("react-native-webrtc");
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValue({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -1327,19 +1314,19 @@ describe("useCallFlow incoming-call ringing", () => {
       addTrack: jest.fn(),
       addIceCandidate: jest.fn(),
       close: jest.fn(),
-      createOffer: jest.fn().mockResolvedValue({ type: "offer", sdp: "" }),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
-      localDescription: { type: "offer", sdp: "" },
+      localDescription: { type: 'offer', sdp: '' },
       getSenders: jest.fn(() => []),
     }));
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((event, _payload, cb) => {
-      if (event === "call.initiate") {
+      if (event === 'call.initiate') {
         cb?.({
           ok: true,
-          call: { callId: "call-accepted", callerId: "alice", calleeId: "bob", status: "ringing" },
+          call: { callId: 'call-accepted', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
         });
       } else {
         cb?.({ ok: true });
@@ -1349,11 +1336,11 @@ describe("useCallFlow incoming-call ringing", () => {
       await resultRef.current.placeCall();
     });
 
-    const stateHandler = getSocketHandler("call.state_changed");
+    const stateHandler = getSocketHandler('call.state_changed');
     await act(async () => {
       await stateHandler({
-        status: "accepted",
-        call: { callId: "call-accepted", callerId: "alice", calleeId: "bob", status: "accepted" },
+        status: 'accepted',
+        call: { callId: 'call-accepted', callerId: 'alice', calleeId: 'bob', status: 'accepted' },
       });
     });
     act(() => {
@@ -1361,21 +1348,21 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     expect(stopOutgoingRingback).toHaveBeenCalled();
-    expect(resultRef.current.status.message).toBe("Call accepted, connecting media…");
+    expect(resultRef.current.status.message).toBe('Call accepted, connecting media…');
   });
 
   // ── Accept stops ringing ──────────────────────────────────────────────────
 
-  test("accepting an incoming call stops the fallback ringtone", async () => {
-    const { displayIncomingCall } = require("../../src/callKeep");
-    const { stopIncomingRingtone } = require("../../src/ringtone");
+  test('accepting an incoming call stops the fallback ringtone', async () => {
+    const { displayIncomingCall } = require('../../src/callKeep');
+    const { stopIncomingRingtone } = require('../../src/ringtone');
     displayIncomingCall.mockResolvedValueOnce(false); // force ringtone fallback
 
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an incoming call.
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-accept", callerId: "grace" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-accept', callerId: 'grace' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1385,7 +1372,7 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     // Set up getUserMedia to unblock acceptIncomingCall.
-    const { mediaDevices } = require("react-native-webrtc");
+    const { mediaDevices } = require('react-native-webrtc');
     const fakeStream = {
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -1394,10 +1381,10 @@ describe("useCallFlow incoming-call ringing", () => {
     mediaDevices.getUserMedia.mockResolvedValueOnce(fakeStream);
 
     // Accept call – emitWithAck needs the socket emit to call back.
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((_event, _payload, cb) => {
-      cb?.({ ok: true, call: { callId: "call-accept", callerId: "grace" } });
+      cb?.({ ok: true, call: { callId: 'call-accept', callerId: 'grace' } });
     });
 
     await act(async () => {
@@ -1412,13 +1399,13 @@ describe("useCallFlow incoming-call ringing", () => {
 
   // ── Decline stops ringing ─────────────────────────────────────────────────
 
-  test("declining an incoming call stops ringing", async () => {
-    const { stopIncomingRingtone } = require("../../src/ringtone");
+  test('declining an incoming call stops ringing', async () => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
 
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-decline", callerId: "henry" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-decline', callerId: 'henry' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1428,7 +1415,7 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     // Stub socket.emit for the decline ack.
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((_event, _payload, cb) => {
       cb?.({ ok: true });
@@ -1448,20 +1435,20 @@ describe("useCallFlow incoming-call ringing", () => {
   // ── Terminal call.state_changed stops ringing ─────────────────────────────
 
   test.each([
-    ["declined", "Call declined"],
-    ["missed", "Call not answered"],
-    ["busy", "Callee is busy"],
-    ["unreachable", "Callee is unreachable"],
-  ])('call.state_changed "%s" stops ringing', async (callStatus) => {
-    const { stopIncomingRingtone } = require("../../src/ringtone");
+    ['declined', 'Call declined'],
+    ['missed', 'Call not answered'],
+    ['busy', 'Callee is busy'],
+    ['unreachable', 'Callee is unreachable'],
+  ])('call.state_changed "%s" stops ringing', async callStatus => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
 
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an active incoming call first.
-    const incomingHandler = getSocketHandler("call.incoming");
+    const incomingHandler = getSocketHandler('call.incoming');
     await act(async () => {
       await incomingHandler({
-        call: { callId: "call-state", callerId: "irene" },
+        call: { callId: 'call-state', callerId: 'irene' },
       });
     });
     await act(async () => {});
@@ -1470,11 +1457,11 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     // Fire the terminal state change.
-    const stateHandler = getSocketHandler("call.state_changed");
+    const stateHandler = getSocketHandler('call.state_changed');
     await act(async () => {
       await stateHandler({
         status: callStatus,
-        call: { callId: "call-state", callerId: "irene" },
+        call: { callId: 'call-state', callerId: 'irene' },
         reason: callStatus,
       });
     });
@@ -1487,24 +1474,24 @@ describe("useCallFlow incoming-call ringing", () => {
   });
 
   test('call.state_changed "ended" stops ringing', async () => {
-    const { stopIncomingRingtone } = require("../../src/ringtone");
+    const { stopIncomingRingtone } = require('../../src/ringtone');
 
     const { resultRef, tree } = await renderWithSocket();
 
-    const incomingHandler = getSocketHandler("call.incoming");
+    const incomingHandler = getSocketHandler('call.incoming');
     await act(async () => {
       await incomingHandler({
-        call: { callId: "call-ended", callerId: "joe" },
+        call: { callId: 'call-ended', callerId: 'joe' },
       });
     });
     await act(async () => {});
 
-    const stateHandler = getSocketHandler("call.state_changed");
+    const stateHandler = getSocketHandler('call.state_changed');
     await act(async () => {
       await stateHandler({
-        status: "ended",
-        call: { callId: "call-ended", callerId: "joe" },
-        reason: "ended",
+        status: 'ended',
+        call: { callId: 'call-ended', callerId: 'joe' },
+        reason: 'ended',
       });
     });
     act(() => {
@@ -1518,14 +1505,13 @@ describe("useCallFlow incoming-call ringing", () => {
   // ── CallKeep answer/end bridging ──────────────────────────────────────────
 
   function latestCallActionHandlers() {
-    const { setCallActionHandlers } = require("../../src/callKeep");
+    const { setCallActionHandlers } = require('../../src/callKeep');
     const { calls } = setCallActionHandlers.mock;
     return calls[calls.length - 1]?.[0];
   }
 
-  test("mounting attaches CallKeep handlers via setCallActionHandlers, not registerCallActionListeners", async () => {
-    const { setCallActionHandlers, registerCallActionListeners } =
-      require("../../src/callKeep");
+  test('mounting attaches CallKeep handlers via setCallActionHandlers, not registerCallActionListeners', async () => {
+    const { setCallActionHandlers, registerCallActionListeners } = require('../../src/callKeep');
 
     await renderWithSocket();
 
@@ -1541,9 +1527,9 @@ describe("useCallFlow incoming-call ringing", () => {
     expect(registerCallActionListeners).not.toHaveBeenCalled();
   });
 
-  test("unmounting detaches the CallKeep handlers without leaving the app unresponsive", async () => {
+  test('unmounting detaches the CallKeep handlers without leaving the app unresponsive', async () => {
     const detach = jest.fn();
-    require("../../src/callKeep").setCallActionHandlers.mockReturnValueOnce(detach);
+    require('../../src/callKeep').setCallActionHandlers.mockReturnValueOnce(detach);
 
     const { tree } = await renderWithSocket();
     act(() => {
@@ -1556,8 +1542,8 @@ describe("useCallFlow incoming-call ringing", () => {
     expect(detach).toHaveBeenCalledTimes(1);
   });
 
-  test("answerCall for the currently-ringing call accepts immediately", async () => {
-    const { mediaDevices } = require("react-native-webrtc");
+  test('answerCall for the currently-ringing call accepts immediately', async () => {
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValueOnce({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -1566,8 +1552,8 @@ describe("useCallFlow incoming-call ringing", () => {
 
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
-    const fakeCall = { callId: "call-answer-now", callerId: "kate" };
+    const handler = getSocketHandler('call.incoming');
+    const fakeCall = { callId: 'call-answer-now', callerId: 'kate' };
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1575,7 +1561,7 @@ describe("useCallFlow incoming-call ringing", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((_event, _payload, cb) => {
       cb?.({ ok: true, call: fakeCall });
@@ -1583,21 +1569,21 @@ describe("useCallFlow incoming-call ringing", () => {
 
     const { onAnswer } = latestCallActionHandlers();
     await act(async () => {
-      onAnswer("call-answer-now");
+      onAnswer('call-answer-now');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(socketMock.emit).toHaveBeenCalledWith(
-      "call.accept",
-      expect.objectContaining({ callId: "call-answer-now" }),
+      'call.accept',
+      expect.objectContaining({ callId: 'call-answer-now' }),
       expect.any(Function),
     );
   });
 
-  test("answerCall received before the matching call.incoming is recorded, not dropped, and replayed", async () => {
-    const { mediaDevices } = require("react-native-webrtc");
+  test('answerCall received before the matching call.incoming is recorded, not dropped, and replayed', async () => {
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValueOnce({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -1606,8 +1592,8 @@ describe("useCallFlow incoming-call ringing", () => {
 
     const { resultRef, tree } = await renderWithSocket();
 
-    const fakeCall = { callId: "call-headless", callerId: "leo" };
-    const { io } = require("socket.io-client");
+    const fakeCall = { callId: 'call-headless', callerId: 'leo' };
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((_event, _payload, cb) => {
       cb?.({ ok: true, call: fakeCall });
@@ -1619,18 +1605,18 @@ describe("useCallFlow incoming-call ringing", () => {
     // even connected.
     const { onAnswer } = latestCallActionHandlers();
     act(() => {
-      onAnswer("call-headless");
+      onAnswer('call-headless');
     });
 
     // Nothing to accept yet: the intent must be recorded rather than dropped.
     expect(socketMock.emit).not.toHaveBeenCalledWith(
-      "call.accept",
+      'call.accept',
       expect.anything(),
       expect.anything(),
     );
 
     // The socket subsequently connects and delivers the matching call.
-    const handler = getSocketHandler("call.incoming");
+    const handler = getSocketHandler('call.incoming');
     await act(async () => {
       await handler({ call: fakeCall });
     });
@@ -1644,38 +1630,38 @@ describe("useCallFlow incoming-call ringing", () => {
     });
 
     expect(socketMock.emit).toHaveBeenCalledWith(
-      "call.accept",
-      expect.objectContaining({ callId: "call-headless" }),
+      'call.accept',
+      expect.objectContaining({ callId: 'call-headless' }),
       expect.any(Function),
     );
   });
 
-  test("endCall from the OS UI declines a ringing call", async () => {
+  test('endCall from the OS UI declines a ringing call', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("call.incoming");
+    const handler = getSocketHandler('call.incoming');
     await act(async () => {
-      await handler({ call: { callId: "call-os-end", callerId: "mia" } });
+      await handler({ call: { callId: 'call-os-end', callerId: 'mia' } });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((_event, _payload, cb) => cb?.({ ok: true }));
 
     const { onEnd } = latestCallActionHandlers();
     await act(async () => {
-      onEnd("call-os-end");
+      onEnd('call-os-end');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(socketMock.emit).toHaveBeenCalledWith(
-      "call.decline",
-      expect.objectContaining({ callId: "call-os-end" }),
+      'call.decline',
+      expect.objectContaining({ callId: 'call-os-end' }),
       expect.any(Function),
     );
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
@@ -1684,11 +1670,10 @@ describe("useCallFlow incoming-call ringing", () => {
 
 // ─── Session lifecycle (session.invalid) ───────────────────────────────────
 
-describe("useCallFlow session lifecycle", () => {
+describe('useCallFlow session lifecycle', () => {
   function getSocketHandler(event, socketIndex = -1) {
-    const { io } = require("socket.io-client");
-    const index =
-      socketIndex === -1 ? io.mock.results.length - 1 : socketIndex;
+    const { io } = require('socket.io-client');
+    const index = socketIndex === -1 ? io.mock.results.length - 1 : socketIndex;
     const socketMock = io.mock.results[index]?.value;
     if (!socketMock) return undefined;
     const call = socketMock.on.mock.calls.find(([e]) => e === event);
@@ -1697,21 +1682,19 @@ describe("useCallFlow session lifecycle", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
-      null,
-    );
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
   });
 
   async function renderWithSocket() {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-stale", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-stale', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -1724,42 +1707,42 @@ describe("useCallFlow session lifecycle", () => {
     return { resultRef, tree };
   }
 
-  test("session.invalid re-mints the session and reconnects the socket", async () => {
+  test('session.invalid re-mints the session and reconnects the socket', async () => {
     await renderWithSocket();
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     expect(io).toHaveBeenCalledTimes(1);
 
-    const handler = getSocketHandler("session.invalid");
+    const handler = getSocketHandler('session.invalid');
     expect(handler).toBeDefined();
 
     // The server rejects the stale session and hands back a fresh one.
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-fresh", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-fresh', userId: 'alice' }),
     }));
 
     await act(async () => {
-      await handler({ sessionId: "sess-stale" });
+      await handler({ sessionId: 'sess-stale' });
     });
     await act(async () => {});
 
     // A new session was created and a second socket connection established.
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/session"),
-      expect.objectContaining({ method: "POST" }),
+      expect.stringContaining('/session'),
+      expect.objectContaining({ method: 'POST' }),
     );
     expect(io).toHaveBeenCalledTimes(2);
     expect(io.mock.calls[1][1]).toEqual(
-      expect.objectContaining({ auth: { sessionId: "sess-fresh" } }),
+      expect.objectContaining({ auth: { sessionId: 'sess-fresh' } }),
     );
   });
 
-  test("session.invalid surfaces an error status when re-minting fails", async () => {
+  test('session.invalid surfaces an error status when re-minting fails', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("session.invalid");
+    const handler = getSocketHandler('session.invalid');
     expect(handler).toBeDefined();
 
     global.fetch = jest.fn(async () => ({
@@ -1769,31 +1752,55 @@ describe("useCallFlow session lifecycle", () => {
     }));
 
     await act(async () => {
-      await handler({ sessionId: "sess-stale" });
+      await handler({ sessionId: 'sess-stale' });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     // Re-minting failed, so no second socket connection is made.
     expect(io).toHaveBeenCalledTimes(1);
-    expect(resultRef.current.status.message).toBe(
-      "Session expired — please reconnect.",
-    );
+    expect(resultRef.current.status.message).toBe('Session expired — please reconnect.');
+  });
+
+  test('requests all runtime permissions once, up front, when an identity is established', async () => {
+    const { ensureCallPermissions } = require('../../src/permissions');
+    await renderWithSocket();
+
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not re-request startup permissions on a session.invalid reconnect', async () => {
+    const { ensureCallPermissions } = require('../../src/permissions');
+    await renderWithSocket();
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
+
+    const handler = getSocketHandler('session.invalid');
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-fresh', userId: 'alice' }),
+    }));
+    await act(async () => {
+      await handler({ sessionId: 'sess-stale' });
+    });
+    await act(async () => {});
+
+    expect(ensureCallPermissions).toHaveBeenCalledTimes(1);
   });
 });
 
 // ─── Chat & call.media-state ───────────────────────────────────────────────
 
-describe("useCallFlow chat", () => {
+describe('useCallFlow chat', () => {
   /**
    * Helper: find a handler registered with socket.on(event) on the most
    * recently created socket from the io() mock (same helper as the
    * "incoming-call ringing" describe block above).
    */
   function getSocketHandler(event) {
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1]?.value;
     if (!socketMock) return undefined;
     const call = socketMock.on.mock.calls.find(([e]) => e === event);
@@ -1802,9 +1809,7 @@ describe("useCallFlow chat", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    require("../../src/pushNotifications").getInitialCallLink.mockResolvedValue(
-      null,
-    );
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
   });
 
   /**
@@ -1815,12 +1820,12 @@ describe("useCallFlow chat", () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: "sess-chat", userId: "alice" }),
+      json: async () => ({ sessionId: 'sess-chat', userId: 'alice' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -1835,18 +1840,18 @@ describe("useCallFlow chat", () => {
 
   // ── fetchConversations ────────────────────────────────────────────────────
 
-  test("fetchConversations populates conversations and unreadTotal on success", async () => {
+  test('fetchConversations populates conversations and unreadTotal on success', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    global.fetch = jest.fn(async (url) => {
-      expect(url).toContain("/conversations?sessionId=");
+    global.fetch = jest.fn(async url => {
+      expect(url).toContain('/conversations?sessionId=');
       return {
         ok: true,
         status: 200,
         json: async () => ({
           conversations: [
-            { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 2 },
-            { conversationId: "c2", peerId: "carol", lastMessage: null, unreadCount: 3 },
+            { conversationId: 'c1', peerId: 'bob', lastMessage: null, unreadCount: 2 },
+            { conversationId: 'c2', peerId: 'carol', lastMessage: null, unreadCount: 3 },
           ],
         }),
       };
@@ -1863,11 +1868,11 @@ describe("useCallFlow chat", () => {
     expect(resultRef.current.unreadTotal).toBe(5);
   });
 
-  test("fetchConversations silently no-ops on a fetch error", async () => {
+  test('fetchConversations silently no-ops on a fetch error', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     global.fetch = jest.fn(async () => {
-      throw new Error("network down");
+      throw new Error('network down');
     });
 
     await act(async () => {
@@ -1882,20 +1887,32 @@ describe("useCallFlow chat", () => {
 
   // ── fetchMessagesForPeer ──────────────────────────────────────────────────
 
-  test("fetchMessagesForPeer sets the first page and pages older messages with `before`", async () => {
+  test('fetchMessagesForPeer sets the first page and pages older messages with `before`', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    global.fetch = jest.fn(async (url) => {
-      expect(url).toContain("/messages?");
-      expect(url).toContain("peerId=bob");
+    global.fetch = jest.fn(async url => {
+      expect(url).toContain('/messages?');
+      expect(url).toContain('peerId=bob');
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          conversationId: "c1",
+          conversationId: 'c1',
           messages: [
-            { messageId: "m2", senderId: "bob", recipientId: "alice", body: "second", createdAt: "2024-01-02T00:00:00.000Z" },
-            { messageId: "m1", senderId: "bob", recipientId: "alice", body: "first", createdAt: "2024-01-01T00:00:00.000Z" },
+            {
+              messageId: 'm2',
+              senderId: 'bob',
+              recipientId: 'alice',
+              body: 'second',
+              createdAt: '2024-01-02T00:00:00.000Z',
+            },
+            {
+              messageId: 'm1',
+              senderId: 'bob',
+              recipientId: 'alice',
+              body: 'first',
+              createdAt: '2024-01-01T00:00:00.000Z',
+            },
           ],
           limit: 20,
         }),
@@ -1903,29 +1920,38 @@ describe("useCallFlow chat", () => {
     });
 
     await act(async () => {
-      await resultRef.current.fetchMessagesForPeer("bob");
+      await resultRef.current.fetchMessagesForPeer('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
-      "m2",
-      "m1",
-    ]);
+    expect(resultRef.current.messagesByPeer.bob.map(m => m.messageId)).toEqual(['m2', 'm1']);
 
     // Page further back with `before`; new (older) messages are appended and
     // duplicates are deduped by messageId.
-    global.fetch = jest.fn(async (url) => {
-      expect(url).toContain("before=2024-01-01T00%3A00%3A00.000Z");
+    global.fetch = jest.fn(async url => {
+      expect(url).toContain('before=2024-01-01T00%3A00%3A00.000Z');
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          conversationId: "c1",
+          conversationId: 'c1',
           messages: [
-            { messageId: "m1", senderId: "bob", recipientId: "alice", body: "first", createdAt: "2024-01-01T00:00:00.000Z" },
-            { messageId: "m0", senderId: "bob", recipientId: "alice", body: "zeroth", createdAt: "2023-12-31T00:00:00.000Z" },
+            {
+              messageId: 'm1',
+              senderId: 'bob',
+              recipientId: 'alice',
+              body: 'first',
+              createdAt: '2024-01-01T00:00:00.000Z',
+            },
+            {
+              messageId: 'm0',
+              senderId: 'bob',
+              recipientId: 'alice',
+              body: 'zeroth',
+              createdAt: '2023-12-31T00:00:00.000Z',
+            },
           ],
           limit: 20,
         }),
@@ -1933,24 +1959,20 @@ describe("useCallFlow chat", () => {
     });
 
     await act(async () => {
-      await resultRef.current.fetchMessagesForPeer("bob", {
-        before: "2024-01-01T00:00:00.000Z",
+      await resultRef.current.fetchMessagesForPeer('bob', {
+        before: '2024-01-01T00:00:00.000Z',
       });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
-      "m2",
-      "m1",
-      "m0",
-    ]);
+    expect(resultRef.current.messagesByPeer.bob.map(m => m.messageId)).toEqual(['m2', 'm1', 'm0']);
   });
 
   // ── markConversationRead ──────────────────────────────────────────────────
 
-  test("markConversationRead posts to /messages/read and zeroes the local unread count", async () => {
+  test('markConversationRead posts to /messages/read and zeroes the local unread count', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     // Seed a conversation with an unread count.
@@ -1958,9 +1980,7 @@ describe("useCallFlow chat", () => {
       ok: true,
       status: 200,
       json: async () => ({
-        conversations: [
-          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 4 },
-        ],
+        conversations: [{ conversationId: 'c1', peerId: 'bob', lastMessage: null, unreadCount: 4 }],
       }),
     }));
     await act(async () => {
@@ -1972,45 +1992,43 @@ describe("useCallFlow chat", () => {
     expect(resultRef.current.unreadTotal).toBe(4);
 
     global.fetch = jest.fn(async (url, options) => {
-      expect(url).toContain("/messages/read");
-      expect(options.method).toBe("POST");
+      expect(url).toContain('/messages/read');
+      expect(options.method).toBe('POST');
       expect(JSON.parse(options.body)).toEqual({
-        sessionId: "sess-chat",
-        peerId: "bob",
+        sessionId: 'sess-chat',
+        peerId: 'bob',
       });
       return {
         ok: true,
         status: 200,
-        json: async () => ({ conversationId: "c1", updated: 4 }),
+        json: async () => ({ conversationId: 'c1', updated: 4 }),
       };
     });
 
     await act(async () => {
-      await resultRef.current.markConversationRead("bob");
+      await resultRef.current.markConversationRead('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(resultRef.current.unreadTotal).toBe(0);
-    expect(
-      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
-    ).toBe(0);
+    expect(resultRef.current.conversations.find(c => c.peerId === 'bob').unreadCount).toBe(0);
   });
 
   // ── sendMessage ────────────────────────────────────────────────────────────
 
-  test("sendMessage fails immediately (no optimistic reconciliation) when there is no connected socket", async () => {
+  test('sendMessage fails immediately (no optimistic reconciliation) when there is no connected socket', async () => {
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      resultRef.current.setUserId("alice");
+      resultRef.current.setUserId('alice');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     await act(async () => {
-      await resultRef.current.sendMessage("bob", "hi there");
+      await resultRef.current.sendMessage('bob', 'hi there');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2018,30 +2036,30 @@ describe("useCallFlow chat", () => {
 
     const messages = resultRef.current.messagesByPeer.bob;
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ body: "hi there", failed: true, pending: false });
-    expect(resultRef.current.status.severity).toBe("error");
+    expect(messages[0]).toMatchObject({ body: 'hi there', failed: true, pending: false });
+    expect(resultRef.current.status.severity).toBe('error');
   });
 
-  test("sendMessage optimistically appends then reconciles with the server-confirmed message on ack", async () => {
+  test('sendMessage optimistically appends then reconciles with the server-confirmed message on ack', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     let capturedPayload;
     socketMock.emit.mockImplementation((event, payload, cb) => {
-      if (event === "message.send") {
+      if (event === 'message.send') {
         capturedPayload = payload;
         cb?.({
           ok: true,
           version: 1,
-          event: "message.send",
+          event: 'message.send',
           message: {
-            messageId: "server-msg-1",
-            conversationId: "conv-1",
-            senderId: "alice",
-            recipientId: "bob",
-            body: "hi there",
-            createdAt: "2024-05-01T00:00:00.000Z",
+            messageId: 'server-msg-1',
+            conversationId: 'conv-1',
+            senderId: 'alice',
+            recipientId: 'bob',
+            body: 'hi there',
+            createdAt: '2024-05-01T00:00:00.000Z',
             deliveredTo: [],
             readAt: null,
           },
@@ -2050,7 +2068,7 @@ describe("useCallFlow chat", () => {
     });
 
     const sendPromise = act(async () => {
-      await resultRef.current.sendMessage("bob", "hi there");
+      await resultRef.current.sendMessage('bob', 'hi there');
     });
     // Immediately after invocation (before the ack resolves within the same
     // act batch) the optimistic message should already be present.
@@ -2061,33 +2079,33 @@ describe("useCallFlow chat", () => {
 
     expect(capturedPayload).toEqual({
       version: 1,
-      recipientId: "bob",
-      body: "hi there",
+      recipientId: 'bob',
+      body: 'hi there',
     });
 
     const messages = resultRef.current.messagesByPeer.bob;
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      messageId: "server-msg-1",
-      body: "hi there",
+      messageId: 'server-msg-1',
+      body: 'hi there',
       pending: false,
     });
     expect(messages[0].failed).toBeUndefined();
   });
 
-  test("sendMessage marks the optimistic message failed and surfaces a status error when the ack rejects", async () => {
+  test('sendMessage marks the optimistic message failed and surfaces a status error when the ack rejects', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((event, _payload, cb) => {
-      if (event === "message.send") {
-        cb?.({ ok: false, error: { code: "invalid", message: "body too long" } });
+      if (event === 'message.send') {
+        cb?.({ ok: false, error: { code: 'invalid', message: 'body too long' } });
       }
     });
 
     await act(async () => {
-      await resultRef.current.sendMessage("bob", "hi there");
+      await resultRef.current.sendMessage('bob', 'hi there');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2095,18 +2113,18 @@ describe("useCallFlow chat", () => {
 
     const messages = resultRef.current.messagesByPeer.bob;
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ pending: false, failed: true, body: "hi there" });
+    expect(messages[0]).toMatchObject({ pending: false, failed: true, body: 'hi there' });
     expect(resultRef.current.status).toEqual({
-      message: "Message failed to send",
-      severity: "error",
+      message: 'Message failed to send',
+      severity: 'error',
     });
   });
 
-  test("sendMessage ignores an empty/whitespace-only body", async () => {
+  test('sendMessage ignores an empty/whitespace-only body', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     await act(async () => {
-      await resultRef.current.sendMessage("bob", "   ");
+      await resultRef.current.sendMessage('bob', '   ');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2117,16 +2135,14 @@ describe("useCallFlow chat", () => {
 
   // ── message.received socket event ─────────────────────────────────────────
 
-  test("message.received bumps unreadCount for an existing conversation when it is not the active chat", async () => {
+  test('message.received bumps unreadCount for an existing conversation when it is not the active chat', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
-        conversations: [
-          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 0 },
-        ],
+        conversations: [{ conversationId: 'c1', peerId: 'bob', lastMessage: null, unreadCount: 0 }],
       }),
     }));
     await act(async () => {
@@ -2136,18 +2152,18 @@ describe("useCallFlow chat", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const handler = getSocketHandler("message.received");
+    const handler = getSocketHandler('message.received');
     expect(handler).toBeDefined();
 
     act(() => {
       handler({
-        conversationId: "c1",
+        conversationId: 'c1',
         message: {
-          messageId: "srv-1",
-          senderId: "bob",
-          recipientId: "alice",
-          body: "hello!",
-          createdAt: "2024-05-01T00:00:00.000Z",
+          messageId: 'srv-1',
+          senderId: 'bob',
+          recipientId: 'alice',
+          body: 'hello!',
+          createdAt: '2024-05-01T00:00:00.000Z',
         },
       });
     });
@@ -2155,32 +2171,26 @@ describe("useCallFlow chat", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((m) => m.messageId)).toEqual([
-      "srv-1",
-    ]);
-    expect(
-      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
-    ).toBe(1);
+    expect(resultRef.current.messagesByPeer.bob.map(m => m.messageId)).toEqual(['srv-1']);
+    expect(resultRef.current.conversations.find(c => c.peerId === 'bob').unreadCount).toBe(1);
     expect(resultRef.current.unreadTotal).toBe(1);
   });
 
-  test("message.received auto-marks-read and does not bump unread when the conversation is the active chat", async () => {
+  test('message.received auto-marks-read and does not bump unread when the conversation is the active chat', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 200,
       json: async () => ({
-        conversations: [
-          { conversationId: "c1", peerId: "bob", lastMessage: null, unreadCount: 0 },
-        ],
+        conversations: [{ conversationId: 'c1', peerId: 'bob', lastMessage: null, unreadCount: 0 }],
       }),
     }));
     await act(async () => {
       await resultRef.current.fetchConversations();
     });
     act(() => {
-      resultRef.current.setActiveChatPeerId("bob");
+      resultRef.current.setActiveChatPeerId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2192,19 +2202,19 @@ describe("useCallFlow chat", () => {
     let readRequestBody = null;
     global.fetch = jest.fn(async (url, options) => {
       readRequestBody = JSON.parse(options.body);
-      return { ok: true, status: 200, json: async () => ({ conversationId: "c1", updated: 1 }) };
+      return { ok: true, status: 200, json: async () => ({ conversationId: 'c1', updated: 1 }) };
     });
 
-    const handler = getSocketHandler("message.received");
+    const handler = getSocketHandler('message.received');
     await act(async () => {
       handler({
-        conversationId: "c1",
+        conversationId: 'c1',
         message: {
-          messageId: "srv-2",
-          senderId: "bob",
-          recipientId: "alice",
-          body: "still here?",
-          createdAt: "2024-05-01T00:01:00.000Z",
+          messageId: 'srv-2',
+          senderId: 'bob',
+          recipientId: 'alice',
+          body: 'still here?',
+          createdAt: '2024-05-01T00:01:00.000Z',
         },
       });
       await Promise.resolve();
@@ -2213,13 +2223,11 @@ describe("useCallFlow chat", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(readRequestBody).toEqual({ sessionId: "sess-chat", peerId: "bob" });
-    expect(
-      resultRef.current.conversations.find((c) => c.peerId === "bob").unreadCount,
-    ).toBe(0);
+    expect(readRequestBody).toEqual({ sessionId: 'sess-chat', peerId: 'bob' });
+    expect(resultRef.current.conversations.find(c => c.peerId === 'bob').unreadCount).toBe(0);
   });
 
-  test("message.received refetches conversations for a brand-new peer not already in the list", async () => {
+  test('message.received refetches conversations for a brand-new peer not already in the list', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     // No existing conversations.
@@ -2240,22 +2248,22 @@ describe("useCallFlow chat", () => {
       status: 200,
       json: async () => ({
         conversations: [
-          { conversationId: "c-new", peerId: "dave", lastMessage: null, unreadCount: 1 },
+          { conversationId: 'c-new', peerId: 'dave', lastMessage: null, unreadCount: 1 },
         ],
       }),
     }));
     global.fetch = fetchConversationsSpy;
 
-    const handler = getSocketHandler("message.received");
+    const handler = getSocketHandler('message.received');
     await act(async () => {
       handler({
-        conversationId: "c-new",
+        conversationId: 'c-new',
         message: {
-          messageId: "srv-3",
-          senderId: "dave",
-          recipientId: "alice",
-          body: "hi, new here",
-          createdAt: "2024-05-01T00:02:00.000Z",
+          messageId: 'srv-3',
+          senderId: 'dave',
+          recipientId: 'alice',
+          body: 'hi, new here',
+          createdAt: '2024-05-01T00:02:00.000Z',
         },
       });
       await Promise.resolve();
@@ -2265,81 +2273,79 @@ describe("useCallFlow chat", () => {
     });
 
     expect(fetchConversationsSpy).toHaveBeenCalled();
-    expect(
-      resultRef.current.conversations.find((c) => c.peerId === "dave"),
-    ).toBeDefined();
+    expect(resultRef.current.conversations.find(c => c.peerId === 'dave')).toBeDefined();
   });
 
   // ── typing indicators ─────────────────────────────────────────────────────
 
-  test("sendTypingIndicator emits message.typing and throttles repeated true calls per peer", async () => {
+  test('sendTypingIndicator emits message.typing and throttles repeated true calls per peer', async () => {
     const { resultRef, tree } = await renderWithSocket();
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
 
     act(() => {
-      resultRef.current.sendTypingIndicator("bob", true);
+      resultRef.current.sendTypingIndicator('bob', true);
     });
     act(() => {
-      resultRef.current.sendTypingIndicator("bob", true);
+      resultRef.current.sendTypingIndicator('bob', true);
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === "message.typing");
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === 'message.typing');
     expect(typingEmits).toHaveLength(1);
     expect(typingEmits[0][1]).toEqual({
       version: expect.any(Number),
-      recipientId: "bob",
+      recipientId: 'bob',
       isTyping: true,
     });
   });
 
-  test("sendTypingIndicator always emits isTyping:false immediately, bypassing the throttle", async () => {
+  test('sendTypingIndicator always emits isTyping:false immediately, bypassing the throttle', async () => {
     const { resultRef, tree } = await renderWithSocket();
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
 
     act(() => {
-      resultRef.current.sendTypingIndicator("bob", true);
+      resultRef.current.sendTypingIndicator('bob', true);
     });
     act(() => {
-      resultRef.current.sendTypingIndicator("bob", false);
+      resultRef.current.sendTypingIndicator('bob', false);
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === "message.typing");
-    expect(typingEmits.map((call) => call[1].isTyping)).toEqual([true, false]);
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === 'message.typing');
+    expect(typingEmits.map(call => call[1].isTyping)).toEqual([true, false]);
   });
 
-  test("sendTypingIndicator is a no-op when there is no connected socket", async () => {
+  test('sendTypingIndicator is a no-op when there is no connected socket', async () => {
     const { resultRef, tree } = await renderWithSocket();
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.connected = false;
 
     act(() => {
-      resultRef.current.sendTypingIndicator("bob", true);
+      resultRef.current.sendTypingIndicator('bob', true);
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(socketMock.emit).not.toHaveBeenCalledWith("message.typing", expect.anything());
+    expect(socketMock.emit).not.toHaveBeenCalledWith('message.typing', expect.anything());
   });
 
-  test("message.typing socket event updates typingByPeer and auto-clears after the safety timeout", async () => {
+  test('message.typing socket event updates typingByPeer and auto-clears after the safety timeout', async () => {
     jest.useFakeTimers();
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("message.typing");
+    const handler = getSocketHandler('message.typing');
     expect(handler).toBeDefined();
 
     act(() => {
-      handler({ senderId: "bob", isTyping: true });
+      handler({ senderId: 'bob', isTyping: true });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2357,15 +2363,15 @@ describe("useCallFlow chat", () => {
     jest.useRealTimers();
   });
 
-  test("message.typing socket event with isTyping:false clears the indicator immediately", async () => {
+  test('message.typing socket event with isTyping:false clears the indicator immediately', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const handler = getSocketHandler("message.typing");
+    const handler = getSocketHandler('message.typing');
     act(() => {
-      handler({ senderId: "bob", isTyping: true });
+      handler({ senderId: 'bob', isTyping: true });
     });
     act(() => {
-      handler({ senderId: "bob", isTyping: false });
+      handler({ senderId: 'bob', isTyping: false });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2376,18 +2382,18 @@ describe("useCallFlow chat", () => {
 
   // ── message.read socket event ─────────────────────────────────────────────
 
-  test("message.read socket event marks own sent messages to that peer as read", async () => {
+  test('message.read socket event marks own sent messages to that peer as read', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const deliveredHandler = getSocketHandler("message.delivered");
+    const deliveredHandler = getSocketHandler('message.delivered');
     act(() => {
       deliveredHandler({
         message: {
-          messageId: "sent-1",
-          senderId: "alice",
-          recipientId: "bob",
-          body: "hi bob",
-          createdAt: "2024-05-01T00:00:00.000Z",
+          messageId: 'sent-1',
+          senderId: 'alice',
+          recipientId: 'bob',
+          body: 'hi bob',
+          createdAt: '2024-05-01T00:00:00.000Z',
           readAt: null,
         },
       });
@@ -2397,43 +2403,43 @@ describe("useCallFlow chat", () => {
     });
     expect(resultRef.current.messagesByPeer.bob[0].readAt).toBeNull();
 
-    const readHandler = getSocketHandler("message.read");
+    const readHandler = getSocketHandler('message.read');
     act(() => {
-      readHandler({ readerId: "bob", readAt: "2024-05-01T00:05:00.000Z" });
+      readHandler({ readerId: 'bob', readAt: '2024-05-01T00:05:00.000Z' });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob[0].readAt).toBe("2024-05-01T00:05:00.000Z");
+    expect(resultRef.current.messagesByPeer.bob[0].readAt).toBe('2024-05-01T00:05:00.000Z');
   });
 
-  test("message.read socket event is a no-op when there is no readerId", async () => {
+  test('message.read socket event is a no-op when there is no readerId', async () => {
     await renderWithSocket();
-    const readHandler = getSocketHandler("message.read");
+    const readHandler = getSocketHandler('message.read');
     expect(() => {
       act(() => {
-        readHandler({ readAt: "2024-05-01T00:05:00.000Z" });
+        readHandler({ readAt: '2024-05-01T00:05:00.000Z' });
       });
     }).not.toThrow();
   });
 
   // ── isPlacingCall ──────────────────────────────────────────────────────────
 
-  test("isPlacingCall is true while placeCall awaits local media and resets afterward", async () => {
+  test('isPlacingCall is true while placeCall awaits local media and resets afterward', async () => {
     const { resultRef, tree } = await renderWithSocket();
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { mediaDevices } = require("react-native-webrtc");
+    const { mediaDevices } = require('react-native-webrtc');
     let resolveMedia;
     mediaDevices.getUserMedia.mockImplementationOnce(
       () =>
-        new Promise((resolve) => {
+        new Promise(resolve => {
           resolveMedia = resolve;
         }),
     );
@@ -2454,17 +2460,17 @@ describe("useCallFlow chat", () => {
     expect(resultRef.current.isPlacingCall).toBe(true);
     expect(resolveMedia).toBeDefined();
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((event, _payload, cb) => {
-      if (event === "call.initiate") {
+      if (event === 'call.initiate') {
         cb?.({
           ok: true,
           call: {
-            callId: "call-outgoing",
-            callerId: "alice",
-            calleeId: "bob",
-            status: "ringing",
+            callId: 'call-outgoing',
+            callerId: 'alice',
+            calleeId: 'bob',
+            status: 'ringing',
             ringTimeoutAt: new Date(Date.now() + 30_000).toISOString(),
           },
         });
@@ -2484,10 +2490,10 @@ describe("useCallFlow chat", () => {
 
   // ── call.media-state socket event ─────────────────────────────────────────
 
-  test("call.media-state sets isRemoteScreenSharing only for the active call", async () => {
+  test('call.media-state sets isRemoteScreenSharing only for the active call', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
-    const { mediaDevices } = require("react-native-webrtc");
+    const { mediaDevices } = require('react-native-webrtc');
     mediaDevices.getUserMedia.mockResolvedValueOnce({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -2495,17 +2501,20 @@ describe("useCallFlow chat", () => {
     });
 
     act(() => {
-      resultRef.current.setCalleeId("bob");
+      resultRef.current.setCalleeId('bob');
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     socketMock.emit.mockImplementation((event, _payload, cb) => {
-      if (event === "call.initiate") {
-        cb?.({ ok: true, call: { callId: "call-media-1", callerId: "alice", calleeId: "bob", status: "ringing" } });
+      if (event === 'call.initiate') {
+        cb?.({
+          ok: true,
+          call: { callId: 'call-media-1', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+        });
       }
     });
 
@@ -2518,12 +2527,12 @@ describe("useCallFlow chat", () => {
 
     expect(resultRef.current.isRemoteScreenSharing).toBe(false);
 
-    const handler = getSocketHandler("call.media-state");
+    const handler = getSocketHandler('call.media-state');
     expect(handler).toBeDefined();
 
     // A media-state event for a *different* call is ignored.
     act(() => {
-      handler({ callId: "some-other-call", mediaState: { isScreenSharing: true } });
+      handler({ callId: 'some-other-call', mediaState: { isScreenSharing: true } });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2532,7 +2541,7 @@ describe("useCallFlow chat", () => {
 
     // A media-state event for the active call updates the flag.
     act(() => {
-      handler({ callId: "call-media-1", mediaState: { isScreenSharing: true } });
+      handler({ callId: 'call-media-1', mediaState: { isScreenSharing: true } });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2540,7 +2549,7 @@ describe("useCallFlow chat", () => {
     expect(resultRef.current.isRemoteScreenSharing).toBe(true);
 
     act(() => {
-      handler({ callId: "call-media-1", mediaState: { isScreenSharing: false } });
+      handler({ callId: 'call-media-1', mediaState: { isScreenSharing: false } });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -2550,22 +2559,25 @@ describe("useCallFlow chat", () => {
 
   // ── call.media-state emit-on-toggle ───────────────────────────────────────
 
-  test("emits call.media-state whenever local isScreenSharing changes during an active call", async () => {
+  test('emits call.media-state whenever local isScreenSharing changes during an active call', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an incoming call and accept it so activeCallIdRef/peerConnectionRef
     // are populated (mirrors the "accepting an incoming call…" test above).
-    const incomingHandler = getSocketHandler("call.incoming");
+    const incomingHandler = getSocketHandler('call.incoming');
     await act(async () => {
-      await incomingHandler({ call: { callId: "call-share-1", callerId: "bob" } });
+      await incomingHandler({ call: { callId: 'call-share-1', callerId: 'bob' } });
     });
     await act(async () => {});
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { mediaDevices, RTCPeerConnection } = require("react-native-webrtc");
-    const videoSender = { track: { kind: "video" }, replaceTrack: jest.fn().mockResolvedValue(undefined) };
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    const videoSender = {
+      track: { kind: 'video' },
+      replaceTrack: jest.fn().mockResolvedValue(undefined),
+    };
     mediaDevices.getUserMedia.mockResolvedValue({
       getTracks: () => [],
       getVideoTracks: () => [],
@@ -2579,13 +2591,13 @@ describe("useCallFlow chat", () => {
       close: jest.fn(),
     }));
 
-    const { io } = require("socket.io-client");
+    const { io } = require('socket.io-client');
     const socketMock = io.mock.results[io.mock.results.length - 1].value;
     const mediaStateEmits = [];
     socketMock.emit.mockImplementation((event, payload, cb) => {
-      if (event === "call.accept") {
-        cb?.({ ok: true, call: { callId: "call-share-1", callerId: "bob", calleeId: "alice" } });
-      } else if (event === "call.media-state") {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { callId: 'call-share-1', callerId: 'bob', calleeId: 'alice' } });
+      } else if (event === 'call.media-state') {
         mediaStateEmits.push(payload);
         cb?.({ ok: true });
       }
@@ -2598,11 +2610,11 @@ describe("useCallFlow chat", () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const { startScreenCapture } = require("../../src/screenShare");
+    const { startScreenCapture } = require('../../src/screenShare');
     startScreenCapture.mockResolvedValue({
       ok: true,
       stream: { getTracks: () => [] },
-      videoTrack: { kind: "video", stop: jest.fn() },
+      videoTrack: { kind: 'video', stop: jest.fn() },
       audioTrack: null,
       audioShared: false,
     });
@@ -2617,7 +2629,7 @@ describe("useCallFlow chat", () => {
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(mediaStateEmits).toContainEqual({
       version: 1,
-      callId: "call-share-1",
+      callId: 'call-share-1',
       mediaState: { isScreenSharing: true },
     });
   });

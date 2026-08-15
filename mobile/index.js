@@ -7,7 +7,7 @@ import { getLogsAsText } from './src/appLogger';
 import ErrorBoundary from './src/ErrorBoundary';
 import { installCrashHandler } from './src/crashReporter';
 import { installBackgroundMessageHandler } from './src/pushNotifications';
-import { registerCallActionListeners } from './src/callKeep';
+import { registerCallActionListeners, registerShowIncomingCallUiListener } from './src/callKeep';
 
 // Install the global JS / unhandled-rejection crash handler as early as
 // possible so it is in place before any component renders.
@@ -21,6 +21,11 @@ installBackgroundMessageHandler();
 // `useCallFlow` takes over routing of these events without re-registering
 // (and, on unmount, removing) this subscription.
 registerCallActionListeners();
+// Wire CallKeep's `showIncomingCallUi` listener at module scope too: Android
+// CallKeep runs self-managed, so Telecom never draws its own ringing UI and
+// relies on this event to ask the app to draw (and ring) its own. See
+// `registerShowIncomingCallUiListener` in `src/callKeep.js`.
+registerShowIncomingCallUiListener();
 
 function Root() {
   return (

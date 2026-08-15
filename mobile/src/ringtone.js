@@ -38,7 +38,9 @@ function loadInCallManager() {
   } catch {
     cachedInCallManager = null;
     if (!hasLoggedMissingInCallManager) {
-      logWarn('[Ringtone] react-native-incall-manager not installed; ringtone fallback unavailable');
+      logWarn(
+        '[Ringtone] react-native-incall-manager not installed; ringtone fallback unavailable',
+      );
       hasLoggedMissingInCallManager = true;
     }
   }

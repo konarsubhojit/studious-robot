@@ -26,7 +26,8 @@ export const AUDIO_ROUTE_LABELS = {
 const NATIVE_DEVICE_EVENT = 'onAudioDeviceChanged';
 const GENERIC_AUDIO_SESSION_ERROR =
   'Unable to update in-call audio. Check app permissions in Settings and confirm the selected audio device is available.';
-const AUDIO_ROUTE_FALLBACK_MESSAGE = 'Requested audio route unavailable. Call will stay on speaker or earpiece.';
+const AUDIO_ROUTE_FALLBACK_MESSAGE =
+  'Requested audio route unavailable. Call will stay on speaker or earpiece.';
 
 /**
  * Convert a route constant into a display label, falling back to the raw value
@@ -145,7 +146,7 @@ export function parseAudioDeviceStatus(payload) {
   // Keep only recognised, de-duplicated device names so the UI never renders
   // empty or "NONE" entries.
   const seen = new Set();
-  available = available.filter((device) => {
+  available = available.filter(device => {
     if (typeof device !== 'string') {
       return false;
     }
@@ -201,7 +202,13 @@ export async function chooseAudioRoute(route) {
       };
     }
 
-    return { available: [], selected: null, ok: false, error, message: GENERIC_AUDIO_SESSION_ERROR };
+    return {
+      available: [],
+      selected: null,
+      ok: false,
+      error,
+      message: GENERIC_AUDIO_SESSION_ERROR,
+    };
   }
 }
 
@@ -213,7 +220,7 @@ export async function chooseAudioRoute(route) {
  * @returns {() => void} unsubscribe function
  */
 export function subscribeAudioDevices(handler) {
-  const subscription = DeviceEventEmitter.addListener(NATIVE_DEVICE_EVENT, (payload) => {
+  const subscription = DeviceEventEmitter.addListener(NATIVE_DEVICE_EVENT, payload => {
     handler(parseAudioDeviceStatus(payload));
   });
   return () => subscription.remove();

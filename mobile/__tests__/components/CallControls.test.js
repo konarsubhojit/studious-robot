@@ -2,8 +2,9 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallControls from '../../src/components/CallControls';
 
-jest.mock('../../src/components/AudioOutputMenu', () => (props) =>
-  require('react').createElement('AudioOutputMenu', props),
+jest.mock(
+  '../../src/components/AudioOutputMenu',
+  () => props => require('react').createElement('AudioOutputMenu', props),
 );
 
 function createProps(overrides = {}) {
@@ -31,7 +32,7 @@ function render(props) {
 }
 
 function findByTestId(tree, testID) {
-  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
 describe('CallControls screen sharing', () => {
@@ -45,9 +46,7 @@ describe('CallControls screen sharing', () => {
   test('renders screen-share and screen-audio toggles when handlers are provided', () => {
     const onScreenShareToggle = jest.fn();
     const onScreenAudioToggle = jest.fn();
-    const tree = render(
-      createProps({ onScreenShareToggle, onScreenAudioToggle }),
-    );
+    const tree = render(createProps({ onScreenShareToggle, onScreenAudioToggle }));
 
     const shareButton = findByTestId(tree, 'control-screen-share');
     const audioButton = findByTestId(tree, 'control-screen-audio');
@@ -87,5 +86,22 @@ describe('CallControls screen sharing', () => {
     );
     expect(findByTestId(tree, 'control-swap-camera').props.disabled).toBe(true);
     expect(findByTestId(tree, 'control-video').props.disabled).toBe(true);
+  });
+});
+
+describe('CallControls primary action labels', () => {
+  test('shows visible text labels for mute, video, and leave, reflecting current state', () => {
+    const tree = render(createProps({ isMuted: false, isVideoEnabled: true }));
+
+    expect(tree.root.findAll(n => n.props?.children === 'Mute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll(n => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll(n => n.props?.children === 'Leave').length).toBeGreaterThan(0);
+  });
+
+  test('flips mute/video labels when muted and video is off', () => {
+    const tree = render(createProps({ isMuted: true, isVideoEnabled: false }));
+
+    expect(tree.root.findAll(n => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll(n => n.props?.children === 'Start video').length).toBeGreaterThan(0);
   });
 });

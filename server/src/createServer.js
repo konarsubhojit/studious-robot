@@ -14,7 +14,11 @@ const {
   DEFAULT_SOCKET_PING_INTERVAL_MS,
   DEFAULT_SOCKET_PING_TIMEOUT_MS,
 } = require('./config');
-const { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } = require('./lib/state');
+const {
+  getPresenceSnapshot,
+  resolveReachableChannels,
+  drainLocalPresence,
+} = require('./lib/state');
 const { waitForSocketsToDrain } = require('./lib/lifecycle');
 const { tickRingingTimeouts } = require('./domain/calls');
 const { notifyCallTransition } = require('./domain/notifications');
@@ -59,8 +63,7 @@ function createServer(opts = {}) {
   // ── Session TTL ──────────────────────────────────────────────────────────
   // When non-zero, sessions expire after this many milliseconds.  Pass via
   // opts (tests) or SESSION_TTL_MS env var (production).
-  const sessionTtlMs = opts.sessionTtlMs
-    ?? (Number(process.env.SESSION_TTL_MS) || 0);
+  const sessionTtlMs = opts.sessionTtlMs ?? (Number(process.env.SESSION_TTL_MS) || 0);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const callInitRateLimiter = createRateLimiter({
@@ -159,9 +162,13 @@ function createServer(opts = {}) {
   const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
   let corsOrigin = '*';
   if (rawCorsOrigin) {
-    corsOrigin = rawCorsOrigin === '*'
-      ? rawCorsOrigin
-      : rawCorsOrigin.split(',').map((s) => s.trim()).filter(Boolean);
+    corsOrigin =
+      rawCorsOrigin === '*'
+        ? rawCorsOrigin
+        : rawCorsOrigin
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
   } else if (process.env.NODE_ENV === 'production') {
     corsOrigin = [];
     console.warn('[signaling] CORS_ORIGIN is not set; rejecting browser origins in production.');
@@ -191,20 +198,21 @@ function createServer(opts = {}) {
 
   // Background worker: advance stale ringing calls to `missed`.
   const pollTimer = setInterval(
-    () => tickRingingTimeouts(state, Date.now(), (call, previousStatus, reason) => {
-      notifyCallTransition(io, state, call, {
-        previousStatus,
-        actor: null,
-        reason,
-      });
-    }),
-    RINGING_POLL_MS,
+    () =>
+      tickRingingTimeouts(state, Date.now(), (call, previousStatus, reason) => {
+        notifyCallTransition(io, state, call, {
+          previousStatus,
+          actor: null,
+          reason,
+        });
+      }),
+    RINGING_POLL_MS
   );
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
-  const shutdownDrainMs = opts.shutdownDrainMs
-    ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
+  const shutdownDrainMs =
+    opts.shutdownDrainMs ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
 
   /** Resolves once shutdown has fully completed; shared for idempotency. */
   let shutdownPromise = null;

@@ -36,8 +36,7 @@ export default function DraggablePip({
       <Animated.View
         style={[styles.localPip, animatedStyle]}
         accessibilityRole="adjustable"
-        accessibilityLabel="Self view. Tap to swap, drag to move."
-      >
+        accessibilityLabel="Self view. Tap to swap, drag to move.">
         <SafeRTCView
           fallbackLabel="Self-view unavailable"
           style={styles.localPipStream}

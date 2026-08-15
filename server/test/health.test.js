@@ -26,7 +26,9 @@ test('GET /health returns ok status', async () => {
 test('GET /health reports a failed Mongo startup check without blocking the server', async () => {
   const messageStore = {
     type: 'mongo',
-    ready: async () => { throw new Error('network unavailable'); },
+    ready: async () => {
+      throw new Error('network unavailable');
+    },
     close: async () => {},
   };
   const { httpServer } = createServer({ messageStore });

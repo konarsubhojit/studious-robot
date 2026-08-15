@@ -108,7 +108,9 @@ test('offer is relayed only to the peer in the room', async () => {
 
     // c3 should NOT receive the offer; use a short timeout to verify.
     let c3ReceivedOffer = false;
-    c3.once('offer', () => { c3ReceivedOffer = true; });
+    c3.once('offer', () => {
+      c3ReceivedOffer = true;
+    });
 
     c1.emit('offer', { roomId: 'room-offer', sdp: { type: 'offer', sdp: 'mock-sdp' } });
 

@@ -32,14 +32,16 @@ test('conversation id differs between different pairs', () => {
 async function seed(store, conversationId, count) {
   const saved = [];
   for (let i = 0; i < count; i++) {
-    saved.push(await store.saveMessage({
-      conversationId,
-      senderId: 'alice',
-      recipientId: 'bob',
-      body: `message ${i}`,
-      // Deterministic, strictly increasing timestamps keep ordering assertions stable.
-      createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
-    }));
+    saved.push(
+      await store.saveMessage({
+        conversationId,
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: `message ${i}`,
+        // Deterministic, strictly increasing timestamps keep ordering assertions stable.
+        createdAt: new Date(Date.UTC(2024, 0, 1, 0, 0, i)).toISOString(),
+      })
+    );
   }
   return saved;
 }
@@ -69,7 +71,10 @@ test('listMessages returns newest first', async () => {
   await seed(store, conversationId, 3);
 
   const messages = await store.listMessages({ conversationId });
-  assert.deepEqual(messages.map((m) => m.body), ['message 2', 'message 1', 'message 0']);
+  assert.deepEqual(
+    messages.map((m) => m.body),
+    ['message 2', 'message 1', 'message 0']
+  );
 });
 
 test('listMessages only returns the requested conversation', async () => {
@@ -77,7 +82,9 @@ test('listMessages only returns the requested conversation', async () => {
   await seed(store, deriveConversationId('alice', 'bob'), 2);
   await seed(store, deriveConversationId('alice', 'carol'), 3);
 
-  const messages = await store.listMessages({ conversationId: deriveConversationId('alice', 'bob') });
+  const messages = await store.listMessages({
+    conversationId: deriveConversationId('alice', 'bob'),
+  });
   assert.equal(messages.length, 2);
 });
 
@@ -87,13 +94,25 @@ test('listMessages clamps the limit between 1 and 100', async () => {
   await seed(store, conversationId, 5);
 
   assert.equal((await store.listMessages({ conversationId, limit: 2 })).length, 2);
-  assert.equal((await store.listMessages({ conversationId, limit: 0 })).length, 1, 'clamped up to 1');
-  assert.equal((await store.listMessages({ conversationId, limit: -5 })).length, 1, 'clamped up to 1');
-  assert.equal((await store.listMessages({ conversationId, limit: 1000 })).length, 5, 'clamped to max');
+  assert.equal(
+    (await store.listMessages({ conversationId, limit: 0 })).length,
+    1,
+    'clamped up to 1'
+  );
+  assert.equal(
+    (await store.listMessages({ conversationId, limit: -5 })).length,
+    1,
+    'clamped up to 1'
+  );
+  assert.equal(
+    (await store.listMessages({ conversationId, limit: 1000 })).length,
+    5,
+    'clamped to max'
+  );
   assert.equal(
     (await store.listMessages({ conversationId, limit: 'not-a-number' })).length,
     5,
-    'falls back to the default',
+    'falls back to the default'
   );
   assert.ok(DEFAULT_MESSAGE_LIMIT <= MAX_MESSAGE_LIMIT);
 });
@@ -104,14 +123,20 @@ test('listMessages honours the `before` cursor', async () => {
   const seeded = await seed(store, conversationId, 5);
 
   const firstPage = await store.listMessages({ conversationId, limit: 2 });
-  assert.deepEqual(firstPage.map((m) => m.body), ['message 4', 'message 3']);
+  assert.deepEqual(
+    firstPage.map((m) => m.body),
+    ['message 4', 'message 3']
+  );
 
   const secondPage = await store.listMessages({
     conversationId,
     limit: 2,
     before: firstPage[firstPage.length - 1].createdAt,
   });
-  assert.deepEqual(secondPage.map((m) => m.body), ['message 2', 'message 1']);
+  assert.deepEqual(
+    secondPage.map((m) => m.body),
+    ['message 2', 'message 1']
+  );
   assert.equal(seeded.length, 5);
 });
 
@@ -318,17 +343,30 @@ function createFakeMongoClient() {
   let closed = false;
 
   const collection = {
-    async createIndex(spec, options) { createdIndexes.push({ spec, options }); },
-    async insertOne(doc) { docs.push(doc); return { insertedId: doc.messageId }; },
+    async createIndex(spec, options) {
+      createdIndexes.push({ spec, options });
+    },
+    async insertOne(doc) {
+      docs.push(doc);
+      return { insertedId: doc.messageId };
+    },
     find(query) {
       let results = docs.filter((d) => d.conversationId === query.conversationId);
       if (query.createdAt?.$lt) {
         results = results.filter((d) => d.createdAt < query.createdAt.$lt);
       }
       return {
-        sort() { results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)); return this; },
-        limit(n) { results = results.slice(0, n); return this; },
-        async toArray() { return results.map((d) => ({ _id: 'oid', ...d })); },
+        sort() {
+          results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+          return this;
+        },
+        limit(n) {
+          results = results.slice(0, n);
+          return this;
+        },
+        async toArray() {
+          return results.map((d) => ({ _id: 'oid', ...d }));
+        },
       };
     },
     async findOneAndUpdate(filter, update) {
@@ -342,9 +380,9 @@ function createFakeMongoClient() {
       let modifiedCount = 0;
       for (const doc of docs) {
         if (
-          doc.conversationId === filter.conversationId
-          && doc.recipientId === filter.recipientId
-          && doc.readAt === filter.readAt
+          doc.conversationId === filter.conversationId &&
+          doc.recipientId === filter.recipientId &&
+          doc.readAt === filter.readAt
         ) {
           Object.assign(doc, update.$set);
           modifiedCount += 1;
@@ -359,10 +397,12 @@ function createFakeMongoClient() {
       for (const stage of pipeline) {
         if (stage.$match) {
           const clauses = stage.$match.$or;
-          results = results.filter((doc) => clauses.some((clause) => {
-            const [field, value] = Object.entries(clause)[0];
-            return doc[field] === value;
-          }));
+          results = results.filter((doc) =>
+            clauses.some((clause) => {
+              const [field, value] = Object.entries(clause)[0];
+              return doc[field] === value;
+            })
+          );
         } else if (stage.$group) {
           const [, groupField] = stage.$group._id.split('$');
           const [recipientClause, readClause] = stage.$group.unreadCount.$sum.$cond[0].$and;
@@ -381,19 +421,30 @@ function createFakeMongoClient() {
           results = [...groups.values()];
         } else if (stage.$sort) {
           const [sortKey] = Object.keys(stage.$sort);
-          const readAt = (doc) => (sortKey.startsWith('lastMessage.') ? doc.lastMessage[sortKey.slice('lastMessage.'.length)] : doc[sortKey]);
+          const readAt = (doc) =>
+            sortKey.startsWith('lastMessage.')
+              ? doc.lastMessage[sortKey.slice('lastMessage.'.length)]
+              : doc[sortKey];
           results = [...results].sort((a, b) => (readAt(a) < readAt(b) ? 1 : -1));
         }
       }
-      return { async toArray() { return results; } };
+      return {
+        async toArray() {
+          return results;
+        },
+      };
     },
   };
 
   return {
     client: {
       async connect() {},
-      db() { return { collection: () => collection }; },
-      async close() { closed = true; },
+      db() {
+        return { collection: () => collection };
+      },
+      async close() {
+        closed = true;
+      },
     },
     createdIndexes,
     isClosed: () => closed,
@@ -406,10 +457,10 @@ test('mongo store creates its indexes on first use', async () => {
 
   await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
 
-  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
-    { conversationId: 1, createdAt: -1 },
-    { messageId: 1 },
-  ]);
+  assert.deepEqual(
+    fake.createdIndexes.map((i) => i.spec),
+    [{ conversationId: 1, createdAt: -1 }, { messageId: 1 }]
+  );
   assert.deepEqual(fake.createdIndexes[1].options, { unique: true });
   await store.close();
   assert.equal(fake.isClosed(), true);
@@ -421,10 +472,10 @@ test('mongo store readiness check connects before the first message operation', 
 
   await store.ready();
 
-  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
-    { conversationId: 1, createdAt: -1 },
-    { messageId: 1 },
-  ]);
+  assert.deepEqual(
+    fake.createdIndexes.map((i) => i.spec),
+    [{ conversationId: 1, createdAt: -1 }, { messageId: 1 }]
+  );
   await store.close();
 });
 
@@ -436,7 +487,10 @@ test('mongo store round-trips messages and strips the driver _id', async () => {
   await seed(store, conversationId, 3);
   const messages = await store.listMessages({ conversationId, limit: 2 });
 
-  assert.deepEqual(messages.map((m) => m.body), ['message 2', 'message 1']);
+  assert.deepEqual(
+    messages.map((m) => m.body),
+    ['message 2', 'message 1']
+  );
   assert.equal(messages[0]._id, undefined, 'driver _id is not leaked');
 
   const delivered = await store.markDelivered(messages[0].messageId, 'bob');
@@ -451,8 +505,12 @@ test('mongo store survives index-creation failure', async () => {
   const fake = createFakeMongoClient();
   fake.client.db = () => ({
     collection: () => ({
-      async createIndex() { throw new Error('cosmos throttled the index build'); },
-      async insertOne() { return {}; },
+      async createIndex() {
+        throw new Error('cosmos throttled the index build');
+      },
+      async insertOne() {
+        return {};
+      },
     }),
   });
 
@@ -492,7 +550,11 @@ test('mongo store listConversations aggregates by conversation, newest first', a
   assert.equal(conversations[0].lastMessage._id, undefined, 'driver _id is not leaked');
   assert.equal(conversations[0].unreadCount, 1);
   assert.equal(conversations[1].peerId, 'carol');
-  assert.equal(conversations[1].unreadCount, 0, 'alice sent this message, so it is not unread for her');
+  assert.equal(
+    conversations[1].unreadCount,
+    0,
+    'alice sent this message, so it is not unread for her'
+  );
 
   await store.close();
 });
@@ -514,7 +576,11 @@ test('mongo store markRead updates only the matching, still-unread messages', as
 
   const [conversation] = await store.listConversations('bob');
   assert.equal(conversation.unreadCount, 0, 'alice→bob messages are read now');
-  assert.equal((await store.listConversations('alice'))[0].unreadCount, 1, 'bob→alice reply still unread');
+  assert.equal(
+    (await store.listConversations('alice'))[0].unreadCount,
+    1,
+    'bob→alice reply still unread'
+  );
 
   await store.close();
 });

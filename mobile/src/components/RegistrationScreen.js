@@ -1,12 +1,5 @@
 import { useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius, spacing } from '../theme';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
@@ -38,10 +31,8 @@ export default function RegistrationScreen({ onRegister, isLoading = false, stat
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.content}>
-
         {/* ── Brand / hero section ───────────────────────────────────────── */}
         <View style={styles.hero}>
           <Text style={styles.logoGlyph}>📞</Text>
@@ -78,7 +69,7 @@ export default function RegistrationScreen({ onRegister, isLoading = false, stat
           </Text>
           <TextInput
             value={recoveryCode}
-            onChangeText={(value) => setRecoveryCode(value.toUpperCase())}
+            onChangeText={value => setRecoveryCode(value.toUpperCase())}
             placeholder="Optional recovery code"
             placeholderTextColor={colors.textSecondary}
             autoCapitalize="characters"
@@ -98,7 +89,6 @@ export default function RegistrationScreen({ onRegister, isLoading = false, stat
             testID="registration-submit"
           />
         </View>
-
       </View>
     </KeyboardAvoidingView>
   );

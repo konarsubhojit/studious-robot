@@ -6,7 +6,6 @@ import {
   getPushToken,
   handleBackgroundPushMessage,
   handleForegroundPushMessage,
-  installBackgroundMessageHandler,
   loadMessaging,
   parseCallDeepLink,
   registerForPushNotifications,
@@ -313,9 +312,9 @@ describe('getPushToken (native module present)', () => {
       // modular call sites instead of masking them.
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (inst) => inst.requestPermission(),
-        getToken: (inst) => inst.getToken(),
-        registerDeviceForRemoteMessages: (inst) => inst.registerDeviceForRemoteMessages?.(),
+        requestPermission: inst => inst.requestPermission(),
+        getToken: inst => inst.getToken(),
+        registerDeviceForRemoteMessages: inst => inst.registerDeviceForRemoteMessages?.(),
         setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
         onMessage: (inst, handler) => inst.onMessage(handler),
         AuthorizationStatus: AUTH,
@@ -336,7 +335,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue('fcm-token-123'),
     };
-    await withMessaging(instance, async (mod) => {
+    await withMessaging(instance, async mod => {
       await expect(mod.getPushToken()).resolves.toEqual({
         provider: 'fcm',
         pushToken: 'fcm-token-123',
@@ -349,7 +348,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.DENIED),
       getToken: jest.fn(),
     };
-    await withMessaging(instance, async (mod) => {
+    await withMessaging(instance, async mod => {
       await expect(mod.getPushToken()).resolves.toBeNull();
       expect(instance.getToken).not.toHaveBeenCalled();
     });
@@ -360,7 +359,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue(''),
     };
-    await withMessaging(instance, async (mod) => {
+    await withMessaging(instance, async mod => {
       await expect(mod.getPushToken()).resolves.toBeNull();
     });
   });
@@ -374,7 +373,7 @@ describe('getPushToken (native module present)', () => {
       ok: true,
       json: async () => ({ deviceId: 'd-1' }),
     });
-    await withMessaging(instance, async (mod) => {
+    await withMessaging(instance, async mod => {
       await expect(
         mod.registerForPushNotifications({
           sessionId: 'sess-9',
@@ -427,9 +426,7 @@ describe('background push handler', () => {
     // `buildDataBlock`); FCM v1 stringifies every value. The server-side
     // counterpart of this contract lives in
     // server/test/push-payload-contract.test.js.
-    const displayIncomingCall = jest
-      .spyOn(callKeep, 'displayIncomingCall')
-      .mockResolvedValue(true);
+    const displayIncomingCall = jest.spyOn(callKeep, 'displayIncomingCall').mockResolvedValue(true);
     const serverData = {
       callId: 'call-abc',
       callerId: 'alice',
@@ -481,8 +478,8 @@ describe('background push handler', () => {
     jest.isolateModules(() => {
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (inst) => inst.requestPermission?.(),
-        getToken: (inst) => inst.getToken?.(),
+        requestPermission: inst => inst.requestPermission?.(),
+        getToken: inst => inst.getToken?.(),
         setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler?.(handler),
         onMessage: (inst, handler) =>
           typeof inst.onMessage === 'function' ? inst.onMessage(handler) : undefined,
@@ -498,7 +495,7 @@ describe('background push handler', () => {
 
   test('installForegroundMessageHandler rings pushes that arrive while open', async () => {
     const onMessage = jest.fn().mockReturnValue(jest.fn());
-    await withMockedMessaging({ onMessage }, async (mod) => {
+    await withMockedMessaging({ onMessage }, async mod => {
       const unsubscribe = mod.installForegroundMessageHandler();
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(typeof unsubscribe).toBe('function');
@@ -513,7 +510,7 @@ describe('background push handler', () => {
   });
 
   test('installForegroundMessageHandler is a no-op when onMessage is unavailable', async () => {
-    await withMockedMessaging({}, (mod) => {
+    await withMockedMessaging({}, mod => {
       expect(() => mod.installForegroundMessageHandler()()).not.toThrow();
     });
   });
@@ -533,8 +530,8 @@ describe('background push handler', () => {
       };
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (inst) => inst.requestPermission(),
-        getToken: (inst) => inst.getToken(),
+        requestPermission: inst => inst.requestPermission(),
+        getToken: inst => inst.getToken(),
         setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
         AuthorizationStatus: AUTH,
       };

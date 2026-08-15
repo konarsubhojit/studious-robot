@@ -547,7 +547,10 @@ test('tickRingingTimeouts: does not re-transition already-terminal calls', async
     assert.equal(transitioned, 0);
 
     const events = getCallEvents(callId);
-    assert.ok(events.every((e) => e.event !== 'missed'), 'no missed event should be appended');
+    assert.ok(
+      events.every((e) => e.event !== 'missed'),
+      'no missed event should be appended'
+    );
   } finally {
     await teardown();
   }
@@ -743,7 +746,7 @@ test('CALL_END_REASONS: exported object has expected terminal reasons', () => {
   for (const reason of expected) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(CALL_END_REASONS, reason),
-      `expected reason '${reason}' to be in CALL_END_REASONS`,
+      `expected reason '${reason}' to be in CALL_END_REASONS`
     );
     assert.equal(typeof CALL_END_REASONS[reason], 'string');
   }

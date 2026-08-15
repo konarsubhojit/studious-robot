@@ -27,58 +27,65 @@ function toDateOrNull(value) {
 function persistCallRecord(db, call) {
   if (!db || !call?.callId) return;
   const { calls: callsTable } = require('../db/schema');
-  return db.insert(callsTable).values({
-    callId: call.callId,
-    callerId: call.callerId,
-    calleeId: call.calleeId,
-    status: call.status,
-    endReason: call.endReason ?? null,
-    createdAt: toDateOrNull(call.createdAt) ?? new Date(),
-    updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
-    ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
-  }).onConflictDoUpdate({
-    target: callsTable.callId,
-    set: {
+  return db
+    .insert(callsTable)
+    .values({
+      callId: call.callId,
       callerId: call.callerId,
       calleeId: call.calleeId,
       status: call.status,
       endReason: call.endReason ?? null,
+      createdAt: toDateOrNull(call.createdAt) ?? new Date(),
       updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
       ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
-    },
-  }).catch((error) => {
-    // Non-fatal: the in-memory call record already reflects reality and the
-    // caller doesn't await this promise. `code` is the Postgres error code
-    // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
-    // it alongside the message makes a recurrence diagnosable without
-    // reproducing it, instead of the bare message alone.
-    console.error(
-      `[calls] failed to persist call to DB: callId=${call.callId} code=${error?.code} ${error?.message}`,
-    );
-  });
+    })
+    .onConflictDoUpdate({
+      target: callsTable.callId,
+      set: {
+        callerId: call.callerId,
+        calleeId: call.calleeId,
+        status: call.status,
+        endReason: call.endReason ?? null,
+        updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
+        ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
+      },
+    })
+    .catch((error) => {
+      // Non-fatal: the in-memory call record already reflects reality and the
+      // caller doesn't await this promise. `code` is the Postgres error code
+      // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
+      // it alongside the message makes a recurrence diagnosable without
+      // reproducing it, instead of the bare message alone.
+      console.error(
+        `[calls] failed to persist call to DB: callId=${call.callId} code=${error?.code} ${error?.message}`
+      );
+    });
 }
 
 function persistCallEvent(db, event) {
   if (!db || !event?.eventId) return;
   const { callEvents: callEventsTable } = require('../db/schema');
   // Runtime call events expose `timestamp`; persist it as `createdAt`.
-  return db.insert(callEventsTable).values({
-    eventId: event.eventId,
-    callId: event.callId,
-    event: event.event,
-    actor: event.actor,
-    reason: event.reason,
-    createdAt: toDateOrNull(event.timestamp) ?? new Date(),
-  }).catch((error) => {
-    // Non-fatal by design (an audit-log write failure must never block the
-    // call itself), but this is still a silent audit-trail gap: log the
-    // Postgres error `code` plus the ids involved so a recurrence can be
-    // traced to its exact cause (e.g. a FK violation because the parent call
-    // row hadn't committed yet) rather than only ever seeing the message.
-    console.error(
-      `[calls] failed to persist call event to DB: eventId=${event.eventId} callId=${event.callId} event=${event.event} code=${error?.code} ${error?.message}`,
-    );
-  });
+  return db
+    .insert(callEventsTable)
+    .values({
+      eventId: event.eventId,
+      callId: event.callId,
+      event: event.event,
+      actor: event.actor,
+      reason: event.reason,
+      createdAt: toDateOrNull(event.timestamp) ?? new Date(),
+    })
+    .catch((error) => {
+      // Non-fatal by design (an audit-log write failure must never block the
+      // call itself), but this is still a silent audit-trail gap: log the
+      // Postgres error `code` plus the ids involved so a recurrence can be
+      // traced to its exact cause (e.g. a FK violation because the parent call
+      // row hadn't committed yet) rather than only ever seeing the message.
+      console.error(
+        `[calls] failed to persist call event to DB: eventId=${event.eventId} callId=${event.callId} event=${event.event} code=${error?.code} ${error?.message}`
+      );
+    });
 }
 
 async function hydrateCallsAndEventsFromDb(db, state) {
@@ -97,7 +104,10 @@ async function hydrateCallsAndEventsFromDb(db, state) {
         endReason: row.endReason ?? null,
         createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
         updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
-        ringTimeoutAt: row.ringTimeoutAt instanceof Date ? row.ringTimeoutAt.toISOString() : (row.ringTimeoutAt ?? null),
+        ringTimeoutAt:
+          row.ringTimeoutAt instanceof Date
+            ? row.ringTimeoutAt.toISOString()
+            : row.ringTimeoutAt ?? null,
       });
       if (!state.callEvents.has(row.callId)) {
         state.callEvents.set(row.callId, []);

@@ -95,20 +95,15 @@ export default function FloatingCallBubble({
 
   return (
     <Animated.View
-      style={[
-        styles.bubble,
-        { transform: pan.getTranslateTransform() },
-      ]}
+      style={[styles.bubble, { transform: pan.getTranslateTransform() }]}
       testID="floating-call-bubble"
-      {...panResponder.panHandlers}
-    >
+      {...panResponder.panHandlers}>
       <Pressable
         onPress={onExpand}
         style={styles.body}
         accessibilityRole="button"
         accessibilityLabel="Expand call"
-        testID="floating-call-bubble-expand"
-      >
+        testID="floating-call-bubble-expand">
         <Text style={styles.glyph}>📞</Text>
         <View style={styles.textWrap}>
           <Text style={styles.label} numberOfLines={1}>

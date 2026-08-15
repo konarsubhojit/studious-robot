@@ -66,7 +66,7 @@ function createMessagesRouter({ state, io }) {
 
     // Defence in depth: only ever return messages the caller took part in.
     const participantMessages = messages.filter(
-      (message) => message.senderId === session.userId || message.recipientId === session.userId,
+      (message) => message.senderId === session.userId || message.recipientId === session.userId
     );
     if (participantMessages.length !== messages.length) {
       res.status(403).json({ error: 'not a participant in this conversation' });
@@ -112,10 +112,11 @@ function createMessagesRouter({ state, io }) {
     }
 
     const visible = conversations
-      .filter((conversation) => (
-        !isBlocked(state.blocks, session.userId, conversation.peerId)
-        && !isBlocked(state.blocks, conversation.peerId, session.userId)
-      ))
+      .filter(
+        (conversation) =>
+          !isBlocked(state.blocks, session.userId, conversation.peerId) &&
+          !isBlocked(state.blocks, conversation.peerId, session.userId)
+      )
       .map((conversation) => ({
         ...conversation,
         online: getPresenceSnapshot(state, conversation.peerId).online,

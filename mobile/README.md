@@ -187,6 +187,14 @@ These features rely on the following permissions declared in
 - `POST_NOTIFICATIONS` — show the ongoing call notification on Android 13 (API 33) and newer.
 - `VIBRATE` — allow `react-native-incall-manager` to vibrate the device on
   incoming calls.
+- `USE_FULL_SCREEN_INTENT` — required to post WeTalk's own branded,
+  full-screen-intent incoming-call notification (`IncomingCallNotificationModule`),
+  shown in response to `react-native-callkeep`'s self-managed `showIncomingCallUi`
+  event; without it, a call arriving while the screen is locked never wakes to
+  that screen. Android 14+ additionally requires the user to have granted this
+  app special access — `IncomingCallNotificationModule` checks
+  `NotificationManager.canUseFullScreenIntent()` and falls back to a plain (but
+  still audible, high-importance-channel) heads-up notification when denied.
 
 The Android APK workflow now inspects the assembled debug APK with `aapt dump
 permissions` and fails CI if any required call permission is missing from the

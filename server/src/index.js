@@ -49,9 +49,7 @@ if (require.main === module) {
   async function bootstrap() {
     logNotificationHubStartupStatus();
 
-    const db = process.env.DATABASE_URL
-      ? require('../db/client').getDb()
-      : null;
+    const db = process.env.DATABASE_URL ? require('../db/client').getDb() : null;
 
     let server;
     if (process.env.REDIS_URL) {
@@ -98,7 +96,7 @@ if (require.main === module) {
             // specifically but don't abort the exit on them.
             Promise.resolve(stores?.close?.()).catch((err) => {
               console.error('[signaling] error closing Redis stores:', err?.message);
-            }),
+            })
           )
           .then(() => {
             console.log('[signaling] shutdown complete; exiting');

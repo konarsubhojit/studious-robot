@@ -24,7 +24,7 @@ export default function useCompactCallView(isInRoomRef) {
       return undefined;
     }
 
-    const subscription = AppState.addEventListener('change', (nextState) => {
+    const subscription = AppState.addEventListener('change', nextState => {
       const shouldUseCompactView =
         isInRoomRef.current && (nextState === 'background' || nextState === 'inactive');
       setIsCompactView(shouldUseCompactView);
@@ -36,7 +36,7 @@ export default function useCompactCallView(isInRoomRef) {
     });
 
     return () => subscription.remove();
-  }, []);
+  }, [isInRoomRef]);
 
   return { isCompactView, setIsCompactView };
 }

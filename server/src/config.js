@@ -34,13 +34,13 @@ const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'un
  * @type {Record<string, string>}
  */
 const CALL_END_REASONS = {
-  ended:       'call_ended',
-  declined:    'call_declined',
-  cancelled:   'call_cancelled',
-  timeout:     'call_missed',
-  busy:        'callee_busy',
+  ended: 'call_ended',
+  declined: 'call_declined',
+  cancelled: 'call_cancelled',
+  timeout: 'call_missed',
+  busy: 'callee_busy',
   unreachable: 'callee_unreachable',
-  failed:      'call_failed',
+  failed: 'call_failed',
 };
 
 /**
@@ -49,10 +49,10 @@ const CALL_END_REASONS = {
  * @type {Map<string, Set<string>>}
  */
 const CALL_TRANSITIONS = new Map([
-  ['ringing',          new Set(['accepted', 'declined', 'missed', 'busy', 'unreachable', 'ended'])],
-  ['accepted',         new Set(['connecting_media', 'ended'])],
+  ['ringing', new Set(['accepted', 'declined', 'missed', 'busy', 'unreachable', 'ended'])],
+  ['accepted', new Set(['connecting_media', 'ended'])],
   ['connecting_media', new Set(['in_call', 'ended'])],
-  ['in_call',          new Set(['ended'])],
+  ['in_call', new Set(['ended'])],
 ]);
 
 /** How long a call may remain in `ringing` before it becomes `missed`. */
