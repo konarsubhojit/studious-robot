@@ -60,6 +60,12 @@ export const radius = {
 export const typography = {
   title: { fontSize: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 16, fontWeight: '700' },
+  groupLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
   body: { fontSize: 14 },
   label: { fontWeight: '600' },
   emphasis: { fontWeight: '700' },

@@ -52,7 +52,7 @@ starting checklist for the next session.
       call, consistent with the "too small" feedback.
 
 ### Settings screen
-- [ ] General visual pass for consistency with the refreshed tab bar
+- [x] General visual pass for consistency with the refreshed tab bar
       (spacing, section headers, icon usage).
 
 ### Cross-cutting

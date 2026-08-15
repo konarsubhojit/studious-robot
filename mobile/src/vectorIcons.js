@@ -75,4 +75,9 @@ export const ICONS = {
   tabCallsActive: { icon: 'phone',                  emoji: '📞' },
   tabSettings:       { icon: 'cog-outline',         emoji: '⚙️' },
   tabSettingsActive: { icon: 'cog',                 emoji: '⚙️' },
+  settingsUsername:  { icon: 'account-outline',      emoji: '👤' },
+  settingsServer:    { icon: 'server-network',       emoji: '🌐' },
+  settingsRecovery:  { icon: 'key-variant',          emoji: '🔑' },
+  settingsDeveloper: { icon: 'code-tags',            emoji: '🛠️' },
+  settingsAccountSection: { icon: 'shield-account-outline', emoji: '🧾' },
 };

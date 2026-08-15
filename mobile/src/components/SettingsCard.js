@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 
 function SettingsToggle({ label, hint, value, onPress, testID }) {
   return (
@@ -62,15 +62,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   settingsTitle: {
+    ...typography.sectionTitle,
     color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
   },
   settingsOption: {
     borderRadius: radius.sm + 2,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#4b3741',
+    backgroundColor: colors.surfaceControl,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 9,
     flexDirection: 'row',

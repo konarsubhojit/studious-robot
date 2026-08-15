@@ -9,9 +9,34 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
+import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
+
+/**
+ * Small uppercase group label used to introduce each settings section,
+ * optionally preceded by a semantic icon from `vectorIcons.js` so section
+ * headers read consistently with the rest of the app's icon usage.
+ *
+ * @param {object} props
+ * @param {string} [props.icon] - Semantic icon key from ICONS map.
+ * @param {import('react').ReactNode} props.children
+ */
+function SectionLabel({ icon, children }) {
+  const MCIcon = loadVectorIcons();
+  const iconDef = icon ? ICONS[icon] : null;
+  return (
+    <View style={styles.sectionLabelRow}>
+      {iconDef && MCIcon ? (
+        <MCIcon name={iconDef.icon} size={14} color={colors.textSecondary} />
+      ) : iconDef ? (
+        <Text style={styles.sectionLabelEmoji}>{iconDef.emoji}</Text>
+      ) : null}
+      <Text style={styles.sectionTitle}>{children}</Text>
+    </View>
+  );
+}
 
 /**
  * Account & connection settings.
@@ -82,7 +107,7 @@ export default function SettingsScreen({
         </View>
 
         {/* ── Username ────────────────────────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Username</Text>
+        <SectionLabel icon="settingsUsername">Username</SectionLabel>
         <Text style={styles.hint}>Other people will call you by this name.</Text>
         <TextInput
           value={name}
@@ -104,7 +129,7 @@ export default function SettingsScreen({
         />
 
         {/* ── Signaling server ────────────────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Signaling server</Text>
+        <SectionLabel icon="settingsServer">Signaling server</SectionLabel>
         <Text style={styles.hint}>The server that routes your calls.</Text>
         <TextInput
           value={url}
@@ -128,7 +153,7 @@ export default function SettingsScreen({
 
         {verificationCode ? (
           <>
-            <Text style={styles.sectionTitle}>Recovery code</Text>
+            <SectionLabel icon="settingsRecovery">Recovery code</SectionLabel>
             <Text style={styles.hint}>
               Keep this code private. You’ll need it to use this username on another device.
             </Text>
@@ -153,7 +178,7 @@ export default function SettingsScreen({
         {/* ── Developer ───────────────────────────────────────────────────── */}
         {onToggleDeveloperMode ? (
           <>
-            <Text style={styles.sectionTitle}>Developer</Text>
+            <SectionLabel icon="settingsDeveloper">Developer</SectionLabel>
             <Pressable
               onPress={onToggleDeveloperMode}
               accessibilityRole="switch"
@@ -175,7 +200,7 @@ export default function SettingsScreen({
         ) : null}
 
         {/* ── Account actions ─────────────────────────────────────────────── */}
-        <Text style={styles.sectionTitle}>Account</Text>
+        <SectionLabel icon="settingsAccountSection">Account</SectionLabel>
         {onExportLogs ? (
           <AppButton
             title="Export logs"
@@ -235,22 +260,27 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
+    ...typography.title,
     color: colors.textPrimary,
   },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
+  sectionLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginTop: spacing.lg,
     marginBottom: spacing.xs,
   },
-  hint: {
-    color: colors.textSecondary,
+  sectionLabelEmoji: {
     fontSize: 12,
+    lineHeight: 14,
+  },
+  sectionTitle: {
+    ...typography.groupLabel,
+    color: colors.textSecondary,
+  },
+  hint: {
+    ...typography.hint,
+    color: colors.textSecondary,
     marginBottom: spacing.sm,
   },
   input: {

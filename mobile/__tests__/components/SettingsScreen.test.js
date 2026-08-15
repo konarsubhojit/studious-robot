@@ -181,4 +181,23 @@ describe('SettingsScreen', () => {
     );
     expect(shownText.length).toBeGreaterThanOrEqual(1);
   });
+
+  test('renders section labels with the expected text for each visible section', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          onExportLogs={jest.fn()}
+          developerModeEnabled
+          onToggleDeveloperMode={jest.fn()}
+        />,
+      );
+    });
+
+    ['Username', 'Signaling server', 'Recovery code', 'Developer', 'Account'].forEach((label) => {
+      const match = tree.root.findAll((n) => n.type === 'Text' && n.props.children === label);
+      expect(match.length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });
