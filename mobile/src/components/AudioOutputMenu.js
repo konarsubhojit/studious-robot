@@ -57,7 +57,7 @@ export default function AudioOutputMenu({
         onPress={() => setIsOpen(true)}
         disabled={disabled}
         variant="default"
-        size={52}
+        size={56}
         accessibilityLabel={`Audio output: ${currentLabel}. Tap to change`}
         testID="audio-output-trigger"
       />

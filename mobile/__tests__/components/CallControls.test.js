@@ -89,3 +89,20 @@ describe('CallControls screen sharing', () => {
     expect(findByTestId(tree, 'control-video').props.disabled).toBe(true);
   });
 });
+
+describe('CallControls primary action labels', () => {
+  test('shows visible text labels for mute, video, and leave, reflecting current state', () => {
+    const tree = render(createProps({ isMuted: false, isVideoEnabled: true }));
+
+    expect(tree.root.findAll((n) => n.props?.children === 'Mute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n) => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n) => n.props?.children === 'Leave').length).toBeGreaterThan(0);
+  });
+
+  test('flips mute/video labels when muted and video is off', () => {
+    const tree = render(createProps({ isMuted: true, isVideoEnabled: false }));
+
+    expect(tree.root.findAll((n) => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n) => n.props?.children === 'Start video').length).toBeGreaterThan(0);
+  });
+});

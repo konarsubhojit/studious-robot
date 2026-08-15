@@ -154,6 +154,11 @@ export default function CallScreen({
             ) : null}
           </View>
 
+          {/* No extra bottom safe-area padding is added here: the app-level
+              root container (App.js) already pads its bottom edge by the
+              device's safe-area/gesture-navigation inset whenever a
+              non-compact CallScreen is on screen, so these controls never
+              sit under the system nav bar. */}
           <View style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}

@@ -33,19 +33,21 @@ export default function CallControls({
       <View style={styles.mediaRow}>
         <IconButton
           icon={isMuted ? 'micOff' : 'micOn'}
+          label={isMuted ? 'Unmute' : 'Mute'}
           onPress={onMuteToggle}
           variant={isMuted ? 'active' : 'default'}
           disabled={!hasLocalStream}
-          size={52}
+          size={56}
           accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
           testID="control-mute"
         />
         <IconButton
           icon={isVideoEnabled ? 'videoOn' : 'videoOff'}
+          label={isVideoEnabled ? 'Stop video' : 'Start video'}
           onPress={onVideoToggle}
           variant={isVideoEnabled ? 'default' : 'active'}
           disabled={!hasLocalStream || isScreenSharing}
-          size={52}
+          size={56}
           accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
           testID="control-video"
         />
@@ -60,7 +62,7 @@ export default function CallControls({
           onPress={onCameraSwitch}
           variant="default"
           disabled={!hasLocalStream || isScreenSharing}
-          size={52}
+          size={56}
           accessibilityLabel="Switch between front and back camera"
           testID="control-swap-camera"
         />
@@ -73,7 +75,7 @@ export default function CallControls({
             onPress={onScreenShareToggle}
             variant={isScreenSharing ? 'active' : 'default'}
             disabled={!isScreenShareSupported}
-            size={52}
+            size={56}
             accessibilityLabel={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
             testID="control-screen-share"
           />
@@ -83,7 +85,7 @@ export default function CallControls({
               onPress={onScreenAudioToggle}
               variant={isScreenAudioEnabled ? 'active' : 'default'}
               disabled={!isScreenShareSupported}
-              size={52}
+              size={56}
               accessibilityLabel={
                 isScreenAudioEnabled
                   ? 'Do not include screen audio when sharing'
@@ -103,9 +105,10 @@ export default function CallControls({
 
       <IconButton
         icon="callEnd"
+        label="Leave"
         onPress={onLeave}
         variant="danger"
-        size={56}
+        size={64}
         accessibilityLabel="Leave the call"
         testID="control-leave"
       />

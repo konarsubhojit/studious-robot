@@ -43,13 +43,18 @@ starting checklist for the next session.
       "too small" complaint that prompted the tab-bar fix.
 
 ### In-call screen (`CallScreen`)
-- [ ] Verify `bottomOverlay` call controls respect the bottom safe-area
-      inset on devices with gesture navigation (the app-level inset fix
-      covers this via the shared container padding, but this needs
-      real-device confirmation since it could not be verified in this
-      sandbox).
-- [ ] Consider larger, more discoverable control icons/labels during a
-      call, consistent with the "too small" feedback.
+- [x] Verify `bottomOverlay` call controls respect the bottom safe-area
+      inset on devices with gesture navigation — confirmed via code
+      inspection: the app-level root container (`App.js`) already pads its
+      bottom edge by `insets.bottom` whenever a non-compact `CallScreen` is
+      shown (documented with a comment in `CallScreen.js`). **Still needs
+      real-device confirmation**, which could not be performed in this
+      sandbox.
+- [x] Consider larger, more discoverable control icons/labels during a
+      call, consistent with the "too small" feedback. Mute/video/leave now
+      show visible text labels (matching Accept/Decline/Cancel elsewhere)
+      and all in-call control icons were enlarged (52dp → 56dp, leave
+      64dp).
 
 ### Settings screen
 - [x] General visual pass for consistency with the refreshed tab bar
@@ -59,7 +64,9 @@ starting checklist for the next session.
 - [ ] Real-device QA pass (cold start, locked screen, gesture nav vs.
       3-button nav, various keyboard types/IMEs) — could not be performed
       in this sandboxed environment for either the CallKeep or this UI
-      work; required before shipping.
+      work; required before shipping. **Still open** after this revamp
+      pass (Phases 1–4 above are code-complete and test-covered, but the
+      in-call safe-area fix and general layout still need a real device).
 - [ ] Confirm no double-padding/layout regressions on tablets or
       split-screen (the safe-area insets change touches the whole app
-      shell).
+      shell). **Still open** for the same reason.
