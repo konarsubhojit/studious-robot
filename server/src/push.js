@@ -844,6 +844,7 @@ function isDeadTokenResult(result) {
   if (!DEAD_TOKEN_STATUS_CODES.has(result.statusCode)) return false;
   return typeof result.reason === 'string' && DEAD_TOKEN_REASON_PATTERN.test(result.reason);
 }
+
 /**
  * Call `fn` up to MAX_ATTEMPTS times, backing off exponentially on transient
  * failures.
