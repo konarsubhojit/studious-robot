@@ -185,7 +185,7 @@ test('android hub payload is FCM v1 native format, data-only, and carries the ca
   const payload = push._buildNotificationHubAndroidPayload(CALL);
   assert.equal(payload.message.notification, undefined, 'no top-level notification block');
   assert.equal(payload.message.android.notification, undefined, 'no android notification block');
-  assert.equal(payload.message.android.priority, 'high');
+  assert.equal(payload.message.android.priority, 'HIGH');
   assert.deepEqual(payload.message.android.data, {
     callId: 'call-abc',
     callerId: 'alice',
@@ -220,7 +220,7 @@ test('delivers through the notification hub when configured', async () => {
       const body = JSON.parse(hubReq.body);
       assert.equal(body.message.notification, undefined);
       assert.equal(body.message.android.data.callId, 'call-abc');
-      assert.equal(body.message.android.priority, 'high');
+      assert.equal(body.message.android.priority, 'HIGH');
     } finally {
       mock.restore();
     }

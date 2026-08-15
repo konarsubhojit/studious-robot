@@ -426,6 +426,17 @@ function buildNotificationHubSasToken(config, uri) {
 // ─── Payload builders ─────────────────────────────────────────────────────────
 
 /**
+ * FCM HTTP v1 `AndroidConfig.priority` enum value for time-critical messages.
+ *
+ * The v1 API defines the field as the proto enum `AndroidMessagePriority`
+ * (`NORMAL` | `HIGH`), so the canonical spelling is upper-case; the lower-case
+ * spelling is a legacy-HTTP artefact and is not part of the v1 contract. Shared
+ * by the direct-FCM and Notification Hubs (`FcmV1`) bodies so the two cannot
+ * drift apart.
+ */
+const FCM_PRIORITY_HIGH = 'HIGH';
+
+/**
  * Transport-neutral description of a push notification.
  *
  * @typedef {object} PushEnvelope
@@ -535,7 +546,7 @@ function buildDataBlock(envelope) {
  * and skip the app's `setBackgroundMessageHandler` whenever the app is
  * backgrounded or killed — so the CallKeep full-screen incoming-call UI would
  * never show and the phone would not ring.  Sending data-only with
- * `android.priority: 'high'` wakes the background handler, which then rings the
+ * `android.priority: 'HIGH'` wakes the background handler, which then rings the
  * call via CallKeep.  The human-readable title/body are carried inside `data`
  * (v1 requires all `data` values to be strings) so the client can still render
  * a heads-up notification if it chooses.
@@ -560,7 +571,7 @@ function buildFcmEnvelopePayload(pushToken, envelope) {
     message: {
       token: pushToken,
       data: buildDataBlock(envelope),
-      android: { priority: 'high' },
+      android: { priority: FCM_PRIORITY_HIGH },
       apns: { headers: { 'apns-priority': '10' } },
     },
   });
@@ -596,7 +607,7 @@ function buildNotificationHubAndroidEnvelopePayload(envelope) {
     message: {
       android: {
         data: buildDataBlock(envelope),
-        priority: 'high',
+        priority: FCM_PRIORITY_HIGH,
       },
     },
   };

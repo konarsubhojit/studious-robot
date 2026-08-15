@@ -82,6 +82,30 @@ describe('callKeep with the native module present', () => {
     expect(mockCallKeep.setAvailable).toHaveBeenCalledWith(true);
   });
 
+  test('setupCallKeep does not request a self-managed phone account', async () => {
+    // A self-managed account makes Telecom skip its own ringing UI and requires
+    // the app to render one from the `showIncomingCallUi` event, which it does
+    // not do — the push would then be delivered without the handset ringing.
+    await mod.setupCallKeep();
+    const [options] = mockCallKeep.setup.mock.calls[0];
+    expect(options.android.selfManaged).toBe(false);
+  });
+
+  test('setupCallKeep survives the Activity-less background push context', async () => {
+    // A push that cold-starts the app has no foreground Activity, so CallKeep's
+    // phone-account permission prompt rejects after the native setup succeeded.
+    mockCallKeep.setup.mockRejectedValueOnce(
+      Object.assign(new Error("Activity doesn't exist"), { code: 'E_ACTIVITY_DOES_NOT_EXIST' }),
+    );
+    await expect(mod.setupCallKeep()).resolves.toBe(true);
+    expect(mockCallKeep.setAvailable).toHaveBeenCalledWith(true);
+  });
+
+  test('setupCallKeep still fails on a genuine setup error', async () => {
+    mockCallKeep.setup.mockRejectedValueOnce(new Error('boom'));
+    await expect(mod.setupCallKeep()).resolves.toBe(false);
+  });
+
   test('displayIncomingCall shows the system UI with caller details', async () => {
     await expect(
       mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' }),

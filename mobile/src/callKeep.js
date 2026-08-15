@@ -34,7 +34,14 @@ const CALLKEEP_SETUP_OPTIONS = {
       channelName: 'Incoming calls',
       notificationTitle: 'WeTalk is running',
     },
-    selfManaged: true,
+    // NOT self-managed: Android Telecom owns the ringing UI. A self-managed
+    // phone account makes Telecom create the connection *without* showing any
+    // UI — the app is then required to render (and ring) its own full-screen
+    // incoming-call notification in response to CallKeep's `showIncomingCallUi`
+    // event. This app has no such handler, so a self-managed account meant a
+    // push could be delivered and `displayIncomingCall` succeed while the
+    // handset stayed silent.
+    selfManaged: false,
     additionalPermissions: [],
   },
 };
@@ -96,6 +103,20 @@ export function clearDisplayedCall(callId) {
 }
 
 /**
+ * Whether a CallKeep setup rejection is the benign "no foreground Activity"
+ * failure raised when setup runs from a background/headless context (the
+ * killed-app push path) rather than a real configuration error.
+ *
+ * @param {{ code?: string, message?: string } | null | undefined} error
+ * @returns {boolean}
+ */
+function isMissingActivityError(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return code === 'E_ACTIVITY_DOES_NOT_EXIST' || /activity doesn't exist/i.test(message);
+}
+
+/**
  * Configure CallKeep once. Safe to call repeatedly; subsequent calls are no-ops
  * once setup has succeeded. Returns `false` (never throws) when the native
  * module is unavailable or setup fails.
@@ -108,7 +129,17 @@ export async function setupCallKeep() {
   if (!callKeep || typeof callKeep.setup !== 'function') return false;
 
   try {
-    await callKeep.setup(CALLKEEP_SETUP_OPTIONS);
+    try {
+      await callKeep.setup(CALLKEEP_SETUP_OPTIONS);
+    } catch (error) {
+      if (!isMissingActivityError(error)) throw error;
+      // A push that cold-starts the app runs in a headless JS context with no
+      // foreground Activity, so CallKeep's post-setup phone-account permission
+      // prompt rejects. The native half of setup (phone-account registration,
+      // event wiring) already ran synchronously before that prompt, so the
+      // system call UI is still usable and the call must still ring.
+      logWarn('[CallKeep] setup completed without an Activity; skipping permission prompt');
+    }
     if (Platform.OS === 'android' && typeof callKeep.setAvailable === 'function') {
       callKeep.setAvailable(true);
     }
