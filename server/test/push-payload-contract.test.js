@@ -37,6 +37,28 @@ function hubDataBlock() {
   return push._buildNotificationHubAndroidPayload(CALL).message.android.data;
 }
 
+/**
+ * Return the source of the function declared at `start`, from its opening brace
+ * to the matching closing brace, so nested blocks inside the body are included.
+ *
+ * @param {string} source
+ * @param {number} start index of the `function` keyword
+ * @returns {string}
+ */
+function extractFunctionBody(source, start) {
+  const open = source.indexOf('{', start);
+  assert.notEqual(open, -1, 'function body not found');
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new assert.AssertionError({ message: 'unbalanced braces in client extractor' });
+}
+
 test('both transports send the same data block for an incoming call', () => {
   const expected = {
     callId: 'call-abc',
@@ -86,7 +108,7 @@ test('the mobile client only reads fields the server sends', (t) => {
   const source = fs.readFileSync(CLIENT_SOURCE, 'utf8');
   const start = source.indexOf('function _extractIncomingCallFromMessage');
   assert.notEqual(start, -1, 'client push extractor not found — was it renamed?');
-  const body = source.slice(start, source.indexOf('\n}', start));
+  const body = extractFunctionBody(source, start);
 
   const readKeys = [...body.matchAll(/\bdata\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
   assert.ok(readKeys.length > 0, 'client reads no data fields — extractor shape changed');
