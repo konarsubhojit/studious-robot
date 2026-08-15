@@ -381,6 +381,9 @@ export default function App() {
           peerPresence={peerPresence}
           onStartAudioCall={() => startAudioCallWith(chatPeerId)}
           onStartVideoCall={() => startVideoCallWith(chatPeerId)}
+          isStartingCall={callFlow.isPlacingCall}
+          isPeerTyping={Boolean(callFlow.typingByPeer[chatPeerId])}
+          onTypingChange={(isTyping) => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
         />
       ) : (
         <ChatListScreen

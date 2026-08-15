@@ -52,12 +52,44 @@ function formatConversationTimestamp(isoString) {
   return isToday ? date.toLocaleTimeString() : date.toLocaleDateString();
 }
 
+/** Up to two uppercase initials derived from a userId, for the avatar circle. */
+function getInitials(id) {
+  const trimmed = (id ?? '').trim();
+  if (!trimmed) return '?';
+  return trimmed.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Initials avatar with an optional online-status dot, used on both
+ * conversation rows and search-result contact rows.
+ *
+ * @param {{ id: string, online?: boolean, testID?: string }} props
+ */
+function Avatar({ id, online, testID }) {
+  return (
+    <View style={styles.avatarWrap} testID={testID}>
+      <View style={styles.avatarCircle}>
+        <Text style={styles.avatarText}>{getInitials(id)}</Text>
+      </View>
+      {typeof online === 'boolean' ? (
+        <View
+          style={[
+            styles.avatarStatusDot,
+            online ? styles.presenceDotOnline : styles.presenceDotOffline,
+          ]}
+          testID={testID ? `${testID}-status` : undefined}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 /**
  * Teams/Slack-style chat list: a searchable contact directory that swaps to
  * the conversation list once the search query is cleared.
  *
  * @param {object} props
- * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object, unreadCount?: number }>} props.conversations
+ * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object, unreadCount?: number, online?: boolean }>} props.conversations
  * @param {(peerId: string) => void} props.onOpenConversation
  * @param {(query: string) => Promise<Array>} [props.onSearchUsers]
  * @param {() => void} [props.onRefresh]
@@ -166,12 +198,7 @@ export default function ChatListScreen({
                     style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                     testID="chat-list-contact-row"
                   >
-                    <View
-                      style={[
-                        styles.presenceDot,
-                        contact.online ? styles.presenceDotOnline : styles.presenceDotOffline,
-                      ]}
-                    />
+                    <Avatar id={contact.userId} online={contact.online} testID="chat-list-contact-avatar" />
                     <View style={styles.rowText}>
                       <Text style={styles.rowTitle}>{contact.userId}</Text>
                       <Text style={styles.rowSubtitle}>
@@ -197,6 +224,7 @@ export default function ChatListScreen({
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
               testID="chat-list-row"
             >
+              <Avatar id={conversation.peerId} online={conversation.online} testID="chat-list-avatar" />
               <View style={styles.rowText}>
                 <Text style={styles.rowTitle}>{conversation.peerId}</Text>
                 <Text style={styles.rowSubtitle} numberOfLines={1}>
@@ -339,6 +367,32 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '700',
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatarCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceControl,
+  },
+  avatarText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  avatarStatusDot: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.surface,
   },
   presenceDot: {
     width: 8,

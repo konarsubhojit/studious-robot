@@ -119,4 +119,25 @@ describe('ChatListScreen', () => {
     const withoutSettings = render({ conversations: [], onOpenConversation: jest.fn() });
     expect(findByTestId(withoutSettings, 'chat-list-open-settings')).toBeNull();
   });
+
+  test('renders an initials avatar with an online-status dot on conversation rows', () => {
+    const tree = render({
+      conversations: [makeConversation({ peerId: 'user-bob', online: true })],
+      onOpenConversation: jest.fn(),
+    });
+    const avatar = findByTestId(tree, 'chat-list-avatar');
+    expect(avatar).not.toBeNull();
+    const statusDot = findByTestId(tree, 'chat-list-avatar-status');
+    expect(statusDot.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ backgroundColor: expect.any(String) })]),
+    );
+  });
+
+  test('omits the online-status dot when a conversation has no known presence', () => {
+    const tree = render({
+      conversations: [makeConversation({ peerId: 'user-bob', online: undefined })],
+      onOpenConversation: jest.fn(),
+    });
+    expect(findByTestId(tree, 'chat-list-avatar-status')).toBeNull();
+  });
 });

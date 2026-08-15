@@ -2103,6 +2103,218 @@ describe("useCallFlow chat", () => {
     ).toBeDefined();
   });
 
+  // ── typing indicators ─────────────────────────────────────────────────────
+
+  test("sendTypingIndicator emits message.typing and throttles repeated true calls per peer", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+
+    act(() => {
+      resultRef.current.sendTypingIndicator("bob", true);
+    });
+    act(() => {
+      resultRef.current.sendTypingIndicator("bob", true);
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === "message.typing");
+    expect(typingEmits).toHaveLength(1);
+    expect(typingEmits[0][1]).toEqual({
+      version: expect.any(Number),
+      recipientId: "bob",
+      isTyping: true,
+    });
+  });
+
+  test("sendTypingIndicator always emits isTyping:false immediately, bypassing the throttle", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+
+    act(() => {
+      resultRef.current.sendTypingIndicator("bob", true);
+    });
+    act(() => {
+      resultRef.current.sendTypingIndicator("bob", false);
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]) => event === "message.typing");
+    expect(typingEmits.map((call) => call[1].isTyping)).toEqual([true, false]);
+  });
+
+  test("sendTypingIndicator is a no-op when there is no connected socket", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.connected = false;
+
+    act(() => {
+      resultRef.current.sendTypingIndicator("bob", true);
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(socketMock.emit).not.toHaveBeenCalledWith("message.typing", expect.anything());
+  });
+
+  test("message.typing socket event updates typingByPeer and auto-clears after the safety timeout", async () => {
+    jest.useFakeTimers();
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler("message.typing");
+    expect(handler).toBeDefined();
+
+    act(() => {
+      handler({ senderId: "bob", isTyping: true });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.typingByPeer.bob).toBe(true);
+
+    act(() => {
+      jest.advanceTimersByTime(6000);
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.typingByPeer.bob).toBe(false);
+
+    jest.useRealTimers();
+  });
+
+  test("message.typing socket event with isTyping:false clears the indicator immediately", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const handler = getSocketHandler("message.typing");
+    act(() => {
+      handler({ senderId: "bob", isTyping: true });
+    });
+    act(() => {
+      handler({ senderId: "bob", isTyping: false });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.typingByPeer.bob).toBe(false);
+  });
+
+  // ── message.read socket event ─────────────────────────────────────────────
+
+  test("message.read socket event marks own sent messages to that peer as read", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const deliveredHandler = getSocketHandler("message.delivered");
+    act(() => {
+      deliveredHandler({
+        message: {
+          messageId: "sent-1",
+          senderId: "alice",
+          recipientId: "bob",
+          body: "hi bob",
+          createdAt: "2024-05-01T00:00:00.000Z",
+          readAt: null,
+        },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.messagesByPeer.bob[0].readAt).toBeNull();
+
+    const readHandler = getSocketHandler("message.read");
+    act(() => {
+      readHandler({ readerId: "bob", readAt: "2024-05-01T00:05:00.000Z" });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob[0].readAt).toBe("2024-05-01T00:05:00.000Z");
+  });
+
+  test("message.read socket event is a no-op when there is no readerId", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const readHandler = getSocketHandler("message.read");
+    expect(() => {
+      act(() => {
+        readHandler({ readAt: "2024-05-01T00:05:00.000Z" });
+      });
+    }).not.toThrow();
+  });
+
+  // ── isPlacingCall ──────────────────────────────────────────────────────────
+
+  test("isPlacingCall is true while placeCall awaits local media and resets afterward", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId("bob");
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { mediaDevices } = require("react-native-webrtc");
+    let resolveMedia;
+    mediaDevices.getUserMedia.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMedia = resolve;
+        }),
+    );
+
+    let placeCallPromise;
+    act(() => {
+      placeCallPromise = resultRef.current.placeCall();
+    });
+    // Flush the microtasks up to (and including) the `ensureCallPermissions()`
+    // await inside `startLocalPreview`, so `getUserMedia` has actually been
+    // called and `resolveMedia` is assigned, while still leaving `placeCall`
+    // suspended so `isPlacingCall` can be observed as true.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    tree.update(<TestHook resultRef={resultRef} />);
+    expect(resultRef.current.isPlacingCall).toBe(true);
+    expect(resolveMedia).toBeDefined();
+
+    const { io } = require("socket.io-client");
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === "call.initiate") {
+        cb?.({
+          ok: true,
+          call: {
+            callId: "call-outgoing",
+            callerId: "alice",
+            calleeId: "bob",
+            status: "ringing",
+            ringTimeoutAt: new Date(Date.now() + 30_000).toISOString(),
+          },
+        });
+      }
+    });
+
+    await act(async () => {
+      resolveMedia({ getTracks: () => [], getVideoTracks: () => [], getAudioTracks: () => [] });
+      await placeCallPromise;
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.isPlacingCall).toBe(false);
+  });
+
   // ── call.media-state socket event ─────────────────────────────────────────
 
   test("call.media-state sets isRemoteScreenSharing only for the active call", async () => {
