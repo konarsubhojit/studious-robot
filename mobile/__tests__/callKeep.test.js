@@ -52,7 +52,10 @@ describe('callKeep with the native module absent', () => {
     expect(mod.endCall('c1')).toBe(false);
     expect(mod.endAllCalls()).toBe(false);
     // Unsubscribe is always callable.
-    expect(typeof mod.registerCallActionListeners({})).toBe('function');
+    expect(typeof mod.registerCallActionListeners()).toBe('function');
+    // Attaching handlers is safe even with no native module to route events
+    // from; it just never gets to fire them.
+    expect(typeof mod.setCallActionHandlers({})).toBe('function');
   });
 });
 
@@ -147,23 +150,107 @@ describe('callKeep with the native module present', () => {
     expect(mockCallKeep.endAllCalls).toHaveBeenCalled();
   });
 
-  test('registerCallActionListeners bridges answer/end events', () => {
-    const onAnswer = jest.fn();
-    const onEnd = jest.fn();
-    const unsubscribe = mod.registerCallActionListeners({ onAnswer, onEnd });
+  test('registerCallActionListeners subscribes once, at module scope', () => {
+    const unregister = mod.registerCallActionListeners();
 
     expect(mockCallKeep.addEventListener).toHaveBeenCalledWith('answerCall', expect.any(Function));
     expect(mockCallKeep.addEventListener).toHaveBeenCalledWith('endCall', expect.any(Function));
+    expect(typeof unregister).toBe('function');
+  });
+
+  test('answerCall received with no call flow attached is queued, not dropped', () => {
+    mod.registerCallActionListeners();
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+
+    // Simulates the OS Answer button being tapped during a push cold start,
+    // before `useCallFlow` has mounted and called `setCallActionHandlers`.
+    answerCb({ callUUID: 'call-1' });
+
+    const onAnswer = jest.fn();
+    mod.setCallActionHandlers({ onAnswer, onEnd: jest.fn() });
+
+    // The queued intent is replayed the instant a handler attaches.
+    expect(onAnswer).toHaveBeenCalledWith('call-1');
+  });
+
+  test('setCallActionHandlers routes subsequent events directly once attached', () => {
+    mod.registerCallActionListeners();
+    const onAnswer = jest.fn();
+    const onEnd = jest.fn();
+    mod.setCallActionHandlers({ onAnswer, onEnd });
 
     const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
     const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
-    answerCb({ callUUID: 'call-1' });
-    endCb({ callUUID: 'call-1' });
-    expect(onAnswer).toHaveBeenCalledWith('call-1');
-    expect(onEnd).toHaveBeenCalledWith('call-1');
+    answerCb({ callUUID: 'call-2' });
+    endCb({ callUUID: 'call-2' });
 
-    unsubscribe();
+    expect(onAnswer).toHaveBeenCalledWith('call-2');
+    expect(onEnd).toHaveBeenCalledWith('call-2');
+  });
+
+  test('detaching call action handlers leaves the native listener registered', () => {
+    const unregisterModuleScope = mod.registerCallActionListeners();
+    const detach = mod.setCallActionHandlers({ onAnswer: jest.fn(), onEnd: jest.fn() });
+
+    detach();
+
+    // Only the handler hand-off was detached; react-native-callkeep tracks a
+    // single listener per event name and unsubscribes by name only, so a
+    // consumer (e.g. useCallFlow) unmounting must never remove the
+    // module-scope subscription wired by `registerCallActionListeners`.
+    expect(mockCallKeep.removeEventListener).not.toHaveBeenCalled();
+
+    // A later event with nothing attached is queued again, exactly like the
+    // original push-cold-start race.
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+    const onAnswer = jest.fn();
+    answerCb({ callUUID: 'call-3' });
+    mod.setCallActionHandlers({ onAnswer, onEnd: jest.fn() });
+    expect(onAnswer).toHaveBeenCalledWith('call-3');
+
+    unregisterModuleScope();
     expect(mockCallKeep.removeEventListener).toHaveBeenCalledWith('answerCall');
     expect(mockCallKeep.removeEventListener).toHaveBeenCalledWith('endCall');
+  });
+
+  test('a stale detach does not clobber a handler attached after it', () => {
+    mod.registerCallActionListeners();
+    const firstOnAnswer = jest.fn();
+    const detachFirst = mod.setCallActionHandlers({ onAnswer: firstOnAnswer, onEnd: jest.fn() });
+
+    const secondOnAnswer = jest.fn();
+    mod.setCallActionHandlers({ onAnswer: secondOnAnswer, onEnd: jest.fn() });
+
+    // e.g. useCallFlow's effect cleanup running after a fast remount already
+    // replaced by the new mount's own setCallActionHandlers call.
+    detachFirst();
+
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'answerCall')[1];
+    answerCb({ callUUID: 'call-4' });
+
+    expect(secondOnAnswer).toHaveBeenCalledWith('call-4');
+    expect(firstOnAnswer).not.toHaveBeenCalled();
+  });
+
+  test('endCall with no call flow attached forgets the call locally so it can ring again', async () => {
+    mod.registerCallActionListeners();
+    await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
+
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
+    endCb({ callUUID: 'end-headless' });
+
+    await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
+    expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledTimes(2);
+  });
+
+  test('endCall for an attached call flow is routed to onEnd', () => {
+    mod.registerCallActionListeners();
+    const onEnd = jest.fn();
+    mod.setCallActionHandlers({ onAnswer: jest.fn(), onEnd });
+
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((c) => c[0] === 'endCall')[1];
+    endCb({ callUUID: 'call-5' });
+
+    expect(onEnd).toHaveBeenCalledWith('call-5');
   });
 });

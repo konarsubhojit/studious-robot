@@ -37,7 +37,7 @@ import useScreenShare from "./useScreenShare";
 import {
   displayIncomingCall,
   endCall as endCallKeepCall,
-  registerCallActionListeners as registerCallKeepListeners,
+  setCallActionHandlers as setCallKeepActionHandlers,
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
 } from "../callKeep";
@@ -2344,12 +2344,35 @@ export default function useCallFlow() {
     declineIncomingCallRef.current = declineIncomingCall;
   }, [acceptIncomingCall, declineIncomingCall]);
 
+  // The `callUUID` from an `answerCall` event that arrived for a call this
+  // hook doesn't know about yet — either a headless answer replayed by
+  // `setCallActionHandlers` the instant this effect attached (the push
+  // cold-start race: CallKeep's native listener lives at module scope in
+  // index.js and can queue an answer before this hook ever mounts), or the
+  // matching `call.incoming` simply hasn't landed yet. The effect below
+  // replays it as soon as `incomingCall` catches up, instead of requiring the
+  // user to tap Accept a second time inside the app.
+  const pendingAnsweredCallIdRef = useRef(null);
+
   useEffect(() => {
     // Configure CallKeep up front so the system call UI is ready before the
     // first incoming push; degrades to a no-op when the native module is absent.
     setupCallKeep().catch(() => {});
-    const unregister = registerCallKeepListeners({
-      onAnswer: () => acceptIncomingCallRef.current?.(),
+    // Take over routing of the answer/end events already subscribed to at
+    // module scope (`registerCallActionListeners`, wired once in index.js)
+    // rather than re-registering with the native module — react-native-callkeep
+    // tracks a single listener per event name and unsubscribes by name only,
+    // so re-registering here would silently replace the module-scope handler
+    // and this effect's cleanup would remove it entirely.
+    const detachCallActionHandlers = setCallKeepActionHandlers({
+      onAnswer: (callUUID) => {
+        if (callUUID && incomingCallRef.current?.callId !== callUUID) {
+          logInfo("[CallFlow] Recording answerCall for replay", { callUUID });
+          pendingAnsweredCallIdRef.current = callUUID;
+          return;
+        }
+        acceptIncomingCallRef.current?.();
+      },
       onEnd: () => {
         if (incomingCallRef.current) {
           declineIncomingCallRef.current?.();
@@ -2364,11 +2387,23 @@ export default function useCallFlow() {
     const unsubscribeForegroundPush = installForegroundMessageHandler();
     return () => {
       unsubscribeForegroundPush();
-      unregister();
+      detachCallActionHandlers();
     };
     // Run once on mount; handlers are invoked via refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Replay a recorded `answerCall` once the matching call becomes known to
+  // this hook (via the `call.incoming` socket event or push rehydration).
+  useEffect(() => {
+    if (incomingCall && pendingAnsweredCallIdRef.current === incomingCall.callId) {
+      pendingAnsweredCallIdRef.current = null;
+      logInfo("[CallFlow] Replaying recorded answerCall", {
+        callId: incomingCall.callId,
+      });
+      acceptIncomingCall();
+    }
+  }, [incomingCall, acceptIncomingCall]);
 
   // ─── End active in-call ───────────────────────────────────────────────────
 
