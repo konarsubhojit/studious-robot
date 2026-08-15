@@ -2,7 +2,9 @@
 
 /**
  * Integration tests for the text-chat surface: the `message.*` socket events
- * and the `GET /messages` history endpoint.
+ * (send, delivered, typing), the `GET /messages` history endpoint, the
+ * `GET /conversations` chat-list summary, and the `POST /messages/read`
+ * read-receipt endpoint (including its realtime `message.read` broadcast).
  */
 
 const test = require('node:test');
@@ -374,4 +376,268 @@ test('GET /messages does not leak another pair conversation', async (t) => {
   const res = await getJson(url, '/messages?peerId=leak-bob', carolSession);
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.messages, []);
+});
+
+// ─── GET /conversations ───────────────────────────────────────────────────────
+
+test('GET /conversations requires a valid session', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await getJson(url, '/conversations', 'bad-session');
+  assert.equal(res.status, 401);
+});
+
+test('GET /conversations summarises each conversation, most recent first, with unread counts', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'conv-alice');
+  await createSession(url, 'conv-bob');
+  await createSession(url, 'conv-carol');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  // Alice ↔ Bob: two messages, most recent overall.
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'conv-bob', body: 'hi bob' });
+
+  // Alice ↔ Carol: one older message.
+  const carolAck = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'conv-carol',
+    body: 'hi carol',
+  });
+
+  const bobAck = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'conv-bob',
+    body: 'you there?',
+  });
+
+  const res = await getJson(url, '/conversations', aliceSession);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.conversations.length, 2);
+
+  const [first, second] = res.body.conversations;
+  assert.equal(first.peerId, 'conv-bob');
+  assert.equal(first.lastMessage.messageId, bobAck.message.messageId);
+  assert.equal(first.unreadCount, 0, 'alice sent both messages, so nothing is unread for her');
+  assert.equal(second.peerId, 'conv-carol');
+  assert.equal(second.lastMessage.messageId, carolAck.message.messageId);
+
+  // From Bob's perspective the two alice→bob messages are unread.
+  const bobSessionId = (await postJson(url, '/session', { userId: 'conv-bob', deviceId: 'device-conv-bob' })).body.sessionId;
+  const bobRes = await getJson(url, '/conversations', bobSessionId);
+  assert.equal(bobRes.status, 200);
+  assert.equal(bobRes.body.conversations.length, 1);
+  assert.equal(bobRes.body.conversations[0].peerId, 'conv-alice');
+  assert.equal(bobRes.body.conversations[0].unreadCount, 2);
+});
+
+test('GET /conversations reports each peer\'s live online status', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'convonline-alice');
+  const bobSession = await createSession(url, 'convonline-bob');
+  await createSession(url, 'convonline-carol');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => bob.disconnect());
+
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'convonline-bob', body: 'hi bob' });
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'convonline-carol', body: 'hi carol' });
+
+  const res = await getJson(url, '/conversations', aliceSession);
+  assert.equal(res.status, 200);
+  const byPeer = Object.fromEntries(res.body.conversations.map((c) => [c.peerId, c]));
+  assert.equal(byPeer['convonline-bob'].online, true, 'bob has a live socket');
+  assert.equal(byPeer['convonline-carol'].online, false, 'carol never connected a socket');
+});
+
+test('GET /conversations excludes conversations with a blocked user', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'convblk-alice');
+  const bobSession = await createSession(url, 'convblk-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'convblk-bob',
+    body: 'hi',
+  });
+
+  // Alice blocks Bob after the fact: the conversation must no longer appear.
+  const blockRes = await postJson(url, '/blocks', { blockeeId: 'convblk-bob' }, aliceSession);
+  assert.equal(blockRes.status, 200);
+
+  const res = await getJson(url, '/conversations', aliceSession);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.conversations, []);
+
+  // The reverse direction is also hidden from Bob's list.
+  const bobRes = await getJson(url, '/conversations', bobSession);
+  assert.equal(bobRes.status, 200);
+  assert.deepEqual(bobRes.body.conversations, []);
+});
+
+// ─── POST /messages/read ──────────────────────────────────────────────────────
+
+test('POST /messages/read requires a valid session', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await postJson(url, '/messages/read', { peerId: 'someone' }, 'bad-session');
+  assert.equal(res.status, 401);
+});
+
+test('POST /messages/read validates peerId', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'read-validate-alice');
+
+  const missing = await postJson(url, '/messages/read', {}, session);
+  assert.equal(missing.status, 400);
+
+  const self = await postJson(url, '/messages/read', { peerId: 'read-validate-alice' }, session);
+  assert.equal(self.status, 400);
+});
+
+test('POST /messages/read marks messages read; unread count drops to 0; idempotent', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'read-alice');
+  const bobSession = await createSession(url, 'read-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'one' });
+  await emitWithAck(alice, 'message.send', { version: VERSION, recipientId: 'read-bob', body: 'two' });
+
+  const before = await getJson(url, '/conversations', bobSession);
+  assert.equal(before.body.conversations[0].unreadCount, 2);
+
+  const readRes = await postJson(url, '/messages/read', { peerId: 'read-alice' }, bobSession);
+  assert.equal(readRes.status, 200);
+  assert.equal(readRes.body.updated, 2);
+  assert.equal(typeof readRes.body.conversationId, 'string');
+
+  const after = await getJson(url, '/conversations', bobSession);
+  assert.equal(after.body.conversations[0].unreadCount, 0);
+
+  const second = await postJson(url, '/messages/read', { peerId: 'read-alice' }, bobSession);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.updated, 0, 'idempotent: nothing left to mark read');
+});
+
+test('POST /messages/read notifies the original sender over their live socket with message.read', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'readnotify-alice');
+  const bobSession = await createSession(url, 'readnotify-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'readnotify-bob',
+    body: 'hi',
+  });
+
+  const readEvent = new Promise((resolve) => alice.once('message.read', resolve));
+
+  const readRes = await postJson(url, '/messages/read', { peerId: 'readnotify-alice' }, bobSession);
+  assert.equal(readRes.status, 200);
+  assert.equal(readRes.body.updated, 1);
+
+  const envelope = await readEvent;
+  assert.equal(envelope.version, VERSION);
+  assert.equal(envelope.conversationId, readRes.body.conversationId);
+  assert.equal(envelope.readerId, 'readnotify-bob');
+  assert.equal(typeof envelope.readAt, 'string');
+});
+
+test('POST /messages/read does not emit message.read when nothing was updated', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'readquiet-alice');
+  const bobSession = await createSession(url, 'readquiet-bob');
+  void aliceSession;
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  let received = false;
+  alice.on('message.read', () => { received = true; });
+
+  const readRes = await postJson(url, '/messages/read', { peerId: 'readquiet-alice' }, bobSession);
+  assert.equal(readRes.status, 200);
+  assert.equal(readRes.body.updated, 0);
+
+  // Give any (unwanted) emit a moment to arrive before asserting it did not.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(received, false);
+});
+
+// ─── message.typing ───────────────────────────────────────────────────────────
+
+test('message.typing relays an ephemeral typing indicator to the recipient', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'typing-alice');
+  const bobSession = await createSession(url, 'typing-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => { alice.disconnect(); bob.disconnect(); });
+
+  const typingEvent = new Promise((resolve) => bob.once('message.typing', resolve));
+
+  alice.emit('message.typing', {
+    version: VERSION,
+    recipientId: 'typing-bob',
+    isTyping: true,
+  });
+
+  const envelope = await typingEvent;
+  assert.equal(envelope.version, VERSION);
+  assert.equal(envelope.senderId, 'typing-alice');
+  assert.equal(envelope.isTyping, true);
+  assert.equal(typeof envelope.conversationId, 'string');
+});
+
+test('message.typing is ignored for an unauthenticated socket, an unsupported version, or a self-recipient', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'typingguard-alice');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const guest = await connectSocket(url, undefined);
+  t.after(() => guest.disconnect());
+
+  let received = false;
+  alice.on('message.typing', () => { received = true; });
+
+  guest.emit('message.typing', { version: VERSION, recipientId: 'typingguard-alice', isTyping: true });
+  alice.emit('message.typing', { version: 99, recipientId: 'typingguard-alice', isTyping: true });
+  alice.emit('message.typing', { version: VERSION, recipientId: 'typingguard-alice', isTyping: true });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(received, false);
 });

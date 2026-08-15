@@ -1,0 +1,346 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import ChatConversationScreen from '../../src/components/ChatConversationScreen';
+
+jest.mock('../../src/components/IconButton', () => (props) =>
+  require('react').createElement('IconButton', props),
+);
+
+function findByTestId(tree, testID) {
+  return tree.root.findAll((node) => node.props?.testID === testID)[0] ?? null;
+}
+
+function findAllByTestId(tree, testID) {
+  return tree.root.findAll(
+    (node) => node.props?.testID === testID && typeof node.type === 'string',
+  );
+}
+
+function makeMessage(overrides = {}) {
+  return {
+    messageId: 'msg-1',
+    conversationId: 'conv-1',
+    senderId: 'user-bob',
+    recipientId: 'user-alice',
+    body: 'Hello!',
+    createdAt: new Date().toISOString(),
+    deliveredTo: [],
+    readAt: null,
+    ...overrides,
+  };
+}
+
+function render(props) {
+  let tree;
+  act(() => {
+    tree = renderer.create(<ChatConversationScreen {...props} />);
+  });
+  return tree;
+}
+
+describe('ChatConversationScreen', () => {
+  // VirtualizedList (used internally by FlatList) schedules a setTimeout to
+  // recompute which cells to render; flush it under fake timers so it never
+  // fires an unwrapped setState after the test/render has finished.
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  test('renders the header with peerId and presence', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: true },
+    });
+
+    const header = tree.root.findAll((n) => n.props?.children === 'user-bob');
+    expect(header.length).toBeGreaterThan(0);
+  });
+
+  test('renders one message row per message, newest at the bottom', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'm2', body: 'second (newest)' }),
+        makeMessage({ messageId: 'm1', body: 'first (oldest)' }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    const messageItems = list.props.data.filter((item) => item.type === 'message');
+    expect(messageItems.map((item) => item.message.messageId)).toEqual(['m1', 'm2']);
+  });
+
+  test('back button calls onBack', () => {
+    const onBack = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack,
+      currentUserId: 'user-alice',
+    });
+    const back = findByTestId(tree, 'chat-back');
+    act(() => {
+      back.props.onPress();
+    });
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  test('audio/video call buttons only render when handlers are provided', () => {
+    const withoutHandlers = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(withoutHandlers, 'chat-call-audio')).toBeNull();
+    expect(findByTestId(withoutHandlers, 'chat-call-video')).toBeNull();
+
+    const onStartAudioCall = jest.fn();
+    const onStartVideoCall = jest.fn();
+    const withHandlers = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onStartAudioCall,
+      onStartVideoCall,
+    });
+    act(() => {
+      findByTestId(withHandlers, 'chat-call-audio').props.onPress();
+    });
+    expect(onStartAudioCall).toHaveBeenCalled();
+    act(() => {
+      findByTestId(withHandlers, 'chat-call-video').props.onPress();
+    });
+    expect(onStartVideoCall).toHaveBeenCalled();
+  });
+
+  test('sending a message calls onSendMessage with trimmed body and clears the input', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const input = findByTestId(tree, 'chat-message-input');
+    act(() => {
+      input.props.onChangeText('  hi there  ');
+    });
+    const sendButton = findByTestId(tree, 'chat-message-send');
+    act(() => {
+      sendButton.props.onPress();
+    });
+    expect(onSendMessage).toHaveBeenCalledWith('hi there');
+
+    const inputAfter = findByTestId(tree, 'chat-message-input');
+    expect(inputAfter.props.value).toBe('');
+  });
+
+  test('send button is disabled when the draft is empty/whitespace', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-send').props.disabled).toBe(true);
+
+    const input = findByTestId(tree, 'chat-message-input');
+    act(() => {
+      input.props.onChangeText('   ');
+    });
+    expect(findByTestId(tree, 'chat-message-send').props.disabled).toBe(true);
+  });
+
+  test('shows a pending indicator for optimistic messages and a failed/retry indicator for failed ones', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'pending-1', senderId: 'user-alice', pending: true }),
+        makeMessage({ messageId: 'failed-1', senderId: 'user-alice', body: 'oops', failed: true }),
+      ],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const rows = findAllByTestId(tree, 'chat-message-row');
+    expect(rows).toHaveLength(2);
+
+    const retryLabel = tree.root.findAll(
+      (n) => n.props?.accessibilityLabel === 'Retry sending message',
+    )[0];
+    expect(retryLabel).toBeDefined();
+    act(() => {
+      retryLabel.props.onPress();
+    });
+    expect(onSendMessage).toHaveBeenCalledWith('oops');
+  });
+
+  test('scrolling to the top calls onLoadOlder', () => {
+    const onLoadOlder = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage()],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onLoadOlder,
+    });
+    const list = findByTestId(tree, 'chat-message-list');
+    act(() => {
+      list.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
+    });
+    expect(onLoadOlder).toHaveBeenCalled();
+  });
+
+  test('inserts a single date separator for messages sent on the same day', () => {
+    const today = new Date();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'm2', createdAt: today.toISOString() }),
+        makeMessage({ messageId: 'm1', createdAt: today.toISOString() }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    const dateItems = list.props.data.filter((item) => item.type === 'date');
+    expect(dateItems).toHaveLength(1);
+    expect(dateItems[0].label).toBe('Today');
+  });
+
+  test('only the last message of a consecutive same-sender group shows a timestamp/tick', () => {
+    const now = new Date();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'm2', senderId: 'user-alice', createdAt: now.toISOString() }),
+        makeMessage({
+          messageId: 'm1',
+          senderId: 'user-alice',
+          createdAt: new Date(now.getTime() - 1000).toISOString(),
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    const messageItems = list.props.data.filter((item) => item.type === 'message');
+    expect(messageItems.map((item) => item.isGroupEnd)).toEqual([false, true]);
+
+    const ticks = findAllByTestId(tree, 'chat-message-tick');
+    expect(ticks).toHaveLength(1);
+  });
+
+  test('renders a read tick (✓✓) for own read messages and a sent tick (✓) otherwise', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'read-1', senderId: 'user-alice', readAt: new Date().toISOString() }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const tick = findByTestId(tree, 'chat-message-tick');
+    expect(tick.props.children).toBe('✓✓');
+    expect(tick.props.accessibilityLabel).toBe('Read');
+  });
+
+  test('shows a typing indicator in the header when isPeerTyping is true', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      peerPresence: { online: true },
+      isPeerTyping: true,
+    });
+    expect(findByTestId(tree, 'chat-typing-indicator')).not.toBeNull();
+  });
+
+  test('reports typing state to onTypingChange while composing and after send', () => {
+    const onTypingChange = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onTypingChange,
+    });
+
+    const input = findByTestId(tree, 'chat-message-input');
+    act(() => {
+      input.props.onChangeText('hi');
+    });
+    expect(onTypingChange).toHaveBeenCalledWith(true);
+
+    onTypingChange.mockClear();
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+    expect(onTypingChange).toHaveBeenCalledWith(false);
+  });
+
+  test('call buttons show a loading state and are disabled while a call is being placed', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onStartAudioCall: jest.fn(),
+      onStartVideoCall: jest.fn(),
+      isStartingCall: true,
+    });
+    expect(findByTestId(tree, 'chat-call-audio').props.loading).toBe(true);
+    expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(true);
+    expect(findByTestId(tree, 'chat-call-video').props.loading).toBe(true);
+    expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
+  });
+
+  test('call buttons are disabled when the peer is known to be offline', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onStartAudioCall: jest.fn(),
+      onStartVideoCall: jest.fn(),
+      peerPresence: { online: false },
+    });
+    expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(true);
+    expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
+  });
+});

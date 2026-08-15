@@ -79,6 +79,17 @@ const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
 const OFFLINE_ERROR_THRESHOLD = 3;
 
 /**
+ * Safety-net timeout for a peer's typing indicator: cleared automatically
+ * this long after the last `isTyping: true` event, in case the corresponding
+ * `isTyping: false` event is dropped (e.g. the peer's app is killed mid-type).
+ */
+const TYPING_INDICATOR_TIMEOUT_MS = 6000;
+
+/** How often `sendTypingIndicator(peerId, true)` may be emitted while the
+ * user keeps typing, so every keystroke doesn't trigger a socket emit. */
+const TYPING_INDICATOR_THROTTLE_MS = 2000;
+
+/**
  * Call phases that drive which screen the UI renders.
  *
  * idle             – no active call; show Lobby
@@ -153,6 +164,10 @@ function emitWithAck(socket, event, payload) {
  *   5. State machine driven by `call.state_changed`
  *   6. WebRTC negotiation via `rtc.offer / rtc.answer / rtc.candidate`
  *   7. In-call controls (mute, video, camera switch, speaker routing)
+ *   8. Text chat: conversation list / history (`GET /conversations`,
+ *      `GET /messages`), sending (`message.send`) with optimistic UI, unread
+ *      tracking and read receipts (`POST /messages/read`), and the
+ *      `call.media-state` relay used to mirror the peer's screen-share state.
  *
  * The hook returns serialisable state and action callbacks so the UI remains
  * purely presentational.
@@ -199,6 +214,32 @@ export default function useCallFlow() {
   //               createdAt, durationSeconds, isRead }
   const [callHistory, setCallHistory] = useState([]);
 
+  // ─── Chat / messaging state ───────────────────────────────────────────────
+  // One entry per conversation the user participates in: { conversationId,
+  // peerId, lastMessage, unreadCount }, newest-activity first.
+  const [conversations, setConversations] = useState([]);
+  // Keyed by peerId → array of message objects, newest-first (matches the
+  // server's ordering). Optimistic (pending/failed) sends are tagged inline.
+  const [messagesByPeer, setMessagesByPeer] = useState({});
+  // peerId of the conversation currently open in the UI, or null. Drives
+  // auto-mark-read for incoming messages from that peer.
+  const [activeChatPeerId, setActiveChatPeerId] = useState(null);
+  // True from the moment `placeCall` is invoked until the call reaches
+  // OUTGOING_RINGING (or fails). Lets chat-header call buttons show a brief
+  // loading state instead of appearing to do nothing while the local camera
+  // preview starts and the socket/`call.initiate` round-trip completes.
+  const [isPlacingCall, setIsPlacingCall] = useState(false);
+  // Keyed by peerId → boolean. True while that peer is actively typing in the
+  // open conversation (relayed via the ephemeral `message.typing` socket
+  // event). Cleared on receipt of isTyping:false or after a short timeout, in
+  // case a "stopped typing" event is dropped.
+  const [typingByPeer, setTypingByPeer] = useState({});
+  const typingTimeoutsRef = useRef({});
+  const typingSentAtRef = useRef({});
+  // True while the remote participant is screen-sharing (relayed via the
+  // `call.media-state` socket event).
+  const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
+
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -233,6 +274,9 @@ export default function useCallFlow() {
   const authedFetchRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
+  // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
+  // (rapid double-tap) without waiting for the state update to flush.
+  const isPlacingCallRef = useRef(false);
   const callConnectedAtRef = useRef(null);
   const elapsedTimerRef = useRef(null);
   const connectionQualityRef = useRef({ bars: 0, label: "No link" });
@@ -250,6 +294,9 @@ export default function useCallFlow() {
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
+  // Mirrors activeChatPeerId so the message.received socket handler never
+  // reads a stale value through a captured closure.
+  const activeChatPeerIdRef = useRef(null);
   const calleePresenceRequestIdRef = useRef(0);
   // Counts consecutive socket connect_error events; resets on a successful
   // connect.  Used to flip isServerUnreachable after OFFLINE_ERROR_THRESHOLD.
@@ -660,6 +707,233 @@ export default function useCallFlow() {
     },
     [signalingUrl],
   );
+
+  // Keep a ref mirror of activeChatPeerId so socket handlers declared once
+  // (inside connectSocket) always see the current value.
+  useEffect(() => {
+    activeChatPeerIdRef.current = activeChatPeerId;
+  }, [activeChatPeerId]);
+
+  /**
+   * Fetch the authenticated user's conversation list (`GET /conversations`)
+   * and populate `conversations`.  Safe to call repeatedly; silently
+   * swallows network errors, mirroring `fetchCallHistory`.
+   */
+  const fetchConversations = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const trimmedUrl = signalingUrl.trim();
+      const response = await authedFetchRef.current?.((sid) => ({
+        url: `${trimmedUrl}/conversations?sessionId=${encodeURIComponent(sid)}`,
+      }));
+      if (!response?.ok) return;
+      const data = await response.json();
+      if (!Array.isArray(data.conversations)) return;
+      setConversations(data.conversations);
+    } catch (error) {
+      logWarn("[CallFlow] fetchConversations failed", {
+        message: error?.message,
+      });
+    }
+  }, [signalingUrl]);
+
+  /**
+   * Fetch a page of message history with `peerId` (`GET /messages`) and merge
+   * it into `messagesByPeer`.  Pass `{ before }` (an ISO cursor, the oldest
+   * held message's `createdAt`) to page further back; omit it for the first
+   * page, which replaces any existing entry for that peer.
+   *
+   * @param {string} peerId
+   * @param {{ before?: string }} [options]
+   * @returns {Promise<Array>} the fetched page (empty on failure)
+   */
+  const fetchMessagesForPeer = useCallback(
+    async (peerId, { before } = {}) => {
+      const trimmedPeerId = (peerId ?? "").trim();
+      const sessionId = sessionIdRef.current;
+      if (!sessionId || !trimmedPeerId) return [];
+      try {
+        const trimmedUrl = signalingUrl.trim();
+        const response = await authedFetchRef.current?.((sid) => {
+          const params = new URLSearchParams({
+            sessionId: sid,
+            peerId: trimmedPeerId,
+          });
+          if (before) params.set("before", before);
+          return { url: `${trimmedUrl}/messages?${params.toString()}` };
+        });
+        if (!response?.ok) return [];
+        const data = await response.json();
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+        setMessagesByPeer((prev) => {
+          const existing = prev[trimmedPeerId] ?? [];
+          if (!before) {
+            return { ...prev, [trimmedPeerId]: messages };
+          }
+          // Pagination: append older messages, deduping by messageId.
+          const existingIds = new Set(existing.map((m) => m.messageId));
+          const merged = [
+            ...existing,
+            ...messages.filter((m) => !existingIds.has(m.messageId)),
+          ];
+          return { ...prev, [trimmedPeerId]: merged };
+        });
+        return messages;
+      } catch (error) {
+        logWarn("[CallFlow] fetchMessagesForPeer failed", {
+          message: error?.message,
+        });
+        return [];
+      }
+    },
+    [signalingUrl],
+  );
+
+  /**
+   * Send a chat message to `peerId`, appending an optimistic (pending) local
+   * copy immediately and reconciling it with the server-confirmed message (or
+   * marking it failed) once `message.send` acks.
+   *
+   * @param {string} peerId
+   * @param {string} body
+   */
+  const sendMessage = useCallback(
+    async (peerId, body) => {
+      const trimmedPeerId = (peerId ?? "").trim();
+      const trimmedBody = (body ?? "").trim();
+      if (!trimmedPeerId || !trimmedBody) return;
+
+      const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const optimisticMessage = {
+        messageId: tempId,
+        conversationId: null,
+        senderId: userId,
+        recipientId: trimmedPeerId,
+        body: trimmedBody,
+        createdAt: new Date().toISOString(),
+        deliveredTo: [],
+        readAt: null,
+        pending: true,
+      };
+
+      setMessagesByPeer((prev) => ({
+        ...prev,
+        [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
+      }));
+
+      const markFailed = () => {
+        setMessagesByPeer((prev) => ({
+          ...prev,
+          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map((m) =>
+            m.messageId === tempId ? { ...m, pending: false, failed: true } : m,
+          ),
+        }));
+        updateStatus("Message failed to send", "error");
+      };
+
+      if (!socketRef.current?.connected) {
+        markFailed();
+        return;
+      }
+
+      try {
+        const ack = await emitWithAck(socketRef.current, "message.send", {
+          version: SIGNALING_VERSION,
+          recipientId: trimmedPeerId,
+          body: trimmedBody,
+        });
+        const confirmed = ack?.message;
+        setMessagesByPeer((prev) => ({
+          ...prev,
+          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map((m) =>
+            m.messageId === tempId ? { ...(confirmed ?? m), pending: false } : m,
+          ),
+        }));
+      } catch (error) {
+        logWarn("[CallFlow] sendMessage failed", { message: error?.message });
+        markFailed();
+      }
+    },
+    [userId, updateStatus],
+  );
+
+  /**
+   * Mark every message from `peerId` as read (`POST /messages/read`) and
+   * locally zero out that conversation's unread badge without waiting for a
+   * refetch.
+   *
+   * @param {string} peerId
+   */
+  const markConversationRead = useCallback(
+    async (peerId) => {
+      const trimmedPeerId = (peerId ?? "").trim();
+      if (!trimmedPeerId) return;
+      try {
+        const trimmedUrl = signalingUrl.trim();
+        const response = await authedFetchRef.current?.((sid) => ({
+          url: `${trimmedUrl}/messages/read`,
+          options: {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId: sid, peerId: trimmedPeerId }),
+          },
+        }));
+        if (!response?.ok) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.peerId === trimmedPeerId ? { ...c, unreadCount: 0 } : c,
+          ),
+        );
+      } catch (error) {
+        logWarn("[CallFlow] markConversationRead failed", {
+          message: error?.message,
+        });
+      }
+    },
+    [signalingUrl],
+  );
+
+  /**
+   * Notify `peerId` that the local user is (or has stopped) typing in their
+   * conversation, via the ephemeral `message.typing` socket event. Silently a
+   * no-op when there is no connected socket — typing indicators are a
+   * best-effort UI nicety, never worth surfacing an error for.
+   *
+   * Emits are throttled to at most once per {@link TYPING_INDICATOR_THROTTLE_MS}
+   * per peer while `isTyping` stays true, so a fast typist doesn't flood the
+   * socket; the final `isTyping: false` (composer cleared/blurred) always
+   * goes out immediately so the peer's indicator doesn't linger.
+   *
+   * @param {string} peerId
+   * @param {boolean} isTyping
+   */
+  const sendTypingIndicator = useCallback((peerId, isTyping) => {
+    const trimmedPeerId = (peerId ?? "").trim();
+    if (!trimmedPeerId) return;
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+
+    const now = Date.now();
+    if (isTyping) {
+      const lastSentAt = typingSentAtRef.current[trimmedPeerId] ?? 0;
+      if (now - lastSentAt < TYPING_INDICATOR_THROTTLE_MS) return;
+    }
+    typingSentAtRef.current[trimmedPeerId] = now;
+
+    socket.emit("message.typing", {
+      version: SIGNALING_VERSION,
+      recipientId: trimmedPeerId,
+      isTyping: Boolean(isTyping),
+    });
+  }, []);
+
+  /** Sum of unreadCount across every conversation; drives the tab badge. */
+  const unreadTotal = useMemo(
+    () => conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0),
+    [conversations],
+  );
+
   // can show whether the callee is online before the user presses Call.
   useEffect(() => {
     const trimmedId = calleeId.trim();
@@ -986,6 +1260,7 @@ export default function useCallFlow() {
       setIsCompactView(false);
       setIsLocalPrimary(false);
       setAudioDevices({ available: [], selected: null });
+      setIsRemoteScreenSharing(false);
       resetScreenShare();
       stopCallService();
       closePeerConnection();
@@ -1144,6 +1419,8 @@ export default function useCallFlow() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
+    Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
+    typingTimeoutsRef.current = {};
   }, []);
 
   // Store mutable callbacks in refs so socket listeners always call the latest
@@ -1407,6 +1684,92 @@ export default function useCallFlow() {
         }
       });
 
+      // ── Chat ─────────────────────────────────────────────────────────
+      socket.on("message.received", ({ message }) => {
+        if (!message?.senderId) return;
+        const senderId = message.senderId;
+
+        setMessagesByPeer((prev) => {
+          const existing = prev[senderId] ?? [];
+          if (existing.some((m) => m.messageId === message.messageId)) {
+            return prev;
+          }
+          return { ...prev, [senderId]: [message, ...existing] };
+        });
+
+        if (activeChatPeerIdRef.current === senderId) {
+          // The conversation is currently open: auto-mark-read, no unread bump.
+          markConversationRead(senderId).catch(() => {});
+          return;
+        }
+
+        setConversations((prev) => {
+          const index = prev.findIndex((c) => c.peerId === senderId);
+          if (index === -1) {
+            // Brand-new conversation: refetch the authoritative list.
+            fetchConversations();
+            return prev;
+          }
+          const next = [...prev];
+          next[index] = {
+            ...next[index],
+            lastMessage: message,
+            unreadCount: (next[index].unreadCount || 0) + 1,
+          };
+          return next;
+        });
+      });
+
+      socket.on("message.delivered", ({ message }) => {
+        if (!message?.recipientId) return;
+        const peerId = message.recipientId;
+        setMessagesByPeer((prev) => {
+          const existing = prev[peerId] ?? [];
+          if (existing.some((m) => m.messageId === message.messageId)) {
+            return prev;
+          }
+          return { ...prev, [peerId]: [message, ...existing] };
+        });
+      });
+
+      socket.on("message.read", ({ readerId, readAt }) => {
+        if (!readerId) return;
+        // `readerId` is the peer who just read our messages; messagesByPeer
+        // is keyed by the other participant regardless of send direction, so
+        // it doubles as the lookup key here.
+        setMessagesByPeer((prev) => {
+          const existing = prev[readerId];
+          if (!existing) return prev;
+          let changed = false;
+          const updated = existing.map((m) => {
+            if (m.senderId === userId && !m.readAt) {
+              changed = true;
+              return { ...m, readAt: readAt ?? new Date().toISOString() };
+            }
+            return m;
+          });
+          return changed ? { ...prev, [readerId]: updated } : prev;
+        });
+      });
+
+      socket.on("message.typing", ({ senderId, isTyping }) => {
+        if (!senderId) return;
+        clearTimeout(typingTimeoutsRef.current[senderId]);
+        setTypingByPeer((prev) => ({ ...prev, [senderId]: Boolean(isTyping) }));
+        if (isTyping) {
+          // Safety net: auto-clear if a "stopped typing" event never arrives.
+          typingTimeoutsRef.current[senderId] = setTimeout(() => {
+            setTypingByPeer((prev) => ({ ...prev, [senderId]: false }));
+          }, TYPING_INDICATOR_TIMEOUT_MS);
+        }
+      });
+
+      // ── In-call screen-share relay ──────────────────────────────────────
+      socket.on("call.media-state", ({ callId, mediaState }) => {
+        if (callId !== activeCallIdRef.current) return;
+        setIsRemoteScreenSharing(Boolean(mediaState?.isScreenSharing));
+      });
+
       // ── Socket lifecycle ──────────────────────────────────────────────
       socket.on("connect", async () => {
         logInfo("[CallFlow] Socket connected", { socketId: socket.id });
@@ -1476,9 +1839,45 @@ export default function useCallFlow() {
         }
       });
 
+      // The server accepted the handshake but the presented sessionId no
+      // longer resolves to a live session (server restart dropped the
+      // in-memory table, TTL expiry, …) and downgraded this connection to a
+      // guest. Re-mint a session and reconnect so the client re-authenticates
+      // immediately, instead of silently operating as an unauthenticated
+      // guest until some later authenticated action (e.g. `call.initiate`) is
+      // rejected.
+      socket.on("session.invalid", async ({ sessionId: staleSessionId } = {}) => {
+        logWarn("[CallFlow] Session invalidated by server; re-minting session", {
+          sessionId: staleSessionId,
+        });
+        sessionIdRef.current = null;
+        try {
+          const newSessionId = await createOrGetSession();
+          // A newer socket may already have replaced this one (e.g. the
+          // presence effect re-ran, or the user signed out) — don't race it.
+          if (socketRef.current !== socket) return;
+          connectSocket(newSessionId);
+        } catch (error) {
+          logError(
+            "[CallFlow] Failed to re-mint session after session.invalid",
+            error,
+          );
+          updateStatus("Session expired — please reconnect.", "error");
+        }
+      });
+
       return socket;
     },
-    [disconnectSocket, updateStatus, showIncomingCallUi, signalingUrl],
+    [
+      createOrGetSession,
+      disconnectSocket,
+      updateStatus,
+      showIncomingCallUi,
+      signalingUrl,
+      markConversationRead,
+      fetchConversations,
+      userId,
+    ],
   );
 
   // ─── Call rehydration (push-notification deep link) ───────────────────────
@@ -1765,6 +2164,8 @@ export default function useCallFlow() {
 
   const placeCall = useCallback(
     async (explicitCalleeId) => {
+      if (isPlacingCallRef.current) return;
+
       const explicit = (
         typeof explicitCalleeId === "string" ? explicitCalleeId : ""
       ).trim();
@@ -1778,6 +2179,8 @@ export default function useCallFlow() {
         return;
       }
 
+      isPlacingCallRef.current = true;
+      setIsPlacingCall(true);
       try {
         setCallSummary(null);
 
@@ -1824,6 +2227,9 @@ export default function useCallFlow() {
         logError("[CallFlow] placeCall failed", error);
         updateStatus(`Failed to place call: ${error.message}`, "error");
         endActiveCall();
+      } finally {
+        isPlacingCallRef.current = false;
+        setIsPlacingCall(false);
       }
     },
     [
@@ -2106,6 +2512,23 @@ export default function useCallFlow() {
     setCallSummary(null);
   }, []);
 
+  // ─── Screen-share presence relay ──────────────────────────────────────────
+  // Tell the peer whenever the local screen-sharing state changes so their
+  // CallStage can render a "they are presenting" banner. Best-effort: a
+  // rejected/timed-out ack is logged and otherwise ignored.
+  useEffect(() => {
+    if (!socketRef.current?.connected || !activeCallIdRef.current) return;
+    emitWithAck(socketRef.current, "call.media-state", {
+      version: SIGNALING_VERSION,
+      callId: activeCallIdRef.current,
+      mediaState: { isScreenSharing },
+    }).catch((error) => {
+      logWarn("[CallFlow] call.media-state emit failed", {
+        message: error?.message,
+      });
+    });
+  }, [isScreenSharing]);
+
   // ─── Connection quality polling ───────────────────────────────────────────
 
   useEffect(() => {
@@ -2265,11 +2688,13 @@ export default function useCallFlow() {
     setCalleeId,
     signalingUrl,
     setSignalingUrl,
+    authedFetch,
 
     // Call lifecycle
     callPhase,
     activeCall,
     incomingCall,
+    isPlacingCall,
 
     // UI status
     status,
@@ -2285,6 +2710,20 @@ export default function useCallFlow() {
     missedCallCount,
     markMissedCallsRead,
     fetchCallHistory,
+
+    // Chat
+    conversations,
+    messagesByPeer,
+    unreadTotal,
+    activeChatPeerId,
+    setActiveChatPeerId,
+    fetchConversations,
+    fetchMessagesForPeer,
+    sendMessage,
+    markConversationRead,
+    typingByPeer,
+    sendTypingIndicator,
+    isRemoteScreenSharing,
 
     // In-call media state
     localStream,

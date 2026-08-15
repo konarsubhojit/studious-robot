@@ -65,4 +65,8 @@ export const ICONS = {
   presenceOnline: { icon: 'circle',               emoji: '●' },
   presenceOffline:{ icon: 'circle-outline',       emoji: '○' },
   dismiss:        { icon: 'close',                emoji: '✕' },
+  chatAudioCall:  { icon: 'phone',                emoji: '📞' },
+  chatVideoCall:  { icon: 'video',                emoji: '📹' },
+  minimize:       { icon: 'chevron-down',         emoji: '⌄' },
+  stopShare:      { icon: 'monitor-off',          emoji: '🚫' },
 };

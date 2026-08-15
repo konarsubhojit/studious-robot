@@ -80,6 +80,19 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     // Redis adapter fans the emit out across instances).
     socket.join(userRoom(identity.userId));
 
+    // The handshake presented a sessionId that no longer resolves to a live
+    // session (server restart dropped the in-memory table, TTL expiry, …):
+    // the connection still succeeds but as a guest. Tell the client
+    // explicitly so it can re-mint a session and reconnect, instead of only
+    // discovering the downgrade indirectly when an authenticated action like
+    // `call.initiate` is later rejected with `unauthorized`.
+    if (identity.sessionDowngraded) {
+      socket.emit('session.invalid', { sessionId: identity.presentedSessionId });
+      console.log(
+        `[signaling] socket ${socket.id} presented stale sessionId=${identity.presentedSessionId}; downgraded to guest user=${identity.userId}`,
+      );
+    }
+
     console.log(
       `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`,
     );
@@ -290,6 +303,21 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         io,
         eventName: 'rtc.candidate',
         dataKey: 'candidate',
+        validateData: (value) => isPlainObject(value),
+      });
+    });
+
+    // Best-effort relay of local media-state flags (currently just screen
+    // sharing) to the other participant, so the UI can show a "X is
+    // presenting" indicator on the remote side.  Reuses the generic RTC relay:
+    // authorization/rate-limiting/call-state checks are identical to
+    // rtc.offer/answer/candidate.
+    socket.on('call.media-state', (payload = {}, ack) => {
+      handleRtcRelay(socket, ack, payload, {
+        state,
+        io,
+        eventName: 'call.media-state',
+        dataKey: 'mediaState',
         validateData: (value) => isPlainObject(value),
       });
     });

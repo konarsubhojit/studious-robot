@@ -157,6 +157,29 @@ function registerMessageHandlers(socket, { io, state }) {
       message,
     });
   });
+
+  /**
+   * `message.typing` — ephemeral, fire-and-forget typing indicator. Not
+   * persisted; simply relayed to the recipient's live socket(s) so their chat
+   * UI can show/hide a "user is typing…" hint. No ack is sent back since the
+   * sender does not need confirmation, matching how a throttled UI event
+   * should behave (best-effort, never blocking the composer).
+   */
+  socket.on('message.typing', (payload = {}) => {
+    if (!socket.data.identity?.sessionId) return;
+    if (payload?.version !== SIGNALING_VERSION) return;
+
+    const senderId = socket.data.identity.userId;
+    const recipientId = normaliseId(payload.recipientId);
+    if (!recipientId || recipientId === senderId) return;
+
+    emitToUserSockets(io, recipientId, 'message.typing', {
+      version: SIGNALING_VERSION,
+      conversationId: deriveConversationId(senderId, recipientId),
+      senderId,
+      isTyping: Boolean(payload.isTyping),
+    });
+  });
 }
 
 module.exports = {

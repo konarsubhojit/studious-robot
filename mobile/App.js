@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  BackHandler,
   Platform,
   Pressable,
   SafeAreaView,
@@ -10,7 +11,11 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { logError } from './src/appLogger';
+import AppTabBar from './src/components/AppTabBar';
 import CallScreen from './src/components/CallScreen';
+import ChatConversationScreen from './src/components/ChatConversationScreen';
+import ChatListScreen from './src/components/ChatListScreen';
+import FloatingCallBubble from './src/components/FloatingCallBubble';
 import IncomingCallScreen from './src/components/IncomingCallScreen';
 import Lobby from './src/components/Lobby';
 import OutgoingCallScreen from './src/components/OutgoingCallScreen';
@@ -29,9 +34,22 @@ import { colors } from './src/theme';
  * Two call paths are supported:
  *   1. **Server-authoritative call flow** (`useCallFlow`) – user places / receives
  *      calls by userId.  Drives OutgoingCallScreen, IncomingCallScreen, and
- *      CallScreen once media is connected.
- *   2. **Legacy room-join flow** (`useWebRTCCall`) – user shares a room ID.
+ *      CallScreen once media is connected.  Also owns text chat (conversations,
+ *      messages) and the `call.media-state` screen-share relay.
+ *   2. **Legacy direct room-join flow** (`useWebRTCCall`) – user shares a room ID.
  *      Drives the existing Lobby → CallScreen path.
+ *
+ * Navigation shell: once identity is registered and no call is ringing, the
+ * app renders a lightweight hand-rolled tab shell (Chats / Calls / Settings)
+ * built from plain state + View/Pressable — no react-navigation or other new
+ * native dependency, so it stays verifiable with the existing Jest setup.
+ * A connected call normally takes over the full screen (as before); pressing
+ * the minimize button in `CallTopBar`, tapping a bottom tab, or the Android
+ * hardware back button instead shrinks it to a small draggable
+ * `FloatingCallBubble` overlaid on top of the tab shell, so the user can keep
+ * chatting/browsing while the call continues in the background of the app
+ * (distinct from the OS-level Android Picture-in-Picture, which only engages
+ * when the app itself is backgrounded — see `useCompactCallView`).
  *
  * All behaviour lives in the hooks; the components are purely presentational.
  */
@@ -42,12 +60,28 @@ export default function App() {
   // ── Legacy direct room-join flow ──────────────────────────────────────────
   const call = useWebRTCCall();
 
-  // Whether the account/connection Settings screen is showing (Lobby only).
-  const [showSettings, setShowSettings] = useState(false);
+  // ── Navigation shell state ─────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('chats');
+  // peerId of the conversation open within the Chats tab; null = chat list.
+  const [chatPeerId, setChatPeerId] = useState(null);
+  // Presence snapshot for the currently open conversation's peer.
+  const [peerPresence, setPeerPresence] = useState(null);
+  // True once the user has explicitly (or automatically, via tab switch /
+  // hardware back) shrunk an active call down to the FloatingCallBubble.
+  const [isCallMinimized, setIsCallMinimized] = useState(false);
+  const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
+
+  // Set by onStartAudioCall; consumed by the effect below once the call
+  // connects, since there is no dedicated audio-only call type server-side.
+  const pendingAudioOnlyCallRef = useRef(false);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
   const callFlowActive =
     callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
+
+  // True once either flow has a connected (post-ringing) call. Drives the
+  // minimize affordances; ringing/dialing screens are never minimizable.
+  const isCallConnected = callFlow.isInCall || call.isInRoom;
 
   // Choose which hook provides PiP swap behaviour.
   const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } =
@@ -75,6 +109,128 @@ export default function App() {
   const legacyMirrorMain = call.isLocalPrimary && call.isFrontCamera;
   const localPreviewStreamUrl = getStreamUrl(call.localStream, 'local preview');
 
+  // ── Chat wiring ────────────────────────────────────────────────────────────
+
+  // Fetch the conversation list once identity is established.
+  useEffect(() => {
+    if (callFlow.isRegistered) {
+      callFlow.fetchConversations();
+    }
+    // Only re-run when registration status flips; fetchConversations is
+    // stable for a given signalingUrl.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callFlow.isRegistered]);
+
+  // Keep the hook's activeChatPeerId mirror in sync with the locally open
+  // conversation, and load history + mark it read whenever one is opened.
+  useEffect(() => {
+    callFlow.setActiveChatPeerId(chatPeerId);
+    if (chatPeerId) {
+      callFlow.fetchMessagesForPeer(chatPeerId);
+      callFlow.markConversationRead(chatPeerId);
+    }
+    return () => {
+      callFlow.setActiveChatPeerId(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatPeerId]);
+
+  // Fetch presence for the peer of the currently open conversation.
+  useEffect(() => {
+    let cancelled = false;
+    if (!chatPeerId) {
+      setPeerPresence(null);
+      return undefined;
+    }
+    callFlow.checkPresence(chatPeerId).then((presence) => {
+      if (!cancelled) setPeerPresence(presence);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatPeerId]);
+
+  const handleRefreshConversations = async () => {
+    setIsRefreshingConversations(true);
+    try {
+      await callFlow.fetchConversations();
+    } finally {
+      setIsRefreshingConversations(false);
+    }
+  };
+
+  const handleLoadOlderMessages = () => {
+    if (!chatPeerId) return;
+    const existing = callFlow.messagesByPeer[chatPeerId] ?? [];
+    const oldest = existing[existing.length - 1];
+    if (oldest?.createdAt) {
+      callFlow.fetchMessagesForPeer(chatPeerId, { before: oldest.createdAt });
+    }
+  };
+
+  /**
+   * Start a video call with `peerId` (used by both the Lobby redial action and
+   * the Chats tab's video-call header button).
+   */
+  const startVideoCallWith = (peerId) => {
+    callFlow.setCalleeId(peerId);
+    callFlow.placeCall(peerId).catch((error) => {
+      logError('placeCall (video) failed', error);
+    });
+  };
+
+  /**
+   * Start an "audio call" with `peerId`. There is no dedicated audio-only call
+   * type server-side yet, so this places a normal video call and then turns
+   * the local camera off once it connects (see the effect below).
+   */
+  const startAudioCallWith = (peerId) => {
+    pendingAudioOnlyCallRef.current = true;
+    callFlow.setCalleeId(peerId);
+    callFlow.placeCall(peerId).catch((error) => {
+      logError('placeCall (audio) failed', error);
+    });
+  };
+
+  useEffect(() => {
+    if (callFlow.isInCall && pendingAudioOnlyCallRef.current) {
+      pendingAudioOnlyCallRef.current = false;
+      callFlow.handleVideoToggle();
+    }
+  }, [callFlow.isInCall, callFlow]);
+
+  // ── Call minimize / restore orchestration ─────────────────────────────────
+
+  // Android hardware back: minimize an active connected call instead of
+  // letting the OS pop the screen / exit the app.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    if (!isCallConnected || isCallMinimized) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setIsCallMinimized(true);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [isCallConnected, isCallMinimized]);
+
+  const handleChangeTab = (tab) => {
+    if (isCallConnected && !isCallMinimized) {
+      setIsCallMinimized(true);
+    }
+    setActiveTab(tab);
+  };
+
+  const handleEndCallFlowCall = () => {
+    setIsCallMinimized(false);
+    callFlow.handleEndCall();
+  };
+
+  const handleEndLegacyCall = () => {
+    setIsCallMinimized(false);
+    call.handleRoomButtonPress();
+  };
+
   // ── Screen routing ────────────────────────────────────────────────────────
 
   /**
@@ -89,7 +245,13 @@ export default function App() {
     return `Call with ${remoteId}`;
   }
 
+  // Compact (Android PiP) mode: replace SafeAreaView with a plain View so
+  // system-inset padding is not applied. OS PiP always short-circuits to the
+  // compact CallScreen, taking precedence over the in-app minimize state.
+  const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
+
   let screenContent;
+  let floatingBubble = null;
 
   if (callFlow.isLoadingIdentity) {
     // Blank screen while identity is being loaded from storage; the app
@@ -124,7 +286,7 @@ export default function App() {
         onDecline={callFlow.declineIncomingCall}
       />
     );
-  } else if (callFlow.isInCall) {
+  } else if (callFlow.isInCall && (isCompact || !isCallMinimized)) {
     // In-call screen driven by the new call flow.
     screenContent = (
       <CallScreen
@@ -151,18 +313,20 @@ export default function App() {
         isScreenAudioEnabled={callFlow.isScreenAudioEnabled}
         isScreenAudioShared={callFlow.isScreenAudioShared}
         isScreenShareSupported={callFlow.isScreenShareSupported}
+        isRemoteScreenSharing={callFlow.isRemoteScreenSharing}
         onMuteToggle={callFlow.handleMuteToggle}
         onVideoToggle={callFlow.handleVideoToggle}
         onChooseAudioOutput={callFlow.chooseAudioOutput}
         onCameraSwitch={callFlow.handleCameraSwitch}
         onScreenShareToggle={callFlow.handleScreenShareToggle}
         onScreenAudioToggle={callFlow.handleScreenAudioToggle}
-        onLeave={callFlow.handleEndCall}
+        onLeave={handleEndCallFlowCall}
+        onMinimize={() => setIsCallMinimized(true)}
         status={callFlow.status}
         isCompact={callFlow.isCompactView}
       />
     );
-  } else if (call.isInRoom) {
+  } else if (call.isInRoom && (isCompact || !isCallMinimized)) {
     // In-call screen driven by the legacy room-join flow.
     screenContent = (
       <CallScreen
@@ -195,88 +359,149 @@ export default function App() {
         onCameraSwitch={call.handleCameraSwitch}
         onScreenShareToggle={call.handleScreenShareToggle}
         onScreenAudioToggle={call.handleScreenAudioToggle}
-        onLeave={call.handleRoomButtonPress}
+        onLeave={handleEndLegacyCall}
+        onMinimize={() => setIsCallMinimized(true)}
         status={call.status}
         isCompact={call.isCompactView}
       />
     );
-  } else if (showSettings) {
-    screenContent = (
-      <SettingsScreen
-        userId={callFlow.userId}
-        onSaveUserId={callFlow.updateUserId}
-        signalingUrl={callFlow.signalingUrl}
-        onSaveSignalingUrl={callFlow.setSignalingUrl}
-        verificationCode={callFlow.verificationCode}
-        status={callFlow.status}
-        onSignOut={() => {
-          setShowSettings(false);
-          callFlow.unregisterUser().catch((error) => {
-            logError('unregisterUser failed', error);
-          });
-        }}
-        onClose={() => setShowSettings(false)}
-        onExportLogs={call.handleExportLogs}
-        developerModeEnabled={call.settings.developerModeEnabled}
-        onToggleDeveloperMode={call.handleDeveloperModeToggle}
-      />
-    );
   } else {
+    // No full-screen call to show: render the tab shell. A connected call
+    // that has been explicitly minimized overlays a FloatingCallBubble on top.
+    let tabContent;
+    if (activeTab === 'chats') {
+      tabContent = chatPeerId ? (
+        <ChatConversationScreen
+          peerId={chatPeerId}
+          messages={callFlow.messagesByPeer[chatPeerId] ?? []}
+          onSendMessage={(body) => callFlow.sendMessage(chatPeerId, body)}
+          onLoadOlder={handleLoadOlderMessages}
+          onBack={() => setChatPeerId(null)}
+          currentUserId={callFlow.userId}
+          peerPresence={peerPresence}
+          onStartAudioCall={() => startAudioCallWith(chatPeerId)}
+          onStartVideoCall={() => startVideoCallWith(chatPeerId)}
+          isStartingCall={callFlow.isPlacingCall}
+          isPeerTyping={Boolean(callFlow.typingByPeer[chatPeerId])}
+          onTypingChange={(isTyping) => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
+        />
+      ) : (
+        <ChatListScreen
+          conversations={callFlow.conversations}
+          onOpenConversation={(peerId) => setChatPeerId(peerId)}
+          onSearchUsers={callFlow.searchUsers}
+          onRefresh={handleRefreshConversations}
+          isRefreshing={isRefreshingConversations}
+          onOpenSettings={() => setActiveTab('settings')}
+        />
+      );
+    } else if (activeTab === 'calls') {
+      tabContent = (
+        <Lobby
+          userId={callFlow.userId}
+          onChangeUserId={callFlow.editUserId}
+          calleeId={callFlow.calleeId}
+          onChangeCalleeId={callFlow.setCalleeId}
+          onCall={() => {
+            callFlow.placeCall().catch((error) => {
+              logError('placeCall unhandled rejection', error);
+            });
+          }}
+          calleePresence={callFlow.calleePresence}
+          onOpenSettings={() => setActiveTab('settings')}
+          isServerUnreachable={callFlow.isServerUnreachable}
+          onRetryConnect={callFlow.retryPresenceConnect}
+          onSearchUsers={callFlow.searchUsers}
+          onSelectContact={callFlow.setCalleeId}
+          developerMode={call.settings.developerModeEnabled}
+          signalingUrl={call.signalingUrl}
+          onChangeSignalingUrl={call.setSignalingUrl}
+          roomId={call.roomId}
+          onChangeRoomId={call.setRoomId}
+          localPreviewStreamUrl={localPreviewStreamUrl}
+          hasLocalStream={Boolean(call.localStream)}
+          onStartPreview={() => {
+            call.startLocalPreview().catch((error) => {
+              logError('startLocalPreview failed (permissions/device)', error);
+            });
+          }}
+          onJoinRoom={call.handleRoomButtonPress}
+          isSettingsVisible={call.isSettingsVisible}
+          onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
+          onExportLogs={call.handleExportLogs}
+          settings={call.settings}
+          onToggleAutoLighting={call.handleAutoLightingToggle}
+          onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
+          status={callFlow.userId ? callFlow.status : call.status}
+          callSummary={callFlow.callSummary ?? call.callSummary}
+          onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
+          callHistory={callFlow.callHistory}
+          missedCallCount={callFlow.missedCallCount}
+          onMarkMissedRead={callFlow.markMissedCallsRead}
+          onRedial={(peerId) => startVideoCallWith(peerId)}
+        />
+      );
+    } else {
+      tabContent = (
+        <SettingsScreen
+          userId={callFlow.userId}
+          onSaveUserId={callFlow.updateUserId}
+          signalingUrl={callFlow.signalingUrl}
+          onSaveSignalingUrl={callFlow.setSignalingUrl}
+          verificationCode={callFlow.verificationCode}
+          status={callFlow.status}
+          onSignOut={() => {
+            setActiveTab('chats');
+            callFlow.unregisterUser().catch((error) => {
+              logError('unregisterUser failed', error);
+            });
+          }}
+          onClose={() => setActiveTab('chats')}
+          onExportLogs={call.handleExportLogs}
+          developerModeEnabled={call.settings.developerModeEnabled}
+          onToggleDeveloperMode={call.handleDeveloperModeToggle}
+        />
+      );
+    }
+
     screenContent = (
-      <Lobby
-        userId={callFlow.userId}
-        onChangeUserId={callFlow.editUserId}
-        calleeId={callFlow.calleeId}
-        onChangeCalleeId={callFlow.setCalleeId}
-        onCall={() => {
-          callFlow.placeCall().catch((error) => {
-            logError('placeCall unhandled rejection', error);
-          });
-        }}
-        calleePresence={callFlow.calleePresence}
-        onOpenSettings={() => setShowSettings(true)}
-        isServerUnreachable={callFlow.isServerUnreachable}
-        onRetryConnect={callFlow.retryPresenceConnect}
-        onSearchUsers={callFlow.searchUsers}
-        onSelectContact={callFlow.setCalleeId}
-        developerMode={call.settings.developerModeEnabled}
-        signalingUrl={call.signalingUrl}
-        onChangeSignalingUrl={call.setSignalingUrl}
-        roomId={call.roomId}
-        onChangeRoomId={call.setRoomId}
-        localPreviewStreamUrl={localPreviewStreamUrl}
-        hasLocalStream={Boolean(call.localStream)}
-        onStartPreview={() => {
-          call.startLocalPreview().catch((error) => {
-            logError('startLocalPreview failed (permissions/device)', error);
-          });
-        }}
-        onJoinRoom={call.handleRoomButtonPress}
-        isSettingsVisible={call.isSettingsVisible}
-        onToggleSettings={() => call.setIsSettingsVisible((previous) => !previous)}
-        onExportLogs={call.handleExportLogs}
-        settings={call.settings}
-        onToggleAutoLighting={call.handleAutoLightingToggle}
-        onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
-        status={callFlow.userId ? callFlow.status : call.status}
-        callSummary={callFlow.callSummary ?? call.callSummary}
-        onDismissSummary={callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary}
-        callHistory={callFlow.callHistory}
-        missedCallCount={callFlow.missedCallCount}
-        onMarkMissedRead={callFlow.markMissedCallsRead}
-        onRedial={(peerId) => {
-          callFlow.setCalleeId(peerId);
-          callFlow.placeCall(peerId).catch((error) => {
-            logError('redial placeCall failed', error);
-          });
-        }}
-      />
+      <View style={styles.tabShellRoot} testID="app-tab-shell">
+        <View style={styles.tabShellContent}>{tabContent}</View>
+        <AppTabBar
+          activeTab={activeTab}
+          onChangeTab={handleChangeTab}
+          unreadCount={callFlow.unreadTotal}
+        />
+      </View>
     );
+
+    if (isCallConnected && isCallMinimized) {
+      const isCallFlowActive = callFlow.isInCall;
+      floatingBubble = (
+        <FloatingCallBubble
+          participantLabel={
+            isCallFlowActive
+              ? getCallFlowParticipantLabel()
+              : call.roomId
+                ? `Room ${call.roomId.trim()}`
+                : null
+          }
+          elapsedCallSeconds={
+            isCallFlowActive ? callFlow.elapsedCallSeconds : call.elapsedCallSeconds
+          }
+          isMuted={isCallFlowActive ? callFlow.isMuted : call.isMuted}
+          isScreenSharing={isCallFlowActive ? callFlow.isScreenSharing : call.isScreenSharing}
+          onExpand={() => setIsCallMinimized(false)}
+          onMuteToggle={isCallFlowActive ? callFlow.handleMuteToggle : call.handleMuteToggle}
+          onEndCall={isCallFlowActive ? handleEndCallFlowCall : handleEndLegacyCall}
+          onStopScreenShare={
+            isCallFlowActive ? callFlow.handleScreenShareToggle : call.handleScreenShareToggle
+          }
+        />
+      );
+    }
   }
 
-  // Compact (Android PiP) mode: replace SafeAreaView with a plain View so
-  // system-inset padding is not applied.
-  const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
   const shouldShowRecoveryCodeNotice =
     !isCompact &&
     !callFlow.isLoadingIdentity &&
@@ -291,6 +516,7 @@ export default function App() {
       ) : (
         <SafeAreaView style={styles.container}>
           {screenContent}
+          {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (
             <View style={styles.recoveryNotice} testID="recovery-code-notice">
               <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
@@ -325,6 +551,12 @@ const styles = StyleSheet.create({
   containerCompact: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  tabShellRoot: {
+    flex: 1,
+  },
+  tabShellContent: {
+    flex: 1,
   },
   recoveryNotice: {
     position: 'absolute',

@@ -14,6 +14,8 @@
  *   saveMessage(message)                        → Promise<savedMessage>
  *   listMessages({ conversationId, limit, before }) → Promise<message[]>
  *   markDelivered(messageId, userId)            → Promise<message|null>
+ *   listConversations(userId)                   → Promise<conversationSummary[]>
+ *   markRead(conversationId, userId)            → Promise<number>
  *   close()                                     → Promise<void>
  *
  * Message document shape
@@ -26,6 +28,16 @@
  *     body:          string,
  *     createdAt:     string (ISO 8601),
  *     deliveredTo:   string[],
+ *     readAt:        string (ISO 8601) | null,
+ *   }
+ *
+ * Conversation summary shape (returned by `listConversations`)
+ * ──────────────────────────────────────────────────────────
+ *   {
+ *     conversationId: string,
+ *     peerId:         string,  // the *other* participant, relative to userId
+ *     lastMessage:    message,
+ *     unreadCount:    number,  // messages addressed to userId with readAt === null
  *   }
  *
  * Two implementations are provided:
@@ -113,7 +125,19 @@ function createMessageRecord(message) {
     body: message.body,
     createdAt: message.createdAt || nextTimestamp(),
     deliveredTo: Array.isArray(message.deliveredTo) ? [...message.deliveredTo] : [],
+    readAt: message.readAt ?? null,
   };
+}
+
+/**
+ * Resolve the "other" participant of a message relative to `userId`.
+ *
+ * @param {object} message
+ * @param {string} userId
+ * @returns {string} `senderId` when `userId` is the recipient, otherwise `recipientId`.
+ */
+function peerIdOf(message, userId) {
+  return message.senderId === userId ? message.recipientId : message.senderId;
 }
 
 /**
@@ -170,6 +194,52 @@ function createMemoryMessageStore() {
         message.deliveredTo.push(userId);
       }
       return { ...message };
+    },
+
+    async listConversations(userId) {
+      /** @type {Map<string, { conversationId: string, peerId: string, lastMessage: object, unreadCount: number }>} */
+      const byConversation = new Map();
+
+      for (const message of messages) {
+        if (message.senderId !== userId && message.recipientId !== userId) continue;
+
+        let summary = byConversation.get(message.conversationId);
+        if (!summary) {
+          summary = {
+            conversationId: message.conversationId,
+            peerId: peerIdOf(message, userId),
+            lastMessage: message,
+            unreadCount: 0,
+          };
+          byConversation.set(message.conversationId, summary);
+        } else if (byNewestFirst(message, summary.lastMessage) < 0) {
+          summary.lastMessage = message;
+        }
+
+        if (message.recipientId === userId && !message.readAt) {
+          summary.unreadCount += 1;
+        }
+      }
+
+      return [...byConversation.values()]
+        .sort((a, b) => byNewestFirst(a.lastMessage, b.lastMessage))
+        .map((summary) => ({ ...summary, lastMessage: { ...summary.lastMessage } }));
+    },
+
+    async markRead(conversationId, userId) {
+      const now = nextTimestamp();
+      let updated = 0;
+      for (const message of messages) {
+        if (
+          message.conversationId === conversationId
+          && message.recipientId === userId
+          && !message.readAt
+        ) {
+          message.readAt = now;
+          updated += 1;
+        }
+      }
+      return updated;
     },
 
     async close() {
@@ -276,6 +346,50 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       if (!updated || !updated.messageId) return null;
       const { _id, ...rest } = updated;
       return rest;
+    },
+
+    async listConversations(userId) {
+      const { messages } = await connect();
+      const found = await messages.aggregate([
+        { $match: { $or: [{ senderId: userId }, { recipientId: userId }] } },
+        { $sort: { createdAt: -1, messageId: -1 } },
+        {
+          $group: {
+            _id: '$conversationId',
+            lastMessage: { $first: '$$ROOT' },
+            unreadCount: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $eq: ['$recipientId', userId] }, { $eq: ['$readAt', null] }] },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+        { $sort: { 'lastMessage.createdAt': -1, 'lastMessage.messageId': -1 } },
+      ]).toArray();
+
+      return found.map((doc) => {
+        // Strip the driver-managed `_id` so the wire shape matches the memory store.
+        const { _id, ...lastMessage } = doc.lastMessage;
+        return {
+          conversationId: doc._id,
+          peerId: peerIdOf(lastMessage, userId),
+          lastMessage,
+          unreadCount: doc.unreadCount,
+        };
+      });
+    },
+
+    async markRead(conversationId, userId) {
+      const { messages } = await connect();
+      const result = await messages.updateMany(
+        { conversationId, recipientId: userId, readAt: null },
+        { $set: { readAt: nextTimestamp() } },
+      );
+      return result?.modifiedCount ?? 0;
     },
 
     async close() {

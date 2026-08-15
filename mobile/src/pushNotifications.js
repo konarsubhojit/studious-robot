@@ -206,6 +206,30 @@ export function _resetMessagingCache() {
 }
 
 /**
+ * Resolve the default-app messaging *instance* from the namespace export
+ * returned by {@link loadMessaging}.
+ *
+ * `@react-native-firebase/messaging`'s default export (`messaging`) is a
+ * callable "app -> module instance" factory, not the instance itself: calling
+ * `messaging()` (no args) returns the instance for the default Firebase app,
+ * and only that instance carries the real methods (`getToken`,
+ * `requestPermission`, `onMessage`, `setBackgroundMessageHandler`, …). Static
+ * properties such as `AuthorizationStatus` are attached directly to the
+ * namespace function itself and remain reachable without invoking it.
+ *
+ * Calling an instance method directly on the un-invoked namespace (e.g.
+ * `messaging.getToken()`) resolves to `undefined` and throws `undefined is
+ * not a function` — resolving the instance here is what fixes that failure.
+ *
+ * @param {Function | object} namespace
+ * @returns {object} the messaging instance (or `namespace` itself when it is
+ *   already instance-shaped, e.g. a test double that mocks methods directly)
+ */
+function resolveMessagingInstance(namespace) {
+  return typeof namespace === 'function' ? namespace() : namespace;
+}
+
+/**
  * Acquire the device push token from the native messaging library, requesting
  * notification permission first.  Returns `null` (never throws) when the native
  * library is unavailable, permission is denied, or no token can be retrieved.
@@ -216,12 +240,13 @@ export function _resetMessagingCache() {
  * @returns {Promise<{ provider: 'fcm', pushToken: string } | null>}
  */
 export async function getPushToken() {
-  const messaging = loadMessaging();
-  if (!messaging) return null;
+  const namespace = loadMessaging();
+  if (!namespace) return null;
 
   try {
+    const messaging = resolveMessagingInstance(namespace);
     const authStatus = await messaging.requestPermission();
-    const { AuthorizationStatus } = messaging;
+    const { AuthorizationStatus } = namespace;
     const granted =
       authStatus === AuthorizationStatus?.AUTHORIZED ||
       authStatus === AuthorizationStatus?.PROVISIONAL;
@@ -242,6 +267,11 @@ export async function getPushToken() {
     }
     return { provider: 'fcm', pushToken };
   } catch (error) {
+    // The message/name here already distinguish a genuinely-missing/
+    // misconfigured native module (e.g. Firebase throws "No Firebase App
+    // '[DEFAULT]' has been created" when google-services.json /
+    // GoogleService-Info.plist isn't wired into the build) from any other
+    // unexpected failure, instead of a bare, unhelpful TypeError.
     logError('[Push] getPushToken threw', error);
     return null;
   }
@@ -326,9 +356,10 @@ export async function handleBackgroundPushMessage(remoteMessage) {
  * @returns {boolean} `true` when a handler was registered
  */
 export function installBackgroundMessageHandler() {
-  const messaging = loadMessaging();
-  if (!messaging) return false;
+  const namespace = loadMessaging();
+  if (!namespace) return false;
 
+  const messaging = resolveMessagingInstance(namespace);
   if (typeof messaging.setBackgroundMessageHandler !== 'function') {
     logWarn('[Push] Native messaging module has no background handler API');
     return false;
@@ -386,8 +417,11 @@ export async function handleForegroundPushMessage(remoteMessage) {
  * @returns {() => void} Unsubscribe function; a no-op when messaging is absent.
  */
 export function installForegroundMessageHandler() {
-  const messaging = loadMessaging();
-  if (!messaging || typeof messaging.onMessage !== 'function') return () => {};
+  const namespace = loadMessaging();
+  if (!namespace) return () => {};
+
+  const messaging = resolveMessagingInstance(namespace);
+  if (typeof messaging.onMessage !== 'function') return () => {};
 
   const unsubscribe = messaging.onMessage(async (remoteMessage) => {
     try {

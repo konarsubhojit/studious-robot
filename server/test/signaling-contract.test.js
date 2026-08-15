@@ -219,6 +219,21 @@ test('accepted calls relay rtc.offer/answer/candidate only to the other particip
     assert.equal(candidate.callId, callId);
     assert.equal(candidate.fromUserId, 'user-alice');
     assert.deepEqual(candidate.candidate, { candidate: 'mock-candidate' });
+
+    // Screen-share state relay reuses the same generic RTC-relay plumbing.
+    const mediaStatePromise = waitFor(callee, 'call.media-state');
+    const mediaStateAck = await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: true },
+    });
+    assert.equal(mediaStateAck.ok, true);
+
+    const mediaState = await mediaStatePromise;
+    assert.equal(mediaState.version, 1);
+    assert.equal(mediaState.callId, callId);
+    assert.equal(mediaState.fromUserId, 'user-alice');
+    assert.deepEqual(mediaState.mediaState, { isScreenSharing: true });
   } finally {
     await teardown(caller, callee, intruder);
   }

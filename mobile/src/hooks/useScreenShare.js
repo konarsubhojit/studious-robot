@@ -276,6 +276,11 @@ export default function useScreenShare({
 
   useEffect(() => resetScreenShare, [resetScreenShare]);
 
+  // @remarks Future group-call support: `isScreenSharing` here and
+  // `isRemoteScreenSharing` in useCallFlow.js are single booleans because only
+  // one-to-one calls exist today. Multi-participant calls would need to turn
+  // both into per-participant maps, with a "N people viewing" count hanging
+  // off the same `call.media-state` relay mechanism.
   return {
     isScreenSharing,
     isScreenAudioShared,
