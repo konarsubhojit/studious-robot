@@ -52,6 +52,8 @@ mobile/.bundle/
 .env
 .env.local
 .env.*.local
+.env.tmp
+*.env.tmp
 
 # OS / Editors
 .DS_Store

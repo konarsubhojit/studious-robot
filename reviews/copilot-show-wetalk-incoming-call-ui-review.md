@@ -4,11 +4,14 @@ _Reviewed `6d626b0..b7cc824`, 35 files changed (+1845/-144). Produced with the
 `grumpy-code-reviewer` skill._
 
 > **Scope note (first run only):** this run also includes a broader,
-> whole-application baseline pass (mobile + server), per explicit request.
-> Going forward, `grumpy-code-reviewer` only reviews the diff against the base
-> branch, and `fix-review-findings` only remediates findings inside that
-> diff — see "Out of scope" at the bottom. The whole-app section below is
-> informational only; nothing in it was auto-fixed in this run.
+> whole-application baseline pass (mobile + server), per explicit request,
+> and — per a further explicit request — this first run's pre-existing
+> findings were also remediated (not left informational-only) plus a
+> repo-wide Prettier/ktlint formatting pass. Going forward,
+> `grumpy-code-reviewer` only reviews the diff against the base branch, and
+> `fix-review-findings` only remediates findings inside that diff — see
+> "Out of scope" at the bottom, whose items now carry `Resolution:` lines
+> as a one-time exception.
 
 ## Summary
 
@@ -22,8 +25,9 @@ None of that is subtle. Fix all three before this merges.
 
 ## Fix summary
 
-Applied by the `fix-review-findings` skill, in severity order, scoped to this
-diff only (nothing under "Out of scope" below was touched):
+Applied by the `fix-review-findings` skill, in severity order.
+
+**In-diff findings** (this branch vs `master`):
 
 | Severity | Fixed | Deferred |
 |---|---|---|
@@ -32,6 +36,18 @@ diff only (nothing under "Out of scope" below was touched):
 | Medium | 2 | 0 |
 | Low | 1 | 0 |
 | Nit | 0 | 1 |
+
+**Pre-existing / whole-app findings** (one-time exception, this run only):
+
+| Item | Resolution |
+|---|---|
+| `useCallFlow.js` / `AppShell` god-object (SOLID) | Deferred — disproportionate blast radius, needs its own PR |
+| `useCompactCallView.js` / `useWebRTCCall.js` exhaustive-deps errors | Fixed |
+| `vectorIcons.js` invalid rule reference | Fixed |
+| `IncomingCallActionReceiver` → `VoiceConnectionService` DIP smell | Deferred — pragmatic native glue, mirrored intentionally |
+| `appLogger.js` variable shadowing, unused test import, stale eslint-disable comments (4x) | Fixed |
+| Repo-wide Prettier (mobile + server) and ktlint (Kotlin) formatting | Fixed |
+| `server/.env.tmp` tracked in git, `Math.random()` fallbacks, `npm audit` advisories | Deferred — see rationale below |
 
 Full validation after all fixes: `npx eslint .` → same 9 pre-existing
 problems as the `origin/master` baseline (the Low finding's new warning is
@@ -197,6 +213,14 @@ of every call site, not by `kotlinc`.
 
 ## Out of scope (pre-existing, not graded)
 
+> **Update (one-time exception):** per explicit user request, this first
+> run's pre-existing/baseline findings below were also remediated (not just
+> the in-diff findings above), and a repo-wide Prettier (mobile + server)
+> and ktlint (Android Kotlin) formatting pass was applied for consistency.
+> Each item below now carries its own `Resolution:` line. This remains a
+> one-time exception — future runs of `fix-review-findings` stay strictly
+> diff-scoped as designed.
+
 ### Pre-existing debt merely adjacent to this diff (not this PR's fault)
 
 - `useCallFlow.js` (2000+ lines) and `App.js`'s `AppShell` (500+ lines) are
@@ -205,12 +229,32 @@ of every call site, not by `kotlinc`.
   above, which *is* scoped/fixed) but did not create the underlying
   structural problem. A full decomposition is a dedicated refactor, not a
   drive-by in a UI/CallKeep feature branch.
+  - **Resolution: Deferred.** A safe, correct decomposition of a 2000+ line
+    hook and a 500+ line root component touches nearly every call-flow test
+    in the suite and carries a real regression risk disproportionate to
+    this pass; it needs to be its own dedicated, reviewed refactor PR with
+    its own test plan, not a rider on a review/formatting pass. Tracked
+    here so it isn't lost.
 - `useCompactCallView.js:39` and `useWebRTCCall.js:295` both have pre-existing
   `react-hooks/exhaustive-deps` lint errors, unchanged by this diff (verified
   against the merge-base build).
+  - **Resolution: Fixed.** Added the missing stable dependencies
+    (`isInRoomRef`, `setIsCompactView`) to each hook's dependency array.
+    Both identities are stable across renders (ref object / state setter),
+    so this is behavior-neutral. This also caught and fixed an unrelated
+    test-double bug: `useWebRTCCall.test.js`'s mock of `useCompactCallView`
+    returned a *new* `jest.fn()` per call (unlike the real hook's stable
+    `useState` setter), which produced an infinite render loop once
+    `setIsCompactView` was correctly memoized — the mock now returns a
+    single stable `jest.fn()`, matching real hook behavior.
 - `vectorIcons.js:28`'s `import/no-extraneous-dependencies` lint error is a
   pre-existing rule-configuration problem (the rule itself isn't loaded),
   unchanged by this diff.
+  - **Resolution: Fixed.** Removed the stale
+    `eslint-disable-next-line import/no-extraneous-dependencies` comment —
+    the rule was never loaded by this project's ESLint config, so the
+    require() call it "guarded" was never actually being flagged; the
+    comment itself was the only lint error.
 - `IncomingCallActionReceiver` reaches directly into
   `io.wazo.callkeep.VoiceConnectionService`, a third-party library's
   internal implementation class, rather than an abstraction WeTalk owns
@@ -218,12 +262,56 @@ of every call site, not by `kotlinc`.
   `react-native-callkeep`-specific event, and no such abstraction exists
   anywhere else in the codebase to route through, this is judged acceptable
   as pragmatic native glue rather than a violation worth blocking on.
+  - **Resolution: Deferred.** `MainActivity.kt`'s own new fix (High finding
+    above) deliberately mirrors this same pattern for consistency. Wrapping
+    `VoiceConnectionService` behind a WeTalk-owned interface is reasonable
+    future work but would touch three call sites for a third-party
+    dependency that is already Android/CallKeep-specific glue; not a
+    proportionate fix for this pass.
+
+### Additional pre-existing lint warnings fixed in this pass
+
+Not previously itemized as findings (below the bar for the original
+report), but caught by the full `eslint .` baseline and fixed as part of
+this run's broader remediation:
+
+- `appLogger.js:26` (`no-shadow`) — **Resolution: Fixed.** Renamed the local
+  `verbose` variable in `isVerboseLoggingEnabled` to `verboseFlag`; it was
+  shadowing the exported `verbose` function.
+- `__tests__/pushNotifications.test.js:9` (`no-unused-vars`) —
+  **Resolution: Fixed.** Removed the unused `installBackgroundMessageHandler`
+  named import; the test already exercises it via `mod.installBackgroundMessageHandler()`.
+- `useCallFlow.js` (3x `eslint-comments/no-unused-disable`) and
+  `webrtcConfig.js` (1x) — **Resolution: Fixed.** Removed four stale
+  `eslint-disable-next-line` comments that ESLint confirmed were
+  suppressing nothing.
 
 ### Whole-application baseline (this run only — see scope note above)
 
 This section is a one-time broader audit, explicitly requested for this
-first run. It is informational; none of it was auto-fixed, and future runs
-of these skills will not repeat it (they are diff-scoped by design).
+first run. Findings that were reasonable to remediate now have a
+`Resolution:` line; future runs of these skills will not repeat this
+whole-app pass (they are diff-scoped by design).
+
+- **Repo-wide formatting pass (Prettier + ktlint).** **Resolution: Fixed.**
+  Added `mobile/.prettierrc.js` (matching the codebase's existing
+  single-quote / spaced-bracket / trailing-comma conventions — verified
+  against existing files before locking in the config) and ran
+  `prettier --write` across `mobile/src`, `mobile/__tests__`, `App.js`,
+  `index.js`, `babel.config.js`, and `metro.config.js`; ran the existing
+  `server/.prettierrc` the same way across `server/src` and `server/test`.
+  Added a repo-root `.editorconfig` pinning Kotlin's `indent_size = 2` (the
+  convention already used throughout `mobile/android`, rather than
+  ktlint's 4-space default) and ran `ktlint --format` across
+  `mobile/android/app/src/main/java/com/wetalk/*.kt`, clearing all
+  411 indentation findings plus 54 genuine style findings (function/class
+  signature wrapping, blank-first-line-in-class-body, chained-call
+  continuation). All changes verified formatting-only (manual diff review);
+  `eslint .` stayed clean, `jest` stayed at 36/36 suites and 422/422 tests,
+  and the `server` test suite kept its exact pre-existing 67-pass/44-fail
+  split (confirmed via `git stash` A/B comparison), so this pass introduced
+  zero behavioral regressions.
+
 
 - **Server (`server/src`)**: spot-checked `security.js`, `lib/auth.js`,
   `config.js`, `createServer.js`, `routes/session.routes.js`, `push.js`.
@@ -242,6 +330,9 @@ of these skills will not repeat it (they are diff-scoped by design).
   lands in git by accident later. Worth adding `*.env.tmp` (or similar) to
   `.gitignore` and untracking it in a dedicated cleanup, not as a drive-by
   here since it's unrelated to this branch's diff.
+  - **Resolution: Fixed.** Added `.env.tmp` / `*.env.tmp` to the root
+    `.gitignore` and ran `git rm --cached server/.env.tmp` to untrack it
+    (the file remains on disk for local dev, just no longer versioned).
 - **`mobile/src/identityVerification.js`** and **`mobile/src/settingsStorage.js`**
   both fall back to `Math.random()` for byte generation when
   `globalThis.crypto.getRandomValues` isn't available. Both already
@@ -250,8 +341,21 @@ of these skills will not repeat it (they are diff-scoped by design).
   normally provides `crypto.getRandomValues`), acceptable as-is.
   `mobile/src/appLogger.js` already redacts `token`/`password`/`push_token`
   keys before logging, which is good practice already in place.
+  - **Resolution: Reviewed, no change needed.** This is already a correct,
+    documented, defense-in-depth fallback, not a bug — CSPRNG is preferred
+    whenever available, and the weaker path is both clearly labeled and
+    only reachable when the platform genuinely lacks
+    `crypto.getRandomValues`.
 - **Dependency audit**: `npm audit` on `mobile/` reports 26 known
   advisories (1 low / 9 moderate / 16 high) in transitive dev/build tooling
   dependencies, all pre-existing on `origin/master` — the one dependency
   this diff actually adds (`react-native-safe-area-context@5.9.0`)
   introduces none of them.
+  - **Resolution: Deferred.** `npm audit fix` cannot run: it hits a
+    pre-existing peer-dependency conflict between
+    `react-native-reanimated@^4.4.1` (wants `react-native-worklets@0.10.x
+    - 0.11.x`) and the pinned `react-native-worklets@^0.9.2`, unrelated to
+    this diff. Forcing a resolution would mean bumping major
+    animation/worklets dependencies blind, which is disproportionate risk
+    for a review/formatting pass and needs its own dedicated dependency
+    upgrade + regression-test pass.
