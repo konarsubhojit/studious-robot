@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, spacing } from '../theme';
+import { colors, sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
 const TABS = [
@@ -27,7 +27,7 @@ const TABS = [
 ];
 
 /** Minimum touch-target height (dp) recommended for reliable thumb taps. */
-const MIN_TAB_HEIGHT = 56;
+const MIN_TAB_HEIGHT = sizes.minTouchTarget;
 
 /**
  * Bottom tab bar for the post-registration app shell: Chats / Calls / Settings.

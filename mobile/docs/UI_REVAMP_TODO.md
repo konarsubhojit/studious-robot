@@ -37,9 +37,9 @@ starting checklist for the next session.
       because the user is mid-read of older history).
 
 ### Calls tab / Lobby
-- [ ] Revisit call history row density and iconography for consistency
+- [x] Revisit call history row density and iconography for consistency
       with the new tab-bar icon set (`tabCalls`/`tabCallsActive`).
-- [ ] Audit touch target sizes on redial/contact rows against the same
+- [x] Audit touch target sizes on redial/contact rows against the same
       "too small" complaint that prompted the tab-bar fix.
 
 ### In-call screen (`CallScreen`)

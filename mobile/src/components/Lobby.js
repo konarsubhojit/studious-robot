@@ -13,7 +13,8 @@ import {
 import SafeRTCView from '../SafeRTCView';
 import { CALL_END_REASON_LABELS } from '../hooks/useCallFlow';
 import { formatCallDuration } from '../callUx';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, sizes, spacing } from '../theme';
+import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import SettingsCard from './SettingsCard';
 import StatusBanner from './StatusBanner';
@@ -198,6 +199,8 @@ export default function Lobby({
   onMarkMissedRead,
   onRedial,
 }) {
+  const MCIcon = loadVectorIcons();
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -279,7 +282,8 @@ export default function Lobby({
               const isMissed =
                 entry.direction === 'incoming' &&
                 (entry.status === 'missed' || entry.endReason === 'timeout');
-              const directionIcon = entry.direction === 'outgoing' ? '↑' : '↓';
+              const directionIconDef = ICONS[entry.direction === 'outgoing' ? 'callOutgoing' : 'callIncoming'];
+              const directionColor = isMissed ? colors.danger : colors.textSecondary;
               const label = CALL_END_REASON_LABELS[entry.endReason] ??
                             CALL_END_REASON_LABELS[entry.status] ?? 'Call';
               const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
@@ -297,9 +301,15 @@ export default function Lobby({
                   ]}
                   testID="call-history-row"
                 >
-                  <Text style={isMissed ? styles.historyIconMissed : styles.historyIcon}>
-                    {directionIcon}
-                  </Text>
+                  <View style={styles.historyIconWrap}>
+                    {directionIconDef && MCIcon ? (
+                      <MCIcon name={directionIconDef.icon} size={18} color={directionColor} />
+                    ) : (
+                      <Text style={[styles.historyIcon, { color: directionColor }]}>
+                        {directionIconDef?.emoji ?? (entry.direction === 'outgoing' ? '↑' : '↓')}
+                      </Text>
+                    )}
+                  </View>
                   <View style={styles.historyText}>
                     <Text style={isMissed ? styles.historyPeerMissed : styles.historyPeer}>
                       {peer}
@@ -312,7 +322,13 @@ export default function Lobby({
                     </Text>
                   </View>
                   {onRedial && peer ? (
-                    <Text style={styles.historyRedialIcon}>📞</Text>
+                    <View style={styles.historyRedialIconWrap}>
+                      {MCIcon ? (
+                        <MCIcon name={ICONS.callRedial.icon} size={20} color={colors.accent} />
+                      ) : (
+                        <Text style={styles.historyRedialIcon}>{ICONS.callRedial.emoji}</Text>
+                      )}
+                    </View>
                   ) : null}
                 </Pressable>
               );
@@ -629,6 +645,7 @@ const styles = StyleSheet.create({
   contactRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: sizes.minTouchTarget,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -654,6 +671,7 @@ const styles = StyleSheet.create({
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: sizes.minTouchTarget,
     paddingVertical: spacing.xs,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -665,20 +683,23 @@ const styles = StyleSheet.create({
   historyRowPressed: {
     opacity: 0.6,
   },
-  historyRedialIcon: {
-    fontSize: 16,
-    marginLeft: spacing.sm,
+  historyIconWrap: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   historyIcon: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    width: 16,
+    fontSize: 16,
     textAlign: 'center',
   },
-  historyIconMissed: {
-    fontSize: 14,
-    color: colors.danger,
-    width: 16,
+  historyRedialIconWrap: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
+  },
+  historyRedialIcon: {
+    fontSize: 18,
     textAlign: 'center',
   },
   historyText: {

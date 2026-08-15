@@ -57,6 +57,11 @@ export const radius = {
   pill: 999,
 };
 
+/** Minimum recommended dimensions (dp) for reliable touch targets. */
+export const sizes = {
+  minTouchTarget: 56,
+};
+
 export const typography = {
   title: { fontSize: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 16, fontWeight: '700' },
@@ -72,6 +77,6 @@ export const typography = {
   hint: { fontSize: 12 },
 };
 
-export const theme = { colors, spacing, radius, typography };
+export const theme = { colors, spacing, radius, sizes, typography };
 
 export default theme;

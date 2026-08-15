@@ -134,6 +134,40 @@ describe('Lobby – call history section', () => {
     expect(rows.length).toBeLessThanOrEqual(15);
   });
 
+  test('history rows meet the minimum touch-target height and show a redial affordance', () => {
+    const history = [
+      {
+        callId: 'call-1',
+        callerId: 'user-alice',
+        calleeId: 'user-bob',
+        direction: 'outgoing',
+        status: 'ended',
+        endReason: 'ended',
+        createdAt: new Date().toISOString(),
+        durationSeconds: 60,
+        isRead: true,
+      },
+    ];
+    const onRedial = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} callHistory={history} onRedial={onRedial} />,
+      );
+    });
+
+    const rowNodes = tree.root.findAll((n) => n.props.testID === 'call-history-row');
+    const hostRow = rowNodes.find((n) => typeof n.type === 'string');
+    const flatStyle = [].concat(hostRow.props.style).flat();
+    expect(flatStyle.some((s) => s?.minHeight === 56)).toBe(true);
+
+    const pressableRow = rowNodes.find((n) => typeof n.props.onPress === 'function');
+    act(() => {
+      pressableRow.props.onPress();
+    });
+    expect(onRedial).toHaveBeenCalledWith('user-bob');
+  });
+
   test('missed incoming calls are visually distinguished', () => {
     const history = [
       {
