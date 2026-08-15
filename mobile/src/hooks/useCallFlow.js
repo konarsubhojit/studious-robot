@@ -1877,6 +1877,7 @@ export default function useCallFlow() {
       signalingUrl,
       markConversationRead,
       fetchConversations,
+      userId,
     ],
   );
 

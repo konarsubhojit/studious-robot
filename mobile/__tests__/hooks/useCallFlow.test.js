@@ -2242,7 +2242,7 @@ describe("useCallFlow chat", () => {
   });
 
   test("message.read socket event is a no-op when there is no readerId", async () => {
-    const { resultRef, tree } = await renderWithSocket();
+    await renderWithSocket();
     const readHandler = getSocketHandler("message.read");
     expect(() => {
       act(() => {
