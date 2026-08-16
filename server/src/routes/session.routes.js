@@ -61,7 +61,13 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
 
     // Persist a newly claimed identity to DB so verification survives restarts.
     if (claim.claimed) {
-      await persistUser(db, claim.user);
+      try {
+        await persistUser(db, claim.user);
+      } catch {
+        state.users.delete(userId);
+        res.status(503).json({ error: 'identity store unavailable' });
+        return;
+      }
     }
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;

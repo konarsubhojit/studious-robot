@@ -95,6 +95,8 @@ CALL_RATE_LIMIT=10             # max call initiations per window per user
 CALL_RATE_WINDOW_MS=60000
 RTC_RATE_LIMIT=100             # max RTC relay events per window per user
 RTC_RATE_WINDOW_MS=10000
+MESSAGE_RATE_LIMIT=30          # max chat sends per window per user
+MESSAGE_RATE_WINDOW_MS=60000
 
 # ── Shutdown ─────────────────────────────────────────────────────────────────
 SHUTDOWN_DRAIN_MS=25000        # graceful drain timeout before forced exit
@@ -118,9 +120,14 @@ APNS_PRODUCTION=false          # set to true for App Store / TestFlight builds
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB_NAME=wetalk                    # optional, default shown
 MONGODB_MESSAGES_COLLECTION=messages      # optional, default shown
+# Production fails closed without MONGODB_URI. Only set this when ephemeral
+# chat history is an intentional operational choice:
+ALLOW_IN_MEMORY_MESSAGE_STORE=false
 ```
 
-> **Tip:** All push variables are optional. Missing or malformed values are skipped with a `console.warn`; the server remains fully functional without push.
+> **Tip:** APNs and Notification Hub variables are optional.
+> `FCM_SERVICE_ACCOUNT_JSON` is required because the server also uses it to
+> verify Firebase authentication tokens.
 
 ### Database (Postgres / Neon)
 

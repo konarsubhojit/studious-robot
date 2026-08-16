@@ -245,7 +245,7 @@ test('POST /devices/register persists the device push token to the DB', async ()
     });
     assert.equal(session.status, 201);
 
-    // Clear inserts from session creation (none expected for unclaimed userId).
+    // Clear identity/device inserts from session creation.
     db.inserts.length = 0;
 
     const reg = await postJson(

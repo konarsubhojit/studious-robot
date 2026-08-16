@@ -314,6 +314,27 @@ test('createMessageStore returns the memory store when MONGODB_URI is unset', ()
   }
 });
 
+test('createMessageStore requires explicit production memory opt-in', () => {
+  const previousUri = process.env.MONGODB_URI;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousOptIn = process.env.ALLOW_IN_MEMORY_MESSAGE_STORE;
+  delete process.env.MONGODB_URI;
+  delete process.env.ALLOW_IN_MEMORY_MESSAGE_STORE;
+  process.env.NODE_ENV = 'production';
+  try {
+    assert.throws(() => createMessageStore(), /MONGODB_URI is required in production/);
+    process.env.ALLOW_IN_MEMORY_MESSAGE_STORE = 'true';
+    assert.equal(createMessageStore().type, 'memory');
+  } finally {
+    if (previousUri === undefined) delete process.env.MONGODB_URI;
+    else process.env.MONGODB_URI = previousUri;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousOptIn === undefined) delete process.env.ALLOW_IN_MEMORY_MESSAGE_STORE;
+    else process.env.ALLOW_IN_MEMORY_MESSAGE_STORE = previousOptIn;
+  }
+});
+
 test('createMessageStore fails closed for a malformed MONGODB_URI', () => {
   const previous = process.env.MONGODB_URI;
   process.env.MONGODB_URI = 'not a uri';

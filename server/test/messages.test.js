@@ -31,9 +31,9 @@ function spyOnMessagePush() {
   };
 }
 
-async function startServer() {
+async function startServer(opts = {}) {
   const { createServer } = require('../src/index.js');
-  const server = createServer();
+  const server = createServer(opts);
   await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
   const { port } = server.httpServer.address();
   const url = `http://127.0.0.1:${port}`;
@@ -161,6 +161,31 @@ test('message.send rejects an unsupported version', async (t) => {
 
   assert.equal(ack.ok, false);
   assert.equal(ack.error.code, 'unsupported_version');
+});
+
+test('message.send rate limits each authenticated sender', async (t) => {
+  const { url, teardown } = await startServer({ messageRateLimit: 1 });
+  t.after(teardown);
+
+  const session = await createSession(url, 'limited-alice');
+  await createSession(url, 'limited-bob');
+  const socket = await connectSocket(url, session);
+  t.after(() => socket.disconnect());
+
+  const first = await emitWithAck(socket, 'message.send', {
+    version: VERSION,
+    recipientId: 'limited-bob',
+    body: 'first',
+  });
+  const second = await emitWithAck(socket, 'message.send', {
+    version: VERSION,
+    recipientId: 'limited-bob',
+    body: 'second',
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, false);
+  assert.equal(second.error.code, 'rate_limited');
 });
 
 test('message.send rejects empty and oversized bodies', async (t) => {

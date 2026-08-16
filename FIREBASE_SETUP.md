@@ -1,6 +1,7 @@
 # WeTalk — Firebase Setup Guide
 
-Complete step-by-step instructions for wiring Firebase into the WeTalk app (Android + iOS) and the signaling server (FCM push delivery).
+Complete step-by-step instructions for wiring Firebase Authentication and push
+delivery into the WeTalk app (Android + iOS) and signaling server.
 
 > **📌 Read this first.** Direct FCM/APNs delivery is now the **fallback** path.
 > The server prefers **Azure Notification Hubs**, which fronts both platforms
@@ -39,15 +40,18 @@ Complete step-by-step instructions for wiring Firebase into the WeTalk app (Andr
 
 ## Overview
 
-WeTalk uses Firebase for one purpose: **push notifications for incoming calls**.
+WeTalk uses Firebase for account authentication and push notifications.
 
 | Component | Firebase product | Config file |
 |-----------|-----------------|-------------|
-| Android app (receive pushes) | Firebase Cloud Messaging (FCM) | `google-services.json` |
-| iOS app (receive pushes) | FCM via APNs | `GoogleService-Info.plist` |
-| Signaling server (send pushes) | FCM HTTP v1 API | Service account JSON |
+| Android app | Firebase Authentication + FCM | `google-services.json` |
+| iOS app | Firebase Authentication + FCM via APNs | `GoogleService-Info.plist` |
+| Signaling server | ID-token verification + FCM HTTP v1 | Service account JSON |
 
-The JS packages `@react-native-firebase/app` and `@react-native-firebase/messaging` are already installed and wired up in `mobile/index.js`. You only need to supply the platform-specific config files.
+The Firebase app, authentication, messaging, and Google Sign-In packages are
+already installed. Supply the platform config files, enable Email/Password,
+Google, and Microsoft in Firebase Authentication, and export the Web OAuth
+client ID as `GOOGLE_WEB_CLIENT_ID` before bundling the mobile app.
 
 ---
 
@@ -274,11 +278,9 @@ Restart the server after setting the variable. You should see this log line at s
 [Push] FCM configured (project: wetalk-prod)
 ```
 
-If `FCM_SERVICE_ACCOUNT_JSON` is absent or malformed, the server starts normally and logs:
-
-```
-[Push] FCM not configured – skipping FCM push delivery
-```
+`FCM_SERVICE_ACCOUNT_JSON` is now also the authentication trust credential.
+The production server fails closed at startup when it is absent or malformed;
+it never accepts sessions that it cannot verify.
 
 ---
 

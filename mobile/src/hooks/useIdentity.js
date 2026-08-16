@@ -24,6 +24,7 @@ import { loadIdentity, saveIdentity } from '../settingsStorage';
 export default function useIdentity(updateStatus) {
   const [userId, setUserId] = useState('');
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authUser, setAuthUser] = useState(null);
 
   const committedIdentityRef = useRef({ userId: '' });
@@ -98,22 +99,30 @@ export default function useIdentity(updateStatus) {
     async registration => {
       const trimmed = (registration?.userId ?? '').trim();
       if (!trimmed) return;
-      if (registration.method === 'email-register') {
-        await registerWithEmail(registration.email, registration.password);
-      } else if (registration.method === 'email-sign-in') {
-        await signInWithEmail(registration.email, registration.password);
-      } else if (registration.method === 'google') {
-        await signInWithGoogle();
-      } else if (registration.method === 'microsoft') {
-        await signInWithMicrosoft();
-      } else {
-        throw new Error('Unsupported sign-in method');
+      setIsAuthenticating(true);
+      try {
+        if (registration.method === 'email-register') {
+          await registerWithEmail(registration.email, registration.password);
+        } else if (registration.method === 'email-sign-in') {
+          await signInWithEmail(registration.email, registration.password);
+        } else if (registration.method === 'google') {
+          await signInWithGoogle();
+        } else if (registration.method === 'microsoft') {
+          await signInWithMicrosoft();
+        } else {
+          throw new Error('Unsupported sign-in method');
+        }
+        const identity = await commitIdentity(trimmed);
+        updateStatus('Account authenticated.', 'success');
+        logInfo('[Identity] User registered', {
+          userId: identity.userId,
+        });
+      } catch (error) {
+        updateStatus(error?.message || 'Authentication failed.', 'error');
+        throw error;
+      } finally {
+        setIsAuthenticating(false);
       }
-      const identity = await commitIdentity(trimmed);
-      updateStatus('Account authenticated.', 'success');
-      logInfo('[Identity] User registered', {
-        userId: identity.userId,
-      });
     },
     [commitIdentity, updateStatus],
   );
@@ -155,6 +164,7 @@ export default function useIdentity(updateStatus) {
     setUserId,
     authUser,
     isLoadingIdentity,
+    isAuthenticating,
     isRegistered,
     committedIdentityRef,
     editUserId,

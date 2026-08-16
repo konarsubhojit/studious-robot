@@ -44,6 +44,7 @@ async function persistUser(db, user) {
       });
   } catch (err) {
     console.error('[session] failed to persist user to DB:', err?.message);
+    throw err;
   }
 }
 

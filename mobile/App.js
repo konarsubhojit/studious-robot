@@ -29,13 +29,9 @@ import { colors } from './src/theme';
 /**
  * Thin composition root: wires the call hooks to the presentational screens.
  *
- * Two call paths are supported:
- *   1. **Server-authoritative call flow** (`useCallFlow`) – user places / receives
- *      calls by userId.  Drives OutgoingCallScreen, IncomingCallScreen, and
- *      CallScreen once media is connected.  Also owns text chat (conversations,
- *      messages) and the `call.media-state` screen-share relay.
- *   2. **Legacy direct room-join flow** (`useWebRTCCall`) – user shares a room ID.
- *      Drives the existing Lobby → CallScreen path.
+ * The server-authoritative call flow places and receives calls by authenticated
+ * userId. The legacy room hook remains only for shared media/settings helpers;
+ * its unauthenticated room-join UI is intentionally disabled.
  *
  * Navigation shell: once identity is registered and no call is ringing, the
  * app renders a lightweight hand-rolled tab shell (Chats / Calls / Settings)
@@ -217,6 +213,7 @@ function AppShell() {
             logError('registerUser failed', error);
           });
         }}
+        isLoading={callFlow.isAuthenticating}
         status={callFlow.status}
       />
     );
@@ -367,7 +364,7 @@ function AppShell() {
           onRetryConnect={callFlow.retryPresenceConnect}
           onSearchUsers={callFlow.searchUsers}
           onSelectContact={callFlow.setCalleeId}
-          developerMode={call.settings.developerModeEnabled}
+          developerMode={false}
           signalingUrl={call.signalingUrl}
           onChangeSignalingUrl={call.setSignalingUrl}
           roomId={call.roomId}
@@ -413,8 +410,6 @@ function AppShell() {
           }}
           onClose={() => setActiveTab('chats')}
           onExportLogs={call.handleExportLogs}
-          developerModeEnabled={call.settings.developerModeEnabled}
-          onToggleDeveloperMode={call.handleDeveloperModeToggle}
         />
       );
     }

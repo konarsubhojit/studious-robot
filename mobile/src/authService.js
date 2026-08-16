@@ -5,6 +5,9 @@ let googleConfigured = false;
 
 function configureGoogle() {
   if (googleConfigured) return;
+  if (!process.env.GOOGLE_WEB_CLIENT_ID) {
+    throw new Error('GOOGLE_WEB_CLIENT_ID is not configured');
+  }
   GoogleSignin.configure({
     webClientId: process.env.GOOGLE_WEB_CLIENT_ID,
   });

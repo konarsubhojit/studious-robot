@@ -1884,6 +1884,7 @@ export default function useCallFlow() {
     editUserId: identity.editUserId,
     isRegistered,
     isLoadingIdentity: identity.isLoadingIdentity,
+    isAuthenticating: identity.isAuthenticating,
     registerUser: identity.registerUser,
     unregisterUser,
     updateUserId: identity.updateUserId,

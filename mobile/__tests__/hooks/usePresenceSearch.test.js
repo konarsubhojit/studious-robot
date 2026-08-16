@@ -15,9 +15,15 @@ function TestHook({ resultRef, params }) {
 }
 
 function setup(overrides = {}) {
+  const authedFetchRef = {
+    current: jest.fn(buildRequest => {
+      const request = buildRequest('sess-1');
+      return global.fetch(request.url, request.options);
+    }),
+  };
   const params = {
     signalingUrl: 'https://signal.example.com',
-    authedFetchRef: { current: jest.fn() },
+    authedFetchRef,
     sessionIdRef: { current: 'sess-1' },
     calleeId: '',
     ...overrides,
@@ -49,7 +55,10 @@ describe('usePresenceSearch', () => {
     });
 
     expect(presence).toEqual({ status: 'online', online: true });
-    expect(global.fetch).toHaveBeenCalledWith('https://signal.example.com/presence/bob');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://signal.example.com/presence/bob?sessionId=sess-1',
+      undefined,
+    );
   });
 
   test('checkPresence returns unknown:true for a 404', async () => {

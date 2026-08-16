@@ -51,6 +51,9 @@ if (require.main === module) {
     const { createFirebaseTokenVerifier } = require('./firebaseAuth');
     const verifyIdToken = createFirebaseTokenVerifier();
 
+    if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is required in production for durable identity ownership');
+    }
     const db = process.env.DATABASE_URL ? require('../db/client').getDb() : null;
 
     let server;
