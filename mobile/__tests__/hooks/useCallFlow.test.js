@@ -153,6 +153,22 @@ function renderHook() {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+// Every hook under test here starts one or more `setInterval`/`setTimeout`
+// timers (elapsed-call clock, proactive session refresh, stats polling,
+// presence debounce, typing-indicator safety net) via `useEffect`, and none
+// of these tests unmount the rendered tree, so those timers are never
+// cleared. Under Jest's *real* timers those are live OS timer handles that
+// keep the process's event loop open, so Jest hangs for tens of seconds
+// after every run ("Jest did not exit...") waiting for them, even though
+// every test already passed. Fake timers are a virtual clock only — they
+// never touch the real event loop — so defaulting every test in this file to
+// fake timers fixes the hang regardless of whether a given test unmounts.
+// Individual tests still advance the fake clock explicitly where they need a
+// timer to actually fire (see `jest.advanceTimersByTime` below).
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+
 describe('useCallFlow', () => {
   afterEach(() => {
     jest.clearAllMocks();

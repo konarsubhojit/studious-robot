@@ -405,7 +405,7 @@ export default function useCallFlow() {
       pc.setConfiguration?.({ iceServers });
       return pc;
     },
-    [signalingUrl],
+    [signalingUrl, sessionIdRef],
   );
 
   const ensurePeerConnection = useCallback(async () => {
