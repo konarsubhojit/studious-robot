@@ -1870,6 +1870,35 @@ describe('useCallFlow chat', () => {
     expect(resultRef.current.unreadTotal).toBe(5);
   });
 
+  test('conversations are fetched automatically once the socket connects, without waiting for a manual refresh', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const conversationsFetchSpy = jest.fn(async url => {
+      expect(url).toContain('/conversations?sessionId=');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          conversations: [
+            { conversationId: 'c1', peerId: 'bob', lastMessage: null, unreadCount: 1 },
+          ],
+        }),
+      };
+    });
+    global.fetch = conversationsFetchSpy;
+
+    const connectHandler = getSocketHandler('connect');
+    await act(async () => {
+      await connectHandler();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(conversationsFetchSpy).toHaveBeenCalled();
+    expect(resultRef.current.conversations).toHaveLength(1);
+  });
+
   test('fetchConversations silently no-ops on a fetch error', async () => {
     const { resultRef, tree } = await renderWithSocket();
 

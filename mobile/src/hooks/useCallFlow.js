@@ -962,6 +962,15 @@ export default function useCallFlow() {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         // Clear offline indicator on successful connection.
         recordConnectSuccess();
+        // Load the conversation list as soon as the session is actually
+        // live. `sessionIdRef` is only populated once `createOrGetSession`
+        // resolves, which happens asynchronously — a chat-sync effect keyed
+        // only on `isRegistered` (which flips as soon as a stored userId
+        // loads, before the session exists) can fire too early and silently
+        // no-op, leaving old messages/conversations unloaded until the user
+        // manually pulls to refresh. Firing here guarantees it runs once the
+        // session/socket are actually ready, on cold start and on reconnect.
+        fetchConversations();
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -1052,6 +1061,7 @@ export default function useCallFlow() {
       recordConnectSuccess,
       recordConnectError,
       sessionIdRef,
+      fetchConversations,
     ],
   );
 

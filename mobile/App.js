@@ -21,6 +21,7 @@ import useCallInitiation from './src/hooks/useCallInitiation';
 import useCallMinimize from './src/hooks/useCallMinimize';
 import useChatSync from './src/hooks/useChatSync';
 import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
+import useTabShellBackNavigation from './src/hooks/useTabShellBackNavigation';
 import useWebRTCCall from './src/hooks/useWebRTCCall';
 import { colors } from './src/theme';
 
@@ -455,6 +456,15 @@ function AppShell() {
       );
     }
   }
+
+  useTabShellBackNavigation({
+    enabled: isTabShellActive,
+    chatPeerId,
+    onCloseChat: () => setChatPeerId(null),
+    activeTab,
+    defaultTab: 'chats',
+    onNavigateToDefaultTab: handleChangeTab,
+  });
 
   const shouldShowRecoveryCodeNotice =
     !isCompact && !callFlow.isLoadingIdentity && Boolean(callFlow.pendingVerificationCode);
