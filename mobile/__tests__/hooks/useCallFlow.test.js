@@ -1,7 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
-import { generateVerificationCode } from '../../src/identityVerification';
 import { loadIdentity, saveIdentity } from '../../src/settingsStorage';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
@@ -119,15 +118,21 @@ jest.mock('../../src/pushNotifications', () => ({
   installForegroundMessageHandler: jest.fn(() => jest.fn()),
 }));
 
-jest.mock('../../src/identityVerification', () => ({
-  generateVerificationCode: jest.fn(() => 'ABCD-EFGH'),
-  normalizeVerificationCode: jest.fn(code =>
-    typeof code === 'string' ? code.trim().toUpperCase() : '',
-  ),
+jest.mock('../../src/authService', () => ({
+  observeAuthState: jest.fn(listener => {
+    listener({ uid: 'firebase-test-user' });
+    return jest.fn();
+  }),
+  registerWithEmail: jest.fn(async () => {}),
+  signInWithEmail: jest.fn(async () => {}),
+  signInWithGoogle: jest.fn(async () => {}),
+  signInWithMicrosoft: jest.fn(async () => {}),
+  getIdToken: jest.fn(async () => 'firebase-id-token'),
+  signOut: jest.fn(async () => {}),
 }));
 
 jest.mock('../../src/settingsStorage', () => ({
-  loadIdentity: jest.fn(async () => ({ userId: '', verificationCode: '' })),
+  loadIdentity: jest.fn(async () => ({ userId: '' })),
   saveIdentity: jest.fn(async () => true),
   loadDeviceId: jest.fn(async () => 'device-test-1'),
   loadSettings: jest.fn(async defaults => ({ ...defaults })),
@@ -242,62 +247,7 @@ describe('useCallFlow', () => {
     expect(resultRef.current.userId).toBe('alice');
   });
 
-  test('registerUser generates and persists a verification code', async () => {
-    global.fetch = jest.fn(async () => ({
-      ok: true,
-      status: 201,
-      json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
-    }));
-
-    const { resultRef, tree } = renderHook();
-    await act(async () => {
-      await resultRef.current.registerUser(' alice ');
-    });
-    act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
-    });
-    await act(async () => {});
-    act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
-    });
-
-    expect(generateVerificationCode).toHaveBeenCalledTimes(1);
-    expect(saveIdentity).toHaveBeenCalledWith({
-      userId: 'alice',
-      verificationCode: 'ABCD-EFGH',
-    });
-    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
-    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
-  });
-
-  test('loads a legacy identity, generates a verification code, and persists it', async () => {
-    loadIdentity.mockResolvedValueOnce({
-      userId: 'alice',
-      verificationCode: '',
-    });
-    global.fetch = jest.fn(async () => ({
-      ok: true,
-      status: 201,
-      json: async () => ({ sessionId: 'sess-legacy', userId: 'alice' }),
-    }));
-
-    const { resultRef, tree } = renderHook();
-    await act(async () => {});
-    act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
-    });
-
-    expect(generateVerificationCode).toHaveBeenCalledTimes(1);
-    expect(saveIdentity).toHaveBeenCalledWith({
-      userId: 'alice',
-      verificationCode: 'ABCD-EFGH',
-    });
-    expect(resultRef.current.userId).toBe('alice');
-    expect(resultRef.current.verificationCode).toBe('ABCD-EFGH');
-    expect(resultRef.current.pendingVerificationCode).toBe('ABCD-EFGH');
-  });
-
-  test('session creation sends verificationCode when it exists', async () => {
+    test('session creation sends a Firebase ID token', async () => {
     global.fetch = jest.fn(async () => ({
       ok: true,
       status: 201,
@@ -306,7 +256,12 @@ describe('useCallFlow', () => {
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      await resultRef.current.registerUser('alice');
+      await resultRef.current.registerUser({
+        userId: 'alice',
+        method: 'email-register',
+        email: 'alice@example.com',
+        password: 'secret12',
+      });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -322,7 +277,7 @@ describe('useCallFlow', () => {
     expect(sessionRequest).toBeTruthy();
     expect(JSON.parse(sessionRequest[1].body)).toMatchObject({
       userId: 'alice',
-      verificationCode: 'ABCD-EFGH',
+      idToken: 'firebase-id-token',
     });
   });
 
@@ -330,12 +285,17 @@ describe('useCallFlow', () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 409,
-      json: async () => ({ code: 'identity_conflict' }),
+      json: async () => ({ code: 'identity_claimed' }),
     }));
 
     const { resultRef, tree } = renderHook();
     await act(async () => {
-      await resultRef.current.registerUser('alice');
+      await resultRef.current.registerUser({
+        userId: 'alice',
+        method: 'email-register',
+        email: 'alice@example.com',
+        password: 'secret12',
+      });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -346,7 +306,7 @@ describe('useCallFlow', () => {
     });
 
     expect(resultRef.current.status.severity).toBe('error');
-    expect(resultRef.current.status.message).toMatch(/already claimed/i);
+    expect(resultRef.current.status.message).toMatch(/bound/i);
   });
 
   test('setCalleeId updates the calleeId state', () => {
@@ -507,12 +467,18 @@ describe('useCallFlow', () => {
   test('calleePresence ignores stale presence responses for older calleeIds', async () => {
     jest.useFakeTimers();
     const pending = [];
-    global.fetch = jest.fn(
-      url =>
-        new Promise(resolve => {
-          pending.push({ url, resolve });
-        }),
-    );
+    global.fetch = jest.fn(url => {
+      if (String(url).endsWith('/session')) {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({ sessionId: 'presence-session', userId: 'alice' }),
+        });
+      }
+      return new Promise(resolve => {
+        pending.push({ url, resolve });
+      });
+    });
 
     const { resultRef, tree } = renderHook();
 
@@ -536,7 +502,7 @@ describe('useCallFlow', () => {
       jest.advanceTimersByTime(400);
     });
 
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(pending).toHaveLength(2);
     expect(pending[0].url).toContain('/presence/alice');
     expect(pending[1].url).toContain('/presence/bob');
 

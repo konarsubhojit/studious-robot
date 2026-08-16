@@ -11,19 +11,32 @@ const { persistUser, persistDevice } = require('../lib/persistence');
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
- * @param {{ state: object, db: object|null, sessionTtlMs: number }} ctx
+ * @param {{ state: object, db: object|null, sessionTtlMs: number, verifyIdToken?: Function }} ctx
  * @returns {import('express').Router}
  */
-function createSessionRouter({ state, db, sessionTtlMs }) {
+function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
   const router = express.Router();
 
   router.post('/session', async (req, res) => {
-    const userId = normaliseId(req.body?.userId) || `user-${randomUUID()}`;
+    let externalIdentity;
+    try {
+      externalIdentity = verifyIdToken
+        ? await verifyIdToken(req.body?.idToken)
+        : { authUid: `test-${normaliseId(req.body?.userId) || randomUUID()}` };
+    } catch (error) {
+      state.auditLog.record({
+        event: 'session.authentication_failed',
+        outcome: 'denied',
+        details: { reason: error?.code ?? 'invalid_token' },
+      });
+      res.status(401).json({ error: 'invalid authentication token', code: 'invalid_token' });
+      return;
+    }
 
-    // Enforce identity ownership: a userId that has been claimed with a
-    // verification code can only be re-used by presenting that same code.
-    const claim = await resolveIdentityClaim(state.users, userId, req.body?.verificationCode);
+    const requestedUserId = normaliseId(req.body?.userId);
+    const claim = resolveIdentityClaim(state.users, requestedUserId, externalIdentity);
     if (!claim.ok) {
+      const userId = requestedUserId || claim.user?.userId || externalIdentity.authUid;
       state.auditLog.record({
         event: 'session.identity_conflict',
         actor: userId,
@@ -35,14 +48,19 @@ function createSessionRouter({ state, db, sessionTtlMs }) {
         `[security] session.identity_conflict userId=${sanitizeForLog(userId)} reason=${sanitizeForLog(claim.reason)}`,
       );
       res.status(409).json({
-        error: 'userId is claimed by a verified identity',
-        code: 'identity_conflict',
+        error:
+          claim.reason === 'username_required'
+            ? 'username is required for a new account'
+            : 'username is unavailable for this account',
+        code: claim.reason,
+        userId: claim.user?.userId,
       });
       return;
     }
+    const userId = claim.user.userId;
 
     // Persist a newly claimed identity to DB so verification survives restarts.
-    if (claim.claimed && claim.user) {
+    if (claim.claimed) {
       await persistUser(db, claim.user);
     }
 

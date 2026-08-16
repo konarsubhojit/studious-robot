@@ -22,10 +22,19 @@ const { createTurnCredentialsRouter } = require('./turnCredentials.routes');
  * @param {{ state: object, db: object|null, io: object, sessionTtlMs: number, ringingTimeoutMs: number }} ctx
  */
 function mountRoutes(app, ctx) {
-  const { state, db, io, sessionTtlMs, ringingTimeoutMs, turnFetch, turnEnv } = ctx;
+  const {
+    state,
+    db,
+    io,
+    sessionTtlMs,
+    ringingTimeoutMs,
+    turnFetch,
+    turnEnv,
+    verifyIdToken,
+  } = ctx;
 
   app.use(createHealthRouter({ state }));
-  app.use(createSessionRouter({ state, db, sessionTtlMs }));
+  app.use(createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }));
   app.use(createDevicesRouter({ state, db }));
   app.use(createDirectoryRouter({ state }));
   app.use(createMetricsRouter({ state }));

@@ -12,6 +12,9 @@ jest.mock('../../src/appLogger', () => ({
 jest.mock('../../src/settingsStorage', () => ({
   loadDeviceId: jest.fn(async () => 'device-test-1'),
 }));
+jest.mock('../../src/authService', () => ({
+  getIdToken: jest.fn(async () => 'firebase-id-token'),
+}));
 
 const { loadDeviceId } = require('../../src/settingsStorage');
 
@@ -24,7 +27,6 @@ function setup(overrides = {}) {
   const params = {
     signalingUrl: 'https://signal.example.com',
     userId: 'alice',
-    verificationCodeRef: { current: '' },
     updateStatus: jest.fn(),
     ...overrides,
   };
@@ -65,6 +67,7 @@ describe('useSession', () => {
       userId: 'alice',
       deviceId: 'device-test-1',
       platform: expect.any(String),
+      idToken: 'firebase-id-token',
     });
   });
 
@@ -89,26 +92,11 @@ describe('useSession', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  test('createOrGetSession includes verificationCode in the request body when present', async () => {
-    global.fetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
-    });
-    const { resultRef } = setup({ verificationCodeRef: { current: 'ABCD-EFGH' } });
-
-    await act(async () => {
-      await resultRef.current.createOrGetSession();
-    });
-
-    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(body.verificationCode).toBe('ABCD-EFGH');
-  });
-
   test('createOrGetSession surfaces an identity_conflict as a friendly status message', async () => {
     global.fetch.mockResolvedValue({
       ok: false,
       status: 409,
-      json: async () => ({ code: 'identity_conflict' }),
+      json: async () => ({ code: 'identity_claimed' }),
     });
     const { resultRef, params } = setup();
 
@@ -124,7 +112,7 @@ describe('useSession', () => {
     expect(caughtError).toBeInstanceOf(Error);
     expect(caughtError.message).toContain('Session creation failed');
     expect(params.updateStatus).toHaveBeenCalledWith(
-      expect.stringContaining('already claimed'),
+      expect.stringContaining('bound'),
       'error',
     );
   });

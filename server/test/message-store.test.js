@@ -314,11 +314,11 @@ test('createMessageStore returns the memory store when MONGODB_URI is unset', ()
   }
 });
 
-test('createMessageStore falls back to memory for a malformed MONGODB_URI', () => {
+test('createMessageStore fails closed for a malformed MONGODB_URI', () => {
   const previous = process.env.MONGODB_URI;
   process.env.MONGODB_URI = 'not a uri';
   try {
-    assert.equal(createMessageStore().type, 'memory');
+    assert.throws(() => createMessageStore(), /Invalid MONGODB_URI/);
   } finally {
     if (previous === undefined) delete process.env.MONGODB_URI;
     else process.env.MONGODB_URI = previous;

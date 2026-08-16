@@ -63,7 +63,10 @@ export default function usePresenceSearch({
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!trimmedId || !trimmedUrl) return null;
       try {
-        const response = await fetch(`${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`);
+        const response = await authedFetchRef.current?.(sessionId => ({
+          url: `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}?sessionId=${encodeURIComponent(sessionId)}`,
+        }));
+        if (!response) return null;
         if (response.status === 404) return { status: 'offline', online: false, unknown: true };
         if (!response.ok) return null;
         const data = await response.json();
@@ -73,7 +76,7 @@ export default function usePresenceSearch({
         return null;
       }
     },
-    [signalingUrl],
+    [authedFetchRef, signalingUrl],
   );
 
   /**

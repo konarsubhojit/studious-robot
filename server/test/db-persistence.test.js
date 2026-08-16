@@ -178,7 +178,7 @@ function buildCallState(db) {
 
 // ─── POST /session – claimed identity persisted to DB ─────────────────────────
 
-test('POST /session persists a newly claimed identity to the DB', async () => {
+test('POST /session persists a newly authenticated identity to the DB', async () => {
   const db = buildMockDb();
   const { url, teardown } = await startServer({ db });
 
@@ -186,7 +186,6 @@ test('POST /session persists a newly claimed identity to the DB', async () => {
     const res = await postJson(url, '/session', {
       userId: 'user-persist-1',
       deviceId: 'device-p1',
-      verificationCode: 'secret-code',
     });
     assert.equal(res.status, 201);
 
@@ -195,14 +194,7 @@ test('POST /session persists a newly claimed identity to the DB', async () => {
     const insert = db.inserts.find((i) => i.table === schema.users);
     assert.ok(insert, 'a users insert should be present');
     assert.equal(insert.values.userId, 'user-persist-1');
-    assert.ok(
-      typeof insert.values.verificationHash === 'string',
-      'verificationHash should be a string'
-    );
-    assert.ok(
-      typeof insert.values.verificationSalt === 'string',
-      'verificationSalt should be a string'
-    );
+    assert.equal(insert.values.authUid, 'test-user-persist-1');
     assert.ok(insert.conflictSet, 'onConflictDoUpdate set should be present');
   } finally {
     await teardown();
@@ -221,8 +213,7 @@ test('POST /session persists the device even without a push token', async () => 
     });
     assert.equal(res.status, 201);
 
-    // No user insert (identity is unclaimed) but the device must be recorded so
-    // the `devices` table reflects every device a user has signed in from.
+    // The device must be recorded so the `devices` table reflects every device.
     const deviceInserts = db.inserts.filter((i) => i.table === schema.devices);
     assert.equal(deviceInserts.length, 1);
     assert.equal(deviceInserts[0].values.deviceId, 'device-p2');
@@ -234,11 +225,7 @@ test('POST /session persists the device even without a push token', async () => 
       !('pushToken' in deviceInserts[0].conflictSet),
       'session persistence must leave push columns untouched on conflict'
     );
-    assert.equal(
-      db.inserts.filter((i) => i.table === schema.users).length,
-      0,
-      'no user write for an unclaimed userId'
-    );
+    assert.equal(db.inserts.filter((i) => i.table === schema.users).length, 1);
   } finally {
     await teardown();
   }
@@ -521,29 +508,34 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
   const userRows = [
     {
       userId: 'user-hydrate-1',
-      verificationHash: 'hash-abc',
-      verificationSalt: 'salt-abc',
+      authUid: 'account-hydrated',
+      email: 'hydrated@example.com',
+      authProvider: 'password',
       createdAt: new Date('2024-01-01T00:00:00Z'),
       verifiedAt: new Date('2024-01-01T00:00:01Z'),
     },
   ];
   const db = buildMockDb({ selectRows: userRows });
-  const server = createServer({ db });
+  const server = createServer({
+    db,
+    verifyIdToken: async (idToken) => ({ authUid: idToken }),
+  });
 
   await server.loadPersistedState();
 
-  // Verify the claimed identity is now protected: a request without the code is rejected.
+  // Verify the hydrated identity is protected from a different authenticated account.
   await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
   const { port } = server.httpServer.address();
   const url = `http://127.0.0.1:${port}`;
 
   try {
-    const noCode = await postJson(url, '/session', {
+    const impostor = await postJson(url, '/session', {
       userId: 'user-hydrate-1',
       deviceId: 'device-x',
+      idToken: 'account-impostor',
     });
-    assert.equal(noCode.status, 409, 'hydrated identity should reject missing code');
-    assert.equal(noCode.body.code, 'identity_conflict');
+    assert.equal(impostor.status, 409, 'hydrated identity should reject another account');
+    assert.equal(impostor.body.code, 'identity_claimed');
   } finally {
     server.httpServer.closeAllConnections?.();
     await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));

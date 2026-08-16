@@ -8,7 +8,7 @@
  * runtime record shapes used by the signaling server (see `server/src/index.js`
  * and `server/src/security.js`):
  *
- *   - users        claimed identities (unique userId + verification secret)
+ *   - users        public usernames bound to authenticated provider accounts
  *   - calls        durable call history
  *   - call_events  per-call ordered event timeline
  *   - devices      push-notification device registrations
@@ -40,6 +40,9 @@ const { sql } = require('drizzle-orm');
  */
 const users = pgTable('users', {
   userId: text('user_id').primaryKey(),
+  authUid: text('auth_uid').unique(),
+  email: text('email'),
+  authProvider: text('auth_provider'),
   verificationHash: text('verification_hash'),
   verificationSalt: text('verification_salt'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

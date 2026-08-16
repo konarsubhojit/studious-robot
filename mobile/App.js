@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
@@ -212,8 +212,8 @@ function AppShell() {
   } else if (!callFlow.isRegistered) {
     screenContent = (
       <RegistrationScreen
-        onRegister={(newUserId, verificationCode) => {
-          callFlow.registerUser(newUserId, verificationCode).catch(error => {
+        onRegister={registration => {
+          callFlow.registerUser(registration).catch(error => {
             logError('registerUser failed', error);
           });
         }}
@@ -404,7 +404,6 @@ function AppShell() {
           onSaveUserId={callFlow.updateUserId}
           signalingUrl={callFlow.signalingUrl}
           onSaveSignalingUrl={callFlow.setSignalingUrl}
-          verificationCode={callFlow.verificationCode}
           status={callFlow.status}
           onSignOut={() => {
             setActiveTab('chats');
@@ -475,9 +474,6 @@ function AppShell() {
     onNavigateToDefaultTab: handleChangeTab,
   });
 
-  const shouldShowRecoveryCodeNotice =
-    !isCompact && !callFlow.isLoadingIdentity && Boolean(callFlow.pendingVerificationCode);
-
   // Padding depends on runtime-only values (measured safe-area insets, and
   // whether the tab shell — which pads its own bottom edge — is active), so
   // it can't live in the static StyleSheet below; computed once per render
@@ -496,28 +492,6 @@ function AppShell() {
           {inCallBanner}
           {screenContent}
           {floatingBubble}
-          {shouldShowRecoveryCodeNotice ? (
-            <View
-              style={[
-                styles.recoveryNotice,
-                { bottom: 16 + (isTabShellActive ? 0 : insets.bottom) },
-              ]}
-              testID="recovery-code-notice">
-              <Text style={styles.recoveryNoticeTitle}>Your recovery code</Text>
-              <Text style={styles.recoveryNoticeCode}>{callFlow.pendingVerificationCode}</Text>
-              <Text style={styles.recoveryNoticeText}>
-                Save this code. You’ll need it to use this username on another device.
-              </Text>
-              <Pressable
-                onPress={callFlow.dismissVerificationCodeNotice}
-                accessibilityRole="button"
-                accessibilityLabel="I saved it"
-                testID="recovery-code-dismiss"
-                style={({ pressed }) => [styles.recoveryNoticeButton, pressed && styles.pressed]}>
-                <Text style={styles.recoveryNoticeButtonText}>I saved it</Text>
-              </Pressable>
-            </View>
-          ) : null}
           <StatusBar
             barStyle="light-content"
             backgroundColor={colors.background}
@@ -543,56 +517,5 @@ const styles = StyleSheet.create({
   },
   tabShellContent: {
     flex: 1,
-  },
-  recoveryNotice: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  recoveryNoticeTitle: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 8,
-  },
-  recoveryNoticeCode: {
-    color: colors.textPrimary,
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginBottom: 8,
-  },
-  recoveryNoticeText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginBottom: 12,
-  },
-  recoveryNoticeButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: colors.accentButton,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  recoveryNoticeButtonText: {
-    color: colors.textOnAccent,
-    fontWeight: '700',
-  },
-  pressed: {
-    opacity: 0.82,
   },
 });

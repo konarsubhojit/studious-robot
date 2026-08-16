@@ -14,7 +14,6 @@ const baseProps = {
   onSaveSignalingUrl: jest.fn(),
   onSignOut: jest.fn(),
   onClose: jest.fn(),
-  verificationCode: 'ABCD-EFGH',
   status: { message: '', severity: 'info' },
 };
 
@@ -156,25 +155,6 @@ describe('SettingsScreen', () => {
     expect(toggle.props.accessibilityState).toEqual({ checked: true });
   });
 
-  test('recovery code is hidden until toggled open', () => {
-    let tree;
-    act(() => {
-      tree = renderer.create(<SettingsScreen {...baseProps} />);
-    });
-
-    const hiddenText = tree.root.findAll(
-      n => n.type === 'Text' && n.props.children === '••••-••••',
-    );
-    expect(hiddenText.length).toBeGreaterThanOrEqual(1);
-
-    act(() => {
-      findByTestID(tree, 'settings-toggle-recovery-code')[0].props.onPress();
-    });
-
-    const shownText = tree.root.findAll(n => n.type === 'Text' && n.props.children === 'ABCD-EFGH');
-    expect(shownText.length).toBeGreaterThanOrEqual(1);
-  });
-
   test('renders section labels with the expected text for each visible section', () => {
     let tree;
     act(() => {
@@ -188,7 +168,7 @@ describe('SettingsScreen', () => {
       );
     });
 
-    ['Username', 'Signaling server', 'Recovery code', 'Developer', 'Account'].forEach(label => {
+    ['Username', 'Signaling server', 'Developer', 'Account'].forEach(label => {
       const match = tree.root.findAll(n => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
     });

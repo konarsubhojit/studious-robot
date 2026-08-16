@@ -14,19 +14,26 @@ import StatusBanner from './StatusBanner';
  * Purely presentational – all behaviour is supplied via props.
  *
  * @param {object}   props
- * @param {Function} props.onRegister  - `(userId: string, verificationCode?: string) => void` called on submit.
+ * @param {Function} props.onRegister - Called with the chosen authentication method and profile fields.
  * @param {boolean}  [props.isLoading] - Shows a loading state while the server is being reached.
  * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
  */
 export default function RegistrationScreen({ onRegister, isLoading = false, status }) {
   const [name, setName] = useState('');
-  const [recoveryCode, setRecoveryCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  const handleSubmit = () => {
+  const submit = method => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    onRegister(trimmed, recoveryCode.trim());
+    onRegister({
+      userId: trimmed,
+      method,
+      email: email.trim(),
+      password,
+    });
   };
+  const emailReady = name.trim() && email.trim() && password.length >= 6;
 
   return (
     <KeyboardAvoidingView
@@ -57,36 +64,67 @@ export default function RegistrationScreen({ onRegister, isLoading = false, stat
             autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="done"
-            onSubmitEditing={handleSubmit}
+            onSubmitEditing={() => submit('email-register')}
             style={styles.input}
             accessibilityLabel="Your username"
             testID="registration-username-input"
           />
 
-          <Text style={styles.optionalLabel}>Already have a recovery code?</Text>
+          <Text style={styles.optionalLabel}>Email</Text>
           <Text style={styles.optionalHint}>
-            If you already claimed this username on another device, enter its recovery code.
+            Register a new account or sign in to an existing one.
           </Text>
           <TextInput
-            value={recoveryCode}
-            onChangeText={value => setRecoveryCode(value.toUpperCase())}
-            placeholder="Optional recovery code"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="you@example.com"
             placeholderTextColor={colors.textSecondary}
-            autoCapitalize="characters"
+            autoCapitalize="none"
             autoCorrect={false}
-            returnKeyType="done"
-            onSubmitEditing={handleSubmit}
+            keyboardType="email-address"
             style={styles.input}
-            accessibilityLabel="Recovery code"
-            testID="registration-recovery-code-input"
+            accessibilityLabel="Email address"
+            testID="registration-email-input"
+          />
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Password (6+ characters)"
+            placeholderTextColor={colors.textSecondary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+            returnKeyType="done"
+            onSubmitEditing={() => submit('email-register')}
+            style={styles.input}
+            accessibilityLabel="Password"
+            testID="registration-password-input"
           />
 
           <AppButton
-            title={isLoading ? 'Setting up…' : 'Get Started'}
-            onPress={handleSubmit}
+            title={isLoading ? 'Setting up…' : 'Create account'}
+            onPress={() => submit('email-register')}
+            disabled={!emailReady || isLoading}
+            accessibilityLabel="Create account"
+            testID="registration-email-register"
+          />
+          <AppButton
+            title="Sign in with email"
+            onPress={() => submit('email-sign-in')}
+            disabled={!emailReady || isLoading}
+            testID="registration-email-sign-in"
+          />
+          <AppButton
+            title="Continue with Google"
+            onPress={() => submit('google')}
             disabled={!name.trim() || isLoading}
-            accessibilityLabel="Get started"
-            testID="registration-submit"
+            testID="registration-google"
+          />
+          <AppButton
+            title="Continue with Microsoft"
+            onPress={() => submit('microsoft')}
+            disabled={!name.trim() || isLoading}
+            testID="registration-microsoft"
           />
         </View>
       </View>

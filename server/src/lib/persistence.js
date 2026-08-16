@@ -27,16 +27,18 @@ async function persistUser(db, user) {
       .insert(usersTable)
       .values({
         userId: user.userId,
-        verificationHash: user.verificationHash,
-        verificationSalt: user.verificationSalt,
+        authUid: user.authUid,
+        email: user.email,
+        authProvider: user.authProvider,
         createdAt: new Date(user.createdAt),
         verifiedAt: user.verifiedAt ? new Date(user.verifiedAt) : null,
       })
       .onConflictDoUpdate({
         target: usersTable.userId,
         set: {
-          verificationHash: user.verificationHash,
-          verificationSalt: user.verificationSalt,
+          authUid: user.authUid,
+          email: user.email,
+          authProvider: user.authProvider,
           verifiedAt: user.verifiedAt ? new Date(user.verifiedAt) : null,
         },
       });
@@ -233,8 +235,9 @@ async function hydrateUsers(db, state, usersTable) {
   for (const row of rows) {
     state.users.set(row.userId, {
       userId: row.userId,
-      verificationHash: row.verificationHash ?? null,
-      verificationSalt: row.verificationSalt ?? null,
+      authUid: row.authUid ?? null,
+      email: row.email ?? null,
+      authProvider: row.authProvider ?? null,
       createdAt: toIsoString(row.createdAt),
       verifiedAt: toIsoString(row.verifiedAt),
     });

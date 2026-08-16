@@ -17,6 +17,7 @@
     "@socket.io/redis-adapter": "^8.3.0",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "firebase-admin": "^14.2.0",
     "mongodb": "^7.5.0",
     "pg": "^8.13.0",
     "redis": "^6.0.0",

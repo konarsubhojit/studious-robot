@@ -28,13 +28,49 @@ async function startServer() {
 /**
  * Helper: connect a client and wait for the 'connect' event.
  */
-function connect(url) {
+let nextClientId = 0;
+async function connect(url) {
+  nextClientId += 1;
+  const userId = `legacy-test-${nextClientId}`;
+  const response = await fetch(`${url}/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId }),
+  });
+  const session = await response.json();
   return new Promise((resolve, reject) => {
-    const socket = ioClient(url, { forceNew: true, transports: ['websocket'] });
+    const socket = ioClient(url, {
+      auth: { sessionId: session.sessionId },
+      forceNew: true,
+      transports: ['websocket'],
+    });
     socket.once('connect', () => resolve(socket));
     socket.once('connect_error', reject);
   });
 }
+
+test('unauthenticated sockets cannot join or inject legacy signaling', async () => {
+  const { url, teardown } = await startServer();
+  const authenticated = await connect(url);
+  const guest = await new Promise((resolve, reject) => {
+    const socket = ioClient(url, { forceNew: true, transports: ['websocket'] });
+    socket.once('connect', () => resolve(socket));
+    socket.once('connect_error', reject);
+  });
+  try {
+    authenticated.emit('join-room', 'secured-room');
+    guest.emit('join-room', 'secured-room');
+    let received = false;
+    authenticated.once('offer', () => {
+      received = true;
+    });
+    guest.emit('offer', { roomId: 'secured-room', sdp: { type: 'offer' } });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(received, false);
+  } finally {
+    await teardown(authenticated, guest);
+  }
+});
 
 /**
  * Helper: wait for a specific event on a socket, with a short timeout.

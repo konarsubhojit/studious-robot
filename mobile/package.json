@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@react-native-firebase/app": "^25.1.0",
+    "@react-native-firebase/auth": "^25.1.0",
     "@react-native-firebase/messaging": "^25.1.0",
+    "@react-native-google-signin/google-signin": "^16.1.4",
     "react": "19.2.3",
     "react-native": "0.86.0",
     "react-native-callkeep": "^4.3.16",

@@ -119,6 +119,7 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     let currentRoom = null;
 
     socket.on('join-room', (roomId) => {
+      if (!socket.data.identity.sessionId) return;
       if (typeof roomId !== 'string' || roomId.length === 0) return;
 
       if (!state.rooms.has(roomId)) {
@@ -151,19 +152,19 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
     });
 
     socket.on('offer', ({ roomId, sdp } = {}) => {
-      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
       console.log(`[signaling] relay offer: from ${socket.id} in room "${roomId}"`);
       socket.to(roomId).emit('offer', { from: socket.id, sdp });
     });
 
     socket.on('answer', ({ roomId, sdp } = {}) => {
-      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
       console.log(`[signaling] relay answer: from ${socket.id} in room "${roomId}"`);
       socket.to(roomId).emit('answer', { from: socket.id, sdp });
     });
 
     socket.on('ice-candidate', ({ roomId, candidate } = {}) => {
-      if (typeof roomId !== 'string' || roomId.length === 0) return;
+      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
       console.log(`[signaling] relay ice-candidate: from ${socket.id} in room "${roomId}"`);
       socket.to(roomId).emit('ice-candidate', { from: socket.id, candidate });
     });
