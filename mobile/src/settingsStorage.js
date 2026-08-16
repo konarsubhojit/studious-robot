@@ -141,6 +141,8 @@ export const IDENTITY_FILE_PATH = IDENTITY_FILE;
 
 const DEVICE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-device.json`;
 
+let fallbackDeviceIdCounter = 0;
+
 /**
  * Generate an opaque per-install device identifier. This is not a credential
  * (the session token is), it only has to be unique and stable.
@@ -148,16 +150,18 @@ const DEVICE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-device.json`;
  * @returns {string}
  */
 function generateDeviceId() {
-  const bytes = new Uint8Array(16);
   if (globalThis.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
     globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return `device-${hex}`;
   }
-  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-  return `device-${hex}`;
+
+  // No secure random source available (e.g. an older runtime). This id isn't
+  // a credential, so a timestamp + monotonic counter is an adequate
+  // fallback and avoids relying on an insecure PRNG.
+  fallbackDeviceIdCounter += 1;
+  return `device-${Date.now().toString(16)}-${fallbackDeviceIdCounter.toString(16)}`;
 }
 
 /**

@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import { BackHandler, Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
+import { deriveCallStreams } from './src/callStreamHelpers';
 import AppTabBar from './src/components/AppTabBar';
 import CallScreen from './src/components/CallScreen';
 import ChatConversationScreen from './src/components/ChatConversationScreen';
 import ChatListScreen from './src/components/ChatListScreen';
 import FloatingCallBubble from './src/components/FloatingCallBubble';
 import IncomingCallScreen from './src/components/IncomingCallScreen';
+import InCallBanner from './src/components/InCallBanner';
 import Lobby from './src/components/Lobby';
 import OutgoingCallScreen from './src/components/OutgoingCallScreen';
 import RegistrationScreen from './src/components/RegistrationScreen';
@@ -16,7 +18,11 @@ import SettingsScreen from './src/components/SettingsScreen';
 import { getStreamUrl } from './src/diagnostics';
 import { CALL_PHASES } from './src/hooks/useCallFlow';
 import useCallFlow from './src/hooks/useCallFlow';
+import useCallInitiation from './src/hooks/useCallInitiation';
+import useCallMinimize from './src/hooks/useCallMinimize';
+import useChatSync from './src/hooks/useChatSync';
 import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
+import useTabShellBackNavigation from './src/hooks/useTabShellBackNavigation';
 import useWebRTCCall from './src/hooks/useWebRTCCall';
 import { colors } from './src/theme';
 
@@ -70,16 +76,6 @@ function AppShell() {
   const [activeTab, setActiveTab] = useState('chats');
   // peerId of the conversation open within the Chats tab; null = chat list.
   const [chatPeerId, setChatPeerId] = useState(null);
-  // Presence snapshot for the currently open conversation's peer.
-  const [peerPresence, setPeerPresence] = useState(null);
-  // True once the user has explicitly (or automatically, via tab switch /
-  // hardware back) shrunk an active call down to the FloatingCallBubble.
-  const [isCallMinimized, setIsCallMinimized] = useState(false);
-  const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
-
-  // Set by onStartAudioCall; consumed by the effect below once the call
-  // connects, since there is no dedicated audio-only call type server-side.
-  const pendingAudioOnlyCallRef = useRef(false);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
   const callFlowActive = callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
@@ -87,6 +83,9 @@ function AppShell() {
   // True once either flow has a connected (post-ringing) call. Drives the
   // minimize affordances; ringing/dialing screens are never minimizable.
   const isCallConnected = callFlow.isInCall || call.isInRoom;
+
+  // ── Call minimize / restore orchestration ─────────────────────────────────
+  const { isCallMinimized, setIsCallMinimized } = useCallMinimize(isCallConnected);
 
   // Choose which hook provides PiP swap behaviour.
   const { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip(
@@ -99,126 +98,66 @@ function AppShell() {
   // ── Stream helpers for active call ────────────────────────────────────────
 
   // Call-flow streams
-  const cfMainStream = callFlow.isLocalPrimary ? callFlow.localStream : callFlow.remoteStream;
-  const cfPipStream = callFlow.isLocalPrimary ? callFlow.remoteStream : callFlow.localStream;
-  const cfMainStreamUrl = getStreamUrl(cfMainStream, 'cf main stream');
-  const cfPipStreamUrl = getStreamUrl(cfPipStream, 'cf pip stream');
-  const cfMirrorPip = !callFlow.isLocalPrimary && callFlow.isFrontCamera;
-  const cfMirrorMain = callFlow.isLocalPrimary && callFlow.isFrontCamera;
+  const {
+    mainStream: cfMainStream,
+    pipStream: cfPipStream,
+    mainStreamUrl: cfMainStreamUrl,
+    pipStreamUrl: cfPipStreamUrl,
+    mirrorPip: cfMirrorPip,
+    mirrorMain: cfMirrorMain,
+  } = deriveCallStreams({
+    isLocalPrimary: callFlow.isLocalPrimary,
+    localStream: callFlow.localStream,
+    remoteStream: callFlow.remoteStream,
+    isFrontCamera: callFlow.isFrontCamera,
+    mainLabel: 'cf main stream',
+    pipLabel: 'cf pip stream',
+  });
 
   // Legacy streams
-  const legacyMainStream = call.isLocalPrimary ? call.localStream : call.remoteStream;
-  const legacyPipStream = call.isLocalPrimary ? call.remoteStream : call.localStream;
-  const legacyMainStreamUrl = getStreamUrl(legacyMainStream, 'main stream');
-  const legacyPipStreamUrl = getStreamUrl(legacyPipStream, 'picture-in-picture stream');
-  const legacyMirrorPip = !call.isLocalPrimary && call.isFrontCamera;
-  const legacyMirrorMain = call.isLocalPrimary && call.isFrontCamera;
+  const {
+    mainStream: legacyMainStream,
+    pipStream: legacyPipStream,
+    mainStreamUrl: legacyMainStreamUrl,
+    pipStreamUrl: legacyPipStreamUrl,
+    mirrorPip: legacyMirrorPip,
+    mirrorMain: legacyMirrorMain,
+  } = deriveCallStreams({
+    isLocalPrimary: call.isLocalPrimary,
+    localStream: call.localStream,
+    remoteStream: call.remoteStream,
+    isFrontCamera: call.isFrontCamera,
+    mainLabel: 'main stream',
+    pipLabel: 'picture-in-picture stream',
+  });
   const localPreviewStreamUrl = getStreamUrl(call.localStream, 'local preview');
 
   // ── Chat wiring ────────────────────────────────────────────────────────────
 
-  // Fetch the conversation list once identity is established.
-  useEffect(() => {
-    if (callFlow.isRegistered) {
-      callFlow.fetchConversations();
-    }
-    // Only re-run when registration status flips; fetchConversations is
-    // stable for a given signalingUrl.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callFlow.isRegistered]);
+  const {
+    peerPresence,
+    isRefreshingConversations,
+    handleRefreshConversations,
+    handleLoadOlderMessages,
+  } = useChatSync({
+    chatPeerId,
+    isRegistered: callFlow.isRegistered,
+    messagesByPeer: callFlow.messagesByPeer,
+    fetchConversations: callFlow.fetchConversations,
+    setActiveChatPeerId: callFlow.setActiveChatPeerId,
+    fetchMessagesForPeer: callFlow.fetchMessagesForPeer,
+    markConversationRead: callFlow.markConversationRead,
+    checkPresence: callFlow.checkPresence,
+  });
 
-  // Keep the hook's activeChatPeerId mirror in sync with the locally open
-  // conversation, and load history + mark it read whenever one is opened.
-  useEffect(() => {
-    callFlow.setActiveChatPeerId(chatPeerId);
-    if (chatPeerId) {
-      callFlow.fetchMessagesForPeer(chatPeerId);
-      callFlow.markConversationRead(chatPeerId);
-    }
-    return () => {
-      callFlow.setActiveChatPeerId(null);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPeerId]);
+  // ── Call initiation (video / audio-only) ──────────────────────────────────
 
-  // Fetch presence for the peer of the currently open conversation.
-  useEffect(() => {
-    let cancelled = false;
-    if (!chatPeerId) {
-      setPeerPresence(null);
-      return undefined;
-    }
-    callFlow.checkPresence(chatPeerId).then(presence => {
-      if (!cancelled) setPeerPresence(presence);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPeerId]);
-
-  const handleRefreshConversations = async () => {
-    setIsRefreshingConversations(true);
-    try {
-      await callFlow.fetchConversations();
-    } finally {
-      setIsRefreshingConversations(false);
-    }
-  };
-
-  const handleLoadOlderMessages = () => {
-    if (!chatPeerId) return;
-    const existing = callFlow.messagesByPeer[chatPeerId] ?? [];
-    const oldest = existing[existing.length - 1];
-    if (oldest?.createdAt) {
-      callFlow.fetchMessagesForPeer(chatPeerId, { before: oldest.createdAt });
-    }
-  };
-
-  /**
-   * Start a video call with `peerId` (used by both the Lobby redial action and
-   * the Chats tab's video-call header button).
-   */
-  const startVideoCallWith = peerId => {
-    callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch(error => {
-      logError('placeCall (video) failed', error);
-    });
-  };
-
-  /**
-   * Start an "audio call" with `peerId`. There is no dedicated audio-only call
-   * type server-side yet, so this places a normal video call and then turns
-   * the local camera off once it connects (see the effect below).
-   */
-  const startAudioCallWith = peerId => {
-    pendingAudioOnlyCallRef.current = true;
-    callFlow.setCalleeId(peerId);
-    callFlow.placeCall(peerId).catch(error => {
-      logError('placeCall (audio) failed', error);
-    });
-  };
-
-  useEffect(() => {
-    if (callFlow.isInCall && pendingAudioOnlyCallRef.current) {
-      pendingAudioOnlyCallRef.current = false;
-      callFlow.handleVideoToggle();
-    }
-  }, [callFlow.isInCall, callFlow]);
-
-  // ── Call minimize / restore orchestration ─────────────────────────────────
-
-  // Android hardware back: minimize an active connected call instead of
-  // letting the OS pop the screen / exit the app.
-  useEffect(() => {
-    if (Platform.OS !== 'android') return undefined;
-    if (!isCallConnected || isCallMinimized) return undefined;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setIsCallMinimized(true);
-      return true;
-    });
-    return () => subscription.remove();
-  }, [isCallConnected, isCallMinimized]);
+  const { startVideoCallWith, startAudioCallWith } = useCallInitiation({
+    isInCall: callFlow.isInCall,
+    setCalleeId: callFlow.setCalleeId,
+    placeCall: callFlow.placeCall,
+    handleVideoToggle: callFlow.handleVideoToggle,
+  });
 
   const handleChangeTab = tab => {
     if (isCallConnected && !isCallMinimized) {
@@ -260,6 +199,7 @@ function AppShell() {
 
   let screenContent;
   let floatingBubble = null;
+  let inCallBanner = null;
   // True only for the tab-shell branch below; AppTabBar renders its own
   // bottom-safe-area padding in that case, so the outer container must not
   // *also* pad for it (that would leave a double gap under the tab bar).
@@ -392,6 +332,7 @@ function AppShell() {
           onBack={() => setChatPeerId(null)}
           currentUserId={callFlow.userId}
           peerPresence={peerPresence}
+          keyboardVerticalOffset={insets.top}
           onStartAudioCall={() => startAudioCallWith(chatPeerId)}
           onStartVideoCall={() => startVideoCallWith(chatPeerId)}
           isStartingCall={callFlow.isPlacingCall}
@@ -493,18 +434,25 @@ function AppShell() {
 
     if (isCallConnected && isCallMinimized) {
       const isCallFlowActive = callFlow.isInCall;
+      const minimizedParticipantLabel = isCallFlowActive
+        ? getCallFlowParticipantLabel()
+        : call.roomId
+        ? `Room ${call.roomId.trim()}`
+        : null;
+      const minimizedElapsedSeconds = isCallFlowActive
+        ? callFlow.elapsedCallSeconds
+        : call.elapsedCallSeconds;
+      inCallBanner = (
+        <InCallBanner
+          participantLabel={minimizedParticipantLabel}
+          elapsedCallSeconds={minimizedElapsedSeconds}
+          onExpand={() => setIsCallMinimized(false)}
+        />
+      );
       floatingBubble = (
         <FloatingCallBubble
-          participantLabel={
-            isCallFlowActive
-              ? getCallFlowParticipantLabel()
-              : call.roomId
-              ? `Room ${call.roomId.trim()}`
-              : null
-          }
-          elapsedCallSeconds={
-            isCallFlowActive ? callFlow.elapsedCallSeconds : call.elapsedCallSeconds
-          }
+          participantLabel={minimizedParticipantLabel}
+          elapsedCallSeconds={minimizedElapsedSeconds}
           isMuted={isCallFlowActive ? callFlow.isMuted : call.isMuted}
           isScreenSharing={isCallFlowActive ? callFlow.isScreenSharing : call.isScreenSharing}
           onExpand={() => setIsCallMinimized(false)}
@@ -517,6 +465,15 @@ function AppShell() {
       );
     }
   }
+
+  useTabShellBackNavigation({
+    enabled: isTabShellActive,
+    chatPeerId,
+    onCloseChat: () => setChatPeerId(null),
+    activeTab,
+    defaultTab: 'chats',
+    onNavigateToDefaultTab: handleChangeTab,
+  });
 
   const shouldShowRecoveryCodeNotice =
     !isCompact && !callFlow.isLoadingIdentity && Boolean(callFlow.pendingVerificationCode);
@@ -536,6 +493,7 @@ function AppShell() {
         <View style={styles.containerCompact}>{screenContent}</View>
       ) : (
         <View style={[styles.container, rootContainerStyle]}>
+          {inCallBanner}
           {screenContent}
           {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (

@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { FlatList, Keyboard } from 'react-native';
+import { FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
 
 jest.mock(
@@ -382,7 +382,7 @@ describe('ChatConversationScreen', () => {
     expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
   });
 
-  test('call buttons are disabled when the peer is known to be offline', () => {
+  test('call buttons stay enabled when the peer is known to be offline (presence is a stale snapshot, not a live signal)', () => {
     const tree = render({
       peerId: 'user-bob',
       messages: [],
@@ -393,8 +393,8 @@ describe('ChatConversationScreen', () => {
       onStartVideoCall: jest.fn(),
       peerPresence: { online: false },
     });
-    expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(true);
-    expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(true);
+    expect(findByTestId(tree, 'chat-call-audio').props.disabled).toBe(false);
+    expect(findByTestId(tree, 'chat-call-video').props.disabled).toBe(false);
   });
 
   // ── Keyboard-aware composer / auto-scroll ──────────────────────────────
@@ -533,6 +533,29 @@ describe('ChatConversationScreen', () => {
     });
 
     expect(removeSpy).toHaveBeenCalled();
+  });
+
+  test('forwards keyboardVerticalOffset to the KeyboardAvoidingView so the composer clears the keyboard when nested below a safe-area top inset', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      keyboardVerticalOffset: 32,
+    });
+    expect(tree.root.findByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(32);
+  });
+
+  test('defaults keyboardVerticalOffset to 0 when not provided', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(tree.root.findByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(0);
   });
 
   // ── Scroll-to-bottom FAB ────────────────────────────────────────────────

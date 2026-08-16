@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Vibration } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -18,7 +18,12 @@ import {
   subscribeAudioDevices,
 } from '../audioRouting';
 import { startCallService, stopCallService } from '../callService';
+import useCallHistory from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
+import useIdentity from './useIdentity';
+import useMessaging from './useMessaging';
+import usePresenceSearch from './usePresenceSearch';
+import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
@@ -31,8 +36,8 @@ import {
   registerForPushNotifications,
   unregisterPushToken,
 } from '../pushNotifications';
-import { loadDeviceId, loadIdentity, saveIdentity } from '../settingsStorage';
 import { getSocketOptions } from '../socketConfig';
+import { emitWithAck, SIGNALING_VERSION } from '../socketProtocol';
 import { getIceServers, getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
 import {
@@ -48,43 +53,19 @@ import {
   stopIncomingRingtone,
   stopOutgoingRingback,
 } from '../ringtone';
-import { generateVerificationCode, normalizeVerificationCode } from '../identityVerification';
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
-
-/** Server-side signaling protocol version required for call.* and rtc.* events. */
-const SIGNALING_VERSION = 1;
 
 const STATS_POLL_INTERVAL_MS = 7000;
 
 const HAPTIC_TAP_MS = 15;
 const HAPTIC_CONNECT_MS = 30;
 
-/** Maximum number of call history entries to retain in memory. */
-const MAX_CALL_HISTORY = 50;
-
 /**
  * How often to proactively rotate the session token.  Set well below typical
  * server-side TTLs (e.g. 1 h) so the token never expires mid-call.
  */
 const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
-
-/**
- * How many consecutive socket `connect_error` events before the lobby is
- * considered offline and an offline banner is shown.
- */
-const OFFLINE_ERROR_THRESHOLD = 3;
-
-/**
- * Safety-net timeout for a peer's typing indicator: cleared automatically
- * this long after the last `isTyping: true` event, in case the corresponding
- * `isTyping: false` event is dropped (e.g. the peer's app is killed mid-type).
- */
-const TYPING_INDICATOR_TIMEOUT_MS = 6000;
-
-/** How often `sendTypingIndicator(peerId, true)` may be emitted while the
- * user keeps typing, so every keystroke doesn't trigger a socket emit. */
-const TYPING_INDICATOR_THROTTLE_MS = 2000;
 
 /**
  * Call phases that drive which screen the UI renders.
@@ -131,24 +112,6 @@ function haptic(durationMs) {
 }
 
 /**
- * Wrap a socket.io emit-with-ack in a Promise.
- * Rejects if the server responds with `ok: false` or after a 10 s timeout.
- */
-function emitWithAck(socket, event, payload) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('socket ack timeout')), 10_000);
-    socket.emit(event, payload, ack => {
-      clearTimeout(timer);
-      if (ack?.ok) {
-        resolve(ack);
-      } else {
-        reject(new Error(ack?.error?.message || 'server error'));
-      }
-    });
-  });
-}
-
-/**
  * Manages the full lifecycle of a server-authoritative call:
  *
  *   1. User identity / session (POST /session)
@@ -163,19 +126,20 @@ function emitWithAck(socket, event, payload) {
  *      tracking and read receipts (`POST /messages/read`), and the
  *      `call.media-state` relay used to mirror the peer's screen-share state.
  *
+ * Identity persistence, session/auth, call history, chat, and presence/search
+ * are each delegated to a dedicated hook (`useIdentity`, `useSession`,
+ * `useCallHistory`, `useMessaging`, `usePresenceSearch`); this hook composes
+ * them and owns only the call-lifecycle / signaling / WebRTC orchestration
+ * that ties them together, so it stays true to a single, cohesive
+ * responsibility rather than a grab-bag of every call-flow concern.
+ *
  * The hook returns serialisable state and action callbacks so the UI remains
  * purely presentational.
  */
 export default function useCallFlow() {
-  // ─── Identity / connection ────────────────────────────────────────────────
+  // ─── Connection config ────────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
-  const [userId, setUserId] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [pendingVerificationCode, setPendingVerificationCode] = useState('');
   const [calleeId, setCalleeId] = useState('');
-
-  // true while the identity is being loaded from persistent storage on mount.
-  const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
 
   // ─── Call lifecycle state ─────────────────────────────────────────────────
   const [callPhase, setCallPhase] = useState(CALL_PHASES.IDLE);
@@ -186,50 +150,18 @@ export default function useCallFlow() {
   // is fully established.  Cleared once rehydration is attempted.
   const [pendingPushCallId, setPendingPushCallId] = useState(null);
 
+  // True from the moment `placeCall` is invoked until the call reaches
+  // OUTGOING_RINGING (or fails). Lets chat-header call buttons show a brief
+  // loading state instead of appearing to do nothing while the local camera
+  // preview starts and the socket/`call.initiate` round-trip completes.
+  const [isPlacingCall, setIsPlacingCall] = useState(false);
+
   // ─── UI state ─────────────────────────────────────────────────────────────
   // Raw state setter; callers use the `updateStatus(message, severity)` helper
   // declared below rather than setting the shape by hand.
   const [status, setStatus] = useState({ message: '', severity: 'info' });
   const [callSummary, setCallSummary] = useState(null);
 
-  // Presence of the user currently entered in `calleeId`, or `null` while
-  // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
-  const [calleePresence, setCalleePresence] = useState(null);
-
-  /**
-   * `true` when repeated socket connect errors suggest the signaling server is
-   * unreachable.  Cleared automatically on a successful connection.  Drives the
-   * persistent offline banner + retry button in the Lobby.
-   */
-  const [isServerUnreachable, setIsServerUnreachable] = useState(false);
-
-  // ─── Call history ─────────────────────────────────────────────────────────
-  // Each entry: { callId, callerId, calleeId, direction, status, endReason,
-  //               createdAt, durationSeconds, isRead }
-  const [callHistory, setCallHistory] = useState([]);
-
-  // ─── Chat / messaging state ───────────────────────────────────────────────
-  // One entry per conversation the user participates in: { conversationId,
-  // peerId, lastMessage, unreadCount }, newest-activity first.
-  const [conversations, setConversations] = useState([]);
-  // Keyed by peerId → array of message objects, newest-first (matches the
-  // server's ordering). Optimistic (pending/failed) sends are tagged inline.
-  const [messagesByPeer, setMessagesByPeer] = useState({});
-  // peerId of the conversation currently open in the UI, or null. Drives
-  // auto-mark-read for incoming messages from that peer.
-  const [activeChatPeerId, setActiveChatPeerId] = useState(null);
-  // True from the moment `placeCall` is invoked until the call reaches
-  // OUTGOING_RINGING (or fails). Lets chat-header call buttons show a brief
-  // loading state instead of appearing to do nothing while the local camera
-  // preview starts and the socket/`call.initiate` round-trip completes.
-  const [isPlacingCall, setIsPlacingCall] = useState(false);
-  // Keyed by peerId → boolean. True while that peer is actively typing in the
-  // open conversation (relayed via the ephemeral `message.typing` socket
-  // event). Cleared on receipt of isTyping:false or after a short timeout, in
-  // case a "stopped typing" event is dropped.
-  const [typingByPeer, setTypingByPeer] = useState({});
-  const typingTimeoutsRef = useRef({});
-  const typingSentAtRef = useRef({});
   // True while the remote participant is screen-sharing (relayed via the
   // `call.media-state` socket event).
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
@@ -257,15 +189,6 @@ export default function useCallFlow() {
   const socketRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
-  const sessionIdRef = useRef(null);
-  // Stable per-install device id, lazily loaded from disk on first session.
-  const deviceIdRef = useRef(null);
-  const verificationCodeRef = useRef('');
-  const committedIdentityRef = useRef({ userId: '', verificationCode: '' });
-  // Holds the latest authedFetch implementation so the call-history / contact
-  // helpers (declared earlier in this hook) can issue 401-recovering requests
-  // without referencing the later-declared authedFetch useCallback directly.
-  const authedFetchRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
   // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
@@ -288,13 +211,6 @@ export default function useCallFlow() {
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef(null);
   const incomingCallRef = useRef(null);
-  // Mirrors activeChatPeerId so the message.received socket handler never
-  // reads a stale value through a captured closure.
-  const activeChatPeerIdRef = useRef(null);
-  const calleePresenceRequestIdRef = useRef(0);
-  // Counts consecutive socket connect_error events; resets on a successful
-  // connect.  Used to flip isServerUnreachable after OFFLINE_ERROR_THRESHOLD.
-  const connectErrorCountRef = useRef(0);
   // Tracks callIds for which the incoming-call UI has already been shown so
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef(new Set());
@@ -303,6 +219,62 @@ export default function useCallFlow() {
     logVerbose('[CallFlow] Status updated', { message, severity });
     setStatus({ message, severity });
   }, []);
+
+  // ─── Composed sub-hooks (identity / session / history / presence / chat) ──
+  // Each owns a single, cohesive concern and is unit-testable in isolation;
+  // this hook wires them together and layers the call-signaling/WebRTC
+  // orchestration that ties them into one coherent call experience.
+  const identity = useIdentity(updateStatus);
+  const { userId, verificationCodeRef, unregisterUser: identityUnregisterUser } = identity;
+
+  const session = useSession({
+    signalingUrl,
+    userId,
+    verificationCodeRef,
+    updateStatus,
+  });
+  const { sessionIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
+
+  const callHistory = useCallHistory({
+    authedFetchRef,
+    sessionIdRef,
+    signalingUrl,
+    userId,
+  });
+  const { addToHistory } = callHistory;
+
+  const presenceSearch = usePresenceSearch({
+    signalingUrl,
+    authedFetchRef,
+    sessionIdRef,
+    calleeId,
+  });
+  const {
+    checkPresence,
+    recordConnectSuccess,
+    recordConnectError,
+    resetOfflineTracking,
+    markServerUnreachable,
+  } = presenceSearch;
+
+  const messaging = useMessaging({
+    authedFetchRef,
+    sessionIdRef,
+    signalingUrl,
+    socketRef,
+    userId,
+    updateStatus,
+  });
+  const {
+    activeChatPeerId,
+    fetchConversations,
+    markConversationRead,
+    resetTypingState,
+    handleMessageReceived,
+    handleMessageDelivered,
+    handleMessageRead,
+    handleTypingEvent,
+  } = messaging;
 
   // Renegotiate the active peer connection (used when screen audio adds or
   // removes a sender). The remote peer answers renegotiation offers with the
@@ -356,158 +328,9 @@ export default function useCallFlow() {
   });
 
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
-
-  /** True once a userId has been persisted (i.e. the user has registered). */
-  const isRegistered = userId.trim().length > 0;
+  const { isRegistered } = identity;
 
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
-
-  const dismissVerificationCodeNotice = useCallback(() => {
-    setPendingVerificationCode('');
-  }, []);
-
-  const commitIdentity = useCallback(
-    async (nextUserId, nextVerificationCode, { announceVerificationCode = false } = {}) => {
-      const identity = {
-        userId: (nextUserId ?? '').trim(),
-        verificationCode: normalizeVerificationCode(nextVerificationCode),
-      };
-
-      committedIdentityRef.current = identity;
-      verificationCodeRef.current = identity.verificationCode;
-      setUserId(identity.userId);
-      setVerificationCode(identity.verificationCode);
-      setPendingVerificationCode(announceVerificationCode ? identity.verificationCode : '');
-      await saveIdentity(identity);
-      return identity;
-    },
-    [],
-  );
-
-  const editUserId = useCallback(nextUserId => {
-    const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
-    const trimmedUserId = rawUserId.trim();
-    const committedIdentity = committedIdentityRef.current;
-    const isCommittedIdentity = trimmedUserId === committedIdentity.userId;
-
-    setUserId(rawUserId);
-    if (isCommittedIdentity) {
-      verificationCodeRef.current = committedIdentity.verificationCode;
-      setVerificationCode(committedIdentity.verificationCode);
-    } else {
-      verificationCodeRef.current = '';
-      setVerificationCode('');
-    }
-    setPendingVerificationCode('');
-  }, []);
-
-  // ─── Load persisted identity on mount ────────────────────────────────────
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const initialiseIdentity = async () => {
-      try {
-        const storedIdentity = await loadIdentity();
-        if (cancelled) return;
-
-        const savedId = (storedIdentity?.userId ?? '').trim();
-        let savedVerificationCode = normalizeVerificationCode(storedIdentity?.verificationCode);
-
-        if (savedId) {
-          const shouldGenerateVerificationCode = !savedVerificationCode;
-          if (shouldGenerateVerificationCode) {
-            savedVerificationCode = generateVerificationCode();
-          }
-
-          committedIdentityRef.current = {
-            userId: savedId,
-            verificationCode: savedVerificationCode,
-          };
-          verificationCodeRef.current = savedVerificationCode;
-          setUserId(savedId);
-          setVerificationCode(savedVerificationCode);
-
-          if (shouldGenerateVerificationCode) {
-            setPendingVerificationCode(savedVerificationCode);
-            updateStatus(
-              'Save your recovery code. You’ll need it to use this username on another device.',
-              'info',
-            );
-            void saveIdentity({
-              userId: savedId,
-              verificationCode: savedVerificationCode,
-            });
-            logInfo('[CallFlow] Recovery code generated for stored identity', {
-              userId: savedId,
-              hasVerificationCode: true,
-            });
-          }
-        }
-      } finally {
-        if (!cancelled) setIsLoadingIdentity(false);
-      }
-    };
-
-    initialiseIdentity().catch(() => {
-      if (!cancelled) setIsLoadingIdentity(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [updateStatus]);
-
-  /**
-   * Register the local user with the given userId.  Persists the identity to
-   * disk and updates the in-memory state so the presence socket connects.
-   *
-   * @param {string} newUserId
-   * @param {string} [existingVerificationCode]
-   */
-  const registerUser = useCallback(
-    async (newUserId, existingVerificationCode = '') => {
-      const trimmed = (newUserId ?? '').trim();
-      if (!trimmed) return;
-      const nextVerificationCode =
-        normalizeVerificationCode(existingVerificationCode) || generateVerificationCode();
-      const identity = await commitIdentity(trimmed, nextVerificationCode, {
-        announceVerificationCode: true,
-      });
-      updateStatus(
-        'Save your recovery code. You’ll need it to use this username on another device.',
-        'success',
-      );
-      logInfo('[CallFlow] User registered', {
-        userId: identity.userId,
-        hasVerificationCode: true,
-      });
-    },
-    [commitIdentity, updateStatus],
-  );
-
-  /**
-   * Update the active userId and persist the new value.
-   * Use this when the user edits their username in the Lobby so the new
-   * identity survives app restarts.
-   *
-   * @param {string} newUserId
-   */
-  const updateUserId = useCallback(
-    async newUserId => {
-      const trimmed = (newUserId ?? '').trim();
-      if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
-
-      const identity = await commitIdentity(trimmed, generateVerificationCode(), {
-        announceVerificationCode: true,
-      });
-      updateStatus('Username updated. Save your new recovery code.', 'success');
-      logInfo('[CallFlow] Username updated', {
-        userId: identity.userId,
-        hasVerificationCode: true,
-      });
-    },
-    [commitIdentity, updateStatus],
-  );
 
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
@@ -521,14 +344,8 @@ export default function useCallFlow() {
       // stops receiving incoming-call notifications.
       await unregisterPushToken({ sessionId, signalingUrl: trimmedUrl }).catch(() => {});
     }
-    committedIdentityRef.current = { userId: '', verificationCode: '' };
-    verificationCodeRef.current = '';
-    setUserId('');
-    setVerificationCode('');
-    setPendingVerificationCode('');
-    await saveIdentity({ userId: '', verificationCode: '' });
-    logInfo('[CallFlow] User unregistered');
-  }, [signalingUrl]);
+    await identityUnregisterUser();
+  }, [identityUnregisterUser, sessionIdRef, signalingUrl]);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -543,384 +360,6 @@ export default function useCallFlow() {
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
   }, [connectionQuality]);
-
-  // ─── Call history helpers ─────────────────────────────────────────────────
-
-  /**
-   * Number of incoming calls that ended as 'missed' and have not yet been
-   * acknowledged by the user.
-   */
-  const missedCallCount = useMemo(
-    () =>
-      callHistory.filter(
-        e =>
-          e.direction === 'incoming' &&
-          (e.status === 'missed' || e.endReason === 'timeout') &&
-          !e.isRead,
-      ).length,
-    [callHistory],
-  );
-
-  /** Append or update a call history entry (deduplicates by callId). */
-  const addToHistory = useCallback(entry => {
-    setCallHistory(prev => {
-      const without = prev.filter(e => e.callId !== entry.callId);
-      return [entry, ...without].slice(0, MAX_CALL_HISTORY);
-    });
-  }, []);
-
-  /** Mark all missed-call entries as read (clears the badge counter). */
-  const markMissedCallsRead = useCallback(() => {
-    setCallHistory(prev => prev.map(e => ({ ...e, isRead: true })));
-  }, []);
-
-  /**
-   * Fetch the authenticated user's recent call history from the server and
-   * populate `callHistory`.  Safe to call repeatedly; silently swallows
-   * network errors so it never disrupts other call-flow operations.
-   *
-   * @param {number} [limit=20]
-   */
-  const fetchCallHistory = useCallback(
-    async (limit = 20) => {
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) return;
-      try {
-        const trimmedUrl = signalingUrl.trim();
-        const trimmedUserId = userId.trim();
-        const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
-        }));
-        if (!response?.ok) return;
-        const data = await response.json();
-        if (!Array.isArray(data.calls)) return;
-        const entries = data.calls.map(call => ({
-          callId: call.callId,
-          callerId: call.callerId,
-          calleeId: call.calleeId,
-          direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
-          status: call.status,
-          endReason: call.endReason,
-          createdAt: call.createdAt,
-          durationSeconds: null,
-          isRead: call.status !== 'missed',
-        }));
-        setCallHistory(entries);
-      } catch (error) {
-        logWarn('[CallFlow] fetchCallHistory failed', {
-          message: error?.message,
-        });
-      }
-    },
-    [signalingUrl, userId],
-  );
-
-  /**
-   * Query the signaling server for the online/offline presence of a userId.
-   * Returns the presence snapshot, or `null` when the user is unknown (404) or
-   * the request fails.  Never throws.
-   *
-   * @param {string} targetUserId
-   * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
-   */
-  const checkPresence = useCallback(
-    async targetUserId => {
-      const trimmedId = (targetUserId ?? '').trim();
-      const trimmedUrl = (signalingUrl ?? '').trim();
-      if (!trimmedId || !trimmedUrl) return null;
-      try {
-        const response = await fetch(`${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`);
-        if (response.status === 404) return { status: 'offline', online: false, unknown: true };
-        if (!response.ok) return null;
-        const data = await response.json();
-        return { status: data.status, online: Boolean(data.online) };
-      } catch (error) {
-        logWarn('[CallFlow] checkPresence failed', { message: error?.message });
-        return null;
-      }
-    },
-    [signalingUrl],
-  );
-
-  /**
-   * Search the server's contact directory (`GET /users`) for known users whose
-   * userId matches `query` (case-insensitive substring).  Returns an array of
-   * `{ userId, status, online, lastSeen }` entries, or an empty array when the
-   * request fails or no session exists.  Never throws.
-   *
-   * @param {string} [query] optional substring filter
-   * @param {number} [limit=20] max results
-   * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
-   */
-  const searchUsers = useCallback(
-    async (query = '', limit = 20) => {
-      const sessionId = sessionIdRef.current;
-      const trimmedUrl = (signalingUrl ?? '').trim();
-      if (!sessionId || !trimmedUrl) return [];
-      try {
-        const trimmedQuery = (query ?? '').trim();
-        const response = await authedFetchRef.current?.(sid => {
-          const params = new URLSearchParams({
-            sessionId: sid,
-            limit: String(limit),
-          });
-          if (trimmedQuery) params.set('search', trimmedQuery);
-          return { url: `${trimmedUrl}/users?${params.toString()}` };
-        });
-        if (!response?.ok) return [];
-        const data = await response.json();
-        return Array.isArray(data.users) ? data.users : [];
-      } catch (error) {
-        logWarn('[CallFlow] searchUsers failed', { message: error?.message });
-        return [];
-      }
-    },
-    [signalingUrl],
-  );
-
-  // Keep a ref mirror of activeChatPeerId so socket handlers declared once
-  // (inside connectSocket) always see the current value.
-  useEffect(() => {
-    activeChatPeerIdRef.current = activeChatPeerId;
-  }, [activeChatPeerId]);
-
-  /**
-   * Fetch the authenticated user's conversation list (`GET /conversations`)
-   * and populate `conversations`.  Safe to call repeatedly; silently
-   * swallows network errors, mirroring `fetchCallHistory`.
-   */
-  const fetchConversations = useCallback(async () => {
-    const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
-    try {
-      const trimmedUrl = signalingUrl.trim();
-      const response = await authedFetchRef.current?.(sid => ({
-        url: `${trimmedUrl}/conversations?sessionId=${encodeURIComponent(sid)}`,
-      }));
-      if (!response?.ok) return;
-      const data = await response.json();
-      if (!Array.isArray(data.conversations)) return;
-      setConversations(data.conversations);
-    } catch (error) {
-      logWarn('[CallFlow] fetchConversations failed', {
-        message: error?.message,
-      });
-    }
-  }, [signalingUrl]);
-
-  /**
-   * Fetch a page of message history with `peerId` (`GET /messages`) and merge
-   * it into `messagesByPeer`.  Pass `{ before }` (an ISO cursor, the oldest
-   * held message's `createdAt`) to page further back; omit it for the first
-   * page, which replaces any existing entry for that peer.
-   *
-   * @param {string} peerId
-   * @param {{ before?: string }} [options]
-   * @returns {Promise<Array>} the fetched page (empty on failure)
-   */
-  const fetchMessagesForPeer = useCallback(
-    async (peerId, { before } = {}) => {
-      const trimmedPeerId = (peerId ?? '').trim();
-      const sessionId = sessionIdRef.current;
-      if (!sessionId || !trimmedPeerId) return [];
-      try {
-        const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.(sid => {
-          const params = new URLSearchParams({
-            sessionId: sid,
-            peerId: trimmedPeerId,
-          });
-          if (before) params.set('before', before);
-          return { url: `${trimmedUrl}/messages?${params.toString()}` };
-        });
-        if (!response?.ok) return [];
-        const data = await response.json();
-        const messages = Array.isArray(data.messages) ? data.messages : [];
-        setMessagesByPeer(prev => {
-          const existing = prev[trimmedPeerId] ?? [];
-          if (!before) {
-            return { ...prev, [trimmedPeerId]: messages };
-          }
-          // Pagination: append older messages, deduping by messageId.
-          const existingIds = new Set(existing.map(m => m.messageId));
-          const merged = [...existing, ...messages.filter(m => !existingIds.has(m.messageId))];
-          return { ...prev, [trimmedPeerId]: merged };
-        });
-        return messages;
-      } catch (error) {
-        logWarn('[CallFlow] fetchMessagesForPeer failed', {
-          message: error?.message,
-        });
-        return [];
-      }
-    },
-    [signalingUrl],
-  );
-
-  /**
-   * Send a chat message to `peerId`, appending an optimistic (pending) local
-   * copy immediately and reconciling it with the server-confirmed message (or
-   * marking it failed) once `message.send` acks.
-   *
-   * @param {string} peerId
-   * @param {string} body
-   */
-  const sendMessage = useCallback(
-    async (peerId, body) => {
-      const trimmedPeerId = (peerId ?? '').trim();
-      const trimmedBody = (body ?? '').trim();
-      if (!trimmedPeerId || !trimmedBody) return;
-
-      const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const optimisticMessage = {
-        messageId: tempId,
-        conversationId: null,
-        senderId: userId,
-        recipientId: trimmedPeerId,
-        body: trimmedBody,
-        createdAt: new Date().toISOString(),
-        deliveredTo: [],
-        readAt: null,
-        pending: true,
-      };
-
-      setMessagesByPeer(prev => ({
-        ...prev,
-        [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
-      }));
-
-      const markFailed = () => {
-        setMessagesByPeer(prev => ({
-          ...prev,
-          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map(m =>
-            m.messageId === tempId ? { ...m, pending: false, failed: true } : m,
-          ),
-        }));
-        updateStatus('Message failed to send', 'error');
-      };
-
-      if (!socketRef.current?.connected) {
-        markFailed();
-        return;
-      }
-
-      try {
-        const ack = await emitWithAck(socketRef.current, 'message.send', {
-          version: SIGNALING_VERSION,
-          recipientId: trimmedPeerId,
-          body: trimmedBody,
-        });
-        const confirmed = ack?.message;
-        setMessagesByPeer(prev => ({
-          ...prev,
-          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map(m =>
-            m.messageId === tempId ? { ...(confirmed ?? m), pending: false } : m,
-          ),
-        }));
-      } catch (error) {
-        logWarn('[CallFlow] sendMessage failed', { message: error?.message });
-        markFailed();
-      }
-    },
-    [userId, updateStatus],
-  );
-
-  /**
-   * Mark every message from `peerId` as read (`POST /messages/read`) and
-   * locally zero out that conversation's unread badge without waiting for a
-   * refetch.
-   *
-   * @param {string} peerId
-   */
-  const markConversationRead = useCallback(
-    async peerId => {
-      const trimmedPeerId = (peerId ?? '').trim();
-      if (!trimmedPeerId) return;
-      try {
-        const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}/messages/read`,
-          options: {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: sid, peerId: trimmedPeerId }),
-          },
-        }));
-        if (!response?.ok) return;
-        setConversations(prev =>
-          prev.map(c => (c.peerId === trimmedPeerId ? { ...c, unreadCount: 0 } : c)),
-        );
-      } catch (error) {
-        logWarn('[CallFlow] markConversationRead failed', {
-          message: error?.message,
-        });
-      }
-    },
-    [signalingUrl],
-  );
-
-  /**
-   * Notify `peerId` that the local user is (or has stopped) typing in their
-   * conversation, via the ephemeral `message.typing` socket event. Silently a
-   * no-op when there is no connected socket — typing indicators are a
-   * best-effort UI nicety, never worth surfacing an error for.
-   *
-   * Emits are throttled to at most once per {@link TYPING_INDICATOR_THROTTLE_MS}
-   * per peer while `isTyping` stays true, so a fast typist doesn't flood the
-   * socket; the final `isTyping: false` (composer cleared/blurred) always
-   * goes out immediately so the peer's indicator doesn't linger.
-   *
-   * @param {string} peerId
-   * @param {boolean} isTyping
-   */
-  const sendTypingIndicator = useCallback((peerId, isTyping) => {
-    const trimmedPeerId = (peerId ?? '').trim();
-    if (!trimmedPeerId) return;
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
-
-    const now = Date.now();
-    if (isTyping) {
-      const lastSentAt = typingSentAtRef.current[trimmedPeerId] ?? 0;
-      if (now - lastSentAt < TYPING_INDICATOR_THROTTLE_MS) return;
-    }
-    typingSentAtRef.current[trimmedPeerId] = now;
-
-    socket.emit('message.typing', {
-      version: SIGNALING_VERSION,
-      recipientId: trimmedPeerId,
-      isTyping: Boolean(isTyping),
-    });
-  }, []);
-
-  /** Sum of unreadCount across every conversation; drives the tab badge. */
-  const unreadTotal = useMemo(
-    () => conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0),
-    [conversations],
-  );
-
-  // can show whether the callee is online before the user presses Call.
-  useEffect(() => {
-    const trimmedId = calleeId.trim();
-    if (!trimmedId) {
-      calleePresenceRequestIdRef.current += 1;
-      setCalleePresence(null);
-      return undefined;
-    }
-    let cancelled = false;
-    const requestId = calleePresenceRequestIdRef.current + 1;
-    calleePresenceRequestIdRef.current = requestId;
-    const timer = setTimeout(async () => {
-      const presence = await checkPresence(trimmedId);
-      if (!cancelled && calleePresenceRequestIdRef.current === requestId) {
-        setCalleePresence(presence);
-      }
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [calleeId, checkPresence]);
 
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
@@ -966,7 +405,7 @@ export default function useCallFlow() {
       pc.setConfiguration?.({ iceServers });
       return pc;
     },
-    [signalingUrl],
+    [signalingUrl, sessionIdRef],
   );
 
   const ensurePeerConnection = useCallback(async () => {
@@ -1235,130 +674,6 @@ export default function useCallFlow() {
     [addToHistory, closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
   );
 
-  // ─── Session management ───────────────────────────────────────────────────
-
-  const createOrGetSession = useCallback(async () => {
-    if (sessionIdRef.current) return sessionIdRef.current;
-
-    const trimmedUrl = signalingUrl.trim();
-    const trimmedVerificationCode = normalizeVerificationCode(verificationCodeRef.current);
-    // Reuse this install's device id so the server keeps a single device record
-    // (and a single push registration) instead of minting a new random one on
-    // every session.
-    if (!deviceIdRef.current) {
-      deviceIdRef.current = await loadDeviceId();
-    }
-    const requestBody = {
-      userId: userId.trim() || undefined,
-      deviceId: deviceIdRef.current,
-      platform: Platform.OS,
-    };
-    if (trimmedVerificationCode) {
-      requestBody.verificationCode = trimmedVerificationCode;
-    }
-    const response = await fetch(`${trimmedUrl}/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorPayload = await response.json().catch(() => null);
-      if (response.status === 409 && errorPayload?.code === 'identity_conflict') {
-        updateStatus(
-          'This username is already claimed. Sign out and choose another username, or enter the recovery code.',
-          'error',
-        );
-      }
-      throw new Error(`Session creation failed (HTTP ${response.status})`);
-    }
-
-    const data = await response.json();
-    sessionIdRef.current = data.sessionId;
-    logInfo('[CallFlow] Session created', {
-      sessionId: data.sessionId,
-      userId: data.userId,
-    });
-    return data.sessionId;
-  }, [updateStatus, signalingUrl, userId]);
-
-  /**
-   * Refresh the current session via `POST /session/refresh`, rotating the
-   * sessionId. On success the new id is stored in `sessionIdRef`; on failure the
-   * stale id is cleared so the next request mints a fresh session. Never throws.
-   *
-   * @returns {Promise<string | null>} the new sessionId, or `null` on failure
-   */
-  const refreshSession = useCallback(async () => {
-    const sessionId = sessionIdRef.current;
-    const trimmedUrl = (signalingUrl ?? '').trim();
-    if (!sessionId || !trimmedUrl) return null;
-    try {
-      const response = await fetch(`${trimmedUrl}/session/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId }),
-      });
-      if (!response.ok) {
-        // The session is gone (e.g. server restart with in-memory store, or TTL
-        // expiry): drop it so the next authed request creates a new session.
-        sessionIdRef.current = null;
-        logWarn('[CallFlow] session refresh failed', {
-          status: response.status,
-        });
-        return null;
-      }
-      const data = await response.json();
-      sessionIdRef.current = data.sessionId;
-      logInfo('[CallFlow] Session refreshed', { sessionId: data.sessionId });
-      return data.sessionId;
-    } catch (error) {
-      logWarn('[CallFlow] session refresh threw', { message: error?.message });
-      return null;
-    }
-  }, [signalingUrl]);
-
-  /**
-   * Perform an authenticated request with automatic 401 recovery. `buildRequest`
-   * receives the current sessionId and returns `{ url, options? }`. On a 401 the
-   * session is refreshed (or recreated) once and the request is retried with the
-   * new id. Returns the `Response` (possibly still 401), or `null` when no
-   * session could be established. Never throws on refresh; fetch errors
-   * propagate to the caller's existing try/catch.
-   *
-   * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
-   * @returns {Promise<Response | null>}
-   */
-  const authedFetch = useCallback(
-    async buildRequest => {
-      let sessionId = sessionIdRef.current;
-      if (!sessionId) {
-        sessionId = await createOrGetSession().catch(() => null);
-      }
-      if (!sessionId) return null;
-
-      let request = buildRequest(sessionId);
-      let response = await fetch(request.url, request.options);
-
-      if (response.status === 401) {
-        // Session expired or was invalidated server-side: refresh once and retry.
-        const refreshedId = await refreshSession();
-        const nextId = refreshedId || (await createOrGetSession().catch(() => null));
-        if (!nextId) return response;
-        request = buildRequest(nextId);
-        response = await fetch(request.url, request.options);
-      }
-
-      return response;
-    },
-    [createOrGetSession, refreshSession],
-  );
-
-  // Expose authedFetch through a ref for helpers defined earlier in the hook.
-  useEffect(() => {
-    authedFetchRef.current = authedFetch;
-  }, [authedFetch]);
-
   // ─── Socket connection ────────────────────────────────────────────────────
 
   /**
@@ -1373,9 +688,8 @@ export default function useCallFlow() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-    Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
-    typingTimeoutsRef.current = {};
-  }, []);
+    resetTypingState();
+  }, [resetTypingState]);
 
   // Store mutable callbacks in refs so socket listeners always call the latest
   // version without the socket needing to be recreated.
@@ -1622,82 +936,19 @@ export default function useCallFlow() {
 
       // ── Chat ─────────────────────────────────────────────────────────
       socket.on('message.received', ({ message }) => {
-        if (!message?.senderId) return;
-        const senderId = message.senderId;
-
-        setMessagesByPeer(prev => {
-          const existing = prev[senderId] ?? [];
-          if (existing.some(m => m.messageId === message.messageId)) {
-            return prev;
-          }
-          return { ...prev, [senderId]: [message, ...existing] };
-        });
-
-        if (activeChatPeerIdRef.current === senderId) {
-          // The conversation is currently open: auto-mark-read, no unread bump.
-          markConversationRead(senderId).catch(() => {});
-          return;
-        }
-
-        setConversations(prev => {
-          const index = prev.findIndex(c => c.peerId === senderId);
-          if (index === -1) {
-            // Brand-new conversation: refetch the authoritative list.
-            fetchConversations();
-            return prev;
-          }
-          const next = [...prev];
-          next[index] = {
-            ...next[index],
-            lastMessage: message,
-            unreadCount: (next[index].unreadCount || 0) + 1,
-          };
-          return next;
-        });
+        handleMessageReceived(message);
       });
 
       socket.on('message.delivered', ({ message }) => {
-        if (!message?.recipientId) return;
-        const peerId = message.recipientId;
-        setMessagesByPeer(prev => {
-          const existing = prev[peerId] ?? [];
-          if (existing.some(m => m.messageId === message.messageId)) {
-            return prev;
-          }
-          return { ...prev, [peerId]: [message, ...existing] };
-        });
+        handleMessageDelivered(message);
       });
 
       socket.on('message.read', ({ readerId, readAt }) => {
-        if (!readerId) return;
-        // `readerId` is the peer who just read our messages; messagesByPeer
-        // is keyed by the other participant regardless of send direction, so
-        // it doubles as the lookup key here.
-        setMessagesByPeer(prev => {
-          const existing = prev[readerId];
-          if (!existing) return prev;
-          let changed = false;
-          const updated = existing.map(m => {
-            if (m.senderId === userId && !m.readAt) {
-              changed = true;
-              return { ...m, readAt: readAt ?? new Date().toISOString() };
-            }
-            return m;
-          });
-          return changed ? { ...prev, [readerId]: updated } : prev;
-        });
+        handleMessageRead({ readerId, readAt });
       });
 
       socket.on('message.typing', ({ senderId, isTyping }) => {
-        if (!senderId) return;
-        clearTimeout(typingTimeoutsRef.current[senderId]);
-        setTypingByPeer(prev => ({ ...prev, [senderId]: Boolean(isTyping) }));
-        if (isTyping) {
-          // Safety net: auto-clear if a "stopped typing" event never arrives.
-          typingTimeoutsRef.current[senderId] = setTimeout(() => {
-            setTypingByPeer(prev => ({ ...prev, [senderId]: false }));
-          }, TYPING_INDICATOR_TIMEOUT_MS);
-        }
+        handleTypingEvent({ senderId, isTyping });
       });
 
       // ── In-call screen-share relay ──────────────────────────────────────
@@ -1710,8 +961,16 @@ export default function useCallFlow() {
       socket.on('connect', async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         // Clear offline indicator on successful connection.
-        connectErrorCountRef.current = 0;
-        setIsServerUnreachable(false);
+        recordConnectSuccess();
+        // Load the conversation list as soon as the session is actually
+        // live. `sessionIdRef` is only populated once `createOrGetSession`
+        // resolves, which happens asynchronously — a chat-sync effect keyed
+        // only on `isRegistered` (which flips as soon as a stored userId
+        // loads, before the session exists) can fire too early and silently
+        // no-op, leaving old messages/conversations unloaded until the user
+        // manually pulls to refresh. Firing here guarantees it runs once the
+        // session/socket are actually ready, on cold start and on reconnect.
+        fetchConversations();
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -1760,10 +1019,7 @@ export default function useCallFlow() {
           message: error?.message,
           description: error?.description,
         });
-        connectErrorCountRef.current += 1;
-        if (connectErrorCountRef.current >= OFFLINE_ERROR_THRESHOLD) {
-          setIsServerUnreachable(true);
-        }
+        recordConnectError();
       });
 
       // The server accepted the handshake but the presented sessionId no
@@ -1798,9 +1054,14 @@ export default function useCallFlow() {
       updateStatus,
       showIncomingCallUi,
       signalingUrl,
-      markConversationRead,
+      handleMessageReceived,
+      handleMessageDelivered,
+      handleMessageRead,
+      handleTypingEvent,
+      recordConnectSuccess,
+      recordConnectError,
+      sessionIdRef,
       fetchConversations,
-      userId,
     ],
   );
 
@@ -1971,7 +1232,7 @@ export default function useCallFlow() {
       sessionIdRef.current = null;
       disconnectSocket();
     };
-  }, [connectSocket, createOrGetSession, disconnectSocket, signalingUrl, userId]);
+  }, [connectSocket, createOrGetSession, disconnectSocket, signalingUrl, userId, sessionIdRef]);
 
   // ─── Upfront permission request ───────────────────────────────────────────
   // Ask for every runtime permission the app can use (camera, microphone,
@@ -2003,7 +1264,7 @@ export default function useCallFlow() {
     }, SESSION_REFRESH_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [userId, signalingUrl, refreshSession, updateStatus]);
+  }, [userId, signalingUrl, refreshSession, updateStatus, sessionIdRef]);
 
   /**
    * Manually retry the presence socket connection when the server appears
@@ -2012,8 +1273,7 @@ export default function useCallFlow() {
    */
   const retryPresenceConnect = useCallback(async () => {
     if (!userId.trim() || !signalingUrl.trim()) return;
-    setIsServerUnreachable(false);
-    connectErrorCountRef.current = 0;
+    resetOfflineTracking();
     sessionIdRef.current = null;
     try {
       const sessionId = await createOrGetSession();
@@ -2022,7 +1282,7 @@ export default function useCallFlow() {
       logWarn('[CallFlow] retryPresenceConnect failed', {
         message: error?.message,
       });
-      setIsServerUnreachable(true);
+      markServerUnreachable();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, signalingUrl]); // createOrGetSession and connectSocket are stable relative to these
@@ -2155,6 +1415,7 @@ export default function useCallFlow() {
       updateStatus,
       startLocalPreview,
       userId,
+      sessionIdRef,
     ],
   );
 
@@ -2221,7 +1482,14 @@ export default function useCallFlow() {
       updateStatus(`Failed to accept call: ${error.message}`, 'error');
       endActiveCall();
     }
-  }, [endActiveCall, ensurePeerConnection, incomingCall, updateStatus, startLocalPreview]);
+  }, [
+    endActiveCall,
+    ensurePeerConnection,
+    incomingCall,
+    updateStatus,
+    startLocalPreview,
+    sessionIdRef,
+  ]);
 
   // ─── Decline incoming call ────────────────────────────────────────────────
 
@@ -2612,17 +1880,17 @@ export default function useCallFlow() {
 
   return {
     // Identity / connection config
-    userId,
-    verificationCode,
-    setUserId,
-    editUserId,
+    userId: identity.userId,
+    verificationCode: identity.verificationCode,
+    setUserId: identity.setUserId,
+    editUserId: identity.editUserId,
     isRegistered,
-    isLoadingIdentity,
-    pendingVerificationCode,
-    dismissVerificationCodeNotice,
-    registerUser,
+    isLoadingIdentity: identity.isLoadingIdentity,
+    pendingVerificationCode: identity.pendingVerificationCode,
+    dismissVerificationCodeNotice: identity.dismissVerificationCodeNotice,
+    registerUser: identity.registerUser,
     unregisterUser,
-    updateUserId,
+    updateUserId: identity.updateUserId,
     calleeId,
     setCalleeId,
     signalingUrl,
@@ -2638,30 +1906,30 @@ export default function useCallFlow() {
     // UI status
     status,
     callSummary,
-    calleePresence,
+    calleePresence: presenceSearch.calleePresence,
     checkPresence,
-    searchUsers,
-    isServerUnreachable,
+    searchUsers: presenceSearch.searchUsers,
+    isServerUnreachable: presenceSearch.isServerUnreachable,
     retryPresenceConnect,
 
     // Call history
-    callHistory,
-    missedCallCount,
-    markMissedCallsRead,
-    fetchCallHistory,
+    callHistory: callHistory.callHistory,
+    missedCallCount: callHistory.missedCallCount,
+    markMissedCallsRead: callHistory.markMissedCallsRead,
+    fetchCallHistory: callHistory.fetchCallHistory,
 
     // Chat
-    conversations,
-    messagesByPeer,
-    unreadTotal,
+    conversations: messaging.conversations,
+    messagesByPeer: messaging.messagesByPeer,
+    unreadTotal: messaging.unreadTotal,
     activeChatPeerId,
-    setActiveChatPeerId,
+    setActiveChatPeerId: messaging.setActiveChatPeerId,
     fetchConversations,
-    fetchMessagesForPeer,
-    sendMessage,
+    fetchMessagesForPeer: messaging.fetchMessagesForPeer,
+    sendMessage: messaging.sendMessage,
     markConversationRead,
-    typingByPeer,
-    sendTypingIndicator,
+    typingByPeer: messaging.typingByPeer,
+    sendTypingIndicator: messaging.sendTypingIndicator,
     isRemoteScreenSharing,
 
     // In-call media state

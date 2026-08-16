@@ -115,6 +115,11 @@ function buildListItems(orderedMessages) {
  *   shows a loading spinner on the call header buttons instead of the icon.
  * @param {boolean} [props.isPeerTyping] - Shows a "peer is typing…" hint under the header.
  * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
+ * @param {number} [props.keyboardVerticalOffset] - Distance between the true top of the
+ *   screen and this screen's root view (e.g. the safe-area top inset applied by an
+ *   ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate
+ *   parent, not the screen, so without this offset it under-compensates for the
+ *   keyboard by exactly that amount and the composer stays partly covered.
  */
 export default function ChatConversationScreen({
   peerId,
@@ -130,6 +135,7 @@ export default function ChatConversationScreen({
   isStartingCall = false,
   isPeerTyping = false,
   onTypingChange,
+  keyboardVerticalOffset = 0,
 }) {
   const [draft, setDraft] = useState('');
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -255,8 +261,11 @@ export default function ChatConversationScreen({
   }, []);
 
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
-  const isPeerKnownOffline = peerPresence?.online === false;
-  const isCallDisabled = isStartingCall || isPeerKnownOffline;
+  // Presence is only a one-shot snapshot fetched when the conversation opens
+  // (see useChatSync) rather than a live subscription, so it can go stale the
+  // moment the peer's real status changes. Show it as a hint, but don't use
+  // it to block placing a call — only an in-flight call attempt should.
+  const isCallDisabled = isStartingCall;
   const MCIcon = loadVectorIcons();
   const presenceIconDef = peerPresence
     ? ICONS[peerPresence.online ? 'presenceOnline' : 'presenceOffline']
@@ -266,7 +275,8 @@ export default function ChatConversationScreen({
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={keyboardVerticalOffset}>
       <View style={styles.root} testID="chat-conversation-root">
         <View style={styles.header}>
           <Pressable

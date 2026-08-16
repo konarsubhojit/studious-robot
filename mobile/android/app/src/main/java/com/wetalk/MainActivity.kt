@@ -13,7 +13,6 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
-import io.wazo.callkeep.VoiceConnectionService
 
 class MainActivity : ReactActivity() {
   /**
@@ -60,7 +59,7 @@ class MainActivity : ReactActivity() {
   private fun applyIncomingCallWakeFlags(intent: Intent?) {
     if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
     val callId = intent.data?.lastPathSegment ?: return
-    if (VoiceConnectionService.getConnection(callId) == null) return
+    if (!CallConnections.isLive(callId)) return
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)

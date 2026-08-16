@@ -66,10 +66,25 @@ function hasOwnProp(value, key) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
+/**
+ * Escape CR/LF and other control characters out of a value before it is
+ * interpolated into a log line, so user-controlled input (e.g. a `userId`)
+ * cannot forge additional log entries or corrupt log formatting.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function sanitizeForLog(value) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, char =>
+    `\\x${char.charCodeAt(0).toString(16).padStart(2, '0')}`,
+  );
+}
+
 module.exports = {
   normaliseId,
   normaliseOptionalString,
   normalisePushProvider,
   isPlainObject,
   hasOwnProp,
+  sanitizeForLog,
 };

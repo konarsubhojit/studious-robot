@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeForLog } = require('./normalize');
+
 const SENSITIVE_FIELDS = new Set([
   'authorization',
   'connectionstring',
@@ -50,7 +52,7 @@ function redact(value, key, seen = new WeakSet()) {
 function verboseLog(scope, message, metadata) {
   if (!isVerboseLoggingEnabled()) return;
   const suffix = metadata === undefined ? '' : ` ${JSON.stringify(redact(metadata))}`;
-  console.log(`[verbose][${scope}] ${message}${suffix}`);
+  console.log(`[verbose][${sanitizeForLog(scope)}] ${sanitizeForLog(message)}${suffix}`);
 }
 
 module.exports = {

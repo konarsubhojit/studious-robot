@@ -4,7 +4,7 @@ const express = require('express');
 const { randomUUID } = require('node:crypto');
 const { resolveIdentityClaim } = require('../identity');
 const { getSessionFromRequest } = require('../lib/auth');
-const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
+const { normaliseId, normaliseOptionalString, sanitizeForLog } = require('../lib/normalize');
 const { addSessionToUser, upsertDevice, ensurePresenceRecord } = require('../lib/state');
 const { persistUser, persistDevice } = require('../lib/persistence');
 
@@ -31,7 +31,9 @@ function createSessionRouter({ state, db, sessionTtlMs }) {
         outcome: 'denied',
         details: { reason: claim.reason },
       });
-      console.warn(`[security] session.identity_conflict userId=${userId} reason=${claim.reason}`);
+      console.warn(
+        `[security] session.identity_conflict userId=${sanitizeForLog(userId)} reason=${sanitizeForLog(claim.reason)}`,
+      );
       res.status(409).json({
         error: 'userId is claimed by a verified identity',
         code: 'identity_conflict',
