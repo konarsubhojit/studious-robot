@@ -1,4 +1,10 @@
-import { applyBitrateConstraints, getIceServers, getTurnDiagnostics } from '../src/webrtcConfig';
+import {
+  applyBitrateConstraints,
+  getIceServers,
+  getIceServersForCall,
+  getTurnDiagnostics,
+  resetIceServersForCallCache,
+} from '../src/webrtcConfig';
 
 // Use indirect delete via a local reference so that
 // babel-plugin-transform-inline-environment-variables (which replaces the
@@ -13,13 +19,116 @@ function clearTurnEnv() {
 }
 
 describe('getIceServers', () => {
-  beforeEach(clearTurnEnv);
-  afterEach(clearTurnEnv);
+  beforeEach(() => {
+    clearTurnEnv();
+    resetIceServersForCallCache();
+  });
+  afterEach(() => {
+    clearTurnEnv();
+    resetIceServersForCallCache();
+  });
 
   test('includes Google STUN server by default', () => {
     const servers = getIceServers();
     expect(servers).toHaveLength(1);
     expect(servers[0].urls).toContain('stun:stun.l.google.com:19302');
+  });
+
+  describe('getIceServersForCall', () => {
+    beforeEach(() => {
+      clearTurnEnv();
+      resetIceServersForCallCache();
+    });
+    afterEach(() => {
+      clearTurnEnv();
+      resetIceServersForCallCache();
+    });
+
+    function response(iceServers, expiresAt) {
+      return {
+        ok: true,
+        json: async () => iceServers,
+        headers: { get: () => expiresAt },
+      };
+    }
+
+    test('fetches server credentials and reuses them while fresh', async () => {
+      const fetchImpl = jest.fn().mockResolvedValue(
+        response([{ urls: ['turn:cf.example'], username: 'short', credential: 'lived' }],
+          new Date(Date.now() + 5 * 60 * 1000).toISOString()),
+      );
+
+      const first = await getIceServersForCall({
+        signalingUrl: 'https://signal.example/',
+        sessionId: 'session-id',
+        fetchImpl,
+      });
+      const second = await getIceServersForCall({
+        signalingUrl: 'https://signal.example/',
+        sessionId: 'session-id',
+        fetchImpl,
+      });
+
+      expect(first).toEqual(second);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledWith('https://signal.example/turn-credentials', {
+        headers: { Authorization: 'Bearer ' + 'session-id' },
+      });
+    });
+
+    test('refreshes credentials near expiry', async () => {
+      const fetchImpl = jest
+        .fn()
+        .mockResolvedValueOnce(response([{ urls: ['turn:first'] }], new Date(Date.now() + 30_000).toISOString()))
+        .mockResolvedValueOnce(response([{ urls: ['turn:second'] }], new Date(Date.now() + 5 * 60 * 1000).toISOString()));
+
+      await expect(
+        getIceServersForCall({ signalingUrl: 'https://signal.example', sessionId: 'session-id', fetchImpl }),
+      ).resolves.toEqual([{ urls: ['turn:first'] }]);
+      await expect(
+        getIceServersForCall({ signalingUrl: 'https://signal.example', sessionId: 'session-id', fetchImpl }),
+      ).resolves.toEqual([{ urls: ['turn:second'] }]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    test('falls back from a failed refresh to cache, static credentials, then STUN', async () => {
+      const cachedFetch = jest
+        .fn()
+        .mockResolvedValueOnce(response([{ urls: ['turn:cached'] }], new Date(Date.now() + 30_000).toISOString()))
+        .mockRejectedValueOnce(new Error('offline'));
+      await getIceServersForCall({
+        signalingUrl: 'https://signal.example',
+        sessionId: 'session-id',
+        fetchImpl: cachedFetch,
+      });
+      await expect(
+        getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: cachedFetch,
+        }),
+      ).resolves.toEqual([{ urls: ['turn:cached'] }]);
+
+      resetIceServersForCallCache();
+      process.env.TURN_USERNAME = 'static-user';
+      process.env.TURN_CREDENTIAL = 'static-password';
+      await expect(
+        getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: jest.fn().mockRejectedValue(new Error('offline')),
+        }),
+      ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ username: 'static-user' })]));
+
+      clearTurnEnv();
+      await expect(
+        getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: jest.fn().mockRejectedValue(new Error('offline')),
+        }),
+      ).resolves.toEqual([{ urls: ['stun:stun.l.google.com:19302'] }]);
+    });
   });
 
   test('adds Metered TURN server when credentials are provided', () => {

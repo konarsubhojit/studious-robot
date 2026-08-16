@@ -59,8 +59,9 @@ npm run android      # build & launch on a connected Android device/emulator
 ```
 
 See [`mobile/README.md`](./mobile/README.md) for the full toolchain setup and
-environment variables (`SIGNALING_URL`, `ROOM_ID`, `TURN_USERNAME`,
-`TURN_CREDENTIAL`).
+environment variables. Configure Cloudflare TURN on the server with
+`CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN`; the mobile client
+then receives short-lived credentials at call time.
 
 ## Common npm scripts
 
@@ -210,8 +211,8 @@ the workflow:
 | ------------------ | ------------------------------------------- |
 | `SIGNALING_URL`    | WebSocket URL of the signaling server       |
 | `ROOM_ID`          | Default room identifier                     |
-| `TURN_USERNAME`    | TURN server username (optional)             |
-| `TURN_CREDENTIAL`  | TURN server credential (optional)           |
+| `TURN_USERNAME`    | Deprecated static TURN fallback (optional)  |
+| `TURN_CREDENTIAL`  | Deprecated static TURN fallback (optional)  |
 
 To build a release APK locally:
 

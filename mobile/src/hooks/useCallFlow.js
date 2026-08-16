@@ -38,7 +38,7 @@ import {
 } from '../pushNotifications';
 import { getSocketOptions } from '../socketConfig';
 import { emitWithAck, SIGNALING_VERSION } from '../socketProtocol';
-import { getIceServers, applyBitrateConstraints } from '../webrtcConfig';
+import { getIceServers, getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
 import {
   displayIncomingCall,
@@ -396,7 +396,19 @@ export default function useCallFlow() {
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
-  const ensurePeerConnection = useCallback(() => {
+  const configurePeerConnection = useCallback(
+    async pc => {
+      const iceServers = await getIceServersForCall({
+        signalingUrl,
+        sessionId: sessionIdRef.current,
+      });
+      pc.setConfiguration?.({ iceServers });
+      return pc;
+    },
+    [signalingUrl],
+  );
+
+  const ensurePeerConnection = useCallback(async () => {
     if (peerConnectionRef.current) return peerConnectionRef.current;
 
     logInfo('[CallFlow] Creating RTCPeerConnection');
@@ -458,6 +470,7 @@ export default function useCallFlow() {
       }
       (async () => {
         try {
+          await configurePeerConnection(pc);
           const offer = await pc.createOffer({ iceRestart: true });
           await pc.setLocalDescription(offer);
           socketRef.current?.emit(
@@ -478,8 +491,8 @@ export default function useCallFlow() {
     };
 
     peerConnectionRef.current = pc;
-    return pc;
-  }, [markCallConnected, updateStatus]);
+    return configurePeerConnection(pc);
+  }, [configurePeerConnection, markCallConnected, updateStatus]);
 
   // ─── Local media ──────────────────────────────────────────────────────────
 
@@ -761,7 +774,7 @@ export default function useCallFlow() {
               activeCallIdRef.current = call.callId;
               try {
                 await startLocalPreviewRef.current?.();
-                const pc = ensurePeerConnectionRef.current?.();
+                const pc = await ensurePeerConnectionRef.current?.();
                 if (!pc) break;
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
@@ -827,7 +840,7 @@ export default function useCallFlow() {
         isNegotiatingRef.current = true;
         logInfo('[CallFlow] RTC offer received');
         try {
-          const pc = ensurePeerConnectionRef.current?.();
+          const pc = await ensurePeerConnectionRef.current?.();
           if (!pc) return;
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           // Flush any ICE candidates that arrived before the remote description.
@@ -1432,7 +1445,7 @@ export default function useCallFlow() {
       activeCallIdRef.current = call.callId;
 
       // Make the peer connection now so tracks are added before the offer arrives.
-      ensurePeerConnection();
+      await ensurePeerConnection();
 
       const ack = await emitWithAck(socketRef.current, 'call.accept', {
         version: SIGNALING_VERSION,

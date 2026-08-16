@@ -89,6 +89,8 @@ jest.mock('../../src/socketConfig', () => ({
 
 jest.mock('../../src/webrtcConfig', () => ({
   getIceServers: jest.fn(() => []),
+  getIceServersForCall: jest.fn(async () => []),
+  applyBitrateConstraints: jest.fn(async () => {}),
 }));
 
 jest.mock('../../src/callKeep', () => ({
