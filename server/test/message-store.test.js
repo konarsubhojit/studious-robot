@@ -350,10 +350,34 @@ function createFakeMongoClient() {
       docs.push(doc);
       return { insertedId: doc.messageId };
     },
+    async updateOne(filter, update, options) {
+      const existing = docs.find(
+        (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
+      );
+      if (existing) {
+        return { matchedCount: 1, modifiedCount: 0, upsertedCount: 0 };
+      }
+      if (options?.upsert) {
+        docs.push({ ...update.$setOnInsert });
+        return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+      }
+      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+    },
     find(query) {
-      let results = docs.filter((d) => d.conversationId === query.conversationId);
-      if (query.createdAt?.$lt) {
+      let results = docs;
+      if (query?.conversationId !== undefined) {
+        results = results.filter((d) => d.conversationId === query.conversationId);
+      }
+      if (query?.createdAt?.$lt) {
         results = results.filter((d) => d.createdAt < query.createdAt.$lt);
+      }
+      if (query?.$or) {
+        results = results.filter((doc) =>
+          query.$or.some((clause) => {
+            const [field, value] = Object.entries(clause)[0];
+            return doc[field] === value;
+          })
+        );
       }
       return {
         sort() {
@@ -390,50 +414,6 @@ function createFakeMongoClient() {
       }
       return { modifiedCount };
     },
-    // Only interprets the specific pipeline shape `listConversations` builds:
-    // $match({ $or }) → $sort(createdAt) → $group(by conversationId) → $sort(lastMessage.createdAt).
-    aggregate(pipeline) {
-      let results = [...docs];
-      for (const stage of pipeline) {
-        if (stage.$match) {
-          const clauses = stage.$match.$or;
-          results = results.filter((doc) =>
-            clauses.some((clause) => {
-              const [field, value] = Object.entries(clause)[0];
-              return doc[field] === value;
-            })
-          );
-        } else if (stage.$group) {
-          const [, groupField] = stage.$group._id.split('$');
-          const [recipientClause, readClause] = stage.$group.unreadCount.$sum.$cond[0].$and;
-          const [, recipientUserId] = recipientClause.$eq;
-          const groups = new Map();
-          for (const doc of results) {
-            const key = doc[groupField];
-            if (!groups.has(key)) {
-              groups.set(key, { _id: key, lastMessage: { _id: 'oid', ...doc }, unreadCount: 0 });
-            }
-            const group = groups.get(key);
-            if (doc.recipientId === recipientUserId && doc.readAt === readClause.$eq[1]) {
-              group.unreadCount += 1;
-            }
-          }
-          results = [...groups.values()];
-        } else if (stage.$sort) {
-          const [sortKey] = Object.keys(stage.$sort);
-          const readAt = (doc) =>
-            sortKey.startsWith('lastMessage.')
-              ? doc.lastMessage[sortKey.slice('lastMessage.'.length)]
-              : doc[sortKey];
-          results = [...results].sort((a, b) => (readAt(a) < readAt(b) ? 1 : -1));
-        }
-      }
-      return {
-        async toArray() {
-          return results;
-        },
-      };
-    },
   };
 
   return {
@@ -451,17 +431,22 @@ function createFakeMongoClient() {
   };
 }
 
-test('mongo store creates its indexes on first use', async () => {
+test('mongo store creates its Cosmos-compatible indexes on first use', async () => {
   const fake = createFakeMongoClient();
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
 
   await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
 
-  assert.deepEqual(
-    fake.createdIndexes.map((i) => i.spec),
-    [{ conversationId: 1, createdAt: -1 }, { messageId: 1 }]
-  );
-  assert.deepEqual(fake.createdIndexes[1].options, { unique: true });
+  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
+    { conversationId: 1, createdAt: -1 },
+    { conversationId: 1, createdAt: 1 },
+    { conversationId: 1, messageId: 1 },
+    { conversationId: 1, createdAt: -1, messageId: -1 },
+  ]);
+  // Every index is prefixed with the shard key (`conversationId`), and the
+  // unique guarantee is expressed on the shard-key-prefixed pair so it
+  // satisfies Cosmos RU's "unique index must include the shard key" rule.
+  assert.deepEqual(fake.createdIndexes[2].options, { unique: true });
   await store.close();
   assert.equal(fake.isClosed(), true);
 });
@@ -472,10 +457,12 @@ test('mongo store readiness check connects before the first message operation', 
 
   await store.ready();
 
-  assert.deepEqual(
-    fake.createdIndexes.map((i) => i.spec),
-    [{ conversationId: 1, createdAt: -1 }, { messageId: 1 }]
-  );
+  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
+    { conversationId: 1, createdAt: -1 },
+    { conversationId: 1, createdAt: 1 },
+    { conversationId: 1, messageId: 1 },
+    { conversationId: 1, createdAt: -1, messageId: -1 },
+  ]);
   await store.close();
 });
 
@@ -508,8 +495,8 @@ test('mongo store survives index-creation failure', async () => {
       async createIndex() {
         throw new Error('cosmos throttled the index build');
       },
-      async insertOne() {
-        return {};
+      async updateOne() {
+        return { upsertedCount: 1 };
       },
     }),
   });
@@ -520,7 +507,35 @@ test('mongo store survives index-creation failure', async () => {
   await store.close();
 });
 
-test('mongo store listConversations aggregates by conversation, newest first', async () => {
+test('mongo store saveMessage is idempotent for a repeated messageId', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  await store.saveMessage({
+    conversationId,
+    messageId: 'dup-1',
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'first send',
+  });
+  // Simulates a client retry/replay of the same client-generated messageId.
+  await store.saveMessage({
+    conversationId,
+    messageId: 'dup-1',
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'retried send',
+  });
+
+  const messages = await store.listMessages({ conversationId });
+  assert.equal(messages.length, 1, 'the duplicate write must not create a second document');
+  assert.equal(messages[0].body, 'first send', 'the original document is preserved');
+
+  await store.close();
+});
+
+test('mongo store listConversations groups and sorts by conversation, newest first', async () => {
   const fake = createFakeMongoClient();
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
 

@@ -1,6 +1,8 @@
-# studious-robot — OCI VM Deployment Guide
+# studious-robot — VM Deployment Guide
 
 This document covers the **one-time VM setup** and explains how the automated SSH deploy works.
+
+The **verified reference deployment** is a **GCP e2-micro** instance running **Ubuntu**, with the service user `ubuntu`, an **nginx** reverse proxy, **DuckDNS** dynamic DNS, and **certbot/Let's Encrypt** (`certbot.timer`) for TLS. An **Oracle Cloud Infrastructure (OCI) Ampere A1** VM with Oracle Linux, user `opc`, firewalld, and Caddy is also documented and supported as an alternative — sections below call out where the two paths differ.
 
 ---
 
@@ -8,26 +10,34 @@ This document covers the **one-time VM setup** and explains how the automated SS
 
 ```
 GitHub Actions (push to master)
-  └─► appleboy/ssh-action → OCI Ampere A1 VM
+  └─► appleboy/ssh-action → VM (GCP e2-micro/Ubuntu, or OCI Ampere A1/Oracle Linux)
           ├─ git fetch / reset
           ├─ npm ci --omit=dev
           └─ sudo systemctl reload-or-restart robot-signal
 ```
 
-The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`.
+The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`, and is fronted by a TLS-terminating reverse proxy (nginx on the reference GCP deployment, Caddy on OCI).
 
 ---
 
 ## 1. Prerequisites
 
-- Oracle Cloud Infrastructure (OCI) Ampere A1 (arm64) VM running Oracle Linux or Ubuntu.
-- A domain name pointing at the VM's public IP (required for TLS; see §7).
+- A VM running Ubuntu (reference: **GCP e2-micro**) or Oracle Linux/Ubuntu (OCI Ampere A1, arm64).
+- A domain name (or a free **DuckDNS** subdomain) pointing at the VM's public IP (required for TLS; see §9).
 
 ---
 
 ## 2. Install Node 24
 
 This repository pins **Node 24** via `.nvmrc`. Install it system-wide so `systemd` can find it at `/usr/bin/node`.
+
+### Ubuntu (GCP reference deployment)
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version
+```
 
 ### Oracle Linux (dnf)
 
@@ -36,14 +46,6 @@ This repository pins **Node 24** via `.nvmrc`. Install it system-wide so `system
 curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
 sudo dnf install -y nodejs
 node --version   # should print v24.x.x
-```
-
-### Ubuntu
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt-get install -y nodejs
-node --version
 ```
 
 If `node` ends up at a path other than `/usr/bin/node`, update `ExecStart` in `deploy/robot-signal.service` accordingly (e.g. `/usr/local/bin/node`).
@@ -58,7 +60,7 @@ git clone https://github.com/konarsubhojit/studious-robot.git ~/repos/studious-r
 ```
 
 > **Repo path:** `~/repos/studious-robot`  
-> **Service user:** `opc` (Oracle Linux default; adjust `User=` in the unit file if your user differs)
+> **Service user:** `ubuntu` (GCP/Ubuntu reference default) or `opc` (Oracle Linux default) — set `User=` in the unit file to match, and see §5's note on `WorkingDirectory=`.
 
 ---
 
@@ -73,6 +75,10 @@ npm ci --omit=dev
 
 ## 5. Install the systemd unit
 
+The shipped `deploy/robot-signal.service` defaults to `User=ubuntu` and `WorkingDirectory=/home/ubuntu/repos/studious-robot/server` (the GCP/Ubuntu reference layout). **Before installing it**, edit both if your VM's user or repo path differs (e.g. `User=opc` and `WorkingDirectory=/home/opc/repos/studious-robot/server` on Oracle Linux):
+
+> `WorkingDirectory=%h/...` does **not** work in a system unit — `%h` resolves to `/root` there regardless of `User=`, not the service user's home directory. Always use an absolute path.
+
 ```bash
 sudo cp ~/repos/studious-robot/deploy/robot-signal.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -80,7 +86,7 @@ sudo systemctl enable --now robot-signal
 sudo systemctl status robot-signal
 ```
 
-The service listens on `PORT=4173` by default. Edit the unit file's `Environment=` lines to change the port, `CORS_ORIGIN`, etc., then reload:
+The service listens on `PORT=4173` by default. For real configuration (secrets, per-deployment overrides), create `/etc/robot-signal/env` — the unit's `EnvironmentFile=-/etc/robot-signal/env` loads it automatically, and being declared *after* the unit's own `Environment=` lines, values there win for any key set in both places. Avoid setting the same key in both `Environment=` and the env file; if you do, remember the env file wins. Then reload:
 
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart robot-signal
@@ -128,7 +134,7 @@ Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restar
 
 ## 6. Create the deploy SSH key pair
 
-The CI workflow SSHes into the VM as user `opc` to run the deploy script. Create a **dedicated deploy key** (do not reuse your personal key).
+The CI workflow SSHes into the VM as your chosen deploy user (`ubuntu` on the GCP reference deployment, `opc` on Oracle Linux) to run the deploy script. Create a **dedicated deploy key** (do not reuse your personal key).
 
 ```bash
 # On your local machine (or the VM — keep the private key off the VM)
@@ -138,7 +144,7 @@ ssh-keygen -t ed25519 -C "studious-robot-deploy" -f ~/.ssh/studious_robot_deploy
 **Add the public key to the VM:**
 
 ```bash
-# On the VM, as opc
+# On the VM, as the deploy user (ubuntu / opc)
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
 echo "<paste contents of studious_robot_deploy.pub>" >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
@@ -151,7 +157,7 @@ chmod 600 ~/.ssh/authorized_keys
 |---------------------|-------------------------------------------------|
 | `DEPLOY_SSH_KEY`    | Private key (`~/.ssh/studious_robot_deploy`)    |
 | `DEPLOY_SSH_HOST`   | VM public IP or hostname                        |
-| `DEPLOY_SSH_USER`   | `opc` (or your VM user)                         |
+| `DEPLOY_SSH_USER`   | `ubuntu` (GCP reference) or `opc` (Oracle Linux) |
 | `DEPLOY_SSH_PORT`   | SSH port — **optional**, defaults to `22`       |
 | `DATABASE_URL_DIRECT` | Neon **direct (unpooled)** Postgres URL — used by the deploy job to run migrations before restart. **Optional**; migrations are skipped when unset. |
 | `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM HTTP v1 push delivery. **Optional**; FCM pushes are skipped when unset. |
@@ -227,28 +233,35 @@ expose it publicly.
 
 ## 7. Sudoers — passwordless restart for the deploy script
 
-The CI deploy script runs `sudo systemctl reload-or-restart robot-signal` and `sudo systemctl is-active robot-signal` as the `opc` user. Grant passwordless sudo for those two commands only:
+The CI deploy script runs `sudo systemctl reload-or-restart robot-signal` and `sudo systemctl is-active robot-signal` as the deploy user. Grant passwordless sudo for those two commands only:
 
 ```bash
 # On the VM
 sudo visudo -f /etc/sudoers.d/studious-robot-deploy
 ```
 
-Add the following line and save:
+Add the following line and save (substitute `ubuntu` for `opc` if deploying on Oracle Linux):
 
 ```
-opc ALL=(ALL) NOPASSWD: /bin/systemctl reload-or-restart robot-signal, /bin/systemctl is-active robot-signal
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl reload-or-restart robot-signal, /bin/systemctl is-active robot-signal
 ```
 
 > **Note:** On some distributions (Oracle Linux 8+, Ubuntu 20.04+) `systemctl` lives at `/usr/bin/systemctl`. Verify with `which systemctl` on the VM and use that path in the sudoers rule. Using the wrong path will silently cause the passwordless sudo to fail and prompt for a password instead.
 
 ---
 
-## 8. OCI networking — open port 4173 (or 443)
+## 8. Networking — open port 4173 (or 443) and set up dynamic DNS
+
+### 8a. GCP (reference deployment)
+
+1. In the GCP Console, go to **VPC network → Firewall** and add a rule allowing ingress TCP on `4173` (or `443` once nginx is fronting it) from `0.0.0.0/0`.
+2. If the VM doesn't have a static IP, use **DuckDNS** for free dynamic DNS: create a subdomain at [duckdns.org](https://www.duckdns.org), then keep it updated with a cron job or systemd timer that periodically curls DuckDNS's update URL with the VM's current IP.
+
+### 8b. OCI (alternative)
 
 Oracle Cloud blocks traffic at **two independent layers**. You must open the port in **both**.
 
-### 8a. OCI Security List / Network Security Group
+**OCI Security List / Network Security Group:**
 
 1. In the OCI Console, go to **Networking → Virtual Cloud Networks → your VCN → Security Lists** (or the attached NSG).
 2. Add an **Ingress rule**:
@@ -256,7 +269,7 @@ Oracle Cloud blocks traffic at **two independent layers**. You must open the por
    - Protocol: TCP
    - Destination port: `4173` (or `443` if you put a reverse proxy in front — see §9)
 
-### 8b. VM host firewall
+**VM host firewall:**
 
 Oracle Linux images ship with **firewalld** enabled; Ubuntu images may use **iptables** with saved rules. You must open the port on the host too.
 
@@ -276,15 +289,50 @@ sudo iptables -I INPUT 6 -p tcp --dport 4173 -j ACCEPT
 sudo netfilter-persistent save
 ```
 
-> If signaling works locally on the VM but not from the phone, a missing firewall rule at one of these two layers is almost always the cause.
+> If signaling works locally on the VM but not from the phone, a missing firewall rule at one of these layers is almost always the cause.
 
 ---
 
-## 9. TLS reverse proxy (recommended)
+## 9. TLS reverse proxy (required)
 
 Your Android app uses `wss://` for signaling. Serving the raw Node server over `ws://` (plain WebSocket) will be **blocked on Android** unless cleartext traffic is explicitly enabled in the app manifest — and it shouldn't be in production. Put a TLS-terminating reverse proxy in front of the Node server.
 
-### Option A — Caddy (easiest, auto-certificates)
+### Option A — nginx + certbot (reference GCP + Ubuntu deployment)
+
+```bash
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+```
+
+**nginx server block** (e.g. `/etc/nginx/sites-available/robot-signal`, then symlink into `sites-enabled` and `sudo nginx -t && sudo systemctl reload nginx`):
+
+```nginx
+server {
+    listen 80;
+    server_name yourname.duckdns.org;
+
+    location / {
+        proxy_pass http://127.0.0.1:4173;
+        # Required for Socket.IO WebSocket transport:
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+> **nginx note:** without the `Upgrade`/`Connection` headers, Socket.IO's WebSocket transport silently falls back to long-polling.
+
+Then obtain and install the certificate — `certbot --nginx` rewrites the server block to listen on 443 with TLS and installs a `certbot.timer` systemd unit that auto-renews the certificate twice daily:
+
+```bash
+sudo certbot --nginx -d yourname.duckdns.org
+systemctl list-timers | grep certbot   # confirm certbot.timer is scheduled
+```
+
+Open port 443 in the GCP firewall (see §8a), and point your `SIGNALING_URL` in the app to `https://yourname.duckdns.org`.
+
+### Option B — Caddy (alternative, e.g. OCI)
 
 ```bash
 # Oracle Linux
@@ -307,29 +355,7 @@ Caddy provisions a Let's Encrypt certificate automatically and handles WebSocket
 sudo systemctl enable --now caddy
 ```
 
-Open port 443 in both the OCI Security List and the host firewall (see §8), and point your `SIGNALING_URL` in the app to `https://signal.yourdomain.com`.
-
-### Option B — nginx
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name signal.yourdomain.com;
-
-    # ... ssl_certificate / ssl_certificate_key (use certbot) ...
-
-    location / {
-        proxy_pass http://127.0.0.1:4173;
-        # Required for Socket.IO WebSocket transport:
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-    }
-}
-```
-
-> **nginx note:** without the `Upgrade`/`Connection` headers, Socket.IO's WebSocket transport silently falls back to long-polling. Caddy handles this automatically; nginx requires these headers explicitly.
+Open port 443 in both the OCI Security List and the host firewall (see §8b), and point your `SIGNALING_URL` in the app to `https://signal.yourdomain.com`.
 
 ---
 
@@ -385,3 +411,21 @@ bash ~/repos/studious-robot/deploy/deploy.sh
 ```
 
 The job **fails** (and you get a GitHub notification) if the service does not become active within 2 seconds of the reload-or-restart.
+
+---
+
+## 13. Message store (MongoDB / Cosmos DB) — provider notes
+
+Chat message history and conversation lists are persisted via `server/src/messageStore.js` when `MONGODB_URI` is set (Postgres/Neon remains the store for users/devices/calls/events; this is a separate, optional store). Two Azure-hosted Mongo-compatible providers are supported and behave differently:
+
+| Concern | DocumentDB (vCore) | Cosmos DB for MongoDB (RU) |
+|---|---|---|
+| Connection string | standard `mongodb://…` / `mongodb+srv://…` | requires `retrywrites=false` in the connection string |
+| Unique indexes | any field | must include the shard key (`conversationId`) |
+| Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 `BadRequest` |
+| Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
+
+The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.js` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
+
+> **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
+
