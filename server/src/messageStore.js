@@ -429,7 +429,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       }
       const found = await messages
         .find(query)
-        .sort({ createdAt: -1, messageId: -1 })
+        .sort({ conversationId: 1, createdAt: -1, messageId: -1 })
         .limit(cap)
         .toArray();
       // Strip the driver-managed `_id` so the wire shape matches the memory store.
