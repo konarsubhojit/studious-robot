@@ -4,6 +4,7 @@ const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
 const SENSITIVE_FIELDS = new Set([
   'turn_username',
+  'username',
   'turn_credential',
   'credential',
   'password',
