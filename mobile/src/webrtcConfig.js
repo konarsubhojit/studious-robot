@@ -4,6 +4,12 @@ const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
 const VIDEO_MAX_BITRATE_BPS = 1_500_000;
 /** Default audio sender max bitrate in bits/second (64 kbps). */
 const AUDIO_MAX_BITRATE_BPS = 64_000;
+const CACHE_REFRESH_MARGIN_MS = 60_000;
+const DEFAULT_CREDENTIAL_TTL_MS = 55 * 60 * 1000;
+
+let cachedServerIceServers = null;
+let cachedServerIceServersExpiresAt = 0;
+let pendingServerIceServers = null;
 
 function readEnv(name) {
   const env = globalThis?.process?.env;
@@ -48,10 +54,66 @@ export function getIceServers() {
         'turns:global.relay.metered.ca:443?transport=tcp',
       ];
     }
+
     iceServers.push({ urls: turnUrls, username: turnUsername, credential: turnCredential });
   }
 
   return iceServers;
+}
+
+/**
+ * Fetch short-lived ICE servers for an authenticated call. A network failure
+ * intentionally falls through to a still-valid cache, build-time fallback,
+ * and finally STUN-only so call setup is never blocked by TURN availability.
+ */
+export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch } = {}) {
+  const now = Date.now();
+  if (cachedServerIceServers && cachedServerIceServersExpiresAt - now > CACHE_REFRESH_MARGIN_MS) {
+    return cachedServerIceServers;
+  }
+
+  if (!signalingUrl || !sessionId || typeof fetchImpl !== 'function') {
+    return getIceServers();
+  }
+
+  if (!pendingServerIceServers) {
+    pendingServerIceServers = (async () => {
+      const response = await fetchImpl(`${signalingUrl.trim().replace(/\/+$/, '')}/turn-credentials`, {
+        headers: { Authorization: 'Bearer ' + sessionId },
+      });
+      if (!response.ok) {
+        throw new Error(`TURN credentials request failed (HTTP ${response.status})`);
+      }
+      const iceServers = await response.json();
+      if (!Array.isArray(iceServers)) {
+        throw new Error('TURN credentials response was not an ICE server array');
+      }
+      const expiresAt = Date.parse(response.headers?.get?.('x-turn-credential-expires-at') || '');
+      cachedServerIceServers = iceServers;
+      cachedServerIceServersExpiresAt =
+        Number.isFinite(expiresAt) && expiresAt > Date.now()
+          ? expiresAt
+          : Date.now() + DEFAULT_CREDENTIAL_TTL_MS;
+      return iceServers;
+    })().finally(() => {
+      pendingServerIceServers = null;
+    });
+  }
+
+  try {
+    return await pendingServerIceServers;
+  } catch {
+    if (cachedServerIceServers && cachedServerIceServersExpiresAt > now) {
+      return cachedServerIceServers;
+    }
+    return getIceServers();
+  }
+}
+
+export function resetIceServersForCallCache() {
+  cachedServerIceServers = null;
+  cachedServerIceServersExpiresAt = 0;
+  pendingServerIceServers = null;
 }
 
 /**

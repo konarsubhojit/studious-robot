@@ -33,6 +33,7 @@ describe('appLogger', () => {
     logError('connect error', {
       authorization: '******',
       verificationCode: 'ABCD-EFGH',
+      iceServer: { username: 'short-lived-turn-user', credential: 'short-lived-turn-secret' },
       nestedRecovery: { recovery_code: 'WXYZ-1234' },
       err,
     });
@@ -45,6 +46,8 @@ describe('appLogger', () => {
     expect(logs).not.toContain('******');
     expect(logs).not.toContain('ABCD-EFGH');
     expect(logs).not.toContain('WXYZ-1234');
+    expect(logs).not.toContain('short-lived-turn-user');
+    expect(logs).not.toContain('short-lived-turn-secret');
   });
 
   test('clearLogs removes all entries', () => {

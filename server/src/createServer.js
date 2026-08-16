@@ -74,6 +74,11 @@ function createServer(opts = {}) {
     maxRequests: opts.rtcRateLimit ?? (Number(process.env.RTC_RATE_LIMIT) || 100),
     windowMs: opts.rtcRateWindowMs ?? (Number(process.env.RTC_RATE_WINDOW_MS) || 10_000),
   });
+  const turnCredentialsRateLimiter = createRateLimiter({
+    maxRequests: opts.turnRateLimit ?? (Number(process.env.TURN_CREDENTIALS_RATE_LIMIT) || 10),
+    windowMs:
+      opts.turnRateWindowMs ?? (Number(process.env.TURN_CREDENTIALS_RATE_WINDOW_MS) || 60_000),
+  });
 
   const telemetry = createTelemetry();
 
@@ -122,6 +127,8 @@ function createServer(opts = {}) {
     callInitRateLimiter,
     /** Rate limiter for RTC signaling events. */
     rtcRateLimiter,
+    /** Rate limiter for TURN credential minting. */
+    turnCredentialsRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
@@ -191,7 +198,15 @@ function createServer(opts = {}) {
 
   // ── HTTP routes ────────────────────────────────────────────────────────────
   // Mounted after `io` is created so the calls router can emit realtime events.
-  mountRoutes(app, { state, db, io, sessionTtlMs, ringingTimeoutMs });
+  mountRoutes(app, {
+    state,
+    db,
+    io,
+    sessionTtlMs,
+    ringingTimeoutMs,
+    turnFetch: opts.turnFetch ?? fetch,
+    turnEnv: opts.turnEnv ?? process.env,
+  });
 
   // ── Realtime signaling ─────────────────────────────────────────────────────
   registerSocketHandlers(io, { state, ringingTimeoutMs });

@@ -86,6 +86,24 @@ The service listens on `PORT=4173` by default. Edit the unit file's `Environment
 sudo systemctl daemon-reload && sudo systemctl restart robot-signal
 ```
 
+### Cloudflare TURN credentials
+
+Set these server-side systemd environment variables to mint short-lived TURN
+credentials for authenticated mobile calls:
+
+```ini
+Environment=CLOUDFLARE_TURN_KEY_ID=<cloudflare-turn-key-id>
+Environment=CLOUDFLARE_TURN_API_TOKEN=<cloudflare-api-token>
+# Optional; defaults to 3600 seconds.
+Environment=CLOUDFLARE_TURN_TTL_SECONDS=3600
+```
+
+Do not put these values in the mobile build. Short-lived credentials prevent a
+public APK from exposing a reusable TURN relay secret. `TURN_USERNAME` and
+`TURN_CREDENTIAL` are deprecated but remain supported as a server-side fallback;
+when neither Cloudflare nor static credentials are set, the server returns
+STUN-only configuration.
+
 ### Graceful shutdown & rolling deploys
 
 The server installs `SIGTERM`/`SIGINT` handlers and shuts down gracefully:

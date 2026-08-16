@@ -15,17 +15,22 @@ cd mobile
 npm install
 ```
 
-Optional environment variables for signaling and TURN (inlined at build time via
-`babel-plugin-transform-inline-environment-variables`):
+Optional environment variables for signaling and the deprecated static TURN
+fallback (inlined at build time via `babel-plugin-transform-inline-environment-variables`):
 
 ```bash
 export SIGNALING_URL=http://<YOUR_SIGNALING_HOST>:4173
 export ROOM_ID=room-1
-export TURN_USERNAME=<metered_turn_username>
-export TURN_CREDENTIAL=<metered_turn_credential>
+export TURN_USERNAME=<legacy_turn_username>
+export TURN_CREDENTIAL=<legacy_turn_credential>
 ```
 
-If TURN credentials are not provided, TURN support is disabled and only STUN is used.
+Production calls fetch short-lived Cloudflare TURN credentials from the signaling
+server using the authenticated session. Configure that server with
+`CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN` (and optionally
+`CLOUDFLARE_TURN_TTL_SECONDS`, default 3600). This avoids baking relay
+credentials into a public APK. `TURN_USERNAME` and `TURN_CREDENTIAL` remain
+supported only as a fallback; without either path calls use STUN-only.
 
 ## Run
 
@@ -262,8 +267,8 @@ required. Set the desired env vars before running Gradle:
 ```bash
 export SIGNALING_URL=https://<your-signaling-host>
 export ROOM_ID=room-1
-export TURN_USERNAME=<metered_turn_username>
-export TURN_CREDENTIAL=<metered_turn_credential>
+export TURN_USERNAME=<legacy_turn_username>
+export TURN_CREDENTIAL=<legacy_turn_credential>
 
 cd android
 ./gradlew assembleRelease
