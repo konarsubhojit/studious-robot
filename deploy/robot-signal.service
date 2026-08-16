@@ -4,9 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-# Run as the Oracle Linux default user; adjust if your VM user differs.
-User=opc
-WorkingDirectory=%h/repos/studious-robot/server
+# Verified deployment target: GCP e2-micro running Ubuntu, service user `ubuntu`.
+# Adjust `User=` (and `WorkingDirectory=` below) if your VM user/distro differs
+# (e.g. `opc` on Oracle Linux).
+User=ubuntu
+# `%h` is NOT usable here: in a *system* unit it resolves to /root regardless
+# of `User=` above, not the service user's home directory — this silently
+# breaks the working directory unless you use an absolute path. Replace
+# `/home/ubuntu` below if the repo lives elsewhere or the service user differs.
+WorkingDirectory=/home/ubuntu/repos/studious-robot/server
 # Adjust the node path if Node is installed elsewhere (e.g. /usr/local/bin/node).
 ExecStart=/usr/bin/node src/index.js
 Restart=on-failure
@@ -19,6 +25,17 @@ KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=30
 
+# Environment configuration: `Environment=` below sets sane defaults; the
+# documented mechanism for real (and secret) config is the env file at
+# /etc/robot-signal/env (see deploy/README.md §5) — create and populate it on
+# the VM.
+#
+# IMPORTANT: systemd applies `Environment=` and `EnvironmentFile=` in the
+# order they appear in the unit, with *later* declarations overriding earlier
+# ones for the same key. `EnvironmentFile=` is listed last here so any value
+# it sets always wins over the `Environment=` defaults above — this has
+# confused operators who expected `Environment=` to win. Prefer putting all
+# real overrides in the env file rather than mixing both mechanisms.
 Environment=NODE_ENV=production
 Environment=PORT=4173
 Environment=HOST=0.0.0.0
@@ -27,6 +44,10 @@ Environment=HOST=0.0.0.0
 # The native Android app does not send a browser Origin header so CORS does
 # not apply to it; use * only if you have no web-browser clients.
 Environment=CORS_ORIGIN=*
+# The leading `-` means systemd tolerates the file being absent (useful before
+# first-time setup); once created, values here override the `Environment=`
+# lines above for the same key.
+EnvironmentFile=-/etc/robot-signal/env
 
 [Install]
 WantedBy=multi-user.target

@@ -14,7 +14,7 @@ End-to-end instructions for configuring the signaling server and the React Nativ
    - [Redis](#redis)
    - [Push notifications — FCM (Android)](#push-notifications--fcm-android)
    - [Push notifications — APNs (iOS)](#push-notifications--apns-ios)
-   - [Deploying to Oracle Ampere A1 VM](#deploying-to-oracle-ampere-a1-vm)
+   - [Deploying to a VM (GCP + Ubuntu)](#deploying-to-a-vm-gcp--ubuntu)
 3. [Mobile App Setup](#mobile-app-setup)
    - [Install JS dependencies](#install-js-dependencies)
    - [Environment variables](#mobile-environment-variables)
@@ -110,6 +110,14 @@ APNS_KEY_ID=XXXXXXXXXX         # 10-char key ID from Apple Developer portal
 APNS_TEAM_ID=XXXXXXXXXX        # 10-char Team ID from Apple Developer portal
 APNS_BUNDLE_ID=com.example.tcalling
 APNS_PRODUCTION=false          # set to true for App Store / TestFlight builds
+
+# ── Message store (MongoDB / Cosmos DB) ─────────────────────────────────────
+# When set, chat message history and conversation lists are persisted to a
+# MongoDB-compatible backend instead of the in-memory store. See "Message
+# store (MongoDB / Cosmos DB)" below for provider-specific notes.
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB_NAME=wetalk                    # optional, default shown
+MONGODB_MESSAGES_COLLECTION=messages      # optional, default shown
 ```
 
 > **Tip:** All push variables are optional. Missing or malformed values are skipped with a `console.warn`; the server remains fully functional without push.
@@ -140,7 +148,7 @@ docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```
 
-For a single-VM deployment Redis is optional (in-memory state is used). Install it locally on the VM or use a managed service such as Upstash. See [Deploying to Oracle Ampere A1 VM](#deploying-to-oracle-ampere-a1-vm) for setup instructions.
+For a single-VM deployment Redis is optional (in-memory state is used). Install it locally on the VM or use a managed service such as Upstash. See [Deploying to a VM (GCP + Ubuntu)](#deploying-to-a-vm-gcp--ubuntu) for setup instructions.
 
 ### Push notifications — FCM (Android)
 
@@ -171,19 +179,57 @@ APNS_BUNDLE_ID=com.example.tcalling     # must match your app's Bundle Identifie
 APNS_PRODUCTION=false                    # true for production / TestFlight
 ```
 
-### Deploying to Oracle Ampere A1 VM
+### Message store (MongoDB / Cosmos DB)
 
-The signaling server runs as a **systemd service** on an Oracle Cloud Ampere A1 (arm64) instance. Automated deploys are handled by the `backend-ci.yml` GitHub Actions workflow, which SSHes into the VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
+Chat message history and conversation lists (`server/src/messageStore.js`) use
+an in-memory store by default. Setting `MONGODB_URI` switches to a durable
+MongoDB-compatible backend. Two Azure providers have materially different
+behaviour — pick the right connection-string shape and be aware of the
+differences below:
 
-**One-time VM setup** is covered in detail in [`deploy/README.md`](./deploy/README.md). The condensed steps are:
+| Concern | DocumentDB (vCore) | Cosmos DB for MongoDB (RU) |
+|---|---|---|
+| Connection string | standard `mongodb://…` / `mongodb+srv://…` | requires `retrywrites=false` in the connection string |
+| Unique indexes | any field | must include the shard key (`conversationId`) |
+| Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 |
+| Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
 
-1. **Provision** an Oracle Cloud Ampere A1 VM (Oracle Linux or Ubuntu) and note its public IP.
+The store creates all indexes with `conversationId` (the shard key) as a
+prefix so they satisfy Cosmos RU's constraints while remaining valid on
+vCore, real MongoDB, and the in-memory store. `saveMessage` also upserts on
+`{ conversationId, messageId }` so duplicate client sends (e.g. a mobile
+retry) never create a second message, even on a backend where the unique
+index could not be created.
+
+At startup, the server logs the active Mongo host, database, collection, and
+whether `retryWrites` is disabled, so you can confirm which backend is live
+without inspecting the connection string (credentials are never logged).
+
+> **Switching providers does not migrate data.** Changing `MONGODB_URI` to
+> point at a different database/provider starts from an empty collection —
+> existing message history is not copied over automatically.
+
+### Deploying to a VM (GCP + Ubuntu)
+
+The verified reference deployment is a **GCP e2-micro** instance running
+**Ubuntu**, with the signaling server as a **systemd service** listening on
+`0.0.0.0:4173` behind an **nginx** reverse proxy, **DuckDNS** for dynamic DNS,
+and **certbot/Let's Encrypt** (`certbot.timer`) for TLS. Automated deploys are
+handled by the `backend-ci.yml` GitHub Actions workflow, which SSHes into the
+VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
+
+> Oracle Cloud Ampere A1 (arm64) + `opc` user + firewalld + Caddy also works
+> and remains documented as an alternative — see
+> [`deploy/README.md`](./deploy/README.md) for both paths.
+
+**One-time VM setup** is covered in detail in [`deploy/README.md`](./deploy/README.md). The condensed steps for the GCP + Ubuntu path are:
+
+1. **Provision** a GCP e2-micro VM (Ubuntu) and note its public IP, or point a **DuckDNS** hostname at it.
 2. **Install Node.js 24** (matching `.nvmrc`) via the NodeSource repo:
 
    ```bash
-   # Oracle Linux
-   curl -fsSL https://rpm.nodesource.com/setup_24.x | sudo bash -
-   sudo dnf install -y nodejs
+   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+   sudo apt-get install -y nodejs
    ```
 
 3. **Clone the repo** and install production dependencies:
@@ -194,7 +240,7 @@ The signaling server runs as a **systemd service** on an Oracle Cloud Ampere A1 
    cd ~/repos/studious-robot/server && npm ci --omit=dev
    ```
 
-4. **Install the systemd unit** from `deploy/robot-signal.service`:
+4. **Install the systemd unit** from `deploy/robot-signal.service` (the unit ships with `User=ubuntu`; adjust it — and `WorkingDirectory=`, which must be an absolute path, not `%h/...` — if your VM user differs, e.g. `opc` on Oracle Linux):
 
    ```bash
    sudo cp ~/repos/studious-robot/deploy/robot-signal.service /etc/systemd/system/
@@ -202,20 +248,30 @@ The signaling server runs as a **systemd service** on an Oracle Cloud Ampere A1 
    sudo systemctl enable --now robot-signal
    ```
 
-5. **Open port 4173** in both the OCI Security List and the VM host firewall:
+5. **Open port 4173** (or `443` once nginx is fronting it) in the VM's firewall / cloud network rules (GCP firewall rules; OCI Security List + firewalld/iptables on Oracle).
 
-   ```bash
-   # Oracle Linux (firewalld)
-   sudo firewall-cmd --permanent --add-port=4173/tcp && sudo firewall-cmd --reload
+6. **Add nginx as a TLS-terminating reverse proxy**, with certbot managing the certificate:
+
+   ```nginx
+   # /etc/nginx/sites-available/robot-signal
+   server {
+       listen 443 ssl;
+       server_name yourname.duckdns.org;
+
+       location / {
+           proxy_pass http://127.0.0.1:4173;
+           # Required for Socket.IO WebSocket transport:
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+       }
+   }
    ```
 
-6. **Add a TLS reverse proxy** (Caddy recommended) so the app can use `wss://`:
-
-   ```caddy
-   # /etc/caddy/Caddyfile
-   signal.yourdomain.com {
-       reverse_proxy 127.0.0.1:4173
-   }
+   ```bash
+   sudo certbot --nginx -d yourname.duckdns.org
+   # certbot installs a certbot.timer systemd unit that auto-renews the cert.
    ```
 
 7. **Add GitHub secrets** for automated deploys:
@@ -224,12 +280,12 @@ The signaling server runs as a **systemd service** on an Oracle Cloud Ampere A1 
    |--------|-------------|
    | `DEPLOY_SSH_KEY` | Private key for the deploy SSH key pair |
    | `DEPLOY_SSH_HOST` | VM public IP or hostname |
-   | `DEPLOY_SSH_USER` | VM user (`opc` on Oracle Linux) |
+   | `DEPLOY_SSH_USER` | VM user (`ubuntu` on GCP; `opc` on Oracle Linux) |
    | `DEPLOY_SSH_PORT` | SSH port (optional, defaults to `22`) |
    | `DATABASE_URL_DIRECT` | Neon direct Postgres URL for CI migrations |
    | `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM push |
 
-See [`deploy/README.md`](./deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and OCI networking details.
+See [`deploy/README.md`](./deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and firewall/networking details for both GCP and OCI.
 
 ---
 

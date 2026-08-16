@@ -254,6 +254,61 @@ function createMemoryMessageStore() {
 // ─── MongoDB / Cosmos DB store ────────────────────────────────────────────────
 
 /**
+ * Create one index, logging (rather than throwing) on failure.
+ *
+ * Cosmos DB can reject or throttle index builds (e.g. a unique index that
+ * does not include the shard key); never let that take the server down —
+ * reads/writes still work without the index, just less efficiently, or with
+ * the corresponding guarantee (sort support, uniqueness) degraded. Each index
+ * is attempted independently so one rejection doesn't skip the rest.
+ *
+ * @param {object} messages - The Mongo collection.
+ * @param {object} spec - Index key spec, e.g. `{ conversationId: 1 }`.
+ * @param {object} [options] - Index options, e.g. `{ unique: true }`.
+ * @returns {Promise<void>}
+ */
+async function createIndexOrWarn(messages, spec, options) {
+  try {
+    await messages.createIndex(spec, options);
+  } catch (error) {
+    console.error(
+      `[messages] DEGRADED: index creation skipped for ${JSON.stringify(spec)}` +
+        `${options ? ` ${JSON.stringify(options)}` : ''} — sorted queries and/or ` +
+        `uniqueness guarantees may be affected: ${error?.message}`
+    );
+  }
+}
+
+/**
+ * Best-effort extraction of the Mongo host(s) for startup logging, without
+ * ever logging credentials embedded in the connection string.
+ *
+ * @param {object} mongoClient
+ * @param {string} [uri]
+ * @returns {string}
+ */
+function safeMongoHost(mongoClient, uri) {
+  try {
+    const options = mongoClient?.options ?? mongoClient?.s?.options;
+    const hosts = options?.hosts;
+    if (Array.isArray(hosts) && hosts.length) {
+      return hosts.map((h) => (h?.host ? `${h.host}${h.port ? `:${h.port}` : ''}` : String(h))).join(',');
+    }
+  } catch {
+    // Fall through to URI parsing below.
+  }
+  if (!uri) return 'unknown';
+  try {
+    // Strip credentials before ever touching the URI for logging purposes.
+    const withoutCreds = uri.replace(/\/\/[^@/]+@/, '//');
+    const match = withoutCreds.match(/^[a-zA-Z+]+:\/\/([^/?]+)/);
+    return match ? match[1] : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Create a MongoDB-backed message store.
  *
  * Targets Azure Cosmos DB for MongoDB but works against any MongoDB-compatible
@@ -295,16 +350,43 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
 
         // Index creation is idempotent, but Cosmos DB can reject or throttle it;
         // never let that take the server down — reads/writes still work without
-        // the indexes, just less efficiently.
-        try {
-          await messages.createIndex({ conversationId: 1, createdAt: -1 });
-          await messages.createIndex({ messageId: 1 }, { unique: true });
-        } catch (error) {
-          console.warn(`[messages] index creation skipped: ${error?.message}`);
-        }
+        // the indexes, just less efficiently (and, on Cosmos RU, sorted queries
+        // may fail outright without the matching composite index — see below).
+        //
+        // All indexes are prefixed with `conversationId` (the shard/partition
+        // key). Azure Cosmos DB for MongoDB (RU) requires:
+        //   - unique indexes to include the shard key, and
+        //   - `sort()` queries to be served by a matching *direction-specific*
+        //     composite index (no collection-scan fallback like vCore/MongoDB).
+        // `{ messageId: 1 }` alone can no longer be unique (see `saveMessage`'s
+        // upsert for the enforcement fallback), so it is replaced by
+        // `{ conversationId: 1, messageId: 1 }`, which preserves the intended
+        // guarantee because a `messageId` only ever appears within one
+        // conversation.
+        //
+        // Each index is created independently (own try/catch) so a single
+        // rejection/throttle never skips the rest.
+        await createIndexOrWarn(messages, { conversationId: 1, createdAt: -1 });
+        // Ascending counterpart — Cosmos composite indexes are direction
+        // specific, so the descending index above does not also serve an
+        // ascending sort.
+        await createIndexOrWarn(messages, { conversationId: 1, createdAt: 1 });
+        // Shard-key-prefixed uniqueness on messageId.
+        await createIndexOrWarn(
+          messages,
+          { conversationId: 1, messageId: 1 },
+          { unique: true }
+        );
+        // Serves `listMessages`'s actual `{ createdAt: -1, messageId: -1 }`
+        // tiebreak sort (Cosmos composite indexes must match sorted fields
+        // exactly, including the tiebreak field).
+        await createIndexOrWarn(messages, { conversationId: 1, createdAt: -1, messageId: -1 });
 
+        const host = safeMongoHost(mongoClient, uri);
+        const retryWritesDisabled = /retrywrites=false/i.test(uri || '');
         console.log(
-          `[messages] Mongo message store ready (db=${database} collection=${collection})`
+          `[messages] Mongo message store ready (host=${host} db=${database} ` +
+            `collection=${collection} retryWrites=${retryWritesDisabled ? 'disabled' : 'default'})`
         );
         return { mongoClient, messages };
       })().catch((error) => {
@@ -324,7 +406,17 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
     async saveMessage(message) {
       const record = createMessageRecord(message);
       const { messages } = await connect();
-      await messages.insertOne({ ...record });
+      // `messageId` is client-supplied (mobile-generated UUIDs), so a client
+      // retry/replay of the same send must not create a duplicate message —
+      // upsert on the shard-key-prefixed `{ conversationId, messageId }` pair
+      // (see the indexes above) so this stays correct even on a backend where
+      // the unique index itself could not be created (e.g. Cosmos RU under a
+      // shard-key mismatch it otherwise rejects).
+      await messages.updateOne(
+        { conversationId: record.conversationId, messageId: record.messageId },
+        { $setOnInsert: { ...record } },
+        { upsert: true }
+      );
       return record;
     },
 
@@ -360,39 +452,46 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
 
     async listConversations(userId) {
       const { messages } = await connect();
+      // Deliberately no `.sort()`/`$sort`/`$group` at the database level: this
+      // query fans out across every conversation the user is part of (i.e.
+      // across shard-key partitions), and Cosmos DB for MongoDB (RU) rejects
+      // cross-partition `ORDER BY`/`$group`+`$sort` unless served by a matching
+      // composite index — which isn't feasible here since the sort key
+      // (`lastMessage.createdAt`) isn't known until after grouping. Instead,
+      // fetch the (bounded, per-user) candidate set and group/sort in
+      // application code, mirroring the in-memory store's implementation.
       const found = await messages
-        .aggregate([
-          { $match: { $or: [{ senderId: userId }, { recipientId: userId }] } },
-          { $sort: { createdAt: -1, messageId: -1 } },
-          {
-            $group: {
-              _id: '$conversationId',
-              lastMessage: { $first: '$$ROOT' },
-              unreadCount: {
-                $sum: {
-                  $cond: [
-                    { $and: [{ $eq: ['$recipientId', userId] }, { $eq: ['$readAt', null] }] },
-                    1,
-                    0,
-                  ],
-                },
-              },
-            },
-          },
-          { $sort: { 'lastMessage.createdAt': -1, 'lastMessage.messageId': -1 } },
-        ])
+        .find({ $or: [{ senderId: userId }, { recipientId: userId }] })
         .toArray();
 
-      return found.map((doc) => {
+      /** @type {Map<string, { conversationId: string, peerId: string, lastMessage: object, unreadCount: number }>} */
+      const byConversation = new Map();
+
+      for (const doc of found) {
         // Strip the driver-managed `_id` so the wire shape matches the memory store.
-        const { _id, ...lastMessage } = doc.lastMessage;
-        return {
-          conversationId: doc._id,
-          peerId: peerIdOf(lastMessage, userId),
-          lastMessage,
-          unreadCount: doc.unreadCount,
-        };
-      });
+        const { _id, ...message } = doc;
+
+        let summary = byConversation.get(message.conversationId);
+        if (!summary) {
+          summary = {
+            conversationId: message.conversationId,
+            peerId: peerIdOf(message, userId),
+            lastMessage: message,
+            unreadCount: 0,
+          };
+          byConversation.set(message.conversationId, summary);
+        } else if (byNewestFirst(message, summary.lastMessage) < 0) {
+          summary.lastMessage = message;
+        }
+
+        if (message.recipientId === userId && !message.readAt) {
+          summary.unreadCount += 1;
+        }
+      }
+
+      return [...byConversation.values()].sort((a, b) =>
+        byNewestFirst(a.lastMessage, b.lastMessage)
+      );
     },
 
     async markRead(conversationId, userId) {
