@@ -3,17 +3,14 @@ const CODE_GROUP_LENGTH = 4;
 const CODE_GROUP_COUNT = 2;
 
 function fillRandomBytes(bytes) {
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-    return bytes;
+  if (!globalThis.crypto?.getRandomValues) {
+    // Verification codes gate identity ownership, so a weak fallback would be
+    // a real security risk. Fail closed instead of silently generating a
+    // predictable code with `Math.random()`.
+    throw new Error('Secure random number generator unavailable');
   }
 
-  // React Native should normally expose a crypto API, but keep a small fallback
-  // so older test/runtime environments can still generate a code. This path is
-  // less secure and should only be used when no stronger primitive exists.
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Math.floor(Math.random() * 256);
-  }
+  globalThis.crypto.getRandomValues(bytes);
   return bytes;
 }
 

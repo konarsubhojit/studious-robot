@@ -13,6 +13,11 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
 
+// Monotonic counter used to disambiguate optimistic message ids sent within
+// the same millisecond. This is a local UI dedup key only (never sent to the
+// server), so a non-PRNG counter is preferable to `Math.random()` here.
+let pendingMessageIdCounter = 0;
+
 /**
  * Owns text chat: the conversation list, per-peer message history, optimistic
  * sending, read receipts, and typing indicators.
@@ -186,7 +191,7 @@ export default function useMessaging({
       const trimmedBody = (body ?? '').trim();
       if (!trimmedPeerId || !trimmedBody) return;
 
-      const tempId = `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const tempId = `pending-${Date.now()}-${(pendingMessageIdCounter += 1).toString(36)}`;
       const optimisticMessage = {
         messageId: tempId,
         conversationId: null,
