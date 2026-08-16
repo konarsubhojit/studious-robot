@@ -329,6 +329,7 @@ function AppShell() {
           onBack={() => setChatPeerId(null)}
           currentUserId={callFlow.userId}
           peerPresence={peerPresence}
+          keyboardVerticalOffset={insets.top}
           onStartAudioCall={() => startAudioCallWith(chatPeerId)}
           onStartVideoCall={() => startVideoCallWith(chatPeerId)}
           isStartingCall={callFlow.isPlacingCall}
