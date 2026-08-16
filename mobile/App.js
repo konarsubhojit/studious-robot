@@ -10,6 +10,7 @@ import ChatConversationScreen from './src/components/ChatConversationScreen';
 import ChatListScreen from './src/components/ChatListScreen';
 import FloatingCallBubble from './src/components/FloatingCallBubble';
 import IncomingCallScreen from './src/components/IncomingCallScreen';
+import InCallBanner from './src/components/InCallBanner';
 import Lobby from './src/components/Lobby';
 import OutgoingCallScreen from './src/components/OutgoingCallScreen';
 import RegistrationScreen from './src/components/RegistrationScreen';
@@ -198,6 +199,7 @@ function AppShell() {
 
   let screenContent;
   let floatingBubble = null;
+  let inCallBanner = null;
   // True only for the tab-shell branch below; AppTabBar renders its own
   // bottom-safe-area padding in that case, so the outer container must not
   // *also* pad for it (that would leave a double gap under the tab bar).
@@ -432,18 +434,25 @@ function AppShell() {
 
     if (isCallConnected && isCallMinimized) {
       const isCallFlowActive = callFlow.isInCall;
+      const minimizedParticipantLabel = isCallFlowActive
+        ? getCallFlowParticipantLabel()
+        : call.roomId
+        ? `Room ${call.roomId.trim()}`
+        : null;
+      const minimizedElapsedSeconds = isCallFlowActive
+        ? callFlow.elapsedCallSeconds
+        : call.elapsedCallSeconds;
+      inCallBanner = (
+        <InCallBanner
+          participantLabel={minimizedParticipantLabel}
+          elapsedCallSeconds={minimizedElapsedSeconds}
+          onExpand={() => setIsCallMinimized(false)}
+        />
+      );
       floatingBubble = (
         <FloatingCallBubble
-          participantLabel={
-            isCallFlowActive
-              ? getCallFlowParticipantLabel()
-              : call.roomId
-              ? `Room ${call.roomId.trim()}`
-              : null
-          }
-          elapsedCallSeconds={
-            isCallFlowActive ? callFlow.elapsedCallSeconds : call.elapsedCallSeconds
-          }
+          participantLabel={minimizedParticipantLabel}
+          elapsedCallSeconds={minimizedElapsedSeconds}
           isMuted={isCallFlowActive ? callFlow.isMuted : call.isMuted}
           isScreenSharing={isCallFlowActive ? callFlow.isScreenSharing : call.isScreenSharing}
           onExpand={() => setIsCallMinimized(false)}
@@ -484,6 +493,7 @@ function AppShell() {
         <View style={styles.containerCompact}>{screenContent}</View>
       ) : (
         <View style={[styles.container, rootContainerStyle]}>
+          {inCallBanner}
           {screenContent}
           {floatingBubble}
           {shouldShowRecoveryCodeNotice ? (
