@@ -100,7 +100,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         cache = {
           iceServers: withStunServer(iceServers),
           expiresAt,
-          refreshAt: now + Math.floor(ttl * 900),
+          refreshAt: now + Math.floor(ttl * 0.9) * 1000,
         };
         res.set('X-Turn-Credential-Expires-At', expiresAt.toISOString());
         res.json(cache.iceServers);
