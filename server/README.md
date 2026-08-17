@@ -133,15 +133,18 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
-| `FCM_SERVICE_ACCOUNT_JSON` | _(unset)_ | Firebase service-account credentials for FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. Absent ⇒ FCM pushes are skipped (`fcm_not_configured`). |
+| `FCM_SERVICE_ACCOUNT_JSON` | _(required)_ | Firebase service-account credentials used for ID-token verification and FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. |
 | `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
 | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../AZURE_SETUP.md). |
 | `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
-| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../AZURE_SETUP.md)). Absent ⇒ an in-process memory store is used and the server behaves exactly as before. |
+| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../AZURE_SETUP.md)). Required when `NODE_ENV=production` unless the memory store is explicitly enabled. |
+| `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
+| `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
+| `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
 | `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
 
 ## Push notifications
@@ -220,9 +223,9 @@ longer used.
    `FCM_SERVICE_ACCOUNT_JSON` and expose it to the deploy environment. Never
    commit the key to the repository.
 
-The server mints (and caches) a short-lived OAuth2 access token from the
-service-account key and refreshes it automatically before expiry. If
-`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid, FCM delivery is skipped.
+The server uses the service account for both Firebase ID-token verification and
+short-lived FCM OAuth2 access tokens. Production startup fails when
+`FCM_SERVICE_ACCOUNT_JSON` is absent or invalid.
 
 ### APNs (Apple Push Notification service) — fallback
 

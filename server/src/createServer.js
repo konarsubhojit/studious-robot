@@ -38,6 +38,9 @@ const { verboseLog } = require('./lib/verbose');
  * the background ringing-timeout worker, and the graceful-shutdown lifecycle.
  */
 function createServer(opts = {}) {
+  if (!opts.verifyIdToken && !process.env.NODE_TEST_CONTEXT) {
+    throw new Error('createServer requires verifyIdToken outside the Node test runner');
+  }
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
@@ -78,6 +81,10 @@ function createServer(opts = {}) {
     maxRequests: opts.turnRateLimit ?? (Number(process.env.TURN_CREDENTIALS_RATE_LIMIT) || 10),
     windowMs:
       opts.turnRateWindowMs ?? (Number(process.env.TURN_CREDENTIALS_RATE_WINDOW_MS) || 60_000),
+  });
+  const messageSendRateLimiter = createRateLimiter({
+    maxRequests: opts.messageRateLimit ?? (Number(process.env.MESSAGE_RATE_LIMIT) || 30),
+    windowMs: opts.messageRateWindowMs ?? (Number(process.env.MESSAGE_RATE_WINDOW_MS) || 60_000),
   });
 
   const telemetry = createTelemetry();
@@ -129,6 +136,7 @@ function createServer(opts = {}) {
     rtcRateLimiter,
     /** Rate limiter for TURN credential minting. */
     turnCredentialsRateLimiter,
+    messageSendRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
@@ -206,6 +214,7 @@ function createServer(opts = {}) {
     ringingTimeoutMs,
     turnFetch: opts.turnFetch ?? fetch,
     turnEnv: opts.turnEnv ?? process.env,
+    verifyIdToken: opts.verifyIdToken,
   });
 
   // ── Realtime signaling ─────────────────────────────────────────────────────

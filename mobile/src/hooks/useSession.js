@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
+import { getIdToken } from '../authService';
 import { loadDeviceId } from '../settingsStorage';
 
 /**
@@ -9,7 +10,7 @@ import { loadDeviceId } from '../settingsStorage';
  * recover from a `401` by refreshing (or re-creating) the session once and
  * retrying.
  *
- * Depends only on identity *values* (`userId`, `verificationCodeRef`) rather
+ * Depends only on the identity value (`userId`) rather
  * than the `useIdentity` hook itself, so the two stay decoupled and either
  * could be tested or reused independently. Extracted out of `useCallFlow` so
  * this concern stays isolated from that hook's call-lifecycle/WebRTC
@@ -18,11 +19,10 @@ import { loadDeviceId } from '../settingsStorage';
  * @param {{
  *   signalingUrl: string,
  *   userId: string,
- *   verificationCodeRef: { current: string },
  *   updateStatus: (message: string, severity?: string) => void,
  * }} params
  */
-export default function useSession({ signalingUrl, userId, verificationCodeRef, updateStatus }) {
+export default function useSession({ signalingUrl, userId, updateStatus }) {
   const sessionIdRef = useRef(null);
   // Stable per-install device id, lazily loaded from disk on first session.
   const deviceIdRef = useRef(null);
@@ -35,7 +35,6 @@ export default function useSession({ signalingUrl, userId, verificationCodeRef, 
     if (sessionIdRef.current) return sessionIdRef.current;
 
     const trimmedUrl = signalingUrl.trim();
-    const trimmedVerificationCode = (verificationCodeRef.current ?? '').trim();
     // Reuse this install's device id so the server keeps a single device record
     // (and a single push registration) instead of minting a new random one on
     // every session.
@@ -46,10 +45,8 @@ export default function useSession({ signalingUrl, userId, verificationCodeRef, 
       userId: userId.trim() || undefined,
       deviceId: deviceIdRef.current,
       platform: Platform.OS,
+      idToken: await getIdToken(),
     };
-    if (trimmedVerificationCode) {
-      requestBody.verificationCode = trimmedVerificationCode;
-    }
     const response = await fetch(`${trimmedUrl}/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -58,9 +55,11 @@ export default function useSession({ signalingUrl, userId, verificationCodeRef, 
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => null);
-      if (response.status === 409 && errorPayload?.code === 'identity_conflict') {
+      if (response.status === 409) {
         updateStatus(
-          'This username is already claimed. Sign out and choose another username, or enter the recovery code.',
+          errorPayload.userId
+            ? `This account is already bound to ${errorPayload.userId}.`
+            : 'This username is already bound to another account.',
           'error',
         );
       }
@@ -74,7 +73,7 @@ export default function useSession({ signalingUrl, userId, verificationCodeRef, 
       userId: data.userId,
     });
     return data.sessionId;
-  }, [updateStatus, signalingUrl, userId, verificationCodeRef]);
+  }, [updateStatus, signalingUrl, userId]);
 
   /**
    * Refresh the current session via `POST /session/refresh`, rotating the

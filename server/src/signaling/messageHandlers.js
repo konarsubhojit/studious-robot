@@ -102,6 +102,18 @@ function registerMessageHandlers(socket, { io, state }) {
     }
 
     const senderId = socket.data.identity.userId;
+    const rateCheck = state.messageSendRateLimiter.check(senderId);
+    if (!rateCheck.allowed) {
+      acknowledgeError(
+        socket,
+        ack,
+        'message.send',
+        'rate_limited',
+        'message rate limit exceeded',
+        state,
+      );
+      return;
+    }
     const recipientId = normaliseId(payload.recipientId);
     if (!recipientId) {
       acknowledgeError(

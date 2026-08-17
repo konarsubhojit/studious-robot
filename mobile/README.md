@@ -20,10 +20,29 @@ fallback (inlined at build time via `babel-plugin-transform-inline-environment-v
 
 ```bash
 export SIGNALING_URL=http://<YOUR_SIGNALING_HOST>:4173
+export GOOGLE_WEB_CLIENT_ID=<firebase-web-oauth-client-id>
 export ROOM_ID=room-1
 export TURN_USERNAME=<legacy_turn_username>
 export TURN_CREDENTIAL=<legacy_turn_credential>
 ```
+
+## Authentication
+
+The first-launch screen supports:
+
+- email/password registration and sign-in through Firebase Authentication;
+- Google Sign-In;
+- Microsoft Sign-In through Firebase's `microsoft.com` provider.
+
+Enable **Email/Password**, **Google**, and **Microsoft** under **Firebase
+Console → Authentication → Sign-in method**. Google requires the Web OAuth
+client ID in `GOOGLE_WEB_CLIENT_ID`; add Android SHA-1/SHA-256 fingerprints and
+the iOS URL scheme from `GoogleService-Info.plist` as described in
+[`FIREBASE_SETUP.md`](../FIREBASE_SETUP.md). Microsoft also requires its Azure
+client ID and secret in the Firebase provider configuration.
+
+The app sends short-lived Firebase ID tokens to the signaling server. It does
+not generate or persist recovery/verification codes.
 
 Production calls fetch short-lived Cloudflare TURN credentials from the signaling
 server using the authenticated session. Configure that server with

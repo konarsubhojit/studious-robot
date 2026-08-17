@@ -48,7 +48,12 @@ if (require.main === module) {
    */
   async function bootstrap() {
     logNotificationHubStartupStatus();
+    const { createFirebaseTokenVerifier } = require('./firebaseAuth');
+    const verifyIdToken = createFirebaseTokenVerifier();
 
+    if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
+      throw new Error('DATABASE_URL is required in production for durable identity ownership');
+    }
     const db = process.env.DATABASE_URL ? require('../db/client').getDb() : null;
 
     let server;
@@ -56,7 +61,7 @@ if (require.main === module) {
       try {
         const stores = await createRedisPgStores();
         console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
-        server = createServer({ stores, db });
+        server = createServer({ stores, db, verifyIdToken });
         if (db) {
           await server.loadPersistedState();
         }
@@ -69,7 +74,7 @@ if (require.main === module) {
       }
     }
 
-    server = createServer({ db });
+    server = createServer({ db, verifyIdToken });
     if (db) {
       await server.loadPersistedState();
     }

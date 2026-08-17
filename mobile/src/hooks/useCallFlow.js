@@ -225,12 +225,11 @@ export default function useCallFlow() {
   // this hook wires them together and layers the call-signaling/WebRTC
   // orchestration that ties them into one coherent call experience.
   const identity = useIdentity(updateStatus);
-  const { userId, verificationCodeRef, unregisterUser: identityUnregisterUser } = identity;
+  const { userId, unregisterUser: identityUnregisterUser } = identity;
 
   const session = useSession({
     signalingUrl,
     userId,
-    verificationCodeRef,
     updateStatus,
   });
   const { sessionIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
@@ -1881,13 +1880,11 @@ export default function useCallFlow() {
   return {
     // Identity / connection config
     userId: identity.userId,
-    verificationCode: identity.verificationCode,
     setUserId: identity.setUserId,
     editUserId: identity.editUserId,
     isRegistered,
     isLoadingIdentity: identity.isLoadingIdentity,
-    pendingVerificationCode: identity.pendingVerificationCode,
-    dismissVerificationCodeNotice: identity.dismissVerificationCodeNotice,
+    isAuthenticating: identity.isAuthenticating,
     registerUser: identity.registerUser,
     unregisterUser,
     updateUserId: identity.updateUserId,

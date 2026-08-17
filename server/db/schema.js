@@ -8,7 +8,7 @@
  * runtime record shapes used by the signaling server (see `server/src/index.js`
  * and `server/src/security.js`):
  *
- *   - users        claimed identities (unique userId + verification secret)
+ *   - users        public usernames bound to authenticated provider accounts
  *   - calls        durable call history
  *   - call_events  per-call ordered event timeline
  *   - devices      push-notification device registrations
@@ -31,17 +31,15 @@ const { sql } = require('drizzle-orm');
 /**
  * Claimed identities.
  *
- * A `userId` becomes "claimed" the first time a `POST /session` request supplies
- * a verification code for it.  The code is stored only as a salted scrypt hash
- * (`verification_hash` + `verification_salt`); the plaintext is never persisted.
- * Once an identity is claimed, a later session request for the same `userId`
- * must present the matching code, otherwise it is rejected — preventing trivial
- * impersonation.  The primary key on `user_id` enforces uniqueness.
+ * Each public `userId` is bound to one verified Firebase `authUid`. Both values
+ * are unique, preventing either username impersonation or one provider account
+ * from claiming multiple public identities.
  */
 const users = pgTable('users', {
   userId: text('user_id').primaryKey(),
-  verificationHash: text('verification_hash'),
-  verificationSalt: text('verification_salt'),
+  authUid: text('auth_uid').unique(),
+  email: text('email'),
+  authProvider: text('auth_provider'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   verifiedAt: timestamp('verified_at', { withTimezone: true }),
 });

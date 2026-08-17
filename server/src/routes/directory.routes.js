@@ -17,6 +17,11 @@ function createDirectoryRouter({ state }) {
   const router = express.Router();
 
   router.get('/presence/:userId', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
     const userId = normaliseId(req.params.userId);
     if (!userId || !hasKnownUser(state, userId)) {
       res.status(404).json({ error: 'user not found' });

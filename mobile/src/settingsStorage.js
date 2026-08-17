@@ -79,33 +79,33 @@ export const SETTINGS_FILE_PATH = SETTINGS_FILE;
 const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 
 /**
- * Load the persisted user identity.  Returns `{ userId: '', verificationCode: '' }`
+ * Load the persisted public username. Authentication credentials remain in
+ * the platform Firebase SDK and are never written to this file.
  * when no identity has been saved yet or the file cannot be read.
  *
- * @returns {Promise<{ userId: string, verificationCode: string }>}
+ * @returns {Promise<{ userId: string }>}
  */
 export async function loadIdentity() {
   try {
     const exists = await RNFS.exists(IDENTITY_FILE);
-    if (!exists) return { userId: '', verificationCode: '' };
+    if (!exists) return { userId: '' };
     const content = await RNFS.readFile(IDENTITY_FILE, 'utf8');
     const parsed = JSON.parse(content);
     return {
       userId: typeof parsed.userId === 'string' ? parsed.userId : '',
-      verificationCode: typeof parsed.verificationCode === 'string' ? parsed.verificationCode : '',
     };
   } catch (error) {
     logError('Failed to load identity; using empty default', {
       message: error?.message,
     });
-    return { userId: '', verificationCode: '' };
+    return { userId: '' };
   }
 }
 
 /**
  * Persist the user identity to disk.  Failures are logged but never thrown.
  *
- * @param {{ userId: string, verificationCode: string }} identity
+ * @param {{ userId: string }} identity
  * @returns {Promise<boolean>} whether the write succeeded
  */
 export async function saveIdentity(identity) {
@@ -114,14 +114,11 @@ export async function saveIdentity(identity) {
       IDENTITY_FILE,
       JSON.stringify({
         userId: typeof identity?.userId === 'string' ? identity.userId : '',
-        verificationCode:
-          typeof identity?.verificationCode === 'string' ? identity.verificationCode : '',
       }),
       'utf8',
     );
     logInfo('Identity persisted', {
       userId: identity?.userId,
-      hasVerificationCode: Boolean(identity?.verificationCode),
     });
     return true;
   } catch (error) {

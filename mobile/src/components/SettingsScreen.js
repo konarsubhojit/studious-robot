@@ -59,7 +59,6 @@ function SectionLabel({ icon, children }) {
  * @param {Function} [props.onExportLogs]        - Optional: export diagnostic logs.
  * @param {boolean}  [props.developerModeEnabled] - Whether the legacy room-join developer tools are shown in the Lobby.
  * @param {Function} [props.onToggleDeveloperMode] - Toggle developer mode on/off.
- * @param {string}   [props.verificationCode]    - Current recovery code for this identity.
  * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
  */
 export default function SettingsScreen({
@@ -72,12 +71,10 @@ export default function SettingsScreen({
   onExportLogs,
   developerModeEnabled,
   onToggleDeveloperMode,
-  verificationCode,
   status,
 }) {
   const [name, setName] = useState(userId ?? '');
   const [url, setUrl] = useState(signalingUrl ?? '');
-  const [showRecoveryCode, setShowRecoveryCode] = useState(false);
 
   const trimmedName = name.trim();
   const trimmedUrl = url.trim();
@@ -148,29 +145,6 @@ export default function SettingsScreen({
           testID="settings-save-signaling"
           style={styles.saveButton}
         />
-
-        {verificationCode ? (
-          <>
-            <SectionLabel icon="settingsRecovery">Recovery code</SectionLabel>
-            <Text style={styles.hint}>
-              Keep this code private. You’ll need it to use this username on another device.
-            </Text>
-            <Pressable
-              onPress={() => setShowRecoveryCode(previous => !previous)}
-              accessibilityRole="button"
-              accessibilityLabel={showRecoveryCode ? 'Hide recovery code' : 'Show recovery code'}
-              testID="settings-toggle-recovery-code"
-              style={({ pressed }) => [styles.recoveryCodeCard, pressed && styles.pressed]}>
-              <View style={styles.recoveryCodeContent}>
-                <Text style={styles.recoveryCodeLabel}>Current recovery code</Text>
-                <Text style={styles.recoveryCodeValue}>
-                  {showRecoveryCode ? verificationCode : '••••-••••'}
-                </Text>
-              </View>
-              <Text style={styles.recoveryCodeAction}>{showRecoveryCode ? 'Hide' : 'Show'}</Text>
-            </Pressable>
-          </>
-        ) : null}
 
         {/* ── Developer ───────────────────────────────────────────────────── */}
         {onToggleDeveloperMode ? (
@@ -290,37 +264,6 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     marginBottom: spacing.sm,
-  },
-  recoveryCodeCard: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  recoveryCodeContent: {
-    flexShrink: 1,
-  },
-  recoveryCodeLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginBottom: 2,
-  },
-  recoveryCodeValue: {
-    color: colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-  },
-  recoveryCodeAction: {
-    color: colors.accentValue,
-    fontWeight: '700',
   },
   signOutButton: {
     minHeight: 44,

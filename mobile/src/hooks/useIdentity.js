@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logInfo } from '../appLogger';
-import { generateVerificationCode, normalizeVerificationCode } from '../identityVerification';
+import {
+  observeAuthState,
+  registerWithEmail,
+  signInWithEmail,
+  signInWithGoogle,
+  signInWithMicrosoft,
+  signOut,
+} from '../authService';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 
 /**
- * Owns the local user's identity: `userId` / `verificationCode`, persistence
- * to disk, and the registration / rename / sign-out lifecycle.
+ * Owns the authenticated account and its public username.
  *
  * Deliberately has no knowledge of sessions, sockets, or calls — those are
- * separate concerns (see `useSession`, `useCallFlow`) that merely *read*
- * `userId` / `verificationCodeRef` from this hook. Extracted out of
+ * separate concerns (see `useSession`, `useCallFlow`) that merely read the
+ * authenticated `userId` from this hook. Extracted out of
  * `useCallFlow` so identity persistence stays isolated from that hook's
  * call-lifecycle/session/WebRTC responsibilities.
  *
@@ -17,39 +23,21 @@ import { loadIdentity, saveIdentity } from '../settingsStorage';
  */
 export default function useIdentity(updateStatus) {
   const [userId, setUserId] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [pendingVerificationCode, setPendingVerificationCode] = useState('');
-
-  // true while the identity is being loaded from persistent storage on mount.
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
 
-  const verificationCodeRef = useRef('');
-  const committedIdentityRef = useRef({ userId: '', verificationCode: '' });
+  const committedIdentityRef = useRef({ userId: '' });
 
-  /** True once a userId has been persisted (i.e. the user has registered). */
-  const isRegistered = userId.trim().length > 0;
+  const isRegistered = userId.trim().length > 0 && Boolean(authUser);
 
-  const dismissVerificationCodeNotice = useCallback(() => {
-    setPendingVerificationCode('');
+  const commitIdentity = useCallback(async nextUserId => {
+    const identity = { userId: (nextUserId ?? '').trim() };
+    committedIdentityRef.current = identity;
+    setUserId(identity.userId);
+    await saveIdentity(identity);
+    return identity;
   }, []);
-
-  const commitIdentity = useCallback(
-    async (nextUserId, nextVerificationCode, { announceVerificationCode = false } = {}) => {
-      const identity = {
-        userId: (nextUserId ?? '').trim(),
-        verificationCode: normalizeVerificationCode(nextVerificationCode),
-      };
-
-      committedIdentityRef.current = identity;
-      verificationCodeRef.current = identity.verificationCode;
-      setUserId(identity.userId);
-      setVerificationCode(identity.verificationCode);
-      setPendingVerificationCode(announceVerificationCode ? identity.verificationCode : '');
-      await saveIdentity(identity);
-      return identity;
-    },
-    [],
-  );
 
   const editUserId = useCallback(nextUserId => {
     const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
@@ -58,20 +46,19 @@ export default function useIdentity(updateStatus) {
     const isCommittedIdentity = trimmedUserId === committedIdentity.userId;
 
     setUserId(rawUserId);
-    if (isCommittedIdentity) {
-      verificationCodeRef.current = committedIdentity.verificationCode;
-      setVerificationCode(committedIdentity.verificationCode);
-    } else {
-      verificationCodeRef.current = '';
-      setVerificationCode('');
-    }
-    setPendingVerificationCode('');
+    if (isCommittedIdentity) setUserId(committedIdentity.userId);
   }, []);
 
   // ─── Load persisted identity on mount ────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false;
+    let identityLoaded = false;
+    let authLoaded = false;
+
+    const finishLoading = () => {
+      if (!cancelled && identityLoaded && authLoaded) setIsLoadingIdentity(false);
+    };
 
     const initialiseIdentity = async () => {
       try {
@@ -79,48 +66,26 @@ export default function useIdentity(updateStatus) {
         if (cancelled) return;
 
         const savedId = (storedIdentity?.userId ?? '').trim();
-        let savedVerificationCode = normalizeVerificationCode(storedIdentity?.verificationCode);
-
         if (savedId) {
-          const shouldGenerateVerificationCode = !savedVerificationCode;
-          if (shouldGenerateVerificationCode) {
-            savedVerificationCode = generateVerificationCode();
-          }
-
-          committedIdentityRef.current = {
-            userId: savedId,
-            verificationCode: savedVerificationCode,
-          };
-          verificationCodeRef.current = savedVerificationCode;
+          committedIdentityRef.current = { userId: savedId };
           setUserId(savedId);
-          setVerificationCode(savedVerificationCode);
-
-          if (shouldGenerateVerificationCode) {
-            setPendingVerificationCode(savedVerificationCode);
-            updateStatus(
-              'Save your recovery code. You’ll need it to use this username on another device.',
-              'info',
-            );
-            void saveIdentity({
-              userId: savedId,
-              verificationCode: savedVerificationCode,
-            });
-            logInfo('[Identity] Recovery code generated for stored identity', {
-              userId: savedId,
-              hasVerificationCode: true,
-            });
-          }
         }
       } finally {
-        if (!cancelled) setIsLoadingIdentity(false);
+        identityLoaded = true;
+        finishLoading();
       }
     };
 
-    initialiseIdentity().catch(() => {
-      if (!cancelled) setIsLoadingIdentity(false);
+    const unsubscribe = observeAuthState(user => {
+      if (cancelled) return;
+      setAuthUser(user);
+      authLoaded = true;
+      finishLoading();
     });
+    initialiseIdentity().catch(() => {});
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [updateStatus]);
 
@@ -128,26 +93,36 @@ export default function useIdentity(updateStatus) {
    * Register the local user with the given userId.  Persists the identity to
    * disk and updates the in-memory state so the presence socket connects.
    *
-   * @param {string} newUserId
-   * @param {string} [existingVerificationCode]
+   * @param {{ userId: string, method: string, email?: string, password?: string }} registration
    */
   const registerUser = useCallback(
-    async (newUserId, existingVerificationCode = '') => {
-      const trimmed = (newUserId ?? '').trim();
+    async registration => {
+      const trimmed = (registration?.userId ?? '').trim();
       if (!trimmed) return;
-      const nextVerificationCode =
-        normalizeVerificationCode(existingVerificationCode) || generateVerificationCode();
-      const identity = await commitIdentity(trimmed, nextVerificationCode, {
-        announceVerificationCode: true,
-      });
-      updateStatus(
-        'Save your recovery code. You’ll need it to use this username on another device.',
-        'success',
-      );
-      logInfo('[Identity] User registered', {
-        userId: identity.userId,
-        hasVerificationCode: true,
-      });
+      setIsAuthenticating(true);
+      try {
+        if (registration.method === 'email-register') {
+          await registerWithEmail(registration.email, registration.password);
+        } else if (registration.method === 'email-sign-in') {
+          await signInWithEmail(registration.email, registration.password);
+        } else if (registration.method === 'google') {
+          await signInWithGoogle();
+        } else if (registration.method === 'microsoft') {
+          await signInWithMicrosoft();
+        } else {
+          throw new Error('Unsupported sign-in method');
+        }
+        const identity = await commitIdentity(trimmed);
+        updateStatus('Account authenticated.', 'success');
+        logInfo('[Identity] User registered', {
+          userId: identity.userId,
+        });
+      } catch (error) {
+        updateStatus(error?.message || 'Authentication failed.', 'error');
+        throw error;
+      } finally {
+        setIsAuthenticating(false);
+      }
     },
     [commitIdentity, updateStatus],
   );
@@ -164,16 +139,10 @@ export default function useIdentity(updateStatus) {
       const trimmed = (newUserId ?? '').trim();
       if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
 
-      const identity = await commitIdentity(trimmed, generateVerificationCode(), {
-        announceVerificationCode: true,
-      });
-      updateStatus('Username updated. Save your new recovery code.', 'success');
-      logInfo('[Identity] Username updated', {
-        userId: identity.userId,
-        hasVerificationCode: true,
-      });
+      setUserId(committedIdentityRef.current.userId);
+      updateStatus('Usernames are bound to your account and cannot be changed here.', 'error');
     },
-    [commitIdentity, updateStatus],
+    [updateStatus],
   );
 
   /**
@@ -183,25 +152,21 @@ export default function useIdentity(updateStatus) {
    * calling this, since the session lives outside this hook.
    */
   const unregisterUser = useCallback(async () => {
-    committedIdentityRef.current = { userId: '', verificationCode: '' };
-    verificationCodeRef.current = '';
+    committedIdentityRef.current = { userId: '' };
     setUserId('');
-    setVerificationCode('');
-    setPendingVerificationCode('');
-    await saveIdentity({ userId: '', verificationCode: '' });
+    await signOut();
+    await saveIdentity({ userId: '' });
     logInfo('[Identity] User unregistered');
   }, []);
 
   return {
     userId,
     setUserId,
-    verificationCode,
-    verificationCodeRef,
-    pendingVerificationCode,
+    authUser,
     isLoadingIdentity,
+    isAuthenticating,
     isRegistered,
     committedIdentityRef,
-    dismissVerificationCodeNotice,
     editUserId,
     registerUser,
     updateUserId,

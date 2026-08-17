@@ -521,8 +521,8 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
 /**
  * Build the message store for this process from the environment.
  *
- * Returns the in-memory store when `MONGODB_URI` is absent, so the server runs
- * unchanged without any Mongo configuration.
+ * Development and tests may use memory explicitly. Production fails closed
+ * unless Mongo is configured or ALLOW_IN_MEMORY_MESSAGE_STORE=true is set.
  *
  * @param {object} [opts]
  * @param {object} [opts.messageStore] - Pre-built store (tests / injection).
@@ -533,6 +533,14 @@ function createMessageStore(opts = {}) {
 
   const uri = process.env.MONGODB_URI?.trim();
   if (!uri) {
+    if (
+      process.env.NODE_ENV === 'production' &&
+      process.env.ALLOW_IN_MEMORY_MESSAGE_STORE !== 'true'
+    ) {
+      throw new Error(
+        'MONGODB_URI is required in production (set ALLOW_IN_MEMORY_MESSAGE_STORE=true to opt in)',
+      );
+    }
     console.log('[messages] using in-memory message store (MONGODB_URI is not set)');
     return createMemoryMessageStore();
   }
@@ -548,10 +556,7 @@ function createMessageStore(opts = {}) {
       client,
     });
   } catch (error) {
-    console.error(
-      `[messages] INVALID MONGODB_URI; using in-memory message store: ${error?.message}`
-    );
-    return createMemoryMessageStore();
+    throw new Error(`Invalid MONGODB_URI: ${error?.message}`);
   }
 }
 

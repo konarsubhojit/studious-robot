@@ -71,23 +71,22 @@ module (mirrors the Firebase pattern — graceful no-op when absent):
 native module, plus real-device QA (iOS additionally needs a CallKit entitlement).
 
 ### 3. userId uniqueness / identity verification
-✅ **Implemented.** `POST /session` now enforces identity ownership via an
-opt-in verification code:
+✅ **Implemented.** `POST /session` now enforces identity ownership via a
+verified Firebase account:
 
 - A `users` table (Drizzle, unique `user_id` primary key) was added in
   `server/db/schema.js` (migration `db/migrations/0001_*.sql`), plus a matching
   in-memory `users` store in the store contract.
 - `server/src/identity.js` claims a `userId` the first time a session request
-  supplies a `verificationCode`, storing only a salted scrypt hash.
-- A later `POST /session` for a claimed `userId` must present the matching code,
-  otherwise it returns **409** (`identity_conflict`) and writes a
-  `session.identity_conflict` audit entry. Unclaimed `userId`s remain freely
-  usable (backwards-compatible). Covered by `test/identity.test.js`.
+  supplies a valid Firebase ID token, storing the provider UID and metadata.
+- A later `POST /session` for a claimed `userId` must present an ID token for
+  the same provider UID. Another account receives **409** (`identity_claimed`)
+  and a `session.identity_conflict` audit entry. Each provider UID can bind to
+  only one public username. Covered by `test/identity.test.js`.
 
 **Remaining (optional follow-up)**
-- Swap the in-memory `users` store for the Drizzle table at runtime so claims
-  survive restarts, and add an external verification channel (email/phone OTP)
-  to bootstrap the code instead of trust-on-first-use.
+- Add an administrator-assisted migration flow for legacy usernames that
+  predate provider account binding.
 
 ---
 

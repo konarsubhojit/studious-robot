@@ -22,6 +22,20 @@
       "when": 1786809129281,
       "tag": "0002_dedupe_device_push_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786910381477,
+      "tag": "0003_first_ultimates",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786910772102,
+      "tag": "0004_wandering_black_cat",
+      "breakpoints": true
     }
   ]
 }
