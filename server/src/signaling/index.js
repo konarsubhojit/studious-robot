@@ -14,6 +14,7 @@ const {
 const { createCallRecord } = require('../domain/calls');
 const {
   notifyCallCreated,
+  markIncomingCallAcknowledged,
   notifyRingingCallsForDisconnectedDevice,
 } = require('../domain/notifications');
 const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
@@ -254,6 +255,31 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
       });
       notifyCallCreated(io, state, call);
       acknowledgeSuccess(socket, ack, 'call.initiate', { call });
+    });
+
+    socket.on('call.incoming.ack', (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, 'call.incoming.ack')) {
+        return;
+      }
+      if (!validateSignalingVersion(socket, payload, ack, 'call.incoming.ack')) {
+        return;
+      }
+      const callId = normaliseId(payload.callId);
+      if (!callId) {
+        acknowledgeError(
+          socket,
+          ack,
+          'call.incoming.ack',
+          'bad_request',
+          'callId is required',
+          state
+        );
+        return;
+      }
+      const identity = socket.data.identity;
+      const deviceId = normaliseId(payload.deviceId) || identity.deviceId;
+      markIncomingCallAcknowledged(state, callId, deviceId);
+      acknowledgeSuccess(socket, ack, 'call.incoming.ack', { callId, deviceId });
     });
 
     socket.on('call.accept', (payload = {}, ack) => {

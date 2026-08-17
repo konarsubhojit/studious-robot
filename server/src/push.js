@@ -73,6 +73,7 @@ const NOTIFICATION_HUB_DEFAULT_API_VERSION = '2015-04';
 const NOTIFICATION_HUB_TOKEN_TTL_SECS = 60 * 60;
 /** Skew applied to the cached SAS-token expiry check, in seconds. */
 const NOTIFICATION_HUB_TOKEN_SKEW_SECS = 60;
+const INCOMING_CALL_TTL_SECONDS = 30;
 
 // ─── APNs JWT cache ───────────────────────────────────────────────────────────
 
@@ -567,7 +568,9 @@ function buildDataBlock(envelope) {
  * @returns {string}
  */
 function buildFcmPayload(pushToken, callData) {
-  return buildFcmEnvelopePayload(pushToken, buildCallEnvelope(callData));
+  return buildFcmEnvelopePayload(pushToken, buildCallEnvelope(callData), {
+    ttlSeconds: INCOMING_CALL_TTL_SECONDS,
+  });
 }
 
 /**
@@ -577,13 +580,22 @@ function buildFcmPayload(pushToken, callData) {
  * @param {PushEnvelope} envelope
  * @returns {string}
  */
-function buildFcmEnvelopePayload(pushToken, envelope) {
+function buildFcmEnvelopePayload(pushToken, envelope, { ttlSeconds = null } = {}) {
+  const apnsHeaders = { 'apns-priority': '10' };
+  if (ttlSeconds && Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
+    apnsHeaders['apns-expiration'] = String(Math.floor(Date.now() / 1000) + ttlSeconds);
+  }
   return JSON.stringify({
     message: {
       token: pushToken,
       data: buildDataBlock(envelope),
-      android: { priority: FCM_PRIORITY_HIGH },
-      apns: { headers: { 'apns-priority': '10' } },
+      android: {
+        priority: FCM_PRIORITY_HIGH,
+        ...(ttlSeconds && Number.isFinite(ttlSeconds) && ttlSeconds > 0
+          ? { ttl: `${ttlSeconds}s` }
+          : {}),
+      },
+      apns: { headers: apnsHeaders },
     },
   });
 }
@@ -606,19 +618,24 @@ function buildFcmEnvelopePayload(pushToken, envelope) {
  * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData) {
-  return buildNotificationHubAndroidEnvelopePayload(buildCallEnvelope(callData));
+  return buildNotificationHubAndroidEnvelopePayload(buildCallEnvelope(callData), {
+    ttlSeconds: INCOMING_CALL_TTL_SECONDS,
+  });
 }
 
 /**
  * @param {PushEnvelope} envelope
  * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
-function buildNotificationHubAndroidEnvelopePayload(envelope) {
+function buildNotificationHubAndroidEnvelopePayload(envelope, { ttlSeconds = null } = {}) {
   return {
     message: {
       android: {
         data: buildDataBlock(envelope),
         priority: FCM_PRIORITY_HIGH,
+        ...(ttlSeconds && Number.isFinite(ttlSeconds) && ttlSeconds > 0
+          ? { ttl: `${ttlSeconds}s` }
+          : {}),
       },
     },
   };
@@ -784,6 +801,16 @@ function sendNotificationHubOnce(config, channel, envelope) {
     new URL(config.hubName, config.endpoint).toString()
   );
   const payloadLen = Buffer.byteLength(payload);
+  const headers = {
+    Authorization: sasToken,
+    'Content-Type': 'application/json;charset=utf-8',
+    'Content-Length': payloadLen,
+    'ServiceBusNotification-Format': format,
+    'ServiceBusNotification-DeviceHandle': channel.pushToken,
+  };
+  if (envelope.type === 'call.incoming') {
+    headers['ServiceBusNotification-TTL'] = String(INCOMING_CALL_TTL_SECONDS);
+  }
 
   return new Promise((resolve, reject) => {
     const req = https.request(
@@ -792,13 +819,7 @@ function sendNotificationHubOnce(config, channel, envelope) {
         port: url.port || 443,
         path: url.pathname + url.search,
         method: 'POST',
-        headers: {
-          Authorization: sasToken,
-          'Content-Type': 'application/json;charset=utf-8',
-          'Content-Length': payloadLen,
-          'ServiceBusNotification-Format': format,
-          'ServiceBusNotification-DeviceHandle': channel.pushToken,
-        },
+        headers,
       },
       (res) => {
         let body = '';

@@ -17,8 +17,16 @@ import StatusBanner from './StatusBanner';
  * @param {Function} props.onRegister - Called with the chosen authentication method and profile fields.
  * @param {boolean}  [props.isLoading] - Shows a loading state while the server is being reached.
  * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
+ * @param {boolean} [props.isGoogleSignInAvailable]
+ * @param {boolean} [props.isMicrosoftSignInAvailable]
  */
-export default function RegistrationScreen({ onRegister, isLoading = false, status }) {
+export default function RegistrationScreen({
+  onRegister,
+  isLoading = false,
+  status,
+  isGoogleSignInAvailable = true,
+  isMicrosoftSignInAvailable = true,
+}) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -115,15 +123,15 @@ export default function RegistrationScreen({ onRegister, isLoading = false, stat
             testID="registration-email-sign-in"
           />
           <AppButton
-            title="Continue with Google"
+            title={isGoogleSignInAvailable ? 'Continue with Google' : 'Google unavailable'}
             onPress={() => submit('google')}
-            disabled={!name.trim() || isLoading}
+            disabled={!isGoogleSignInAvailable || !name.trim() || isLoading}
             testID="registration-google"
           />
           <AppButton
-            title="Continue with Microsoft"
+            title={isMicrosoftSignInAvailable ? 'Continue with Microsoft' : 'Microsoft unavailable'}
             onPress={() => submit('microsoft')}
-            disabled={!name.trim() || isLoading}
+            disabled={!isMicrosoftSignInAvailable || !name.trim() || isLoading}
             testID="registration-microsoft"
           />
         </View>

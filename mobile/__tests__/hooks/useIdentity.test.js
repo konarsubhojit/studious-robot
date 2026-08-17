@@ -7,6 +7,8 @@ jest.mock('../../src/appLogger', () => ({
 }));
 
 jest.mock('../../src/authService', () => ({
+  isGoogleSignInConfigured: jest.fn(() => true),
+  isMicrosoftSignInConfigured: jest.fn(() => true),
   observeAuthState: jest.fn(),
   registerWithEmail: jest.fn(),
   signInWithEmail: jest.fn(),
@@ -111,5 +113,38 @@ describe('useIdentity', () => {
     expect(authService.signOut).toHaveBeenCalled();
     expect(saveIdentity).toHaveBeenCalledWith({ userId: '' });
     expect(resultRef.current.userId).toBe('');
+  });
+
+  test.each([
+    ['auth/email-already-in-use', 'already in use', 'raw native error'],
+    ['auth/weak-password', 'too weak', 'raw native error'],
+    ['auth/invalid-email', 'valid email', 'raw native error'],
+    ['auth/operation-not-allowed', 'disabled in Firebase Auth settings', 'raw native error'],
+    [
+      'auth/app-not-configured',
+      'Firebase is not configured',
+      'Firebase is not configured in this build. Add google-services.json (Android) or GoogleService-Info.plist (iOS).',
+    ],
+  ])('registerUser maps %s to a readable status message', async (code, expectedText, message) => {
+    const updateStatus = jest.fn();
+    authService.registerWithEmail.mockRejectedValue({
+      code,
+      message,
+    });
+    const { resultRef } = setup(updateStatus);
+    act(() => authListener({ uid: 'firebase-user' }));
+
+    await act(async () => {
+      await expect(
+        resultRef.current.registerUser({
+          userId: 'alice',
+          method: 'email-register',
+          email: 'alice@example.com',
+          password: 'secret12',
+        }),
+      ).rejects.toBeTruthy();
+    });
+
+    expect(updateStatus).toHaveBeenCalledWith(expect.stringContaining(expectedText), 'error');
   });
 });

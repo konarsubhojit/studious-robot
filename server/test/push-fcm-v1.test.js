@@ -154,6 +154,11 @@ test('acquires an OAuth2 token then posts a valid v1 message payload', async () 
       assert.equal(payload.message.data.type, 'call.incoming');
       assert.equal(payload.message.data.deepLink, 'wetalk://call/call-abc');
       assert.equal(payload.message.android.priority, 'HIGH');
+      assert.equal(payload.message.android.ttl, '30s');
+      assert.equal(payload.message.apns.headers['apns-priority'], '10');
+      assert.ok(
+        Number(payload.message.apns.headers['apns-expiration']) > Math.floor(Date.now() / 1000),
+      );
     } finally {
       mock.restore();
     }

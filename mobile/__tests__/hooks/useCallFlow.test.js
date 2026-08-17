@@ -118,6 +118,8 @@ jest.mock('../../src/pushNotifications', () => ({
 }));
 
 jest.mock('../../src/authService', () => ({
+  isGoogleSignInConfigured: jest.fn(() => true),
+  isMicrosoftSignInConfigured: jest.fn(() => true),
   observeAuthState: jest.fn(listener => {
     listener({ uid: 'firebase-test-user' });
     return jest.fn();

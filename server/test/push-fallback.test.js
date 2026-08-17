@@ -47,10 +47,10 @@ function spyOnPush() {
   };
 }
 
-async function startServer() {
+async function startServer(opts = {}) {
   // Require *after* the spy is installed so `createServer` picks up the mock.
   const { createServer } = require('../src/index.js');
-  const server = createServer();
+  const server = createServer(opts);
   await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
   const { port } = server.httpServer.address();
   const url = `http://127.0.0.1:${port}`;
@@ -318,4 +318,123 @@ test('push fallback: disconnected ringing device gets a push before timeout', as
   assert.equal(spy.calls.length, 1, 'disconnect during ringing triggers a push to that device');
   assert.equal(spy.calls[0].channel.deviceId, 'device-user-louis');
   assert.equal(spy.calls[0].callData.callId, res.body.callId);
+});
+
+test('push fallback: connected device with no call.incoming ack receives push on ack timeout', async (t) => {
+  process.env.INCOMING_CALL_ACK_TIMEOUT_MS = '60';
+  t.after(() => {
+    delete process.env.INCOMING_CALL_ACK_TIMEOUT_MS;
+  });
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-ack-a');
+  const calleeSession = await createSession(url, 'user-ack-b', 'device-ack-b');
+
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'ack-b-token' },
+    calleeSession
+  );
+
+  const callee = ioClient(url, { auth: { sessionId: calleeSession } });
+  await new Promise((resolve) => callee.once('connect', resolve));
+
+  try {
+    const res = await postJson(url, '/calls', { calleeId: 'user-ack-b' }, callerSession);
+    assert.equal(res.status, 201);
+    await new Promise((r) => setTimeout(r, 160));
+
+    assert.equal(spy.calls.length, 1);
+    assert.equal(spy.calls[0].channel.deviceId, 'device-ack-b');
+    assert.equal(spy.calls[0].callData.callId, res.body.callId);
+  } finally {
+    callee.disconnect();
+  }
+});
+
+test('push fallback: call.incoming ack suppresses ack-timeout push', async (t) => {
+  process.env.INCOMING_CALL_ACK_TIMEOUT_MS = '60';
+  t.after(() => {
+    delete process.env.INCOMING_CALL_ACK_TIMEOUT_MS;
+  });
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-ack-c');
+  const calleeSession = await createSession(url, 'user-ack-d', 'device-ack-d');
+
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'ack-d-token' },
+    calleeSession
+  );
+
+  const callee = ioClient(url, { auth: { sessionId: calleeSession } });
+  await new Promise((resolve) => callee.once('connect', resolve));
+  callee.on('call.incoming', ({ call }) => {
+    callee.emit(
+      'call.incoming.ack',
+      { version: 1, callId: call.callId, deviceId: 'device-ack-d' },
+      () => {}
+    );
+  });
+
+  try {
+    const res = await postJson(url, '/calls', { calleeId: 'user-ack-d' }, callerSession);
+    assert.equal(res.status, 201);
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(spy.calls.length, 0, 'acked device must not be pushed');
+  } finally {
+    callee.disconnect();
+  }
+});
+
+test('push fallback: no duplicate push after socket_disconnected when ack-timeout push already sent', async (t) => {
+  process.env.INCOMING_CALL_ACK_TIMEOUT_MS = '60';
+  t.after(() => {
+    delete process.env.INCOMING_CALL_ACK_TIMEOUT_MS;
+  });
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { io: ioClient } = require('socket.io-client');
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-ack-e');
+  const calleeSession = await createSession(url, 'user-ack-f', 'device-ack-f');
+
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'ack-f-token' },
+    calleeSession
+  );
+
+  const callee = ioClient(url, { auth: { sessionId: calleeSession } });
+  await new Promise((resolve) => callee.once('connect', resolve));
+
+  try {
+    const res = await postJson(url, '/calls', { calleeId: 'user-ack-f' }, callerSession);
+    assert.equal(res.status, 201);
+    await new Promise((r) => setTimeout(r, 160));
+    assert.equal(spy.calls.length, 1, 'ack-timeout should send one push');
+    callee.disconnect();
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(spy.calls.length, 1, 'socket_disconnected should not duplicate push');
+    assert.equal(spy.calls[0].callData.callId, res.body.callId);
+  } finally {
+    callee.disconnect();
+  }
 });

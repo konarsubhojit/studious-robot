@@ -41,11 +41,20 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
     if (!deviceIdRef.current) {
       deviceIdRef.current = await loadDeviceId();
     }
+    let idToken;
+    try {
+      idToken = await getIdToken();
+    } catch (error) {
+      if (error?.code === 'auth/app-not-configured') {
+        updateStatus(error.message, 'error');
+      }
+      throw error;
+    }
     const requestBody = {
       userId: userId.trim() || undefined,
       deviceId: deviceIdRef.current,
       platform: Platform.OS,
-      idToken: await getIdToken(),
+      idToken,
     };
     const response = await fetch(`${trimmedUrl}/session`, {
       method: 'POST',
@@ -154,6 +163,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
 
   return {
     sessionIdRef,
+    deviceIdRef,
     createOrGetSession,
     refreshSession,
     authedFetch,
