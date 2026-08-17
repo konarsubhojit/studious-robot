@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "prefabPath": "/home/runner/.gradle/caches/modules-2/files-2.1/com.google.prefab/cli/2.1.0/aa32fec809c44fa531f01dcfb739b5b3304d3050/cli-2.1.0-all.jar",
+  "packages": [
+    "/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-reanimated/android/build/intermediates/prefab_package/release/prefab",
+    "/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-worklets/android/build/intermediates/prefab_package/release/prefab",
+    "/home/runner/.gradle/caches/9.3.1/transforms/b0ada7483120ac73e44b4d827460959c/transformed/react-android-0.86.0-release/prefab",
+    "/home/runner/.gradle/caches/9.3.1/transforms/d8b8d40503a9942f9b4514c39d7f38c4/transformed/hermes-android-250829098.0.14-release/prefab",
+    "/home/runner/.gradle/caches/9.3.1/transforms/ea3a73c5ae18ed9cff9b4578d9fb3d6d/transformed/fbjni-0.7.0/prefab"
+  ]
+}
