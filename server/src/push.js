@@ -726,7 +726,9 @@ async function sendFcmOnce(config, pushToken, envelope) {
     };
   }
 
-  const payload = buildFcmEnvelopePayload(pushToken, envelope);
+  const payload = buildFcmEnvelopePayload(pushToken, envelope, {
+    ttlSeconds: envelope.type === 'call.incoming' ? INCOMING_CALL_TTL_SECONDS : null,
+  });
   const payloadLen = Buffer.byteLength(payload);
   const path = `/v1/projects/${config.projectId}/messages:send`;
 
@@ -789,7 +791,11 @@ function sendNotificationHubOnce(config, channel, envelope) {
   const format = isApple ? 'apple' : 'FcmV1';
   const payload = isApple
     ? buildApnsEnvelopePayload(envelope)
-    : JSON.stringify(buildNotificationHubAndroidEnvelopePayload(envelope));
+    : JSON.stringify(
+        buildNotificationHubAndroidEnvelopePayload(envelope, {
+          ttlSeconds: envelope.type === 'call.incoming' ? INCOMING_CALL_TTL_SECONDS : null,
+        }),
+      );
 
   const url = new URL(
     `${config.hubName}/messages/?direct&api-version=${encodeURIComponent(config.apiVersion)}`,
