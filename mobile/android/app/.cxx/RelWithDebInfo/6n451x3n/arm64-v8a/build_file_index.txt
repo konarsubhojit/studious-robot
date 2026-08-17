@@ -1,7 +1,0 @@
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/@react-native-google-signin/google-signin/android/build/generated/source/codegen/jni/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-gesture-handler/android/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-reanimated/android/build/generated/source/codegen/jni/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-vector-icons/android/build/generated/source/codegen/jni/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native-worklets/android/build/generated/source/codegen/jni/CMakeLists.txt
-/home/runner/work/studious-robot/studious-robot/mobile/node_modules/react-native/ReactAndroid/cmake-utils/default-app-setup/CMakeLists.txt

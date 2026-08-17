@@ -1,4 +1,0 @@
-/home/runner/work/studious-robot/studious-robot/mobile/android/app/.cxx/RelWithDebInfo/6n451x3n/arm64-v8a/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/foo.dir
-/home/runner/work/studious-robot/studious-robot/mobile/android/app/.cxx/RelWithDebInfo/6n451x3n/arm64-v8a/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/boo.dir
-/home/runner/work/studious-robot/studious-robot/mobile/android/app/.cxx/RelWithDebInfo/6n451x3n/arm64-v8a/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/edit_cache.dir
-/home/runner/work/studious-robot/studious-robot/mobile/android/app/.cxx/RelWithDebInfo/6n451x3n/arm64-v8a/CMakeFiles/_CMakeLTOTest-CXX/bin/CMakeFiles/rebuild_cache.dir
