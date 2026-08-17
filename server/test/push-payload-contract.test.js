@@ -96,7 +96,9 @@ test('neither transport adds a notification block', () => {
 test('both transports request FCM v1 high priority so the handset wakes', () => {
   const direct = JSON.parse(push._buildFcmPayload('device-token-123', CALL)).message;
   assert.equal(direct.android.priority, 'HIGH');
+  assert.equal(direct.android.ttl, '30s');
   assert.equal(push._buildNotificationHubAndroidPayload(CALL).message.android.priority, 'HIGH');
+  assert.equal(push._buildNotificationHubAndroidPayload(CALL).message.android.ttl, '30s');
 });
 
 test('the mobile client only reads fields the server sends', (t) => {

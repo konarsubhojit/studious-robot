@@ -628,3 +628,23 @@ test('loadPersistedState() is a no-op when no db is provided', async () => {
   server.httpServer.closeAllConnections?.();
   await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
 });
+
+test('loadPersistedState() fails loudly when users hydration fails', async () => {
+  const db = {
+    select() {
+      return {
+        from(table) {
+          if (table === schema.users) {
+            return Promise.reject(new Error('users column missing'));
+          }
+          return Promise.resolve([]);
+        },
+      };
+    },
+  };
+  const server = createServer({ db });
+  await assert.rejects(() => server.loadPersistedState(), /failed to hydrate users from DB/);
+
+  server.httpServer.closeAllConnections?.();
+  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+});

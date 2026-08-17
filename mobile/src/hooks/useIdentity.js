@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logInfo } from '../appLogger';
 import {
+  isGoogleSignInConfigured,
+  isMicrosoftSignInConfigured,
   observeAuthState,
   registerWithEmail,
   signInWithEmail,
@@ -9,6 +11,26 @@ import {
   signOut,
 } from '../authService';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
+
+function getAuthenticationErrorMessage(error) {
+  const code = error?.code;
+  if (code === 'auth/email-already-in-use') {
+    return 'That email is already in use. Try signing in instead.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Password is too weak. Use at least 6 characters.';
+  }
+  if (code === 'auth/invalid-email') {
+    return 'Enter a valid email address.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Email/password sign-in is disabled in Firebase Auth settings.';
+  }
+  if (code === 'auth/app-not-configured') {
+    return error?.message;
+  }
+  return error?.message || 'Authentication failed.';
+}
 
 /**
  * Owns the authenticated account and its public username.
@@ -30,6 +52,8 @@ export default function useIdentity(updateStatus) {
   const committedIdentityRef = useRef({ userId: '' });
 
   const isRegistered = userId.trim().length > 0 && Boolean(authUser);
+  const canUseGoogleSignIn = isGoogleSignInConfigured();
+  const canUseMicrosoftSignIn = isMicrosoftSignInConfigured();
 
   const commitIdentity = useCallback(async nextUserId => {
     const identity = { userId: (nextUserId ?? '').trim() };
@@ -118,7 +142,7 @@ export default function useIdentity(updateStatus) {
           userId: identity.userId,
         });
       } catch (error) {
-        updateStatus(error?.message || 'Authentication failed.', 'error');
+        updateStatus(getAuthenticationErrorMessage(error), 'error');
         throw error;
       } finally {
         setIsAuthenticating(false);
@@ -166,6 +190,8 @@ export default function useIdentity(updateStatus) {
     isLoadingIdentity,
     isAuthenticating,
     isRegistered,
+    canUseGoogleSignIn,
+    canUseMicrosoftSignIn,
     committedIdentityRef,
     editUserId,
     registerUser,

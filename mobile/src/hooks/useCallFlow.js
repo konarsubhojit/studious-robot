@@ -232,7 +232,7 @@ export default function useCallFlow() {
     userId,
     updateStatus,
   });
-  const { sessionIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
+  const { sessionIdRef, deviceIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
 
   const callHistory = useCallHistory({
     authedFetchRef,
@@ -731,6 +731,19 @@ export default function useCallFlow() {
           callId: call.callId,
           callerId: call.callerId,
         });
+        socket.emit(
+          'call.incoming.ack',
+          {
+            version: SIGNALING_VERSION,
+            callId: call.callId,
+            deviceId: deviceIdRef.current || undefined,
+          },
+          ack => {
+            if (!ack?.ok) {
+              logWarn('[CallFlow] call.incoming.ack failed', { error: ack?.error });
+            }
+          },
+        );
         incomingCallRef.current = call;
         setIncomingCall(call);
         setCallPhase(CALL_PHASES.INCOMING_RINGING);
@@ -1885,6 +1898,8 @@ export default function useCallFlow() {
     isRegistered,
     isLoadingIdentity: identity.isLoadingIdentity,
     isAuthenticating: identity.isAuthenticating,
+    canUseGoogleSignIn: identity.canUseGoogleSignIn,
+    canUseMicrosoftSignIn: identity.canUseMicrosoftSignIn,
     registerUser: identity.registerUser,
     unregisterUser,
     updateUserId: identity.updateUserId,

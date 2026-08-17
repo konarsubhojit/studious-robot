@@ -217,12 +217,16 @@ function toIsoString(value) {
  * @param {() => Promise<number>} hydrate resolves to the number of rows read
  * @returns {Promise<void>}
  */
-async function runHydrationStep(label, hydrate) {
+async function runHydrationStep(label, hydrate, { required = false } = {}) {
   try {
     const count = await hydrate();
     console.log(`[signaling] hydrated ${count} ${label} record(s) from DB`);
   } catch (err) {
-    console.error(`[signaling] failed to hydrate ${label}s from DB:`, err?.message);
+    const message = `[signaling] failed to hydrate ${label}s from DB: ${err?.message}`;
+    console.error(message);
+    if (required) {
+      throw new Error(message);
+    }
   }
 }
 
@@ -312,7 +316,7 @@ async function loadPersistedStateFromDb(db, state) {
     blocks: blocksTable,
   } = require('../../db/schema');
 
-  await runHydrationStep('user', () => hydrateUsers(db, state, usersTable));
+  await runHydrationStep('user', () => hydrateUsers(db, state, usersTable), { required: true });
   await runHydrationStep('device', () => hydrateDevices(db, state, devicesTable));
   await hydrateCallsAndEventsFromDb(db, state);
   await runHydrationStep('block', () => hydrateBlocks(db, state, blocksTable));

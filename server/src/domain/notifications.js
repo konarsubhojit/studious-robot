@@ -6,6 +6,8 @@ const { resolveReachableChannels, userRoom } = require('../lib/state');
 const { pruneDeadDevice } = require('../lib/persistence');
 const { verboseLog } = require('../lib/verbose');
 
+const DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS = 2000;
+
 /**
  * Client-facing call notifications.
  *
@@ -78,6 +80,104 @@ function getNoPushChannelReason(state, userId) {
   return 'no_push_token';
 }
 
+function getIncomingCallPushState(state) {
+  if (!state.incomingCallPushState) {
+    state.incomingCallPushState = new Map();
+  }
+  return state.incomingCallPushState;
+}
+
+function getIncomingCallPushStateForCall(state, callId) {
+  const store = getIncomingCallPushState(state);
+  if (!store.has(callId)) {
+    store.set(callId, {
+      acknowledgedDeviceIds: new Set(),
+      pushedDeviceIds: new Set(),
+      ackTimeouts: new Map(),
+    });
+  }
+  return store.get(callId);
+}
+
+function clearIncomingCallPushState(state, callId) {
+  const store = getIncomingCallPushState(state);
+  const entry = store.get(callId);
+  if (!entry) return;
+  for (const timeoutId of entry.ackTimeouts.values()) {
+    clearTimeout(timeoutId);
+  }
+  store.delete(callId);
+}
+
+function hasIncomingCallPushBeenDispatched(state, callId, deviceId) {
+  const entry = getIncomingCallPushStateForCall(state, callId);
+  return entry.pushedDeviceIds.has(deviceId);
+}
+
+function markIncomingCallPushDispatched(state, callId, deviceId) {
+  const entry = getIncomingCallPushStateForCall(state, callId);
+  entry.pushedDeviceIds.add(deviceId);
+}
+
+function hasIncomingCallBeenAcknowledged(state, callId, deviceId) {
+  const entry = getIncomingCallPushStateForCall(state, callId);
+  return entry.acknowledgedDeviceIds.has(deviceId);
+}
+
+function markIncomingCallAcknowledged(state, callId, deviceId) {
+  if (!callId || !deviceId) return false;
+  const entry = getIncomingCallPushStateForCall(state, callId);
+  entry.acknowledgedDeviceIds.add(deviceId);
+  const timeoutId = entry.ackTimeouts.get(deviceId);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    entry.ackTimeouts.delete(deviceId);
+  }
+  return true;
+}
+
+function attemptIncomingCallPush(state, call, channel, trigger = null) {
+  if (hasIncomingCallPushBeenDispatched(state, call.callId, channel.deviceId)) {
+    logIncomingCallPushSkip(call, 'already_pushed', channel.deviceId, trigger ? ` trigger=${trigger}` : '');
+    return;
+  }
+  markIncomingCallPushDispatched(state, call.callId, channel.deviceId);
+  console.log(
+    `[push] Attempting call.incoming callId=${call.callId}` +
+      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
+      (trigger ? ` trigger=${trigger}` : '')
+  );
+  push
+    .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    .then((outcome) => handleDeadTokenOutcome(state, outcome))
+    .catch((err) => {
+      console.error(
+        `[push] Failed call.incoming callId=${call.callId}` +
+          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
+      );
+    });
+}
+
+function scheduleIncomingCallAckTimeout(state, call, deviceId) {
+  const entry = getIncomingCallPushStateForCall(state, call.callId);
+  if (entry.ackTimeouts.has(deviceId)) return;
+  const configuredTimeoutMs = Number(process.env.INCOMING_CALL_ACK_TIMEOUT_MS);
+  const ackTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? configuredTimeoutMs
+      : DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => {
+    entry.ackTimeouts.delete(deviceId);
+    if (call.status !== 'ringing') return;
+    if (hasIncomingCallBeenAcknowledged(state, call.callId, deviceId)) return;
+    dispatchIncomingCallPushToDevice(state, call, deviceId, 'ack_timeout', {
+      allowConnectedDevicePush: true,
+    });
+  }, ackTimeoutMs);
+  timeoutId.unref?.();
+  entry.ackTimeouts.set(deviceId, timeoutId);
+}
+
 function dispatchIncomingCallPushes(state, call) {
   const connections = state.userConnections.get(call.calleeId);
   const connectedDeviceIds = new Set(
@@ -106,22 +206,11 @@ function dispatchIncomingCallPushes(state, call) {
         channel.deviceId,
         ` activeSockets=${connections?.size ?? 0}`
       );
+      scheduleIncomingCallAckTimeout(state, call, channel.deviceId);
       continue;
     }
 
-    console.log(
-      `[push] Attempting call.incoming callId=${call.callId}` +
-        ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}`
-    );
-    push
-      .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
-      .then((outcome) => handleDeadTokenOutcome(state, outcome))
-      .catch((err) => {
-        console.error(
-          `[push] Failed call.incoming callId=${call.callId}` +
-            ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
-        );
-      });
+    attemptIncomingCallPush(state, call, channel);
   }
 }
 
@@ -149,7 +238,13 @@ function hasLiveConnectionForDevice(state, userId, deviceId) {
   return false;
 }
 
-function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
+function dispatchIncomingCallPushToDevice(
+  state,
+  call,
+  deviceId,
+  trigger,
+  { allowConnectedDevicePush = false } = {}
+) {
   if (call.status !== 'ringing') return;
   const ringTimeoutMs = call.ringTimeoutAt ? new Date(call.ringTimeoutAt).getTime() : null;
   if (ringTimeoutMs !== null && Number.isNaN(ringTimeoutMs)) {
@@ -160,7 +255,11 @@ function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
     logIncomingCallPushSkip(call, 'ring_timeout_elapsed', deviceId);
     return;
   }
-  if (hasLiveConnectionForDevice(state, call.calleeId, deviceId)) {
+  if (hasIncomingCallBeenAcknowledged(state, call.callId, deviceId)) {
+    logIncomingCallPushSkip(call, 'ack_received', deviceId);
+    return;
+  }
+  if (!allowConnectedDevicePush && hasLiveConnectionForDevice(state, call.calleeId, deviceId)) {
     logIncomingCallPushSkip(call, 'callee_online', deviceId);
     return;
   }
@@ -171,20 +270,7 @@ function dispatchIncomingCallPushToDevice(state, call, deviceId, trigger) {
     return;
   }
 
-  console.log(
-    `[push] Attempting call.incoming callId=${call.callId}` +
-      ` user=${call.calleeId} device=${channel.deviceId} via ${channel.provider}` +
-      (trigger ? ` trigger=${trigger}` : '')
-  );
-  push
-    .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
-    .then((outcome) => handleDeadTokenOutcome(state, outcome))
-    .catch((err) => {
-      console.error(
-        `[push] Failed call.incoming callId=${call.callId}` +
-          ` user=${call.calleeId} device=${channel.deviceId} error=${err?.message ?? 'unknown'}`
-      );
-    });
+  attemptIncomingCallPush(state, call, channel, trigger);
 }
 
 function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
@@ -220,6 +306,7 @@ function notifyCallCreated(io, state, call) {
     dispatchIncomingCallPushes(state, call);
   } else {
     logIncomingCallPushSkip(call, `call_status_${call.status}`);
+    clearIncomingCallPushState(state, call.callId);
   }
 
   notifyCallTransition(io, state, call, {
@@ -230,6 +317,9 @@ function notifyCallCreated(io, state, call) {
 }
 
 function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
+  if (call.status !== 'ringing') {
+    clearIncomingCallPushState(state, call.callId);
+  }
   if (previousStatus !== null) {
     state.telemetry.recordCallTransition(call, previousStatus);
     console.log(
@@ -296,6 +386,7 @@ module.exports = {
   emitToUserSockets,
   createCallEnvelope,
   getCallTransitionEventName,
+  markIncomingCallAcknowledged,
   notifyCallCreated,
   notifyCallTransition,
   notifyRingingCallsForDisconnectedDevice,

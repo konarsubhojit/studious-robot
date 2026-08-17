@@ -99,4 +99,29 @@ describe('RegistrationScreen', () => {
       password: 'secret12',
     });
   });
+
+  test('disables provider buttons when providers are unconfigured', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <RegistrationScreen
+          onRegister={jest.fn()}
+          isGoogleSignInAvailable={false}
+          isMicrosoftSignInAvailable={false}
+        />,
+      );
+    });
+
+    const googleButton = tree.root
+      .findAllByType('AppButton')
+      .find(button => button.props.testID === 'registration-google');
+    const microsoftButton = tree.root
+      .findAllByType('AppButton')
+      .find(button => button.props.testID === 'registration-microsoft');
+
+    expect(googleButton.props.disabled).toBe(true);
+    expect(googleButton.props.title).toMatch(/unavailable/i);
+    expect(microsoftButton.props.disabled).toBe(true);
+    expect(microsoftButton.props.title).toMatch(/unavailable/i);
+  });
 });

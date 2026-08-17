@@ -46,7 +46,10 @@ test('GET /turn-credentials mints and caches Cloudflare credentials', async () =
       assert.equal(options.method, 'POST');
       assert.equal(options.headers.Authorization, 'Bearer ' + 'api-token');
       assert.deepEqual(JSON.parse(options.body), { ttl: 3600 });
-      return { ok: true, json: async () => ({ iceServers: [{ urls: ['turn:cf.example'] }] }) };
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ iceServers: [{ urls: ['turn:cf.example'] }] }),
+      };
     },
   });
   try {
@@ -61,6 +64,42 @@ test('GET /turn-credentials mints and caches Cloudflare credentials', async () =
     assert.match(first.response.headers.get('x-turn-credential-expires-at'), /^\d{4}-/);
     assert.deepEqual(second.body, first.body);
     assert.equal(calls, 1);
+  } finally {
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials accepts object-shaped iceServers from Cloudflare', async () => {
+  const server = await startServer({
+    turnEnv: {
+      CLOUDFLARE_TURN_KEY_ID: 'key-id',
+      CLOUDFLARE_TURN_API_TOKEN: 'api-token',
+      CLOUDFLARE_TURN_TTL_SECONDS: '3600',
+    },
+    turnFetch: async () => ({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          iceServers: {
+            urls: ['turn:cf.example', 'turns:cf.example?transport=tcp'],
+            username: 'user',
+            credential: 'secret',
+          },
+        }),
+    }),
+  });
+  try {
+    const sessionId = await createSession(server.url);
+    const result = await getCredentials(server.url, sessionId);
+    assert.equal(result.response.status, 200);
+    assert.deepEqual(result.body, [
+      { urls: ['stun:stun.l.google.com:19302'] },
+      {
+        urls: ['turn:cf.example', 'turns:cf.example?transport=tcp'],
+        username: 'user',
+        credential: 'secret',
+      },
+    ]);
   } finally {
     await server.teardown();
   }
@@ -103,6 +142,41 @@ test('GET /turn-credentials requires a valid session and is rate limited', async
     assert.equal((await getCredentials(server.url, sessionId)).response.status, 200);
     assert.equal((await getCredentials(server.url, sessionId)).response.status, 429);
   } finally {
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials logs minting failures at error level when no static TURN exists', async () => {
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  const errors = [];
+  const warns = [];
+  console.error = (...args) => errors.push(args.join(' '));
+  console.warn = (...args) => warns.push(args.join(' '));
+
+  const server = await startServer({
+    turnEnv: {
+      CLOUDFLARE_TURN_KEY_ID: 'key-id',
+      CLOUDFLARE_TURN_API_TOKEN: 'api-token',
+    },
+    turnFetch: async () => ({
+      ok: false,
+      status: 500,
+      text: async () => '{"error":"boom"}',
+    }),
+  });
+  try {
+    const sessionId = await createSession(server.url);
+    const result = await getCredentials(server.url, sessionId);
+    assert.equal(result.response.status, 200);
+    assert.ok(
+      errors.some((line) => line.includes('[turn] credential minting failed: Cloudflare TURN API returned 500')),
+    );
+    assert.ok(errors.some((line) => line.includes('body={"error":"boom"}')));
+    assert.equal(warns.length, 0);
+  } finally {
+    console.error = originalError;
+    console.warn = originalWarn;
     await server.teardown();
   }
 });

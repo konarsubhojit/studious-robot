@@ -215,6 +215,8 @@ function AppShell() {
         }}
         isLoading={callFlow.isAuthenticating}
         status={callFlow.status}
+        isGoogleSignInAvailable={callFlow.canUseGoogleSignIn}
+        isMicrosoftSignInAvailable={callFlow.canUseMicrosoftSignIn}
       />
     );
   } else if (callFlow.callPhase === CALL_PHASES.OUTGOING_RINGING) {

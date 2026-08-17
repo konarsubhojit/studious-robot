@@ -13,6 +13,8 @@ jest.mock('../../src/settingsStorage', () => ({
   loadDeviceId: jest.fn(async () => 'device-test-1'),
 }));
 jest.mock('../../src/authService', () => ({
+  isGoogleSignInConfigured: jest.fn(() => true),
+  isMicrosoftSignInConfigured: jest.fn(() => true),
   getIdToken: jest.fn(async () => 'firebase-id-token'),
 }));
 

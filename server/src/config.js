@@ -68,11 +68,11 @@ const DEFAULT_RINGING_TIMEOUT_MS = 30_000;
  * event is emitted into a dead connection and the push fallback for that device
  * never fires: the callee's phone simply never rings.
  *
- * Halving both values detects a dead client in ~20s, comfortably inside the
+ * These values detect a dead client in ~18s, comfortably inside the
  * ring window, at the cost of one extra heartbeat every 10s.
  */
 const DEFAULT_SOCKET_PING_INTERVAL_MS = 10_000;
-const DEFAULT_SOCKET_PING_TIMEOUT_MS = 10_000;
+const DEFAULT_SOCKET_PING_TIMEOUT_MS = 8_000;
 
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;

@@ -38,6 +38,14 @@ function getTtlSeconds(value) {
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
 }
 
+function normalizeIceServers(payload) {
+  if (Array.isArray(payload)) return payload;
+  const iceServers = payload?.iceServers;
+  if (Array.isArray(iceServers)) return iceServers;
+  if (iceServers && typeof iceServers === 'object') return [iceServers];
+  return [];
+}
+
 function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.env }) {
   const router = express.Router();
   let cache = null;
@@ -84,15 +92,19 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
               Authorization: 'Bearer ' + apiToken,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ ttl }),
+              body: JSON.stringify({ ttl }),
           }
         );
+        const responseBody = await response.text().catch(() => '');
+        const payload = responseBody ? JSON.parse(responseBody) : null;
         if (!response.ok) {
-          throw new Error(`Cloudflare TURN API returned ${response.status}`);
+          throw new Error(
+              `Cloudflare TURN API returned ${response.status}` +
+              (responseBody ? ` body=${responseBody}` : '')
+          );
         }
-        const payload = await response.json();
-        const iceServers = Array.isArray(payload) ? payload : payload.iceServers;
-        if (!Array.isArray(iceServers) || iceServers.length === 0) {
+        const iceServers = normalizeIceServers(payload);
+        if (iceServers.length === 0) {
           throw new Error('Cloudflare TURN API returned no ICE servers');
         }
 
@@ -106,7 +118,8 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         res.json(cache.iceServers);
         return;
       } catch (error) {
-        console.warn(`[turn] credential minting failed: ${error?.message || 'unknown error'}`);
+        const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
+        logger(`[turn] credential minting failed: ${error?.message || 'unknown error'}`);
       }
     }
 
