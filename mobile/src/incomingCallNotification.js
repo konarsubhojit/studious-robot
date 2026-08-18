@@ -1,5 +1,9 @@
 import { NativeModules, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
+import { startIncomingRingtone } from './ringtone';
+
+/** Android's `NotificationManager.IMPORTANCE_HIGH`; below this nothing rings. */
+const IMPORTANCE_HIGH = 4;
 
 /**
  * WeTalk's own branded incoming-call notification.
@@ -56,12 +60,87 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
   if (!module || typeof module.show !== 'function') return false;
 
   try {
-    await module.show(callId, callerId || 'Incoming call', Boolean(hasVideo));
-    logInfo('[IncomingCallNotification] Shown', { callId, callerId: callerId ?? null });
+    const result = (await module.show(callId, callerId || 'Incoming call', Boolean(hasVideo))) ?? {};
+    logInfo('[IncomingCallNotification] Shown', {
+      callId,
+      callerId: callerId ?? null,
+      channelImportance: result.channelImportance ?? null,
+      channelHasSound: result.channelHasSound ?? null,
+      connectionLive: result.connectionLive ?? null,
+    });
+
+    // Notification channel settings are immutable once created, so an install
+    // carrying an older, quieter channel can post this notification silently.
+    // The native side reports the channel's *effective* importance and sound;
+    // when either says it will not ring, ring from JS instead of assuming.
+    const importance = result.channelImportance;
+    const hasSound = result.channelHasSound;
+    if (
+      (typeof importance === 'number' && importance < IMPORTANCE_HIGH) ||
+      hasSound === false
+    ) {
+      logWarn('[IncomingCallNotification] Channel will not ring; starting ringtone fallback', {
+        callId,
+        channelImportance: importance ?? null,
+        channelHasSound: hasSound ?? null,
+      });
+      startIncomingRingtone();
+    }
     return true;
   } catch (error) {
     logError('[IncomingCallNotification] show failed', error);
     return false;
+  }
+}
+
+/**
+ * Remove and return the Accept / Decline the user tapped on the branded
+ * notification while the JS context was not running (cold start), so the call
+ * flow can replay it. Resolves `null` when nothing is pending.
+ *
+ * @returns {Promise<{
+ *   callId: string,
+ *   action: 'accept' | 'decline',
+ *   ageMs: number,
+ *   connectionLive: boolean,
+ * } | null>}
+ */
+export async function consumePendingCallAction() {
+  const module = getNativeModule();
+  if (!module || typeof module.consumePendingCallAction !== 'function') return null;
+  try {
+    const pending = await module.consumePendingCallAction();
+    if (!pending?.callId || !pending?.action) return null;
+    logInfo('[IncomingCallNotification] Draining persisted call action', pending);
+    return pending;
+  } catch (error) {
+    logWarn('[IncomingCallNotification] consumePendingCallAction failed', {
+      message: error?.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Whether Telecom still holds a live CallKeep connection for `callId`.
+ *
+ * The branded notification is posted independently of whether Telecom ever
+ * created a connection, so this is reported alongside the ring so the server
+ * records whether the call was answerable through the OS call UI.
+ *
+ * @param {string} callId
+ * @returns {Promise<boolean | null>} `null` when the native module is absent
+ */
+export async function isCallConnectionLive(callId) {
+  const module = getNativeModule();
+  if (!callId || !module || typeof module.isCallConnectionLive !== 'function') return null;
+  try {
+    return Boolean(await module.isCallConnectionLive(callId));
+  } catch (error) {
+    logWarn('[IncomingCallNotification] isCallConnectionLive failed', {
+      message: error?.message,
+    });
+    return null;
   }
 }
 

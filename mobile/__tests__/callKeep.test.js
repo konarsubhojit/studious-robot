@@ -388,3 +388,65 @@ describe('callKeep with the native module present', () => {
     expect(mockStopIncomingRingtone).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── The single pending-answer queue ──────────────────────────────────────────
+//
+// An answer tapped before the call flow is listening used to be split across
+// two queues (one here, one in useCallFlow), and could be lost in the hand-off.
+// There is now exactly one, with explicit enqueue / drain / drop logging.
+
+describe('callKeep pending-answer queue', () => {
+  let mod;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    jest.doMock('react-native-callkeep', () => ({ default: mockCallKeep }));
+    mod = require('../src/callKeep');
+    mod._resetCallKeepCache();
+    mod.clearPendingAnswer();
+  });
+
+  afterEach(() => {
+    jest.dontMock('react-native-callkeep');
+  });
+
+  test('records an answer and drains it exactly once', () => {
+    expect(mod.recordPendingAnswer('call-q1', 'native_no_handler')).toBe(true);
+    expect(mod.peekPendingAnswer()).toBe('call-q1');
+    expect(mod.consumePendingAnswer('call-q1')).toBe('call-q1');
+    expect(mod.peekPendingAnswer()).toBeNull();
+    expect(mod.consumePendingAnswer('call-q1')).toBeNull();
+  });
+
+  test('does not drain an answer queued for a different call', () => {
+    mod.recordPendingAnswer('call-q2', 'native_no_handler');
+    expect(mod.consumePendingAnswer('other-call')).toBeNull();
+    expect(mod.peekPendingAnswer()).toBe('call-q2');
+  });
+
+  test('clearPendingAnswer drops only the matching call', () => {
+    mod.recordPendingAnswer('call-q3', 'native_no_handler');
+    expect(mod.clearPendingAnswer('other-call', 'ended')).toBe(false);
+    expect(mod.peekPendingAnswer()).toBe('call-q3');
+    expect(mod.clearPendingAnswer('call-q3', 'ended')).toBe(true);
+    expect(mod.peekPendingAnswer()).toBeNull();
+  });
+
+  test('ignores an empty callId', () => {
+    expect(mod.recordPendingAnswer(undefined, 'native_no_handler')).toBe(false);
+    expect(mod.peekPendingAnswer()).toBeNull();
+  });
+
+  test('attaching handlers replays a queued answer instead of dropping it', () => {
+    mod.recordPendingAnswer('call-q4', 'native_no_handler');
+    const onAnswer = jest.fn();
+    mod.setCallActionHandlers({ onAnswer, onEnd: jest.fn() });
+
+    expect(onAnswer).toHaveBeenCalledWith('call-q4');
+    // Drained: a second attach must not replay the same answer again.
+    const onAnswerAgain = jest.fn();
+    mod.setCallActionHandlers({ onAnswer: onAnswerAgain, onEnd: jest.fn() });
+    expect(onAnswerAgain).not.toHaveBeenCalled();
+  });
+});

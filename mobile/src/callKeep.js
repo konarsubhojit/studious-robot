@@ -92,10 +92,15 @@ const displayedCallIds = new Set();
 let activeCallActionHandlers = null;
 
 /**
- * The `callUUID` from an `answerCall` event that fired with no handler
- * attached — the push-cold-start race, where CallKeep's OS UI can be answered
- * before `useCallFlow` has mounted and called `setCallActionHandlers`.
- * Replayed to the next handler that attaches via `setCallActionHandlers`.
+ * The single queue for an `answerCall` that cannot be acted on yet — either it
+ * fired with no handler attached (the push-cold-start race, where CallKeep's OS
+ * UI can be answered before `useCallFlow` has mounted and called
+ * `setCallActionHandlers`), or the attached call flow does not know the call
+ * yet (the `call.incoming` socket event has not landed).
+ *
+ * There is deliberately exactly one queue: a second queue inside the call flow
+ * would mean an answer could be lost in the hand-off between the two. Every
+ * enqueue, drain and drop is logged so a swallowed tap is always traceable.
  */
 let pendingAnswerCallId = null;
 
@@ -145,6 +150,72 @@ export function _resetCallKeepCache() {
  */
 export function clearDisplayedCall(callId) {
   displayedCallIds.delete(callId);
+}
+
+/**
+ * Queue an answered call that cannot be acted on yet, so the tap is replayed
+ * instead of swallowed. Supersedes any previously queued call (only one call
+ * can ring at a time), logging the drop.
+ *
+ * @param {string} callUUID
+ * @param {string} [source] - where the answer came from, for log correlation
+ * @returns {boolean} `true` when the call was queued
+ */
+export function recordPendingAnswer(callUUID, source = 'unknown') {
+  if (!callUUID) {
+    logWarn('[CallKeep] Pending answer dropped; no callUUID', { source });
+    return false;
+  }
+  if (pendingAnswerCallId && pendingAnswerCallId !== callUUID) {
+    logWarn('[CallKeep] Pending answer superseded', {
+      dropped: pendingAnswerCallId,
+      callUUID,
+      source,
+    });
+  }
+  pendingAnswerCallId = callUUID;
+  logInfo('[CallKeep] Pending answer queued', { callUUID, source });
+  return true;
+}
+
+/**
+ * The currently queued answered callId, or `null`.
+ *
+ * @returns {string | null}
+ */
+export function peekPendingAnswer() {
+  return pendingAnswerCallId;
+}
+
+/**
+ * Remove and return the queued answered callId.
+ *
+ * @param {string} [callUUID] - when given, only drains a matching queue entry
+ * @returns {string | null} the drained callId, or `null` when nothing matched
+ */
+export function consumePendingAnswer(callUUID) {
+  if (!pendingAnswerCallId) return null;
+  if (callUUID && pendingAnswerCallId !== callUUID) return null;
+  const drained = pendingAnswerCallId;
+  pendingAnswerCallId = null;
+  logInfo('[CallKeep] Pending answer drained', { callUUID: drained });
+  return drained;
+}
+
+/**
+ * Discard the queued answered callId (the call ended, was declined, or is no
+ * longer answerable).
+ *
+ * @param {string} [callUUID] - when given, only drops a matching queue entry
+ * @param {string} [reason]
+ * @returns {boolean} `true` when an entry was dropped
+ */
+export function clearPendingAnswer(callUUID, reason = 'unspecified') {
+  if (!pendingAnswerCallId) return false;
+  if (callUUID && pendingAnswerCallId !== callUUID) return false;
+  logWarn('[CallKeep] Pending answer dropped', { callUUID: pendingAnswerCallId, reason });
+  pendingAnswerCallId = null;
+  return true;
 }
 
 /**
@@ -269,6 +340,28 @@ export function reportCallConnected(callId) {
 }
 
 /**
+ * Ask the OS to bring the app's UI to the foreground.
+ *
+ * Answering from a push cold start runs with no foreground Activity, so a
+ * runtime permission prompt cannot be displayed; raising the app first gives
+ * the prompt (and the in-call screen) somewhere to appear.
+ *
+ * @returns {boolean} `true` when the request was sent
+ */
+export function bringAppToForeground() {
+  const callKeep = loadCallKeep();
+  if (!callKeep || typeof callKeep.backToForeground !== 'function') return false;
+  try {
+    callKeep.backToForeground();
+    logInfo('[CallKeep] Requested app foreground');
+    return true;
+  } catch (error) {
+    logWarn('[CallKeep] backToForeground failed', { message: error?.message });
+    return false;
+  }
+}
+
+/**
  * Dismiss the OS call UI for a single call.
  *
  * @param {string} callId
@@ -347,7 +440,7 @@ export function registerCallActionListeners() {
     logWarn('[CallKeep] answerCall received with no call flow attached; queuing for replay', {
       callUUID,
     });
-    pendingAnswerCallId = callUUID;
+    recordPendingAnswer(callUUID, 'native_no_handler');
   };
   const endHandler = ({ callUUID } = {}) => {
     logInfo('[CallKeep] endCall', {
@@ -356,7 +449,7 @@ export function registerCallActionListeners() {
     });
     dismissIncomingCallNotification(callUUID);
     stopIncomingRingtone();
-    if (pendingAnswerCallId === callUUID) pendingAnswerCallId = null;
+    if (pendingAnswerCallId === callUUID) clearPendingAnswer(callUUID, 'call_ended');
     if (activeCallActionHandlers?.onEnd) {
       activeCallActionHandlers.onEnd(callUUID);
       return;
@@ -477,8 +570,7 @@ export function setCallActionHandlers({ onAnswer, onEnd } = {}) {
   activeCallActionHandlers = handlers;
 
   if (pendingAnswerCallId) {
-    const callUUID = pendingAnswerCallId;
-    pendingAnswerCallId = null;
+    const callUUID = consumePendingAnswer();
     logInfo('[CallKeep] Replaying queued answerCall', { callUUID });
     onAnswer?.(callUUID);
   }

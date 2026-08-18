@@ -28,6 +28,7 @@ import {
   ensureBluetoothPermission,
   ensureCallPermissions,
   getCallRuntimePermissions,
+  getMissingCallPermissions,
   requiresBluetoothConnectPermission,
   requiresPostNotificationsPermission,
 } from '../src/permissions';
@@ -168,5 +169,46 @@ describe('permissions helpers', () => {
       requested: true,
       message: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
     });
+  });
+
+  // ── Non-prompting check used by the answer path ──────────────────────────
+  //
+  // A push cold start has no foreground Activity, so a runtime prompt cannot be
+  // shown; the answer path needs to know *which* permission is missing without
+  // triggering one.
+
+  test('getMissingCallPermissions reports camera and microphone without prompting', async () => {
+    mockCheck.mockImplementation(async permission => permission !== 'android.permission.CAMERA');
+
+    await expect(getMissingCallPermissions()).resolves.toEqual({
+      camera: true,
+      microphone: false,
+      missing: ['android.permission.CAMERA'],
+      message: expect.any(String),
+    });
+    expect(mockRequestMultiple).not.toHaveBeenCalled();
+  });
+
+  test('getMissingCallPermissions reports nothing missing when both are granted', async () => {
+    mockCheck.mockResolvedValue(true);
+
+    await expect(getMissingCallPermissions()).resolves.toEqual({
+      camera: false,
+      microphone: false,
+      missing: [],
+      message: null,
+    });
+  });
+
+  test('getMissingCallPermissions is a no-op on non-Android platforms', async () => {
+    Platform.OS = 'ios';
+
+    await expect(getMissingCallPermissions()).resolves.toEqual({
+      camera: false,
+      microphone: false,
+      missing: [],
+      message: null,
+    });
+    expect(mockCheck).not.toHaveBeenCalled();
   });
 });

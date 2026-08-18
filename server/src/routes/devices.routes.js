@@ -6,7 +6,20 @@ const { normaliseId, normalisePushProvider, sanitizeForLog } = require('../lib/n
 const { upsertDevice } = require('../lib/state');
 const { persistDevice } = require('../lib/persistence');
 
-const PUSH_RECEIPT_STAGES = new Set(['received', 'ui_displayed', 'ui_failed']);
+// Delivery stages report that a call push reached the device and rang it;
+// answer stages report what happened when the user tapped Answer, so a call
+// that rings but cannot be picked up is visible in server logs (previously the
+// server saw nothing at all between `ringing` and `timeout`).
+const PUSH_RECEIPT_STAGES = new Set([
+  'received',
+  'ui_displayed',
+  'ui_failed',
+  'answer_attempted',
+  'answer_failed',
+  'answer_accepted',
+  'accept_tapped',
+  'decline_tapped',
+]);
 
 /**
  * Device push-token registration / unregistration.
@@ -97,6 +110,7 @@ function createDevicesRouter({ state, db }) {
     const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
     const callId = normaliseId(req.body?.callId);
     const stage = normaliseId(req.body?.stage);
+    const reason = normaliseId(req.body?.reason);
 
     if (!deviceId) {
       res.status(400).json({ error: 'sessionId or deviceId is required' });
@@ -118,6 +132,7 @@ function createDevicesRouter({ state, db }) {
       `[push] Receipt callId=${sanitizeForLog(callId)}` +
         ` device=${sanitizeForLog(deviceId)}` +
         ` stage=${sanitizeForLog(stage)}` +
+        (reason ? ` reason=${sanitizeForLog(reason)}` : '') +
         ` latencyMs=${latencyMs ?? 'N/A'}`
     );
 
@@ -126,6 +141,7 @@ function createDevicesRouter({ state, db }) {
       callId,
       deviceId,
       stage,
+      ...(reason ? { reason } : {}),
       latencyMs,
     });
   });
