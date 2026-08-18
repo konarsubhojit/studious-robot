@@ -784,7 +784,7 @@ async function sendFcmOnce(config, pushToken, envelope) {
  * @param {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string }} config
  * @param {{ provider: string, pushToken: string, deviceId: string }} channel
  * @param {PushEnvelope} envelope
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
+ * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string, headers?: Record<string, string>, trackingId?: string|null }>}
  */
 function sendNotificationHubOnce(config, channel, envelope) {
   const isApple = channel.provider === 'apns';
@@ -834,8 +834,18 @@ function sendNotificationHubOnce(config, channel, envelope) {
         });
         res.on('end', () => {
           const statusCode = res.statusCode;
+          const responseHeaders = extractNotificationHubCorrelationHeaders(res.headers);
+          const trackingId =
+            responseHeaders['x-ms-request-id'] ||
+            responseHeaders['x-ms-tracking-id'] ||
+            responseHeaders['x-ms-correlation-request-id'] ||
+            null;
+          console.debug(
+            `[push] Notification Hub response status=${statusCode ?? 'N/A'}` +
+              ` device=${channel.deviceId} headers=${JSON.stringify(responseHeaders)}`
+          );
           if (statusCode === 200 || statusCode === 201) {
-            resolve({ ok: true, statusCode });
+            resolve({ ok: true, statusCode, headers: responseHeaders, trackingId });
             return;
           }
           let reason = 'unknown';
@@ -848,13 +858,23 @@ function sendNotificationHubOnce(config, channel, envelope) {
               reason = body.slice(0, 200);
             }
           }
-          resolve({ ok: false, statusCode, reason });
+          resolve({ ok: false, statusCode, reason, headers: responseHeaders, trackingId });
         });
       }
     );
     req.on('error', reject);
     req.end(payload);
   });
+}
+
+function extractNotificationHubCorrelationHeaders(headers = {}) {
+  const output = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (!lower.startsWith('x-ms-')) continue;
+    output[lower] = Array.isArray(value) ? value.join(',') : String(value ?? '');
+  }
+  return output;
 }
 
 // ─── Retry wrapper ────────────────────────────────────────────────────────────
@@ -1080,15 +1100,25 @@ async function deliverPush(channel, envelope) {
 /**
  * Log the outcome of a delivery attempt for operational visibility.
  *
- * @param {{ ok: boolean, provider: string, deviceId: string, transport: string, statusCode?: number, reason?: string }} outcome
+ * @param {{ ok: boolean, provider: string, deviceId: string, transport: string, statusCode?: number, reason?: string, trackingId?: string|null }} outcome
  * @param {string} description - Event description, e.g. `call.incoming callId=…`.
  */
 function logDeliveryOutcome(outcome, description) {
   if (outcome.ok) {
-    console.log(
-      `[push] Delivered ${description}` +
-        ` via ${outcome.provider} (${outcome.transport}) to device=${outcome.deviceId}`
-    );
+    if (outcome.transport === 'notification_hub') {
+      console.log(
+        `[push] Accepted by hub ${description}` +
+          ` via ${outcome.provider} to device=${outcome.deviceId}` +
+          ` status=${outcome.statusCode ?? 'N/A'}` +
+          ` trackingId=${outcome.trackingId ?? 'N/A'}`
+      );
+    } else {
+      console.log(
+        `[push] Accepted by provider ${description}` +
+          ` via ${outcome.provider} to device=${outcome.deviceId}` +
+          ` status=${outcome.statusCode ?? 'N/A'}`
+      );
+    }
     return;
   }
   console.error(

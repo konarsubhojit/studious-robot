@@ -1,7 +1,15 @@
 import { Linking, Platform } from 'react-native';
 import { getApp } from '@react-native-firebase/app';
-import { logError, logInfo, logWarn } from './appLogger';
+import {
+  flushDurableLogs,
+  logBackgroundInfo,
+  logBackgroundWarn,
+  logError,
+  logInfo,
+  logWarn,
+} from './appLogger';
 import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
+import { loadDeviceId, loadSettings } from './settingsStorage';
 
 /**
  * Push notification helpers for the WeTalk mobile app.
@@ -25,6 +33,8 @@ import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
 // ─── Deep-link helpers ────────────────────────────────────────────────────────
 
 const DEEP_LINK_SCHEME = 'wetalk';
+const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
+const RECEIPT_STAGES = new Set(['received', 'ui_displayed', 'ui_failed']);
 
 /**
  * Parse a WeTalk deep-link URL into a call descriptor.
@@ -309,6 +319,59 @@ export function _extractIncomingCallFromMessage(remoteMessage) {
   };
 }
 
+function getReceiptBaseUrl(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const fromPayload =
+    typeof data.receiptUrl === 'string'
+      ? data.receiptUrl.trim()
+      : typeof data.signalingUrl === 'string'
+      ? data.signalingUrl.trim()
+      : '';
+  if (fromPayload) return fromPayload;
+  return null;
+}
+
+async function resolveReceiptBaseUrl(remoteMessage) {
+  const fromPayload = getReceiptBaseUrl(remoteMessage);
+  if (fromPayload) return fromPayload;
+  const settings = await loadSettings({ signalingUrl: DEFAULT_SIGNALING_URL }).catch(() => ({
+    signalingUrl: DEFAULT_SIGNALING_URL,
+  }));
+  return (settings.signalingUrl || DEFAULT_SIGNALING_URL).trim();
+}
+
+export async function sendPushReceipt({ remoteMessage, callId, stage }) {
+  if (!callId || !RECEIPT_STAGES.has(stage) || typeof fetch !== 'function') return false;
+  try {
+    const data = remoteMessage?.data ?? {};
+    const sessionId = typeof data.sessionId === 'string' ? data.sessionId.trim() : '';
+    const deviceId =
+      typeof data.deviceId === 'string' && data.deviceId.trim()
+        ? data.deviceId.trim()
+        : await loadDeviceId();
+    const signalingUrl = await resolveReceiptBaseUrl(remoteMessage);
+    if (!signalingUrl || (!sessionId && !deviceId)) return false;
+
+    const response = await fetch(`${signalingUrl.replace(/\/+$/, '')}/devices/push-receipt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...(sessionId ? { sessionId } : { deviceId }),
+        callId,
+        stage,
+      }),
+    });
+    if (!response.ok) {
+      await logBackgroundWarn('[Push] push receipt failed', { status: response.status, stage });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    await logBackgroundWarn('[Push] push receipt threw', { message: error?.message, stage });
+    return false;
+  }
+}
+
 /**
  * Background push callback used by @react-native-firebase/messaging.
  *
@@ -318,11 +381,13 @@ export function _extractIncomingCallFromMessage(remoteMessage) {
 export async function handleBackgroundPushMessage(remoteMessage) {
   const incoming = _extractIncomingCallFromMessage(remoteMessage);
   if (!incoming) {
-    logWarn('[Push] Background message missing call payload');
+    await logBackgroundWarn('[Push] Background message missing call payload');
+    await flushDurableLogs();
     return null;
   }
 
-  logInfo('[Push] Background call push received', {
+  await sendPushReceipt({ remoteMessage, callId: incoming.callId, stage: 'received' });
+  await logBackgroundInfo('[Push] Background call push received', {
     callId: incoming.callId,
     callerId: incoming.callerId,
   });
@@ -330,12 +395,31 @@ export async function handleBackgroundPushMessage(remoteMessage) {
   // Surface the OS-level incoming-call UI (CallKeep) so the call rings
   // full-screen even when the app was cold-started by this push. Degrades to a
   // no-op when the native callkeep module is not installed.
-  await displayCallKeepIncomingCall({
+  await logBackgroundInfo('[Push] Calling CallKeep displayIncomingCall', {
+    callId: incoming.callId,
+  });
+  const displayResult = await displayCallKeepIncomingCall({
     callId: incoming.callId,
     callerId: incoming.callerId,
-  }).catch(error => {
-    logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
+  }).catch(error => ({
+    shown: false,
+    reason: 'telecom_threw',
+    message: error?.message,
+  }));
+  await logBackgroundInfo('[Push] CallKeep displayIncomingCall resolved', {
+    callId: incoming.callId,
+    ...displayResult,
   });
+  await sendPushReceipt({
+    remoteMessage,
+    callId: incoming.callId,
+    stage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
+  });
+  await logBackgroundInfo('[Push] Background message handler exit', {
+    callId: incoming.callId,
+    uiStage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
+  });
+  await flushDurableLogs();
 
   return incoming;
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StatusBar, StyleSheet, View } from 'react-native';
+import { StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
@@ -25,6 +25,7 @@ import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
 import useTabShellBackNavigation from './src/hooks/useTabShellBackNavigation';
 import useWebRTCCall from './src/hooks/useWebRTCCall';
 import { colors } from './src/theme';
+import { getStartupIssues } from './src/startupHealth';
 
 /**
  * Thin composition root: wires the call hooks to the presentational screens.
@@ -196,6 +197,7 @@ function AppShell() {
   let screenContent;
   let floatingBubble = null;
   let inCallBanner = null;
+  const startupIssues = getStartupIssues();
   // True only for the tab-shell branch below; AppTabBar renders its own
   // bottom-safe-area padding in that case, so the outer container must not
   // *also* pad for it (that would leave a double gap under the tab bar).
@@ -486,6 +488,13 @@ function AppShell() {
         <View style={styles.containerCompact}>{screenContent}</View>
       ) : (
         <View style={[styles.container, rootContainerStyle]}>
+          {startupIssues.length > 0 ? (
+            <View style={styles.degradedBanner} testID="startup-degraded-banner">
+              <Text style={styles.degradedBannerText}>
+                {`Calling degraded: ${startupIssues.map(issue => issue.message).join('; ')}`}
+              </Text>
+            </View>
+          ) : null}
           {inCallBanner}
           {screenContent}
           {floatingBubble}
@@ -514,5 +523,15 @@ const styles = StyleSheet.create({
   },
   tabShellContent: {
     flex: 1,
+  },
+  degradedBanner: {
+    backgroundColor: colors.danger,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  degradedBannerText: {
+    color: colors.textOnAccent,
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

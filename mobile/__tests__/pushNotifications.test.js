@@ -10,16 +10,25 @@ import {
   parseCallDeepLink,
   registerForPushNotifications,
   registerPushToken,
+  sendPushReceipt,
   unregisterPushToken,
   _resetMessagingCache,
 } from '../src/pushNotifications';
-import { logInfo, logWarn } from '../src/appLogger';
+import { flushDurableLogs, logBackgroundInfo, logInfo, logWarn } from '../src/appLogger';
 import * as callKeep from '../src/callKeep';
 
 jest.mock('../src/appLogger', () => ({
+  flushDurableLogs: jest.fn(() => Promise.resolve()),
+  logBackgroundInfo: jest.fn(() => Promise.resolve()),
+  logBackgroundWarn: jest.fn(() => Promise.resolve()),
   logError: jest.fn(),
   logInfo: jest.fn(),
   logWarn: jest.fn(),
+}));
+
+jest.mock('../src/settingsStorage', () => ({
+  loadDeviceId: jest.fn(() => Promise.resolve('device-test')),
+  loadSettings: jest.fn(() => Promise.resolve({ signalingUrl: 'http://localhost:4173' })),
 }));
 
 jest.mock('react-native', () => ({
@@ -394,7 +403,13 @@ describe('background push handler', () => {
 
   beforeEach(() => {
     _resetMessagingCache();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+    jest.restoreAllMocks();
   });
 
   test('extracts incoming call payload from data messages', () => {
@@ -426,7 +441,9 @@ describe('background push handler', () => {
     // `buildDataBlock`); FCM v1 stringifies every value. The server-side
     // counterpart of this contract lives in
     // server/test/push-payload-contract.test.js.
-    const displayIncomingCall = jest.spyOn(callKeep, 'displayIncomingCall').mockResolvedValue(true);
+    const displayIncomingCall = jest
+      .spyOn(callKeep, 'displayIncomingCall')
+      .mockResolvedValue({ shown: true });
     const serverData = {
       callId: 'call-abc',
       callerId: 'alice',
@@ -462,10 +479,79 @@ describe('background push handler', () => {
       callerId: 'carol',
       deepLink: 'wetalk://call/call-3',
     });
-    expect(logInfo).toHaveBeenCalledWith('[Push] Background call push received', {
+    expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background call push received', {
       callId: 'call-3',
       callerId: 'carol',
     });
+  });
+
+  test('posts receipt stages and flushes durable logs', async () => {
+    jest.spyOn(callKeep, 'displayIncomingCall').mockResolvedValueOnce({ shown: true });
+
+    await handleBackgroundPushMessage({
+      data: { callId: 'call-receipt', callerId: 'alice' },
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          callId: 'call-receipt',
+          stage: 'received',
+        }),
+      }),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          callId: 'call-receipt',
+          stage: 'ui_displayed',
+        }),
+      }),
+    );
+    expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Calling CallKeep displayIncomingCall', {
+      callId: 'call-receipt',
+    });
+    expect(logBackgroundInfo).toHaveBeenCalledWith(
+      '[Push] CallKeep displayIncomingCall resolved',
+      {
+        callId: 'call-receipt',
+        shown: true,
+      },
+    );
+    expect(flushDurableLogs).toHaveBeenCalled();
+  });
+
+  test('sendPushReceipt can use a payload-provided session id and receipt URL', async () => {
+    await expect(
+      sendPushReceipt({
+        remoteMessage: {
+          data: {
+            sessionId: 'sess-1',
+            deviceId: 'device-ignored',
+            receiptUrl: 'https://signal.example/',
+          },
+        },
+        callId: 'call-1',
+        stage: 'ui_failed',
+      }),
+    ).resolves.toBe(true);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://signal.example/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          sessionId: 'sess-1',
+          callId: 'call-1',
+          stage: 'ui_failed',
+        }),
+      }),
+    );
   });
 
   /**
@@ -545,7 +631,7 @@ describe('background push handler', () => {
 
     const [handler] = setBackgroundMessageHandler.mock.calls[0];
     await handler({ data: { callId: 'call-4', callerId: 'dave' } });
-    expect(logInfo).toHaveBeenCalledWith('[Push] Background call push received', {
+    expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background call push received', {
       callId: 'call-4',
       callerId: 'dave',
     });

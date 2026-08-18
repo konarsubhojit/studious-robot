@@ -1,8 +1,25 @@
-import { clearLogs, getLogsAsText, logError, logInfo, logVerbose } from '../src/appLogger';
+jest.mock('react-native-fs', () => ({
+  DocumentDirectoryPath: '/docs',
+  appendFile: jest.fn(),
+  exists: jest.fn(),
+  readFile: jest.fn(),
+}));
+
+import RNFS from 'react-native-fs';
+import {
+  clearLogs,
+  getLogsAsText,
+  getLogsForExport,
+  logBackgroundInfo,
+  logError,
+  logInfo,
+  logVerbose,
+} from '../src/appLogger';
 
 describe('appLogger', () => {
   beforeEach(() => {
     clearLogs();
+    jest.clearAllMocks();
     delete process.env.VERBOSE_LOGGING;
     delete process.env.LOG_LEVEL;
   });
@@ -67,5 +84,23 @@ describe('appLogger', () => {
     expect(logs).toContain('[VERBOSE] visible verbose');
     expect(logs).toContain('[REDACTED]');
     expect(logs).not.toContain('secret-device-token');
+  });
+
+  test('background logs are persisted and included in export text', async () => {
+    RNFS.appendFile.mockResolvedValueOnce(undefined);
+    RNFS.exists.mockResolvedValueOnce(true);
+    RNFS.readFile.mockResolvedValueOnce('persisted background line\n');
+
+    await logBackgroundInfo('background receipt', { callId: 'call-1' });
+    const exported = await getLogsForExport();
+
+    expect(RNFS.appendFile).toHaveBeenCalledWith(
+      '/docs/wetalk-background.log',
+      expect.stringContaining('[INFO] background receipt'),
+      'utf8',
+    );
+    expect(exported).toContain('background receipt');
+    expect(exported).toContain('--- persisted background logs ---');
+    expect(exported).toContain('persisted background line');
   });
 });

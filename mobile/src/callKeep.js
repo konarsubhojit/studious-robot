@@ -99,6 +99,12 @@ let activeCallActionHandlers = null;
  */
 let pendingAnswerCallId = null;
 
+function registrationResult(registered) {
+  const unsubscribe = () => {};
+  unsubscribe.registered = registered;
+  return unsubscribe;
+}
+
 /**
  * Lazily resolve the optional `react-native-callkeep` default export. Returns
  * the RNCallKeep singleton, or `null` when the package is not installed. The
@@ -192,36 +198,53 @@ export async function setupCallKeep() {
 }
 
 /**
- * Display the OS incoming-call UI for a call. Returns `false` (never throws)
- * when CallKeep is unavailable or display fails.
+ * Display the OS incoming-call UI for a call. Never throws; failures resolve
+ * with a reason that distinguishes no-op paths from Telecom errors.
  *
  * Duplicate calls for the same `callId` are ignored, so it is safe to invoke
  * this from the socket, foreground-push and background-push paths at once.
  *
  * @param {{ callId: string, callerId?: string | null, hasVideo?: boolean }} opts
- * @returns {Promise<boolean>} `true` when the system UI was shown
+ * @returns {Promise<{ shown: true } | { shown: false, reason: string, message?: string }>}
  */
 export async function displayIncomingCall({ callId, callerId, hasVideo = true } = {}) {
-  if (!callId) return false;
+  if (!callId) return { shown: false, reason: 'missing_call_id' };
   if (displayedCallIds.has(callId)) {
     logInfo('[CallKeep] Incoming call already displayed; ignoring duplicate', { callId });
-    return true;
+    return { shown: false, reason: 'duplicate_callId_deduped' };
+  }
+  if (!loadCallKeep()) {
+    return { shown: false, reason: 'native_module_absent' };
   }
   const ready = await setupCallKeep();
-  if (!ready) return false;
+  if (!ready) return { shown: false, reason: 'phone_account_not_registered' };
 
   const callKeep = loadCallKeep();
   try {
+    if (
+      Platform.OS === 'android' &&
+      typeof callKeep.hasPhoneAccount === 'function' &&
+      !(await callKeep.hasPhoneAccount())
+    ) {
+      return { shown: false, reason: 'phone_account_not_registered' };
+    }
+    if (
+      Platform.OS === 'android' &&
+      typeof callKeep.checkPhoneAccountEnabled === 'function' &&
+      !(await callKeep.checkPhoneAccountEnabled())
+    ) {
+      return { shown: false, reason: 'phone_account_disabled_by_user' };
+    }
     const handle = callerId || callId;
     const name = callerId || 'Incoming call';
     displayedCallIds.add(callId);
     callKeep.displayIncomingCall(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
-    return true;
+    return { shown: true };
   } catch (error) {
     displayedCallIds.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
-    return false;
+    return { shown: false, reason: 'telecom_threw', message: error?.message };
   }
 }
 
@@ -306,7 +329,8 @@ export function endAllCalls() {
 export function registerCallActionListeners() {
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.addEventListener !== 'function') {
-    return () => {};
+    logWarn('[CallKeep] call action listeners not registered; native module unavailable');
+    return registrationResult(false);
   }
 
   const answerHandler = ({ callUUID } = {}) => {
@@ -347,10 +371,10 @@ export function registerCallActionListeners() {
     callKeep.addEventListener('endCall', endHandler);
   } catch (error) {
     logError('[CallKeep] registerCallActionListeners failed', error);
-    return () => {};
+    return registrationResult(false);
   }
 
-  return () => {
+  const unsubscribe = () => {
     try {
       // react-native-callkeep tracks a single listener per event name, so it
       // unsubscribes by event name only (no handler reference required).
@@ -360,6 +384,8 @@ export function registerCallActionListeners() {
       logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
     }
   };
+  unsubscribe.registered = true;
+  return unsubscribe;
 }
 
 /**
@@ -388,7 +414,8 @@ export function registerCallActionListeners() {
 export function registerShowIncomingCallUiListener() {
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.addEventListener !== 'function') {
-    return () => {};
+    logWarn('[CallKeep] showIncomingCallUi listener not registered; native module unavailable');
+    return registrationResult(false);
   }
 
   const handler = async ({ callUUID, handle, name } = {}) => {
@@ -413,16 +440,18 @@ export function registerShowIncomingCallUiListener() {
     callKeep.addEventListener('showIncomingCallUi', handler);
   } catch (error) {
     logError('[CallKeep] registerShowIncomingCallUiListener failed', error);
-    return () => {};
+    return registrationResult(false);
   }
 
-  return () => {
+  const unsubscribe = () => {
     try {
       callKeep.removeEventListener?.('showIncomingCallUi');
     } catch (error) {
       logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
     }
   };
+  unsubscribe.registered = true;
+  return unsubscribe;
 }
 
 /**

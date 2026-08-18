@@ -7,7 +7,15 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
 } from 'react-native-webrtc';
-import { clearLogs, getLogsAsText, logDebug, logError, logInfo, logWarn } from '../appLogger';
+import {
+  clearLogs,
+  getLogsForExport,
+  getLogsAsText,
+  logDebug,
+  logError,
+  logInfo,
+  logWarn,
+} from '../appLogger';
 import {
   AUDIO_ROUTES,
   chooseAudioRoute,
@@ -1053,7 +1061,7 @@ export default function useWebRTCCall() {
         isInRoom,
         socket: socketRef.current,
       });
-      const content = `${header}\n${getLogsAsText()}\n`;
+      const content = `${header}\n${await getLogsForExport()}\n`;
       const result = await writeLogsFile(content);
 
       if (result.success) {

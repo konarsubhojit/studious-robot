@@ -1,4 +1,5 @@
 const LOG_ENTRIES = [];
+let durableLogQueue = Promise.resolve();
 
 const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
@@ -133,6 +134,77 @@ function addLog(level, message, metadata) {
   return line;
 }
 
+function loadRNFS() {
+  try {
+    const mod = require('react-native-fs');
+    return mod?.default ?? mod ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function getDurableLogFilePath() {
+  const RNFS = loadRNFS();
+  const directory = RNFS?.DocumentDirectoryPath;
+  return directory ? `${directory}/wetalk-background.log` : null;
+}
+
+export function persistLogLine(line) {
+  const safeLine = typeof line === 'string' ? line : String(line ?? '');
+  durableLogQueue = durableLogQueue
+    .catch(() => {})
+    .then(async () => {
+      const RNFS = loadRNFS();
+      const path = getDurableLogFilePath();
+      if (!RNFS || !path || !safeLine) return false;
+      try {
+        if (typeof RNFS.appendFile === 'function') {
+          await RNFS.appendFile(path, `${safeLine}\n`, 'utf8');
+        } else {
+          const exists = typeof RNFS.exists === 'function' ? await RNFS.exists(path) : false;
+          const previous =
+            exists && typeof RNFS.readFile === 'function' ? await RNFS.readFile(path, 'utf8') : '';
+          await RNFS.writeFile(path, `${previous}${safeLine}\n`, 'utf8');
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  return durableLogQueue;
+}
+
+export function flushDurableLogs() {
+  return durableLogQueue.catch(() => false);
+}
+
+export async function getPersistedLogsAsText() {
+  await flushDurableLogs();
+  const RNFS = loadRNFS();
+  const path = getDurableLogFilePath();
+  if (!RNFS || !path || typeof RNFS.exists !== 'function' || typeof RNFS.readFile !== 'function') {
+    return '';
+  }
+  try {
+    if (!(await RNFS.exists(path))) return '';
+    return await RNFS.readFile(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+export function logBackgroundInfo(message, metadata) {
+  return persistLogLine(info(message, metadata));
+}
+
+export function logBackgroundWarn(message, metadata) {
+  return persistLogLine(warn(message, metadata));
+}
+
+export function logBackgroundError(message, metadata) {
+  return persistLogLine(error(message, metadata));
+}
+
 export function debug(message, metadata) {
   return addLog('debug', message, metadata);
 }
@@ -176,6 +248,14 @@ export function logError(message, metadata) {
 
 export function getLogsAsText() {
   return LOG_ENTRIES.join('\n');
+}
+
+export async function getLogsForExport() {
+  const memory = getLogsAsText();
+  const persisted = (await getPersistedLogsAsText()).trimEnd();
+  return [memory, persisted ? '--- persisted background logs ---' : '', persisted]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export function clearLogs() {

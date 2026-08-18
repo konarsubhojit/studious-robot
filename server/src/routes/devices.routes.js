@@ -2,9 +2,11 @@
 
 const express = require('express');
 const { getSessionFromRequest } = require('../lib/auth');
-const { normaliseId, normalisePushProvider } = require('../lib/normalize');
+const { normaliseId, normalisePushProvider, sanitizeForLog } = require('../lib/normalize');
 const { upsertDevice } = require('../lib/state');
 const { persistDevice } = require('../lib/persistence');
+
+const PUSH_RECEIPT_STAGES = new Set(['received', 'ui_displayed', 'ui_failed']);
 
 /**
  * Device push-token registration / unregistration.
@@ -87,6 +89,44 @@ function createDevicesRouter({ state, db }) {
       status: 'unregistered',
       userId: device.userId,
       deviceId: device.deviceId,
+    });
+  });
+
+  router.post('/devices/push-receipt', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
+    const callId = normaliseId(req.body?.callId);
+    const stage = normaliseId(req.body?.stage);
+
+    if (!deviceId) {
+      res.status(400).json({ error: 'sessionId or deviceId is required' });
+      return;
+    }
+    if (!callId) {
+      res.status(400).json({ error: 'callId is required' });
+      return;
+    }
+    if (!PUSH_RECEIPT_STAGES.has(stage)) {
+      res.status(400).json({ error: 'invalid stage' });
+      return;
+    }
+
+    const call = state.calls.get(callId) || null;
+    const createdAtMs = call?.createdAt ? new Date(call.createdAt).getTime() : NaN;
+    const latencyMs = Number.isFinite(createdAtMs) ? Math.max(0, Date.now() - createdAtMs) : null;
+    console.log(
+      `[push] Receipt callId=${sanitizeForLog(callId)}` +
+        ` device=${sanitizeForLog(deviceId)}` +
+        ` stage=${sanitizeForLog(stage)}` +
+        ` latencyMs=${latencyMs ?? 'N/A'}`
+    );
+
+    res.status(202).json({
+      status: 'recorded',
+      callId,
+      deviceId,
+      stage,
+      latencyMs,
     });
   });
 
