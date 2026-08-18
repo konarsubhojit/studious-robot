@@ -73,7 +73,20 @@ const NOTIFICATION_HUB_DEFAULT_API_VERSION = '2015-04';
 const NOTIFICATION_HUB_TOKEN_TTL_SECS = 60 * 60;
 /** Skew applied to the cached SAS-token expiry check, in seconds. */
 const NOTIFICATION_HUB_TOKEN_SKEW_SECS = 60;
-const INCOMING_CALL_TTL_SECONDS = 30;
+/**
+ * Fallback lifetime of a call push when the call record carries no
+ * `ringTimeoutAt`.  Matches the default server ring window
+ * (`DEFAULT_RINGING_TIMEOUT_MS`) so a push can never outlive the ring — see
+ * {@link resolveCallTtlSeconds}.
+ */
+const INCOMING_CALL_TTL_SECONDS = 120;
+
+/**
+ * Lifetime of a `call.cancelled` push.  Short: it is only useful while the
+ * stale incoming-call notification is still on screen, and a device that was
+ * offline for a minute never showed one.
+ */
+const CANCELLED_CALL_TTL_SECONDS = 60;
 
 // ─── APNs JWT cache ───────────────────────────────────────────────────────────
 
@@ -457,17 +470,38 @@ const FCM_PRIORITY_HIGH = 'HIGH';
  * @property {string} body      - Human-readable body.
  * @property {string} deepLink  - `wetalk://…` link the client opens on tap.
  * @property {Record<string, string>} data - Extra event-specific fields.
+ * @property {number} [ttlSeconds] - Provider time-to-live; omitted means "no expiry".
  */
+
+/**
+ * Derive the push time-to-live from the time left in the ring window.
+ *
+ * A late-delivered call push must never ring a call that has already timed
+ * out, so the TTL tracks the *remaining* ring time rather than a fixed value:
+ * a push handed to the provider 100s into a 120s ring window expires in 20s,
+ * exactly when the call does.  Falls back to
+ * {@link INCOMING_CALL_TTL_SECONDS} when the caller supplied no timeout.
+ *
+ * @param {string|null|undefined} ringTimeoutAt - ISO 8601 ring deadline.
+ * @returns {number} TTL in seconds (at least 1).
+ */
+function resolveCallTtlSeconds(ringTimeoutAt) {
+  if (!ringTimeoutAt) return INCOMING_CALL_TTL_SECONDS;
+  const deadlineMs = new Date(ringTimeoutAt).getTime();
+  if (!Number.isFinite(deadlineMs)) return INCOMING_CALL_TTL_SECONDS;
+  return Math.max(1, Math.ceil((deadlineMs - Date.now()) / 1000));
+}
 
 /**
  * Describe an incoming call as a transport-neutral push envelope.
  *
- * @param {{ callId: string, callerId: string }} callData
+ * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
  * @returns {PushEnvelope}
  */
 function buildCallEnvelope(callData) {
   return {
     type: 'call.incoming',
+    ttlSeconds: resolveCallTtlSeconds(callData.ringTimeoutAt),
     title: 'Incoming call',
     body: `Call from ${callData.callerId}`,
     deepLink: `wetalk://call/${callData.callId}`,
@@ -516,6 +550,30 @@ function buildMessageEnvelope(messageData) {
       messageId: messageData.messageId,
       conversationId: messageData.conversationId,
       senderId: messageData.senderId,
+    },
+  };
+}
+
+/**
+ * Describe a call that stopped ringing as a transport-neutral push envelope.
+ *
+ * Sent so a killed app — which has no socket and therefore never sees
+ * `call.state_changed` — can dismiss the incoming-call notification it is
+ * still showing for a call nobody can answer any more.
+ *
+ * @param {{ callId: string, reason?: string|null }} callData
+ * @returns {PushEnvelope}
+ */
+function buildCallCancelledEnvelope(callData) {
+  return {
+    type: 'call.cancelled',
+    ttlSeconds: CANCELLED_CALL_TTL_SECONDS,
+    title: 'Call ended',
+    body: 'The call is no longer ringing',
+    deepLink: `wetalk://call/${callData.callId}`,
+    data: {
+      callId: callData.callId,
+      reason: callData.reason || 'ended',
     },
   };
 }
@@ -590,9 +648,8 @@ function buildDataBlock(envelope) {
  * @returns {string}
  */
 function buildFcmPayload(pushToken, callData) {
-  return buildFcmEnvelopePayload(pushToken, buildCallEnvelope(callData), {
-    ttlSeconds: INCOMING_CALL_TTL_SECONDS,
-  });
+  const envelope = buildCallEnvelope(callData);
+  return buildFcmEnvelopePayload(pushToken, envelope, { ttlSeconds: envelope.ttlSeconds });
 }
 
 /**
@@ -640,8 +697,9 @@ function buildFcmEnvelopePayload(pushToken, envelope, { ttlSeconds = null } = {}
  * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData) {
-  return buildNotificationHubAndroidEnvelopePayload(buildCallEnvelope(callData), {
-    ttlSeconds: INCOMING_CALL_TTL_SECONDS,
+  const envelope = buildCallEnvelope(callData);
+  return buildNotificationHubAndroidEnvelopePayload(envelope, {
+    ttlSeconds: envelope.ttlSeconds,
   });
 }
 
@@ -749,7 +807,7 @@ async function sendFcmOnce(config, pushToken, envelope) {
   }
 
   const payload = buildFcmEnvelopePayload(pushToken, envelope, {
-    ttlSeconds: envelope.type === 'call.incoming' ? INCOMING_CALL_TTL_SECONDS : null,
+    ttlSeconds: envelope.ttlSeconds ?? null,
   });
   const payloadLen = Buffer.byteLength(payload);
   const path = `/v1/projects/${config.projectId}/messages:send`;
@@ -815,7 +873,7 @@ function sendNotificationHubOnce(config, channel, envelope) {
     ? buildApnsEnvelopePayload(envelope)
     : JSON.stringify(
         buildNotificationHubAndroidEnvelopePayload(envelope, {
-          ttlSeconds: envelope.type === 'call.incoming' ? INCOMING_CALL_TTL_SECONDS : null,
+          ttlSeconds: envelope.ttlSeconds ?? null,
         }),
       );
 
@@ -836,8 +894,8 @@ function sendNotificationHubOnce(config, channel, envelope) {
     'ServiceBusNotification-Format': format,
     'ServiceBusNotification-DeviceHandle': channel.pushToken,
   };
-  if (envelope.type === 'call.incoming') {
-    headers['ServiceBusNotification-TTL'] = String(INCOMING_CALL_TTL_SECONDS);
+  if (Number.isFinite(envelope.ttlSeconds) && envelope.ttlSeconds > 0) {
+    headers['ServiceBusNotification-TTL'] = String(envelope.ttlSeconds);
   }
 
   return new Promise((resolve, reject) => {
@@ -1206,6 +1264,50 @@ async function sendIncomingCallPush(channel, callData) {
  *   deadToken: boolean
  * }>}
  */
+/**
+ * Tell a device that a call stopped ringing so it can dismiss the stale
+ * incoming-call notification even with no socket connected.  Never throws.
+ *
+ * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ callId: string, reason?: string|null }} callData
+ * @returns {Promise<object>} delivery outcome, see {@link sendIncomingCallPush}
+ */
+async function sendCallCancelledPush(channel, callData) {
+  const outcome = await deliverPush(channel, buildCallCancelledEnvelope(callData));
+  logDeliveryOutcome(
+    outcome,
+    `call.cancelled callId=${callData.callId} reason=${callData.reason ?? 'ended'}`
+  );
+  return outcome;
+}
+
+/**
+ * Send a text-message push notification to an offline recipient.
+ *
+ * Uses the same Notification-Hubs-first chain and data-only payload shape as
+ * {@link sendIncomingCallPush}.  Never throws.
+ *
+ * Acceptance by the provider says nothing about whether the handset displayed
+ * anything — the client reports that separately through
+ * `POST /devices/push-receipt` keyed by `messageId`.
+ *
+ * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{
+ *   messageId: string,
+ *   conversationId: string,
+ *   senderId: string,
+ *   preview?: string | null,
+ * }} messageData
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   provider: string,
+ *   deviceId: string,
+ *   transport: 'notification_hub'|'direct',
+ *   statusCode?: number,
+ *   reason?: string,
+ *   deadToken: boolean
+ * }>}
+ */
 async function sendMessagePush(channel, messageData) {
   const outcome = await deliverPush(channel, buildMessageEnvelope(messageData));
   logDeliveryOutcome(outcome, `message.received messageId=${messageData.messageId}`);
@@ -1214,6 +1316,7 @@ async function sendMessagePush(channel, messageData) {
 
 module.exports = {
   sendIncomingCallPush,
+  sendCallCancelledPush,
   sendMessagePush,
   logNotificationHubStartupStatus,
   // Exported for unit tests.
@@ -1226,6 +1329,8 @@ module.exports = {
   _loadNotificationHubConfig: loadNotificationHubConfig,
   _buildNotificationHubSasToken: buildNotificationHubSasToken,
   _buildNotificationHubAndroidPayload: buildNotificationHubAndroidPayload,
+  _buildCallCancelledEnvelope: buildCallCancelledEnvelope,
+  _resolveCallTtlSeconds: resolveCallTtlSeconds,
   _buildNotificationHubAndroidMessagePayload: (messageData) =>
     buildNotificationHubAndroidEnvelopePayload(buildMessageEnvelope(messageData)),
   _isDeadTokenResult: isDeadTokenResult,

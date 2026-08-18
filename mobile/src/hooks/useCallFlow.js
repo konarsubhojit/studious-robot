@@ -77,6 +77,26 @@ const HAPTIC_CONNECT_MS = 30;
 const ANSWER_SOCKET_WAIT_MS = 5000;
 
 /**
+ * Call statuses that mean a call is up (or coming up) on this device.  A failed
+ * accept must never tear one of these down: a duplicate Answer tap for a call
+ * that is already connected fails server-side ("not ringing any more") and the
+ * naive cleanup would kill the very call the user just picked up.
+ */
+const LIVE_CALL_STATUSES = new Set(['accepted', 'connecting_media', 'in_call']);
+
+/** Statuses that mean a call has stopped ringing for good. */
+const TERMINAL_CALL_STATUSES = new Set([
+  'ended',
+  'declined',
+  'missed',
+  'busy',
+  'unreachable',
+]);
+
+/** How many answered callIds are remembered for duplicate-accept suppression. */
+const ANSWERED_CALL_HISTORY_LIMIT = 20;
+
+/**
  * How often to proactively rotate the session token.  Set well below typical
  * server-side TTLs (e.g. 1 h) so the token never expires mid-call.
  */
@@ -229,6 +249,15 @@ export default function useCallFlow() {
   // Tracks callIds for which the incoming-call UI has already been shown so
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef(new Set());
+  // Answer bookkeeping. The same tap can reach `acceptIncomingCall` through
+  // several paths at once (CallKeep event, replayed queue entry, in-app
+  // button), and a second accept for a call that is already up fails
+  // server-side — so each callId is accepted at most once.
+  const acceptInFlightCallIdRef = useRef(null);
+  const answeredCallIdsRef = useRef([]);
+  // callIds whose queued answer has already been replayed, so the replay effect
+  // stays a no-op when `acceptIncomingCall`'s identity changes.
+  const replayedAnswerCallIdsRef = useRef(new Set());
 
   const updateStatus = useCallback((message, severity = 'info') => {
     logVerbose('[CallFlow] Status updated', { message, severity });
@@ -787,6 +816,38 @@ export default function useCallFlow() {
           callId: call?.callId,
           reason,
         });
+        const eventCallId = call?.callId ?? null;
+        const knownCallId =
+          activeCallIdRef.current ??
+          activeCallRef.current?.callId ??
+          incomingCallRef.current?.callId ??
+          null;
+
+        // A call that stops ringing — cancelled, declined, missed, timed out —
+        // must take its OS notification with it, otherwise the shade keeps a
+        // tappable ghost that answers a call nobody can join.
+        if (eventCallId && TERMINAL_CALL_STATUSES.has(callStatus)) {
+          logInfo('[CallFlow] Dismissing call UI for terminal transition', {
+            callId: eventCallId,
+            callStatus,
+            reason: reason ?? null,
+          });
+          clearPendingAnswer(eventCallId, `state_${callStatus}`);
+          displayedIncomingCallIdsRef.current.delete(eventCallId);
+          endCallKeepCall(eventCallId);
+        }
+
+        // Transitions for a *different* call (a stale ring that ended while
+        // this one is up) must not touch the call currently in progress.
+        if (eventCallId && knownCallId && eventCallId !== knownCallId) {
+          logInfo('[CallFlow] Ignoring state change for a non-current call', {
+            callId: eventCallId,
+            knownCallId,
+            callStatus,
+          });
+          return;
+        }
+
         if (call) {
           activeCallRef.current = call;
           setActiveCall(call);
@@ -1688,6 +1749,14 @@ export default function useCallFlow() {
     [ensurePeerConnection, reportAnswerStage, startLocalPreview, updateStatus],
   );
 
+  /** Remember a callId that must never be accepted twice (bounded). */
+  const rememberAnsweredCall = useCallback(callId => {
+    const history = answeredCallIdsRef.current;
+    if (history.includes(callId)) return;
+    history.push(callId);
+    if (history.length > ANSWERED_CALL_HISTORY_LIMIT) history.shift();
+  }, []);
+
   const acceptIncomingCall = useCallback(async () => {
     // Read from the ref first: on a push-originated answer the ref is set
     // before React has re-rendered with the new state, and a stale closure over
@@ -1704,7 +1773,43 @@ export default function useCallFlow() {
       return;
     }
 
+    // ── Idempotency guard ───────────────────────────────────────────────────
+    // A second accept for the same call is a logged no-op, never an error path:
+    // the server has already left `ringing`, so it would fail and the old
+    // failure handling tore down the call that had just connected.
+    if (acceptInFlightCallIdRef.current === call.callId) {
+      logInfo('[CallFlow] Ignoring duplicate acceptIncomingCall', {
+        callId: call.callId,
+        reason: 'accept_in_flight',
+      });
+      reportAnswerStage(call.callId, 'answer_skipped_duplicate', 'accept_in_flight');
+      return;
+    }
+    if (answeredCallIdsRef.current.includes(call.callId)) {
+      logInfo('[CallFlow] Ignoring duplicate acceptIncomingCall', {
+        callId: call.callId,
+        reason: 'already_accepted',
+      });
+      reportAnswerStage(call.callId, 'answer_skipped_duplicate', 'already_accepted');
+      return;
+    }
+
+    // The call stopped ringing before the tap reached here (a stale
+    // notification the OS still showed): dismiss it instead of answering a
+    // call that no longer exists.
+    if (call.status && call.status !== 'ringing') {
+      logInfo('[CallFlow] Ignoring accept for a call that stopped ringing', {
+        callId: call.callId,
+        status: call.status,
+      });
+      reportAnswerStage(call.callId, 'accept_tapped', 'call_already_ended');
+      clearPendingAnswer(call.callId, 'call_already_ended');
+      endCallKeepCall(call.callId);
+      return;
+    }
+
     logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
+    acceptInFlightCallIdRef.current = call.callId;
     reportAnswerStage(call.callId, 'answer_attempted');
 
     try {
@@ -1718,6 +1823,7 @@ export default function useCallFlow() {
       const { call: acceptedCall, transport } = await sendCallAccept(call.callId);
 
       const nextCall = acceptedCall ?? call;
+      rememberAnsweredCall(call.callId);
       activeCallRef.current = nextCall;
       setActiveCall(nextCall);
       incomingCallRef.current = null;
@@ -1744,15 +1850,37 @@ export default function useCallFlow() {
     } catch (error) {
       const reason = error?.answerFailureReason ?? 'accept_failed';
       logError('[CallFlow] acceptIncomingCall failed', error);
-      updateStatus(`Failed to accept call: ${error.message}`, 'error');
       reportAnswerStage(call.callId, 'answer_failed', reason);
       clearPendingAnswer(call.callId, reason);
+
+      // Never tear down a call that is already up. The accept can fail simply
+      // because it lost a race with an earlier accept for the same call, in
+      // which case the call is connected and ending it here is exactly the
+      // "cannot pick up" bug.
+      const liveCall = activeCallRef.current;
+      if (liveCall && LIVE_CALL_STATUSES.has(liveCall.status)) {
+        logWarn('[CallFlow] Accept failed while a call is already active; keeping it', {
+          callId: call.callId,
+          activeCallId: liveCall.callId,
+          activeStatus: liveCall.status,
+          reason,
+        });
+        updateStatus('Call already answered', 'info');
+        return;
+      }
+
+      updateStatus(`Failed to accept call: ${error.message}`, 'error');
       endActiveCall();
+    } finally {
+      if (acceptInFlightCallIdRef.current === call.callId) {
+        acceptInFlightCallIdRef.current = null;
+      }
     }
   }, [
     acquireMediaForAcceptedCall,
     endActiveCall,
     incomingCall,
+    rememberAnsweredCall,
     reportAnswerStage,
     sendCallAccept,
     updateStatus,
@@ -1861,14 +1989,29 @@ export default function useCallFlow() {
       // outcome is still in flight (no identity yet), so the queue must
       // survive until the deferred rehydration runs.
       if (outcome === 'deferred') return;
-      if (peekPendingAnswer() === callUUID && incomingCallRef.current?.callId !== callUUID) {
-        logWarn('[CallFlow] Queued answer cannot be replayed; call unavailable', {
+      if (peekPendingAnswer() !== callUUID || incomingCallRef.current?.callId === callUUID) return;
+
+      if (outcome === 'terminal' || outcome === 'not_found') {
+        // The tap was for a call that had already stopped ringing — the
+        // notification outlived the call. Dismiss it silently rather than
+        // failing an answer nobody can complete.
+        logInfo('[CallFlow] Queued answer dropped; call already ended', {
           callUUID,
           source,
+          outcome,
         });
-        reportAnswerStageRef.current?.(callUUID, 'answer_failed', 'call_unavailable');
-        clearPendingAnswer(callUUID, 'call_unavailable');
+        reportAnswerStageRef.current?.(callUUID, 'accept_tapped', 'call_already_ended');
+        clearPendingAnswer(callUUID, 'call_already_ended');
+        endCallKeepCall(callUUID);
+        return;
       }
+
+      logWarn('[CallFlow] Queued answer cannot be replayed; call unavailable', {
+        callUUID,
+        source,
+      });
+      reportAnswerStageRef.current?.(callUUID, 'answer_failed', 'call_unavailable');
+      clearPendingAnswer(callUUID, 'call_unavailable');
     });
   }, []);
 
@@ -1956,13 +2099,17 @@ export default function useCallFlow() {
   // Replay a queued `answerCall` once the matching call becomes known to this
   // hook (via the `call.incoming` socket event or push rehydration).
   useEffect(() => {
-    if (incomingCall && consumePendingAnswer(incomingCall.callId)) {
-      logInfo('[CallFlow] Replaying recorded answerCall', {
-        callId: incomingCall.callId,
-      });
-      acceptIncomingCall();
-    }
-  }, [incomingCall, acceptIncomingCall]);
+    const callId = incomingCall?.callId;
+    if (!callId) return;
+    // The effect re-runs whenever `acceptIncomingCall`'s identity changes, so a
+    // per-callId guard (not just the drained queue) keeps a replay from
+    // triggering a second accept for the same call.
+    if (replayedAnswerCallIdsRef.current.has(callId)) return;
+    if (!consumePendingAnswer(callId)) return;
+    replayedAnswerCallIdsRef.current.add(callId);
+    logInfo('[CallFlow] Replaying recorded answerCall', { callId });
+    acceptIncomingCallRef.current?.();
+  }, [incomingCall]);
 
   // ─── End active in-call ───────────────────────────────────────────────────
 

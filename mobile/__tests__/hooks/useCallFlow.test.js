@@ -2958,7 +2958,7 @@ describe('useCallFlow answer path', () => {
   });
 
   test('a queued answer for a call that is gone is dropped loudly, not left stuck', async () => {
-    const { peekPendingAnswer } = require('../../src/callKeep');
+    const { endCall, peekPendingAnswer } = require('../../src/callKeep');
     const { sendPushReceipt } = require('../../src/pushNotifications');
     mockFetch({
       '/calls/call-gone': { ok: false, status: 404, json: async () => ({}) },
@@ -2978,13 +2978,46 @@ describe('useCallFlow answer path', () => {
     });
 
     expect(peekPendingAnswer()).toBeNull();
+    // The call had already stopped ringing, so the tap is reported as landing
+    // on a dead notification and that notification is dismissed.
     expect(sendPushReceipt).toHaveBeenCalledWith(
       expect.objectContaining({
         callId: 'call-gone',
+        stage: 'accept_tapped',
+        reason: 'call_already_ended',
+      }),
+    );
+    expect(endCall).toHaveBeenCalledWith('call-gone');
+    expect(resultRef.current.status.message).toMatch(/no longer available/i);
+  });
+
+  test('a queued answer whose call cannot be fetched is reported as unavailable', async () => {
+    const { peekPendingAnswer } = require('../../src/callKeep');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    mockFetch({
+      '/calls/call-unreachable': { ok: false, status: 500, json: async () => ({}) },
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const { setCallActionHandlers } = require('../../src/callKeep');
+    const { onAnswer } =
+      setCallActionHandlers.mock.calls[setCallActionHandlers.mock.calls.length - 1][0];
+
+    await act(async () => {
+      onAnswer('call-unreachable');
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(peekPendingAnswer()).toBeNull();
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-unreachable',
         stage: 'answer_failed',
         reason: 'call_unavailable',
       }),
     );
-    expect(resultRef.current.status.message).toMatch(/no longer available/i);
   });
 });

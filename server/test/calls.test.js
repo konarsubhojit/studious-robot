@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, CALL_END_REASONS } = require('../src/index.js');
+const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -498,7 +499,7 @@ test('tickRingingTimeouts: transitions stale ringing calls to missed', async () 
     assert.equal(created.body.status, 'ringing');
 
     // Tick with a timestamp far in the future.
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 1);
 
     const call = getCall(callId);
@@ -543,7 +544,7 @@ test('tickRingingTimeouts: does not re-transition already-terminal calls', async
     await postJson(url, `/calls/${callId}/decline`, {}, calleeSession);
 
     // Tick far in the future – should not affect the already-terminal call.
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 0);
 
     const events = getCallEvents(callId);

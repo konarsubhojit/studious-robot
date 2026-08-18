@@ -1,7 +1,7 @@
 'use strict';
 
 const push = require('../push');
-const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL } = require('../config');
+const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, TERMINAL_CALL_STATES } = require('../config');
 const { resolveReachableChannels, userRoom } = require('../lib/state');
 const { pruneDeadDevice } = require('../lib/persistence');
 const { verboseLog } = require('../lib/verbose');
@@ -148,7 +148,11 @@ function attemptIncomingCallPush(state, call, channel, trigger = null) {
       (trigger ? ` trigger=${trigger}` : '')
   );
   push
-    .sendIncomingCallPush(channel, { callId: call.callId, callerId: call.callerId })
+    .sendIncomingCallPush(channel, {
+      callId: call.callId,
+      callerId: call.callerId,
+      ringTimeoutAt: call.ringTimeoutAt ?? null,
+    })
     .then((outcome) => handleDeadTokenOutcome(state, outcome))
     .catch((err) => {
       console.error(
@@ -316,8 +320,43 @@ function notifyCallCreated(io, state, call) {
   });
 }
 
+/**
+ * Tell every device that was pushed an incoming-call notification for this call
+ * that it stopped ringing, so a killed app (no socket, therefore no
+ * `call.state_changed`) can dismiss the notification instead of leaving a
+ * tappable ghost on screen.
+ *
+ * @param {object} state
+ * @param {object} call
+ * @param {string|null} reason
+ */
+function dispatchCallCancelledPushes(state, call, reason) {
+  const entry = getIncomingCallPushState(state).get(call.callId);
+  if (!entry || entry.pushedDeviceIds.size === 0) return;
+  for (const deviceId of entry.pushedDeviceIds) {
+    const channel = findPushChannelForDevice(state, call.calleeId, deviceId);
+    if (!channel) continue;
+    console.log(
+      `[push] Attempting call.cancelled callId=${call.callId}` +
+        ` user=${call.calleeId} device=${deviceId} via ${channel.provider}`
+    );
+    push
+      .sendCallCancelledPush(channel, { callId: call.callId, reason })
+      .then((outcome) => handleDeadTokenOutcome(state, outcome))
+      .catch((err) => {
+        console.error(
+          `[push] Failed call.cancelled callId=${call.callId}` +
+            ` user=${call.calleeId} device=${deviceId} error=${err?.message ?? 'unknown'}`
+        );
+      });
+  }
+}
+
 function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
   if (call.status !== 'ringing') {
+    if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
+      dispatchCallCancelledPushes(state, call, reason ?? call.endReason ?? null);
+    }
     clearIncomingCallPushState(state, call.callId);
   }
   if (previousStatus !== null) {

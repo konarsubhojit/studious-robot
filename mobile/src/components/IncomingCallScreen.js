@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { deriveInitials } from '../callUx';
+import { deriveInitials, formatRingCountdown } from '../callUx';
 import { colors, spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
@@ -112,7 +112,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
         {ringTimeoutAt ? (
           <Text style={styles.countdown} testID="incoming-countdown">
-            {secondsLeft > 0 ? `Rings for ${secondsLeft}s` : 'Timed out'}
+            {secondsLeft > 0 ? `Rings for ${formatRingCountdown(secondsLeft)}` : 'Timed out'}
           </Text>
         ) : null}
       </View>

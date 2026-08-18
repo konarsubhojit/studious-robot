@@ -8,7 +8,11 @@ import {
   logInfo,
   logWarn,
 } from './appLogger';
-import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
+import {
+  clearPendingAnswer,
+  displayIncomingCall as displayCallKeepIncomingCall,
+  endCall as endCallKeepCall,
+} from './callKeep';
 import { isCallConnectionLive } from './incomingCallNotification';
 import {
   hasSeenMessage,
@@ -52,6 +56,7 @@ const RECEIPT_STAGES = new Set([
   'answer_attempted',
   'answer_failed',
   'answer_accepted',
+  'answer_skipped_duplicate',
   'accept_tapped',
   'decline_tapped',
 ]);
@@ -67,6 +72,7 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 
 /** Envelope `type` values the server sends (see `server/src/push.js`). */
 export const PUSH_TYPE_CALL = 'call.incoming';
+export const PUSH_TYPE_CALL_CANCELLED = 'call.cancelled';
 export const PUSH_TYPE_MESSAGE = 'message.received';
 
 /**
@@ -636,6 +642,36 @@ async function displayMessagePush({ remoteMessage, message }) {
 }
 
 /**
+ * Handle a `call.cancelled` push: the call stopped ringing, so whatever OS UI
+ * this device is showing for it must go away.
+ *
+ * A killed app has no socket and therefore never sees `call.state_changed`, so
+ * without this push its incoming-call notification stays on screen — and stays
+ * tappable — long after the call ended.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<{ callId: string, reason: string | null } | null>}
+ */
+async function handleCallCancelledPush(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
+  const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
+  if (!callId) {
+    logWarn('[Push] Call-cancelled push missing callId');
+    return null;
+  }
+
+  logInfo('[Push] Call cancelled push received', { callId, reason: reason || null });
+  clearPendingAnswer(callId, reason || 'call_cancelled_push');
+  try {
+    endCallKeepCall(callId);
+  } catch (error) {
+    logWarn('[Push] Failed to dismiss cancelled call UI', { callId, message: error?.message });
+  }
+  return { callId, reason: reason || null };
+}
+
+/**
  * Background push callback used by @react-native-firebase/messaging.
  *
  * Dispatches on the envelope `type` the server sends: message pushes carry no
@@ -649,6 +685,11 @@ export async function handleBackgroundPushMessage(remoteMessage) {
   const type = _extractPushType(remoteMessage);
   if (type === PUSH_TYPE_MESSAGE) {
     return handleBackgroundMessagePush(remoteMessage);
+  }
+  if (type === PUSH_TYPE_CALL_CANCELLED) {
+    const cancelled = await handleCallCancelledPush(remoteMessage);
+    await flushDurableLogs();
+    return cancelled;
   }
   if (type !== PUSH_TYPE_CALL) {
     await logBackgroundWarn('[Push] Background push of unknown type ignored', {
@@ -791,6 +832,9 @@ export async function handleForegroundPushMessage(remoteMessage) {
   const type = _extractPushType(remoteMessage);
   if (type === PUSH_TYPE_MESSAGE) {
     return handleForegroundMessagePush(remoteMessage);
+  }
+  if (type === PUSH_TYPE_CALL_CANCELLED) {
+    return handleCallCancelledPush(remoteMessage);
   }
   if (type !== PUSH_TYPE_CALL) {
     logWarn('[Push] Foreground push of unknown type ignored', { type: type ?? null });

@@ -189,7 +189,7 @@ test('android hub payload is FCM v1 native format, data-only, and carries the ca
   assert.equal(payload.message.notification, undefined, 'no top-level notification block');
   assert.equal(payload.message.android.notification, undefined, 'no android notification block');
   assert.equal(payload.message.android.priority, 'HIGH');
-  assert.equal(payload.message.android.ttl, '30s');
+  assert.equal(payload.message.android.ttl, '120s');
   assert.deepEqual(payload.message.android.data, {
     callId: 'call-abc',
     callerId: 'alice',
@@ -225,7 +225,7 @@ test('delivers through the notification hub when configured', async () => {
         assert.equal(hubReq.opts.hostname, HUB_NAMESPACE);
         assert.equal(hubReq.opts.path, '/storeman/messages/?direct&api-version=2015-04');
         assert.equal(hubReq.opts.headers['ServiceBusNotification-Format'], 'FcmV1');
-        assert.equal(hubReq.opts.headers['ServiceBusNotification-TTL'], '30');
+        assert.equal(hubReq.opts.headers['ServiceBusNotification-TTL'], '120');
         assert.equal(
           hubReq.opts.headers['ServiceBusNotification-DeviceHandle'],
           'device-token-123'
@@ -237,7 +237,7 @@ test('delivers through the notification hub when configured', async () => {
         assert.equal(body.message.notification, undefined);
         assert.equal(body.message.android.data.callId, 'call-abc');
         assert.equal(body.message.android.priority, 'HIGH');
-        assert.equal(body.message.android.ttl, '30s');
+        assert.equal(body.message.android.ttl, '120s');
         assert.ok(
           logs.lines.some(
             (line) =>
