@@ -1073,6 +1073,7 @@ export default function useCallFlow() {
       recordConnectSuccess,
       recordConnectError,
       sessionIdRef,
+      deviceIdRef,
       fetchConversations,
     ],
   );

@@ -10,7 +10,6 @@ import {
 import {
   clearLogs,
   getLogsForExport,
-  getLogsAsText,
   logDebug,
   logError,
   logInfo,
