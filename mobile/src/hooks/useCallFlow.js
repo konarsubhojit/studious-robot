@@ -10,6 +10,7 @@ import {
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
 import * as Telemetry from '../telemetry';
 import {
+  applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
   setAudioRoute,
@@ -233,7 +234,13 @@ export default function useCallFlow() {
   const [remoteStream, setRemoteStream] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
+  // Starts false: the route is picked automatically from the connected
+  // devices (Bluetooth → wired → earpiece) and only becomes the loudspeaker
+  // when nothing else is available or the user asks for it.
+  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(false);
+  // Route the user explicitly picked; never overridden by automatic
+  // re-evaluation for the rest of the call.
+  const manualAudioRouteRef = useRef(null);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
@@ -464,9 +471,9 @@ export default function useCallFlow() {
    * left behind in the Picture-in-Picture window after a call ends.
    */
   const releaseLocalMedia = useCallback(() => {
-    const localStream = localStreamRef.current;
-    if (localStream) {
-      localStream.getTracks?.().forEach(track => {
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks?.().forEach(track => {
         try {
           track.stop();
         } catch {
@@ -2302,6 +2309,7 @@ export default function useCallFlow() {
   const chooseAudioOutput = useCallback(
     async route => {
       try {
+        manualAudioRouteRef.current = route;
         const result = await chooseAudioRoute(route);
         if (!result.ok) {
           setAudioDevices({
@@ -2457,17 +2465,40 @@ export default function useCallFlow() {
     };
   }, [isInCall, updateStatus]);
 
+  // Pick the best available output (Bluetooth → wired → earpiece → speaker)
+  // unless the user already chose one explicitly during this call.
+  const applyAutomaticAudioRoute = useCallback(async available => {
+    if (manualAudioRouteRef.current) return;
+    const result = await applyPreferredAudioRoute(available);
+    setAudioDevices({ available: result.available, selected: result.selected });
+    setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
+    if (!result.ok) {
+      logWarn('[CallFlow] Automatic audio routing degraded', {
+        message: result.message,
+      });
+    }
+  }, []);
+
   useEffect(() => {
-    if (!isInCall) return undefined;
+    if (!isInCall) {
+      manualAudioRouteRef.current = null;
+      return undefined;
+    }
+
+    // The device list is discovered by the first selection (see
+    // applyPreferredAudioRoute), so no list is needed here.
+    applyAutomaticAudioRoute([]);
+    // Re-evaluate whenever a device is plugged in or removed mid-call.
     return subscribeAudioDevices(nextDevices => {
       logInfo('[CallFlow] Audio devices changed', nextDevices);
       setAudioDevices(nextDevices);
+      applyAutomaticAudioRoute(nextDevices.available);
     });
-  }, [isInCall]);
+  }, [applyAutomaticAudioRoute, isInCall]);
 
   useEffect(() => {
-    if (!isInCall) return;
-    const result = setAudioRoute(isSpeakerEnabled);
+    if (!isInCall || !isSpeakerEnabled) return;
+    const result = setAudioRoute(true);
     if (!result.ok) {
       logWarn('[CallFlow] Audio route update failed', {
         message: result.message,

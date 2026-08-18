@@ -16,8 +16,10 @@ jest.mock('../src/permissions', () => ({
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 import {
+  applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
+  selectPreferredAudioRoute,
   getAudioRouteLabel,
   parseAudioDeviceStatus,
   setAudioRoute,
@@ -213,6 +215,91 @@ describe('audioRouting', () => {
         selected: null,
         message: expect.stringContaining('Unable to update in-call audio'),
       });
+    });
+  });
+
+  describe('selectPreferredAudioRoute', () => {
+    test('prefers Bluetooth, then wired, then earpiece, then speaker', () => {
+      expect(
+        selectPreferredAudioRoute(['SPEAKER_PHONE', 'EARPIECE', 'WIRED_HEADSET', 'BLUETOOTH']),
+      ).toBe(AUDIO_ROUTES.BLUETOOTH);
+      expect(selectPreferredAudioRoute(['SPEAKER_PHONE', 'EARPIECE', 'WIRED_HEADSET'])).toBe(
+        AUDIO_ROUTES.WIRED_HEADSET,
+      );
+      expect(selectPreferredAudioRoute(['SPEAKER_PHONE', 'EARPIECE'])).toBe(AUDIO_ROUTES.EARPIECE);
+      expect(selectPreferredAudioRoute(['SPEAKER_PHONE'])).toBe(AUDIO_ROUTES.SPEAKER_PHONE);
+    });
+
+    test('never defaults to the loudspeaker when nothing is known', () => {
+      expect(selectPreferredAudioRoute()).toBe(AUDIO_ROUTES.EARPIECE);
+      expect(selectPreferredAudioRoute([])).toBe(AUDIO_ROUTES.EARPIECE);
+    });
+  });
+
+  describe('applyPreferredAudioRoute', () => {
+    beforeEach(() => {
+      mockEnsureBluetoothPermission.mockResolvedValue({ ok: true, granted: true });
+    });
+
+    test('routes to Bluetooth when a headset is connected', async () => {
+      InCallManager.chooseAudioRoute.mockResolvedValue({
+        availableAudioDeviceList: '["BLUETOOTH","EARPIECE","SPEAKER_PHONE"]',
+        selectedAudioDevice: 'BLUETOOTH',
+      });
+
+      const result = await applyPreferredAudioRoute([
+        'BLUETOOTH',
+        'EARPIECE',
+        'SPEAKER_PHONE',
+      ]);
+
+      expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
+      expect(result).toMatchObject({ ok: true, selected: AUDIO_ROUTES.BLUETOOTH });
+    });
+
+    test('discovers devices on the first selection and upgrades to the better one', async () => {
+      InCallManager.chooseAudioRoute.mockImplementation(async route => ({
+        availableAudioDeviceList: '["BLUETOOTH","EARPIECE"]',
+        selectedAudioDevice: route,
+      }));
+
+      const result = await applyPreferredAudioRoute([]);
+
+      expect(InCallManager.chooseAudioRoute).toHaveBeenNthCalledWith(1, 'EARPIECE');
+      expect(InCallManager.chooseAudioRoute).toHaveBeenNthCalledWith(2, 'BLUETOOTH');
+      expect(result).toMatchObject({ ok: true, selected: AUDIO_ROUTES.BLUETOOTH });
+    });
+
+    test('falls back to the wired headset instead of the speaker when Bluetooth is denied', async () => {
+      mockEnsureBluetoothPermission.mockResolvedValue({
+        ok: false,
+        granted: false,
+        message: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
+      });
+      InCallManager.chooseAudioRoute.mockResolvedValue({
+        availableAudioDeviceList: '["WIRED_HEADSET","SPEAKER_PHONE"]',
+        selectedAudioDevice: 'WIRED_HEADSET',
+      });
+
+      const result = await applyPreferredAudioRoute([
+        'BLUETOOTH',
+        'WIRED_HEADSET',
+        'SPEAKER_PHONE',
+      ]);
+
+      expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalled();
+      expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('WIRED_HEADSET');
+      expect(result).toMatchObject({ ok: true, selected: AUDIO_ROUTES.WIRED_HEADSET });
+    });
+
+    test('reports a degraded result when every device fails', async () => {
+      InCallManager.chooseAudioRoute.mockRejectedValue(new Error('native failure'));
+
+      const result = await applyPreferredAudioRoute(['EARPIECE', 'SPEAKER_PHONE']);
+
+      expect(result.ok).toBe(false);
+      expect(result.selected).toBe(AUDIO_ROUTES.SPEAKER_PHONE);
+      expect(result.message).toEqual(expect.any(String));
     });
   });
 
