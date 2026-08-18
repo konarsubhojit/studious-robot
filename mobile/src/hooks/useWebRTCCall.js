@@ -16,6 +16,7 @@ import {
   logWarn,
 } from '../appLogger';
 import {
+  applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
   setAudioRoute,
@@ -102,6 +103,8 @@ export default function useWebRTCCall() {
     selected: null,
   });
   const [callSummary, setCallSummary] = useState(null);
+  // Route the user explicitly picked; cleared when the call ends.
+  const manualAudioRouteRef = useRef(null);
   const [connectionQuality, setConnectionQuality] = useState({
     bars: 0,
     label: 'No link',
@@ -176,7 +179,11 @@ export default function useWebRTCCall() {
     renegotiate,
   });
 
-  const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef);
+  // Closing the Picture-in-Picture window must end the call: leaving it running
+  // invisibly gives the user no way back to it and no way to hang up.
+  const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef, {
+    onPictureInPictureClosed: () => leaveRoomRef.current?.(),
+  });
 
   useEffect(() => {
     isInRoomRef.current = isInRoom;
@@ -286,6 +293,13 @@ export default function useWebRTCCall() {
     },
     [closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
   );
+
+  // Kept in a ref so the PiP-closed handler (registered before `leaveRoom`
+  // exists) always calls the current implementation.
+  const leaveRoomRef = useRef(leaveRoom);
+  useEffect(() => {
+    leaveRoomRef.current = leaveRoom;
+  }, [leaveRoom]);
 
   const ensurePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {
@@ -822,6 +836,18 @@ export default function useWebRTCCall() {
     };
   }, [isInRoom]);
 
+  // Pick the best available output (Bluetooth → wired → earpiece → speaker),
+  // never overriding a route the user chose explicitly during this call.
+  const applyAutomaticAudioRoute = useCallback(async available => {
+    if (manualAudioRouteRef.current) return;
+    const result = await applyPreferredAudioRoute(available);
+    setAudioDevices({ available: result.available, selected: result.selected });
+    setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
+    if (!result.ok) {
+      logWarn('Automatic audio routing degraded', { message: result.message });
+    }
+  }, []);
+
   // Start/stop the in-call audio session when entering or leaving a call.
   // Splitting this from the route-update effect below prevents unnecessary
   // InCallManager stop/start cycles when only the speaker preference changes.
@@ -861,15 +887,26 @@ export default function useWebRTCCall() {
     const unsubscribe = subscribeAudioDevices(nextStatus => {
       logInfo('Audio devices changed', nextStatus);
       setAudioDevices(nextStatus);
+      // Plugging in a headset mid-call should switch to it, unless the user
+      // has already picked an output explicitly.
+      applyAutomaticAudioRoute(nextStatus.available);
     });
     return unsubscribe;
-  }, [isInRoom]);
+  }, [applyAutomaticAudioRoute, isInRoom]);
 
   // Update the audio output route whenever the speaker preference changes while
   // a call is active.  Runs immediately when the call starts (isInRoom flips to
   // true) to apply the initial route, and again on every subsequent toggle.
   useEffect(() => {
     if (!isInRoom) {
+      manualAudioRouteRef.current = null;
+      return;
+    }
+
+    if (!isSpeakerEnabled && !manualAudioRouteRef.current) {
+      // Prefer an external device (Bluetooth → wired → earpiece) over the
+      // loudspeaker whenever the user has not asked for the speaker.
+      applyAutomaticAudioRoute(audioDevices.available);
       return;
     }
 
@@ -884,7 +921,8 @@ export default function useWebRTCCall() {
       });
       updateStatus(routeResult.message, 'error');
     }
-  }, [isInRoom, isSpeakerEnabled, updateStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyAutomaticAudioRoute, isInRoom, isSpeakerEnabled, updateStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) {
@@ -908,6 +946,9 @@ export default function useWebRTCCall() {
 
   const handleSpeakerToggle = useCallback(() => {
     const nextSpeakerEnabled = !isSpeakerEnabled;
+    manualAudioRouteRef.current = nextSpeakerEnabled
+      ? AUDIO_ROUTES.SPEAKER_PHONE
+      : AUDIO_ROUTES.EARPIECE;
     setIsSpeakerEnabled(nextSpeakerEnabled);
     updateStatus(nextSpeakerEnabled ? 'Speaker enabled' : 'Speaker disabled');
   }, [isSpeakerEnabled, updateStatus]);
@@ -918,6 +959,7 @@ export default function useWebRTCCall() {
     async route => {
       try {
         logInfo('Audio output selected', { route });
+        manualAudioRouteRef.current = route;
         const nextStatus = await chooseAudioRoute(route);
         if (!nextStatus.ok) {
           logWarn('Audio output selection degraded', {

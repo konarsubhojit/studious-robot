@@ -9,9 +9,11 @@ jest.mock('../../src/appLogger', () => ({
 }));
 jest.mock('../../src/screenShare', () => ({
   SCREEN_SHARE_CANCELLED: 'cancelled',
+  SCREEN_SHARE_NO_FRAMES: 'no_frames',
   isScreenShareSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
+  verifyScreenShareFrames: jest.fn(() => Promise.resolve({ ok: true, frames: 1, verified: true })),
 }));
 
 const screenShare = require('../../src/screenShare');
@@ -54,6 +56,7 @@ function setup({ renegotiate = jest.fn(() => Promise.resolve()) } = {}) {
 beforeEach(() => {
   jest.clearAllMocks();
   screenShare.isScreenShareSupported.mockReturnValue(true);
+  screenShare.verifyScreenShareFrames.mockResolvedValue({ ok: true, frames: 1, verified: true });
 });
 
 describe('useScreenShare', () => {
@@ -276,5 +279,33 @@ describe('useScreenShare', () => {
     });
 
     expect(resultRef.current.isScreenSharing).toBe(false);
+  });
+
+  test('stops the share and reports an error when no frames reach the peer', async () => {
+    const screenVideoTrack = makeTrack('video');
+    const stream = { id: 'screen' };
+    screenShare.startScreenCapture.mockResolvedValue({
+      ok: true,
+      stream,
+      videoTrack: screenVideoTrack,
+      audioTrack: null,
+      audioShared: false,
+    });
+    screenShare.verifyScreenShareFrames.mockResolvedValue({
+      ok: false,
+      reason: 'no_frames',
+      message: 'Screen sharing produced no video',
+    });
+
+    const { resultRef, params, sender, cameraTrack } = setup();
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(resultRef.current.isScreenSharing).toBe(false);
+    expect(screenShare.stopScreenCapture).toHaveBeenCalledWith(stream);
+    expect(sender.replaceTrack).toHaveBeenLastCalledWith(cameraTrack);
+    expect(params.setStatus).toHaveBeenLastCalledWith('Screen sharing produced no video', 'error');
   });
 });

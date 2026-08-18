@@ -80,6 +80,14 @@ During a call the audio output route can be switched between the loudspeaker,
 earpiece, and any connected Bluetooth device using the **Speaker / Earpiece**
 toggle button in the in-call controls row.
 
+At call start (and whenever a device is connected or removed mid-call) the
+route is chosen automatically in priority order **Bluetooth → wired headset →
+earpiece → loudspeaker** (`applyPreferredAudioRoute`). The loudspeaker is only
+used when nothing else is available or when the user selects it; an explicit
+selection is remembered for the rest of the call and is never overridden by an
+automatic re-evaluation. When `BLUETOOTH_CONNECT` is denied the denial is
+logged and the next device in the list is used instead.
+
 The app uses `react-native-incall-manager` (`src/audioRouting.js`) to:
 
 - **Activate the in-call audio focus** so that media volume controls and audio
@@ -88,9 +96,9 @@ The app uses `react-native-incall-manager` (`src/audioRouting.js`) to:
   `InCallManager.start`, the library automatically dims the screen and switches
   to earpiece when the handset is held to the ear.
 - **Keep the screen on** throughout the call so the controls remain accessible.
-- **Switch routes on demand** via `setForceSpeakerphoneOn` /
-  `setSpeakerphoneOn`. When a Bluetooth device is paired, choosing _Earpiece_
-  will route through Bluetooth rather than the physical earpiece.
+- **Switch routes on demand** via `chooseAudioRoute` (which also starts the
+  Bluetooth SCO link — a connected device alone does not carry call audio) and
+  `setForceSpeakerphoneOn` / `setSpeakerphoneOn` for the speaker toggle.
 
 Toggling the route does **not** restart the audio session — the speaker
 preference is applied in a dedicated effect that runs independently of the
@@ -151,6 +159,12 @@ sharer's UI looks perfectly fine. Both platforms therefore need explicit setup:
   `ios/StudiousRobot.xcodeproj`, `ScreenCaptureController.startCapture` returns
   immediately and the shared screen stays blank on the receiving side.
 
+Because a frameless capture is indistinguishable from a healthy one locally,
+`verifyScreenShareFrames` polls the peer connection's outbound RTP stats for a
+few seconds after the share starts; a capture that never reports
+`framesSent`/`framesEncoded` is stopped and surfaced as an error instead of
+silently "succeeding".
+
 ## ICE restart and reconnection
 
 WebRTC ICE connections can break when the device switches networks (e.g. Wi-Fi
@@ -182,7 +196,10 @@ foreground service and the system Picture-in-Picture (PiP) window:
 - **Picture-in-Picture** — pressing Home (or otherwise leaving the app) while a
   call is active shrinks the call into a small floating PiP window so you can
   keep watching while using other apps. PiP requires Android 8.0 (API 26) or
-  newer.
+  newer. Ending a call closes the PiP window (`exitPictureInPictureMode`) and
+  releases the local stream so no frozen frame is left on screen, and closing
+  the PiP window ends the call — the activity reports every PiP transition to
+  JS through `MainActivity.onPictureInPictureModeChanged`.
 - **Reconnection** — Socket.IO uses a short bounded reconnection policy and
   re-joins the room automatically after a transient drop. While reconnecting,
   the UI shows a "Reconnecting…" indicator instead of ending the call.

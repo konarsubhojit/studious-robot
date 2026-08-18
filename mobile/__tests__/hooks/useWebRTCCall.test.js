@@ -36,6 +36,9 @@ jest.mock('../../src/appLogger', () => ({
 }));
 jest.mock('../../src/audioRouting', () => ({
   AUDIO_ROUTES: {},
+  applyPreferredAudioRoute: jest.fn(() =>
+    Promise.resolve({ ok: true, selected: 'EARPIECE', available: ['EARPIECE'] }),
+  ),
   chooseAudioRoute: jest.fn(),
   setAudioRoute: jest.fn(),
   startAudioSession: jest.fn(),

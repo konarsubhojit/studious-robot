@@ -10,6 +10,7 @@ import {
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
 import * as Telemetry from '../telemetry';
 import {
+  applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
   setAudioRoute,
@@ -138,6 +139,33 @@ export const CALL_END_REASON_LABELS = {
   failed: 'Call failed',
 };
 
+/**
+ * Tell the server which calls this device still considers live.
+ *
+ * Used as a self-heal after a `busy` rejection: a call the server thinks is in
+ * progress but that no client is holding is a phantom, and the server closes
+ * it out when it hears the client's own view of the world.
+ *
+ * @param {object} socket
+ * @param {string[]} activeCallIds
+ */
+function reportOwnCallState(socket, activeCallIds) {
+  logInfo('[CallFlow] Reporting own call state after busy rejection', { activeCallIds });
+  socket.emit(
+    'call.state.report',
+    { version: SIGNALING_VERSION, activeCallIds },
+    ack => {
+      if (!ack?.ok) {
+        logWarn('[CallFlow] call.state.report ack failed', ack?.error);
+        return;
+      }
+      logInfo('[CallFlow] Server cleared phantom calls', {
+        clearedCallIds: ack.clearedCallIds ?? [],
+      });
+    },
+  );
+}
+
 function haptic(durationMs) {
   try {
     Vibration.vibrate(durationMs);
@@ -206,7 +234,13 @@ export default function useCallFlow() {
   const [remoteStream, setRemoteStream] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
+  // Starts false: the route is picked automatically from the connected
+  // devices (Bluetooth → wired → earpiece) and only becomes the loudspeaker
+  // when nothing else is available or the user asks for it.
+  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(false);
+  // Route the user explicitly picked; never overridden by automatic
+  // re-evaluation for the rest of the call.
+  const manualAudioRouteRef = useRef(null);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
@@ -373,7 +407,12 @@ export default function useCallFlow() {
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
   const { isRegistered } = identity;
 
-  const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
+  // Closing the Picture-in-Picture window must end the call: leaving it running
+  // invisibly gives the user no way back to it and no way to hang up.
+  const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef, {
+    onPictureInPictureClosed: () =>
+      endActiveCallRef.current?.('Call ended', 'info', 'ended'),
+  });
 
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
@@ -422,6 +461,28 @@ export default function useCallFlow() {
     if (pc) {
       applyBitrateConstraints(pc).catch(() => {});
     }
+  }, []);
+
+  /**
+   * Stop and drop the local camera/mic stream.
+   *
+   * Also blanks the local video view: an `RTCView` whose stream was torn down
+   * keeps presenting its last decoded frame, which is exactly the frozen image
+   * left behind in the Picture-in-Picture window after a call ends.
+   */
+  const releaseLocalMedia = useCallback(() => {
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks?.().forEach(track => {
+        try {
+          track.stop();
+        } catch {
+          // Best-effort: the track may already have been ended by the OS.
+        }
+      });
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
   }, []);
 
   const closePeerConnection = useCallback(() => {
@@ -712,9 +773,17 @@ export default function useCallFlow() {
       resetScreenShare();
       stopCallService();
       closePeerConnection();
+      releaseLocalMedia();
       if (nextMessage) updateStatus(nextMessage, severity);
     },
-    [addToHistory, closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
+    [
+      addToHistory,
+      closePeerConnection,
+      releaseLocalMedia,
+      resetScreenShare,
+      setIsCompactView,
+      updateStatus,
+    ],
   );
 
   // ─── Socket connection ────────────────────────────────────────────────────
@@ -894,9 +963,21 @@ export default function useCallFlow() {
             endActiveCallRef.current?.('Call not answered', 'error', 'missed');
             break;
 
-          case 'busy':
+          case 'busy': {
+            // Self-heal: `busy` means the server still believes one of the
+            // participants is in a call.  When this device holds no live call,
+            // say so, so the server can clear the phantom that is blocking
+            // every new call instead of the user being stuck forever.
+            const liveCallIds = [
+              activeCallIdRef.current,
+              incomingCallRef.current?.callId,
+            ].filter(id => id && id !== eventCallId);
+            if (liveCallIds.length === 0) {
+              reportOwnCallState(socket, []);
+            }
             endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
             break;
+          }
 
           case 'unreachable':
             endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
@@ -2228,6 +2309,7 @@ export default function useCallFlow() {
   const chooseAudioOutput = useCallback(
     async route => {
       try {
+        manualAudioRouteRef.current = route;
         const result = await chooseAudioRoute(route);
         if (!result.ok) {
           setAudioDevices({
@@ -2383,17 +2465,40 @@ export default function useCallFlow() {
     };
   }, [isInCall, updateStatus]);
 
+  // Pick the best available output (Bluetooth → wired → earpiece → speaker)
+  // unless the user already chose one explicitly during this call.
+  const applyAutomaticAudioRoute = useCallback(async available => {
+    if (manualAudioRouteRef.current) return;
+    const result = await applyPreferredAudioRoute(available);
+    setAudioDevices({ available: result.available, selected: result.selected });
+    setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
+    if (!result.ok) {
+      logWarn('[CallFlow] Automatic audio routing degraded', {
+        message: result.message,
+      });
+    }
+  }, []);
+
   useEffect(() => {
-    if (!isInCall) return undefined;
+    if (!isInCall) {
+      manualAudioRouteRef.current = null;
+      return undefined;
+    }
+
+    // The device list is discovered by the first selection (see
+    // applyPreferredAudioRoute), so no list is needed here.
+    applyAutomaticAudioRoute([]);
+    // Re-evaluate whenever a device is plugged in or removed mid-call.
     return subscribeAudioDevices(nextDevices => {
       logInfo('[CallFlow] Audio devices changed', nextDevices);
       setAudioDevices(nextDevices);
+      applyAutomaticAudioRoute(nextDevices.available);
     });
-  }, [isInCall]);
+  }, [applyAutomaticAudioRoute, isInCall]);
 
   useEffect(() => {
-    if (!isInCall) return;
-    const result = setAudioRoute(isSpeakerEnabled);
+    if (!isInCall || !isSpeakerEnabled) return;
+    const result = setAudioRoute(true);
     if (!result.ok) {
       logWarn('[CallFlow] Audio route update failed', {
         message: result.message,

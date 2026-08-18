@@ -1,6 +1,6 @@
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
-import { logWarn } from './appLogger';
+import { logInfo, logWarn } from './appLogger';
 import { ensureBluetoothPermission } from './permissions';
 
 /**
@@ -22,6 +22,20 @@ export const AUDIO_ROUTE_LABELS = {
   [AUDIO_ROUTES.BLUETOOTH]: 'Bluetooth',
   [AUDIO_ROUTES.WIRED_HEADSET]: 'Wired headset',
 };
+
+/**
+ * Preference order used whenever the route is picked automatically.
+ *
+ * External devices always win: a connected headset is an explicit signal that
+ * the user does not want the loudspeaker, which is only chosen when nothing
+ * else is available (or when the user picks it).
+ */
+export const AUDIO_ROUTE_PRIORITY = [
+  AUDIO_ROUTES.BLUETOOTH,
+  AUDIO_ROUTES.WIRED_HEADSET,
+  AUDIO_ROUTES.EARPIECE,
+  AUDIO_ROUTES.SPEAKER_PHONE,
+];
 
 const NATIVE_DEVICE_EVENT = 'onAudioDeviceChanged';
 const GENERIC_AUDIO_SESSION_ERROR =
@@ -170,16 +184,22 @@ export function parseAudioDeviceStatus(payload) {
  * device status (available list + selected device) so callers can refresh UI.
  *
  * @param {string} route - One of {@link AUDIO_ROUTES}.
+ * @param {{ fallbackToSpeaker?: boolean }} [options] - when false, a failed
+ *   Bluetooth selection is reported without forcing the loudspeaker, so the
+ *   caller can try the next device in its own preference order.
  * @returns {Promise<{ available: string[], selected: string|null }>}
  */
-export async function chooseAudioRoute(route) {
+export async function chooseAudioRoute(route, { fallbackToSpeaker = true } = {}) {
   if (route === AUDIO_ROUTES.BLUETOOTH) {
     const bluetoothPermission = await ensureBluetoothPermission({ requestIfNeeded: true });
     if (!bluetoothPermission.ok) {
-      const fallback = setAudioRoute(true);
+      logWarn('Bluetooth permission denied; cannot route call audio to Bluetooth', {
+        message: bluetoothPermission.message,
+      });
+      const fallback = fallbackToSpeaker ? setAudioRoute(true) : { selected: null };
       return {
         available: [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE],
-        selected: fallback.selected || AUDIO_ROUTES.SPEAKER_PHONE,
+        selected: fallbackToSpeaker ? fallback.selected || AUDIO_ROUTES.SPEAKER_PHONE : null,
         ok: false,
         reason: 'permission-denied',
         message: bluetoothPermission.message,
@@ -191,7 +211,7 @@ export async function chooseAudioRoute(route) {
     const result = await InCallManager.chooseAudioRoute(route);
     return { ...parseAudioDeviceStatus(result), ok: true };
   } catch (error) {
-    if (route === AUDIO_ROUTES.BLUETOOTH) {
+    if (route === AUDIO_ROUTES.BLUETOOTH && fallbackToSpeaker) {
       const fallback = setAudioRoute(true);
       return {
         available: [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE],
@@ -210,6 +230,77 @@ export async function chooseAudioRoute(route) {
       message: GENERIC_AUDIO_SESSION_ERROR,
     };
   }
+}
+
+/**
+ * Highest-priority route among the currently available devices.
+ *
+ * Falls back to the earpiece (never the loudspeaker) when the device list is
+ * empty or contains nothing recognised, which is what the native side reports
+ * for a brief moment right after the audio session starts.
+ *
+ * @param {string[]} [available]
+ * @returns {string} one of {@link AUDIO_ROUTES}
+ */
+export function selectPreferredAudioRoute(available = []) {
+  const devices = new Set(Array.isArray(available) ? available : []);
+  return (
+    AUDIO_ROUTE_PRIORITY.find(route => devices.has(route)) ??
+    AUDIO_ROUTES.EARPIECE
+  );
+}
+
+/**
+ * Route call audio to the best available device.
+ *
+ * Walks {@link AUDIO_ROUTE_PRIORITY} downwards so a denied Bluetooth
+ * permission (or a headset that disappears mid-switch) degrades to the wired
+ * headset/earpiece instead of jumping to the loudspeaker.  Selecting
+ * `BLUETOOTH` also starts the SCO link natively — simply having a device
+ * connected does not route call audio to it.
+ *
+ * When the caller does not know the device list yet (call start), pass an
+ * empty array: the first selection reports the available devices, and the
+ * route is re-evaluated once against that freshly discovered list.
+ *
+ * @param {string[]} [available] - devices reported by the native module.
+ * @param {{ allowRediscovery?: boolean }} [options] - internal recursion guard.
+ * @returns {Promise<{ ok: boolean, selected: string, available: string[], message?: string }>}
+ */
+export async function applyPreferredAudioRoute(available = [], { allowRediscovery = true } = {}) {
+  const devices = Array.isArray(available) ? available : [];
+  const candidates = AUDIO_ROUTE_PRIORITY.filter(route => devices.includes(route));
+  if (candidates.length === 0) {
+    candidates.push(AUDIO_ROUTES.EARPIECE);
+  }
+
+  let lastMessage;
+  for (const route of candidates) {
+    const result = await chooseAudioRoute(route, { fallbackToSpeaker: false });
+    if (result.ok) {
+      const discovered = result.available.length > 0 ? result.available : devices;
+      const preferred = selectPreferredAudioRoute(discovered);
+      if (allowRediscovery && preferred !== route && discovered.includes(preferred)) {
+        // The native module only reports the device list once a route has been
+        // selected, so a better device may have shown up just now.
+        return applyPreferredAudioRoute(discovered, { allowRediscovery: false });
+      }
+      logInfo('Audio routed to preferred device', { route, available: discovered });
+      return { ok: true, selected: result.selected || route, available: discovered };
+    }
+    lastMessage = result.message;
+    logWarn('Preferred audio route unavailable; trying next device', {
+      route,
+      message: result.message,
+    });
+  }
+
+  return {
+    ok: false,
+    selected: AUDIO_ROUTES.SPEAKER_PHONE,
+    available: devices,
+    message: lastMessage || AUDIO_ROUTE_FALLBACK_MESSAGE,
+  };
 }
 
 /**

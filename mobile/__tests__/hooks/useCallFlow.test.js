@@ -35,6 +35,9 @@ jest.mock('../../src/appLogger', () => ({
 
 jest.mock('../../src/audioRouting', () => ({
   AUDIO_ROUTES: { SPEAKER_PHONE: 'speakerphone' },
+  applyPreferredAudioRoute: jest.fn(() =>
+    Promise.resolve({ ok: true, selected: 'earpiece', available: ['earpiece'] }),
+  ),
   chooseAudioRoute: jest.fn(),
   setAudioRoute: jest.fn(() => ({ ok: true })),
   startAudioSession: jest.fn(() => ({ ok: true })),
@@ -57,9 +60,11 @@ jest.mock('../../src/callUx', () => ({
 
 jest.mock('../../src/screenShare', () => ({
   SCREEN_SHARE_CANCELLED: 'cancelled',
+  SCREEN_SHARE_NO_FRAMES: 'no_frames',
   isScreenShareSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
+  verifyScreenShareFrames: jest.fn(() => Promise.resolve({ ok: true, frames: 1, verified: true })),
 }));
 
 jest.mock('../../src/diagnostics', () => ({
@@ -1493,6 +1498,57 @@ describe('useCallFlow incoming-call ringing', () => {
 
     expect(stopIncomingRingtone).toHaveBeenCalled();
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('call.state_changed "busy" with no live call reports own state for reconciliation', async () => {
+    const { resultRef } = await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, clearedCallIds: ['phantom-call'] });
+    });
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'busy',
+        call: { callId: 'call-busy', callerId: 'me' },
+        reason: 'busy',
+      });
+    });
+
+    const report = socketMock.emit.mock.calls.find(([event]) => event === 'call.state.report');
+    expect(report).toBeDefined();
+    expect(report[1].activeCallIds).toEqual([]);
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('call.state_changed "busy" while a call is live does not report own state', async () => {
+    await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true });
+    });
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-live', callerId: 'irene' } });
+    });
+    await act(async () => {});
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'busy',
+        call: { callId: 'call-busy-other', callerId: 'me' },
+        reason: 'busy',
+      });
+    });
+
+    expect(
+      socketMock.emit.mock.calls.some(([event]) => event === 'call.state.report'),
+    ).toBe(false);
   });
 
   test('call.state_changed "ended" stops ringing', async () => {
@@ -3246,5 +3302,84 @@ describe('useCallFlow answer path', () => {
         reason: 'call_unavailable',
       }),
     );
+  });
+
+  // ── audio routing ─────────────────────────────────────────────────────────
+
+  test('prefers an external audio device at call start and keeps the manual choice', async () => {
+    const audioRouting = require('../../src/audioRouting');
+    let deviceChangeHandler = null;
+    audioRouting.subscribeAudioDevices.mockImplementation(handler => {
+      deviceChangeHandler = handler;
+      return jest.fn();
+    });
+    audioRouting.applyPreferredAudioRoute.mockResolvedValue({
+      ok: true,
+      selected: 'bluetooth',
+      available: ['bluetooth', 'earpiece'],
+    });
+    audioRouting.chooseAudioRoute.mockResolvedValue({
+      ok: true,
+      selected: 'speakerphone',
+      available: ['bluetooth', 'earpiece', 'speakerphone'],
+    });
+
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    RTCPeerConnection.mockImplementation(() => ({
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => []),
+      setRemoteDescription: jest.fn().mockResolvedValue(undefined),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'a' }),
+      addIceCandidate: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'answer', sdp: 'a' },
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    }));
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-audio', callerId: 'pia' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+
+    // Complete the media handshake so the call reaches the in-call phase.
+    const offerHandler = getSocketHandler('rtc.offer');
+    await act(async () => {
+      await offerHandler({ callId: 'call-audio', sdp: { type: 'offer', sdp: 'o' } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // The loudspeaker is never forced: the best available device wins.
+    expect(audioRouting.applyPreferredAudioRoute).toHaveBeenCalled();
+    expect(audioRouting.setAudioRoute).not.toHaveBeenCalled();
+    expect(resultRef.current.isSpeakerEnabled).toBe(false);
+
+    // An explicit user choice must survive later device changes.
+    await act(async () => {
+      await resultRef.current.chooseAudioOutput('speakerphone');
+    });
+    audioRouting.applyPreferredAudioRoute.mockClear();
+
+    await act(async () => {
+      deviceChangeHandler({ available: ['bluetooth', 'earpiece'], selected: 'bluetooth' });
+    });
+
+    expect(audioRouting.applyPreferredAudioRoute).not.toHaveBeenCalled();
   });
 });

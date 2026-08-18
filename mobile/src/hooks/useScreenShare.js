@@ -5,6 +5,7 @@ import {
   SCREEN_SHARE_CANCELLED,
   startScreenCapture,
   stopScreenCapture,
+  verifyScreenShareFrames,
 } from '../screenShare';
 
 /**
@@ -209,6 +210,19 @@ export default function useScreenShare({
         logWarn('Renegotiation after screen share start failed', {
           message: error?.message,
         });
+      }
+
+      // A capture that never produces frames looks fine locally but shows the
+      // remote peer a black screen, so surface it as a failure instead of
+      // silently "succeeding".
+      const frameCheck = await verifyScreenShareFrames(peerConnectionRef.current);
+      if (!frameCheck.ok && screenStreamRef.current === stream) {
+        logError('Screen sharing produced no frames; stopping', {
+          reason: frameCheck.reason,
+        });
+        await stopScreenShare({ silent: true });
+        setStatus(frameCheck.message, 'error');
+        return;
       }
 
       if (isScreenAudioEnabled && !audioShared) {
