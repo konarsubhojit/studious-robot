@@ -59,7 +59,8 @@ class MainActivity : ReactActivity() {
       return
     }
 
-    if (intent.getBooleanExtra(EXTRA_ACCEPT_CALL, false)) {
+    val accepted = intent.getBooleanExtra(EXTRA_ACCEPT_CALL, false)
+    if (accepted) {
       // Consume the extra so a later re-delivery of the same intent (e.g. a
       // configuration change re-creating the Activity) cannot answer twice.
       intent.removeExtra(EXTRA_ACCEPT_CALL)
@@ -79,6 +80,13 @@ class MainActivity : ReactActivity() {
     }
 
     applyIncomingCallWakeFlags(callId)
+
+    if (accepted) {
+      // The call is no longer ringing, so the record must stop vouching for
+      // incoming-call intents (it is only a trust signal for the wake flags
+      // applied just above).
+      PendingCallStore.clearRinging(this, callId)
+    }
   }
 
   /**

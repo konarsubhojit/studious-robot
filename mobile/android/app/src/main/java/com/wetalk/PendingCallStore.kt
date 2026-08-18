@@ -43,6 +43,14 @@ object PendingCallStore {
    */
   const val ACTION_TTL_MS = 120_000L
 
+  /**
+   * How long a ringing record keeps authorising a screen wake. A record is
+   * normally cleared when the notification is dismissed, but a killed process
+   * or a legacy Accept can leave one behind; expiring it stops a stale entry
+   * from vouching for an intent long after the call is over.
+   */
+  const val RINGING_TTL_MS = 120_000L
+
   private fun prefs(context: Context) =
     context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -63,15 +71,25 @@ object PendingCallStore {
   fun isRinging(
     context: Context,
     callId: String,
-  ): Boolean = prefs(context).getString(KEY_RINGING_CALL_ID, null) == callId
+  ): Boolean {
+    val store = prefs(context)
+    if (store.getString(KEY_RINGING_CALL_ID, null) != callId) return false
+    val ageMs = System.currentTimeMillis() - store.getLong(KEY_RINGING_AT, 0L)
+    if (ageMs > RINGING_TTL_MS) {
+      Log.w(TAG, "Ignoring expired ringing record callId=$callId ageMs=$ageMs")
+      return false
+    }
+    return true
+  }
 
   /** Forget the ringing record for [callId] (call answered/declined/ended). */
   fun clearRinging(
     context: Context,
     callId: String,
   ) {
-    if (!isRinging(context, callId)) return
-    prefs(context).edit().remove(KEY_RINGING_CALL_ID).remove(KEY_RINGING_AT).apply()
+    val store = prefs(context)
+    if (store.getString(KEY_RINGING_CALL_ID, null) != callId) return
+    store.edit().remove(KEY_RINGING_CALL_ID).remove(KEY_RINGING_AT).apply()
   }
 
   /**

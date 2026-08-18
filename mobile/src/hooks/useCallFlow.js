@@ -1610,6 +1610,13 @@ export default function useCallFlow() {
             });
           }
         }
+        // Both attempts failed on a connected socket: say so before falling
+        // through to HTTP, so the fallback is never silent.
+        logWarn('[CallFlow] Answering over HTTP', {
+          callId,
+          reason: 'socket_accept_failed',
+        });
+        updateStatus('Answering — retrying over a different connection…', 'warning');
       } else {
         logWarn('[CallFlow] Answering over HTTP', {
           callId,
