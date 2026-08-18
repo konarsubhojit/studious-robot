@@ -8,16 +8,26 @@ import {
   logInfo,
   logWarn,
 } from './appLogger';
-import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
+import {
+  clearPendingAnswer,
+  displayIncomingCall as displayCallKeepIncomingCall,
+  endCall as endCallKeepCall,
+} from './callKeep';
 import { isCallConnectionLive } from './incomingCallNotification';
+import {
+  hasSeenMessage,
+  isConversationOnScreen,
+  markMessageSeen,
+  showMessageNotification,
+} from './messageNotification';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 
 /**
  * Push notification helpers for the WeTalk mobile app.
  *
  * Provides three capabilities:
- *  1. Deep-link parsing  – convert `wetalk://call/{callId}` URLs into call
- *     descriptors.
+ *  1. Deep-link parsing  – convert `wetalk://call/{callId}` and
+ *     `wetalk://chat/{conversationId}` URLs into descriptors.
  *  2. App-launch detection – retrieve the URL the app was opened from
  *     (notification tap while the app was killed or backgrounded).
  *  3. Push-token registration – persist the device push token with the
@@ -46,9 +56,24 @@ const RECEIPT_STAGES = new Set([
   'answer_attempted',
   'answer_failed',
   'answer_accepted',
+  'answer_skipped_duplicate',
   'accept_tapped',
   'decline_tapped',
 ]);
+// Message pushes report the same `received` stage plus what the device did
+// with it, so "the provider accepted it" (which proves nothing about the
+// handset) is no longer the only server-side evidence a message push exists.
+const MESSAGE_RECEIPT_STAGES = new Set([
+  'received',
+  'notification_shown',
+  'notification_failed',
+  'notification_suppressed',
+]);
+
+/** Envelope `type` values the server sends (see `server/src/push.js`). */
+export const PUSH_TYPE_CALL = 'call.incoming';
+export const PUSH_TYPE_CALL_CANCELLED = 'call.cancelled';
+export const PUSH_TYPE_MESSAGE = 'message.received';
 
 /**
  * Parse a WeTalk deep-link URL into a call descriptor.
@@ -107,6 +132,69 @@ export function addCallLinkListener(callback) {
     const descriptor = parseCallDeepLink(url);
     if (descriptor) {
       logInfo('[Push] Deep-link received', descriptor);
+      callback(descriptor);
+    }
+  });
+  return () => subscription?.remove();
+}
+
+/**
+ * Parse a WeTalk chat deep-link URL into a conversation descriptor.
+ *
+ * Expected format: `wetalk://chat/{conversationId}` — the link a message
+ * notification opens (see `buildMessageEnvelope` in `server/src/push.js`).
+ *
+ * @param {string | null | undefined} url
+ * @returns {{ conversationId: string } | null}
+ */
+export function parseChatDeepLink(url) {
+  if (!url || typeof url !== 'string') return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== `${DEEP_LINK_SCHEME}:`) return null;
+
+  const conversationId = decodeURIComponent(parsed.pathname?.replace(/^\//, '') ?? '').trim();
+  if (parsed.host === 'chat' && conversationId) {
+    return { conversationId };
+  }
+
+  return null;
+}
+
+/**
+ * Return the conversation descriptor for the URL the app was launched from, if
+ * any. The chat counterpart of {@link getInitialCallLink}, so a notification
+ * tap that cold-starts the app still opens the right conversation.
+ *
+ * @returns {Promise<{ conversationId: string } | null>}
+ */
+export async function getInitialChatLink() {
+  try {
+    const url = await Linking.getInitialURL();
+    return parseChatDeepLink(url);
+  } catch (error) {
+    logWarn('[Push] getInitialURL failed', { message: error?.message });
+    return null;
+  }
+}
+
+/**
+ * Subscribe to chat deep-link URLs received while the app is already running.
+ *
+ * @param {(descriptor: { conversationId: string }) => void} callback
+ * @returns {() => void} Unsubscribe function – call it in the effect cleanup.
+ */
+export function addChatLinkListener(callback) {
+  const subscription = Linking.addEventListener('url', ({ url }) => {
+    const descriptor = parseChatDeepLink(url);
+    if (descriptor) {
+      logInfo('[Push] Chat deep-link received', descriptor);
       callback(descriptor);
     }
   });
@@ -333,6 +421,62 @@ export function _extractIncomingCallFromMessage(remoteMessage) {
   };
 }
 
+/**
+ * Parse the received-message payload from an FCM/APNs data message.
+ *
+ * Mirrors {@link _extractIncomingCallFromMessage}: message pushes are data-only
+ * too, so FCM displays nothing by itself and every field the app needs to
+ * render the notification has to come out of `data`.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {{
+ *   messageId: string,
+ *   conversationId: string,
+ *   senderId: string | null,
+ *   title: string,
+ *   body: string,
+ *   deepLink: string,
+ * } | null}
+ */
+export function _extractMessageFromMessage(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const messageId = typeof data.messageId === 'string' ? data.messageId.trim() : '';
+  const conversationId = typeof data.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!messageId || !conversationId) return null;
+
+  const senderId = typeof data.senderId === 'string' ? data.senderId.trim() : '';
+  const title = typeof data.title === 'string' ? data.title.trim() : '';
+  const body = typeof data.body === 'string' ? data.body.trim() : '';
+  const deepLink = typeof data.deepLink === 'string' ? data.deepLink.trim() : '';
+
+  return {
+    messageId,
+    conversationId,
+    senderId: senderId || null,
+    title: title || senderId || 'New message',
+    body: body || 'Sent you a message',
+    deepLink: deepLink || `wetalk://chat/${conversationId}`,
+  };
+}
+
+/**
+ * Classify a push by the envelope `type` the server sends.
+ *
+ * Falls back to the payload shape for pushes produced before `type` was
+ * carried through, so an older server release still rings calls.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {string | null}
+ */
+export function _extractPushType(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const type = typeof data.type === 'string' ? data.type.trim() : '';
+  if (type) return type;
+  if (typeof data.callId === 'string' && data.callId.trim()) return PUSH_TYPE_CALL;
+  if (typeof data.messageId === 'string' && data.messageId.trim()) return PUSH_TYPE_MESSAGE;
+  return null;
+}
+
 function getReceiptBaseUrl(remoteMessage) {
   const data = remoteMessage?.data ?? {};
   const fromPayload =
@@ -355,7 +499,12 @@ async function resolveReceiptBaseUrl(remoteMessage) {
 }
 
 /**
- * Report a call-lifecycle stage for `callId` to the server.
+ * Report a call- or message-lifecycle stage to the server.
+ *
+ * Exactly one of `callId` / `messageId` identifies what the receipt is about;
+ * message receipts exist because "accepted by provider" says nothing about
+ * whether the handset ever displayed anything, the same trap that hid the
+ * incoming-call bug.
  *
  * Callers that hold a live session (e.g. the in-app call flow) can pass
  * `sessionId` / `signalingUrl` explicitly; background push handlers instead
@@ -363,7 +512,8 @@ async function resolveReceiptBaseUrl(remoteMessage) {
  *
  * @param {{
  *   remoteMessage?: object | null,
- *   callId: string,
+ *   callId?: string | null,
+ *   messageId?: string | null,
  *   stage: string,
  *   reason?: string | null,
  *   sessionId?: string | null,
@@ -373,13 +523,23 @@ async function resolveReceiptBaseUrl(remoteMessage) {
  */
 export async function sendPushReceipt({
   remoteMessage,
-  callId,
+  callId = null,
+  messageId = null,
   stage,
   reason = null,
   sessionId: explicitSessionId = null,
   signalingUrl: explicitSignalingUrl = null,
 }) {
-  if (!callId || !RECEIPT_STAGES.has(stage) || typeof fetch !== 'function') return false;
+  const trimmedCallId = typeof callId === 'string' ? callId.trim() : '';
+  const trimmedMessageId = typeof messageId === 'string' ? messageId.trim() : '';
+  const allowedStages = trimmedCallId ? RECEIPT_STAGES : MESSAGE_RECEIPT_STAGES;
+  if (
+    (!trimmedCallId && !trimmedMessageId) ||
+    !allowedStages.has(stage) ||
+    typeof fetch !== 'function'
+  ) {
+    return false;
+  }
   try {
     const data = remoteMessage?.data ?? {};
     const sessionId =
@@ -399,7 +559,7 @@ export async function sendPushReceipt({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...(sessionId ? { sessionId } : { deviceId }),
-        callId,
+        ...(trimmedCallId ? { callId: trimmedCallId } : { messageId: trimmedMessageId }),
         stage,
         ...(reason ? { reason } : {}),
       }),
@@ -416,12 +576,129 @@ export async function sendPushReceipt({
 }
 
 /**
- * Background push callback used by @react-native-firebase/messaging.
+ * Render (or deliberately suppress) the notification for a message push.
+ *
+ * Shared by the background and foreground handlers so both report the same
+ * receipt stages: a message push that arrives but displays nothing has to be
+ * as visible in server logs as one that rings.
+ *
+ * @param {{
+ *   remoteMessage: object | null | undefined,
+ *   message: {
+ *     messageId: string,
+ *     conversationId: string,
+ *     senderId: string | null,
+ *     title: string,
+ *     body: string,
+ *     deepLink: string,
+ *   },
+ * }} opts
+ * @returns {Promise<{ shown: boolean, reason?: string }>}
+ */
+async function displayMessagePush({ remoteMessage, message }) {
+  // The same message can arrive over both the socket and push; the socket copy
+  // marks it seen, so the push must not announce it a second time.
+  if (hasSeenMessage(message.messageId)) {
+    await sendPushReceipt({
+      remoteMessage,
+      messageId: message.messageId,
+      stage: 'notification_suppressed',
+      reason: 'already_delivered',
+    });
+    return { shown: false, reason: 'already_delivered' };
+  }
+
+  // The conversation is on screen: `useMessaging` already rendered the message
+  // in-app, so an OS notification for it would be noise. Messages for any other
+  // conversation still notify.
+  if (
+    isConversationOnScreen({
+      senderId: message.senderId,
+      conversationId: message.conversationId,
+    })
+  ) {
+    markMessageSeen(message.messageId);
+    await sendPushReceipt({
+      remoteMessage,
+      messageId: message.messageId,
+      stage: 'notification_suppressed',
+      reason: 'conversation_on_screen',
+    });
+    return { shown: false, reason: 'conversation_on_screen' };
+  }
+
+  const result = await showMessageNotification(message).catch(error => ({
+    shown: false,
+    reason: 'notification_threw',
+    message: error?.message,
+  }));
+  await sendPushReceipt({
+    remoteMessage,
+    messageId: message.messageId,
+    stage: result.shown ? 'notification_shown' : 'notification_failed',
+    reason: result.reason ?? null,
+  });
+  return result;
+}
+
+/**
+ * Handle a `call.cancelled` push: the call stopped ringing, so whatever OS UI
+ * this device is showing for it must go away.
+ *
+ * A killed app has no socket and therefore never sees `call.state_changed`, so
+ * without this push its incoming-call notification stays on screen — and stays
+ * tappable — long after the call ended.
  *
  * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<{ callId: string, callerId: string | null, deepLink: string } | null>}
+ * @returns {Promise<{ callId: string, reason: string | null } | null>}
+ */
+async function handleCallCancelledPush(remoteMessage) {
+  const data = remoteMessage?.data ?? {};
+  const callId = typeof data.callId === 'string' ? data.callId.trim() : '';
+  const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
+  if (!callId) {
+    logWarn('[Push] Call-cancelled push missing callId');
+    return null;
+  }
+
+  logInfo('[Push] Call cancelled push received', { callId, reason: reason || null });
+  clearPendingAnswer(callId, reason || 'call_cancelled_push');
+  try {
+    endCallKeepCall(callId);
+  } catch (error) {
+    logWarn('[Push] Failed to dismiss cancelled call UI', { callId, message: error?.message });
+  }
+  return { callId, reason: reason || null };
+}
+
+/**
+ * Background push callback used by @react-native-firebase/messaging.
+ *
+ * Dispatches on the envelope `type` the server sends: message pushes carry no
+ * `callId`, so parsing every push as a call silently dropped every message.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<object | null>} the call or message descriptor that was
+ *   handled, or `null` when the push could not be handled
  */
 export async function handleBackgroundPushMessage(remoteMessage) {
+  const type = _extractPushType(remoteMessage);
+  if (type === PUSH_TYPE_MESSAGE) {
+    return handleBackgroundMessagePush(remoteMessage);
+  }
+  if (type === PUSH_TYPE_CALL_CANCELLED) {
+    const cancelled = await handleCallCancelledPush(remoteMessage);
+    await flushDurableLogs();
+    return cancelled;
+  }
+  if (type !== PUSH_TYPE_CALL) {
+    await logBackgroundWarn('[Push] Background push of unknown type ignored', {
+      type: type ?? null,
+    });
+    await flushDurableLogs();
+    return null;
+  }
+
   const incoming = _extractIncomingCallFromMessage(remoteMessage);
   if (!incoming) {
     await logBackgroundWarn('[Push] Background message missing call payload');
@@ -476,6 +753,39 @@ export async function handleBackgroundPushMessage(remoteMessage) {
 }
 
 /**
+ * Handle a `message.received` push that arrived while the app is backgrounded
+ * or killed.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<object | null>}
+ */
+async function handleBackgroundMessagePush(remoteMessage) {
+  const message = _extractMessageFromMessage(remoteMessage);
+  if (!message) {
+    await logBackgroundWarn('[Push] Background message push missing message payload');
+    await flushDurableLogs();
+    return null;
+  }
+
+  await sendPushReceipt({ remoteMessage, messageId: message.messageId, stage: 'received' });
+  await logBackgroundInfo('[Push] Background message push received', {
+    messageId: message.messageId,
+    conversationId: message.conversationId,
+    senderId: message.senderId,
+  });
+
+  const result = await displayMessagePush({ remoteMessage, message });
+  await logBackgroundInfo('[Push] Background message push handler exit', {
+    messageId: message.messageId,
+    shown: result.shown,
+    reason: result.reason ?? null,
+  });
+  await flushDurableLogs();
+
+  return message;
+}
+
+/**
  * Install the Firebase background message handler when the native messaging
  * module is available.
  *
@@ -513,12 +823,29 @@ export function installBackgroundMessageHandler() {
  * socket is unhealthy (suspended radio, reconnect in progress) but the app is
  * on screen — the exact situation in which the callee's phone never rings.
  *
+ * Dispatches on the envelope `type`, exactly like the background handler.
+ *
  * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<{ callId: string, callerId: string | null, deepLink: string } | null>}
+ * @returns {Promise<object | null>}
  */
 export async function handleForegroundPushMessage(remoteMessage) {
+  const type = _extractPushType(remoteMessage);
+  if (type === PUSH_TYPE_MESSAGE) {
+    return handleForegroundMessagePush(remoteMessage);
+  }
+  if (type === PUSH_TYPE_CALL_CANCELLED) {
+    return handleCallCancelledPush(remoteMessage);
+  }
+  if (type !== PUSH_TYPE_CALL) {
+    logWarn('[Push] Foreground push of unknown type ignored', { type: type ?? null });
+    return null;
+  }
+
   const incoming = _extractIncomingCallFromMessage(remoteMessage);
-  if (!incoming) return null;
+  if (!incoming) {
+    logWarn('[Push] Foreground call push missing call payload');
+    return null;
+  }
 
   logInfo('[Push] Foreground call push received', {
     callId: incoming.callId,
@@ -535,6 +862,31 @@ export async function handleForegroundPushMessage(remoteMessage) {
   });
 
   return incoming;
+}
+
+/**
+ * Handle a `message.received` push that arrived while the app is on screen.
+ *
+ * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
+ * @returns {Promise<object | null>}
+ */
+async function handleForegroundMessagePush(remoteMessage) {
+  const message = _extractMessageFromMessage(remoteMessage);
+  if (!message) {
+    logWarn('[Push] Foreground message push missing message payload');
+    return null;
+  }
+
+  logInfo('[Push] Foreground message push received', {
+    messageId: message.messageId,
+    conversationId: message.conversationId,
+    senderId: message.senderId,
+  });
+
+  await sendPushReceipt({ remoteMessage, messageId: message.messageId, stage: 'received' });
+  await displayMessagePush({ remoteMessage, message });
+
+  return message;
 }
 
 /**

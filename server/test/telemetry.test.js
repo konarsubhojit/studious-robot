@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, CALL_END_REASONS } = require('../src/index.js');
+const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ test('GET /metrics increments calls_missed after ringing timeout', async () => {
     await postJson(url, '/calls', { calleeId: 'bob' }, callerSession);
 
     // Advance time past the ringing timeout.
-    tickRingingTimeouts(Date.now() + 60_000);
+    tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
 
     const res = await getJson(url, '/metrics');
     assert.equal(res.body.counters.calls_missed, 1);

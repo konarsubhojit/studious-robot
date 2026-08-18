@@ -17,8 +17,19 @@ const PUSH_RECEIPT_STAGES = new Set([
   'answer_attempted',
   'answer_failed',
   'answer_accepted',
+  'answer_skipped_duplicate',
   'accept_tapped',
   'decline_tapped',
+]);
+
+// Message pushes are data-only, so the client renders the notification itself
+// and "accepted by provider" proves nothing about the handset. These stages are
+// what makes a message that never surfaced distinguishable from one that did.
+const MESSAGE_RECEIPT_STAGES = new Set([
+  'received',
+  'notification_shown',
+  'notification_failed',
+  'notification_suppressed',
 ]);
 
 /**
@@ -109,6 +120,7 @@ function createDevicesRouter({ state, db }) {
     const session = getSessionFromRequest(req, state.sessions);
     const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
     const callId = normaliseId(req.body?.callId);
+    const messageId = normaliseId(req.body?.messageId);
     const stage = normaliseId(req.body?.stage);
     const reason = normaliseId(req.body?.reason);
 
@@ -116,20 +128,23 @@ function createDevicesRouter({ state, db }) {
       res.status(400).json({ error: 'sessionId or deviceId is required' });
       return;
     }
-    if (!callId) {
-      res.status(400).json({ error: 'callId is required' });
+    if (!callId && !messageId) {
+      res.status(400).json({ error: 'callId or messageId is required' });
       return;
     }
-    if (!PUSH_RECEIPT_STAGES.has(stage)) {
+    const allowedStages = callId ? PUSH_RECEIPT_STAGES : MESSAGE_RECEIPT_STAGES;
+    if (!allowedStages.has(stage)) {
       res.status(400).json({ error: 'invalid stage' });
       return;
     }
 
-    const call = state.calls.get(callId) || null;
+    // Only calls are tracked in memory long enough to time the push against;
+    // message receipts report the stage alone.
+    const call = callId ? state.calls.get(callId) || null : null;
     const createdAtMs = call?.createdAt ? new Date(call.createdAt).getTime() : NaN;
     const latencyMs = Number.isFinite(createdAtMs) ? Math.max(0, Date.now() - createdAtMs) : null;
     console.log(
-      `[push] Receipt callId=${sanitizeForLog(callId)}` +
+      `[push] Receipt ${callId ? 'callId' : 'messageId'}=${sanitizeForLog(callId || messageId)}` +
         ` device=${sanitizeForLog(deviceId)}` +
         ` stage=${sanitizeForLog(stage)}` +
         (reason ? ` reason=${sanitizeForLog(reason)}` : '') +
@@ -138,7 +153,7 @@ function createDevicesRouter({ state, db }) {
 
     res.status(202).json({
       status: 'recorded',
-      callId,
+      ...(callId ? { callId } : { messageId }),
       deviceId,
       stage,
       ...(reason ? { reason } : {}),

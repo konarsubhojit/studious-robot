@@ -129,6 +129,21 @@ describe('OutgoingCallScreen', () => {
     expect(nodes.length).toBeGreaterThanOrEqual(1);
   });
 
+  test('renders a two-minute ring window as m:ss', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          activeCall={makeCall({ ringTimeoutAt: new Date(Date.now() + 119_000).toISOString() })}
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    const [node] = tree.root.findAll(n => n.props.testID === 'outgoing-countdown');
+    expect(String(node.props.children)).toMatch(/^1:5\d$/);
+  });
+
   test('hides countdown when ringTimeoutAt is absent', () => {
     let tree;
     act(() => {

@@ -21,6 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
+const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -190,7 +191,7 @@ test('reconnect: ringing timeout fires and marks call missed even when caller is
     await tick();
 
     // Advance time past the ringing timeout (deterministic – no real wait).
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 1, 'call should be transitioned to missed');
 
     const call = getCall(callId);
@@ -435,7 +436,7 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
     assert.equal(accepted.status, 'accepted');
 
     // Ringing timeout must not re-transition the now-accepted call.
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 0, 'accepted call must not be re-transitioned to missed');
 
     const call = getCall(callId);

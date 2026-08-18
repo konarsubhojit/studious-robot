@@ -23,9 +23,26 @@ const path = require('node:path');
 const push = require('../src/push.js');
 
 const CALL = { callId: 'call-abc', callerId: 'alice' };
+const MESSAGE = {
+  messageId: 'message-abc',
+  conversationId: 'alice:bob',
+  senderId: 'alice',
+  preview: 'hey there',
+};
 
 /** Keys the incoming-call push carries; renaming one is a breaking change. */
 const CALL_DATA_KEYS = ['callId', 'callerId', 'type', 'deepLink', 'title', 'body'];
+
+/** Keys the message push carries; the client renders the notification itself. */
+const MESSAGE_DATA_KEYS = [
+  'messageId',
+  'conversationId',
+  'senderId',
+  'type',
+  'deepLink',
+  'title',
+  'body',
+];
 
 const CLIENT_SOURCE = path.join(__dirname, '..', '..', 'mobile', 'src', 'pushNotifications.js');
 
@@ -35,6 +52,14 @@ function directDataBlock() {
 
 function hubDataBlock() {
   return push._buildNotificationHubAndroidPayload(CALL).message.android.data;
+}
+
+function directMessageDataBlock() {
+  return JSON.parse(push._buildFcmMessagePayload('device-token-123', MESSAGE)).message.data;
+}
+
+function hubMessageDataBlock() {
+  return push._buildNotificationHubAndroidMessagePayload(MESSAGE).message.android.data;
 }
 
 /**
@@ -96,9 +121,9 @@ test('neither transport adds a notification block', () => {
 test('both transports request FCM v1 high priority so the handset wakes', () => {
   const direct = JSON.parse(push._buildFcmPayload('device-token-123', CALL)).message;
   assert.equal(direct.android.priority, 'HIGH');
-  assert.equal(direct.android.ttl, '30s');
+  assert.equal(direct.android.ttl, '120s');
   assert.equal(push._buildNotificationHubAndroidPayload(CALL).message.android.priority, 'HIGH');
-  assert.equal(push._buildNotificationHubAndroidPayload(CALL).message.android.ttl, '30s');
+  assert.equal(push._buildNotificationHubAndroidPayload(CALL).message.android.ttl, '120s');
 });
 
 test('the mobile client only reads fields the server sends', (t) => {
@@ -123,4 +148,107 @@ test('the mobile client only reads fields the server sends', (t) => {
   for (const key of ['callId', 'callerId']) {
     assert.ok(readKeys.includes(key), `client no longer reads data.${key}`);
   }
+});
+
+test('both transports send the same data block for a received message', () => {
+  const expected = {
+    messageId: 'message-abc',
+    conversationId: 'alice:bob',
+    senderId: 'alice',
+    type: 'message.received',
+    deepLink: 'wetalk://chat/alice:bob',
+    title: 'alice',
+    body: 'hey there',
+  };
+  assert.deepEqual(directMessageDataBlock(), expected);
+  assert.deepEqual(hubMessageDataBlock(), expected);
+  assert.deepEqual(Object.keys(directMessageDataBlock()).sort(), [...MESSAGE_DATA_KEYS].sort());
+});
+
+test('a message push carries a preview the client can display, truncated', () => {
+  const short = directMessageDataBlock();
+  assert.equal(short.title, 'alice', 'the sender is the notification title');
+  assert.equal(short.body, 'hey there');
+
+  const long = JSON.parse(
+    push._buildFcmMessagePayload('device-token-123', { ...MESSAGE, preview: 'x'.repeat(400) })
+  ).message.data;
+  assert.ok(long.body.length <= 120, 'preview is truncated');
+  assert.ok(long.body.endsWith('…'));
+
+  const empty = JSON.parse(
+    push._buildFcmMessagePayload('device-token-123', { ...MESSAGE, preview: '' })
+  ).message.data;
+  assert.equal(empty.body, 'Sent you a message');
+});
+
+test('a message push stays data-only and unexpired', () => {
+  // Data-only for the same reason calls are: a `notification` block would skip
+  // the app's background handler, and the app is what renders chat
+  // notifications (mobile/src/messageNotification.js). Unlike a call, a message
+  // must not expire after 30s — an offline handset should still get it later.
+  const direct = JSON.parse(push._buildFcmMessagePayload('device-token-123', MESSAGE)).message;
+  assert.equal(direct.notification, undefined);
+  assert.equal(direct.android?.notification, undefined);
+  assert.equal(direct.android.ttl, undefined);
+  const hub = push._buildNotificationHubAndroidMessagePayload(MESSAGE).message;
+  assert.equal(hub.notification, undefined);
+  assert.equal(hub.android.notification, undefined);
+  assert.equal(hub.android.ttl, undefined);
+});
+
+test('the mobile client only reads message fields the server sends', (t) => {
+  if (!fs.existsSync(CLIENT_SOURCE)) {
+    t.skip('mobile client source not present in this checkout');
+    return;
+  }
+
+  const source = fs.readFileSync(CLIENT_SOURCE, 'utf8');
+  const start = source.indexOf('function _extractMessageFromMessage');
+  assert.notEqual(start, -1, 'client message extractor not found — was it renamed?');
+  const body = extractFunctionBody(source, start);
+
+  const readKeys = [...body.matchAll(/\bdata\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+  assert.ok(readKeys.length > 0, 'client reads no data fields — extractor shape changed');
+
+  const sent = new Set(MESSAGE_DATA_KEYS);
+  for (const key of readKeys) {
+    assert.ok(sent.has(key), `client reads data.${key} but the server never sends it`);
+  }
+  // Without these the notification cannot be rendered or routed to a chat.
+  for (const key of ['messageId', 'conversationId', 'senderId']) {
+    assert.ok(readKeys.includes(key), `client no longer reads data.${key}`);
+  }
+});
+
+test('call push TTL follows the time left in the ring window', () => {
+  const ringTimeoutAt = new Date(Date.now() + 45_000).toISOString();
+  const direct = JSON.parse(
+    push._buildFcmPayload('device-token-123', { ...CALL, ringTimeoutAt })
+  ).message;
+  const ttlSeconds = Number(String(direct.android.ttl).replace('s', ''));
+  // A push delivered late in the window must expire with the call, not 120s
+  // after it was handed to the provider.
+  assert.ok(ttlSeconds > 40 && ttlSeconds <= 45, `unexpected ttl ${direct.android.ttl}`);
+
+  const hub = push._buildNotificationHubAndroidPayload({ ...CALL, ringTimeoutAt }).message;
+  assert.equal(hub.android.ttl, direct.android.ttl);
+});
+
+test('an elapsed ring deadline still yields a positive TTL', () => {
+  // Providers reject ttl=0/negative; the dispatcher already refuses to send a
+  // push for an elapsed ring window, so this is only belt and braces.
+  assert.equal(push._resolveCallTtlSeconds(new Date(Date.now() - 10_000).toISOString()), 1);
+  assert.equal(push._resolveCallTtlSeconds(null), 120);
+  assert.equal(push._resolveCallTtlSeconds('not-a-date'), 120);
+});
+
+test('a call-cancelled push is data-only and identifies the call it dismisses', () => {
+  const envelope = push._buildCallCancelledEnvelope({ callId: 'call-abc', reason: 'cancelled' });
+  assert.equal(envelope.type, 'call.cancelled');
+  assert.equal(envelope.data.callId, 'call-abc');
+  assert.equal(envelope.data.reason, 'cancelled');
+  assert.equal(envelope.deepLink, 'wetalk://call/call-abc');
+  assert.ok(envelope.ttlSeconds > 0);
+  assert.equal(push._buildCallCancelledEnvelope({ callId: 'call-abc' }).data.reason, 'ended');
 });

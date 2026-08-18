@@ -47,6 +47,26 @@ function spyOnPush() {
   };
 }
 
+/**
+ * Temporarily replace `sendCallCancelledPush` with a spy.
+ * Returns `{ calls, restore }`.
+ */
+function spyOnCancelPush() {
+  const mod = require(pushModulePath);
+  const original = mod.sendCallCancelledPush;
+  const calls = [];
+  mod.sendCallCancelledPush = async (channel, callData) => {
+    calls.push({ channel, callData });
+    return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
+  };
+  return {
+    calls,
+    restore: () => {
+      mod.sendCallCancelledPush = original;
+    },
+  };
+}
+
 async function startServer(opts = {}) {
   // Require *after* the spy is installed so `createServer` picks up the mock.
   const { createServer } = require('../src/index.js');
@@ -437,4 +457,90 @@ test('push fallback: no duplicate push after socket_disconnected when ack-timeou
   } finally {
     callee.disconnect();
   }
+});
+
+test('push fallback: call push carries the ring deadline so its TTL tracks the ring window', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-ttl-caller');
+  const calleeSession = await createSession(url, 'user-ttl-callee');
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'fcm-ttl-token' },
+    calleeSession
+  );
+
+  const res = await postJson(url, '/calls', { calleeId: 'user-ttl-callee' }, callerSession);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(spy.calls.length, 1);
+  // Without the deadline the push would carry a fixed TTL and could outlive
+  // (or, worse, undercut) the ring window it belongs to.
+  assert.equal(spy.calls[0].callData.ringTimeoutAt, res.body.ringTimeoutAt);
+});
+
+test('push fallback: a cancelled call pushes a dismissal to every device that was rung', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+  const cancelSpy = spyOnCancelPush();
+  t.after(() => cancelSpy.restore());
+
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-cancel-caller');
+  const calleeSession = await createSession(url, 'user-cancel-callee');
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'fcm-cancel-token' },
+    calleeSession
+  );
+
+  const res = await postJson(url, '/calls', { calleeId: 'user-cancel-callee' }, callerSession);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(spy.calls.length, 1, 'the incoming-call push must have been sent first');
+
+  const cancelled = await postJson(url, `/calls/${res.body.callId}/cancel`, {}, callerSession);
+  assert.equal(cancelled.status, 200);
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.equal(cancelSpy.calls.length, 1, 'the rung device must be told the call is over');
+  assert.equal(cancelSpy.calls[0].callData.callId, res.body.callId);
+  assert.equal(cancelSpy.calls[0].callData.reason, 'cancelled');
+  assert.equal(cancelSpy.calls[0].channel.pushToken, 'fcm-cancel-token');
+});
+
+test('push fallback: an accepted call does not push a dismissal', async (t) => {
+  const spy = spyOnPush();
+  t.after(() => spy.restore());
+  const cancelSpy = spyOnCancelPush();
+  t.after(() => cancelSpy.restore());
+
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const callerSession = await createSession(url, 'user-accept-caller');
+  const calleeSession = await createSession(url, 'user-accept-callee');
+  await postJson(
+    url,
+    '/devices/register',
+    { provider: 'fcm', pushToken: 'fcm-accept-token' },
+    calleeSession
+  );
+
+  const res = await postJson(url, '/calls', { calleeId: 'user-accept-callee' }, callerSession);
+  await new Promise((r) => setTimeout(r, 100));
+  const accepted = await postJson(url, `/calls/${res.body.callId}/accept`, {}, calleeSession);
+  assert.equal(accepted.status, 200);
+  await new Promise((r) => setTimeout(r, 100));
+
+  // Dismissing the UI of the device that just answered would end the call it
+  // is about to join.
+  assert.equal(cancelSpy.calls.length, 0);
 });

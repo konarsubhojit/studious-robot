@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StatusBar, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +20,7 @@ import { CALL_PHASES } from './src/hooks/useCallFlow';
 import useCallFlow from './src/hooks/useCallFlow';
 import useCallInitiation from './src/hooks/useCallInitiation';
 import useCallMinimize from './src/hooks/useCallMinimize';
+import useChatDeepLink from './src/hooks/useChatDeepLink';
 import useChatSync from './src/hooks/useChatSync';
 import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
 import useTabShellBackNavigation from './src/hooks/useTabShellBackNavigation';
@@ -145,6 +146,17 @@ function AppShell() {
     fetchMessagesForPeer: callFlow.fetchMessagesForPeer,
     markConversationRead: callFlow.markConversationRead,
     checkPresence: callFlow.checkPresence,
+  });
+
+  // Open the conversation a tapped message notification points at
+  // (`wetalk://chat/{conversationId}`), including from a cold start.
+  useChatDeepLink({
+    userId: callFlow.userId,
+    conversations: callFlow.conversations,
+    onOpenConversation: useCallback(peerId => {
+      setActiveTab('chats');
+      setChatPeerId(peerId);
+    }, []),
   });
 
   // ── Call initiation (video / audio-only) ──────────────────────────────────

@@ -74,6 +74,17 @@ let isConfigured = false;
 const displayedCallIds = new Set();
 
 /**
+ * Caller id per displayed call (`callId` → `callerId`).
+ *
+ * Used to replace a stale ring from the same peer: when someone cancels and
+ * immediately redials, the notification for the cancelled call can still be on
+ * screen, and a user tapping it answers a call that no longer exists. The new
+ * call therefore dismisses the previous one from the same caller instead of
+ * stacking on top of it.
+ */
+const displayedCallerIds = new Map();
+
+/**
  * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
  * `endCall` events, or `null` when nothing is attached.
  *
@@ -138,6 +149,7 @@ export function _resetCallKeepCache() {
   hasLoggedMissingCallKeep = false;
   isConfigured = false;
   displayedCallIds.clear();
+  displayedCallerIds.clear();
   activeCallActionHandlers = null;
   pendingAnswerCallId = null;
 }
@@ -150,6 +162,7 @@ export function _resetCallKeepCache() {
  */
 export function clearDisplayedCall(callId) {
   displayedCallIds.delete(callId);
+  displayedCallerIds.delete(callId);
 }
 
 /**
@@ -269,6 +282,28 @@ export async function setupCallKeep() {
 }
 
 /**
+ * Dismiss any incoming-call UI still on screen for an *earlier* call from the
+ * same caller, so a redial replaces the stale ring instead of stacking on top
+ * of it (and so a tap can only ever reach the call that is actually ringing).
+ *
+ * @param {string} callId   - the call about to be displayed
+ * @param {string|null|undefined} callerId
+ */
+function dismissStaleCallsFromCaller(callId, callerId) {
+  if (!callerId) return;
+  for (const [displayedCallId, displayedCallerId] of displayedCallerIds) {
+    if (displayedCallId === callId || displayedCallerId !== callerId) continue;
+    logInfo('[CallKeep] Dismissing stale incoming call from same caller', {
+      staleCallId: displayedCallId,
+      callId,
+      callerId,
+    });
+    endCall(displayedCallId);
+    clearPendingAnswer(displayedCallId, 'superseded_by_new_call');
+  }
+}
+
+/**
  * Display the OS incoming-call UI for a call. Never throws; failures resolve
  * with a reason that distinguishes no-op paths from Telecom errors.
  *
@@ -290,6 +325,8 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true } 
   const ready = await setupCallKeep();
   if (!ready) return { shown: false, reason: 'phone_account_not_registered' };
 
+  dismissStaleCallsFromCaller(callId, callerId);
+
   const callKeep = loadCallKeep();
   try {
     if (
@@ -309,11 +346,13 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true } 
     const handle = callerId || callId;
     const name = callerId || 'Incoming call';
     displayedCallIds.add(callId);
+    if (callerId) displayedCallerIds.set(callId, callerId);
     callKeep.displayIncomingCall(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
     return { shown: true };
   } catch (error) {
     displayedCallIds.delete(callId);
+    displayedCallerIds.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
     return { shown: false, reason: 'telecom_threw', message: error?.message };
   }
@@ -371,6 +410,7 @@ export function endCall(callId) {
   if (!callId) return false;
   // Allow the call id to be displayed again if it ever rings anew.
   displayedCallIds.delete(callId);
+  displayedCallerIds.delete(callId);
   // Idempotent no-ops when nothing was ever shown/started for this call.
   dismissIncomingCallNotification(callId);
   stopIncomingRingtone();
@@ -389,6 +429,7 @@ export function endCall(callId) {
 export function endAllCalls() {
   for (const callId of displayedCallIds) dismissIncomingCallNotification(callId);
   displayedCallIds.clear();
+  displayedCallerIds.clear();
   stopIncomingRingtone();
   const callKeep = loadCallKeep();
   if (!callKeep || typeof callKeep.endAllCalls !== 'function') return false;

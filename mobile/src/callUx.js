@@ -18,6 +18,23 @@ export function formatCallDuration(totalSeconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+/**
+ * Format the seconds left in the ring window for display.
+ *
+ * The ring window is two minutes, so a raw second count ("117s") reads as
+ * noise; anything from a minute up is shown as `m:ss`.
+ *
+ * @param {number} totalSeconds
+ * @returns {string}
+ */
+export function formatRingCountdown(totalSeconds) {
+  const safeSeconds = Math.floor(Math.max(0, totalSeconds || 0));
+  if (safeSeconds < 60) return `${safeSeconds}s`;
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 export function deriveInitials(id) {
   if (!id) return '?';
   const parts = id

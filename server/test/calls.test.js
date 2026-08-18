@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, CALL_END_REASONS } = require('../src/index.js');
+const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -498,7 +499,7 @@ test('tickRingingTimeouts: transitions stale ringing calls to missed', async () 
     assert.equal(created.body.status, 'ringing');
 
     // Tick with a timestamp far in the future.
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 1);
 
     const call = getCall(callId);
@@ -543,7 +544,7 @@ test('tickRingingTimeouts: does not re-transition already-terminal calls', async
     await postJson(url, `/calls/${callId}/decline`, {}, calleeSession);
 
     // Tick far in the future – should not affect the already-terminal call.
-    const transitioned = tickRingingTimeouts(Date.now() + 60_000);
+    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
     assert.equal(transitioned, 0);
 
     const events = getCallEvents(callId);
@@ -749,5 +750,54 @@ test('CALL_END_REASONS: exported object has expected terminal reasons', () => {
       `expected reason '${reason}' to be in CALL_END_REASONS`
     );
     assert.equal(typeof CALL_END_REASONS[reason], 'string');
+  }
+});
+
+test('ring window: defaults to two minutes and is configurable via RINGING_TIMEOUT_MS', async () => {
+  // A 30s window was too short for a locked or silent handset to be picked up.
+  assert.equal(DEFAULT_RINGING_TIMEOUT_MS, 120_000);
+
+  const { url, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-ring-default');
+    await createSession(url, 'user-ring-default-callee');
+    const before = Date.now();
+    const res = await postJson(
+      url,
+      '/calls',
+      { calleeId: 'user-ring-default-callee' },
+      callerSession
+    );
+    const remainingMs = new Date(res.body.ringTimeoutAt).getTime() - before;
+    assert.ok(
+      remainingMs > 110_000 && remainingMs <= 121_000,
+      `unexpected ring window ${remainingMs}ms`
+    );
+  } finally {
+    await teardown();
+  }
+
+  const previous = process.env.RINGING_TIMEOUT_MS;
+  process.env.RINGING_TIMEOUT_MS = '45000';
+  const configured = await startServer();
+  try {
+    const callerSession = await createSession(configured.url, 'user-ring-env');
+    await createSession(configured.url, 'user-ring-env-callee');
+    const before = Date.now();
+    const res = await postJson(
+      configured.url,
+      '/calls',
+      { calleeId: 'user-ring-env-callee' },
+      callerSession
+    );
+    const remainingMs = new Date(res.body.ringTimeoutAt).getTime() - before;
+    assert.ok(
+      remainingMs > 40_000 && remainingMs <= 46_000,
+      `unexpected configured ring window ${remainingMs}ms`
+    );
+  } finally {
+    await configured.teardown();
+    if (previous === undefined) delete process.env.RINGING_TIMEOUT_MS;
+    else process.env.RINGING_TIMEOUT_MS = previous;
   }
 });

@@ -128,8 +128,9 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
 | `SHUTDOWN_DRAIN_MS` | `25000` | Max time (ms) to wait for in-flight socket connections to drain on `SIGTERM`/`SIGINT` before force-closing. Keep below the systemd `TimeoutStopSec`. |
-| `SOCKET_PING_INTERVAL_MS` | `10000` | Engine.IO heartbeat interval. Together with `SOCKET_PING_TIMEOUT_MS` this bounds how long a dead client (e.g. a suspended phone) still looks connected. The defaults detect a drop in ~20s, comfortably inside the 30s ringing timeout, so the callee falls back to push instead of ringing into a dead socket. |
+| `SOCKET_PING_INTERVAL_MS` | `10000` | Engine.IO heartbeat interval. Together with `SOCKET_PING_TIMEOUT_MS` this bounds how long a dead client (e.g. a suspended phone) still looks connected. The defaults detect a drop in ~20s, comfortably inside the ringing timeout, so the callee falls back to push instead of ringing into a dead socket. |
 | `SOCKET_PING_TIMEOUT_MS` | `10000` | Time (ms) to wait for a client's heartbeat response before considering the socket dead. |
+| `RINGING_TIMEOUT_MS` | `120000` | How long a call may ring before it is marked `missed`. The incoming-call push TTL is derived from the time *remaining* in this window, so a late-delivered push expires exactly when the call does. |
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
 | `DATABASE_POOL_MAX` | `10`     | Maximum app-side `pg` pool connections. |
