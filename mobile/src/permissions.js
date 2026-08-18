@@ -85,6 +85,36 @@ async function getMissingPermissions(permissions) {
   return missing;
 }
 
+/**
+ * Report which *required* call permissions (camera / microphone) are missing,
+ * without prompting for them.
+ *
+ * Answering a call from a push cold start happens with no foreground Activity,
+ * so a runtime prompt cannot be shown; the answer path uses this to name the
+ * missing permission in logs and in the user-visible status instead of failing
+ * silently inside `getUserMedia`.
+ *
+ * @returns {Promise<{
+ *   camera: boolean,
+ *   microphone: boolean,
+ *   missing: string[],
+ *   message: string | null,
+ * }>} `missing` is empty when nothing is required or everything is granted.
+ */
+export async function getMissingCallPermissions() {
+  if (Platform.OS !== 'android' || !PermissionsAndroid?.check) {
+    return { camera: false, microphone: false, missing: [], message: null };
+  }
+
+  const missing = await getMissingPermissions(REQUIRED_CALL_PERMISSIONS);
+  return {
+    camera: missing.includes(CAMERA_PERMISSION),
+    microphone: missing.includes(MICROPHONE_PERMISSION),
+    missing,
+    message: missing.length > 0 ? getRuntimePermissionDeniedMessage(missing) : null,
+  };
+}
+
 export async function ensureCallPermissions() {
   if (
     Platform.OS !== 'android' ||

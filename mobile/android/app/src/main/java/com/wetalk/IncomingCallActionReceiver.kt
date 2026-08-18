@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 
 /**
  * Handles the Accept / Decline action buttons on WeTalk's branded
@@ -40,7 +41,11 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
     context: Context,
     intent: Intent,
   ) {
-    val callId = intent.getStringExtra(EXTRA_CALL_ID) ?: return
+    val callId = intent.getStringExtra(EXTRA_CALL_ID)
+    if (callId == null) {
+      Log.w(TAG, "Action ${intent.action} ignored; no callId extra")
+      return
+    }
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     manager.cancel(IncomingCallNotificationModule.notificationId(callId))
 
@@ -48,8 +53,13 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
       IncomingCallNotificationModule.ACTION_ACCEPT -> {
         // The connection may already be gone (the call ended/timed out
         // elsewhere before the user tapped an action); there is nothing
-        // left to accept in that case.
-        if (!CallConnections.answer(callId)) return
+        // left to accept in that case. Log it so "the answer never reached
+        // the call flow" is distinguishable from "the app never came up".
+        if (!CallConnections.answer(callId)) {
+          Log.w(TAG, "Accept ignored for callId=$callId; no live CallKeep connection")
+          return
+        }
+        Log.i(TAG, "Answered callId=$callId; bringing app to the foreground")
         // Bring the app to the foreground so the user sees the in-call
         // screen once `useCallFlow` picks up the resulting answerCall event.
         val activityIntent =
@@ -59,13 +69,22 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(MainActivity.EXTRA_INCOMING_CALL, true)
           }
-        context.startActivity(activityIntent)
+        try {
+          context.startActivity(activityIntent)
+        } catch (error: Exception) {
+          Log.e(TAG, "Failed to launch MainActivity for callId=$callId", error)
+        }
       }
-      IncomingCallNotificationModule.ACTION_DECLINE -> CallConnections.reject(callId)
+      IncomingCallNotificationModule.ACTION_DECLINE -> {
+        val rejected = CallConnections.reject(callId)
+        Log.i(TAG, "Decline for callId=$callId rejected=$rejected")
+      }
     }
   }
 
   companion object {
+    private const val TAG = "WeTalkCallAction"
+
     const val EXTRA_CALL_ID = "com.wetalk.EXTRA_CALL_ID"
   }
 }

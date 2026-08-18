@@ -34,7 +34,18 @@ import { loadDeviceId, loadSettings } from './settingsStorage';
 
 const DEEP_LINK_SCHEME = 'wetalk';
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
-const RECEIPT_STAGES = new Set(['received', 'ui_displayed', 'ui_failed']);
+// `received` / `ui_displayed` / `ui_failed` cover push delivery and ringing;
+// the `answer_*` stages cover what happened after the user tapped Answer, so a
+// call that rings but cannot be picked up is diagnosable from server logs
+// without device access.
+const RECEIPT_STAGES = new Set([
+  'received',
+  'ui_displayed',
+  'ui_failed',
+  'answer_attempted',
+  'answer_failed',
+  'answer_accepted',
+]);
 
 /**
  * Parse a WeTalk deep-link URL into a call descriptor.
@@ -340,16 +351,44 @@ async function resolveReceiptBaseUrl(remoteMessage) {
   return (settings.signalingUrl || DEFAULT_SIGNALING_URL).trim();
 }
 
-export async function sendPushReceipt({ remoteMessage, callId, stage }) {
+/**
+ * Report a call-lifecycle stage for `callId` to the server.
+ *
+ * Callers that hold a live session (e.g. the in-app call flow) can pass
+ * `sessionId` / `signalingUrl` explicitly; background push handlers instead
+ * pass the `remoteMessage` the values are read from.
+ *
+ * @param {{
+ *   remoteMessage?: object | null,
+ *   callId: string,
+ *   stage: string,
+ *   reason?: string | null,
+ *   sessionId?: string | null,
+ *   signalingUrl?: string | null,
+ * }} opts
+ * @returns {Promise<boolean>} `true` when the receipt was accepted
+ */
+export async function sendPushReceipt({
+  remoteMessage,
+  callId,
+  stage,
+  reason = null,
+  sessionId: explicitSessionId = null,
+  signalingUrl: explicitSignalingUrl = null,
+}) {
   if (!callId || !RECEIPT_STAGES.has(stage) || typeof fetch !== 'function') return false;
   try {
     const data = remoteMessage?.data ?? {};
-    const sessionId = typeof data.sessionId === 'string' ? data.sessionId.trim() : '';
+    const sessionId =
+      (typeof explicitSessionId === 'string' ? explicitSessionId.trim() : '') ||
+      (typeof data.sessionId === 'string' ? data.sessionId.trim() : '');
     const deviceId =
       typeof data.deviceId === 'string' && data.deviceId.trim()
         ? data.deviceId.trim()
         : await loadDeviceId();
-    const signalingUrl = await resolveReceiptBaseUrl(remoteMessage);
+    const signalingUrl =
+      (typeof explicitSignalingUrl === 'string' ? explicitSignalingUrl.trim() : '') ||
+      (await resolveReceiptBaseUrl(remoteMessage));
     if (!signalingUrl || (!sessionId && !deviceId)) return false;
 
     const response = await fetch(`${signalingUrl.replace(/\/+$/, '')}/devices/push-receipt`, {
@@ -359,6 +398,7 @@ export async function sendPushReceipt({ remoteMessage, callId, stage }) {
         ...(sessionId ? { sessionId } : { deviceId }),
         callId,
         stage,
+        ...(reason ? { reason } : {}),
       }),
     });
     if (!response.ok) {

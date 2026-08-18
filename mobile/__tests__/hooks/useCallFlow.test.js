@@ -78,6 +78,9 @@ jest.mock('../../src/mediaControls', () => ({
 
 jest.mock('../../src/permissions', () => ({
   ensureCallPermissions: jest.fn(() => Promise.resolve({ ok: true })),
+  getMissingCallPermissions: jest.fn(() =>
+    Promise.resolve({ camera: false, microphone: false, missing: [], message: null }),
+  ),
 }));
 
 jest.mock('../../src/socketConfig', () => ({
@@ -91,15 +94,40 @@ jest.mock('../../src/webrtcConfig', () => ({
   applyBitrateConstraints: jest.fn(async () => {}),
 }));
 
-jest.mock('../../src/callKeep', () => ({
-  displayIncomingCall: jest.fn(async () => ({ shown: true })),
-  endCall: jest.fn(() => true),
-  endAllCalls: jest.fn(() => true),
-  registerCallActionListeners: jest.fn(() => jest.fn()),
-  setCallActionHandlers: jest.fn(() => jest.fn()),
-  reportCallConnected: jest.fn(() => true),
-  setupCallKeep: jest.fn(async () => true),
-}));
+jest.mock('../../src/callKeep', () => {
+  let pendingAnswerCallId = null;
+  return {
+    bringAppToForeground: jest.fn(() => true),
+    displayIncomingCall: jest.fn(async () => ({ shown: true })),
+    endCall: jest.fn(() => true),
+    endAllCalls: jest.fn(() => true),
+    registerCallActionListeners: jest.fn(() => jest.fn()),
+    setCallActionHandlers: jest.fn(() => jest.fn()),
+    reportCallConnected: jest.fn(() => true),
+    setupCallKeep: jest.fn(async () => true),
+    // Mirrors the single module-scope pending-answer queue in callKeep.js so
+    // the hook's enqueue/drain/drop behaviour is exercised for real.
+    recordPendingAnswer: jest.fn(callUUID => {
+      if (!callUUID) return false;
+      pendingAnswerCallId = callUUID;
+      return true;
+    }),
+    peekPendingAnswer: jest.fn(() => pendingAnswerCallId),
+    consumePendingAnswer: jest.fn(callUUID => {
+      if (!pendingAnswerCallId) return null;
+      if (callUUID && pendingAnswerCallId !== callUUID) return null;
+      const drained = pendingAnswerCallId;
+      pendingAnswerCallId = null;
+      return drained;
+    }),
+    clearPendingAnswer: jest.fn(callUUID => {
+      if (!pendingAnswerCallId) return false;
+      if (callUUID && pendingAnswerCallId !== callUUID) return false;
+      pendingAnswerCallId = null;
+      return true;
+    }),
+  };
+});
 
 jest.mock('../../src/ringtone', () => ({
   startIncomingRingtone: jest.fn(),
@@ -115,6 +143,7 @@ jest.mock('../../src/pushNotifications', () => ({
   registerForPushNotifications: jest.fn(async () => true),
   unregisterPushToken: jest.fn(async () => true),
   installForegroundMessageHandler: jest.fn(() => jest.fn()),
+  sendPushReceipt: jest.fn(async () => true),
 }));
 
 jest.mock('../../src/authService', () => ({
