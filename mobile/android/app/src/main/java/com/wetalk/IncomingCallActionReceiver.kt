@@ -8,33 +8,31 @@ import android.net.Uri
 import android.util.Log
 
 /**
- * Handles the Accept / Decline action buttons on WeTalk's branded
- * incoming-call notification ([IncomingCallNotificationModule]).
+ * Handles the Decline action button on WeTalk's branded incoming-call
+ * notification ([IncomingCallNotificationModule]), and remains a compatible
+ * receiver for Accept intents posted by an earlier build's notification.
  *
- * Acts directly on react-native-callkeep's Android `Connection` for the call
- * (via [CallConnections], WeTalk's own seam over
- * `io.wazo.callkeep.VoiceConnectionService.getConnection`) — the same object
- * `RNCallKeepModule.answerIncomingCall` / `rejectCall` call `onAnswer()` /
- * `onReject()` on from the JS bridge. Doing the same here needs no live
- * React/JS context, so the actions work as soon as the self-managed
- * ConnectionService is bound (which Telecom does to *route* the call, before
- * the JS bundle has necessarily finished loading), instead of depending on a
- * React Native bridge call that may not exist yet.
+ * Acts on react-native-callkeep's Android `Connection` for the call (via
+ * [CallConnections], WeTalk's own seam over
+ * `io.wazo.callkeep.VoiceConnectionService.getConnection`) when one exists —
+ * the same object `RNCallKeepModule.answerIncomingCall` / `rejectCall` call
+ * `onAnswer()` / `onReject()` on from the JS bridge — so the OS call UI stays
+ * in sync without needing a live React/JS context.
  *
- * `Connection.onAnswer()` / `onReject()` in turn make react-native-callkeep
- * re-emit the same `RNCallKeepPerformAnswerCallAction` /
- * `RNCallKeepPerformEndCallAction` native events that
- * `registerCallActionListeners` in `mobile/src/callKeep.js` already
- * subscribes to at module scope, so accepting/declining from this receiver
- * flows through the exact same JS call-flow plumbing the system dialer's own
- * Answer/Decline buttons would have used.
+ * Crucially, that connection is treated as an *optimisation, not a
+ * prerequisite*. On a cold start Telecom frequently never completes a
+ * connection (`setupCallKeep` runs with no foreground Activity), yet the
+ * branded notification is still posted, so gating on `CallConnections.answer()`
+ * / `reject()` — as this receiver used to — made the buttons silent no-ops
+ * exactly when they were needed most. Every action is therefore *also*
+ * persisted via [PendingCallStore], which survives process death, so
+ * `useCallFlow` can drain it on mount and complete the accept/decline against
+ * the server over the socket or the HTTP fallback.
  *
- * Actually connecting media for an accepted call still requires the JS call
- * flow (`useCallFlow`) to mount and take over WebRTC negotiation; on a true
- * cold start that is the same "answer arrived before the JS context is
- * ready" race already handled by `pendingAnswerCallId` in `callKeep.js` (and
- * the separate cold-start-answer-path fix this feature builds on/depends on
- * — see the module doc comment in `callKeep.js`).
+ * Accept is now delivered by an Activity `PendingIntent` straight to
+ * [MainActivity] (Android 12+ blocks notification trampolines, and Android 10+
+ * restricts background activity starts from a receiver), so it no longer
+ * depends on this receiver being able to launch an Activity.
  */
 class IncomingCallActionReceiver : BroadcastReceiver() {
   override fun onReceive(
@@ -51,17 +49,17 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
 
     when (intent.action) {
       IncomingCallNotificationModule.ACTION_ACCEPT -> {
-        // The connection may already be gone (the call ended/timed out
-        // elsewhere before the user tapped an action); there is nothing
-        // left to accept in that case. Log it so "the answer never reached
-        // the call flow" is distinguishable from "the app never came up".
-        if (!CallConnections.answer(callId)) {
-          Log.w(TAG, "Accept ignored for callId=$callId; no live CallKeep connection")
-          return
-        }
-        Log.i(TAG, "Answered callId=$callId; bringing app to the foreground")
-        // Bring the app to the foreground so the user sees the in-call
-        // screen once `useCallFlow` picks up the resulting answerCall event.
+        // Legacy path: only reachable from a notification posted by an older
+        // build. The connection may already be gone, which must not stop the
+        // app from opening and completing the accept in JS.
+        val connectionLive = CallConnections.answer(callId)
+        Log.i(TAG, "Accept received callId=$callId connectionLive=$connectionLive")
+        PendingCallStore.recordAction(
+          context,
+          callId,
+          PendingCallStore.ACTION_ACCEPT,
+          connectionLive,
+        )
         val activityIntent =
           Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -71,14 +69,28 @@ class IncomingCallActionReceiver : BroadcastReceiver() {
           }
         try {
           context.startActivity(activityIntent)
+          Log.i(TAG, "Launched MainActivity for callId=$callId")
         } catch (error: Exception) {
+          // Background activity-start restrictions (Android 10+) and OEM
+          // policies can block this; the persisted accept above still lets the
+          // call be answered the next time the app runs.
           Log.e(TAG, "Failed to launch MainActivity for callId=$callId", error)
         }
       }
       IncomingCallNotificationModule.ACTION_DECLINE -> {
-        val rejected = CallConnections.reject(callId)
-        Log.i(TAG, "Decline for callId=$callId rejected=$rejected")
+        val connectionLive = CallConnections.reject(callId)
+        Log.i(TAG, "Decline received callId=$callId connectionLive=$connectionLive")
+        // Rejecting the Telecom connection only tears down the local OS call
+        // UI; the server is told by the JS call flow when it drains this.
+        PendingCallStore.recordAction(
+          context,
+          callId,
+          PendingCallStore.ACTION_DECLINE,
+          connectionLive,
+        )
+        PendingCallStore.clearRinging(context, callId)
       }
+      else -> Log.w(TAG, "Unknown action ${intent.action} for callId=$callId")
     }
   }
 

@@ -1,12 +1,14 @@
 package com.wetalk
 
 import android.app.KeyguardManager
+import android.app.NotificationManager
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
 import com.facebook.react.ReactActivity
@@ -30,12 +32,53 @@ class MainActivity : ReactActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    applyIncomingCallWakeFlags(intent)
+    handleIncomingCallIntent(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    applyIncomingCallWakeFlags(intent)
+    handleIncomingCallIntent(intent)
+  }
+
+  /**
+   * Handle a launch from WeTalk's branded incoming-call notification: record
+   * an Accept tap for the JS call flow to replay, then apply the wake flags.
+   *
+   * The Accept action's `PendingIntent` targets this Activity directly (see
+   * `IncomingCallNotificationModule.acceptPendingIntent`), so accepting never
+   * depends on a live CallKeep `Connection` — on a cold start Telecom often
+   * never created one, which previously made the Accept button a silent no-op.
+   * `Connection.onAnswer()` is still called when a connection *does* exist, so
+   * the OS call UI transitions correctly, but its absence is only logged.
+   */
+  private fun handleIncomingCallIntent(intent: Intent?) {
+    if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
+    val callId = intent.data?.lastPathSegment
+    if (callId.isNullOrBlank()) {
+      Log.w(TAG, "Incoming-call intent without a callId; ignoring")
+      return
+    }
+
+    if (intent.getBooleanExtra(EXTRA_ACCEPT_CALL, false)) {
+      // Consume the extra so a later re-delivery of the same intent (e.g. a
+      // configuration change re-creating the Activity) cannot answer twice.
+      intent.removeExtra(EXTRA_ACCEPT_CALL)
+      (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+        ?.cancel(IncomingCallNotificationModule.notificationId(callId))
+      val connectionLive = CallConnections.answer(callId)
+      Log.i(TAG, "Accept tapped callId=$callId connectionLive=$connectionLive")
+      // Persist the tap: the JS pending-answer queue lives in a JS module and
+      // does not survive process death, so a cold-start accept is replayed
+      // from here by `useCallFlow` on mount.
+      PendingCallStore.recordAction(
+        this,
+        callId,
+        PendingCallStore.ACTION_ACCEPT,
+        connectionLive,
+      )
+    }
+
+    applyIncomingCallWakeFlags(callId)
   }
 
   /**
@@ -51,15 +94,26 @@ class MainActivity : ReactActivity() {
    * accepts external `wetalk://call/{callId}` deep links, so [EXTRA_INCOMING_CALL]
    * alone — a plain `Intent` extra, not covered by the intent-filter — cannot
    * be trusted: any other app could forge it to force a screen wake / keyguard
-   * dismiss with no real call in progress. Guard against that by requiring a
-   * real, currently-live react-native-callkeep connection for the intent's
-   * `callId`, the same check [IncomingCallActionReceiver] already performs
-   * before acting on a notification action.
+   * dismiss with no real call in progress. The intent is therefore accepted
+   * only for a call this app is itself ringing for: either a live
+   * react-native-callkeep connection, or a ringing record written by
+   * [IncomingCallNotificationModule] (only this app can write those
+   * preferences). The latter is what keeps the screen wake working on a cold
+   * start, where Telecom frequently never completed a connection and the
+   * connection-only check silently did nothing.
    */
-  private fun applyIncomingCallWakeFlags(intent: Intent?) {
-    if (intent?.getBooleanExtra(EXTRA_INCOMING_CALL, false) != true) return
-    val callId = intent.data?.lastPathSegment ?: return
-    if (!CallConnections.isLive(callId)) return
+  private fun applyIncomingCallWakeFlags(callId: String) {
+    val connectionLive = CallConnections.isLive(callId)
+    val ringing = PendingCallStore.isRinging(this, callId)
+    if (!connectionLive && !ringing) {
+      Log.w(
+        TAG,
+        "Ignoring incoming-call intent for unknown callId=$callId" +
+          " (no live connection and not ringing)",
+      )
+      return
+    }
+    Log.i(TAG, "Waking screen for callId=$callId connectionLive=$connectionLive ringing=$ringing")
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
@@ -171,6 +225,14 @@ class MainActivity : ReactActivity() {
     }
 
   companion object {
+    private const val TAG = "WeTalkMainActivity"
+
+    /**
+     * Intent extra marking a launch that came from the notification's Accept
+     * button, so the tap is recorded for the JS call flow to complete.
+     */
+    const val EXTRA_ACCEPT_CALL = "com.wetalk.EXTRA_ACCEPT_CALL"
+
     /**
      * Intent extra set by [IncomingCallNotificationModule]'s full-screen intent
      * so [applyIncomingCallWakeFlags] knows to wake the device / draw over the

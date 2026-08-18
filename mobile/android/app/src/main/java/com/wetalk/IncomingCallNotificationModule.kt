@@ -10,11 +10,14 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -36,6 +39,17 @@ class IncomingCallNotificationModule(
 ) : ReactContextBaseJavaModule(reactContext) {
   override fun getName(): String = NAME
 
+  /**
+   * Post the branded incoming-call notification.
+   *
+   * Resolves with what the *device* will actually do, not just that a
+   * notification was posted: the channel's real importance and sound are read
+   * back after creation, because channel settings are immutable once created
+   * and an older, quieter channel from a previous install would otherwise
+   * silently swallow the ring (see [createNotificationChannel]). The JS side
+   * uses this to start its own ringtone fallback instead of assuming the
+   * channel rings.
+   */
   @ReactMethod
   fun show(
     callId: String,
@@ -46,9 +60,25 @@ class IncomingCallNotificationModule(
     try {
       val manager = notificationManager()
       createNotificationChannel(manager)
+      // Remember that this app is ringing for the call, so the Accept path and
+      // the lock-screen wake can trust the call id even when Telecom never
+      // created a CallKeep connection (the cold-start case).
+      PendingCallStore.markRinging(reactContext, callId)
       manager.notify(notificationId(callId), buildNotification(callId, callerName, hasVideo, manager))
-      promise.resolve(true)
+
+      val result = channelAudioState(manager)
+      result.putBoolean("shown", true)
+      result.putBoolean("connectionLive", CallConnections.isLive(callId))
+      Log.i(
+        TAG,
+        "Posted incoming-call notification callId=$callId" +
+          " importance=${result.getInt("channelImportance")}" +
+          " hasSound=${result.getBoolean("channelHasSound")}" +
+          " connectionLive=${result.getBoolean("connectionLive")}",
+      )
+      promise.resolve(result)
     } catch (error: Exception) {
+      Log.e(TAG, "Failed to post incoming-call notification callId=$callId", error)
       promise.reject("INCOMING_CALL_NOTIFICATION_SHOW_FAILED", error)
     }
   }
@@ -56,17 +86,87 @@ class IncomingCallNotificationModule(
   @ReactMethod
   fun dismiss(callId: String) {
     notificationManager().cancel(notificationId(callId))
+    PendingCallStore.clearRinging(reactContext, callId)
     // The call is over (answered/declined/ended) by the time dismiss() is
     // called, so its id can be freed instead of growing notificationIds
     // for the lifetime of the process.
     notificationIds.remove(callId)
   }
 
+  /**
+   * Remove and return the Accept / Decline the user tapped while the JS
+   * context was not running, so the call flow can replay it on mount.
+   * Resolves `null` when there is nothing pending.
+   */
+  @ReactMethod
+  fun consumePendingCallAction(promise: Promise) {
+    try {
+      val pending = PendingCallStore.consumeAction(reactContext)
+      if (pending == null) {
+        promise.resolve(null)
+        return
+      }
+      val payload = Arguments.createMap()
+      payload.putString("callId", pending.callId)
+      payload.putString("action", pending.action)
+      payload.putDouble("ageMs", pending.ageMs.toDouble())
+      payload.putBoolean("connectionLive", pending.connectionLive)
+      promise.resolve(payload)
+    } catch (error: Exception) {
+      Log.e(TAG, "consumePendingCallAction failed", error)
+      promise.reject("PENDING_CALL_ACTION_FAILED", error)
+    }
+  }
+
+  /** Whether Telecom still holds a live CallKeep connection for [callId]. */
+  @ReactMethod
+  fun isCallConnectionLive(
+    callId: String,
+    promise: Promise,
+  ) {
+    promise.resolve(CallConnections.isLive(callId))
+  }
+
+  /** The channel's *effective* importance and sound, post-creation. */
+  private fun channelAudioState(manager: NotificationManager): WritableMap {
+    val state = Arguments.createMap()
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      // Pre-O has no channels: importance/sound come from the notification
+      // itself, which is built with PRIORITY_HIGH and the default ringtone.
+      state.putInt("channelImportance", NotificationManager.IMPORTANCE_HIGH)
+      state.putBoolean("channelHasSound", true)
+      return state
+    }
+    val channel = manager.getNotificationChannel(CHANNEL_ID)
+    state.putInt("channelImportance", channel?.importance ?: NotificationManager.IMPORTANCE_NONE)
+    state.putBoolean("channelHasSound", channel?.sound != null)
+    return state
+  }
+
   private fun notificationManager(): NotificationManager =
     reactContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+  /**
+   * Create the incoming-call channel, deleting superseded versions first.
+   *
+   * Notification channel settings are immutable once the channel exists, so an
+   * install that ever created an earlier, quieter version of this channel would
+   * ignore the importance/sound/vibration configured below *forever* — the
+   * classic "notification appears but is silent" bug, which a reinstall fixes
+   * and an app upgrade does not. Versioning the channel id (and deleting the
+   * obsolete ids on upgrade) is what makes these settings apply on existing
+   * installs.
+   */
   private fun createNotificationChannel(manager: NotificationManager) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+    for (obsoleteId in OBSOLETE_CHANNEL_IDS) {
+      if (manager.getNotificationChannel(obsoleteId) != null) {
+        Log.i(TAG, "Deleting obsolete notification channel $obsoleteId")
+        manager.deleteNotificationChannel(obsoleteId)
+      }
+    }
+
     if (manager.getNotificationChannel(CHANNEL_ID) != null) return
 
     val channel =
@@ -108,7 +208,12 @@ class IncomingCallNotificationModule(
         .setAutoCancel(false)
         .setContentIntent(fullScreenPendingIntent(callId))
         .addAction(0, "Decline", actionPendingIntent(callId, ACTION_DECLINE))
-        .addAction(0, "Accept", actionPendingIntent(callId, ACTION_ACCEPT))
+        // Accept targets an Activity directly rather than a BroadcastReceiver
+        // that starts one: Android 12+ blocks notification "trampolines", and
+        // Android 10+ restricts background activity starts, which is why the
+        // Accept button opened the app on some devices and did nothing on
+        // others. An Activity PendingIntent is always allowed to launch.
+        .addAction(0, "Accept", acceptPendingIntent(callId))
 
     // Android 14+ restricts full-screen intents to apps the user has granted
     // special "Alarms & reminders"-style access to; a non-exempt app that
@@ -143,6 +248,28 @@ class IncomingCallNotificationModule(
     )
   }
 
+  /**
+   * Launches [MainActivity] for an Accept tap. The accept is completed by the
+   * JS call flow (socket `call.accept`, or the HTTP fallback), so it works
+   * whether or not Telecom ever created a CallKeep connection.
+   */
+  private fun acceptPendingIntent(callId: String): PendingIntent {
+    val intent =
+      Intent(reactContext, MainActivity::class.java).apply {
+        action = Intent.ACTION_VIEW
+        data = Uri.parse("wetalk://call/$callId")
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        putExtra(MainActivity.EXTRA_INCOMING_CALL, true)
+        putExtra(MainActivity.EXTRA_ACCEPT_CALL, true)
+      }
+    return PendingIntent.getActivity(
+      reactContext,
+      actionRequestCode(callId, ACTION_ACCEPT),
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
   /** Routes a notification action button through [IncomingCallActionReceiver]. */
   private fun actionPendingIntent(
     callId: String,
@@ -163,7 +290,19 @@ class IncomingCallNotificationModule(
 
   companion object {
     const val NAME = "IncomingCallNotification"
-    const val CHANNEL_ID = "wetalk_incoming_calls"
+
+    /**
+     * Versioned channel id — bump this (and add the previous value to
+     * [OBSOLETE_CHANNEL_IDS]) whenever the channel's sound, importance or
+     * vibration settings change, since Android ignores changes to an existing
+     * channel.
+     */
+    const val CHANNEL_ID = "wetalk_incoming_calls.v2"
+
+    /** Superseded channel ids, deleted on first use of the current channel. */
+    private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_incoming_calls")
+
+    private const val TAG = "WeTalkCallNotification"
     const val ACTION_ACCEPT = "com.wetalk.action.ACCEPT_CALL"
     const val ACTION_DECLINE = "com.wetalk.action.DECLINE_CALL"
     private val VIBRATION_PATTERN = longArrayOf(0, 1000, 1000)

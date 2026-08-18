@@ -129,6 +129,14 @@ jest.mock('../../src/callKeep', () => {
   };
 });
 
+jest.mock('../../src/incomingCallNotification', () => ({
+  consumePendingCallAction: jest.fn(async () => null),
+  dismissIncomingCallNotification: jest.fn(() => true),
+  isCallConnectionLive: jest.fn(async () => null),
+  isIncomingCallNotificationAvailable: jest.fn(() => false),
+  showIncomingCallNotification: jest.fn(async () => true),
+}));
+
 jest.mock('../../src/ringtone', () => ({
   startIncomingRingtone: jest.fn(),
   startOutgoingRingback: jest.fn(),
@@ -2675,5 +2683,308 @@ describe('useCallFlow chat', () => {
       callId: 'call-share-1',
       mediaState: { isScreenSharing: true },
     });
+  });
+});
+
+
+// ─── Answer-path hardening ────────────────────────────────────────────────────
+//
+// Every failure on the answer path used to be a silent `return`: a call could
+// ring and simply refuse to be picked up with no log, no user-visible status
+// and nothing on the server. These tests pin each of those paths.
+
+describe('useCallFlow answer path', () => {
+  function getSocketHandler(event) {
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1]?.value;
+    if (!socketMock) return undefined;
+    return socketMock.on.mock.calls.find(([e]) => e === event)?.[1];
+  }
+
+  function latestSocket() {
+    const { io } = require('socket.io-client');
+    return io.mock.results[io.mock.results.length - 1].value;
+  }
+
+  function mockFetch(routes) {
+    global.fetch = jest.fn(async url => {
+      const target = String(url);
+      const match = Object.keys(routes).find(key => target.includes(key));
+      if (match) return routes[match];
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ sessionId: 'sess-answer', userId: 'alice' }),
+      };
+    });
+  }
+
+  async function renderWithSocket() {
+    if (!global.fetch) mockFetch({});
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      resultRef.current.setUserId('alice');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    return { resultRef, tree };
+  }
+
+  async function ring(resultRef, tree, call) {
+    const handler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await handler({ call });
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
+    require('../../src/incomingCallNotification').consumePendingCallAction.mockResolvedValue(null);
+    require('../../src/permissions').getMissingCallPermissions.mockResolvedValue({
+      camera: false,
+      microphone: false,
+      missing: [],
+      message: null,
+    });
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+  });
+
+  test('answering with no incoming call surfaces a reason instead of silently returning', async () => {
+    const { logWarn } = require('../../src/appLogger');
+    const { resultRef, tree } = await renderWithSocket();
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.status.message).toBe('No incoming call to answer');
+    expect(logWarn).toHaveBeenCalledWith(
+      '[CallFlow] acceptIncomingCall aborted',
+      expect.objectContaining({ reason: 'no_incoming_call' }),
+    );
+  });
+
+  test('unavailable local media degrades the call instead of preventing the answer', async () => {
+    const { mediaDevices } = require('react-native-webrtc');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    mediaDevices.getUserMedia.mockRejectedValue(new Error('Permission denied'));
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-nomedia', callerId: 'olive' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      'call.accept',
+      expect.objectContaining({ callId: 'call-nomedia' }),
+      expect.any(Function),
+    );
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ callId: 'call-nomedia', stage: 'answer_accepted' }),
+    );
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-nomedia',
+        stage: 'answer_failed',
+        reason: 'local_media_unavailable',
+      }),
+    );
+  });
+
+  test('a disconnected socket falls back to the HTTP accept endpoint', async () => {
+    const { mediaDevices } = require('react-native-webrtc');
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-http', callerId: 'pia' };
+    await ring(resultRef, tree, call);
+
+    // The socket drops (or never finished connecting) before Answer is tapped.
+    const socketMock = latestSocket();
+    socketMock.connected = false;
+    mockFetch({
+      '/calls/call-http/accept': {
+        ok: true,
+        status: 200,
+        json: async () => ({ ...call, status: 'accepted' }),
+      },
+    });
+
+    await act(async () => {
+      const accepted = resultRef.current.acceptIncomingCall();
+      await Promise.resolve();
+      jest.advanceTimersByTime(6000);
+      await accepted;
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const acceptRequest = global.fetch.mock.calls.find(([url]) =>
+      String(url).includes('/calls/call-http/accept'),
+    );
+    expect(acceptRequest).toBeTruthy();
+    expect(acceptRequest[1].method).toBe('POST');
+    expect(resultRef.current.activeCall).toMatchObject({ callId: 'call-http' });
+  });
+
+  test('an Accept tapped while the app was killed is replayed on mount', async () => {
+    const { consumePendingCallAction } = require('../../src/incomingCallNotification');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    const { mediaDevices } = require('react-native-webrtc');
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    consumePendingCallAction.mockResolvedValue({
+      callId: 'call-native',
+      action: 'accept',
+      ageMs: 1200,
+      connectionLive: false,
+    });
+    mockFetch({
+      '/calls/call-native': {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          callId: 'call-native',
+          callerId: 'nina',
+          calleeId: 'alice',
+          status: 'ringing',
+        }),
+      },
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, call: { callId: 'call-native', callerId: 'nina' } });
+    });
+
+    // Flush the deferred rehydration, the replay effect and the accept it runs.
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-native',
+        stage: 'accept_tapped',
+        reason: 'connection_missing',
+      }),
+    );
+    expect(socketMock.emit).toHaveBeenCalledWith(
+      'call.accept',
+      expect.objectContaining({ callId: 'call-native' }),
+      expect.any(Function),
+    );
+  });
+
+  test('a Decline tapped while the app was killed still reaches the server', async () => {
+    const { consumePendingCallAction } = require('../../src/incomingCallNotification');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    consumePendingCallAction.mockResolvedValue({
+      callId: 'call-native-decline',
+      action: 'decline',
+      ageMs: 900,
+      connectionLive: true,
+    });
+
+    mockFetch({
+      '/calls/call-native-decline/decline': {
+        ok: true,
+        status: 200,
+        json: async () => ({ callId: 'call-native-decline', status: 'declined' }),
+      },
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-native-decline',
+        stage: 'decline_tapped',
+        reason: 'connection_live',
+      }),
+    );
+    // The drain runs before the socket exists, so the decline must reach the
+    // server over HTTP rather than being dropped.
+    const declineRequest = global.fetch.mock.calls.find(([url]) =>
+      String(url).includes('/calls/call-native-decline/decline'),
+    );
+    expect(declineRequest).toBeTruthy();
+    expect(declineRequest[1].method).toBe('POST');
+  });
+
+  test('a queued answer for a call that is gone is dropped loudly, not left stuck', async () => {
+    const { peekPendingAnswer } = require('../../src/callKeep');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    mockFetch({
+      '/calls/call-gone': { ok: false, status: 404, json: async () => ({}) },
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const { setCallActionHandlers } = require('../../src/callKeep');
+    const { onAnswer } =
+      setCallActionHandlers.mock.calls[setCallActionHandlers.mock.calls.length - 1][0];
+
+    await act(async () => {
+      onAnswer('call-gone');
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(peekPendingAnswer()).toBeNull();
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-gone',
+        stage: 'answer_failed',
+        reason: 'call_unavailable',
+      }),
+    );
+    expect(resultRef.current.status.message).toMatch(/no longer available/i);
   });
 });

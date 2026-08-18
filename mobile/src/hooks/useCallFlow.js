@@ -27,6 +27,7 @@ import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
+import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions, getMissingCallPermissions } from '../permissions';
 import {
@@ -1108,10 +1109,13 @@ export default function useCallFlow() {
    * the presence auto-connect effect fires with a valid identity.
    *
    * @param {string} callId
+   * @returns {Promise<'deferred'|'ringing'|'terminal'|'not_found'|'error'|'ignored'>}
+   *   what happened, so callers replaying a queued answer can tell "still
+   *   waiting on an identity" apart from "this call is gone".
    */
   const rehydrateCallFromPush = useCallback(
     async callId => {
-      if (!callId) return;
+      if (!callId) return 'ignored';
 
       const trimmedUserId = (userId ?? '').trim();
       const trimmedUrl = (signalingUrl ?? '').trim();
@@ -1121,7 +1125,7 @@ export default function useCallFlow() {
           callId,
         });
         setPendingPushCallId(callId);
-        return;
+        return 'deferred';
       }
 
       logInfo('[CallFlow] Rehydrating call from push', { callId });
@@ -1137,7 +1141,7 @@ export default function useCallFlow() {
         if (!response.ok) {
           if (response.status === 404) {
             updateStatus('Call no longer available', 'info');
-            return;
+            return 'not_found';
           }
           throw new Error(`HTTP ${response.status}`);
         }
@@ -1162,6 +1166,7 @@ export default function useCallFlow() {
           if (!socketRef.current?.connected) {
             connectSocket(sessionId);
           }
+          return 'ringing';
         } else {
           // Terminal or non-ringing state – inform the user and stay idle.
           const terminalMessages = {
@@ -1177,10 +1182,12 @@ export default function useCallFlow() {
             status: call.status,
           });
           updateStatus(message, 'info');
+          return 'terminal';
         }
       } catch (error) {
         logError('[CallFlow] rehydrateCallFromPush failed', error);
         updateStatus('Unable to retrieve call state', 'error');
+        return 'error';
       }
     },
     // connectSocket and createOrGetSession are stable relative to userId/signalingUrl
@@ -1747,6 +1754,54 @@ export default function useCallFlow() {
 
   // ─── Decline incoming call ────────────────────────────────────────────────
 
+  /**
+   * Tell the server a call is declined, preferring the socket and falling back
+   * to the authenticated HTTP endpoint so a decline tapped during a cold start
+   * still reaches the server. Never throws.
+   *
+   * @param {string} callId
+   * @returns {Promise<boolean>} whether the server was told
+   */
+  const declineCallById = useCallback(
+    async callId => {
+      if (!callId) return false;
+      clearPendingAnswer(callId, 'declined');
+
+      if (socketRef.current?.connected) {
+        try {
+          await emitWithAck(socketRef.current, 'call.decline', {
+            version: SIGNALING_VERSION,
+            callId,
+          });
+          return true;
+        } catch (error) {
+          logWarn('[CallFlow] decline ack failed', { message: error?.message });
+        }
+      }
+
+      try {
+        const trimmedUrl = (signalingUrl ?? '').trim();
+        const response = await authedFetchRef.current?.(sessionId => ({
+          url: `${trimmedUrl}/calls/${encodeURIComponent(callId)}/decline`,
+          options: {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          },
+        }));
+        if (response?.ok) return true;
+        logWarn('[CallFlow] HTTP decline failed', {
+          callId,
+          status: response?.status ?? null,
+        });
+      } catch (error) {
+        logWarn('[CallFlow] HTTP decline threw', { callId, message: error?.message });
+      }
+      return false;
+    },
+    [authedFetchRef, signalingUrl],
+  );
+
   const declineIncomingCall = useCallback(async () => {
     // Mirror `acceptIncomingCall`: prefer the ref so a push-originated decline
     // is never dropped on a stale closure.
@@ -1756,20 +1811,9 @@ export default function useCallFlow() {
       return;
     }
 
-    clearPendingAnswer(call.callId, 'declined');
-    if (socketRef.current?.connected) {
-      try {
-        await emitWithAck(socketRef.current, 'call.decline', {
-          version: SIGNALING_VERSION,
-          callId: call.callId,
-        });
-      } catch (error) {
-        logWarn('[CallFlow] decline ack failed', { message: error?.message });
-      }
-    }
-
+    await declineCallById(call.callId);
     endActiveCall('Call declined', 'info', 'declined');
-  }, [endActiveCall, incomingCall]);
+  }, [declineCallById, endActiveCall, incomingCall]);
 
   // ─── CallKeep: bridge OS answer/end buttons into the call flow ────────────
   // Keep refs to the latest accept/decline handlers so the (mount-once)
@@ -1791,6 +1835,76 @@ export default function useCallFlow() {
   // lost in the hand-off) and replayed by the effect below as soon as the call
   // record is known, instead of requiring a second Accept tap in the app.
 
+  /**
+   * Queue an answered callId whose call record this hook doesn't know yet, and
+   * immediately try to fetch that record (`GET /calls/:callId`) so the queued
+   * answer can be drained without waiting on the socket to deliver
+   * `call.incoming`. Drops the queue entry — loudly — when the call turns out
+   * to be gone.
+   *
+   * @param {string} callUUID
+   * @param {string} source
+   */
+  const queueAnswerForReplay = useCallback((callUUID, source) => {
+    if (!callUUID) return;
+    recordPendingAnswer(callUUID, source);
+    Promise.resolve(rehydrateCallFromPushRef.current?.(callUUID)).then(outcome => {
+      // The call is gone (terminal/not found) or could not be fetched — drop
+      // the queued answer loudly instead of leaving it stuck. A `deferred`
+      // outcome is still in flight (no identity yet), so the queue must
+      // survive until the deferred rehydration runs.
+      if (outcome === 'deferred') return;
+      if (peekPendingAnswer() === callUUID && incomingCallRef.current?.callId !== callUUID) {
+        logWarn('[CallFlow] Queued answer cannot be replayed; call unavailable', {
+          callUUID,
+          source,
+        });
+        reportAnswerStageRef.current?.(callUUID, 'answer_failed', 'call_unavailable');
+        clearPendingAnswer(callUUID, 'call_unavailable');
+      }
+    });
+  }, []);
+
+  // Latest `declineCallById` for the mount-once effects below.
+  const declineCallByIdRef = useRef(declineCallById);
+  useEffect(() => {
+    declineCallByIdRef.current = declineCallById;
+  }, [declineCallById]);
+
+  // Drain the Accept / Decline the user tapped on the branded notification
+  // while this JS context was not running. The pending-answer queue lives in a
+  // JS module, so it cannot survive process death — the native side persists
+  // the tap (`PendingCallStore`) and it is replayed here on mount, which is
+  // what makes a cold-start answer work even when Telecom never created a
+  // CallKeep connection to route it through.
+  useEffect(() => {
+    let cancelled = false;
+    consumePendingCallAction()
+      .then(pending => {
+        if (cancelled || !pending?.callId) return;
+        const { callId, action, connectionLive } = pending;
+        const reason = connectionLive ? 'connection_live' : 'connection_missing';
+        logInfo('[CallFlow] Replaying persisted notification action', pending);
+        if (action === 'accept') {
+          reportAnswerStageRef.current?.(callId, 'accept_tapped', reason);
+          queueAnswerForReplay(callId, 'native_persisted_intent');
+        } else if (action === 'decline') {
+          reportAnswerStageRef.current?.(callId, 'decline_tapped', reason);
+          declineCallByIdRef.current?.(callId);
+        }
+      })
+      .catch(error => {
+        logWarn('[CallFlow] Failed to drain persisted notification action', {
+          message: error?.message,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Run once on mount; handlers are invoked via refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     // Configure CallKeep up front so the system call UI is ready before the
     // first incoming push; degrades to a no-op when the native module is absent.
@@ -1805,21 +1919,7 @@ export default function useCallFlow() {
       onAnswer: callUUID => {
         if (callUUID && incomingCallRef.current?.callId !== callUUID) {
           logInfo('[CallFlow] Recording answerCall for replay', { callUUID });
-          recordPendingAnswer(callUUID, 'call_flow_unknown_call');
-          // Don't wait on the socket to deliver `call.incoming`: fetch the call
-          // record (GET /calls/:callId) so the queued answer can be drained on
-          // a cold start or while the socket is still reconnecting.
-          Promise.resolve(rehydrateCallFromPushRef.current?.(callUUID)).then(() => {
-            // The call is gone (terminal/not found) or could not be fetched —
-            // drop the queued answer loudly instead of leaving it stuck.
-            if (peekPendingAnswer() === callUUID && incomingCallRef.current?.callId !== callUUID) {
-              logWarn('[CallFlow] Queued answer cannot be replayed; call unavailable', {
-                callUUID,
-              });
-              reportAnswerStageRef.current?.(callUUID, 'answer_failed', 'call_unavailable');
-              clearPendingAnswer(callUUID, 'call_unavailable');
-            }
-          });
+          queueAnswerForReplay(callUUID, 'call_flow_unknown_call');
           return;
         }
         acceptIncomingCallRef.current?.();
@@ -1841,7 +1941,9 @@ export default function useCallFlow() {
       unsubscribeForegroundPush();
       detachCallActionHandlers();
     };
-    // Run once on mount; handlers are invoked via refs.
+    // Run once on mount; handlers are invoked via refs (`queueAnswerForReplay`
+    // is stable and only touches refs, so it is safe to omit).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Replay a queued `answerCall` once the matching call becomes known to this

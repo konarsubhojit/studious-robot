@@ -17,6 +17,8 @@ const PUSH_RECEIPT_STAGES = new Set([
   'answer_attempted',
   'answer_failed',
   'answer_accepted',
+  'accept_tapped',
+  'decline_tapped',
 ]);
 
 /**

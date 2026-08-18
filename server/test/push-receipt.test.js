@@ -99,3 +99,49 @@ test('push receipt rejects invalid stages', async (t) => {
   assert.equal(res.status, 400);
   assert.equal(res.body.error, 'invalid stage');
 });
+
+test('push receipt records answer-path stages with their failure reason', async (t) => {
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await postJson(url, '/devices/push-receipt', {
+    deviceId: 'device-cold-start',
+    callId: 'call-answer-1',
+    stage: 'answer_failed',
+    reason: 'socket_not_connected',
+  });
+
+  assert.equal(res.status, 202);
+  assert.equal(res.body.stage, 'answer_failed');
+  assert.equal(res.body.reason, 'socket_not_connected');
+  assert.ok(
+    logs.lines.some(
+      (line) =>
+        line.includes('[push] Receipt') &&
+        line.includes('stage=answer_failed') &&
+        line.includes('reason=socket_not_connected')
+    )
+  );
+});
+
+test('push receipt accepts every answer-path stage', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  for (const stage of [
+    'answer_attempted',
+    'answer_accepted',
+    'accept_tapped',
+    'decline_tapped',
+  ]) {
+    const res = await postJson(url, '/devices/push-receipt', {
+      deviceId: 'device-cold-start',
+      callId: 'call-answer-2',
+      stage,
+    });
+    assert.equal(res.status, 202, `stage ${stage} should be accepted`);
+    assert.equal(res.body.stage, stage);
+  }
+});

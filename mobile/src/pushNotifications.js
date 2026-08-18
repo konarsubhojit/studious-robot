@@ -9,6 +9,7 @@ import {
   logWarn,
 } from './appLogger';
 import { displayIncomingCall as displayCallKeepIncomingCall } from './callKeep';
+import { isCallConnectionLive } from './incomingCallNotification';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 
 /**
@@ -45,6 +46,8 @@ const RECEIPT_STAGES = new Set([
   'answer_attempted',
   'answer_failed',
   'answer_accepted',
+  'accept_tapped',
+  'decline_tapped',
 ]);
 
 /**
@@ -450,14 +453,22 @@ export async function handleBackgroundPushMessage(remoteMessage) {
     callId: incoming.callId,
     ...displayResult,
   });
+  // The branded notification is posted independently of whether Telecom ever
+  // created a CallKeep connection, so record which of the two happened: a ring
+  // with no live connection is answerable only through the app's own
+  // connection-independent accept path.
+  const connectionLive = await isCallConnectionLive(incoming.callId);
   await sendPushReceipt({
     remoteMessage,
     callId: incoming.callId,
     stage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
+    reason:
+      connectionLive === null ? null : connectionLive ? 'connection_live' : 'connection_missing',
   });
   await logBackgroundInfo('[Push] Background message handler exit', {
     callId: incoming.callId,
     uiStage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
+    connectionLive,
   });
   await flushDurableLogs();
 
