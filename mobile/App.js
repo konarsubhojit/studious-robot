@@ -28,6 +28,7 @@ import {
   closeChatConversation,
   openChatConversation,
   openTab,
+  resetNavigation,
 } from './src/navigation/navigationRef';
 import { clearNavigationState } from './src/navigation/navigationState';
 import { TABS } from './src/navigation/routes';
@@ -180,12 +181,13 @@ function AppShell() {
   });
 
   // Tapping a bottom tab while a connected call is full-screen shrinks it to
-  // the FloatingCallBubble rather than tearing the call down.
-  const handleTabPress = () => {
+  // the FloatingCallBubble rather than tearing the call down. Memoized so the
+  // navigator's tab bar is not rebuilt on every render of this shell.
+  const handleTabPress = useCallback(() => {
     if (isCallConnected && !isCallMinimized) {
       setIsCallMinimized(true);
     }
-  };
+  }, [isCallConnected, isCallMinimized, setIsCallMinimized]);
 
   const handleEndCallFlowCall = () => {
     setIsCallMinimized(false);
@@ -432,8 +434,10 @@ function AppShell() {
         onSaveSignalingUrl={callFlow.setSignalingUrl}
         status={callFlow.status}
         onSignOut={() => {
-          openTab(TABS.CHATS);
-          // Don't restore the signed-out user's screen on the next launch.
+          // Reset first, then clear: the reset's own state write can only ever
+          // race with the clear as the (harmless) default route, never as the
+          // signed-out user's open conversation.
+          resetNavigation();
           clearNavigationState();
           callFlow.unregisterUser().catch(error => {
             logError('unregisterUser failed', error);

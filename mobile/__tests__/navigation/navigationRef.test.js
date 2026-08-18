@@ -4,6 +4,7 @@ jest.mock('@react-navigation/native', () => ({
     navigate: jest.fn(),
     goBack: jest.fn(),
     canGoBack: jest.fn(),
+    reset: jest.fn(),
   }),
 }));
 
@@ -13,9 +14,10 @@ import {
   navigationRef,
   openChatConversation,
   openTab,
+  resetNavigation,
   resetPendingNavigation,
 } from '../../src/navigation/navigationRef';
-import { CHAT_SCREENS, TABS } from '../../src/navigation/routes';
+import { CHAT_SCREENS, DEFAULT_TAB, TABS } from '../../src/navigation/routes';
 
 describe('navigationRef', () => {
   beforeEach(() => {
@@ -70,6 +72,25 @@ describe('navigationRef', () => {
     navigationRef.isReady.mockReturnValue(true);
     openTab(TABS.CALLS);
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CALLS);
+  });
+
+  test('resetNavigation drops every route back to the default tab', () => {
+    navigationRef.isReady.mockReturnValue(true);
+    resetNavigation();
+    expect(navigationRef.reset).toHaveBeenCalledWith({
+      index: 0,
+      routes: [{ name: DEFAULT_TAB }],
+    });
+  });
+
+  test('resetNavigation discards a queued destination', () => {
+    navigationRef.isReady.mockReturnValue(false);
+    openChatConversation('user-bob');
+    resetNavigation();
+
+    navigationRef.isReady.mockReturnValue(true);
+    flushPendingNavigation();
+    expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
   test('closeChatConversation pops the stack only when there is something to pop', () => {

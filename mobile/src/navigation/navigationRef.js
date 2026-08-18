@@ -1,5 +1,5 @@
 import { createNavigationContainerRef } from '@react-navigation/native';
-import { CHAT_SCREENS, TABS } from './routes';
+import { CHAT_SCREENS, DEFAULT_TAB, TABS } from './routes';
 
 /**
  * Container ref for the app shell navigator.
@@ -61,6 +61,18 @@ export function openChatConversation(peerId) {
  */
 export function openTab(tab) {
   runWhenReady(() => navigationRef.navigate(tab));
+}
+
+/**
+ * Drop every route and return to the default tab's root — used on sign-out so
+ * the next session (and anything persisted right after) can't carry the
+ * previous user's open conversation.
+ */
+export function resetNavigation() {
+  resetPendingNavigation();
+  if (navigationRef.isReady()) {
+    navigationRef.reset({ index: 0, routes: [{ name: DEFAULT_TAB }] });
+  }
 }
 
 /** Pop the open conversation back to the chat list, if one is open. */

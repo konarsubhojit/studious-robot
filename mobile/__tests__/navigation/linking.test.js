@@ -34,4 +34,11 @@ describe('linking config', () => {
   test('ignores a URL that matches no screen', () => {
     expect(getStateFromPath('/nothing-here', linking.config)).toBeUndefined();
   });
+
+  test('leaves the notification chat link to useChatDeepLink to resolve', () => {
+    // `wetalk://chat/{conversationId}` carries a conversation id, not a peer
+    // id, so it deliberately matches no route: `useChatDeepLink` resolves the
+    // peer first and then navigates.
+    expect(getStateFromPath('/chat/alice:bob', linking.config)).toBeUndefined();
+  });
 });
