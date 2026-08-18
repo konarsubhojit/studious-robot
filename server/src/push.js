@@ -479,16 +479,38 @@ function buildCallEnvelope(callData) {
 }
 
 /**
+ * Maximum number of characters of a message body carried in a push payload.
+ * Long messages are truncated so the notification stays a preview and the
+ * payload stays well inside the provider size limits.
+ */
+const MESSAGE_PREVIEW_MAX_LENGTH = 120;
+
+/**
  * Describe a received text message as a transport-neutral push envelope.
  *
- * @param {{ messageId: string, conversationId: string, senderId: string }} messageData
+ * The title is the sender and the body a preview of what they wrote, because
+ * the client renders this notification itself: message pushes are data-only
+ * (see {@link buildDataBlock}), so whatever is not in `data` cannot be shown.
+ *
+ * @param {{
+ *   messageId: string,
+ *   conversationId: string,
+ *   senderId: string,
+ *   preview?: string | null,
+ * }} messageData
  * @returns {PushEnvelope}
  */
 function buildMessageEnvelope(messageData) {
+  const preview =
+    typeof messageData.preview === 'string' ? messageData.preview.trim().replace(/\s+/g, ' ') : '';
+  const truncated =
+    preview.length > MESSAGE_PREVIEW_MAX_LENGTH
+      ? `${preview.slice(0, MESSAGE_PREVIEW_MAX_LENGTH - 1)}…`
+      : preview;
   return {
     type: 'message.received',
-    title: 'New message',
-    body: `Message from ${messageData.senderId}`,
+    title: messageData.senderId,
+    body: truncated || 'Sent you a message',
     deepLink: `wetalk://chat/${messageData.conversationId}`,
     data: {
       messageId: messageData.messageId,
@@ -1163,8 +1185,17 @@ async function sendIncomingCallPush(channel, callData) {
  * Uses the same Notification-Hubs-first chain and data-only payload shape as
  * {@link sendIncomingCallPush}.  Never throws.
  *
+ * Acceptance by the provider says nothing about whether the handset displayed
+ * anything — the client reports that separately through
+ * `POST /devices/push-receipt` keyed by `messageId`.
+ *
  * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
- * @param {{ messageId: string, conversationId: string, senderId: string }} messageData
+ * @param {{
+ *   messageId: string,
+ *   conversationId: string,
+ *   senderId: string,
+ *   preview?: string | null,
+ * }} messageData
  * @returns {Promise<{
  *   ok: boolean,
  *   provider: string,
@@ -1189,9 +1220,13 @@ module.exports = {
   _resetFcmTokenCache,
   _loadFcmConfig: loadFcmConfig,
   _buildFcmPayload: buildFcmPayload,
+  _buildFcmMessagePayload: (pushToken, messageData) =>
+    buildFcmEnvelopePayload(pushToken, buildMessageEnvelope(messageData)),
   _resetNotificationHubTokenCache,
   _loadNotificationHubConfig: loadNotificationHubConfig,
   _buildNotificationHubSasToken: buildNotificationHubSasToken,
   _buildNotificationHubAndroidPayload: buildNotificationHubAndroidPayload,
+  _buildNotificationHubAndroidMessagePayload: (messageData) =>
+    buildNotificationHubAndroidEnvelopePayload(buildMessageEnvelope(messageData)),
   _isDeadTokenResult: isDeadTokenResult,
 };

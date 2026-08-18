@@ -73,6 +73,7 @@ function deliverMessage(io, state, message) {
         messageId: message.messageId,
         conversationId: message.conversationId,
         senderId: message.senderId,
+        preview: message.body,
       })
       .then((outcome) => {
         if (!outcome?.deadToken) return;

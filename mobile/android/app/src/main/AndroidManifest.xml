@@ -74,6 +74,13 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="wetalk" android:host="call" />
         </intent-filter>
+        <!-- Deep link used by chat-message notifications: wetalk://chat/{conversationId} -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="wetalk" android:host="chat" />
+        </intent-filter>
       </activity>
       <service
         android:name=".CallForegroundService"

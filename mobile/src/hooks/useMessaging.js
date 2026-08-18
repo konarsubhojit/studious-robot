@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
+import {
+  dismissMessageNotification,
+  markMessageSeen,
+  setActiveConversation,
+} from '../messageNotification';
 import { emitWithAck, SIGNALING_VERSION } from '../socketProtocol';
 
 /**
@@ -69,6 +74,21 @@ export default function useMessaging({
   useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
   }, [activeChatPeerId]);
+
+  // Mirror the open conversation into the push layer, so a message push for
+  // the conversation the user is looking at is suppressed instead of being
+  // announced by the OS on top of the message they can already see, and any
+  // notification left over for it is cleared.
+  useEffect(() => {
+    if (!activeChatPeerId) {
+      setActiveConversation(null);
+      return;
+    }
+    const conversationId =
+      conversations.find(c => c.peerId === activeChatPeerId)?.conversationId ?? null;
+    setActiveConversation({ peerId: activeChatPeerId, conversationId });
+    if (conversationId) dismissMessageNotification(conversationId);
+  }, [activeChatPeerId, conversations]);
 
   /**
    * Fetch the authenticated user's conversation list (`GET /conversations`)
@@ -306,6 +326,11 @@ export default function useMessaging({
       if (!message?.senderId) return;
       const senderId = message.senderId;
 
+      // The same message can also arrive as a push; record it so the push
+      // handler does not post a notification for a message already delivered
+      // here.
+      markMessageSeen(message.messageId);
+
       setMessagesByPeer(prev => {
         const existing = prev[senderId] ?? [];
         if (existing.some(m => m.messageId === message.messageId)) {
@@ -315,7 +340,9 @@ export default function useMessaging({
       });
 
       if (activeChatPeerIdRef.current === senderId) {
-        // The conversation is currently open: auto-mark-read, no unread bump.
+        // The conversation is currently open: auto-mark-read, no unread bump,
+        // and clear any notification a push already posted for it.
+        if (message.conversationId) dismissMessageNotification(message.conversationId);
         markConversationRead(senderId).catch(() => {});
         return;
       }
