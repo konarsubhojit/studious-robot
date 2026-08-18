@@ -2,14 +2,17 @@ import {
   getScreenShareErrorMessage,
   isScreenShareSupported,
   SCREEN_SHARE_CANCELLED,
+  SCREEN_SHARE_NO_FRAMES,
   startScreenCapture,
   stopScreenCapture,
+  verifyScreenShareFrames,
 } from '../src/screenShare';
 
 jest.mock('react-native-webrtc', () => ({
   mediaDevices: { getDisplayMedia: jest.fn() },
 }));
 jest.mock('../src/appLogger', () => ({
+  logError: jest.fn(),
   logInfo: jest.fn(),
   logWarn: jest.fn(),
 }));
@@ -156,5 +159,69 @@ describe('getScreenShareErrorMessage', () => {
     } finally {
       Platform.OS = originalOS;
     }
+  });
+});
+
+describe('verifyScreenShareFrames', () => {
+  const options = { timeoutMs: 20, intervalMs: 1 };
+
+  test('succeeds once outbound frames are reported', async () => {
+    let frames = 0;
+    const peerConnection = {
+      getStats: jest.fn(async () => {
+        frames += 5;
+        return new Map([['outbound-rtp-1', { type: 'outbound-rtp', kind: 'video', framesSent: frames }]]);
+      }),
+    };
+
+    await expect(verifyScreenShareFrames(peerConnection, options)).resolves.toEqual({
+      ok: true,
+      frames: 5,
+      verified: true,
+    });
+  });
+
+  test('fails when the capture never produces a frame', async () => {
+    const peerConnection = {
+      getStats: jest.fn(async () => [
+        { type: 'outbound-rtp', kind: 'video', framesSent: 0 },
+        { type: 'outbound-rtp', kind: 'audio', packetsSent: 42 },
+      ]),
+    };
+
+    const result = await verifyScreenShareFrames(peerConnection, options);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe(SCREEN_SHARE_NO_FRAMES);
+    expect(result.message).toMatch(/black screen/i);
+  });
+
+  test('counts framesEncoded when framesSent is unavailable', async () => {
+    const peerConnection = {
+      getStats: jest.fn(async () => ({
+        a: { type: 'outbound-rtp', mediaType: 'video', framesEncoded: 3 },
+      })),
+    };
+
+    await expect(verifyScreenShareFrames(peerConnection, options)).resolves.toMatchObject({
+      ok: true,
+      frames: 3,
+    });
+  });
+
+  test('does not fail a share it cannot measure', async () => {
+    await expect(verifyScreenShareFrames(null, options)).resolves.toEqual({
+      ok: true,
+      frames: null,
+      verified: false,
+    });
+
+    const peerConnection = {
+      getStats: jest.fn(() => Promise.reject(new Error('closed'))),
+    };
+    await expect(verifyScreenShareFrames(peerConnection, options)).resolves.toEqual({
+      ok: true,
+      frames: null,
+      verified: false,
+    });
   });
 });

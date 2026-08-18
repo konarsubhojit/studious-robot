@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { mediaDevices } from 'react-native-webrtc';
-import { logInfo, logWarn } from './appLogger';
+import { logError, logInfo, logWarn } from './appLogger';
 
 /**
  * Screen-sharing capture helpers built on top of `getDisplayMedia`.
@@ -20,6 +20,20 @@ import { logInfo, logWarn } from './appLogger';
 
 /** Returned when the user dismisses the OS screen-capture consent dialog. */
 export const SCREEN_SHARE_CANCELLED = 'cancelled';
+
+/**
+ * Returned when capture started but no frame ever reached the remote peer.
+ *
+ * On Android this almost always means the MediaProjection foreground service
+ * failed to start (see `mobile/README.md`), which produces a capture that
+ * *looks* healthy locally while the remote peer only ever sees black.
+ */
+export const SCREEN_SHARE_NO_FRAMES = 'no_frames';
+
+/** How long to wait for the first encoded screen frame before giving up. */
+const FRAME_CHECK_TIMEOUT_MS = 3000;
+/** How often to poll `getStats()` while waiting for the first frame. */
+const FRAME_CHECK_INTERVAL_MS = 500;
 
 function isPermissionDeniedError(error) {
   const name = error?.name;
@@ -91,6 +105,7 @@ export async function startScreenCapture({ withAudio = false } = {}) {
       try {
         stream = await mediaDevices.getDisplayMedia({ video: true });
       } catch (retryError) {
+        logError('Screen capture failed; MediaProjection did not start', retryError);
         return {
           ok: false,
           reason: isPermissionDeniedError(retryError) ? SCREEN_SHARE_CANCELLED : 'failed',
@@ -99,6 +114,9 @@ export async function startScreenCapture({ withAudio = false } = {}) {
         };
       }
     } else {
+      if (!isPermissionDeniedError(error)) {
+        logError('Screen capture failed; MediaProjection did not start', error);
+      }
       return {
         ok: false,
         reason: isPermissionDeniedError(error) ? SCREEN_SHARE_CANCELLED : 'failed',
@@ -119,7 +137,7 @@ export async function startScreenCapture({ withAudio = false } = {}) {
   }
 
   const [audioTrack] = withAudio ? stream.getAudioTracks?.() ?? [] : [];
-  logInfo('Screen capture started', {
+  logInfo('Screen capture started; MediaProjection service running', {
     requestedAudio: Boolean(withAudio),
     audioShared: Boolean(audioTrack),
   });
@@ -130,6 +148,98 @@ export async function startScreenCapture({ withAudio = false } = {}) {
     videoTrack,
     audioTrack: audioTrack ?? null,
     audioShared: Boolean(audioTrack),
+  };
+}
+
+function sleep(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function forEachStatsEntry(report, visit) {
+  if (!report) return;
+  if (typeof report.forEach === 'function') {
+    report.forEach(visit);
+    return;
+  }
+  if (Array.isArray(report)) {
+    report.forEach(visit);
+    return;
+  }
+  if (typeof report === 'object') {
+    Object.values(report).forEach(visit);
+  }
+}
+
+/**
+ * Total frames the outbound video sender has handed to the encoder/network.
+ *
+ * @param {unknown} report - an `RTCStatsReport` (Map), array or plain object.
+ * @returns {number}
+ */
+function countOutboundVideoFrames(report) {
+  let frames = 0;
+  forEachStatsEntry(report, entry => {
+    if (!entry || entry.type !== 'outbound-rtp') return;
+    const kind = entry.kind ?? entry.mediaType;
+    if (kind && kind !== 'video') return;
+    const sent = Number(entry.framesSent ?? entry.framesEncoded ?? 0);
+    if (Number.isFinite(sent)) frames += sent;
+  });
+  return frames;
+}
+
+/**
+ * Confirm the screen capture is actually producing frames for the remote peer.
+ *
+ * A `getDisplayMedia` stream can resolve with a live video track that never
+ * emits a single frame (missing MediaProjection foreground service, failed
+ * `startForeground`), which is indistinguishable from success locally. Polling
+ * the outbound RTP stats is the only reliable way to tell the difference.
+ *
+ * @param {object | null | undefined} peerConnection
+ * @param {{ timeoutMs?: number, intervalMs?: number }} [options]
+ * @returns {Promise<
+ *   | { ok: true, frames: number | null, verified: boolean }
+ *   | { ok: false, reason: 'no_frames', message: string }
+ * >}
+ */
+export async function verifyScreenShareFrames(peerConnection, options = {}) {
+  const { timeoutMs = FRAME_CHECK_TIMEOUT_MS, intervalMs = FRAME_CHECK_INTERVAL_MS } = options;
+
+  if (typeof peerConnection?.getStats !== 'function') {
+    // Nothing to measure against: never fail a share we cannot verify.
+    return { ok: true, frames: null, verified: false };
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let frames = 0;
+
+  for (;;) {
+    await sleep(intervalMs);
+    try {
+      frames = countOutboundVideoFrames(await peerConnection.getStats());
+    } catch (error) {
+      logWarn('Unable to read screen share stats', { message: error?.message });
+      return { ok: true, frames: null, verified: false };
+    }
+
+    if (frames > 0) {
+      logInfo('Screen capture is delivering frames', { frames });
+      return { ok: true, frames, verified: true };
+    }
+    if (Date.now() >= deadline) break;
+  }
+
+  logError('Screen capture produced no frames', {
+    timeoutMs,
+    hint: 'MediaProjection foreground service may have failed to start',
+  });
+  return {
+    ok: false,
+    reason: SCREEN_SHARE_NO_FRAMES,
+    message: 'Screen sharing produced no video; the remote side would only see a black screen',
   };
 }
 
