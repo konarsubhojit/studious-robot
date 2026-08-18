@@ -2106,6 +2106,11 @@ export default function useCallFlow() {
     // triggering a second accept for the same call.
     if (replayedAnswerCallIdsRef.current.has(callId)) return;
     if (!consumePendingAnswer(callId)) return;
+    // Bounded: callIds are unique, so the guard set would otherwise grow for
+    // the lifetime of the app.
+    if (replayedAnswerCallIdsRef.current.size >= ANSWERED_CALL_HISTORY_LIMIT) {
+      replayedAnswerCallIdsRef.current.clear();
+    }
     replayedAnswerCallIdsRef.current.add(callId);
     logInfo('[CallFlow] Replaying recorded answerCall', { callId });
     acceptIncomingCallRef.current?.();
