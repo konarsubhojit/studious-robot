@@ -61,7 +61,10 @@ describe('callKeep with the native module absent', () => {
     const mod = require('../src/callKeep');
     mod._resetCallKeepCache();
     await expect(mod.setupCallKeep()).resolves.toBe(false);
-    await expect(mod.displayIncomingCall({ callId: 'c1' })).resolves.toBe(false);
+    await expect(mod.displayIncomingCall({ callId: 'c1' })).resolves.toEqual({
+      shown: false,
+      reason: 'native_module_absent',
+    });
     expect(mod.reportCallConnected('c1')).toBe(false);
     expect(mod.endCall('c1')).toBe(false);
     expect(mod.endAllCalls()).toBe(false);
@@ -80,6 +83,8 @@ describe('callKeep with the native module present', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    delete mockCallKeep.hasPhoneAccount;
+    delete mockCallKeep.checkPhoneAccountEnabled;
     jest.doMock('react-native-callkeep', () => ({ default: mockCallKeep }));
     mod = require('../src/callKeep');
     mod._resetCallKeepCache();
@@ -128,8 +133,8 @@ describe('callKeep with the native module present', () => {
   });
 
   test('displayIncomingCall shows the system UI with caller details', async () => {
-    await expect(mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' })).resolves.toBe(
-      true,
+    await expect(mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' })).resolves.toEqual(
+      { shown: true },
     );
     expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledWith(
       'call-1',
@@ -141,13 +146,14 @@ describe('callKeep with the native module present', () => {
   });
 
   test('displayIncomingCall ignores a duplicate ring for the same call', async () => {
-    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(
-      true,
-    );
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toEqual({
+      shown: true,
+    });
     // A second path (foreground push racing the socket event) rings the same call.
-    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toBe(
-      true,
-    );
+    await expect(mod.displayIncomingCall({ callId: 'dup-1', callerId: 'alice' })).resolves.toEqual({
+      shown: false,
+      reason: 'duplicate_callId_deduped',
+    });
     expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
   });
 
@@ -159,8 +165,46 @@ describe('callKeep with the native module present', () => {
   });
 
   test('displayIncomingCall returns false without a callId', async () => {
-    await expect(mod.displayIncomingCall({})).resolves.toBe(false);
+    await expect(mod.displayIncomingCall({})).resolves.toEqual({
+      shown: false,
+      reason: 'missing_call_id',
+    });
     expect(mockCallKeep.displayIncomingCall).not.toHaveBeenCalled();
+  });
+
+  test('displayIncomingCall reports a disabled phone account', async () => {
+    mockCallKeep.checkPhoneAccountEnabled = jest.fn().mockResolvedValueOnce(false);
+    await expect(
+      mod.displayIncomingCall({ callId: 'disabled-1', callerId: 'alice' }),
+    ).resolves.toEqual({
+      shown: false,
+      reason: 'phone_account_disabled_by_user',
+    });
+    delete mockCallKeep.checkPhoneAccountEnabled;
+  });
+
+  test('displayIncomingCall reports an unregistered phone account', async () => {
+    mockCallKeep.hasPhoneAccount = jest.fn().mockResolvedValueOnce(false);
+    await expect(
+      mod.displayIncomingCall({ callId: 'unregistered-1', callerId: 'alice' }),
+    ).resolves.toEqual({
+      shown: false,
+      reason: 'phone_account_not_registered',
+    });
+    delete mockCallKeep.hasPhoneAccount;
+  });
+
+  test('displayIncomingCall reports Telecom exceptions', async () => {
+    mockCallKeep.displayIncomingCall.mockImplementationOnce(() => {
+      throw new Error('telecom unavailable');
+    });
+    await expect(
+      mod.displayIncomingCall({ callId: 'throw-1', callerId: 'alice' }),
+    ).resolves.toEqual({
+      shown: false,
+      reason: 'telecom_threw',
+      message: 'telecom unavailable',
+    });
   });
 
   test('reportCallConnected / endCall / endAllCalls delegate to the module', () => {

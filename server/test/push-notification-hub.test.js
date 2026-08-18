@@ -41,7 +41,7 @@ const CALL = { callId: 'call-abc', callerId: 'alice' };
 /**
  * Install a fake `https.request` driven by a per-call handler.
  *
- * @param {(opts: object, body: Buffer) => { statusCode: number, body: string }} handler
+ * @param {(opts: object, body: Buffer) => { statusCode: number, body: string, headers?: object }} handler
  */
 function mockHttps(handler) {
   const original = https.request;
@@ -55,9 +55,10 @@ function mockHttps(handler) {
       const body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
       requests.push({ opts, body: body.toString('utf8') });
 
-      const { statusCode, body: resBody } = handler(opts, body);
+      const { statusCode, body: resBody, headers = {} } = handler(opts, body);
       const res = new EventEmitter();
       res.statusCode = statusCode;
+      res.headers = headers;
       setImmediate(() => {
         callback(res);
         if (resBody) res.emit('data', Buffer.from(resBody));
@@ -205,13 +206,19 @@ test('delivers through the notification hub when configured', async () => {
   await withEnv(
     { ...HUB_ENV, FCM_SERVICE_ACCOUNT_JSON: JSON.stringify(SERVICE_ACCOUNT) },
     async () => {
-      const mock = mockHttps(() => ({ statusCode: 201, body: '' }));
+      const logs = captureConsoleLog();
+      const mock = mockHttps(() => ({
+        statusCode: 201,
+        body: '',
+        headers: { 'x-ms-request-id': 'hub-track-1', 'x-ms-region': 'westus' },
+      }));
       try {
         const result = await push.sendIncomingCallPush(CHANNEL_FCM, CALL);
         assert.equal(result.ok, true);
         assert.equal(result.transport, 'notification_hub');
         assert.equal(result.provider, 'fcm');
         assert.equal(result.deviceId, 'dev-1');
+        assert.equal(result.trackingId, 'hub-track-1');
 
         assert.equal(mock.requests.length, 1, 'no direct provider request attempted');
         const [hubReq] = mock.requests;
@@ -231,8 +238,17 @@ test('delivers through the notification hub when configured', async () => {
         assert.equal(body.message.android.data.callId, 'call-abc');
         assert.equal(body.message.android.priority, 'HIGH');
         assert.equal(body.message.android.ttl, '30s');
+        assert.ok(
+          logs.lines.some(
+            (line) =>
+              line.includes('[push] Accepted by hub call.incoming callId=call-abc') &&
+              line.includes('status=201') &&
+              line.includes('trackingId=hub-track-1')
+          )
+        );
       } finally {
         mock.restore();
+        logs.restore();
       }
     }
   );

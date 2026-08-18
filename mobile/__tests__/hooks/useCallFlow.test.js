@@ -92,7 +92,7 @@ jest.mock('../../src/webrtcConfig', () => ({
 }));
 
 jest.mock('../../src/callKeep', () => ({
-  displayIncomingCall: jest.fn(async () => true),
+  displayIncomingCall: jest.fn(async () => ({ shown: true })),
   endCall: jest.fn(() => true),
   endAllCalls: jest.fn(() => true),
   registerCallActionListeners: jest.fn(() => jest.fn()),
@@ -1107,7 +1107,7 @@ describe('useCallFlow incoming-call ringing', () => {
     jest.clearAllMocks();
     require('../../src/pushNotifications').getInitialCallLink.mockResolvedValue(null);
     // Default: CallKeep shows the system UI successfully.
-    require('../../src/callKeep').displayIncomingCall.mockResolvedValue(true);
+    require('../../src/callKeep').displayIncomingCall.mockResolvedValue({ shown: true });
   });
 
   /**
@@ -1199,7 +1199,7 @@ describe('useCallFlow incoming-call ringing', () => {
   test('starts fallback ringtone when CallKeep returns false', async () => {
     const { displayIncomingCall } = require('../../src/callKeep');
     const { startIncomingRingtone } = require('../../src/ringtone');
-    displayIncomingCall.mockResolvedValueOnce(false);
+    displayIncomingCall.mockResolvedValueOnce({ shown: false, reason: 'native_module_absent' });
 
     await renderWithSocket();
 
@@ -1216,7 +1216,7 @@ describe('useCallFlow incoming-call ringing', () => {
   test('does not start fallback ringtone when CallKeep succeeds', async () => {
     const { displayIncomingCall } = require('../../src/callKeep');
     const { startIncomingRingtone } = require('../../src/ringtone');
-    displayIncomingCall.mockResolvedValueOnce(true);
+    displayIncomingCall.mockResolvedValueOnce({ shown: true });
 
     await renderWithSocket();
 
@@ -1341,7 +1341,7 @@ describe('useCallFlow incoming-call ringing', () => {
   test('accepting an incoming call stops the fallback ringtone', async () => {
     const { displayIncomingCall } = require('../../src/callKeep');
     const { stopIncomingRingtone } = require('../../src/ringtone');
-    displayIncomingCall.mockResolvedValueOnce(false); // force ringtone fallback
+    displayIncomingCall.mockResolvedValueOnce({ shown: false, reason: 'native_module_absent' }); // force ringtone fallback
 
     const { resultRef, tree } = await renderWithSocket();
 

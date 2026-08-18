@@ -553,22 +553,22 @@ export default function useCallFlow() {
       callerId: call.callerId ?? null,
     });
 
-    const shown = await displayIncomingCall({
+    const displayResult = await displayIncomingCall({
       callId: call.callId,
       callerId: call.callerId,
     }).catch(error => {
       logWarn('[CallFlow] displayIncomingCall failed', {
         message: error?.message,
       });
-      return false;
+      return { shown: false, reason: 'telecom_threw', message: error?.message };
     });
 
     logInfo('[CallFlow] Incoming-call UI result', {
       callId: call.callId,
-      shown,
+      ...displayResult,
     });
 
-    if (!shown) {
+    if (!displayResult.shown) {
       // CallKeep is unavailable – fall back to a JS ringtone so the user still
       // hears an audible alert in the foreground.
       startIncomingRingtone();
@@ -1073,6 +1073,7 @@ export default function useCallFlow() {
       recordConnectSuccess,
       recordConnectError,
       sessionIdRef,
+      deviceIdRef,
       fetchConversations,
     ],
   );
