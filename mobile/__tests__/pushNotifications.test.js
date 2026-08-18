@@ -921,3 +921,61 @@ describe('message push handling', () => {
     });
   });
 });
+
+// ─── call.cancelled pushes ────────────────────────────────────────────────────
+
+describe('call-cancelled push handling', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+    jest.restoreAllMocks();
+  });
+
+  test('a background call.cancelled push dismisses the stale call UI', async () => {
+    const endCall = jest.spyOn(callKeep, 'endCall').mockReturnValue(true);
+    const clearPendingAnswer = jest.spyOn(callKeep, 'clearPendingAnswer').mockReturnValue(true);
+    const displayIncomingCall = jest
+      .spyOn(callKeep, 'displayIncomingCall')
+      .mockResolvedValue({ shown: true });
+
+    const result = await handleBackgroundPushMessage({
+      data: {
+        type: 'call.cancelled',
+        callId: 'call-cancelled-1',
+        reason: 'cancelled',
+        title: 'Call ended',
+        body: 'The call is no longer ringing',
+        deepLink: 'wetalk://call/call-cancelled-1',
+      },
+    });
+
+    expect(result).toEqual({ callId: 'call-cancelled-1', reason: 'cancelled' });
+    expect(endCall).toHaveBeenCalledWith('call-cancelled-1');
+    expect(clearPendingAnswer).toHaveBeenCalledWith('call-cancelled-1', 'cancelled');
+    // A cancelled call must never ring.
+    expect(displayIncomingCall).not.toHaveBeenCalled();
+  });
+
+  test('a foreground call.cancelled push dismisses the stale call UI', async () => {
+    const endCall = jest.spyOn(callKeep, 'endCall').mockReturnValue(true);
+
+    const result = await handleForegroundPushMessage({
+      data: { type: 'call.cancelled', callId: 'call-cancelled-2', reason: 'timeout' },
+    });
+
+    expect(result).toEqual({ callId: 'call-cancelled-2', reason: 'timeout' });
+    expect(endCall).toHaveBeenCalledWith('call-cancelled-2');
+  });
+
+  test('a call.cancelled push without a callId is ignored', async () => {
+    const endCall = jest.spyOn(callKeep, 'endCall').mockReturnValue(true);
+
+    expect(await handleForegroundPushMessage({ data: { type: 'call.cancelled' } })).toBeNull();
+    expect(endCall).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith('[Push] Call-cancelled push missing callId');
+  });
+});

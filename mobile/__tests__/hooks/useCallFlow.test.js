@@ -2957,6 +2957,233 @@ describe('useCallFlow answer path', () => {
     expect(declineRequest[1].method).toBe('POST');
   });
 
+  test('a duplicate accept for the same call is a logged no-op, not a teardown', async () => {
+    const { endCall } = require('../../src/callKeep');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-dup', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const acceptEmits = () =>
+      socketMock.emit.mock.calls.filter(([event]) => event === 'call.accept').length;
+    expect(acceptEmits()).toBe(1);
+
+    // The same call rings again (a duplicate push, or a rehydration that
+    // re-populates the incoming call) and the user taps Answer a second time.
+    // The server has already left `ringing`, so accepting again would fail —
+    // and the old failure path tore down the call that had just connected.
+    endCall.mockClear();
+    await ring(resultRef, tree, call);
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(acceptEmits()).toBe(1);
+    expect(endCall).not.toHaveBeenCalled();
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-dup',
+        stage: 'answer_skipped_duplicate',
+      }),
+    );
+    expect(resultRef.current.activeCall).toEqual(
+      expect.objectContaining({ callId: 'call-dup', status: 'accepted' }),
+    );
+  });
+
+  test('a second accept while the first is in flight is suppressed', async () => {
+    const { sendPushReceipt } = require('../../src/pushNotifications');
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-inflight', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    let ack = null;
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        ack = cb;
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      const first = resultRef.current.acceptIncomingCall();
+      const second = resultRef.current.acceptIncomingCall();
+      await Promise.resolve();
+      ack?.({ ok: true, call: { ...call, status: 'accepted' } });
+      await Promise.all([first, second]);
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(
+      socketMock.emit.mock.calls.filter(([event]) => event === 'call.accept'),
+    ).toHaveLength(1);
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-inflight',
+        stage: 'answer_skipped_duplicate',
+        reason: 'accept_in_flight',
+      }),
+    );
+  });
+
+  test('a failed accept never ends a call that is already active', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const firstCall = { callId: 'call-live', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, firstCall);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...firstCall, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+
+    // A second call rings and its accept fails on every transport.
+    await ring(resultRef, tree, { callId: 'call-doomed', callerId: 'zen', status: 'ringing' });
+    mockFetch({
+      '/calls/call-doomed/accept': { ok: false, status: 409, json: async () => ({}) },
+    });
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: false, error: { code: 'invalid_state' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // The live call survives the failed accept.
+    expect(resultRef.current.activeCall).toEqual(
+      expect.objectContaining({ callId: 'call-live', status: 'accepted' }),
+    );
+    expect(resultRef.current.status.message).toBe('Call already answered');
+  });
+
+  test('a queued answer is replayed exactly once even as the accept callback changes', async () => {
+    const { recordPendingAnswer } = require('../../src/callKeep');
+    const { resultRef, tree } = await renderWithSocket();
+
+    recordPendingAnswer('call-replay', 'test');
+    const call = { callId: 'call-replay', callerId: 'nez', status: 'ringing' };
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+
+    await ring(resultRef, tree, call);
+    // Force extra renders: the replay effect re-runs whenever the accept
+    // callback identity changes.
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {});
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+    }
+
+    expect(
+      socketMock.emit.mock.calls.filter(([event]) => event === 'call.accept'),
+    ).toHaveLength(1);
+  });
+
+  test('a call that stops ringing dismisses its notification and CallKeep connection', async () => {
+    const { endCall } = require('../../src/callKeep');
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-stale', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    endCall.mockClear();
+    const stateChanged = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateChanged({
+        status: 'ended',
+        reason: 'cancelled',
+        call: { ...call, status: 'ended' },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(endCall).toHaveBeenCalledWith('call-stale');
+  });
+
+  test('a terminal transition for another call leaves the active call alone', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-current', callerId: 'nez', status: 'ringing' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((event, _payload, cb) => {
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { ...call, status: 'accepted' } });
+        return;
+      }
+      cb?.({ ok: true });
+    });
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+
+    const { endCall } = require('../../src/callKeep');
+    endCall.mockClear();
+    const stateChanged = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateChanged({
+        status: 'missed',
+        reason: 'timeout',
+        call: { callId: 'call-other', callerId: 'nez', status: 'missed' },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // Only the stale call's UI goes away; the connected call is untouched.
+    expect(endCall).toHaveBeenCalledWith('call-other');
+    expect(endCall).not.toHaveBeenCalledWith('call-current');
+    expect(resultRef.current.activeCall).toEqual(
+      expect.objectContaining({ callId: 'call-current', status: 'accepted' }),
+    );
+  });
+
   test('a queued answer for a call that is gone is dropped loudly, not left stuck', async () => {
     const { endCall, peekPendingAnswer } = require('../../src/callKeep');
     const { sendPushReceipt } = require('../../src/pushNotifications');

@@ -1,10 +1,25 @@
-import { clamp, formatCallDuration, getConnectionQuality } from '../src/callUx';
+import {
+  clamp,
+  formatCallDuration,
+  formatRingCountdown,
+  getConnectionQuality,
+} from '../src/callUx';
 
 describe('callUx', () => {
   test('formats elapsed call duration', () => {
     expect(formatCallDuration(0)).toBe('00:00');
     expect(formatCallDuration(75)).toBe('01:15');
     expect(formatCallDuration(3671)).toBe('01:01:11');
+  });
+
+  test('formats the ring countdown as m:ss once past a minute', () => {
+    // The ring window is two minutes, so "117s" would read as noise.
+    expect(formatRingCountdown(120)).toBe('2:00');
+    expect(formatRingCountdown(117)).toBe('1:57');
+    expect(formatRingCountdown(60)).toBe('1:00');
+    expect(formatRingCountdown(59)).toBe('59s');
+    expect(formatRingCountdown(0)).toBe('0s');
+    expect(formatRingCountdown(-5)).toBe('0s');
   });
 
   test('clamps draggable PiP coordinates to stage bounds', () => {

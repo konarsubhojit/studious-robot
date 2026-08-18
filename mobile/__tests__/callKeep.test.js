@@ -132,6 +132,37 @@ describe('callKeep with the native module present', () => {
     await expect(mod.setupCallKeep()).resolves.toBe(false);
   });
 
+  test('a new call from the same caller replaces the stale ring', async () => {
+    await mod.displayIncomingCall({ callId: 'call-old', callerId: 'alice' });
+    mockCallKeep.endCall.mockClear();
+    mockDismissIncomingCallNotification.mockClear();
+
+    await expect(
+      mod.displayIncomingCall({ callId: 'call-new', callerId: 'alice' }),
+    ).resolves.toEqual({ shown: true });
+
+    // The cancelled call's UI must not stay on screen next to the redial,
+    // where a tap would answer a call that no longer exists.
+    expect(mockCallKeep.endCall).toHaveBeenCalledWith('call-old');
+    expect(mockDismissIncomingCallNotification).toHaveBeenCalledWith('call-old');
+    expect(mockCallKeep.displayIncomingCall).toHaveBeenCalledWith(
+      'call-new',
+      'alice',
+      'alice',
+      'generic',
+      true,
+    );
+  });
+
+  test('a call from a different caller leaves an existing ring alone', async () => {
+    await mod.displayIncomingCall({ callId: 'call-alice', callerId: 'alice' });
+    mockCallKeep.endCall.mockClear();
+
+    await mod.displayIncomingCall({ callId: 'call-bob', callerId: 'bob' });
+
+    expect(mockCallKeep.endCall).not.toHaveBeenCalled();
+  });
+
   test('displayIncomingCall shows the system UI with caller details', async () => {
     await expect(mod.displayIncomingCall({ callId: 'call-1', callerId: 'alice' })).resolves.toEqual(
       { shown: true },

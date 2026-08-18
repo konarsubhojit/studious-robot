@@ -220,3 +220,35 @@ test('the mobile client only reads message fields the server sends', (t) => {
     assert.ok(readKeys.includes(key), `client no longer reads data.${key}`);
   }
 });
+
+test('call push TTL follows the time left in the ring window', () => {
+  const ringTimeoutAt = new Date(Date.now() + 45_000).toISOString();
+  const direct = JSON.parse(
+    push._buildFcmPayload('device-token-123', { ...CALL, ringTimeoutAt })
+  ).message;
+  const ttlSeconds = Number(String(direct.android.ttl).replace('s', ''));
+  // A push delivered late in the window must expire with the call, not 120s
+  // after it was handed to the provider.
+  assert.ok(ttlSeconds > 40 && ttlSeconds <= 45, `unexpected ttl ${direct.android.ttl}`);
+
+  const hub = push._buildNotificationHubAndroidPayload({ ...CALL, ringTimeoutAt }).message;
+  assert.equal(hub.android.ttl, direct.android.ttl);
+});
+
+test('an elapsed ring deadline still yields a positive TTL', () => {
+  // Providers reject ttl=0/negative; the dispatcher already refuses to send a
+  // push for an elapsed ring window, so this is only belt and braces.
+  assert.equal(push._resolveCallTtlSeconds(new Date(Date.now() - 10_000).toISOString()), 1);
+  assert.equal(push._resolveCallTtlSeconds(null), 120);
+  assert.equal(push._resolveCallTtlSeconds('not-a-date'), 120);
+});
+
+test('a call-cancelled push is data-only and identifies the call it dismisses', () => {
+  const envelope = push._buildCallCancelledEnvelope({ callId: 'call-abc', reason: 'cancelled' });
+  assert.equal(envelope.type, 'call.cancelled');
+  assert.equal(envelope.data.callId, 'call-abc');
+  assert.equal(envelope.data.reason, 'cancelled');
+  assert.equal(envelope.deepLink, 'wetalk://call/call-abc');
+  assert.ok(envelope.ttlSeconds > 0);
+  assert.equal(push._buildCallCancelledEnvelope({ callId: 'call-abc' }).data.reason, 'ended');
+});

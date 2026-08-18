@@ -215,3 +215,27 @@ test('push receipt requires a callId or a messageId', async (t) => {
   assert.equal(res.status, 400);
   assert.equal(res.body.error, 'callId or messageId is required');
 });
+
+test('push receipt accepts the duplicate-answer stage', async (t) => {
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const sessionId = await createSession(url, 'user-dup');
+  const res = await postJson(url, '/devices/push-receipt', {
+    sessionId,
+    callId: 'call-dup',
+    stage: 'answer_skipped_duplicate',
+    reason: 'already_accepted',
+  });
+
+  assert.equal(res.status, 202);
+  assert.ok(
+    logs.lines.some(
+      (line) =>
+        line.includes('stage=answer_skipped_duplicate') && line.includes('reason=already_accepted')
+    ),
+    'suppressed duplicates must be visible server-side'
+  );
+});
