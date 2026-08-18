@@ -145,3 +145,73 @@ test('push receipt accepts every answer-path stage', async (t) => {
     assert.equal(res.body.stage, stage);
   }
 });
+
+test('push receipt records message stages keyed by messageId', async (t) => {
+  const logs = captureConsoleLog();
+  t.after(() => logs.restore());
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const session = await createSession(url, 'user-bob', 'device-bob-phone');
+  const res = await postJson(url, '/devices/push-receipt', {
+    sessionId: session,
+    messageId: 'message-1',
+    stage: 'notification_shown',
+  });
+
+  assert.equal(res.status, 202);
+  assert.equal(res.body.status, 'recorded');
+  assert.equal(res.body.messageId, 'message-1');
+  assert.equal(res.body.callId, undefined);
+  assert.equal(res.body.deviceId, 'device-bob-phone');
+  assert.equal(res.body.stage, 'notification_shown');
+  assert.ok(
+    logs.lines.some(
+      (line) =>
+        line.includes('[push] Receipt') &&
+        line.includes('messageId=message-1') &&
+        line.includes('stage=notification_shown')
+    )
+  );
+});
+
+test('push receipt accepts every message stage and rejects call-only stages', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  for (const stage of [
+    'received',
+    'notification_shown',
+    'notification_failed',
+    'notification_suppressed',
+  ]) {
+    const res = await postJson(url, '/devices/push-receipt', {
+      deviceId: 'device-1',
+      messageId: 'message-2',
+      stage,
+    });
+    assert.equal(res.status, 202, `stage ${stage} should be accepted`);
+    assert.equal(res.body.stage, stage);
+  }
+
+  const wrongStage = await postJson(url, '/devices/push-receipt', {
+    deviceId: 'device-1',
+    messageId: 'message-2',
+    stage: 'ui_displayed',
+  });
+  assert.equal(wrongStage.status, 400);
+  assert.equal(wrongStage.body.error, 'invalid stage');
+});
+
+test('push receipt requires a callId or a messageId', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const res = await postJson(url, '/devices/push-receipt', {
+    deviceId: 'device-1',
+    stage: 'received',
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error, 'callId or messageId is required');
+});

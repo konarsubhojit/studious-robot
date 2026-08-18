@@ -23,9 +23,26 @@ const path = require('node:path');
 const push = require('../src/push.js');
 
 const CALL = { callId: 'call-abc', callerId: 'alice' };
+const MESSAGE = {
+  messageId: 'message-abc',
+  conversationId: 'alice:bob',
+  senderId: 'alice',
+  preview: 'hey there',
+};
 
 /** Keys the incoming-call push carries; renaming one is a breaking change. */
 const CALL_DATA_KEYS = ['callId', 'callerId', 'type', 'deepLink', 'title', 'body'];
+
+/** Keys the message push carries; the client renders the notification itself. */
+const MESSAGE_DATA_KEYS = [
+  'messageId',
+  'conversationId',
+  'senderId',
+  'type',
+  'deepLink',
+  'title',
+  'body',
+];
 
 const CLIENT_SOURCE = path.join(__dirname, '..', '..', 'mobile', 'src', 'pushNotifications.js');
 
@@ -35,6 +52,14 @@ function directDataBlock() {
 
 function hubDataBlock() {
   return push._buildNotificationHubAndroidPayload(CALL).message.android.data;
+}
+
+function directMessageDataBlock() {
+  return JSON.parse(push._buildFcmMessagePayload('device-token-123', MESSAGE)).message.data;
+}
+
+function hubMessageDataBlock() {
+  return push._buildNotificationHubAndroidMessagePayload(MESSAGE).message.android.data;
 }
 
 /**
@@ -121,6 +146,77 @@ test('the mobile client only reads fields the server sends', (t) => {
   }
   // The fields the incoming-call UI cannot ring without.
   for (const key of ['callId', 'callerId']) {
+    assert.ok(readKeys.includes(key), `client no longer reads data.${key}`);
+  }
+});
+
+test('both transports send the same data block for a received message', () => {
+  const expected = {
+    messageId: 'message-abc',
+    conversationId: 'alice:bob',
+    senderId: 'alice',
+    type: 'message.received',
+    deepLink: 'wetalk://chat/alice:bob',
+    title: 'alice',
+    body: 'hey there',
+  };
+  assert.deepEqual(directMessageDataBlock(), expected);
+  assert.deepEqual(hubMessageDataBlock(), expected);
+  assert.deepEqual(Object.keys(directMessageDataBlock()).sort(), [...MESSAGE_DATA_KEYS].sort());
+});
+
+test('a message push carries a preview the client can display, truncated', () => {
+  const short = directMessageDataBlock();
+  assert.equal(short.title, 'alice', 'the sender is the notification title');
+  assert.equal(short.body, 'hey there');
+
+  const long = JSON.parse(
+    push._buildFcmMessagePayload('device-token-123', { ...MESSAGE, preview: 'x'.repeat(400) })
+  ).message.data;
+  assert.ok(long.body.length <= 120, 'preview is truncated');
+  assert.ok(long.body.endsWith('…'));
+
+  const empty = JSON.parse(
+    push._buildFcmMessagePayload('device-token-123', { ...MESSAGE, preview: '' })
+  ).message.data;
+  assert.equal(empty.body, 'Sent you a message');
+});
+
+test('a message push stays data-only and unexpired', () => {
+  // Data-only for the same reason calls are: a `notification` block would skip
+  // the app's background handler, and the app is what renders chat
+  // notifications (mobile/src/messageNotification.js). Unlike a call, a message
+  // must not expire after 30s — an offline handset should still get it later.
+  const direct = JSON.parse(push._buildFcmMessagePayload('device-token-123', MESSAGE)).message;
+  assert.equal(direct.notification, undefined);
+  assert.equal(direct.android?.notification, undefined);
+  assert.equal(direct.android.ttl, undefined);
+  const hub = push._buildNotificationHubAndroidMessagePayload(MESSAGE).message;
+  assert.equal(hub.notification, undefined);
+  assert.equal(hub.android.notification, undefined);
+  assert.equal(hub.android.ttl, undefined);
+});
+
+test('the mobile client only reads message fields the server sends', (t) => {
+  if (!fs.existsSync(CLIENT_SOURCE)) {
+    t.skip('mobile client source not present in this checkout');
+    return;
+  }
+
+  const source = fs.readFileSync(CLIENT_SOURCE, 'utf8');
+  const start = source.indexOf('function _extractMessageFromMessage');
+  assert.notEqual(start, -1, 'client message extractor not found — was it renamed?');
+  const body = extractFunctionBody(source, start);
+
+  const readKeys = [...body.matchAll(/\bdata\.([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+  assert.ok(readKeys.length > 0, 'client reads no data fields — extractor shape changed');
+
+  const sent = new Set(MESSAGE_DATA_KEYS);
+  for (const key of readKeys) {
+    assert.ok(sent.has(key), `client reads data.${key} but the server never sends it`);
+  }
+  // Without these the notification cannot be rendered or routed to a chat.
+  for (const key of ['messageId', 'conversationId', 'senderId']) {
     assert.ok(readKeys.includes(key), `client no longer reads data.${key}`);
   }
 });

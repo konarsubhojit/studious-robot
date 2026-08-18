@@ -1,21 +1,44 @@
 import { Linking } from 'react-native';
 import {
   _extractIncomingCallFromMessage,
+  _extractMessageFromMessage,
+  _extractPushType,
   addCallLinkListener,
+  addChatLinkListener,
   getInitialCallLink,
+  getInitialChatLink,
   getPushToken,
   handleBackgroundPushMessage,
   handleForegroundPushMessage,
   loadMessaging,
   parseCallDeepLink,
+  parseChatDeepLink,
   registerForPushNotifications,
   registerPushToken,
   sendPushReceipt,
   unregisterPushToken,
   _resetMessagingCache,
 } from '../src/pushNotifications';
-import { flushDurableLogs, logBackgroundInfo, logInfo, logWarn } from '../src/appLogger';
+import {
+  flushDurableLogs,
+  logBackgroundInfo,
+  logBackgroundWarn,
+  logInfo,
+  logWarn,
+} from '../src/appLogger';
 import * as callKeep from '../src/callKeep';
+import {
+  hasSeenMessage,
+  markMessageSeen,
+  resetMessageNotificationState,
+  setActiveConversation,
+  showMessageNotification,
+} from '../src/messageNotification';
+
+jest.mock('../src/messageNotification', () => {
+  const actual = jest.requireActual('../src/messageNotification');
+  return { ...actual, showMessageNotification: jest.fn() };
+});
 
 jest.mock('../src/appLogger', () => ({
   flushDurableLogs: jest.fn(() => Promise.resolve()),
@@ -634,6 +657,267 @@ describe('background push handler', () => {
     expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background call push received', {
       callId: 'call-4',
       callerId: 'dave',
+    });
+  });
+});
+
+// ─── Chat deep links ──────────────────────────────────────────────────────────
+
+describe('parseChatDeepLink', () => {
+  test('parses a valid wetalk://chat/{conversationId} URL', () => {
+    expect(parseChatDeepLink('wetalk://chat/alice:bob')).toEqual({
+      conversationId: 'alice:bob',
+    });
+  });
+
+  test('decodes a percent-encoded conversation id', () => {
+    expect(parseChatDeepLink('wetalk://chat/alice%3Abob')).toEqual({
+      conversationId: 'alice:bob',
+    });
+  });
+
+  test('returns null for call links, other schemes and malformed input', () => {
+    expect(parseChatDeepLink('wetalk://call/call-1')).toBeNull();
+    expect(parseChatDeepLink('https://example.com/chat/alice:bob')).toBeNull();
+    expect(parseChatDeepLink('wetalk://chat/')).toBeNull();
+    expect(parseChatDeepLink('not-a-url')).toBeNull();
+    expect(parseChatDeepLink(null)).toBeNull();
+  });
+});
+
+describe('getInitialChatLink / addChatLinkListener', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('returns the conversation the app was launched from', async () => {
+    Linking.getInitialURL.mockResolvedValue('wetalk://chat/alice:bob');
+    await expect(getInitialChatLink()).resolves.toEqual({ conversationId: 'alice:bob' });
+  });
+
+  test('returns null when the app was launched from a call link', async () => {
+    Linking.getInitialURL.mockResolvedValue('wetalk://call/call-1');
+    await expect(getInitialChatLink()).resolves.toBeNull();
+  });
+
+  test('forwards only chat links to the listener', () => {
+    const remove = jest.fn();
+    let emit;
+    Linking.addEventListener.mockImplementation((_event, handler) => {
+      emit = handler;
+      return { remove };
+    });
+    const callback = jest.fn();
+    const unsubscribe = addChatLinkListener(callback);
+
+    emit({ url: 'wetalk://call/call-1' });
+    expect(callback).not.toHaveBeenCalled();
+
+    emit({ url: 'wetalk://chat/alice:bob' });
+    expect(callback).toHaveBeenCalledWith({ conversationId: 'alice:bob' });
+
+    unsubscribe();
+    expect(remove).toHaveBeenCalled();
+  });
+});
+
+// ─── Message pushes ───────────────────────────────────────────────────────────
+
+describe('message push handling', () => {
+  // The exact `data` map both server transports send for a message
+  // (`buildMessageEnvelope` + `buildDataBlock` in server/src/push.js); FCM v1
+  // stringifies every value.
+  const SERVER_MESSAGE_DATA = {
+    messageId: 'message-1',
+    conversationId: 'alice:bob',
+    senderId: 'alice',
+    type: 'message.received',
+    deepLink: 'wetalk://chat/alice:bob',
+    title: 'alice',
+    body: 'hey there',
+  };
+
+  beforeEach(() => {
+    _resetMessagingCache();
+    resetMessageNotificationState();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    jest.clearAllMocks();
+    showMessageNotification.mockImplementation(async () => ({ shown: true }));
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+    jest.restoreAllMocks();
+  });
+
+  test('classifies pushes by the envelope type', () => {
+    expect(_extractPushType({ data: SERVER_MESSAGE_DATA })).toBe('message.received');
+    expect(_extractPushType({ data: { type: 'call.incoming', callId: 'call-1' } })).toBe(
+      'call.incoming',
+    );
+    // Payload-shape fallback for servers predating the `type` field.
+    expect(_extractPushType({ data: { callId: 'call-1' } })).toBe('call.incoming');
+    expect(_extractPushType({ data: { messageId: 'message-1' } })).toBe('message.received');
+    expect(_extractPushType({ data: {} })).toBeNull();
+  });
+
+  test('extracts the message payload a data-only push carries', () => {
+    expect(_extractMessageFromMessage({ data: SERVER_MESSAGE_DATA })).toEqual({
+      messageId: 'message-1',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      title: 'alice',
+      body: 'hey there',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+  });
+
+  test('falls back to a default title, body and deep link', () => {
+    expect(
+      _extractMessageFromMessage({
+        data: { messageId: 'message-2', conversationId: 'alice:bob' },
+      }),
+    ).toEqual({
+      messageId: 'message-2',
+      conversationId: 'alice:bob',
+      senderId: null,
+      title: 'New message',
+      body: 'Sent you a message',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+  });
+
+  test('returns null without a messageId or conversationId', () => {
+    expect(_extractMessageFromMessage({ data: { conversationId: 'alice:bob' } })).toBeNull();
+    expect(_extractMessageFromMessage({ data: { messageId: 'message-1' } })).toBeNull();
+  });
+
+  test('background handler renders the notification instead of dropping the push', async () => {
+    await expect(handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA })).resolves.toEqual({
+      messageId: 'message-1',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+      title: 'alice',
+      body: 'hey there',
+      deepLink: 'wetalk://chat/alice:bob',
+    });
+    expect(showMessageNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'message-1', conversationId: 'alice:bob' }),
+    );
+    expect(logBackgroundInfo).toHaveBeenCalledWith('[Push] Background message push received', {
+      messageId: 'message-1',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+    });
+    expect(flushDurableLogs).toHaveBeenCalled();
+  });
+
+  test('reports message receipt stages keyed by messageId', async () => {
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'received',
+        }),
+      }),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_shown',
+        }),
+      }),
+    );
+  });
+
+  test('reports notification_failed when nothing could be displayed', async () => {
+    showMessageNotification.mockResolvedValue({ shown: false, reason: 'module_unavailable' });
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_failed',
+          reason: 'module_unavailable',
+        }),
+      }),
+    );
+  });
+
+  test('does not notify twice for a message the socket already delivered', async () => {
+    markMessageSeen('message-1');
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_suppressed',
+          reason: 'already_delivered',
+        }),
+      }),
+    );
+  });
+
+  test('suppresses the notification while that conversation is on screen', async () => {
+    setActiveConversation({ peerId: 'alice', conversationId: 'alice:bob' });
+
+    await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(hasSeenMessage('message-1')).toBe(true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_suppressed',
+          reason: 'conversation_on_screen',
+        }),
+      }),
+    );
+  });
+
+  test('still notifies in the foreground for another conversation', async () => {
+    setActiveConversation({ peerId: 'carol', conversationId: 'bob:carol' });
+
+    await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).toHaveBeenCalledTimes(1);
+    expect(logInfo).toHaveBeenCalledWith('[Push] Foreground message push received', {
+      messageId: 'message-1',
+      conversationId: 'alice:bob',
+      senderId: 'alice',
+    });
+  });
+
+  test('logs unknown push types instead of silently dropping them', async () => {
+    await expect(
+      handleBackgroundPushMessage({ data: { type: 'presence.changed' } }),
+    ).resolves.toBeNull();
+    expect(logBackgroundWarn).toHaveBeenCalledWith('[Push] Background push of unknown type ignored', {
+      type: 'presence.changed',
+    });
+
+    await expect(
+      handleForegroundPushMessage({ data: { type: 'presence.changed' } }),
+    ).resolves.toBeNull();
+    expect(logWarn).toHaveBeenCalledWith('[Push] Foreground push of unknown type ignored', {
+      type: 'presence.changed',
     });
   });
 });

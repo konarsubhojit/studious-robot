@@ -1,12 +1,23 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useMessaging from '../../src/hooks/useMessaging';
+import {
+  dismissMessageNotification,
+  markMessageSeen,
+  setActiveConversation,
+} from '../../src/messageNotification';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
   logInfo: jest.fn(),
   logWarn: jest.fn(),
   logVerbose: jest.fn(),
+}));
+
+jest.mock('../../src/messageNotification', () => ({
+  dismissMessageNotification: jest.fn(),
+  markMessageSeen: jest.fn(),
+  setActiveConversation: jest.fn(),
 }));
 
 function TestHook({ resultRef, params }) {
@@ -393,5 +404,71 @@ describe('useMessaging', () => {
     // Still true: the safety-net timer that would have cleared it was reset.
     expect(resultRef.current.typingByPeer.bob).toBe(true);
     jest.useRealTimers();
+  });
+});
+
+describe('useMessaging push-notification coordination', () => {
+  test('mirrors the open conversation into the push layer and clears its notification', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 0 }],
+      }),
+    });
+    await act(async () => {
+      await resultRef.current.fetchConversations();
+    });
+
+    params.authedFetchRef.current.mockResolvedValueOnce({ ok: true });
+    await act(async () => {
+      resultRef.current.setActiveChatPeerId('bob');
+      await Promise.resolve();
+    });
+
+    expect(setActiveConversation).toHaveBeenCalledWith({
+      peerId: 'bob',
+      conversationId: 'c1',
+    });
+    expect(dismissMessageNotification).toHaveBeenCalledWith('c1');
+
+    await act(async () => {
+      resultRef.current.setActiveChatPeerId(null);
+      await Promise.resolve();
+    });
+    expect(setActiveConversation).toHaveBeenLastCalledWith(null);
+  });
+
+  test('handleMessageReceived marks the message seen so its push does not notify', () => {
+    const { resultRef } = setup();
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'hi',
+      });
+    });
+    expect(markMessageSeen).toHaveBeenCalledWith('m1');
+  });
+
+  test('handleMessageReceived dismisses the notification for the open conversation', async () => {
+    const { resultRef, params } = setup();
+    act(() => {
+      resultRef.current.setActiveChatPeerId('bob');
+    });
+    params.authedFetchRef.current.mockResolvedValue({ ok: true });
+
+    await act(async () => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'hi',
+      });
+      await Promise.resolve();
+    });
+
+    expect(dismissMessageNotification).toHaveBeenCalledWith('c1');
   });
 });
