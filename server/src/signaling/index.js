@@ -1,6 +1,6 @@
 'use strict';
 
-const { MAX_ROOM_SIZE } = require('../config');
+const { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } = require('../config');
 const { normaliseId } = require('../lib/normalize');
 const { isBlocked } = require('../security');
 const { resolveSocketIdentity } = require('../lib/auth');
@@ -11,9 +11,15 @@ const {
   removeConnection,
   userRoom,
 } = require('../lib/state');
-const { createCallRecord } = require('../domain/calls');
+const {
+  createCallRecord,
+  endCallsForDisconnectedParticipant,
+  reconcileClientCallState,
+  describeActiveCallsForUser,
+} = require('../domain/calls');
 const {
   notifyCallCreated,
+  notifyCallTransition,
   markIncomingCallAcknowledged,
   notifyRingingCallsForDisconnectedDevice,
 } = require('../domain/notifications');
@@ -53,12 +59,40 @@ function leaveRoom(socket, roomId, rooms) {
 }
 
 /**
+ * After a grace period (long enough for an ordinary reconnect), end any
+ * in-progress call of `userId` whose participants have all lost their sockets.
+ *
+ * Without this, a call that reaches `accepted` / `connecting_media` and then
+ * loses both peers stays non-terminal forever and permanently marks both
+ * participants busy.
+ *
+ * @param {import('socket.io').Server} io
+ * @param {object} state
+ * @param {string|undefined} userId
+ * @param {number} graceMs
+ */
+function scheduleParticipantDisconnectCleanup(io, state, userId, graceMs) {
+  if (!userId) return;
+  const timer = setTimeout(() => {
+    endCallsForDisconnectedParticipant(state, userId, {
+      onTransition: (call, previousStatus, reason) =>
+        notifyCallTransition(io, state, call, { previousStatus, actor: null, reason }),
+    });
+  }, graceMs);
+  // Never keep the process (or a test run) alive just for this cleanup.
+  timer.unref?.();
+}
+
+/**
  * Wire up all Socket.IO connection and event handlers.
  *
  * @param {import('socket.io').Server} io
- * @param {{ state: object, ringingTimeoutMs: number }} ctx
+ * @param {{ state: object, ringingTimeoutMs: number, participantDisconnectGraceMs?: number }} ctx
  */
-function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
+function registerSocketHandlers(
+  io,
+  { state, ringingTimeoutMs, participantDisconnectGraceMs = DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS }
+) {
   io.on('connection', (socket) => {
     // Reject connections that race in after shutdown has begun: tell the client
     // this instance is draining so it can reconnect elsewhere, then disconnect.
@@ -376,6 +410,31 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
       });
     });
 
+    // Self-heal: a client that was rejected as `busy` while holding no call of
+    // its own reports what it believes is live, so the server can close out the
+    // phantom calls that are blocking it.
+    socket.on('call.state.report', (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, 'call.state.report')) {
+        return;
+      }
+      if (!validateSignalingVersion(socket, payload, ack, 'call.state.report')) {
+        return;
+      }
+      const userId = socket.data.identity.userId;
+      const reported = Array.isArray(payload.activeCallIds)
+        ? payload.activeCallIds
+        : [payload.callId];
+      const activeCallIds = reported.map((value) => normaliseId(value)).filter(Boolean);
+      const cleared = reconcileClientCallState(state, userId, activeCallIds, {
+        onTransition: (call, previousStatus, reason) =>
+          notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),
+      });
+      acknowledgeSuccess(socket, ack, 'call.state.report', {
+        clearedCallIds: cleared.map((call) => call.callId),
+        activeCalls: describeActiveCallsForUser(state, userId),
+      });
+    });
+
     registerMessageHandlers(socket, { io, state });
 
     socket.on('disconnect', (reason) => {
@@ -401,6 +460,7 @@ function registerSocketHandlers(io, { state, ringingTimeoutMs }) {
         remainingUserSockets: remainingConnections,
       });
       notifyRingingCallsForDisconnectedDevice(state, identity?.userId, identity?.deviceId);
+      scheduleParticipantDisconnectCleanup(io, state, identity?.userId, participantDisconnectGraceMs);
     });
   });
 }

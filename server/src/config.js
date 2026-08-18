@@ -41,6 +41,11 @@ const CALL_END_REASONS = {
   busy: 'callee_busy',
   unreachable: 'callee_unreachable',
   failed: 'call_failed',
+  media_connect_timeout: 'call_media_connect_timeout',
+  participant_disconnected: 'call_participant_disconnected',
+  max_duration_exceeded: 'call_max_duration_exceeded',
+  stale_cleanup: 'call_stale_cleanup',
+  client_state_reconciled: 'call_state_reconciled',
 };
 
 /**
@@ -63,6 +68,33 @@ const CALL_TRANSITIONS = new Map([
  * var (read in `createServer`).
  */
 const DEFAULT_RINGING_TIMEOUT_MS = 120_000;
+
+/**
+ * How long a call may sit in `accepted` / `connecting_media` before it is
+ * force-ended with `media_connect_timeout`.
+ *
+ * Without this, a call whose peers vanish between "accepted" and "connected"
+ * stays non-terminal forever, permanently marking both participants busy (and
+ * surviving restarts through the `calls` table).  Sixty seconds is far longer
+ * than a healthy ICE negotiation needs, but still finite.
+ */
+const DEFAULT_MEDIA_CONNECT_TIMEOUT_MS = 60_000;
+
+/**
+ * Upper bound on a fully connected (`in_call`) call.
+ *
+ * Deliberately generous — it exists only so that *no* call state can be
+ * non-terminal indefinitely when both clients disappear without ever sending
+ * `call.end`.
+ */
+const DEFAULT_MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Grace period after a socket disconnect before an in-progress call whose
+ * participants have no sockets left is ended with `participant_disconnected`.
+ * Long enough to absorb an ordinary Socket.IO reconnect.
+ */
+const DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS = 15_000;
 
 /**
  * Socket.IO heartbeat tuning.
@@ -107,6 +139,9 @@ module.exports = {
   CALL_END_REASONS,
   CALL_TRANSITIONS,
   DEFAULT_RINGING_TIMEOUT_MS,
+  DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+  DEFAULT_MAX_CALL_DURATION_MS,
+  DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   DEFAULT_SOCKET_PING_INTERVAL_MS,
   DEFAULT_SOCKET_PING_TIMEOUT_MS,
   RINGING_POLL_MS,

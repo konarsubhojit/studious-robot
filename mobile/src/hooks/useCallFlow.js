@@ -138,6 +138,33 @@ export const CALL_END_REASON_LABELS = {
   failed: 'Call failed',
 };
 
+/**
+ * Tell the server which calls this device still considers live.
+ *
+ * Used as a self-heal after a `busy` rejection: a call the server thinks is in
+ * progress but that no client is holding is a phantom, and the server closes
+ * it out when it hears the client's own view of the world.
+ *
+ * @param {object} socket
+ * @param {string[]} activeCallIds
+ */
+function reportOwnCallState(socket, activeCallIds) {
+  logInfo('[CallFlow] Reporting own call state after busy rejection', { activeCallIds });
+  socket.emit(
+    'call.state.report',
+    { version: SIGNALING_VERSION, activeCallIds },
+    ack => {
+      if (!ack?.ok) {
+        logWarn('[CallFlow] call.state.report ack failed', ack?.error);
+        return;
+      }
+      logInfo('[CallFlow] Server cleared phantom calls', {
+        clearedCallIds: ack.clearedCallIds ?? [],
+      });
+    },
+  );
+}
+
 function haptic(durationMs) {
   try {
     Vibration.vibrate(durationMs);
@@ -894,9 +921,21 @@ export default function useCallFlow() {
             endActiveCallRef.current?.('Call not answered', 'error', 'missed');
             break;
 
-          case 'busy':
+          case 'busy': {
+            // Self-heal: `busy` means the server still believes one of the
+            // participants is in a call.  When this device holds no live call,
+            // say so, so the server can clear the phantom that is blocking
+            // every new call instead of the user being stuck forever.
+            const liveCallIds = [
+              activeCallIdRef.current,
+              incomingCallRef.current?.callId,
+            ].filter(id => id && id !== eventCallId);
+            if (liveCallIds.length === 0) {
+              reportOwnCallState(socket, []);
+            }
             endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
             break;
+          }
 
           case 'unreachable':
             endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');

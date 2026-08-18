@@ -435,8 +435,9 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
     const accepted = acceptRes.body;
     assert.equal(accepted.status, 'accepted');
 
-    // Ringing timeout must not re-transition the now-accepted call.
-    const transitioned = tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
+    // Ringing timeout must not re-transition the now-accepted call while it is
+    // still inside the media-connect window.
+    const transitioned = tickRingingTimeouts(Date.now() + 1_000);
     assert.equal(transitioned, 0, 'accepted call must not be re-transitioned to missed');
 
     const call = getCall(callId);

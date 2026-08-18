@@ -3,6 +3,7 @@
 const push = require('../push');
 const { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, TERMINAL_CALL_STATES } = require('../config');
 const { resolveReachableChannels, userRoom } = require('../lib/state');
+const { describeActiveCallsForUser } = require('./calls');
 const { pruneDeadDevice } = require('../lib/persistence');
 const { verboseLog } = require('../lib/verbose');
 
@@ -285,6 +286,22 @@ function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
   }
 }
 
+/**
+ * Render the calls that are keeping the callee busy, so a `busy` rejection log
+ * names the blocking call instead of only its own callId.
+ *
+ * @param {object} state
+ * @param {object} call
+ * @returns {string}
+ */
+function describeBusyBlockers(state, call) {
+  if (call.status !== 'busy') return '';
+  const blockers = describeActiveCallsForUser(state, call.calleeId)
+    .filter((blocker) => blocker.callId !== call.callId)
+    .map((blocker) => `${blocker.callId}:${blocker.status}:${blocker.ageMs}ms`);
+  return blockers.length > 0 ? ` blockedBy=${blockers.join(',')}` : '';
+}
+
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
@@ -309,7 +326,7 @@ function notifyCallCreated(io, state, call) {
     // the phone that is asleep in their pocket — the device that has to ring.
     dispatchIncomingCallPushes(state, call);
   } else {
-    logIncomingCallPushSkip(call, `call_status_${call.status}`);
+    logIncomingCallPushSkip(call, `call_status_${call.status}`, null, describeBusyBlockers(state, call));
     clearIncomingCallPushState(state, call.callId);
   }
 

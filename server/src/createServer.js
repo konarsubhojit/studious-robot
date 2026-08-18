@@ -9,6 +9,9 @@ const { createStores } = require('./stores');
 const { createMessageStore } = require('./messageStore');
 const {
   DEFAULT_RINGING_TIMEOUT_MS,
+  DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+  DEFAULT_MAX_CALL_DURATION_MS,
+  DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   DEFAULT_SOCKET_PING_INTERVAL_MS,
@@ -20,7 +23,7 @@ const {
   drainLocalPresence,
 } = require('./lib/state');
 const { waitForSocketsToDrain } = require('./lib/lifecycle');
-const { tickRingingTimeouts } = require('./domain/calls');
+const { tickRingingTimeouts, sanitizeHydratedCalls } = require('./domain/calls');
 const { notifyCallTransition } = require('./domain/notifications');
 const { loadPersistedStateFromDb } = require('./lib/persistence');
 const { mountRoutes } = require('./routes');
@@ -62,6 +65,18 @@ function createServer(opts = {}) {
   });
 
   const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
+  // Windows after which a call stuck in a non-terminal state is force-ended, so
+  // no state can keep both participants busy forever (see domain/calls.js).
+  const callTimeouts = {
+    ringingTimeoutMs,
+    mediaConnectTimeoutMs:
+      Number(process.env.MEDIA_CONNECT_TIMEOUT_MS) || DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+    maxCallDurationMs: Number(process.env.MAX_CALL_DURATION_MS) || DEFAULT_MAX_CALL_DURATION_MS,
+  };
+  const participantDisconnectGraceMs =
+    opts.participantDisconnectGraceMs ??
+    (Number(process.env.PARTICIPANT_DISCONNECT_GRACE_MS) ||
+      DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS);
 
   // ── Session TTL ──────────────────────────────────────────────────────────
   // When non-zero, sessions expire after this many milliseconds.  Pass via
@@ -218,18 +233,24 @@ function createServer(opts = {}) {
   });
 
   // ── Realtime signaling ─────────────────────────────────────────────────────
-  registerSocketHandlers(io, { state, ringingTimeoutMs });
+  registerSocketHandlers(io, { state, ringingTimeoutMs, participantDisconnectGraceMs });
 
-  // Background worker: advance stale ringing calls to `missed`.
+  // Background worker: advance stale ringing calls to `missed` and force-end
+  // calls stranded in `accepted` / `connecting_media` / `in_call`.
   const pollTimer = setInterval(
     () =>
-      tickRingingTimeouts(state, Date.now(), (call, previousStatus, reason) => {
-        notifyCallTransition(io, state, call, {
-          previousStatus,
-          actor: null,
-          reason,
-        });
-      }),
+      tickRingingTimeouts(
+        state,
+        Date.now(),
+        (call, previousStatus, reason) => {
+          notifyCallTransition(io, state, call, {
+            previousStatus,
+            actor: null,
+            reason,
+          });
+        },
+        callTimeouts
+      ),
     RINGING_POLL_MS
   );
   // Don't prevent the process from exiting if only the timer is left.
@@ -311,7 +332,8 @@ function createServer(opts = {}) {
      * @param {number} [now] - Unix timestamp in ms (defaults to Date.now()).
      * @returns {number} Number of calls transitioned.
      */
-    tickRingingTimeouts: (now = Date.now()) => tickRingingTimeouts(state, now),
+    tickRingingTimeouts: (now = Date.now()) =>
+      tickRingingTimeouts(state, now, undefined, callTimeouts),
     /**
      * Populate the in-memory state from the Neon database.
      *
@@ -322,7 +344,15 @@ function createServer(opts = {}) {
      *
      * @returns {Promise<void>}
      */
-    loadPersistedState: () => loadPersistedStateFromDb(db, state),
+    loadPersistedState: async () => {
+      await loadPersistedStateFromDb(db, state);
+      // A restart must never resurrect a dead call: close out anything that was
+      // reloaded in a non-terminal state past its timeout window.
+      const closed = sanitizeHydratedCalls(state, callTimeouts);
+      if (closed > 0) {
+        console.log(`[signaling] closed ${closed} stale call record(s) after hydration`);
+      }
+    },
   };
 }
 

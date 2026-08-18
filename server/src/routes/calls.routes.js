@@ -1,12 +1,34 @@
 'use strict';
 
 const express = require('express');
+const { timingSafeEqual } = require('crypto');
 const { isBlocked } = require('../security');
 const { getCallHistoryCacheKey } = require('../callPersistence');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId } = require('../lib/normalize');
-const { createCallRecord, transitionCall } = require('../domain/calls');
+const {
+  createCallRecord,
+  transitionCall,
+  describeActiveCallsForUser,
+} = require('../domain/calls');
 const { notifyCallCreated, notifyCallTransition } = require('../domain/notifications');
+
+/**
+ * Constant-time check of the operator debug token, so `/debug/active-calls`
+ * can be used to inspect another user without leaking the token via timing.
+ *
+ * @param {import('express').Request} req
+ * @returns {boolean}
+ */
+function hasDebugToken(req) {
+  const expected = process.env.DEBUG_API_TOKEN;
+  if (!expected) return false;
+  const presented = req.get('x-debug-token') ?? '';
+  const expectedBuffer = Buffer.from(expected);
+  const presentedBuffer = Buffer.from(presented);
+  if (expectedBuffer.length !== presentedBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, presentedBuffer);
+}
 
 /**
  * Call lifecycle endpoints: create, inspect, history, and state transitions.
@@ -176,6 +198,38 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
     };
     state.callHistoryCache.set(cacheKey, payload);
     res.status(200).json(payload);
+  });
+
+  /**
+   * GET /debug/active-calls/:userId
+   *
+   * Inspect exactly what is keeping a user busy: every non-terminal call they
+   * participate in, with its status and age.  A `busy` rejection is otherwise
+   * undiagnosable from the outside.
+   *
+   * Requires an authenticated session; a user may only inspect themselves
+   * unless the request carries the operator token (`DEBUG_API_TOKEN`).
+   */
+  router.get('/debug/active-calls/:userId', (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    const userId = normaliseId(req.params.userId) ?? '';
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+
+    if (userId !== session.userId && !hasDebugToken(req)) {
+      res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+
+    const activeCalls = describeActiveCallsForUser(state, userId);
+    res.status(200).json({ userId, activeCalls, total: activeCalls.length });
   });
 
   router.post('/calls/:callId/accept', (req, res) => {

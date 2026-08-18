@@ -1495,6 +1495,57 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
 
+  test('call.state_changed "busy" with no live call reports own state for reconciliation', async () => {
+    const { resultRef } = await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true, clearedCallIds: ['phantom-call'] });
+    });
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'busy',
+        call: { callId: 'call-busy', callerId: 'me' },
+        reason: 'busy',
+      });
+    });
+
+    const report = socketMock.emit.mock.calls.find(([event]) => event === 'call.state.report');
+    expect(report).toBeDefined();
+    expect(report[1].activeCallIds).toEqual([]);
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('call.state_changed "busy" while a call is live does not report own state', async () => {
+    await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((_event, _payload, cb) => {
+      cb?.({ ok: true });
+    });
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-live', callerId: 'irene' } });
+    });
+    await act(async () => {});
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'busy',
+        call: { callId: 'call-busy-other', callerId: 'me' },
+        reason: 'busy',
+      });
+    });
+
+    expect(
+      socketMock.emit.mock.calls.some(([event]) => event === 'call.state.report'),
+    ).toBe(false);
+  });
+
   test('call.state_changed "ended" stops ringing', async () => {
     const { stopIncomingRingtone } = require('../../src/ringtone');
 
