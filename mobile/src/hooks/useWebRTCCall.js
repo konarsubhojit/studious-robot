@@ -176,7 +176,11 @@ export default function useWebRTCCall() {
     renegotiate,
   });
 
-  const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef);
+  // Closing the Picture-in-Picture window must end the call: leaving it running
+  // invisibly gives the user no way back to it and no way to hang up.
+  const { isCompactView, setIsCompactView } = useCompactCallView(isInRoomRef, {
+    onPictureInPictureClosed: () => leaveRoomRef.current?.(),
+  });
 
   useEffect(() => {
     isInRoomRef.current = isInRoom;
@@ -286,6 +290,13 @@ export default function useWebRTCCall() {
     },
     [closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
   );
+
+  // Kept in a ref so the PiP-closed handler (registered before `leaveRoom`
+  // exists) always calls the current implementation.
+  const leaveRoomRef = useRef(leaveRoom);
+  useEffect(() => {
+    leaveRoomRef.current = leaveRoom;
+  }, [leaveRoom]);
 
   const ensurePeerConnection = useCallback(() => {
     if (peerConnectionRef.current) {

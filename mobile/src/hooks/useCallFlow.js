@@ -400,7 +400,12 @@ export default function useCallFlow() {
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
   const { isRegistered } = identity;
 
-  const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef);
+  // Closing the Picture-in-Picture window must end the call: leaving it running
+  // invisibly gives the user no way back to it and no way to hang up.
+  const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef, {
+    onPictureInPictureClosed: () =>
+      endActiveCallRef.current?.('Call ended', 'info', 'ended'),
+  });
 
   /**
    * Clear the persisted identity and disconnect.  After this the app returns
@@ -449,6 +454,28 @@ export default function useCallFlow() {
     if (pc) {
       applyBitrateConstraints(pc).catch(() => {});
     }
+  }, []);
+
+  /**
+   * Stop and drop the local camera/mic stream.
+   *
+   * Also blanks the local video view: an `RTCView` whose stream was torn down
+   * keeps presenting its last decoded frame, which is exactly the frozen image
+   * left behind in the Picture-in-Picture window after a call ends.
+   */
+  const releaseLocalMedia = useCallback(() => {
+    const localStream = localStreamRef.current;
+    if (localStream) {
+      localStream.getTracks?.().forEach(track => {
+        try {
+          track.stop();
+        } catch {
+          // Best-effort: the track may already have been ended by the OS.
+        }
+      });
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
   }, []);
 
   const closePeerConnection = useCallback(() => {
@@ -739,9 +766,17 @@ export default function useCallFlow() {
       resetScreenShare();
       stopCallService();
       closePeerConnection();
+      releaseLocalMedia();
       if (nextMessage) updateStatus(nextMessage, severity);
     },
-    [addToHistory, closePeerConnection, resetScreenShare, setIsCompactView, updateStatus],
+    [
+      addToHistory,
+      closePeerConnection,
+      releaseLocalMedia,
+      resetScreenShare,
+      setIsCompactView,
+      updateStatus,
+    ],
   );
 
   // ─── Socket connection ────────────────────────────────────────────────────

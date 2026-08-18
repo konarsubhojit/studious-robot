@@ -4,9 +4,17 @@ import { AppState, Platform } from 'react-native';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 
 jest.mock('../../src/appLogger', () => ({ logInfo: jest.fn() }));
-jest.mock('../../src/callService', () => ({ enterPictureInPicture: jest.fn() }));
+jest.mock('../../src/callService', () => ({
+  enterPictureInPicture: jest.fn(),
+  exitPictureInPicture: jest.fn(() => Promise.resolve(true)),
+  subscribePictureInPictureMode: jest.fn(() => jest.fn()),
+}));
 
-const { enterPictureInPicture } = require('../../src/callService');
+const {
+  enterPictureInPicture,
+  exitPictureInPicture,
+  subscribePictureInPictureMode,
+} = require('../../src/callService');
 
 const originalPlatformOS = Platform.OS;
 
@@ -15,24 +23,31 @@ const originalPlatformOS = Platform.OS;
  * `resultRef.current`.  Using a plain object ref avoids React overhead while
  * still giving access to the last render's result after each `act()` block.
  */
-function TestHook({ isInRoomRef, resultRef }) {
-  const result = useCompactCallView(isInRoomRef);
+function TestHook({ isInRoomRef, resultRef, options }) {
+  const result = useCompactCallView(isInRoomRef, options);
   resultRef.current = result;
   return null;
 }
 
 describe('useCompactCallView', () => {
   let capturedListener;
+  let capturedPipListener;
   let mockRemove;
 
   beforeEach(() => {
     capturedListener = null;
+    capturedPipListener = null;
     mockRemove = jest.fn();
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
       capturedListener = listener;
       return { remove: mockRemove };
     });
     jest.clearAllMocks();
+    subscribePictureInPictureMode.mockImplementation(listener => {
+      capturedPipListener = listener;
+      return jest.fn();
+    });
+    exitPictureInPicture.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -161,6 +176,95 @@ describe('useCompactCallView', () => {
     act(() => {
       resultRef.current.setIsCompactView(false);
     });
+    expect(resultRef.current.isCompactView).toBe(false);
+  });
+
+  test('mirrors the native Picture-in-Picture state instead of guessing from AppState', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: true };
+    const resultRef = { current: null };
+
+    act(() => {
+      renderer.create(<TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} />);
+    });
+
+    act(() => {
+      capturedPipListener({ isInPictureInPictureMode: true, dismissed: false });
+    });
+    expect(resultRef.current.isCompactView).toBe(true);
+
+    act(() => {
+      capturedPipListener({ isInPictureInPictureMode: false, dismissed: false });
+    });
+    expect(resultRef.current.isCompactView).toBe(false);
+  });
+
+  test('ends the call when the user closes the Picture-in-Picture window', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: true };
+    const resultRef = { current: null };
+    const onPictureInPictureClosed = jest.fn();
+
+    act(() => {
+      renderer.create(
+        <TestHook
+          isInRoomRef={isInRoomRef}
+          resultRef={resultRef}
+          options={{ onPictureInPictureClosed }}
+        />,
+      );
+    });
+
+    act(() => {
+      capturedPipListener({ isInPictureInPictureMode: false, dismissed: true });
+    });
+
+    expect(onPictureInPictureClosed).toHaveBeenCalledTimes(1);
+    expect(resultRef.current.isCompactView).toBe(false);
+  });
+
+  test('does not end a call that is not running when the window is closed', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: false };
+    const resultRef = { current: null };
+    const onPictureInPictureClosed = jest.fn();
+
+    act(() => {
+      renderer.create(
+        <TestHook
+          isInRoomRef={isInRoomRef}
+          resultRef={resultRef}
+          options={{ onPictureInPictureClosed }}
+        />,
+      );
+    });
+
+    act(() => {
+      capturedPipListener({ isInPictureInPictureMode: false, dismissed: true });
+    });
+
+    expect(onPictureInPictureClosed).not.toHaveBeenCalled();
+  });
+
+  test('exitCompactView leaves native PiP and drops the compact flag', async () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: true };
+    const resultRef = { current: null };
+
+    act(() => {
+      renderer.create(<TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} />);
+    });
+
+    act(() => {
+      capturedPipListener({ isInPictureInPictureMode: true, dismissed: false });
+    });
+    expect(resultRef.current.isCompactView).toBe(true);
+
+    await act(async () => {
+      await resultRef.current.exitCompactView();
+    });
+
+    expect(exitPictureInPicture).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isCompactView).toBe(false);
   });
 });

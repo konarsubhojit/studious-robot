@@ -6,12 +6,15 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
+import androidx.lifecycle.Lifecycle
 import com.facebook.react.ReactActivity
+import androidx.lifecycle.Lifecycle
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
@@ -159,6 +162,30 @@ class MainActivity : ReactActivity() {
     } catch (_: IllegalStateException) {
       // Activity not in a valid state to update PiP params; ignore.
     }
+  }
+
+  /**
+   * Bridge the real Picture-in-Picture state to JS.
+   *
+   * JS used to infer PiP purely from `AppState`, which desyncs whenever the
+   * system enters or leaves PiP on its own. Leaving PiP because the user closed
+   * the window (the X on the PiP window) stops the activity instead of
+   * restoring it, and is reported as `dismissed` so the JS layer can end the
+   * call rather than leave it running invisibly.
+   */
+  override fun onPictureInPictureModeChanged(
+    isInPictureInPictureMode: Boolean,
+    newConfig: Configuration,
+  ) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    val dismissed =
+      !isInPictureInPictureMode &&
+        (isFinishing || !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+    Log.i(
+      TAG,
+      "PiP mode changed inPip=$isInPictureInPictureMode dismissed=$dismissed",
+    )
+    CallServiceModule.emitPictureInPictureModeChanged(this, isInPictureInPictureMode, dismissed)
   }
 
   override fun onResume() {

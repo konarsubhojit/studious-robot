@@ -1,9 +1,11 @@
-import { NativeModules, Platform } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   enterPictureInPicture,
+  exitPictureInPicture,
   isCallServiceAvailable,
   startCallService,
   stopCallService,
+  subscribePictureInPictureMode,
 } from '../src/callService';
 
 const originalPlatform = Platform.OS;
@@ -75,5 +77,58 @@ describe('callService', () => {
     Platform.OS = 'ios';
     setCallServiceModule(null);
     await expect(enterPictureInPicture()).resolves.toBe(false);
+  });
+
+  test('stopCallService also leaves Picture-in-Picture so no frozen frame remains', () => {
+    Platform.OS = 'android';
+    const stopService = jest.fn();
+    const exitPictureInPictureMode = jest.fn().mockResolvedValue(true);
+    setCallServiceModule({ stopService, exitPictureInPictureMode });
+
+    expect(stopCallService()).toBe(true);
+    expect(exitPictureInPictureMode).toHaveBeenCalledTimes(1);
+  });
+
+  test('exitPictureInPicture resolves to the native result', async () => {
+    Platform.OS = 'android';
+    const exitPictureInPictureMode = jest.fn().mockResolvedValue(true);
+    setCallServiceModule({ exitPictureInPictureMode });
+
+    await expect(exitPictureInPicture()).resolves.toBe(true);
+    expect(exitPictureInPictureMode).toHaveBeenCalledTimes(1);
+  });
+
+  test('exitPictureInPicture resolves false when the native module is missing', async () => {
+    Platform.OS = 'android';
+    setCallServiceModule(null);
+    await expect(exitPictureInPicture()).resolves.toBe(false);
+  });
+
+  test('exitPictureInPicture swallows native errors', async () => {
+    Platform.OS = 'android';
+    setCallServiceModule({
+      exitPictureInPictureMode: jest.fn(() => Promise.reject(new Error('boom'))),
+    });
+    await expect(exitPictureInPicture()).resolves.toBe(false);
+  });
+
+  test('subscribePictureInPictureMode forwards native mode changes', () => {
+    const handler = jest.fn();
+    const unsubscribe = subscribePictureInPictureMode(handler);
+
+    DeviceEventEmitter.emit('CallService.pictureInPictureModeChanged', {
+      isInPictureInPictureMode: false,
+      dismissed: true,
+    });
+    expect(handler).toHaveBeenCalledWith({
+      isInPictureInPictureMode: false,
+      dismissed: true,
+    });
+
+    unsubscribe();
+    DeviceEventEmitter.emit('CallService.pictureInPictureModeChanged', {
+      isInPictureInPictureMode: true,
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });
