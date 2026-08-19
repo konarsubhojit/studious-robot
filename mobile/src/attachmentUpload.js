@@ -29,6 +29,22 @@ import {
  */
 let serverAttachmentsUnavailable = false;
 
+/**
+ * An attachment pipeline failure. Callers read `.status` (when the failure
+ * came from an HTTP response) and `.message`, same as any other `Error`.
+ */
+export class AttachmentError extends Error {
+  /**
+   * @param {string} message
+   * @param {number} [status]
+   */
+  constructor(message, status) {
+    super(message);
+    this.name = 'AttachmentError';
+    this.status = status;
+  }
+}
+
 /** Reset the unavailability cache (tests only). */
 export function _resetAttachmentAvailabilityCache() {
   serverAttachmentsUnavailable = false;
@@ -102,7 +118,7 @@ export function describeAttachmentError({ status, message } = {}) {
  * }} params
  * @returns {Promise<{ conversationId: string, key: string, uploadUrl: string,
  *   publicUrl: string, expiresAt: string, headers: Record<string,string> }>}
- * @throws {{ status?: number, message: string }}
+ * @throws {AttachmentError}
  */
 export async function presignAttachment({
   authedFetch,
@@ -123,13 +139,13 @@ export async function presignAttachment({
   }));
 
   if (!response) {
-    throw { message: 'Could not reach the server' };
+    throw new AttachmentError('Could not reach the server');
   }
 
   if (!response.ok) {
     if (response.status === 503) serverAttachmentsUnavailable = true;
     const body = await response.json().catch(() => ({}));
-    throw { status: response.status, message: body?.error };
+    throw new AttachmentError(body?.error, response.status);
   }
 
   serverAttachmentsUnavailable = false;
@@ -173,10 +189,10 @@ export function putAttachment({ uploadUrl, headers, body, onProgress }) {
         resolve();
         return;
       }
-      reject({ status: xhr.status, message: 'Upload was rejected by storage' });
+      reject(new AttachmentError('Upload was rejected by storage', xhr.status));
     };
-    xhr.onerror = () => reject({ message: 'Network problem during upload' });
-    xhr.onabort = () => reject({ message: 'Upload cancelled' });
+    xhr.onerror = () => reject(new AttachmentError('Network problem during upload'));
+    xhr.onabort = () => reject(new AttachmentError('Upload cancelled'));
     xhr.send(body);
   });
 }
@@ -201,8 +217,8 @@ export function putAttachment({ uploadUrl, headers, body, onProgress }) {
  * }} params
  * @returns {Promise<{ url: string, mimeType: string, sizeBytes: number,
  *   name?: string, width?: number, height?: number, durationMs?: number }>}
- * @throws {{ status?: number, message: string }} `message` is already the
- *   user-facing text ({@link describeAttachmentError}).
+ * @throws {AttachmentError} `message` is already the user-facing text
+ *   ({@link describeAttachmentError}).
  */
 export async function uploadAttachment({
   authedFetch,
@@ -220,7 +236,7 @@ export async function uploadAttachment({
 }) {
   const validation = validateAttachment({ type, mimeType, sizeBytes });
   if (!validation.ok) {
-    throw { message: validation.message };
+    throw new AttachmentError(validation.message);
   }
 
   let presigned;
@@ -235,7 +251,7 @@ export async function uploadAttachment({
     });
   } catch (error) {
     logWarn('[Attachments] presign failed', { status: error?.status, message: error?.message });
-    throw { status: error?.status, message: describeAttachmentError(error ?? {}) };
+    throw new AttachmentError(describeAttachmentError(error ?? {}), error?.status);
   }
 
   try {
@@ -247,7 +263,7 @@ export async function uploadAttachment({
     });
   } catch (error) {
     logWarn('[Attachments] upload failed', { status: error?.status, message: error?.message });
-    throw { status: error?.status, message: describeAttachmentError(error ?? {}) };
+    throw new AttachmentError(describeAttachmentError(error ?? {}), error?.status);
   }
 
   logInfo('[Attachments] uploaded', { type, sizeBytes });

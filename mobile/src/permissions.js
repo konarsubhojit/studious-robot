@@ -230,6 +230,14 @@ function getAttachmentPermissionDeniedMessage(kind) {
   return 'Required permission is missing';
 }
 
+/** The Android runtime permission constant `ensureAttachmentPermission` needs to check/request for `kind`. */
+function attachmentPermissionFor(kind, androidApiLevel) {
+  if (kind === 'photo') return getPhotoLibraryPermission(androidApiLevel);
+  if (kind === 'camera') return CAMERA_PERMISSION;
+  if (kind === 'voice') return MICROPHONE_PERMISSION;
+  return undefined;
+}
+
 /**
  * Ensure the runtime permission needed to attach a photo, take a camera
  * photo, or record a voice note is granted, requesting it if not.
@@ -252,14 +260,7 @@ export async function ensureAttachmentPermission(kind, { androidApiLevel = Platf
     return { ok: true, granted: true, message: null };
   }
 
-  const permission =
-    kind === 'photo'
-      ? getPhotoLibraryPermission(androidApiLevel)
-      : kind === 'camera'
-        ? CAMERA_PERMISSION
-        : kind === 'voice'
-          ? MICROPHONE_PERMISSION
-          : undefined;
+  const permission = attachmentPermissionFor(kind, androidApiLevel);
   if (!permission) return { ok: true, granted: true, message: null };
 
   const alreadyGranted = await PermissionsAndroid.check(permission);

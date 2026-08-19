@@ -163,7 +163,7 @@ describe('attachmentUpload', () => {
           mimeType: 'image/png',
           sizeBytes: 10,
         }),
-      ).rejects.toEqual({ status: 503, message: 'attachment uploads are not configured' });
+      ).rejects.toMatchObject({ status: 503, message: 'attachment uploads are not configured' });
       expect(isAttachmentUploadKnownUnavailable()).toBe(true);
     });
 
@@ -178,7 +178,7 @@ describe('attachmentUpload', () => {
           mimeType: 'image/png',
           sizeBytes: 10,
         }),
-      ).rejects.toEqual({ message: 'Could not reach the server' });
+      ).rejects.toMatchObject({ message: 'Could not reach the server' });
     });
   });
 
@@ -215,13 +215,13 @@ describe('attachmentUpload', () => {
       const xhr = FakeXHR.instances[0];
       xhr.status = 403;
       xhr.onload();
-      await expect(promise).rejects.toEqual({ status: 403, message: expect.any(String) });
+      await expect(promise).rejects.toMatchObject({ status: 403, message: expect.any(String) });
     });
 
     test('rejects on a network error', async () => {
       const promise = putAttachment({ uploadUrl: 'https://r2.example/upload', headers: {}, body: {} });
       FakeXHR.instances[0].onerror();
-      await expect(promise).rejects.toEqual({ message: expect.any(String) });
+      await expect(promise).rejects.toMatchObject({ message: expect.any(String) });
     });
   });
 
@@ -238,7 +238,7 @@ describe('attachmentUpload', () => {
           mimeType: 'application/zip',
           sizeBytes: 10,
         }),
-      ).rejects.toEqual({ message: expect.any(String) });
+      ).rejects.toMatchObject({ message: expect.any(String) });
       expect(authedFetch).not.toHaveBeenCalled();
     });
 
@@ -305,7 +305,7 @@ describe('attachmentUpload', () => {
           mimeType: 'image/png',
           sizeBytes: 1024,
         }),
-      ).rejects.toEqual({
+      ).rejects.toMatchObject({
         status: 503,
         message: "Attachments aren't available on this server",
       });

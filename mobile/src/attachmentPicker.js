@@ -119,7 +119,7 @@ export async function pickDocument() {
     // picker failure (e.g. the native module errored) worth a log line, but
     // still resolves to "no attachment" — the composer just leaves the
     // attach sheet available to retry rather than surfacing a hard error.
-    const cancelled = picker.isErrorWithCode && picker.isErrorWithCode(error, 'OPERATION_CANCELED');
+    const cancelled = picker.isErrorWithCode?.(error, 'OPERATION_CANCELED');
     if (!cancelled) {
       logWarn('[Attachments] document picker failed', { message: error?.message });
     }

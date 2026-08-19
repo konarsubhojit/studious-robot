@@ -74,6 +74,41 @@ criterion until that's fixed. Everything else is comparatively minor.
   - Both render as a plain `<Text>` inside a `<View testID=...>` with no `accessibilityLiveRegion`/`accessibilityRole="alert"`, so a screen-reader user won't be proactively told upload progress changed or that the notice appeared — purely cosmetic/polish, not blocking.
   - **Resolution: Deferred.** Cosmetic/polish per the finding's own framing; no functional regression, and worth batching with a broader accessibility pass rather than a one-off tweak here.
 
+## SonarCloud findings (PR #144 automated analysis)
+
+In addition to the manual review above, SonarCloud flagged 11 issues against
+this PR's diff. All are fixed:
+
+- **[MAJOR × 7] `S3696`/`S6671` — "Expected an error object to be thrown" /
+  "Expected the Promise rejection reason to be an Error"** —
+  `mobile/src/attachmentUpload.js:126,132,176,178,179,223,238,250`
+  - `presignAttachment`, `putAttachment`, and `uploadAttachment` threw/rejected
+    plain object literals (`{ status, message }`) instead of `Error`
+    instances, losing stack traces and violating the convention that thrown
+    values are always `Error`s.
+  - **Resolution: Fixed.** Added an exported `AttachmentError extends Error`
+    class (`message`, optional `status`) and replaced every `throw {...}` /
+    `reject({...})` call site with `new AttachmentError(message, status)`.
+    Updated the `@throws` JSDoc tags accordingly. `attachmentUpload.test.js`'s
+    assertions against these rejections were changed from
+    `.rejects.toEqual({...})` to `.rejects.toMatchObject({...})` since the
+    rejected value is now an `Error` instance, not a plain object.
+
+- **[MINOR] `S6582` — prefer optional chaining** —
+  `mobile/src/attachmentPicker.js:117`
+  - **Resolution: Fixed.** `picker.isErrorWithCode && picker.isErrorWithCode(error, 'OPERATION_CANCELED')`
+    → `picker.isErrorWithCode?.(error, 'OPERATION_CANCELED')`.
+
+- **[MAJOR × 2] `S3358` — nested ternary operators should be extracted** —
+  `mobile/src/permissions.js:258,260`
+  - **Resolution: Fixed.** Extracted the nested
+    `kind === 'photo' ? ... : kind === 'camera' ? ... : kind === 'voice' ? ... : undefined`
+    into a new `attachmentPermissionFor(kind, androidApiLevel)` helper using
+    sequential `if` statements, called from `ensureAttachmentPermission`.
+
+Summary: 10 fixed (7 Major error-object issues, 2 Major nested-ternary
+issues, 1 Minor optional-chaining issue), 0 deferred.
+
 ## Out of scope (pre-existing, not graded)
 
 - `mobile/ios/StudiousRobot/Info.plist` still has no `NSCameraUsageDescription` / `NSMicrophoneUsageDescription` / `NSPhotoLibraryUsageDescription`, even for the pre-existing calling feature that already uses camera/microphone. The issue only asked for Android manifest permissions, so this diff correctly left iOS untouched, but the app will crash on iOS the first time any of these APIs are invoked (missing usage description) — worth a follow-up issue.
