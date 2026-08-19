@@ -45,9 +45,13 @@ export default function useChatSync({
     if (!isRegistered) return undefined;
     let cancelled = false;
     setIsLoadingConversations(true);
-    Promise.resolve(fetchConversations()).finally(() => {
-      if (!cancelled) setIsLoadingConversations(false);
-    });
+    // `catch` before `finally` so a rejected fetch clears the flag instead of
+    // leaving the skeleton up behind an unhandled rejection.
+    Promise.resolve(fetchConversations())
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsLoadingConversations(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -63,9 +67,11 @@ export default function useChatSync({
     let cancelled = false;
     if (chatPeerId) {
       setIsLoadingMessages(true);
-      Promise.resolve(fetchMessagesForPeer(chatPeerId)).finally(() => {
-        if (!cancelled) setIsLoadingMessages(false);
-      });
+      Promise.resolve(fetchMessagesForPeer(chatPeerId))
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setIsLoadingMessages(false);
+        });
       markConversationRead(chatPeerId);
     } else {
       setIsLoadingMessages(false);

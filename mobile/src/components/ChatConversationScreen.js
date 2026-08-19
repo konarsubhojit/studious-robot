@@ -39,7 +39,7 @@ const SKELETON_BUBBLE_COUNT = 6;
  *   deliveredTo?: string[], recipientId?: string }} message
  * @returns {'sending'|'failed'|'sent'|'delivered'|'read'}
  */
-export function getMessageStatus(message) {
+function getMessageStatus(message) {
   if (message?.failed) return 'failed';
   if (message?.pending) return 'sending';
   if (message?.readAt) return 'read';
