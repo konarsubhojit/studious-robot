@@ -13,11 +13,16 @@ import {
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
 
 /** Consecutive own-sender messages within this many minutes are grouped
  * (only the last bubble in the group shows a timestamp/tick). */
 const GROUP_GAP_MS = 5 * 60 * 1000;
+/** Consecutive calls with the same peer, direction and outcome within this
+ * window collapse into a single expandable row, so a redial storm can't bury
+ * the conversation around it. */
+const CALL_GROUP_GAP_MS = 60 * 60 * 1000;
 /** How long after the user stops typing to report "stopped typing". */
 const TYPING_IDLE_MS = 3000;
 /** Distance (px) from the bottom of the message list still considered
@@ -48,6 +53,25 @@ function getMessageStatus(message) {
     ? deliveredTo.includes(message.recipientId)
     : deliveredTo.length > 0;
   return reachedRecipient ? 'delivered' : 'sent';
+}
+
+/**
+ * True when a timeline entry is a call record rather than a text message.
+ *
+ * The server only tags entries with a `type` when the client opts into the
+ * merged timeline (`include=calls`), and optimistic local sends carry no type
+ * at all, so anything untagged is a message.
+ *
+ * @param {{ type?: string }} entry
+ * @returns {boolean}
+ */
+function isCallEntry(entry) {
+  return entry?.type === 'call';
+}
+
+/** Stable list key for either kind of timeline entry. */
+function entryKey(entry) {
+  return isCallEntry(entry) ? entry.callId : entry.messageId;
 }
 
 /** Only items at least this visible count for the pinned date pill. */
@@ -85,24 +109,46 @@ function formatDateSeparator(date) {
 }
 
 /**
- * Turn a flat, oldest-first message array into a render list that interleaves
+ * True when two consecutive call entries belong in the same collapsed row.
+ *
+ * @param {object} previous
+ * @param {object} entry
+ * @returns {boolean}
+ */
+function isSameCallRun(previous, entry) {
+  if (previous.direction !== entry.direction || previous.status !== entry.status) return false;
+  const previousAt = new Date(previous.createdAt).getTime();
+  const entryAt = new Date(entry.createdAt).getTime();
+  if (Number.isNaN(previousAt) || Number.isNaN(entryAt)) return false;
+  return entryAt - previousAt <= CALL_GROUP_GAP_MS;
+}
+
+/**
+ * Turn a flat, oldest-first timeline array into a render list that interleaves
  * date separators and flags the last message of each same-sender/time-window
  * group, so consecutive bubbles from one sender only show a single
  * timestamp/tick at the bottom of the group (Teams/Slack-style grouping).
  *
- * Each message item also carries the date label of the day it belongs to, so
- * the pinned (sticky) date pill can be derived from whichever message is
- * currently at the top of the viewport without re-scanning the list.
+ * Call entries share the list with messages — one merged conversation, as in
+ * every mainstream messenger — and a run of consecutive calls with the same
+ * direction and outcome collapses into a single row.
  *
- * @param {Array<object>} orderedMessages oldest-first
- * @returns {Array<{ key: string, type: 'date', label: string } | { key: string, type: 'message', message: object, isGroupEnd: boolean, dateLabel: string | null }>}
+ * Each item also carries the date label of the day it belongs to, so the
+ * pinned (sticky) date pill can be derived from whichever item is currently at
+ * the top of the viewport without re-scanning the list.
+ *
+ * @param {Array<object>} orderedEntries oldest-first
+ * @returns {Array<{ key: string, type: 'date', label: string }
+ *   | { key: string, type: 'message', message: object, isGroupEnd: boolean, dateLabel: string | null }
+ *   | { key: string, type: 'call', entries: Array<object>, dateLabel: string | null }>}
  */
-function buildListItems(orderedMessages) {
+function buildListItems(orderedEntries) {
   const items = [];
   let currentDateLabel = null;
-  orderedMessages.forEach((message, index) => {
-    const createdAt = new Date(message.createdAt);
-    const previous = orderedMessages[index - 1];
+  for (let index = 0; index < orderedEntries.length; index++) {
+    const entry = orderedEntries[index];
+    const createdAt = new Date(entry.createdAt);
+    const previous = orderedEntries[index - 1];
     const hasValidDate = !Number.isNaN(createdAt.getTime());
     if (
       hasValidDate &&
@@ -110,15 +156,34 @@ function buildListItems(orderedMessages) {
     ) {
       currentDateLabel = formatDateSeparator(createdAt);
       items.push({
-        key: `date-${message.messageId}`,
+        key: `date-${entryKey(entry)}`,
         type: 'date',
         label: currentDateLabel,
       });
     }
 
-    const next = orderedMessages[index + 1];
+    if (isCallEntry(entry)) {
+      // Collapse the run of same-direction/same-outcome calls starting here.
+      const run = [entry];
+      while (index + 1 < orderedEntries.length) {
+        const candidate = orderedEntries[index + 1];
+        if (!isCallEntry(candidate) || !isSameCallRun(run[run.length - 1], candidate)) break;
+        if (!isSameCalendarDay(new Date(candidate.createdAt), createdAt)) break;
+        run.push(candidate);
+        index += 1;
+      }
+      items.push({
+        key: entryKey(entry),
+        type: 'call',
+        entries: run,
+        dateLabel: currentDateLabel,
+      });
+      continue;
+    }
+
+    const next = orderedEntries[index + 1];
     let isGroupEnd = true;
-    if (next && next.senderId === message.senderId) {
+    if (next && !isCallEntry(next) && next.senderId === entry.senderId) {
       const nextCreatedAt = new Date(next.createdAt);
       const sameDay =
         !hasValidDate ||
@@ -132,13 +197,13 @@ function buildListItems(orderedMessages) {
     }
 
     items.push({
-      key: message.messageId,
+      key: entryKey(entry),
       type: 'message',
-      message,
+      message: entry,
       isGroupEnd,
       dateLabel: currentDateLabel,
     });
-  });
+  }
   return items;
 }
 
@@ -225,6 +290,8 @@ function MessageSkeleton() {
  * @param {object} props
  * @param {string} props.peerId
  * @param {Array<object>} [props.messages] - newest-first, as delivered by the hook.
+ *   Entries tagged `type: 'call'` are rendered as call records inline in the
+ *   timeline; everything else is a text message.
  * @param {(body: string) => void} props.onSendMessage
  * @param {() => void} [props.onLoadOlder]
  * @param {() => void} props.onBack
@@ -232,6 +299,8 @@ function MessageSkeleton() {
  * @param {{ online: boolean, status?: string } | null} [props.peerPresence]
  * @param {() => void} [props.onStartAudioCall]
  * @param {() => void} [props.onStartVideoCall]
+ * @param {(peerId: string) => void} [props.onCallBack] - Audio call back from a call row.
+ * @param {(peerId: string) => void} [props.onVideoCallBack] - Video call back from a call row.
  * @param {boolean} [props.isSending]
  * @param {boolean} [props.isStartingCall] - True while a call to this peer is being placed;
  *   shows a loading spinner on the call header buttons instead of the icon.
@@ -255,6 +324,8 @@ export default function ChatConversationScreen({
   peerPresence = null,
   onStartAudioCall,
   onStartVideoCall,
+  onCallBack,
+  onVideoCallBack,
   isSending = false,
   isStartingCall = false,
   isPeerTyping = false,
@@ -297,7 +368,7 @@ export default function ChatConversationScreen({
   // "scroll to bottom" FAB instead of yanking the view.
   useEffect(() => {
     const newestMessage = messages[0] ?? null;
-    const newestId = newestMessage?.messageId ?? null;
+    const newestId = newestMessage ? (newestMessage.messageId ?? newestMessage.callId) : null;
     if (newestId !== newestMessageIdRef.current) {
       newestMessageIdRef.current = newestId;
       const isOwnMessage = newestMessage?.senderId === currentUserId;
@@ -390,8 +461,10 @@ export default function ChatConversationScreen({
   // items in render order, so the first message item in that list is the one
   // at the top of the viewport.
   const handleViewableItemsChanged = useCallback(({ viewableItems }) => {
-    const topMessage = viewableItems.find(entry => entry.item?.type === 'message');
-    setStickyDateLabel(topMessage?.item?.dateLabel ?? null);
+    const topItem = viewableItems.find(
+      entry => entry.item?.type === 'message' || entry.item?.type === 'call',
+    );
+    setStickyDateLabel(topItem?.item?.dateLabel ?? null);
   }, []);
 
   const renderItem = useCallback(
@@ -403,6 +476,16 @@ export default function ChatConversationScreen({
           </View>
         );
       }
+      if (item.type === 'call') {
+        return (
+          <CallTimelineRow
+            entries={item.entries}
+            peerId={peerId}
+            onCallBack={onCallBack}
+            onVideoCallBack={onVideoCallBack}
+          />
+        );
+      }
       return (
         <MessageRow
           message={item.message}
@@ -412,7 +495,7 @@ export default function ChatConversationScreen({
         />
       );
     },
-    [currentUserId, handleRetry, styles],
+    [currentUserId, handleRetry, onCallBack, onVideoCallBack, peerId, styles],
   );
 
   const handleScrollToBottomPress = useCallback(() => {

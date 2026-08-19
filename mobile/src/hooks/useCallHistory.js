@@ -81,8 +81,8 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
           status: call.status,
           endReason: call.endReason,
           createdAt: call.createdAt,
-          durationSeconds: null,
-          isRead: call.status !== 'missed',
+          durationSeconds: call.durationSeconds ?? null,
+          isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
         }));
         setCallHistory(entries);
       } catch (error) {

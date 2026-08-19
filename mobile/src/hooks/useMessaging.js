@@ -20,6 +20,17 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
 
+/**
+ * Identity of a timeline entry: a message id, or a call id for the call
+ * records the unified timeline interleaves with the messages.
+ *
+ * @param {{ messageId?: string, callId?: string }} entry
+ * @returns {string | undefined}
+ */
+function timelineEntryId(entry) {
+  return entry?.messageId ?? entry?.callId;
+}
+
 // Monotonic counter used to disambiguate optimistic message ids sent within
 // the same millisecond. This is a local UI dedup key only (never sent to the
 // server), so a non-PRNG counter is preferable to `Math.random()` here.
@@ -56,7 +67,10 @@ export default function useMessaging({
   updateStatus,
 }) {
   // One entry per conversation the user participates in: { conversationId,
-  // peerId, lastMessage, unreadCount }, newest-activity first.
+  // peerId, lastMessage, lastActivity, unreadCount }, newest-activity first.
+  // `lastActivity` is whichever of the last message and the last call is
+  // newer, so the chat list preview never shows a stale message for a
+  // conversation whose latest event was a call.
   const [conversations, setConversations] = useState([]);
   // Keyed by peerId → array of message objects, newest-first (matches the
   // server's ordering). Optimistic (pending/failed) sends are tagged inline.
@@ -119,10 +133,14 @@ export default function useMessaging({
   }, [authedFetchRef, sessionIdRef, signalingUrl]);
 
   /**
-   * Fetch a page of message history with `peerId` (`GET /messages`) and merge
-   * it into `messagesByPeer`.  Pass `{ before }` (an ISO cursor, the oldest
-   * held message's `createdAt`) to page further back; omit it for the first
-   * page, which replaces any existing entry for that peer.
+   * Fetch a page of conversation history with `peerId` (`GET /messages`) and
+   * merge it into `messagesByPeer`.  Pass `{ before }` (an ISO cursor, the
+   * oldest held entry's `createdAt`) to page further back; omit it for the
+   * first page, which replaces any existing entry for that peer.
+   *
+   * Requests the unified timeline (`include=calls`), so the page interleaves
+   * text messages (`type: 'text'`) with call records (`type: 'call'`) and a
+   * conversation shows that the two people also called each other.
    *
    * @param {string} peerId
    * @param {{ before?: string }} [options]
@@ -141,6 +159,7 @@ export default function useMessaging({
             peerId: trimmedPeerId,
           });
           if (before) params.set('before', before);
+          params.set('include', 'calls');
           return { url: `${trimmedUrl}${API_ROUTES.MESSAGES}?${params.toString()}` };
         });
         if (!response?.ok) return [];
@@ -151,9 +170,13 @@ export default function useMessaging({
           if (!before) {
             return { ...prev, [trimmedPeerId]: messages };
           }
-          // Pagination: append older messages, deduping by messageId.
-          const existingIds = new Set(existing.map(m => m.messageId));
-          const merged = [...existing, ...messages.filter(m => !existingIds.has(m.messageId))];
+          // Pagination: append older entries, deduping by their own id (a
+          // call entry carries a `callId` rather than a `messageId`).
+          const existingIds = new Set(existing.map(timelineEntryId));
+          const merged = [
+            ...existing,
+            ...messages.filter(entry => !existingIds.has(timelineEntryId(entry))),
+          ];
           return { ...prev, [trimmedPeerId]: merged };
         });
         return messages;
@@ -362,6 +385,7 @@ export default function useMessaging({
         next[index] = {
           ...next[index],
           lastMessage: message,
+          lastActivity: { ...message, type: 'text' },
           unreadCount: (next[index].unreadCount || 0) + 1,
         };
         return next;

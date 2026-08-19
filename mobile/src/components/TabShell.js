@@ -51,6 +51,8 @@ export default function TabShell() {
       keyboardVerticalOffset={insets.top}
       onStartAudioCall={() => startAudioCallWith(peerId)}
       onStartVideoCall={() => startVideoCallWith(peerId)}
+      onCallBack={startAudioCallWith}
+      onVideoCallBack={startVideoCallWith}
       isStartingCall={callFlow.isPlacingCall}
       isPeerTyping={Boolean(chat.typingByPeer[peerId])}
       isLoadingMessages={chat.isLoadingMessages}

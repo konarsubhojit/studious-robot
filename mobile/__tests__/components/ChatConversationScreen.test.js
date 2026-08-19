@@ -798,4 +798,56 @@ describe('ChatConversationScreen', () => {
 
     expect(findByTestId(tree, 'chat-scroll-to-bottom')).toBeNull();
   });
+
+  test('renders call records inline in the timeline', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'm2', body: 'after', type: 'text' }),
+        {
+          type: 'call',
+          callId: 'call-1',
+          direction: 'incoming',
+          status: 'missed',
+          durationSeconds: 0,
+          createdAt: new Date().toISOString(),
+        },
+        makeMessage({ messageId: 'm1', body: 'before', type: 'text' }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findAllByTestId(tree, 'chat-message-row')).toHaveLength(2);
+    const callRow = findByTestId(tree, 'chat-call-entry');
+    expect(callRow).not.toBeNull();
+    expect(callRow.props.accessibilityLabel).toBe('Missed call');
+  });
+
+  test('collapses consecutive calls with the same outcome into one row', () => {
+    const createdAt = new Date();
+    const makeCall = (callId, offsetMinutes) => ({
+      type: 'call',
+      callId,
+      direction: 'incoming',
+      status: 'missed',
+      durationSeconds: 0,
+      createdAt: new Date(createdAt.getTime() - offsetMinutes * 60_000).toISOString(),
+    });
+
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeCall('c3', 0), makeCall('c2', 1), makeCall('c1', 2)],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const rows = findAllByTestId(tree, 'chat-call-timeline-row');
+    expect(rows).toHaveLength(1);
+    expect(findByTestId(tree, 'chat-call-entry').props.accessibilityLabel).toBe(
+      '3 × missed call',
+    );
+  });
 });
