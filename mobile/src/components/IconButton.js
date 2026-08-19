@@ -37,8 +37,8 @@ export default function IconButton({
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const bgColor = variantColors(colors)[variant] ?? colors.surfaceControl;
-  const iconColor = iconColors(colors)[variant] ?? colors.textPrimary;
+  const bgColor = variantColor(colors, variant);
+  const glyphColor = iconColor(colors, variant);
   const iconSize = Math.round(size * 0.42);
   const isDisabled = disabled || loading;
 
@@ -50,12 +50,12 @@ export default function IconButton({
     iconContent = (
       <ActivityIndicator
         size="small"
-        color={iconColor}
+        color={glyphColor}
         testID={testID ? `${testID}-loading` : undefined}
       />
     );
   } else if (iconDef && MCIcon) {
-    iconContent = <MCIcon name={iconDef.icon} size={iconSize} color={iconColor} />;
+    iconContent = <MCIcon name={iconDef.icon} size={iconSize} color={glyphColor} />;
   } else {
     const glyph = iconDef ? iconDef.emoji : icon;
     iconContent = <Text style={[styles.icon, { fontSize: iconSize }]}>{glyph}</Text>;
@@ -88,22 +88,24 @@ export default function IconButton({
 }
 
 /** Circle background colour per variant, resolved from the active palette. */
-const variantColors = colors => ({
-  default: colors.surfaceControl,
-  danger: colors.danger,
-  success: colors.success,
-  active: colors.accentButton,
-  muted: colors.surfaceBanner,
-});
+const variantColor = (colors, variant) =>
+  ({
+    default: colors.surfaceControl,
+    danger: colors.danger,
+    success: colors.success,
+    active: colors.accentButton,
+    muted: colors.surfaceBanner,
+  }[variant] ?? colors.surfaceControl);
 
 /** Foreground colour for vector icon glyphs per variant. */
-const iconColors = colors => ({
-  default: colors.textPrimary,
-  danger: '#fff',
-  success: '#fff',
-  active: colors.textOnAccent,
-  muted: colors.textSecondary,
-});
+const iconColor = (colors, variant) =>
+  ({
+    default: colors.textPrimary,
+    danger: '#fff',
+    success: '#fff',
+    active: colors.textOnAccent,
+    muted: colors.textSecondary,
+  }[variant] ?? colors.textPrimary);
 
 const createStyles = colors =>
   StyleSheet.create({

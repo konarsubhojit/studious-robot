@@ -2,6 +2,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 
+/** Tinted background style for a severity, or `null` for plain 'info'. */
+const severityTint = (styles, severity) =>
+  ({
+    success: styles.containerSuccess,
+    error: styles.containerError,
+    warning: styles.containerWarning,
+  }[severity] ?? null);
+
 const severityColor = (colors, severity) =>
   ({
     info: colors.textMuted,
@@ -9,13 +17,6 @@ const severityColor = (colors, severity) =>
     error: colors.danger,
     warning: colors.warning,
   }[severity] ?? colors.textMuted);
-
-const SEVERITY_BG = {
-  info: null,
-  success: 'rgba(139,231,165,0.12)',
-  error: 'rgba(240,141,137,0.15)',
-  warning: 'rgba(255,210,122,0.15)',
-};
 
 /**
  * Single-line status message whose colour reflects severity (info / success /
@@ -32,16 +33,14 @@ export default function StatusBanner({ status, style, textStyle }) {
   const styles = useThemedStyles(createStyles);
   const message = status?.message || '';
   const severity = status?.severity || 'info';
-  const bg = SEVERITY_BG[severity];
+  const tint = severityTint(styles, severity);
 
   if (!message) {
     return null;
   }
 
   return (
-    <View
-      style={[styles.container, bg ? { backgroundColor: bg } : null, style]}
-      accessibilityLiveRegion="polite">
+    <View style={[styles.container, tint, style]} accessibilityLiveRegion="polite">
       <Text
         testID="status-banner"
         accessibilityRole="text"
@@ -60,6 +59,15 @@ const createStyles = colors =>
       paddingVertical: spacing.xs,
       paddingHorizontal: spacing.sm,
       marginBottom: spacing.xs,
+    },
+    containerSuccess: {
+      backgroundColor: colors.tintSuccess,
+    },
+    containerError: {
+      backgroundColor: colors.tintDanger,
+    },
+    containerWarning: {
+      backgroundColor: colors.tintWarning,
     },
     status: {
       textAlign: 'center',

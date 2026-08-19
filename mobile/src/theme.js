@@ -45,6 +45,11 @@ const darkColors = {
   warning: '#ffd27a',
   blob: '#9ec2ff',
 
+  // Translucent tints behind non-info status banners.
+  tintSuccess: 'rgba(91,226,162,0.12)',
+  tintDanger: 'rgba(255,123,138,0.15)',
+  tintWarning: 'rgba(255,210,122,0.15)',
+
   // Foreground for content drawn on the fixed dark video overlays, which stay
   // dark in both schemes so camera frames are never framed in white.
   onOverlay: '#f6f8ff',
@@ -84,6 +89,10 @@ const lightColors = {
   warning: '#8a5300',
   blob: '#4a7bd6',
 
+  tintSuccess: 'rgba(17,107,69,0.10)',
+  tintDanger: 'rgba(179,38,30,0.10)',
+  tintWarning: 'rgba(138,83,0,0.10)',
+
   onOverlay: '#f6f8ff',
 };
 
@@ -117,14 +126,6 @@ export function resolveScheme(mode, systemScheme) {
   if (mode === THEME_MODES.DARK) return 'dark';
   return systemScheme === 'light' ? 'light' : 'dark';
 }
-
-/**
- * The dark palette, kept as a named export for the few call sites that run
- * outside React (and therefore outside `ThemeProvider`).  Components must read
- * colours from `useTheme()`/`useThemedStyles()` instead so they re-render when
- * the scheme changes.
- */
-export const colors = darkColors;
 
 export const spacing = {
   xs: 4,
@@ -161,7 +162,3 @@ export const typography = {
   emphasis: { fontWeight: '700' },
   hint: { fontSize: 12 },
 };
-
-export const theme = { colors, spacing, radius, sizes, typography };
-
-export default theme;

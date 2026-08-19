@@ -23,6 +23,9 @@ export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, childr
   const systemScheme = useColorScheme();
   const [mode, setModeState] = useState(initialMode);
 
+  // The stored preference is read asynchronously (there is no synchronous
+  // store on the device), so a user who pinned a scheme opposite to the OS one
+  // sees a single frame in the OS scheme before it applies.
   useEffect(() => {
     let cancelled = false;
     loadThemeMode()
