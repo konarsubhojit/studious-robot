@@ -1,14 +1,17 @@
-import { useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useRef } from 'react';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  ZoomIn,
+  ZoomOut,
+} from 'react-native-reanimated';
 import { formatCallDuration } from '../callUx';
+import { triggerHaptic } from '../haptics';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
@@ -16,6 +19,15 @@ import IconButton from './IconButton';
 const BUBBLE_WIDTH = 180;
 const BUBBLE_HEIGHT = 72;
 const BUBBLE_MARGIN = 12;
+
+/** Spring used when the bubble settles against the nearest screen edge. */
+const SNAP_SPRING = { damping: 18, stiffness: 180, mass: 0.6 };
+
+/** Horizontal fling speed (px/s) above which the bubble is dismissed. */
+const FLING_DISMISS_VELOCITY = 1200;
+
+/** Duration of the fling-out animation played before `onDismiss` fires. */
+const DISMISS_DURATION_MS = 160;
 
 /**
  * In-app floating call bubble: a small draggable "call in progress" pill,
@@ -29,10 +41,10 @@ const BUBBLE_MARGIN = 12;
  * the app is backgrounded, whereas this bubble only appears while the app is
  * foregrounded and the user has simply navigated to another in-app screen.
  *
- * Uses plain `PanResponder` (core React Native) rather than
- * react-native-gesture-handler/reanimated so it stays lightweight and needs no
- * extra native module or test mocking beyond what core RN testing already
- * provides.
+ * The drag runs on react-native-gesture-handler + react-native-reanimated, so
+ * every frame is computed on the UI thread (no JS round trip); on release the
+ * bubble springs to the nearest horizontal screen edge, and a fast sideways
+ * fling animates it off-screen and reports `onDismiss`.
  *
  * @param {object} props
  * @param {string|null} [props.participantLabel]
@@ -43,6 +55,9 @@ const BUBBLE_MARGIN = 12;
  * @param {() => void} [props.onMuteToggle]
  * @param {() => void} [props.onEndCall]
  * @param {() => void} [props.onStopScreenShare]
+ * @param {() => void} [props.onDismiss] - Called once the bubble has been
+ *   flung off-screen; when omitted the bubble stays hidden until it is
+ *   remounted, so callers that support dismissal should pass it.
  */
 export default function FloatingCallBubble({
   participantLabel = null,
@@ -53,6 +68,7 @@ export default function FloatingCallBubble({
   onMuteToggle,
   onEndCall,
   onStopScreenShare,
+  onDismiss,
 }) {
   const styles = useThemedStyles(createStyles);
 
@@ -61,90 +77,139 @@ export default function FloatingCallBubble({
   const maxX = Math.max(BUBBLE_MARGIN, width - BUBBLE_WIDTH - BUBBLE_MARGIN);
   const maxY = Math.max(BUBBLE_MARGIN, height - BUBBLE_HEIGHT - BUBBLE_MARGIN);
 
-  const [position, setPosition] = useState({ x: maxX, y: maxY });
-  const positionRef = useRef(position);
-  const pan = useRef(new Animated.ValueXY(position)).current;
+  // Bounds are shared values as well, so the UI-thread drag worklets can read
+  // them without crossing back to the JS thread.
+  const boundMaxX = useSharedValue(maxX);
+  const boundMaxY = useSharedValue(maxY);
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_evt, gestureState) =>
-          Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2,
-        onPanResponderGrant: () => {
-          pan.setOffset(positionRef.current);
-          pan.setValue({ x: 0, y: 0 });
-        },
-        onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], {
-          useNativeDriver: false,
-        }),
-        onPanResponderRelease: (_evt, gestureState) => {
-          pan.flattenOffset();
-          const nextX = Math.min(
-            Math.max(positionRef.current.x + gestureState.dx, BUBBLE_MARGIN),
-            maxX,
-          );
-          const nextY = Math.min(
-            Math.max(positionRef.current.y + gestureState.dy, BUBBLE_MARGIN),
-            maxY,
-          );
-          positionRef.current = { x: nextX, y: nextY };
-          setPosition({ x: nextX, y: nextY });
-          pan.setValue({ x: nextX, y: nextY });
-        },
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [maxX, maxY],
-  );
+  const translateX = useSharedValue(maxX);
+  const translateY = useSharedValue(maxY);
+  const startX = useSharedValue(maxX);
+  const startY = useSharedValue(maxY);
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    boundMaxX.value = maxX;
+    boundMaxY.value = maxY;
+    translateX.value = Math.min(Math.max(translateX.value, BUBBLE_MARGIN), maxX);
+    translateY.value = Math.min(Math.max(translateY.value, BUBBLE_MARGIN), maxY);
+  }, [boundMaxX, boundMaxY, maxX, maxY, translateX, translateY]);
+
+  // Keeps the latest dismiss callback reachable from the stable JS function
+  // the drag worklet hands to runOnJS.
+  const onDismissRef = useRef(onDismiss);
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
+
+  const handleDismiss = useCallback(() => {
+    triggerHaptic('tap');
+    onDismissRef.current?.();
+  }, []);
+
+  const gesture = Gesture.Pan()
+    .minDistance(2)
+    .onStart(() => {
+      'worklet';
+      startX.value = translateX.value;
+      startY.value = translateY.value;
+    })
+    .onUpdate(event => {
+      'worklet';
+      translateX.value = Math.min(
+        Math.max(startX.value + event.translationX, BUBBLE_MARGIN),
+        boundMaxX.value,
+      );
+      translateY.value = Math.min(
+        Math.max(startY.value + event.translationY, BUBBLE_MARGIN),
+        boundMaxY.value,
+      );
+    })
+    .onEnd(event => {
+      'worklet';
+      if (Math.abs(event.velocityX) > FLING_DISMISS_VELOCITY) {
+        const exitX = event.velocityX > 0 ? boundMaxX.value + BUBBLE_WIDTH : -BUBBLE_WIDTH;
+        opacity.value = withTiming(0, { duration: DISMISS_DURATION_MS });
+        translateX.value = withTiming(exitX, { duration: DISMISS_DURATION_MS }, finished => {
+          if (finished) {
+            runOnJS(handleDismiss)();
+          }
+        });
+        return;
+      }
+
+      // Otherwise settle against whichever horizontal edge is closest.
+      const snapTarget =
+        translateX.value < (BUBBLE_MARGIN + boundMaxX.value) / 2 ? BUBBLE_MARGIN : boundMaxX.value;
+      translateX.value = withSpring(snapTarget, SNAP_SPRING);
+      translateY.value = withSpring(
+        Math.min(Math.max(translateY.value, BUBBLE_MARGIN), boundMaxY.value),
+        SNAP_SPRING,
+      );
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateX: translateX.value }, { translateY: translateY.value }],
+  }));
+
+  const handleExpand = useCallback(() => {
+    triggerHaptic('tap');
+    onExpand?.();
+  }, [onExpand]);
 
   return (
-    <Animated.View
-      style={[styles.bubble, { transform: pan.getTranslateTransform() }]}
-      testID="floating-call-bubble"
-      {...panResponder.panHandlers}>
-      <Pressable
-        onPress={onExpand}
-        style={styles.body}
-        accessibilityRole="button"
-        accessibilityLabel="Expand call"
-        testID="floating-call-bubble-expand">
-        <Text style={styles.glyph}>📞</Text>
-        <View style={styles.textWrap}>
-          <Text style={styles.label} numberOfLines={1}>
-            {participantLabel || 'Call in progress'}
-          </Text>
-          <Text style={styles.timer}>{formatCallDuration(elapsedCallSeconds)}</Text>
-        </View>
-      </Pressable>
+    <GestureDetector gesture={gesture}>
+      <Animated.View
+        entering={ZoomIn.springify()}
+        exiting={ZoomOut}
+        style={[styles.bubble, animatedStyle]}
+        testID="floating-call-bubble">
+        <Pressable
+          onPress={handleExpand}
+          style={styles.body}
+          accessibilityRole="button"
+          accessibilityLabel="Expand call"
+          testID="floating-call-bubble-expand">
+          <Text style={styles.glyph}>📞</Text>
+          <View style={styles.textWrap}>
+            <Text style={styles.label} numberOfLines={1}>
+              {participantLabel || 'Call in progress'}
+            </Text>
+            <Text style={styles.timer}>{formatCallDuration(elapsedCallSeconds)}</Text>
+          </View>
+        </Pressable>
 
-      <View style={styles.actions}>
-        <IconButton
-          icon={isMuted ? 'micOff' : 'micOn'}
-          onPress={onMuteToggle}
-          variant={isMuted ? 'active' : 'default'}
-          size={32}
-          accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-          testID="floating-call-bubble-mute"
-        />
-        {isScreenSharing ? (
+        <View style={styles.actions}>
           <IconButton
-            icon="stopShare"
-            onPress={onStopScreenShare}
-            variant="active"
+            icon={isMuted ? 'micOff' : 'micOn'}
+            onPress={onMuteToggle}
+            variant={isMuted ? 'active' : 'default'}
             size={32}
-            accessibilityLabel="Stop sharing your screen"
-            testID="floating-call-bubble-stop-share"
+            accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+            testID="floating-call-bubble-mute"
           />
-        ) : null}
-        <IconButton
-          icon="callEnd"
-          onPress={onEndCall}
-          variant="danger"
-          size={32}
-          accessibilityLabel="End call"
-          testID="floating-call-bubble-end"
-        />
-      </View>
-    </Animated.View>
+          {isScreenSharing ? (
+            <IconButton
+              icon="stopShare"
+              onPress={onStopScreenShare}
+              variant="active"
+              size={32}
+              accessibilityLabel="Stop sharing your screen"
+              testID="floating-call-bubble-stop-share"
+            />
+          ) : null}
+          <IconButton
+            icon="callEnd"
+            onPress={onEndCall}
+            variant="danger"
+            size={32}
+            accessibilityLabel="End call"
+            testID="floating-call-bubble-end"
+          />
+        </View>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 

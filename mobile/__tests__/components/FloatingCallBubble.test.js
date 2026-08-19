@@ -1,7 +1,66 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { PanResponder } from 'react-native';
 import FloatingCallBubble from '../../src/components/FloatingCallBubble';
+import { triggerHaptic } from '../../src/haptics';
+
+/** Pan-gesture callbacks captured from the mocked gesture builder. */
+const mockPanCallbacks = {};
+
+jest.mock('react-native-gesture-handler', () => ({
+  __esModule: true,
+  GestureDetector: ({ children }) => children,
+  Gesture: {
+    Pan: () => ({
+      minDistance: function () {
+        return this;
+      },
+      onStart: function (callback) {
+        mockPanCallbacks.onStart = callback;
+        return this;
+      },
+      onUpdate: function (callback) {
+        mockPanCallbacks.onUpdate = callback;
+        return this;
+      },
+      onEnd: function (callback) {
+        mockPanCallbacks.onEnd = callback;
+        return this;
+      },
+    }),
+  },
+}));
+
+jest.mock('react-native-reanimated', () => {
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: { View },
+    // Backed by a ref so values survive re-renders, like real shared values.
+    useSharedValue: init => {
+      const ref = require('react').useRef(null);
+      if (ref.current === null) {
+        ref.current = { value: init };
+      }
+      return ref.current;
+    },
+    useAnimatedStyle: fn => fn(),
+    // Animations resolve instantly so assertions can read the settled value;
+    // completion callbacks are invoked as if the animation finished.
+    withSpring: toValue => toValue,
+    withTiming: (toValue, _config, callback) => {
+      callback?.(true);
+      return toValue;
+    },
+    runOnJS: fn => fn,
+    ZoomIn: { springify: () => 'zoom-in' },
+    ZoomOut: 'zoom-out',
+  };
+});
+
+jest.mock('../../src/haptics', () => ({
+  __esModule: true,
+  triggerHaptic: jest.fn(),
+}));
 
 jest.mock(
   '../../src/components/IconButton',
@@ -12,54 +71,53 @@ function findByTestId(tree, testID) {
   return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
 }
 
-/**
- * The most recent config object passed to `PanResponder.create(config)`,
- * captured via a spy so drag gestures can be exercised deterministically
- * (grant/move/release with fabricated gestureState), without needing to
- * simulate raw native touch events.
- */
-function getPanResponderConfig() {
-  const calls = PanResponder.create.mock.calls;
-  return calls[calls.length - 1][0];
-}
-
 /** Reads the current (x, y) translation applied to the bubble's Animated.View. */
 function readBubbleTranslate(tree) {
   const bubble = findByTestId(tree, 'floating-call-bubble');
-  const transformStyle = bubble.props.style.find(s => s && s.transform)?.transform;
-  return {
-    x: transformStyle[0].translateX.__getValue(),
-    y: transformStyle[1].translateY.__getValue(),
-  };
+  const transform = bubble.props.style.find(s => s && s.transform)?.transform;
+  return { x: transform[0].translateX, y: transform[1].translateY };
+}
+
+function bubbleElement(props) {
+  return (
+    <FloatingCallBubble
+      participantLabel="Call with user-bob"
+      elapsedCallSeconds={65}
+      isMuted={false}
+      isScreenSharing={false}
+      onExpand={jest.fn()}
+      onMuteToggle={jest.fn()}
+      onEndCall={jest.fn()}
+      onStopScreenShare={jest.fn()}
+      {...props}
+    />
+  );
 }
 
 function render(props) {
   let tree;
   act(() => {
-    tree = renderer.create(
-      <FloatingCallBubble
-        participantLabel="Call with user-bob"
-        elapsedCallSeconds={65}
-        isMuted={false}
-        isScreenSharing={false}
-        onExpand={jest.fn()}
-        onMuteToggle={jest.fn()}
-        onEndCall={jest.fn()}
-        onStopScreenShare={jest.fn()}
-        {...props}
-      />,
-    );
+    tree = renderer.create(bubbleElement(props));
   });
   return tree;
 }
 
+/**
+ * Re-renders so the mocked `useAnimatedStyle` recomputes from the shared
+ * values the gesture worklets just mutated.
+ */
+function refresh(tree, props) {
+  act(() => {
+    tree.update(bubbleElement(props));
+  });
+}
+
 describe('FloatingCallBubble', () => {
   beforeEach(() => {
-    jest.spyOn(PanResponder, 'create');
-  });
-
-  afterEach(() => {
-    PanResponder.create.mockRestore();
+    triggerHaptic.mockClear();
+    mockPanCallbacks.onStart = null;
+    mockPanCallbacks.onUpdate = null;
+    mockPanCallbacks.onEnd = null;
   });
 
   test('renders the participant label and formatted duration', () => {
@@ -76,13 +134,14 @@ describe('FloatingCallBubble', () => {
     expect(label.length).toBeGreaterThan(0);
   });
 
-  test('tapping the bubble body calls onExpand', () => {
+  test('tapping the bubble body calls onExpand with a haptic', () => {
     const onExpand = jest.fn();
     const tree = render({ onExpand });
     act(() => {
       findByTestId(tree, 'floating-call-bubble-expand').props.onPress();
     });
     expect(onExpand).toHaveBeenCalled();
+    expect(triggerHaptic).toHaveBeenCalledWith('tap');
   });
 
   test('tapping mute calls onMuteToggle', () => {
@@ -126,34 +185,14 @@ describe('FloatingCallBubble', () => {
     expect(readBubbleTranslate(tree)).toEqual({ x: 558, y: 1250 });
   });
 
-  test('onMoveShouldSetPanResponder only claims the gesture past a small movement threshold', () => {
-    render();
-    const config = getPanResponderConfig();
-    expect(config.onMoveShouldSetPanResponder({}, { dx: 1, dy: 1 })).toBe(false);
-    expect(config.onMoveShouldSetPanResponder({}, { dx: 5, dy: 0 })).toBe(true);
-    expect(config.onMoveShouldSetPanResponder({}, { dx: 0, dy: -5 })).toBe(true);
-  });
-
   test('dragging repositions the bubble by the gesture delta', () => {
     const tree = render();
-    const config = getPanResponderConfig();
 
     act(() => {
-      config.onPanResponderGrant({}, { dx: 0, dy: 0 });
-      config.onPanResponderRelease({}, { dx: -40, dy: -30 });
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -40, translationY: -30 });
     });
-    act(() => {
-      tree.update(
-        <FloatingCallBubble
-          participantLabel="Call with user-bob"
-          elapsedCallSeconds={65}
-          onExpand={jest.fn()}
-          onMuteToggle={jest.fn()}
-          onEndCall={jest.fn()}
-          onStopScreenShare={jest.fn()}
-        />,
-      );
-    });
+    refresh(tree);
 
     // Starting at (558, 1250), dragged up-and-left by (40, 30).
     expect(readBubbleTranslate(tree)).toEqual({ x: 518, y: 1220 });
@@ -161,52 +200,92 @@ describe('FloatingCallBubble', () => {
 
   test('dragging clamps the bubble within the screen bounds instead of letting it go off-screen', () => {
     const tree = render();
-    const config = getPanResponderConfig();
 
     act(() => {
-      config.onPanResponderGrant({}, { dx: 0, dy: 0 });
-      // A drag far larger than the screen, in both directions.
-      config.onPanResponderRelease({}, { dx: -10000, dy: -10000 });
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -10000, translationY: -10000 });
     });
+    refresh(tree);
 
-    const afterFirstDrag = readBubbleTranslate(tree);
-    expect(afterFirstDrag.x).toBe(12); // BUBBLE_MARGIN
-    expect(afterFirstDrag.y).toBe(12); // BUBBLE_MARGIN
+    expect(readBubbleTranslate(tree)).toEqual({ x: 12, y: 12 }); // BUBBLE_MARGIN
 
     act(() => {
-      config.onPanResponderGrant({}, { dx: 0, dy: 0 });
-      config.onPanResponderRelease({}, { dx: 10000, dy: 10000 });
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: 10000, translationY: 10000 });
+    });
+    refresh(tree);
+
+    expect(readBubbleTranslate(tree)).toEqual({ x: 558, y: 1250 }); // maxX / maxY
+  });
+
+  test('releasing near the left half springs the bubble to the left edge', () => {
+    const tree = render();
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -450, translationY: -600 });
+      mockPanCallbacks.onEnd({ velocityX: 0, velocityY: 0 });
+    });
+    refresh(tree);
+
+    const { x, y } = readBubbleTranslate(tree);
+    expect(x).toBe(12);
+    expect(y).toBe(650);
+  });
+
+  test('releasing near the right half springs the bubble back to the right edge', () => {
+    const tree = render();
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -100, translationY: -600 });
+      mockPanCallbacks.onEnd({ velocityX: 0, velocityY: 0 });
+    });
+    refresh(tree);
+
+    expect(readBubbleTranslate(tree).x).toBe(558);
+  });
+
+  test('flinging the bubble sideways dismisses it', () => {
+    const onDismiss = jest.fn();
+    render({ onDismiss });
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: 20, translationY: 0 });
+      mockPanCallbacks.onEnd({ velocityX: 2400, velocityY: 0 });
     });
 
-    const afterSecondDrag = readBubbleTranslate(tree);
-    expect(afterSecondDrag.x).toBe(558); // maxX
-    expect(afterSecondDrag.y).toBe(1250); // maxY
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(triggerHaptic).toHaveBeenCalledWith('tap');
+  });
+
+  test('a slow drag release never dismisses the bubble', () => {
+    const onDismiss = jest.fn();
+    render({ onDismiss });
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -200, translationY: 0 });
+      mockPanCallbacks.onEnd({ velocityX: -200, velocityY: 0 });
+    });
+
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   test('tab-switch (re-render with the same props) preserves the dragged position', () => {
     const tree = render();
-    const config = getPanResponderConfig();
 
     act(() => {
-      config.onPanResponderGrant({}, { dx: 0, dy: 0 });
-      config.onPanResponderRelease({}, { dx: -100, dy: -50 });
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -100, translationY: -50 });
     });
+    refresh(tree);
     const afterDrag = readBubbleTranslate(tree);
 
     // Simulate the parent re-rendering this same bubble (e.g. after switching
     // tabs and back) with fresh callback identities but no position props.
-    act(() => {
-      tree.update(
-        <FloatingCallBubble
-          participantLabel="Call with user-bob"
-          elapsedCallSeconds={70}
-          onExpand={jest.fn()}
-          onMuteToggle={jest.fn()}
-          onEndCall={jest.fn()}
-          onStopScreenShare={jest.fn()}
-        />,
-      );
-    });
+    refresh(tree, { elapsedCallSeconds: 70 });
 
     expect(readBubbleTranslate(tree)).toEqual(afterDrag);
   });
