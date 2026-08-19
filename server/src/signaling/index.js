@@ -23,7 +23,11 @@ const {
   markIncomingCallAcknowledged,
   notifyRingingCallsForDisconnectedDevice,
 } = require('../domain/notifications');
-const { handleSocketCallTransition, handleRtcRelay } = require('./callHandlers');
+const {
+  handleSocketCallTransition,
+  handleRtcRelay,
+  handleCallConnected,
+} = require('./callHandlers');
 const { registerMessageHandlers } = require('./messageHandlers');
 const {
   requireSocketSession,
@@ -410,6 +414,13 @@ function registerSocketHandlers(
       });
     });
 
+    // Media established (or irrecoverably failed) on this device. This is the
+    // only signal that advances a call out of `connecting_media`, so without
+    // it every answered call is force-ended by the stale-call sweep.
+    socket.on(CLIENT_EVENTS.CALL_CONNECTED, (payload = {}, ack) => {
+      handleCallConnected(socket, ack, payload, { state, io });
+    });
+
     socket.on(CLIENT_EVENTS.RTC_OFFER, (payload = {}, ack) => {
       handleRtcRelay(socket, ack, payload, {
         state,
@@ -448,6 +459,8 @@ function registerSocketHandlers(
         io,
         eventName: CLIENT_EVENTS.CALL_MEDIA_STATE,
         dataKey: 'mediaState',
+        // Doubles as the in-call liveness heartbeat.
+        recordsHeartbeat: true,
       });
     });
 

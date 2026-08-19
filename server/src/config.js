@@ -20,6 +20,15 @@ const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
 const CALL_TRANSITION_CHANNEL = 'signaling:call.transitions';
 const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
 
+/**
+ * The status a call reaches once the peers report connected media.
+ *
+ * This is the call's *steady state*: it has no media-setup deadline, only a
+ * heartbeat check and an absolute duration cap, so a healthy conversation is
+ * never force-ended by the stale-call sweep.
+ */
+const CONNECTED_CALL_STATUS = 'in_call';
+
 // ─── Call lifecycle ───────────────────────────────────────────────────────────
 
 /** States from which calls can never leave. */
@@ -46,6 +55,8 @@ const CALL_END_REASONS = {
   participant_disconnected: 'call_participant_disconnected',
   max_duration_exceeded: 'call_max_duration_exceeded',
   stale_cleanup: 'call_stale_cleanup',
+  media_failed: 'call_media_failed',
+  heartbeat_timeout: 'call_heartbeat_timeout',
   client_state_reconciled: 'call_state_reconciled',
 };
 
@@ -56,7 +67,10 @@ const CALL_END_REASONS = {
  */
 const CALL_TRANSITIONS = new Map([
   ['ringing', new Set(['accepted', 'declined', 'missed', 'busy', 'unreachable', 'ended'])],
-  ['accepted', new Set(['connecting_media', 'ended'])],
+  // `in_call` is reachable directly from `accepted`: a client whose peer
+  // connection reports `connected` before its first relayed RTC frame reaches
+  // the server must still be able to advance the call.
+  ['accepted', new Set(['connecting_media', 'in_call', 'ended'])],
   ['connecting_media', new Set(['in_call', 'ended'])],
   ['in_call', new Set(['ended'])],
 ]);
@@ -76,10 +90,15 @@ const DEFAULT_RINGING_TIMEOUT_MS = 120_000;
  *
  * Without this, a call whose peers vanish between "accepted" and "connected"
  * stays non-terminal forever, permanently marking both participants busy (and
- * surviving restarts through the `calls` table).  Sixty seconds is far longer
- * than a healthy ICE negotiation needs, but still finite.
+ * surviving restarts through the `calls` table).  Ninety seconds leaves room
+ * for the observed ~4s push latency plus a TURN relay allocation on a slow
+ * network, while still bounding a genuine media-setup failure.
+ *
+ * It only ever applies to a call that has *not* reached `in_call`: a connected
+ * call is excluded from this sweep entirely and ends via explicit hangup,
+ * participant disconnect, a missed heartbeat, or the absolute duration cap.
  */
-const DEFAULT_MEDIA_CONNECT_TIMEOUT_MS = 60_000;
+const DEFAULT_MEDIA_CONNECT_TIMEOUT_MS = 90_000;
 
 /**
  * Upper bound on a fully connected (`in_call`) call.
@@ -89,6 +108,23 @@ const DEFAULT_MEDIA_CONNECT_TIMEOUT_MS = 60_000;
  * `call.end`.
  */
 const DEFAULT_MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * How long a connected (`in_call`) call may go without a client heartbeat
+ * before it is considered abandoned and ended with `heartbeat_timeout`.
+ *
+ * Clients report liveness every `CALL_HEARTBEAT_INTERVAL_MS` over the existing
+ * `call.media-state` relay once media is connected. Five missed beats is a
+ * deliberately forgiving margin for a phone that briefly loses its network.
+ *
+ * A call that has *never* sent a heartbeat is never aged out by it: an older
+ * client that does not implement heartbeats stays bounded by the absolute
+ * duration cap instead of being hung up on mid-conversation.
+ */
+const DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS = 150_000;
+
+/** How often a connected client reports call liveness. */
+const CALL_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Grace period after a socket disconnect before an in-progress call whose
@@ -136,12 +172,15 @@ module.exports = {
   SIGNALING_VERSION,
   CALL_TRANSITION_CHANNEL,
   RTC_ACTIVE_CALL_STATES,
+  CONNECTED_CALL_STATUS,
   TERMINAL_CALL_STATES,
   CALL_END_REASONS,
   CALL_TRANSITIONS,
   DEFAULT_RINGING_TIMEOUT_MS,
   DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
   DEFAULT_MAX_CALL_DURATION_MS,
+  DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+  CALL_HEARTBEAT_INTERVAL_MS,
   DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   DEFAULT_SOCKET_PING_INTERVAL_MS,
   DEFAULT_SOCKET_PING_TIMEOUT_MS,

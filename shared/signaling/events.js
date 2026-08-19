@@ -24,6 +24,10 @@ const CLIENT_EVENTS = Object.freeze({
   CALL_DECLINE: 'call.decline',
   CALL_CANCEL: 'call.cancel',
   CALL_END: 'call.end',
+  // Media reached (or lost) the connected ICE state on this device.  Without
+  // it no call ever leaves `connecting_media`, and the stale-call sweep ends
+  // every healthy call with `media_connect_timeout`.
+  CALL_CONNECTED: 'call.connected',
   CALL_STATE_REPORT: 'call.state.report',
   // WebRTC relay + in-call media flags.
   RTC_OFFER: 'rtc.offer',

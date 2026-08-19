@@ -122,6 +122,14 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.CALL_DECLINE]: s.object({ version: versionField, callId: idField }),
   [CLIENT_EVENTS.CALL_CANCEL]: s.object({ version: versionField, callId: idField }),
   [CLIENT_EVENTS.CALL_END]: s.object({ version: versionField, callId: idField }),
+  // `iceState` mirrors the peer connection state the client observed. Anything
+  // other than a failure state advances the call to its connected steady
+  // state; `disconnected` / `failed` end it without waiting for a sweep.
+  [CLIENT_EVENTS.CALL_CONNECTED]: s.object({
+    version: versionField,
+    callId: idField,
+    iceState: s.enum(['connected', 'completed', 'disconnected', 'failed']).optional(),
+  }),
   [CLIENT_EVENTS.CALL_STATE_REPORT]: s.object({
     version: versionField,
     activeCallIds: s.array(s.id()).optional(),

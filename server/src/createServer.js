@@ -13,6 +13,7 @@ const {
   DEFAULT_RINGING_TIMEOUT_MS,
   DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
   DEFAULT_MAX_CALL_DURATION_MS,
+  DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
   DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
@@ -74,6 +75,8 @@ function createServer(opts = {}) {
     mediaConnectTimeoutMs:
       Number(process.env.MEDIA_CONNECT_TIMEOUT_MS) || DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
     maxCallDurationMs: Number(process.env.MAX_CALL_DURATION_MS) || DEFAULT_MAX_CALL_DURATION_MS,
+    heartbeatTimeoutMs:
+      Number(process.env.CALL_HEARTBEAT_TIMEOUT_MS) || DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
   };
   const participantDisconnectGraceMs =
     opts.participantDisconnectGraceMs ??
