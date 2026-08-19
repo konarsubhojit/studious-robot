@@ -360,9 +360,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     markConversationRead,
     resetTypingState,
     handleMessageReceived,
+    handleMessageDeleted,
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,
+    handleSocketConnected,
+    handleSocketDisconnected,
   } = messaging;
 
   // Renegotiate the active peer connection (used when screen audio adds or
@@ -1144,6 +1147,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         handleMessageReceived(message);
       });
 
+      signaling.on(SERVER_EVENTS.MESSAGE_DELETED, payload => {
+        handleMessageDeleted(payload);
+      });
+
       signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
         handleMessageDelivered(message);
       });
@@ -1178,6 +1185,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         // manually pulls to refresh. Firing here guarantees it runs once the
         // session/socket are actually ready, on cold start and on reconnect.
         fetchConversations();
+        // Flush any chat message queued while the socket was down (including
+        // one composed in a previous run of the app).
+        handleSocketConnected();
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -1216,6 +1226,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
       socket.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
         logWarn('[CallFlow] Socket disconnected', { reason });
+        handleSocketDisconnected();
         if (isInCallRef.current) {
           setIsReconnecting(true);
           updateStatus('Reconnecting…');
@@ -1263,9 +1274,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       showIncomingCallUi,
       signalingUrl,
       handleMessageReceived,
+      handleMessageDeleted,
       handleMessageDelivered,
       handleMessageRead,
       handleTypingEvent,
+      handleSocketConnected,
+      handleSocketDisconnected,
       recordConnectSuccess,
       recordConnectError,
       sessionIdRef,
@@ -2630,6 +2644,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     fetchConversations,
     fetchMessagesForPeer: messaging.fetchMessagesForPeer,
     sendMessage: messaging.sendMessage,
+    retryMessage: messaging.retryMessage,
+    discardMessage: messaging.discardMessage,
+    deleteMessage: messaging.deleteMessage,
+    drainOutbox: messaging.drainOutbox,
+    isChatOffline: messaging.isOffline,
+    pendingSendCount: messaging.pendingSendCount,
     markConversationRead,
     typingByPeer: messaging.typingByPeer,
     sendTypingIndicator: messaging.sendTypingIndicator,

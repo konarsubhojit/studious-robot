@@ -122,6 +122,18 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: versionField,
     recipientId: idField,
     body: s.string({ min: 1, max: MAX_MESSAGE_BODY_LENGTH, trim: true }),
+    // Client-generated id for the message, so a send that is replayed from the
+    // sender's durable outbox (reconnect, app relaunch) is stored once instead
+    // of once per attempt: the store upserts on `{ conversationId, messageId }`.
+    // Optional so an older client that does not generate one still works.
+    messageId: s.id().optional(),
+  }),
+  [CLIENT_EVENTS.MESSAGE_DELETE]: s.object({
+    version: versionField,
+    // The conversation is derived from the pair, so the peer identifies it
+    // without the client having to know the server's conversation id.
+    peerId: idField,
+    messageId: idField,
   }),
   [CLIENT_EVENTS.MESSAGE_TYPING]: s.object({
     version: versionField,
@@ -197,6 +209,12 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     conversationId: s.id().optional(),
     messageId: s.id().optional(),
     message: messageRecord,
+  }),
+  [SERVER_EVENTS.MESSAGE_DELETED]: s.object({
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
+    messageId: idField,
+    deletedBy: idField,
   }),
   [SERVER_EVENTS.MESSAGE_READ]: s.object({
     version: inboundVersionField,

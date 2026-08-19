@@ -199,6 +199,55 @@ describe('ChatConversationScreen', () => {
     expect(onSendMessage).toHaveBeenCalledWith('oops');
   });
 
+  test('swiping an own message exposes delete, and retry for failed sends', () => {
+    const onDeleteMessage = jest.fn();
+    const onRetryMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'failed-1', senderId: 'user-alice', failed: true }),
+        makeMessage({ messageId: 'theirs-1', senderId: 'user-bob' }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDeleteMessage,
+      onRetryMessage,
+    });
+
+    // Only the user's own message gets swipe actions.
+    const deleteActions = findAllByTestId(tree, 'chat-message-swipe-delete');
+    expect(deleteActions).toHaveLength(1);
+
+    act(() => {
+      findByTestId(tree, 'chat-message-swipe-delete').props.onPress();
+    });
+    expect(onDeleteMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'failed-1' }),
+    );
+
+    act(() => {
+      findByTestId(tree, 'chat-message-swipe-retry').props.onPress();
+    });
+    expect(onRetryMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
+  });
+
+  test('shows the offline banner only while offline', () => {
+    const props = {
+      peerId: 'user-bob',
+      messages: [makeMessage()],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    };
+
+    const online = render(props);
+    expect(findByTestId(online, 'status-banner')).toBeNull();
+
+    const offline = render({ ...props, isOffline: true });
+    expect(findByTestId(offline, 'status-banner').props.children).toContain('Offline');
+  });
+
   test('scrolling to the top calls onLoadOlder', () => {
     const onLoadOlder = jest.fn();
     const tree = render({

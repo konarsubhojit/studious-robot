@@ -32,6 +32,7 @@ const CLIENT_EVENTS = Object.freeze({
   CALL_MEDIA_STATE: 'call.media-state',
   // Text chat.
   MESSAGE_SEND: 'message.send',
+  MESSAGE_DELETE: 'message.delete',
   MESSAGE_TYPING: 'message.typing',
 });
 
@@ -56,6 +57,7 @@ const SERVER_EVENTS = Object.freeze({
   // Text chat.
   MESSAGE_RECEIVED: 'message.received',
   MESSAGE_DELIVERED: 'message.delivered',
+  MESSAGE_DELETED: 'message.deleted',
   MESSAGE_READ: 'message.read',
   MESSAGE_TYPING: 'message.typing',
   // Connection-level notices.

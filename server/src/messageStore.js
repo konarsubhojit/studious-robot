@@ -16,6 +16,7 @@
  *   markDelivered(messageId, userId)            → Promise<message|null>
  *   listConversations(userId)                   → Promise<conversationSummary[]>
  *   markRead(conversationId, userId)            → Promise<number>
+ *   deleteMessage(conversationId, messageId, userId) → Promise<message|null>
  *   close()                                     → Promise<void>
  *
  * Message document shape
@@ -177,6 +178,15 @@ function createMemoryMessageStore() {
 
     async saveMessage(message) {
       const record = createMessageRecord(message);
+      // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
+      // mirroring the Mongo store's upsert: a client replaying a send from its
+      // durable outbox must not create a second copy of the same message.
+      const existing = messages.find(
+        (candidate) =>
+          candidate.conversationId === record.conversationId &&
+          candidate.messageId === record.messageId
+      );
+      if (existing) return { ...existing };
       messages.push(record);
       return { ...record };
     },
@@ -245,6 +255,20 @@ function createMemoryMessageStore() {
         }
       }
       return updated;
+    },
+
+    async deleteMessage(conversationId, messageId, userId) {
+      const index = messages.findIndex(
+        (candidate) =>
+          candidate.conversationId === conversationId &&
+          candidate.messageId === messageId &&
+          // Only the author may delete: a participant cannot remove what the
+          // other person said.
+          candidate.senderId === userId
+      );
+      if (index === -1) return null;
+      const [removed] = messages.splice(index, 1);
+      return { ...removed };
     },
 
     async close() {
@@ -414,11 +438,26 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       // (see the indexes above) so this stays correct even on a backend where
       // the unique index itself could not be created (e.g. Cosmos RU under a
       // shard-key mismatch it otherwise rejects).
-      await messages.updateOne(
+      //
+      const result = await messages.updateOne(
         { conversationId: record.conversationId, messageId: record.messageId },
         { $setOnInsert: { ...record } },
         { upsert: true }
       );
+      // The write was a replay of an already-stored message: return the stored
+      // document rather than this copy of it, so the caller (and the sender)
+      // sees what is actually persisted.
+      if (!result?.upsertedCount) {
+        const existing = await messages.findOne({
+          conversationId: record.conversationId,
+          messageId: record.messageId,
+        });
+        if (existing?.messageId) {
+          // Strip the driver-managed `_id` so the shape matches the memory store.
+          const { _id, ...rest } = existing;
+          return rest;
+        }
+      }
       return record;
     },
 
@@ -503,6 +542,18 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         { $set: { readAt: nextTimestamp() } }
       );
       return result?.modifiedCount ?? 0;
+    },
+
+    async deleteMessage(conversationId, messageId, userId) {
+      const { messages } = await connect();
+      // The `senderId` in the filter is the authorisation check: a delete for
+      // someone else's message matches nothing and reports "not found".
+      // Shard-key (`conversationId`) prefixed so Cosmos can route the delete.
+      const existing = await messages.findOne({ conversationId, messageId, senderId: userId });
+      if (!existing?.messageId) return null;
+      await messages.deleteOne({ conversationId, messageId, senderId: userId });
+      const { _id, ...rest } = existing;
+      return rest;
     },
 
     async close() {

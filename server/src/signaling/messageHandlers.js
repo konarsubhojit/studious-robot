@@ -105,6 +105,24 @@ function deliverMessage(io, state, message) {
  * @param {import('socket.io').Socket} socket
  * @param {{ io: object, state: object }} ctx
  */
+/**
+ * Client-supplied message ids are opaque to the server, but they end up in
+ * storage keys and in the log line below, so restrict them to a conservative
+ * URL-safe alphabet (a UUID qualifies) rather than accepting any string.
+ */
+const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Normalise and validate a client-supplied message id.
+ *
+ * @param {unknown} value
+ * @returns {string|null} the id, or `null` when it is unusable
+ */
+function parseClientMessageId(value) {
+  const normalised = normaliseId(value);
+  return normalised && CLIENT_MESSAGE_ID_PATTERN.test(normalised) ? normalised : null;
+}
+
 function registerMessageHandlers(socket, { io, state }) {
   socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, ack) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
@@ -184,6 +202,22 @@ function registerMessageHandlers(socket, { io, state }) {
       return;
     }
 
+    let clientMessageId;
+    if (parsed.messageId !== undefined) {
+      clientMessageId = parseClientMessageId(parsed.messageId);
+      if (!clientMessageId) {
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.MESSAGE_SEND,
+          ERROR_CODES.BAD_REQUEST,
+          'messageId must be url-safe',
+          state
+        );
+        return;
+      }
+    }
+
     let message;
     try {
       message = await state.messageStore.saveMessage({
@@ -191,6 +225,10 @@ function registerMessageHandlers(socket, { io, state }) {
         senderId,
         recipientId,
         body: validated.body,
+        // Client-generated id, when the sender supplies one: the store upserts
+        // on `{ conversationId, messageId }`, so a send replayed from the
+        // sender's durable outbox is stored exactly once.
+        messageId: clientMessageId,
       });
     } catch (error) {
       console.error(`[messages] failed to persist message: ${error?.message}`);
@@ -200,6 +238,21 @@ function registerMessageHandlers(socket, { io, state }) {
         CLIENT_EVENTS.MESSAGE_SEND,
         ERROR_CODES.INTERNAL_ERROR,
         'could not store message',
+        state
+      );
+      return;
+    }
+
+    // A client-supplied id that already belongs to a *different* message is not
+    // a replay: the store kept the original, so echoing this payload back (or
+    // delivering it) would let a sender overwrite what the peer already sees.
+    if (message.senderId !== senderId || message.recipientId !== recipientId) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.BAD_REQUEST,
+        'messageId already used by another message',
         state
       );
       return;
@@ -245,6 +298,111 @@ function registerMessageHandlers(socket, { io, state }) {
       messageId: message.messageId,
       message: deliveredMessage,
     });
+  });
+
+  /**
+   * `message.delete` — remove one of the *sender's own* messages from the
+   * conversation, for both participants.
+   *
+   * Authorisation lives in the store: the delete is filtered on `senderId`, so
+   * a request for a message the caller did not write matches nothing and is
+   * reported as `not_found` rather than silently succeeding.
+   */
+  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, ack) => {
+    if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
+      return;
+    }
+    if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
+      return;
+    }
+
+    const requesterId = socket.data.identity.userId;
+    // Deletes are cheap but still writes: rate limit them like sends so a
+    // malicious client cannot hammer the store.
+    const rateCheck = state.messageSendRateLimiter.check(requesterId);
+    if (!rateCheck.allowed) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.RATE_LIMITED,
+        'message rate limit exceeded',
+        state
+      );
+      return;
+    }
+
+    const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, payload, state);
+    if (!parsed) return;
+
+    const peerId = normaliseId(parsed.peerId);
+    const messageId = parseClientMessageId(parsed.messageId);
+    if (!peerId || peerId === requesterId || !messageId) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.BAD_REQUEST,
+        'peerId and a url-safe messageId are required',
+        state
+      );
+      return;
+    }
+
+    const conversationId = deriveConversationId(requesterId, peerId);
+    let deleted;
+    try {
+      deleted = await state.messageStore.deleteMessage(conversationId, messageId, requesterId);
+    } catch (error) {
+      console.error(`[messages] failed to delete message: ${error?.message}`);
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.INTERNAL_ERROR,
+        'could not delete message',
+        state
+      );
+      return;
+    }
+
+    if (!deleted) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.NOT_FOUND,
+        'message not found',
+        state
+      );
+      return;
+    }
+
+    // The conversation list preview and the history page both change.
+    await invalidateCache(
+      state,
+      conversationsCachePrefix(requesterId),
+      conversationsCachePrefix(peerId),
+      messagesCachePrefix(conversationId)
+    );
+
+    console.log(
+      `[messages] message.delete messageId=${messageId}` +
+        ` conversationId=${conversationId} userId=${requesterId}`
+    );
+
+    const envelope = {
+      version: SIGNALING_VERSION,
+      conversationId,
+      messageId,
+      deletedBy: requesterId,
+    };
+    // Both sides are told, so the message disappears from the peer's open
+    // conversation and from the sender's other devices.
+    emitToUserSockets(io, peerId, SERVER_EVENTS.MESSAGE_DELETED, envelope);
+    emitToUserSockets(io, requesterId, SERVER_EVENTS.MESSAGE_DELETED, envelope);
+
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, { messageId, conversationId });
   });
 
   /**

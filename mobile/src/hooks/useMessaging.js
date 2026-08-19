@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
 import {
   dismissMessageNotification,
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
+import { loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
@@ -31,14 +33,62 @@ function timelineEntryId(entry) {
   return entry?.messageId ?? entry?.callId;
 }
 
-// Monotonic counter used to disambiguate optimistic message ids sent within
-// the same millisecond. This is a local UI dedup key only (never sent to the
-// server), so a non-PRNG counter is preferable to `Math.random()` here.
-let pendingMessageIdCounter = 0;
+/** How many send attempts a queued message gets before it is marked failed
+ * and left for the user to retry or delete explicitly. */
+export const OUTBOX_MAX_ATTEMPTS = 5;
+/** First outbox drain retry delay; doubles per attempt up to the cap. */
+const OUTBOX_BASE_RETRY_MS = 1000;
+/** Ceiling for the exponential backoff between outbox drains. */
+const OUTBOX_MAX_RETRY_MS = 60_000;
+
+/** True while a queued message may still be sent automatically. */
+function isRetryable(item) {
+  return (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
+}
+
+/** Newest-first ordering, matching the server's message ordering. */
+function byNewestFirst(a, b) {
+  return Date.parse(b?.createdAt ?? 0) - Date.parse(a?.createdAt ?? 0);
+}
+
+/** Oldest-first ordering, so queued sends are flushed in composition order. */
+function byOldestFirst(a, b) {
+  return Date.parse(a?.createdAt ?? 0) - Date.parse(b?.createdAt ?? 0);
+}
+
+/**
+ * Client-generated message id. The server upserts on
+ * `{ conversationId, messageId }`, so this is what makes a replayed send
+ * idempotent rather than a duplicate.
+ *
+ * Not a security token — it only has to be unique — so a `Math.random()`
+ * fallback is fine where the runtime has no `crypto.randomUUID`.
+ *
+ * @returns {string}
+ */
+function createMessageId() {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  const randomHex = length =>
+    Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  const variant = '89ab'[Math.floor(Math.random() * 4)];
+  return (
+    `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-` +
+    `${variant}${randomHex(3)}-${randomHex(12)}`
+  );
+}
 
 /**
  * Owns text chat: the conversation list, per-peer message history, optimistic
  * sending, read receipts, and typing indicators.
+ *
+ * Offline-first: the conversation list and history are hydrated from the local
+ * {@link module:storage/chatDb} store on mount and rendered immediately, then
+ * reconciled with the server in the background (always by `messageId`, never
+ * by array position). Sends go through a durable outbox that is written before
+ * the socket emit, so a message composed offline — or one caught by the app
+ * being killed mid-send — is replayed on the next connect or launch. Replay is
+ * safe because the server upserts on the client-supplied `messageId`.
  *
  * The socket lifecycle itself lives in `useCallFlow`; it forwards the raw
  * `message.*` socket events to the `handle*` methods returned here instead of
@@ -89,9 +139,69 @@ export default function useMessaging({
   // reads a stale value through a captured closure.
   const activeChatPeerIdRef = useRef(null);
 
+  // ─── Offline-first state ─────────────────────────────────────────────────
+  // Durable queue of sends awaiting an ack, mirrored into the local store on
+  // every mutation so it survives process death. Held in a ref (not state) so
+  // the drain loop always reads the latest queue.
+  const outboxRef = useRef([]);
+  const [pendingSendCount, setPendingSendCount] = useState(0);
+  // null until the socket reports either way, so the UI doesn't flash an
+  // "offline" banner during the first connect.
+  const [isSocketConnected, setIsSocketConnected] = useState(null);
+  const drainTimerRef = useRef(null);
+  const drainAttemptRef = useRef(0);
+  const isDrainingRef = useRef(false);
+  const drainOutboxRef = useRef(() => {});
+  // True once the local store has been read; gates persistence so an empty
+  // initial render can't overwrite the cached history with nothing.
+  const hydratedRef = useRef(false);
+  const conversationsRef = useRef([]);
+
   useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
   }, [activeChatPeerId]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  // ─── Hydrate-then-fetch ──────────────────────────────────────────────────
+  // Render whatever was cached locally straight away (so launching offline —
+  // or before the first response lands — shows real conversations and history
+  // instead of an empty app), then let the network refresh it.
+  useEffect(() => {
+    let cancelled = false;
+    loadChatSnapshot()
+      .then(snapshot => {
+        if (cancelled) return;
+        outboxRef.current = snapshot.outbox;
+        setPendingSendCount(snapshot.outbox.length);
+        // Only fill in what the network hasn't already provided: a response
+        // that beat the disk read is newer than the cache.
+        setConversations(prev => (prev.length ? prev : snapshot.conversations));
+        setMessagesByPeer(prev => {
+          const next = { ...snapshot.messagesByPeer, ...prev };
+          return next;
+        });
+        hydratedRef.current = true;
+        // Anything still queued from a previous run goes out as soon as the
+        // socket allows it — this is what makes a force-quit mid-send safe.
+        if (snapshot.outbox.some(isRetryable)) drainOutboxRef.current();
+      })
+      .catch(() => {
+        hydratedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Mirror the rendered chat state into the local store, so the next launch
+  // has something to hydrate from.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    saveChatSnapshot({ conversations, messagesByPeer });
+  }, [conversations, messagesByPeer]);
 
   // Mirror the open conversation into the push layer, so a message push for
   // the conversation the user is looking at is suppressed instead of being
@@ -167,8 +277,19 @@ export default function useMessaging({
         const messages = Array.isArray(data.messages) ? data.messages : [];
         setMessagesByPeer(prev => {
           const existing = prev[trimmedPeerId] ?? [];
+          const serverIds = new Set(messages.map(timelineEntryId));
           if (!before) {
-            return { ...prev, [trimmedPeerId]: messages };
+            // First page: the server is authoritative for everything it knows
+            // about, but entries it has never seen — sends still queued in the
+            // outbox — are kept and merged by id, never by position, so an
+            // optimistic entry is replaced rather than duplicated.
+            const unsent = existing.filter(
+              entry =>
+                (entry.syncState === 'pending' || entry.syncState === 'failed') &&
+                !serverIds.has(timelineEntryId(entry)),
+            );
+            const merged = unsent.length ? [...unsent, ...messages].sort(byNewestFirst) : messages;
+            return { ...prev, [trimmedPeerId]: merged };
           }
           // Pagination: append older entries, deduping by their own id (a
           // call entry carries a `callId` rather than a `messageId`).
@@ -225,9 +346,184 @@ export default function useMessaging({
   );
 
   /**
-   * Send a chat message to `peerId`, appending an optimistic (pending) local
-   * copy immediately and reconciling it with the server-confirmed message (or
-   * marking it failed) once `message.send` acks.
+   * Update one local message in `peerId`'s history, by id.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   * @param {(message: object) => object} update
+   */
+  const patchMessage = useCallback((peerId, messageId, update) => {
+    setMessagesByPeer(prev => {
+      const existing = prev[peerId];
+      if (!existing) return prev;
+      let changed = false;
+      const next = existing.map(entry => {
+        if (entry.messageId !== messageId) return entry;
+        changed = true;
+        return update(entry);
+      });
+      return changed ? { ...prev, [peerId]: next } : prev;
+    });
+  }, []);
+
+  /**
+   * Replace the outbox and mirror it into the local store, so a queued send
+   * outlives the process that composed it.
+   *
+   * @param {Array<object>} next
+   */
+  const persistOutbox = useCallback(next => {
+    outboxRef.current = next;
+    setPendingSendCount(next.length);
+    saveChatSnapshot({ outbox: next });
+  }, []);
+
+  /** Schedule the next drain with bounded exponential backoff plus jitter. */
+  const scheduleDrain = useCallback(() => {
+    if (drainTimerRef.current) return;
+    const attempt = drainAttemptRef.current;
+    drainAttemptRef.current = attempt + 1;
+    const ceiling = Math.min(OUTBOX_BASE_RETRY_MS * 2 ** attempt, OUTBOX_MAX_RETRY_MS);
+    // Jitter across the second half of the window so many clients coming back
+    // online together don't retry in lockstep.
+    const delay = ceiling / 2 + Math.random() * (ceiling / 2);
+    drainTimerRef.current = setTimeout(() => {
+      drainTimerRef.current = null;
+      drainOutboxRef.current();
+    }, delay);
+  }, []);
+
+  /**
+   * Attempt one queued send.  Resolves to whether the message is now the
+   * server's problem rather than ours.
+   *
+   * @param {object} item outbox row
+   * @returns {Promise<boolean>}
+   */
+  const sendOutboxItem = useCallback(
+    async item => {
+      const signaling = signalingRef?.current;
+      if (!signaling || !socketRef.current?.connected) return false;
+
+      try {
+        const ack = await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, {
+          version: SIGNALING_VERSION,
+          recipientId: item.recipientId,
+          body: item.body,
+          // The server upserts on this id, so a replay of this exact send
+          // resolves to the same message instead of a duplicate.
+          messageId: item.messageId,
+        });
+        const confirmed = ack?.message;
+        patchMessage(item.recipientId, item.messageId, entry => ({
+          ...entry,
+          ...(confirmed ?? {}),
+          pending: false,
+          failed: false,
+          syncState: 'synced',
+        }));
+        persistOutbox(outboxRef.current.filter(queued => queued.messageId !== item.messageId));
+        return true;
+      } catch (error) {
+        logWarn('[Messaging] sendMessage failed', { message: error?.message });
+        const attempts = (item.attempts ?? 0) + 1;
+        persistOutbox(
+          outboxRef.current.map(queued =>
+            queued.messageId === item.messageId
+              ? {
+                  ...queued,
+                  attempts,
+                  lastAttemptAt: new Date().toISOString(),
+                  lastError: error?.message ?? null,
+                }
+              : queued,
+          ),
+        );
+        if (attempts >= OUTBOX_MAX_ATTEMPTS) {
+          // Out of automatic retries: surface it so the user can retry or
+          // delete the message explicitly.
+          patchMessage(item.recipientId, item.messageId, entry => ({
+            ...entry,
+            pending: false,
+            failed: true,
+            syncState: 'failed',
+          }));
+          updateStatus('Message failed to send', 'error');
+        }
+        return false;
+      }
+    },
+    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus],
+  );
+
+  /**
+   * Flush the durable outbox, oldest first.  A no-op while offline (the queue
+   * is simply left for the next connect) and re-armed with backoff whenever a
+   * send does not get through.
+   *
+   * @returns {Promise<void>}
+   */
+  const drainOutbox = useCallback(async () => {
+    if (isDrainingRef.current) return;
+    const queue = outboxRef.current.filter(isRetryable);
+    if (!queue.length) return;
+    if (!socketRef.current?.connected || !signalingRef?.current) {
+      scheduleDrain();
+      return;
+    }
+
+    isDrainingRef.current = true;
+    let allSent = true;
+    try {
+      for (const item of [...queue].sort(byOldestFirst)) {
+        // Stop at the first failure so queued messages keep their order.
+          const sent = await sendOutboxItem(item);
+        if (!sent) {
+          allSent = false;
+          break;
+        }
+      }
+    } finally {
+      isDrainingRef.current = false;
+    }
+
+    if (allSent) {
+      drainAttemptRef.current = 0;
+    } else if (outboxRef.current.some(isRetryable)) {
+      scheduleDrain();
+    }
+  }, [scheduleDrain, sendOutboxItem, signalingRef, socketRef]);
+
+  useEffect(() => {
+    drainOutboxRef.current = drainOutbox;
+  }, [drainOutbox]);
+
+  // Drain on foreground: a send queued while the app was backgrounded (or
+  // before it was killed) goes out as soon as the user comes back.
+  useEffect(() => {
+    const subscription = AppState.addEventListener?.('change', nextState => {
+      if (nextState !== 'active') return;
+      drainAttemptRef.current = 0;
+      drainOutboxRef.current();
+    });
+    return () => subscription?.remove?.();
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearTimeout(drainTimerRef.current);
+      drainTimerRef.current = null;
+    },
+    [],
+  );
+
+  /**
+   * Send a chat message to `peerId`.
+   *
+   * The message is written to the local history (as `pending`) and to the
+   * durable outbox *before* anything is emitted, so it is never lost to a dead
+   * socket or a killed process: whatever is still queued is replayed on the
+   * next connect, foreground, or launch.
    *
    * @param {string} peerId
    * @param {string} body
@@ -238,61 +534,159 @@ export default function useMessaging({
       const trimmedBody = (body ?? '').trim();
       if (!trimmedPeerId || !trimmedBody) return;
 
-      const tempId = `pending-${Date.now()}-${(pendingMessageIdCounter += 1).toString(36)}`;
+      const messageId = createMessageId();
+      const createdAt = new Date().toISOString();
+      const conversationId =
+        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ?? null;
       const optimisticMessage = {
-        messageId: tempId,
-        conversationId: null,
+        messageId,
+        conversationId,
         senderId: userId,
         recipientId: trimmedPeerId,
         body: trimmedBody,
-        createdAt: new Date().toISOString(),
+        createdAt,
         deliveredTo: [],
         readAt: null,
         pending: true,
+        syncState: 'pending',
       };
 
       setMessagesByPeer(prev => ({
         ...prev,
         [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
       }));
-
-      const markFailed = () => {
-        setMessagesByPeer(prev => ({
-          ...prev,
-          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map(m =>
-            m.messageId === tempId ? { ...m, pending: false, failed: true } : m,
-          ),
-        }));
-        updateStatus('Message failed to send', 'error');
-      };
-
-      if (!socketRef.current?.connected || !signalingRef?.current) {
-        markFailed();
-        return;
-      }
-
-      try {
-        const ack = await signalingRef.current.request(CLIENT_EVENTS.MESSAGE_SEND, {
-          version: SIGNALING_VERSION,
+      persistOutbox([
+        ...outboxRef.current,
+        {
+          messageId,
+          conversationId,
           recipientId: trimmedPeerId,
           body: trimmedBody,
-        });
-        const confirmed = ack?.message;
-        setMessagesByPeer(prev => ({
-          ...prev,
-          [trimmedPeerId]: (prev[trimmedPeerId] ?? []).map(m =>
-            m.messageId === tempId ? { ...(confirmed ?? m), pending: false } : m,
-          ),
-        }));
-      } catch (error) {
-        logWarn('[Messaging] sendMessage failed', { message: error?.message });
-        markFailed();
-      }
+          createdAt,
+          attempts: 0,
+          lastAttemptAt: null,
+          lastError: null,
+        },
+      ]);
+
+      await drainOutbox();
     },
-    [signalingRef, socketRef, userId, updateStatus],
+    [drainOutbox, persistOutbox, userId],
   );
 
   /**
+   * Re-queue a message whose automatic retries were exhausted, putting it back
+   * into `pending` and draining immediately.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   */
+  const retryMessage = useCallback(
+    async (peerId, messageId) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId) return;
+
+      const queued = outboxRef.current.find(item => item.messageId === messageId);
+      const next = queued
+        ? outboxRef.current.map(item =>
+            item.messageId === messageId ? { ...item, attempts: 0, lastError: null } : item,
+          )
+        : outboxRef.current;
+      persistOutbox(next);
+      if (!queued) return;
+
+      patchMessage(trimmedPeerId, messageId, entry => ({
+        ...entry,
+        pending: true,
+        failed: false,
+        syncState: 'pending',
+      }));
+      drainAttemptRef.current = 0;
+      clearTimeout(drainTimerRef.current);
+      drainTimerRef.current = null;
+      await drainOutbox();
+    },
+    [drainOutbox, patchMessage, persistOutbox],
+  );
+
+  /**
+   * Remove one message from the local history, wherever it lives.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   */
+  const removeMessageLocally = useCallback((peerId, messageId) => {
+    setMessagesByPeer(prev => {
+      const existing = prev[peerId];
+      if (!existing) return prev;
+      const next = existing.filter(m => m.messageId !== messageId);
+      return next.length === existing.length ? prev : { ...prev, [peerId]: next };
+    });
+  }, []);
+
+  /**
+   * Drop a message that never made it to the server: it leaves both the local
+   * history and the outbox, so it is never replayed.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   */
+  const discardMessage = useCallback(
+    (peerId, messageId) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId) return;
+      persistOutbox(outboxRef.current.filter(item => item.messageId !== messageId));
+      removeMessageLocally(trimmedPeerId, messageId);
+    },
+    [persistOutbox, removeMessageLocally],
+  );
+
+  /**
+   * Delete a message the local user sent.  Unsent messages (still in the
+   * outbox) are simply discarded locally; a message the server already stored
+   * is deleted there too, so it disappears for the recipient as well.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   * @returns {Promise<boolean>} whether the message is gone
+   */
+  const deleteMessage = useCallback(
+    async (peerId, messageId) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId) return false;
+
+      // Never delivered: nothing on the server to delete.
+      if (outboxRef.current.some(item => item.messageId === messageId)) {
+        discardMessage(trimmedPeerId, messageId);
+        return true;
+      }
+
+      const signaling = signalingRef?.current;
+      if (!signaling || !socketRef.current?.connected) {
+        updateStatus('Cannot delete while offline', 'error');
+        return false;
+      }
+
+      try {
+        await signaling.request(CLIENT_EVENTS.MESSAGE_DELETE, {
+          version: SIGNALING_VERSION,
+          peerId: trimmedPeerId,
+          messageId,
+        });
+      } catch (error) {
+        logWarn('[Messaging] deleteMessage failed', { message: error?.message });
+        updateStatus('Could not delete message', 'error');
+        return false;
+      }
+
+      removeMessageLocally(trimmedPeerId, messageId);
+      return true;
+    },
+    [discardMessage, removeMessageLocally, signalingRef, socketRef, updateStatus],
+  );
+
+  /**
+   * Notify `peerId` that the local user is (or has stopped) typing  /**
    * Notify `peerId` that the local user is (or has stopped) typing in their
    * conversation, via the ephemeral `message.typing` socket event. Silently a
    * no-op when there is no connected socket — typing indicators are a
@@ -360,10 +754,12 @@ export default function useMessaging({
 
       setMessagesByPeer(prev => {
         const existing = prev[senderId] ?? [];
+        // Dedupe by id, so a message that arrives over both the socket and a
+        // background push converges on one entry.
         if (existing.some(m => m.messageId === message.messageId)) {
           return prev;
         }
-        return { ...prev, [senderId]: [message, ...existing] };
+        return { ...prev, [senderId]: [{ ...message, syncState: 'synced' }, ...existing] };
       });
 
       if (activeChatPeerIdRef.current === senderId) {
@@ -447,6 +843,44 @@ export default function useMessaging({
     }
   }, []);
 
+  /**
+   * A participant deleted a message: drop it from the local history so both
+   * sides converge, whichever peer initiated the delete.
+   *
+   * @param {{ conversationId?: string, messageId?: string, deletedBy?: string }} payload
+   */
+  const handleMessageDeleted = useCallback(payload => {
+    const messageId = payload?.messageId;
+    if (!messageId) return;
+    setMessagesByPeer(prev => {
+      let changed = false;
+      const next = {};
+      Object.entries(prev).forEach(([peerId, messages]) => {
+        const filtered = messages.filter(m => m.messageId !== messageId);
+        if (filtered.length !== messages.length) changed = true;
+        next[peerId] = filtered;
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  /**
+   * The socket came up: connectivity is restored, so reset the backoff and
+   * flush anything the outbox still holds.
+   */
+  const handleSocketConnected = useCallback(() => {
+    setIsSocketConnected(true);
+    drainAttemptRef.current = 0;
+    clearTimeout(drainTimerRef.current);
+    drainTimerRef.current = null;
+    drainOutboxRef.current();
+  }, []);
+
+  /** The socket went down: drive the offline banner. */
+  const handleSocketDisconnected = useCallback(() => {
+    setIsSocketConnected(false);
+  }, []);
+
   return {
     conversations,
     messagesByPeer,
@@ -454,15 +888,26 @@ export default function useMessaging({
     setActiveChatPeerId,
     typingByPeer,
     unreadTotal,
+    // Only reported once the socket has told us either way, so the banner
+    // never flashes during the first connect.
+    isOffline: isSocketConnected === false,
+    pendingSendCount,
     fetchConversations,
     fetchMessagesForPeer,
     sendMessage,
+    retryMessage,
+    discardMessage,
+    deleteMessage,
+    drainOutbox,
     markConversationRead,
     sendTypingIndicator,
     resetTypingState,
     handleMessageReceived,
+    handleMessageDeleted,
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,
+    handleSocketConnected,
+    handleSocketDisconnected,
   };
 }

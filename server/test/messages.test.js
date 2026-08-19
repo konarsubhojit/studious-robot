@@ -173,6 +173,198 @@ test('message.send reports no delivery receipt while the recipient is offline', 
   assert.deepEqual(confirmation.message.deliveredTo, []);
 });
 
+test('message.send stores a replayed client messageId exactly once', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const payload = {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'queued offline',
+    messageId: 'client-uuid-1',
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  // The sender's durable outbox replays the same send after a reconnect.
+  const replay = await emitWithAck(alice, 'message.send', payload);
+
+  assert.equal(first.ok, true);
+  assert.equal(first.message.messageId, 'client-uuid-1');
+  assert.equal(replay.ok, true);
+  assert.equal(replay.message.messageId, 'client-uuid-1');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 1, 'the replay must not duplicate the message');
+});
+
+test('message.send rejects a messageId already used by another message', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  const bobSession = await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'the original',
+    messageId: 'client-uuid-2',
+  });
+  // Bob tries to overwrite Alice's message by reusing its id.
+  const ack = await emitWithAck(bob, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-alice',
+    body: 'forged',
+    messageId: 'client-uuid-2',
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'bad_request');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 1);
+  assert.equal(history.body.messages[0].body, 'the original');
+});
+
+test('message.send rejects a messageId that is not url-safe', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'hello',
+    messageId: 'bad id\nwith newline',
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'bad_request');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 0);
+});
+
+test('message.delete removes the sender own message for both participants', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  const bobSession = await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const sent = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'sent by mistake',
+  });
+  const { messageId } = sent.message;
+
+  const peerNotified = new Promise((resolve) => bob.once('message.deleted', resolve));
+  const ack = await emitWithAck(alice, 'message.delete', {
+    version: VERSION,
+    peerId: 'msg-bob',
+    messageId,
+  });
+
+  assert.equal(ack.ok, true);
+  assert.equal(ack.messageId, messageId);
+
+  const notice = await peerNotified;
+  assert.equal(notice.messageId, messageId);
+  assert.equal(notice.deletedBy, 'msg-alice');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 0);
+  const peerHistory = await getJson(url, '/messages?peerId=msg-alice', bobSession);
+  assert.equal(peerHistory.body.messages.length, 0);
+});
+
+test('message.delete refuses to delete the peer message', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  const bobSession = await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const sent = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'you cannot delete this',
+  });
+
+  const ack = await emitWithAck(bob, 'message.delete', {
+    version: VERSION,
+    peerId: 'msg-alice',
+    messageId: sent.message.messageId,
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'not_found');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 1);
+});
+
+test('message.delete rejects an unknown message and an unauthenticated caller', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const guest = await connectSocket(url, undefined);
+  t.after(() => {
+    alice.disconnect();
+    guest.disconnect();
+  });
+
+  const unknown = await emitWithAck(alice, 'message.delete', {
+    version: VERSION,
+    peerId: 'msg-bob',
+    messageId: 'does-not-exist',
+  });
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.error.code, 'not_found');
+
+  const unauthenticated = await emitWithAck(guest, 'message.delete', {
+    version: VERSION,
+    peerId: 'msg-bob',
+    messageId: 'anything',
+  });
+  assert.equal(unauthenticated.ok, false);
+  assert.equal(unauthenticated.error.code, 'unauthorized');
+});
+
 test('message.send rejects an unauthenticated sender', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);

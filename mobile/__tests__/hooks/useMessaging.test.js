@@ -7,6 +7,7 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../../src/messageNotification';
+import * as chatDb from '../../src/storage/chatDb';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -20,6 +21,17 @@ jest.mock('../../src/messageNotification', () => ({
   markMessageSeen: jest.fn(),
   setActiveConversation: jest.fn(),
 }));
+
+// In-memory stand-in for the durable local store, so the hook's hydration and
+// persistence can be observed without touching the filesystem.
+jest.mock('../../src/storage/chatDb', () => {
+  const snapshot = { conversations: [], messagesByPeer: {}, outbox: [] };
+  return {
+    __snapshot: snapshot,
+    loadChatSnapshot: jest.fn(async () => snapshot),
+    saveChatSnapshot: jest.fn(partial => Object.assign(snapshot, partial)),
+  };
+});
 
 function TestHook({ resultRef, params }) {
   resultRef.current = useMessaging(params);
@@ -55,11 +67,25 @@ function setup(overrides = {}) {
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
   });
+  mountedTrees.push(tree);
   return { resultRef, params, tree };
 }
 
+/** Rendered hooks, unmounted after each test so the outbox retry timer that
+ * an unsent message arms cannot outlive the test that queued it. */
+const mountedTrees = [];
+
 beforeEach(() => {
   jest.clearAllMocks();
+  chatDb.__snapshot.conversations = [];
+  chatDb.__snapshot.messagesByPeer = {};
+  chatDb.__snapshot.outbox = [];
+});
+
+afterEach(() => {
+  act(() => {
+    mountedTrees.splice(0).forEach(tree => tree.unmount());
+  });
 });
 
 describe('useMessaging', () => {
@@ -169,6 +195,47 @@ describe('useMessaging', () => {
     ]);
   });
 
+  test('fetchMessagesForPeer reconciles by messageId, replacing an optimistic entry', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef, params } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'sent while offline');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    // The server page contains the server's copy of that same message, plus one
+    // the client has never seen, and a still-queued local message it cannot
+    // know about yet.
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'still queued');
+    });
+    params.authedFetchRef.current.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        messages: [
+          {
+            messageId,
+            body: 'sent while offline',
+            senderId: 'alice',
+            createdAt: '2024-01-02T00:00:00.000Z',
+          },
+          { messageId: 'server-1', body: 'hello', createdAt: '2024-01-01T00:00:00.000Z' },
+        ],
+      }),
+    });
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer('bob');
+    });
+
+    const bodies = resultRef.current.messagesByPeer.bob.map(m => m.body);
+    expect(bodies).toContain('still queued');
+    // Replaced, never duplicated.
+    expect(bodies.filter(body => body === 'sent while offline')).toHaveLength(1);
+    expect(bodies).toContain('hello');
+  });
+
   test('fetchMessagesForPeer resolves to an empty array with no session or peerId', async () => {
     const { resultRef } = setup({ sessionIdRef: { current: null } });
     let messages;
@@ -203,7 +270,7 @@ describe('useMessaging', () => {
     expect(resultRef.current.conversations[0].unreadCount).toBe(0);
   });
 
-  test('sendMessage fails immediately when there is no connected socket', async () => {
+  test('sendMessage queues durably while offline instead of failing', async () => {
     const socketRef = { current: makeSocket({ connected: false }) };
     const { resultRef, params } = setup({ socketRef });
 
@@ -211,8 +278,236 @@ describe('useMessaging', () => {
       await resultRef.current.sendMessage('bob', 'hi');
     });
 
-    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ pending: false, failed: true });
+    // Still pending, not failed: it goes out when connectivity returns.
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      body: 'hi',
+      pending: true,
+      syncState: 'pending',
+    });
+    expect(params.updateStatus).not.toHaveBeenCalled();
+    // Written to the durable outbox before anything was emitted, so a
+    // force-quit here cannot lose the message.
+    expect(chatDb.__snapshot.outbox).toEqual([
+      expect.objectContaining({ body: 'hi', recipientId: 'bob', attempts: 0 }),
+    ]);
+    expect(resultRef.current.pendingSendCount).toBe(1);
+  });
+
+  test('a queued message is sent once when the socket connects, and leaves the outbox', async () => {
+    const socket = makeSocket({ connected: false });
+    const socketRef = { current: socket };
+    const { resultRef } = setup({ socketRef });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'from the train');
+    });
+    const queuedId = chatDb.__snapshot.outbox[0].messageId;
+
+    socket.connected = true;
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+    });
+
+    expect(socket.emit).toHaveBeenCalledTimes(1);
+    expect(socket.emit).toHaveBeenCalledWith(
+      'message.send',
+      expect.objectContaining({ messageId: queuedId, body: 'from the train' }),
+      expect.any(Function),
+    );
+    expect(chatDb.__snapshot.outbox).toEqual([]);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ syncState: 'synced' });
+  });
+
+  test('a send queued by a previous run is replayed on mount', async () => {
+    chatDb.__snapshot.outbox = [
+      {
+        messageId: 'queued-1',
+        conversationId: 'c1',
+        recipientId: 'bob',
+        body: 'survived a force quit',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        attempts: 0,
+      },
+    ];
+    chatDb.__snapshot.messagesByPeer = {
+      bob: [
+        {
+          messageId: 'queued-1',
+          senderId: 'alice',
+          recipientId: 'bob',
+          body: 'survived a force quit',
+          createdAt: '2024-01-01T00:00:00.000Z',
+          syncState: 'pending',
+          pending: true,
+        },
+      ],
+    };
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {});
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      'message.send',
+      expect.objectContaining({ messageId: 'queued-1' }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(chatDb.__snapshot.outbox).toEqual([]);
+  });
+
+  test('hydrates conversations and history from the local store before any fetch', async () => {
+    chatDb.__snapshot.conversations = [{ conversationId: 'c1', peerId: 'bob', unreadCount: 2 }];
+    chatDb.__snapshot.messagesByPeer = {
+      bob: [{ messageId: 'm1', body: 'cached', createdAt: '2024-01-01T00:00:00.000Z' }],
+    };
+    const { resultRef, params } = setup();
+
+    await act(async () => {});
+
+    expect(resultRef.current.conversations).toEqual(chatDb.__snapshot.conversations);
+    expect(resultRef.current.messagesByPeer.bob[0].body).toBe('cached');
+    expect(resultRef.current.unreadTotal).toBe(2);
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('retryMessage re-queues an exhausted send and discardMessage drops it', async () => {
+    const socket = makeSocket({ ackResponse: { ok: false, error: { message: 'nope' } } });
+    const { resultRef, params } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'hi');
+    });
+    // Exhaust the automatic retries.
+    for (let attempt = 1; attempt < 5; attempt += 1) {
+      await act(async () => {
+        await resultRef.current.drainOutbox();
+      });
+    }
+
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      failed: true,
+      syncState: 'failed',
+    });
     expect(params.updateStatus).toHaveBeenCalledWith('Message failed to send', 'error');
+
+    await act(async () => {
+      await resultRef.current.retryMessage('bob', messageId);
+    });
+    // The retry re-sends the *same* id, so the server upsert cannot duplicate it.
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.send',
+      expect.objectContaining({ messageId }),
+      expect.any(Function),
+    );
+
+    act(() => {
+      resultRef.current.discardMessage('bob', messageId);
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(chatDb.__snapshot.outbox).toEqual([]);
+  });
+
+  test('deleteMessage removes a sent message on the server and locally', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'oops');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    let deleted;
+    await act(async () => {
+      deleted = await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(deleted).toBe(true);
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.delete',
+      expect.objectContaining({ peerId: 'bob', messageId }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+  });
+
+  test('deleteMessage discards a still-queued message without contacting the server', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'never sent');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    await act(async () => {
+      await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(chatDb.__snapshot.outbox).toEqual([]);
+  });
+
+  test('deleteMessage reports an error when a sent message cannot be deleted', async () => {
+    const socket = makeSocket();
+    const { resultRef, params } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'keep me');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    socket.emit = jest.fn((event, payload, callback) =>
+      callback({ ok: false, error: { message: 'nope' } }),
+    );
+    let deleted;
+    await act(async () => {
+      deleted = await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(deleted).toBe(false);
+    expect(params.updateStatus).toHaveBeenCalledWith('Could not delete message', 'error');
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+  });
+
+  test('handleMessageDeleted drops a message the peer deleted', () => {
+    const { resultRef } = setup();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'hi',
+      });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+
+    act(() => {
+      resultRef.current.handleMessageDeleted({
+        conversationId: 'c1',
+        messageId: 'm-1',
+        deletedBy: 'bob',
+      });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+  });
+
+  test('isOffline follows the socket lifecycle', async () => {
+    const { resultRef } = setup();
+    expect(resultRef.current.isOffline).toBe(false);
+
+    act(() => {
+      resultRef.current.handleSocketDisconnected();
+    });
+    expect(resultRef.current.isOffline).toBe(true);
+
+    await act(async () => {
+      resultRef.current.handleSocketConnected();
+    });
+    expect(resultRef.current.isOffline).toBe(false);
   });
 
   test('sendMessage optimistically appends then reconciles with the server-confirmed message on ack', async () => {
@@ -226,18 +521,25 @@ describe('useMessaging', () => {
       await resultRef.current.sendMessage('bob', 'hi');
     });
 
-    expect(resultRef.current.messagesByPeer.bob[0]).toEqual({
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
       ...confirmedMessage,
       pending: false,
+      syncState: 'synced',
     });
     expect(socketRef.current.emit).toHaveBeenCalledWith(
       'message.send',
-      { version: 1, recipientId: 'bob', body: 'hi' },
+      {
+        version: 1,
+        recipientId: 'bob',
+        body: 'hi',
+        messageId: expect.any(String),
+      },
       expect.any(Function),
     );
   });
 
-  test('sendMessage marks the optimistic message failed when the ack rejects', async () => {
+  test('sendMessage keeps retrying a rejected ack and only fails after the attempt budget', async () => {
     const socketRef = {
       current: makeSocket({ ackResponse: { ok: false, error: { message: 'nope' } } }),
     };
@@ -246,6 +548,16 @@ describe('useMessaging', () => {
     await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi');
     });
+    // One attempt spent: still pending, still queued.
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ pending: true });
+    expect(chatDb.__snapshot.outbox[0].attempts).toBe(1);
+    expect(params.updateStatus).not.toHaveBeenCalled();
+
+    for (let attempt = 1; attempt < 5; attempt += 1) {
+      await act(async () => {
+        await resultRef.current.drainOutbox();
+      });
+    }
 
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ pending: false, failed: true });
     expect(params.updateStatus).toHaveBeenCalledWith('Message failed to send', 'error');
@@ -327,6 +639,7 @@ describe('useMessaging', () => {
       messageId: 'm1',
       senderId: 'bob',
       body: 'hi',
+      syncState: 'synced',
     });
     expect(resultRef.current.conversations[0].unreadCount).toBe(1);
   });

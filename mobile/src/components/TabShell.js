@@ -44,6 +44,9 @@ export default function TabShell() {
       peerId={peerId}
       messages={chat.messagesByPeer[peerId] ?? []}
       onSendMessage={body => chat.sendMessage(peerId, body)}
+      onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
+      onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
+      isOffline={chat.isChatOffline}
       onLoadOlder={chat.handleLoadOlderMessages}
       onBack={closeChatConversation}
       currentUserId={chat.currentUserId}
