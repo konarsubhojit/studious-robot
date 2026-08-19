@@ -103,6 +103,16 @@ function createServer(opts = {}) {
     maxRequests: opts.messageRateLimit ?? (Number(process.env.MESSAGE_RATE_LIMIT) || 30),
     windowMs: opts.messageRateWindowMs ?? (Number(process.env.MESSAGE_RATE_WINDOW_MS) || 60_000),
   });
+  // Search fans out across every conversation a user takes part in, so it is
+  // the most expensive read the API serves; it gets its own budget rather than
+  // sharing the (much cheaper) send allowance.
+  const messageSearchRateLimiter = createRateLimiter({
+    maxRequests:
+      opts.messageSearchRateLimit ?? (Number(process.env.MESSAGE_SEARCH_RATE_LIMIT) || 30),
+    windowMs:
+      opts.messageSearchRateWindowMs ??
+      (Number(process.env.MESSAGE_SEARCH_RATE_WINDOW_MS) || 60_000),
+  });
 
   const telemetry = createTelemetry();
 
@@ -157,6 +167,8 @@ function createServer(opts = {}) {
     /** Rate limiter for TURN credential minting. */
     turnCredentialsRateLimiter,
     messageSendRateLimiter,
+    /** Rate limiter for message search (`GET /messages/search`). */
+    messageSearchRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */

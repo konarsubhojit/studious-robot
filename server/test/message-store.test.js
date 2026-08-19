@@ -166,6 +166,67 @@ test('listMessages honours the `before` cursor', async () => {
   assert.equal(seeded.length, 5);
 });
 
+test('searchMessages returns only the requesting user matches, newest first', async () => {
+  const store = createMemoryMessageStore();
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'lunch at noon',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'alice',
+    body: 'Lunch sounds good',
+    createdAt: '2024-01-01T00:00:01.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'carol',
+    body: 'lunch without alice',
+    createdAt: '2024-01-01T00:00:02.000Z',
+  });
+
+  const results = await store.searchMessages({ userId: 'alice', query: 'lunch' });
+  assert.deepEqual(
+    results.map((m) => m.body),
+    ['Lunch sounds good', 'lunch at noon'],
+    'case-insensitive, newest first, and never another pair conversation'
+  );
+});
+
+test('searchMessages honours the limit and the `before` cursor', async () => {
+  const store = createMemoryMessageStore();
+  const conversationId = deriveConversationId('alice', 'bob');
+  await seed(store, conversationId, 5);
+
+  const firstPage = await store.searchMessages({ userId: 'alice', query: 'message', limit: 2 });
+  assert.deepEqual(
+    firstPage.map((m) => m.body),
+    ['message 4', 'message 3']
+  );
+
+  const secondPage = await store.searchMessages({
+    userId: 'alice',
+    query: 'message',
+    limit: 2,
+    before: firstPage[firstPage.length - 1].createdAt,
+  });
+  assert.deepEqual(
+    secondPage.map((m) => m.body),
+    ['message 2', 'message 1']
+  );
+});
+
+test('searchMessages returns nothing without a user or a term', async () => {
+  const store = createMemoryMessageStore();
+  await seed(store, deriveConversationId('alice', 'bob'), 2);
+
+  assert.deepEqual(await store.searchMessages({ userId: 'alice', query: '   ' }), []);
+  assert.deepEqual(await store.searchMessages({ query: 'message' }), []);
+  assert.deepEqual(await store.searchMessages(), []);
+});
+
 test('markDelivered is idempotent', async () => {
   const store = createMemoryMessageStore();
   const message = await store.saveMessage({
@@ -470,6 +531,10 @@ function createFakeMongoClient() {
           })
         );
       }
+      if (query?.body?.$regex) {
+        const pattern = new RegExp(query.body.$regex, query.body.$options ?? '');
+        results = results.filter((d) => pattern.test(d.body));
+      }
       return {
         sort() {
           results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -533,11 +598,20 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
     { conversationId: 1, createdAt: 1 },
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
+    { conversationId: 1, body: 1 },
   ]);
   // Every index is prefixed with the shard key (`conversationId`), and the
   // unique guarantee is expressed on the shard-key-prefixed pair so it
   // satisfies Cosmos RU's "unique index must include the shard key" rule.
   assert.deepEqual(fake.createdIndexes[2].options, { unique: true });
+  // The search index stays a plain composite index: Cosmos RU supports no
+  // `text` index / `$text` operator, so every backend serves the same query.
+  assert.ok(
+    fake.createdIndexes.every((index) =>
+      Object.values(index.spec).every((direction) => direction === 1 || direction === -1)
+    ),
+    'every index key is a plain ascending/descending direction'
+  );
   await store.close();
   assert.equal(fake.isClosed(), true);
 });
@@ -553,6 +627,7 @@ test('mongo store readiness check connects before the first message operation', 
     { conversationId: 1, createdAt: 1 },
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
+    { conversationId: 1, body: 1 },
   ]);
   await store.close();
 });
@@ -575,6 +650,42 @@ test('mongo store round-trips messages and strips the driver _id', async () => {
   assert.deepEqual(delivered.deliveredTo, ['bob']);
   assert.equal(delivered._id, undefined);
   assert.equal(await store.markDelivered('missing', 'bob'), null);
+
+  await store.close();
+});
+
+test('mongo store searchMessages matches literally and sorts in application code', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'lunch at noon',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'alice',
+    body: 'Lunch sounds good',
+    createdAt: '2024-01-01T00:00:01.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'carol',
+    body: 'lunch without alice',
+    createdAt: '2024-01-01T00:00:02.000Z',
+  });
+
+  const results = await store.searchMessages({ userId: 'alice', query: 'lunch' });
+  assert.deepEqual(
+    results.map((m) => m.body),
+    ['Lunch sounds good', 'lunch at noon']
+  );
+  assert.equal(results[0]._id, undefined, 'driver _id is not leaked');
+
+  // A term containing regex metacharacters is matched literally.
+  assert.deepEqual(await store.searchMessages({ userId: 'alice', query: '.*' }), []);
 
   await store.close();
 });
