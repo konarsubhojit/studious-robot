@@ -105,6 +105,24 @@ function deliverMessage(io, state, message) {
  * @param {import('socket.io').Socket} socket
  * @param {{ io: object, state: object }} ctx
  */
+/**
+ * Client-supplied message ids are opaque to the server, but they end up in
+ * storage keys and in the log line below, so restrict them to a conservative
+ * URL-safe alphabet (a UUID qualifies) rather than accepting any string.
+ */
+const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Normalise and validate a client-supplied message id.
+ *
+ * @param {unknown} value
+ * @returns {string|null} the id, or `null` when it is unusable
+ */
+function parseClientMessageId(value) {
+  const normalised = normaliseId(value);
+  return normalised && CLIENT_MESSAGE_ID_PATTERN.test(normalised) ? normalised : null;
+}
+
 function registerMessageHandlers(socket, { io, state }) {
   socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, ack) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
@@ -184,6 +202,22 @@ function registerMessageHandlers(socket, { io, state }) {
       return;
     }
 
+    let clientMessageId;
+    if (parsed.messageId !== undefined) {
+      clientMessageId = parseClientMessageId(parsed.messageId);
+      if (!clientMessageId) {
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.MESSAGE_SEND,
+          ERROR_CODES.BAD_REQUEST,
+          'messageId must be url-safe',
+          state
+        );
+        return;
+      }
+    }
+
     let message;
     try {
       message = await state.messageStore.saveMessage({
@@ -194,7 +228,7 @@ function registerMessageHandlers(socket, { io, state }) {
         // Client-generated id, when the sender supplies one: the store upserts
         // on `{ conversationId, messageId }`, so a send replayed from the
         // sender's durable outbox is stored exactly once.
-        messageId: parsed.messageId ? normaliseId(parsed.messageId) : undefined,
+        messageId: clientMessageId,
       });
     } catch (error) {
       console.error(`[messages] failed to persist message: ${error?.message}`);
@@ -302,14 +336,14 @@ function registerMessageHandlers(socket, { io, state }) {
     if (!parsed) return;
 
     const peerId = normaliseId(parsed.peerId);
-    const messageId = normaliseId(parsed.messageId);
+    const messageId = parseClientMessageId(parsed.messageId);
     if (!peerId || peerId === requesterId || !messageId) {
       acknowledgeError(
         socket,
         ack,
         CLIENT_EVENTS.MESSAGE_DELETE,
         ERROR_CODES.BAD_REQUEST,
-        'peerId and messageId are required',
+        'peerId and a url-safe messageId are required',
         state
       );
       return;

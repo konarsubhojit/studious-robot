@@ -238,6 +238,29 @@ test('message.send rejects a messageId already used by another message', async (
   assert.equal(history.body.messages[0].body, 'the original');
 });
 
+test('message.send rejects a messageId that is not url-safe', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'hello',
+    messageId: 'bad id\nwith newline',
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'bad_request');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 0);
+});
+
 test('message.delete removes the sender own message for both participants', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
