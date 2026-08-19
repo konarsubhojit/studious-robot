@@ -1,7 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import appConfig from '../app.json';
-import { logError } from './appLogger';
+import { getLogsForExport, logError, logInfo } from './appLogger';
 
 /**
  * Diagnostic / logging helpers extracted from App.js.  These are framework
@@ -127,11 +127,11 @@ export function getMediaAccessStatus(error) {
 
 export function buildExportHeader({
   signalingUrl,
-  roomId,
+  callId,
   status,
   localStream,
   remoteStream,
-  isInRoom,
+  isInCall,
   socket,
 }) {
   const lines = [
@@ -143,11 +143,11 @@ export function buildExportHeader({
     `osVersion: ${Platform.Version}`,
     `reactNativeVersion: ${getReactNativeVersion()}`,
     `signalingUrl: ${sanitizeUrlForLog(signalingUrl)}`,
-    `roomId: ${roomId || ''}`,
+    `callId: ${callId || ''}`,
     `appStatus: ${status || ''}`,
     `hasLocalStream: ${Boolean(localStream)}`,
     `hasRemoteStream: ${Boolean(remoteStream)}`,
-    `isInRoom: ${Boolean(isInRoom)}`,
+    `isInCall: ${Boolean(isInCall)}`,
     `socketConnected: ${Boolean(socket?.connected)}`,
     `socketId: ${socket?.id || 'none'}`,
     `socketTransport: ${getSocketTransportName(socket)}`,
@@ -193,4 +193,54 @@ export async function writeLogsFile(content) {
   }
 
   return { success: false, error: firstError };
+}
+
+/**
+ * Collect the in-memory log buffer, prepend a diagnostic header and write it
+ * to disk.  Shared by every "Export logs" affordance; the caller only has to
+ * surface the returned message to the user.
+ *
+ * @param {{
+ *   signalingUrl?: string,
+ *   callId?: string | null,
+ *   status?: string,
+ *   localStream?: object | null,
+ *   remoteStream?: object | null,
+ *   isInCall?: boolean,
+ *   socket?: object | null,
+ * }} [context]
+ * @returns {Promise<{ ok: boolean, message: string }>}
+ */
+export async function exportDiagnosticLogs(context = {}) {
+  try {
+    logInfo('Export Logs button press');
+    const header = buildExportHeader({
+      ...context,
+      signalingUrl: (context.signalingUrl ?? '').trim(),
+    });
+    const result = await writeLogsFile(`${header}\n${await getLogsForExport()}\n`);
+
+    if (!result.success) {
+      logError('Failed to export logs', result.error);
+      return {
+        ok: false,
+        message: `Failed to export logs: ${result.error?.message || 'Unknown error'}`,
+      };
+    }
+
+    logInfo('Logs exported', {
+      path: result.path,
+      storage: result.label,
+      usedFallback: result.usedFallback,
+    });
+    return {
+      ok: true,
+      message: result.usedFallback
+        ? `Logs saved to fallback (${result.label}): ${result.path}`
+        : `Logs saved: ${result.path}`,
+    };
+  } catch (error) {
+    logError('Unexpected export logs failure', error);
+    return { ok: false, message: `Failed to export logs: ${error?.message || 'Unknown error'}` };
+  }
 }
