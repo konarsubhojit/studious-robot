@@ -773,6 +773,10 @@ export default function ChatConversationScreen({
     }
   }, [isRecordingVoiceNote, onStartVoiceNote, onStopVoiceNote]);
 
+  const handleCancelVoiceNote = useCallback(() => {
+    onCancelVoiceNote?.();
+  }, [onCancelVoiceNote]);
+
   const handleReply = useCallback(message => setReplyTarget(message), []);
 
   const handleReact = useCallback(
@@ -1138,6 +1142,17 @@ export default function ChatConversationScreen({
                   : 'Voice notes are not supported on this build'
               }
               testID="chat-mic-button"
+            />
+          ) : null}
+          {isRecordingVoiceNote ? (
+            <IconButton
+              icon="dismiss"
+              onPress={handleCancelVoiceNote}
+              variant="danger"
+              size={40}
+              accessibilityLabel="Cancel voice note"
+              accessibilityHint="Stops recording without sending"
+              testID="chat-mic-cancel-button"
             />
           ) : null}
           <IconButton

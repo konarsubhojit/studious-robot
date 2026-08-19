@@ -134,7 +134,12 @@ describe('useAttachments', () => {
 
   test('records and sends a voice note', async () => {
     startVoiceRecording.mockResolvedValue(true);
-    stopVoiceRecording.mockResolvedValue({ uri: 'file:///v.m4a', mimeType: 'audio/aac', durationMs: 2000 });
+    stopVoiceRecording.mockResolvedValue({
+      uri: 'file:///v.m4a',
+      mimeType: 'audio/aac',
+      durationMs: 2000,
+      sizeBytes: 4096,
+    });
     uploadAttachment.mockResolvedValue({ url: 'https://cdn/v.m4a' });
     const { resultRef, params } = setup();
 

@@ -67,6 +67,22 @@ describe('attachmentUpload', () => {
         validateAttachment({ type: MESSAGE_TYPES.IMAGE, mimeType: 'image/png', sizeBytes: 1024 }),
       ).toEqual({ ok: true });
     });
+
+    // Regression guard: a real `voiceRecorder.stopVoiceRecording()` result
+    // must pass validation. This previously slipped through because tests
+    // mocked `uploadAttachment` for the voice-note path instead of feeding
+    // the recorder's real output shape through the real validator — the
+    // recorder never populated `sizeBytes`, so every voice note was silently
+    // rejected here with "Could not determine the file size".
+    test('accepts a voice-note description shaped like voiceRecorder.stopVoiceRecording()', () => {
+      expect(
+        validateAttachment({
+          type: MESSAGE_TYPES.VOICE,
+          mimeType: 'audio/aac',
+          sizeBytes: 4096,
+        }),
+      ).toEqual({ ok: true });
+    });
   });
 
   describe('describeAttachmentError', () => {

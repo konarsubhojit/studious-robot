@@ -1200,6 +1200,33 @@ describe('ChatConversationScreen attachments', () => {
     expect(onStopVoiceNote).toHaveBeenCalledTimes(1);
   });
 
+  test('a cancel button appears only while recording and stops without sending', () => {
+    const onCancelVoiceNote = jest.fn();
+    const props = {
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onCancelVoiceNote,
+      isVoiceNoteSupported: true,
+      isRecordingVoiceNote: false,
+    };
+    const tree = render(props);
+
+    expect(findAllByTestId(tree, 'chat-mic-cancel-button')).toHaveLength(0);
+
+    act(() => {
+      tree.update(<ChatConversationScreen {...props} isRecordingVoiceNote />);
+    });
+    expect(findByTestId(tree, 'chat-mic-cancel-button')).not.toBeNull();
+
+    act(() => {
+      findByTestId(tree, 'chat-mic-cancel-button').props.onPress();
+    });
+    expect(onCancelVoiceNote).toHaveBeenCalledTimes(1);
+  });
+
   test('shows upload progress while an attachment is uploading', () => {
     const tree = render({
       peerId: 'user-bob',

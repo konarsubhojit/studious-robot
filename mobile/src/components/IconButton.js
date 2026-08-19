@@ -23,6 +23,7 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * @param {number}   [props.size=64]         - Diameter of the circle in dp.
  * @param {string}   [props.testID]
  * @param {string}   [props.accessibilityLabel]
+ * @param {string}   [props.accessibilityHint]
  */
 export default function IconButton({
   icon,
@@ -34,6 +35,7 @@ export default function IconButton({
   size = 64,
   testID,
   accessibilityLabel,
+  accessibilityHint,
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -68,6 +70,7 @@ export default function IconButton({
         disabled={isDisabled}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel ?? label ?? icon}
+        accessibilityHint={accessibilityHint}
         accessibilityState={{ disabled: isDisabled, busy: loading }}
         testID={testID}
         style={({ pressed }) => [

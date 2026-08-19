@@ -1,3 +1,4 @@
+import RNFS from 'react-native-fs';
 import { MAX_VOICE_DURATION_MS } from '../../shared';
 
 /**
@@ -23,9 +24,12 @@ function loadRecorderModule() {
 export function _resetVoiceRecorderCache() {
   _recorderCache = undefined;
   _recorderInstance = null;
+  _lastPositionMs = 0;
 }
 
 let _recorderInstance = null;
+/** Elapsed recording time (ms), updated by the record-back listener while recording. */
+let _lastPositionMs = 0;
 
 function getRecorderInstance() {
   const RecorderModule = loadRecorderModule();
@@ -48,6 +52,10 @@ export function isVoiceRecorderAvailable() {
 export async function startVoiceRecording() {
   const recorder = getRecorderInstance();
   if (!recorder) return false;
+  _lastPositionMs = 0;
+  recorder.addRecordBackListener?.(event => {
+    _lastPositionMs = Number(event?.currentPosition) || _lastPositionMs;
+  });
   await recorder.startRecorder();
   return true;
 }
@@ -55,26 +63,32 @@ export async function startVoiceRecording() {
 /**
  * Stop the in-progress recording.
  *
- * @returns {Promise<{ uri: string, mimeType: string, durationMs: number } | null>}
+ * @returns {Promise<{ uri: string, mimeType: string, durationMs: number, sizeBytes: number } | null>}
  *   `null` when nothing was recording (module not linked, or never started).
  */
 export async function stopVoiceRecording() {
   const recorder = getRecorderInstance();
   if (!recorder) return null;
   const uri = await recorder.stopRecorder();
-  const durationMs = Math.min(recorder.mmssss ? parseDuration(recorder.mmssss) : 0, MAX_VOICE_DURATION_MS);
+  const durationMs = Math.min(_lastPositionMs, MAX_VOICE_DURATION_MS);
   recorder.removeRecordBackListener?.();
   if (!uri) return null;
-  return { uri, mimeType: 'audio/aac', durationMs };
+  const sizeBytes = await statSizeBytes(uri);
+  return { uri, mimeType: 'audio/aac', durationMs, sizeBytes };
 }
 
-/** Parse a recorder library's `mm:ss:SS` (or similar) timestamp into ms — best effort only. */
-function parseDuration(value) {
-  const parts = String(value).split(':').map(Number);
-  if (parts.some(Number.isNaN)) return 0;
-  if (parts.length === 3) {
-    const [minutes, seconds, hundredths] = parts;
-    return minutes * 60_000 + seconds * 1000 + hundredths * 10;
+/**
+ * Read a local file's size, so the upload pipeline's size validation (and
+ * the presign request, which needs an exact `Content-Length`) has something
+ * to work with — the recorder itself reports elapsed time, not bytes.
+ *
+ * @returns {Promise<number>} `0` when the file cannot be statted.
+ */
+async function statSizeBytes(uri) {
+  try {
+    const { size } = await RNFS.stat(uri);
+    return Number(size) || 0;
+  } catch {
+    return 0;
   }
-  return 0;
 }

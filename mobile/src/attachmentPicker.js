@@ -7,6 +7,8 @@
  * fresh checkout before `pod install` / a native rebuild has linked them.
  */
 
+import { logWarn } from './appLogger';
+
 let _imagePickerCache;
 let _documentPickerCache;
 
@@ -113,9 +115,13 @@ export async function pickDocument() {
     };
   } catch (error) {
     // The picker libraries reject with a cancellation error when the user
-    // backs out; every other error is treated the same way (no attachment).
-    if (picker.isErrorWithCode && picker.isErrorWithCode(error, 'OPERATION_CANCELED')) {
-      return null;
+    // backs out; that's expected and silent. Anything else is a genuine
+    // picker failure (e.g. the native module errored) worth a log line, but
+    // still resolves to "no attachment" — the composer just leaves the
+    // attach sheet available to retry rather than surfacing a hard error.
+    const cancelled = picker.isErrorWithCode && picker.isErrorWithCode(error, 'OPERATION_CANCELED');
+    if (!cancelled) {
+      logWarn('[Attachments] document picker failed', { message: error?.message });
     }
     return null;
   }

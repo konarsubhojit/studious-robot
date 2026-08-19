@@ -11,6 +11,14 @@ jest.mock('../../src/storage/chatDb', () => ({
   saveChatSnapshot: jest.fn(),
 }));
 
+// `voiceRecorder.js` (pulled in via `useAttachments`) imports this directly
+// (it's a hard app dependency, not an optional native module); the real
+// package doesn't parse under Jest's transform, same reason `chatDb.test.js`
+// mocks it.
+jest.mock('react-native-fs', () => ({
+  stat: jest.fn().mockResolvedValue({ size: 0 }),
+}));
+
 jest.mock('socket.io-client', () => ({
   io: jest.fn(() => ({
     connected: true,
