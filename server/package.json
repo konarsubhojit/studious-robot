@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "node --watch src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "db:generate": "drizzle-kit generate",
@@ -25,8 +26,10 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^22.20.1",
     "dotenv": "^16.4.5",
     "drizzle-kit": "^0.31.10",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "typescript": "^5.9.3"
   }
 }

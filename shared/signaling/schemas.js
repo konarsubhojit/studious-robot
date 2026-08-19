@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { s } = require('../schema');
@@ -257,11 +258,13 @@ const ACK_SCHEMA = s.object(
  *
  * @param {string} eventName
  * @param {'client'|'server'} [direction] - Which side *sends* the payload.
- * @returns {object | null} the schema, or `null` when the event carries no
- *   contract (e.g. transport events).
+ * @returns {import('../schema').Schema | null} the schema, or `null` when the
+ *   event carries no contract (e.g. transport events).
  */
 function getEventSchema(eventName, direction = 'client') {
-  const table = direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS;
+  const table = /** @type {Record<string, import('../schema').Schema>} */ (
+    direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS
+  );
   return table[eventName] ?? null;
 }
 

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -22,6 +23,14 @@
  * @property {{ message: string, path: string }} error
  *
  * @typedef {ParseSuccess | ParseFailure} ParseResult
+ *
+ * @typedef {object} Schema
+ * @property {boolean} isOptional
+ * @property {(value: unknown, path: string) => ParseResult} _parse
+ * @property {(value: unknown) => ParseResult} safeParse
+ * @property {(value: unknown) => any} parse
+ * @property {() => Schema} optional
+ * @property {() => Schema} nullable
  */
 
 /** @param {string} path @param {string} message @returns {ParseFailure} */
@@ -37,10 +46,15 @@ function ok(data) {
   return { success: true, data };
 }
 
+/** @param {string} path @param {string|number} key */
 function joinPath(path, key) {
   return path ? `${path}.${key}` : String(key);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, any>}
+ */
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -49,11 +63,10 @@ function isPlainObject(value) {
  * Wrap a `(value, path) => ParseResult` function in the chainable schema API.
  *
  * @param {(value: unknown, path: string) => ParseResult} parse
- * @param {object} [meta]
+ * @param {{ isOptional?: boolean }} [meta]
  * @returns {Schema}
  */
 function createSchema(parse, meta = {}) {
-  /** @typedef {{ safeParse: (value: unknown) => ParseResult, parse: (value: unknown) => any, optional: () => Schema, nullable: () => Schema, isOptional: boolean }} Schema */
   const schema = {
     ...meta,
     isOptional: Boolean(meta.isOptional),
@@ -147,6 +160,7 @@ function enumOf(values) {
 function array(item) {
   return createSchema((value, path) => {
     if (!Array.isArray(value)) return fail(path, 'expected an array');
+    /** @type {any[]} */
     const parsed = [];
     for (let index = 0; index < value.length; index += 1) {
       const result = item._parse(value[index], joinPath(path, `[${index}]`));
@@ -168,6 +182,7 @@ function array(item) {
 function object(shape, { passthrough = false } = {}) {
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
+    /** @type {Record<string, any>} */
     const parsed = passthrough ? { ...value } : {};
     for (const [key, keySchema] of Object.entries(shape)) {
       const result = keySchema._parse(value[key], joinPath(path, key));
@@ -191,9 +206,15 @@ function opaque() {
   );
 }
 
-/** Object with arbitrary string keys and uniformly typed values. @param {Schema} valueSchema */function record(valueSchema) {
+/**
+ * Object with arbitrary string keys and uniformly typed values.
+ *
+ * @param {Schema} valueSchema
+ */
+function record(valueSchema) {
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
+    /** @type {Record<string, any>} */
     const parsed = {};
     for (const [key, entry] of Object.entries(value)) {
       const result = valueSchema._parse(entry, joinPath(path, key));

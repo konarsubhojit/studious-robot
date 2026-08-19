@@ -1,3 +1,4 @@
+// @ts-check
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
@@ -40,7 +41,7 @@ export const MAX_QUEUED_EVENTS = 32;
  * @property {object} socket                 - The wrapped Socket.IO connection.
  * @property {(event: string, handler: Function) => void} on
  * @property {(event: string, payload?: object, ack?: Function) => boolean} emit
- * @property {(event: string, payload?: object) => Promise<object>} request
+ * @property {(event: string, payload: object) => Promise<object>} request
  * @property {() => number} flushQueue
  * @property {() => number} getQueuedEventCount
  */
@@ -108,7 +109,7 @@ export function createSignalingClient(socket) {
       if (queue.length >= MAX_QUEUED_EVENTS) {
         const dropped = queue.shift();
         logWarn('[Signaling] Offline queue full, dropped oldest event', {
-          event: dropped.event,
+          event: dropped?.event,
         });
       }
       queue.push({ event, payload });

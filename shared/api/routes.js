@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { s } = require('../schema');

@@ -5,11 +5,13 @@ on:
     branches: [master]
     paths:
       - 'server/**'
+      - 'shared/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     branches: [master]
     paths:
       - 'server/**'
+      - 'shared/**'
       - '.github/workflows/backend-ci.yml'
 
 jobs:
@@ -78,6 +80,9 @@ jobs:
 
       - name: Apply database migrations
         run: npm run db:migrate
+
+      - name: Check types
+        run: npm run typecheck
 
       - name: Run tests
         run: npm test

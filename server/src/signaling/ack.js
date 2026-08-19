@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { SIGNALING_VERSION } = require('../config');
@@ -12,6 +13,16 @@ const { ERROR_CODES, SERVER_EVENTS, parseEventPayload } = require('../../../shar
  * consistent.
  */
 
+/**
+ * @typedef {{ telemetry: { recordSignalingError: (code: string) => void } }} SignalingState
+ */
+
+/**
+ * @param {import('socket.io').Socket} socket
+ * @param {Function|undefined} ack
+ * @param {string} eventName
+ * @returns {boolean}
+ */
 function requireSocketSession(socket, ack, eventName) {
   if (socket.data.identity?.sessionId) {
     return true;
@@ -27,6 +38,13 @@ function requireSocketSession(socket, ack, eventName) {
   return false;
 }
 
+/**
+ * @param {import('socket.io').Socket} socket
+ * @param {any} payload
+ * @param {Function|undefined} ack
+ * @param {string} eventName
+ * @returns {boolean}
+ */
 function validateSignalingVersion(socket, payload, ack, eventName) {
   if (payload?.version === SIGNALING_VERSION) {
     return true;
@@ -53,7 +71,7 @@ function validateSignalingVersion(socket, payload, ack, eventName) {
  * @param {Function|undefined} ack
  * @param {string} eventName
  * @param {unknown} payload
- * @param {object} [state]
+ * @param {SignalingState} [state]
  * @returns {object | null} the parsed payload, or `null` when it was rejected.
  */
 function parseInboundPayload(socket, ack, eventName, payload, state) {
@@ -78,6 +96,12 @@ function parseInboundPayload(socket, ack, eventName, payload, state) {
   return null;
 }
 
+/**
+ * @param {import('socket.io').Socket} socket
+ * @param {Function|undefined} ack
+ * @param {string} eventName
+ * @param {object} [data]
+ */
 function acknowledgeSuccess(socket, ack, eventName, data) {
   const payload = {
     ok: true,
@@ -104,7 +128,7 @@ function acknowledgeSuccess(socket, ack, eventName, data) {
  * @param {string} eventName
  * @param {string} code
  * @param {string} message
- * @param {object} [state]  - Optional server state (provides telemetry recorder).
+ * @param {SignalingState} [state]  - Optional server state (provides telemetry recorder).
  */
 function acknowledgeError(socket, ack, eventName, code, message, state) {
   if (state) {
