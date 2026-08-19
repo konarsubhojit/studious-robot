@@ -267,6 +267,12 @@ hand-edit the generated SQL.
 # After editing db/schema.js, regenerate the migration (commit the result):
 npm run db:generate
 
+# …or give the migration a meaningful name (commit the result):
+npm run db:generate:named -- call_duration_and_missed_read
+
+# Verify the generated migrations and their journal are consistent:
+npm run db:check
+
 # Apply pending migrations (uses DATABASE_URL_DIRECT, falling back to DATABASE_URL):
 npm run db:migrate
 ```
