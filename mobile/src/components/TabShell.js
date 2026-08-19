@@ -4,9 +4,13 @@ import { logError } from '../appLogger';
 import { useCall } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
+import useRecentSearches from '../hooks/useRecentSearches';
 import {
   closeChatConversation,
+  goBack,
   openChatConversation,
+  openPeerProfile,
+  openSearch,
   openTab,
   resetNavigation,
 } from '../navigation/navigationRef';
@@ -15,6 +19,8 @@ import { TABS } from '../navigation/routes';
 import ChatConversationScreen from './ChatConversationScreen';
 import ChatListScreen from './ChatListScreen';
 import Lobby from './Lobby';
+import PeerProfileScreen from './PeerProfileScreen';
+import SearchScreen from './SearchScreen';
 import SettingsScreen from './SettingsScreen';
 
 /**
@@ -38,11 +44,14 @@ export default function TabShell() {
   } = useCall();
   const chat = useChat();
   const insets = useSafeAreaInsets();
+  const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
 
-  const renderChatConversation = peerId => (
+  const renderChatConversation = (peerId, { messageId } = {}) => (
     <ChatConversationScreen
       peerId={peerId}
       messages={chat.messagesByPeer[peerId] ?? []}
+      highlightMessageId={messageId ?? null}
+      onOpenProfile={() => openPeerProfile(peerId)}
       onSendMessage={body => chat.sendMessage(peerId, body)}
       onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
       onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
@@ -72,7 +81,42 @@ export default function TabShell() {
       isRefreshing={chat.isRefreshingConversations}
       isLoading={chat.isLoadingConversations}
       onMarkRead={chat.markConversationRead}
+      onOpenSearch={openSearch}
       onOpenSettings={() => openTab(TABS.SETTINGS)}
+    />
+  );
+
+  const renderSearch = () => (
+    <SearchScreen
+      onSearchContacts={chat.searchUsers}
+      onSearchMessages={chat.searchMessages}
+      conversations={chat.conversations}
+      callHistory={callFlow.callHistory}
+      currentUserId={chat.currentUserId}
+      onOpenConversation={openChatConversation}
+      onOpenMessage={({ peerId, messageId }) => openChatConversation(peerId, { messageId })}
+      onOpenProfile={openPeerProfile}
+      onBack={goBack}
+      isServerUnreachable={callFlow.isServerUnreachable}
+      recentSearches={recentSearches}
+      onRecordRecentSearch={recordSearch}
+      onClearRecentSearches={clearSearches}
+    />
+  );
+
+  const renderPeerProfile = peerId => (
+    <PeerProfileScreen
+      peerId={peerId}
+      presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
+      isBlocked={Boolean(chat.isUserBlocked?.(peerId))}
+      callHistory={callFlow.callHistory}
+      currentUserId={chat.currentUserId}
+      onBack={goBack}
+      onMessage={openChatConversation}
+      onAudioCall={startAudioCallWith}
+      onVideoCall={startVideoCallWith}
+      onBlock={chat.blockPeer}
+      onUnblock={chat.unblockPeer}
     />
   );
 
@@ -93,6 +137,7 @@ export default function TabShell() {
       onRetryConnect={callFlow.retryPresenceConnect}
       onSearchUsers={callFlow.searchUsers}
       onSelectContact={callFlow.setCalleeId}
+      onOpenSearch={openSearch}
       developerMode={settings.developerModeEnabled}
       isSettingsVisible={isSettingsPanelVisible}
       onToggleSettings={() => setIsSettingsPanelVisible(previous => !previous)}
@@ -143,6 +188,8 @@ export default function TabShell() {
         onRouteChange={chat.handleRouteChange}
         renderChatList={renderChatList}
         renderChatConversation={renderChatConversation}
+        renderSearch={renderSearch}
+        renderPeerProfile={renderPeerProfile}
         renderCalls={renderCalls}
         renderSettings={renderSettings}
       />

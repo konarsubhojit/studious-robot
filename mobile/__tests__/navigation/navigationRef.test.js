@@ -30,7 +30,7 @@ describe('navigationRef', () => {
     openChatConversation('user-bob');
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
-      params: { peerId: 'user-bob' },
+      params: { peerId: 'user-bob', messageId: null },
     });
   });
 
@@ -49,7 +49,7 @@ describe('navigationRef', () => {
     flushPendingNavigation();
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
-      params: { peerId: 'user-bob' },
+      params: { peerId: 'user-bob', messageId: null },
     });
 
     // Replayed only once.

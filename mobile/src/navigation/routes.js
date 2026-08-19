@@ -15,6 +15,10 @@ export const TABS = {
 export const CHAT_SCREENS = {
   LIST: 'chatList',
   CONVERSATION: 'chatConversation',
+  /** Full-screen unified search (contacts, conversations, messages, calls). */
+  SEARCH: 'search',
+  /** Per-contact screen: presence, call actions, block/mute. */
+  PROFILE: 'peerProfile',
 };
 
 /** Tab shown first, and the one Android back returns to from another tab. */

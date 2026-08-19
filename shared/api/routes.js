@@ -26,6 +26,7 @@ const API_ROUTES = Object.freeze({
   MESSAGES_READ: '/messages/read',
   MESSAGES_SEARCH: '/messages/search',
   CALLS: '/calls',
+  BLOCKS: '/blocks',
   TURN_CREDENTIALS: '/turn-credentials',
 });
 

@@ -43,15 +43,48 @@ export function resetPendingNavigation() {
  * tab first if another one is selected.
  *
  * @param {string | null | undefined} peerId
+ * @param {{ messageId?: string | null }} [options] `messageId` deep-links to a
+ *   specific message (a search result), which the conversation screen scrolls
+ *   to and highlights.
  */
-export function openChatConversation(peerId) {
+export function openChatConversation(peerId, { messageId } = {}) {
   if (!peerId) return;
   runWhenReady(() =>
     navigationRef.navigate(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
+      params: { peerId, messageId: messageId ?? null },
+    }),
+  );
+}
+
+/**
+ * Open the unified search screen.  It lives in the Chats tab's stack, so
+ * opening it from the Calls tab switches tabs first — search spans both.
+ */
+export function openSearch() {
+  runWhenReady(() => navigationRef.navigate(TABS.CHATS, { screen: CHAT_SCREENS.SEARCH }));
+}
+
+/**
+ * Open the profile screen for `peerId`.
+ *
+ * @param {string | null | undefined} peerId
+ */
+export function openPeerProfile(peerId) {
+  if (!peerId) return;
+  runWhenReady(() =>
+    navigationRef.navigate(TABS.CHATS, {
+      screen: CHAT_SCREENS.PROFILE,
       params: { peerId },
     }),
   );
+}
+
+/** Pop the current screen, if anything is stacked above the tab's root. */
+export function goBack() {
+  if (navigationRef.isReady() && navigationRef.canGoBack()) {
+    navigationRef.goBack();
+  }
 }
 
 /**
@@ -77,7 +110,5 @@ export function resetNavigation() {
 
 /** Pop the open conversation back to the chat list, if one is open. */
 export function closeChatConversation() {
-  if (navigationRef.isReady() && navigationRef.canGoBack()) {
-    navigationRef.goBack();
-  }
+  goBack();
 }

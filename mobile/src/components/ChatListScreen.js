@@ -169,6 +169,8 @@ function EmptyConversations() {
  *   list fetch is still in flight.
  * @param {(peerId: string) => void} [props.onMarkRead] - Swipe action: mark a
  *   conversation read without opening it.
+ * @param {() => void} [props.onOpenSearch] - Opens the full-screen unified
+ *   search (contacts, conversations, messages and calls).
  * @param {() => void} [props.onOpenSettings]
  */
 export default function ChatListScreen({
@@ -179,6 +181,7 @@ export default function ChatListScreen({
   isRefreshing = false,
   isLoading = false,
   onMarkRead,
+  onOpenSearch,
   onOpenSettings,
 }) {
   const { colors } = useTheme();
@@ -326,6 +329,18 @@ export default function ChatListScreen({
           Chats
         </Text>
         <View style={styles.titleSpacer} />
+        {onOpenSearch ? (
+          <Pressable
+            onPress={onOpenSearch}
+            accessibilityRole="button"
+            accessibilityLabel="Search"
+            accessibilityHint="Search contacts, conversations, messages and calls"
+            hitSlop={touchSlop(36)}
+            testID="chat-list-open-search"
+            style={styles.gearButton}>
+            <Text style={styles.gearIcon}>🔍</Text>
+          </Pressable>
+        ) : null}
         {onOpenSettings ? (
           <Pressable
             onPress={onOpenSettings}

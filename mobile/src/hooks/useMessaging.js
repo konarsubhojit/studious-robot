@@ -346,6 +346,51 @@ export default function useMessaging({
   );
 
   /**
+   * Search the authenticated user's message history
+   * (`GET /messages/search`).  Returns the matching messages, newest first,
+   * each carrying the `peerId` of the conversation it belongs to so a result
+   * can deep-link into that conversation.  Returns an empty array when the
+   * request fails, so an unreachable server degrades to local-only results
+   * rather than an error.
+   *
+   * @param {string} query
+   * @param {{ limit?: number, signal?: AbortSignal }} [options]
+   * @returns {Promise<Array<object>>}
+   */
+  const searchMessages = useCallback(
+    async (query, { limit = 20, signal } = {}) => {
+      const term = (query ?? '').trim();
+      const sessionId = sessionIdRef.current;
+      if (!term || !sessionId) return [];
+      try {
+        const trimmedUrl = signalingUrl.trim();
+        const response = await authedFetchRef.current?.(sid => {
+          const params = new URLSearchParams({
+            sessionId: sid,
+            q: term,
+            limit: String(limit),
+          });
+          return {
+            url: `${trimmedUrl}${API_ROUTES.MESSAGES_SEARCH}?${params.toString()}`,
+            options: signal ? { signal } : undefined,
+          };
+        });
+        if (!response?.ok) return [];
+        const data = await response.json();
+        return Array.isArray(data.results) ? data.results : [];
+      } catch (error) {
+        // An aborted request is the expected outcome of a newer keystroke, not
+        // a failure worth logging.
+        if (error?.name !== 'AbortError') {
+          logWarn('[Messaging] searchMessages failed', { message: error?.message });
+        }
+        return [];
+      }
+    },
+    [authedFetchRef, sessionIdRef, signalingUrl],
+  );
+
+  /**
    * Update one local message in `peerId`'s history, by id.
    *
    * @param {string} peerId
@@ -894,6 +939,7 @@ export default function useMessaging({
     pendingSendCount,
     fetchConversations,
     fetchMessagesForPeer,
+    searchMessages,
     sendMessage,
     retryMessage,
     discardMessage,
