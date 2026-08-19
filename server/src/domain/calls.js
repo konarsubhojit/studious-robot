@@ -545,6 +545,8 @@ module.exports = {
   isCalleeUnreachable,
   isSingleInstanceMode,
   recordCallHeartbeat,
+  // Exported for the state-machine invariant test, which asserts every
+  // non-terminal status has a bounded — and appropriate — timeout.
   getCallExpiry,
   tickRingingTimeouts,
   endCallsForDisconnectedParticipant,

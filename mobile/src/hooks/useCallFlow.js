@@ -601,7 +601,6 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         iceState: iceState === 'failed' ? 'failed' : 'disconnected',
       });
     }, ICE_FAILURE_GRACE_MS);
-    iceFailureTimerRef.current?.unref?.();
   }, []);
 
   const markCallConnected = useCallback(() => {

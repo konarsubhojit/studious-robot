@@ -518,6 +518,41 @@ test('heartbeat: a connected call is aged out only once its liveness reports sto
   }
 });
 
+test('heartbeat: only an explicit liveness report refreshes a connected call', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    const stampedAt = getCall(callId).lastHeartbeatAt;
+    assert.ok(stampedAt, 'call.connected must stamp the first liveness report');
+
+    // A client that predates the heartbeat still emits `call.media-state` when
+    // screen sharing is toggled. Those frames must not be mistaken for
+    // liveness, or an abandoned call is kept alive by a stray UI toggle.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: true },
+    });
+    assert.equal(getCall(callId).lastHeartbeatAt, stampedAt);
+
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: true, heartbeat: true },
+    });
+    assert.notEqual(getCall(callId).lastHeartbeatAt, stampedAt);
+  } finally {
+    await teardown(caller);
+  }
+});
+
 // ─── 6. State-machine regression guard ───────────────────────────────────────
 
 test('guard: every non-terminal status has a forward transition and a bounded timeout', () => {

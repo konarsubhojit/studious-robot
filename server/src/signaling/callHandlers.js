@@ -196,7 +196,10 @@ function handleRtcRelay(socket, ack, payload, options) {
 
   // A connected client relays its liveness over this channel every 30s, which
   // is what lets the sweep tell a long healthy call from an abandoned one.
-  if (options.recordsHeartbeat) {
+  // The opt-in flag matters: older clients emit this event when screen sharing
+  // is toggled but never send beats, and stamping those would arm the
+  // heartbeat deadline on a call that will never satisfy it.
+  if (options.recordsHeartbeat && value?.heartbeat === true) {
     recordCallHeartbeat(options.state, callId);
   }
 
@@ -230,6 +233,9 @@ function handleRtcRelay(socket, ack, payload, options) {
  * @param {{ state: object, io: object }} options
  */
 function handleCallConnected(socket, ack, payload, options) {
+  // Read before validation only to pick the destination status; the payload is
+  // still validated (and rejected) by `handleSocketCallTransition` below, and a
+  // non-string never reaches the transition.
   const iceState = typeof payload?.iceState === 'string' ? payload.iceState : 'connected';
   const isFailure = iceState === 'disconnected' || iceState === 'failed';
 
