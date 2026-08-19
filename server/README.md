@@ -31,7 +31,9 @@ Besides the call/session/contact routes, the chat surface adds:
 | ------------- | ----- | -------- | ----- |
 | `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
 
-With `include=calls` the page becomes a unified conversation timeline: calls between the same two users are merged in and every entry carries a `type` discriminator — `text` for a message, or `call` for `{ type, callId, conversationId, direction, status, endReason, durationSeconds, createdAt }`. The `before` cursor stays exact across the merged stream (`messageStore.nextTimestamp()` guarantees strictly-increasing message timestamps, and ties are broken by entry id). The parameter is opt-in, so omitting it returns exactly the payload it always did, and a blocked (or blocking) peer's calls are filtered out just like their conversation is in `GET /conversations`.
+| `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
+
+With `include=calls` the page becomes a unified conversation timeline: calls between the same two users are merged in and every entry carries a `type` discriminator — a message contributes its own type (`text`, `image`, `file`, `voice`, `system`), or `call` for `{ type, callId, conversationId, direction, status, endReason, durationSeconds, createdAt }`. The `before` cursor stays exact across the merged stream (`messageStore.nextTimestamp()` guarantees strictly-increasing message timestamps, and ties are broken by entry id). The parameter is opt-in, so omitting it returns exactly the payload it always did, and a blocked (or blocking) peer's calls are filtered out just like their conversation is in `GET /conversations`.
 
 `GET /conversations` correspondingly reports `lastActivity` — whichever of the last message and the last call is newer — alongside `lastMessage`, and counts a peer's unacknowledged missed calls in `unreadCount`. `POST /messages/read` clears both halves, returning `{ conversationId, updated, missedCallsRead }`.
 
@@ -80,7 +82,9 @@ default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
 
 | Event          | Payload                              | Ack success                            | Notes |
 | -------------- | ------------------------------------ | -------------------------------------- | ----- |
-| `message.send` | `{ version, recipientId, body }`     | `{ ok, version, event, message }`      | `body` must be a non-empty string of at most **4000** characters. Rejected with `unauthorized` (no session), `unsupported_version`, `bad_request` (missing/self `recipientId`, empty, oversized, or non-string `body`), and `forbidden` when either party has blocked the other. |
+| `message.send` | `{ version, recipientId, body, type?, attachment?, replyTo?, messageId? }` | `{ ok, version, event, message }`      | `body` must be a string of at most **4000** characters, and non-empty unless the message carries an attachment. `type` defaults to `text` and may be `text`, `image`, `file` or `voice` (`system` is server-owned). Rejected with `unauthorized` (no session), `unsupported_version`, `bad_request` (missing/self `recipientId`, empty/oversized/non-string `body`, unknown `type`, missing attachment, disallowed MIME type, oversized attachment, or an `attachment.url` this server did not presign), and `forbidden` when either party has blocked the other. |
+| `message.delete` | `{ version, peerId, messageId }`   | `{ ok, version, event, messageId, conversationId }` | "Delete for everyone" for one of your **own** messages. The row is tombstoned rather than removed, so a reply that quotes it still resolves. `not_found` for an unknown (or already deleted) message and for someone else's. |
+| `message.react` | `{ version, peerId, messageId, emoji, action }` | `{ ok, version, event, messageId, conversationId, reactions }` | `action` is `add` or `remove`; `emoji` must be an emoji of at most 16 code units. Idempotent, so a replayed add cannot toggle the reaction off. `not_found` for an unknown or tombstoned message, `forbidden` when either party has blocked the other. |
 
 ##### Server → Client
 
@@ -88,9 +92,17 @@ default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
 | ------------------- | --------------- |
 | `message.received`  | `{ version, message }` emitted to the recipient's `user:<userId>` room, so every one of their devices receives it via the Socket.IO Redis adapter. |
 | `message.delivered` | `{ version, messageId, conversationId, deliveredTo }` emitted back to the sender once the message has been persisted and fanned out. |
+| `message.deleted`   | `{ version, conversationId, messageId, deletedBy, message }` emitted to **both** participants; `message` is the tombstone that replaced the content. |
+| `message.reaction`  | `{ version, conversationId, messageId, reactions, actorId, emoji, action }` emitted to both participants' `user:<userId>` rooms, so every device of both users converges on the same reaction set. |
 
 The persisted message shape is
-`{ messageId, conversationId, senderId, recipientId, body, createdAt, deliveredTo }`.
+`{ messageId, conversationId, senderId, recipientId, body, type, attachment, replyTo, reactions, deletedAt, createdAt, deliveredTo, readAt }`.
+Rows written before rich messaging carry none of `type`, `attachment`,
+`replyTo`, `reactions` or `deletedAt`: readers default the type to `text` and
+treat the rest as absent. A `type` a client does not know about must render as
+a neutral "Unsupported message" placeholder rather than crash it — that rule is
+what makes the schema safe to extend, and it is covered by
+`test/messages-rich.test.js`.
 `conversationId` is derived deterministically from the two user ids (sorted and
 joined), so both participants resolve the same conversation. `createdAt` is a
 monotonic ISO timestamp, which keeps the newest-first ordering and the `before`
@@ -148,9 +160,27 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
+| `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
+| `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
+| `R2_PUBLIC_BASE_URL` | _(unset)_ | Public origin the bucket (or its CDN hostname) is served from. Chat media lives under `<base>/chatblobs/…`, and only URLs under that prefix are accepted on `message.send`. |
+| `R2_ENDPOINT` | derived from `R2_ACCOUNT_ID` | Override for the S3-compatible endpoint (custom domain, or a local S3 stand-in). |
+| `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
 | `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + shared read cache + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
+
+## Attachments
+
+Chat media never travels through the signaling server. `POST
+/attachments/presign` returns a short-lived, S3 SigV4-signed `PUT` URL for
+Cloudflare R2; the client uploads directly, then sends a `message.send`
+referencing the returned `publicUrl`.
+
+- Every object lives under one shared prefix — `<R2_PUBLIC_BASE_URL>/chatblobs/<conversationId>/<uuid>.<ext>` — so a deployment only points a single bucket/CDN hostname at chat media, and `message.send` can reject any URL outside it.
+- The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
+- `content-length` and `content-type` are part of the signature: an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.js`) are re-checked on `message.send`.
+- When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
 
 ## Push notifications
 
