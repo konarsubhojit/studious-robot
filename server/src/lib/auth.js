@@ -3,6 +3,24 @@
 const { randomUUID } = require('crypto');
 const { normaliseId, normaliseOptionalString, isPlainObject } = require('./normalize');
 
+/** Upper bound for the client-supplied correlation id kept for logging. */
+const MAX_CORRELATION_ID_LENGTH = 64;
+
+/**
+ * Normalise the client-supplied per-session correlation id used to trace a
+ * call across client and server logs.  Untrusted input: it is trimmed, capped
+ * in length and restricted to log-safe characters.
+ *
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function normaliseCorrelationId(value) {
+  const id = normaliseId(value);
+  if (!id) return null;
+  const safe = id.replace(/[^A-Za-z0-9._:-]/g, '');
+  return safe.length > 0 ? safe.slice(0, MAX_CORRELATION_ID_LENGTH) : null;
+}
+
 /**
  * Session/identity resolution for HTTP requests and Socket.IO handshakes.
  */
@@ -75,6 +93,7 @@ function getSessionFromRequest(req, sessions) {
  *   sessionId: string|null,
  *   presentedSessionId: string|null,
  *   sessionDowngraded: boolean,
+ *   correlationId: string|null,
  * }}
  */
 function resolveSocketIdentity(socket, sessions) {
@@ -83,6 +102,7 @@ function resolveSocketIdentity(socket, sessions) {
   const session = sessionId ? sessions.get(sessionId) : null;
   const expiresAtMs = session?.expiresAt ? new Date(session.expiresAt).getTime() : null;
   const sessionValid = session && (!expiresAtMs || expiresAtMs > Date.now());
+  const correlationId = normaliseCorrelationId(auth.correlationId);
   if (sessionValid) {
     return {
       userId: session.userId,
@@ -91,6 +111,7 @@ function resolveSocketIdentity(socket, sessions) {
       sessionId: session.sessionId,
       presentedSessionId: sessionId,
       sessionDowngraded: false,
+      correlationId,
     };
   }
 
@@ -104,11 +125,13 @@ function resolveSocketIdentity(socket, sessions) {
     // a genuine downgrade (stale/expired/server-restart), distinct from a
     // fresh connection that never had a session id to begin with.
     sessionDowngraded: Boolean(sessionId),
+    correlationId,
   };
 }
 
 module.exports = {
   parseBearerToken,
+  normaliseCorrelationId,
   getSessionFromRequest,
   resolveSocketIdentity,
 };

@@ -84,6 +84,24 @@ function scheduleParticipantDisconnectCleanup(io, state, userId, graceMs) {
 }
 
 /**
+ * Emit the callId ↔ correlationId link so a call can be followed from the
+ * client log (which stamps every event with the same correlation id) into the
+ * server log, where subsequent lines are keyed by callId.
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {string} callId
+ * @param {string} eventName
+ */
+function logCallCorrelation(socket, callId, eventName) {
+  const correlationId = socket.data.identity?.correlationId;
+  if (!callId || !correlationId) return;
+  console.log(
+    `[signaling] call.correlation callId=${callId} correlationId=${correlationId}` +
+      ` userId=${socket.data.identity.userId} event=${eventName}`
+  );
+}
+
+/**
  * Wire up all Socket.IO connection and event handlers.
  *
  * @param {import('socket.io').Server} io
@@ -131,13 +149,17 @@ function registerSocketHandlers(
       );
     }
 
+    // The client's per-session correlation id is echoed into the server log so
+    // a failed call can be traced from the device log to the server log.
     console.log(
-      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}`
+      `[signaling] socket connected: ${socket.id} user=${identity.userId} device=${identity.deviceId}` +
+        ` correlationId=${identity.correlationId ?? 'none'}`
     );
     verboseLog('socket', 'connected', {
       socketId: socket.id,
       userId: identity.userId,
       deviceId: identity.deviceId,
+      correlationId: identity.correlationId,
       activeUserSockets: state.userConnections.get(identity.userId)?.size ?? 0,
     });
     socket.onAny((eventName, payload) => {
@@ -287,6 +309,7 @@ function registerSocketHandlers(
         calleeId,
         ringingTimeoutMs,
       });
+      logCallCorrelation(socket, call.callId, 'call.initiate');
       notifyCallCreated(io, state, call);
       acknowledgeSuccess(socket, ack, 'call.initiate', { call });
     });
@@ -313,6 +336,7 @@ function registerSocketHandlers(
       const identity = socket.data.identity;
       const deviceId = normaliseId(payload.deviceId) || identity.deviceId;
       markIncomingCallAcknowledged(state, callId, deviceId);
+      logCallCorrelation(socket, callId, 'call.incoming.ack');
       acknowledgeSuccess(socket, ack, 'call.incoming.ack', { callId, deviceId });
     });
 

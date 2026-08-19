@@ -1813,7 +1813,9 @@ describe('useCallFlow session lifecycle', () => {
     );
     expect(io).toHaveBeenCalledTimes(2);
     expect(io.mock.calls[1][1]).toEqual(
-      expect.objectContaining({ auth: { sessionId: 'sess-fresh' } }),
+      expect.objectContaining({
+        auth: { sessionId: 'sess-fresh', correlationId: expect.stringMatching(/^wt-/) },
+      }),
     );
   });
 

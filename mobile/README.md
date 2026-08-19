@@ -315,6 +315,25 @@ URL, call ID, call/socket state) and detailed app-side signaling/WebRTC events.
 Sensitive fields such as TURN credentials, passwords, tokens, authorization
 values, and other secrets are redacted or intentionally not logged.
 
+## Observability
+
+`src/observability.js` is the single entry point for client observability.
+`initObservability()` — the only startup call in `index.js` — installs the
+global crash handler, registers the background-push and CallKeep listeners, and
+reports any registration failure as a startup degradation.
+
+All events are structured and levelled (`emitEvent`, `emitMetric`,
+`recordDegradation`) and fan out to pluggable sinks: the in-memory/durable app
+log by default, plus anything registered with `addSink` (Crashlytics, server
+upload, …). Metrics currently emitted include call QoS (setup, first-frame and
+signaling latency), ICE failures, mid-call reconnects, and push/CallKeep
+registration failures.
+
+Every event carries a per-session **correlation ID** (`wt-…`), which is also
+sent on the signaling handshake. The server echoes it on socket connection and
+logs a `call.correlation callId=… correlationId=…` line, so a failed call can
+be traced from the device log through the server log.
+
 ## Build a debug APK locally
 
 ```bash
