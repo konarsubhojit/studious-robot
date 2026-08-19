@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
@@ -8,6 +8,12 @@ import {
   RTCSessionDescription,
 } from 'react-native-webrtc';
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
+import {
+  CALL_EVENTS,
+  CALL_STATES,
+  INITIAL_CALL_STATE,
+  callStateReducer,
+} from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
 import {
   applyPreferredAudioRoute,
@@ -104,19 +110,17 @@ const ANSWERED_CALL_HISTORY_LIMIT = 20;
 const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
 
 /**
- * Call phases that drive which screen the UI renders.
+ * Call phases that drive which screen the UI renders.  Alias of the state
+ * machine's `CALL_STATES` (see `src/call/callStateMachine`), kept under the
+ * historical name for the hook's consumers.
  *
  * idle             – no active call; show Lobby
  * outgoing_ringing – caller placed a call, waiting for callee to answer
  * incoming_ringing – callee received a call, waiting for user action
  * in_call          – call accepted and media connected
+ * ended            – transient terminal state; teardown then returns to idle
  */
-export const CALL_PHASES = {
-  IDLE: 'idle',
-  OUTGOING_RINGING: 'outgoing_ringing',
-  INCOMING_RINGING: 'incoming_ringing',
-  IN_CALL: 'in_call',
-};
+export const CALL_PHASES = CALL_STATES;
 
 /**
  * English display strings for server-side `endReason` codes.
@@ -198,14 +202,21 @@ function haptic(durationMs) {
  *
  * The hook returns serialisable state and action callbacks so the UI remains
  * purely presentational.
+ *
+ * @param {{ speakerEnabledByDefault?: boolean }} [options] persisted device
+ *   preferences that influence call setup (see `useAppSettings`).
  */
-export default function useCallFlow() {
+export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // ─── Connection config ────────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
   const [calleeId, setCalleeId] = useState('');
 
   // ─── Call lifecycle state ─────────────────────────────────────────────────
-  const [callPhase, setCallPhase] = useState(CALL_PHASES.IDLE);
+  // Single source of truth for the call lifecycle: every phase change goes
+  // through the pure state machine in `src/call/callStateMachine`, so illegal
+  // transitions (a late `rtc.answer` after hang-up, a second incoming call
+  // while already connected, …) are ignored instead of corrupting the UI.
+  const [callPhase, dispatchCallEvent] = useReducer(callStateReducer, INITIAL_CALL_STATE);
   const [activeCall, setActiveCall] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
 
@@ -428,6 +439,15 @@ export default function useCallFlow() {
     }
     await identityUnregisterUser();
   }, [identityUnregisterUser, sessionIdRef, signalingUrl]);
+
+  // `ended` is the machine's terminal state; `endActiveCall` has already run
+  // the teardown by the time it is entered, so acknowledge it immediately and
+  // return the machine to `idle` (which is what the lobby renders from).
+  useEffect(() => {
+    if (callPhase === CALL_STATES.ENDED) {
+      dispatchCallEvent(CALL_EVENTS.RESET);
+    }
+  }, [callPhase]);
 
   useEffect(() => {
     isInCallRef.current = isInCall;
@@ -761,7 +781,7 @@ export default function useCallFlow() {
       activeCallRef.current = null;
       incomingCallRef.current = null;
 
-      setCallPhase(CALL_PHASES.IDLE);
+      dispatchCallEvent(CALL_EVENTS.END);
       setActiveCall(null);
       setIncomingCall(null);
       setIsReconnecting(false);
@@ -859,7 +879,7 @@ export default function useCallFlow() {
         );
         incomingCallRef.current = call;
         setIncomingCall(call);
-        setCallPhase(CALL_PHASES.INCOMING_RINGING);
+        dispatchCallEvent(CALL_EVENTS.RECEIVE);
         updateStatus(`Incoming call from ${call.callerId}`);
         // Show system-level incoming-call UI (CallKeep) and start the JS
         // ringtone fallback when CallKeep is unavailable.  Runs async so UI
@@ -1037,7 +1057,7 @@ export default function useCallFlow() {
               if (!ack?.ok) logWarn('[CallFlow] rtc.answer ack failed', ack?.error);
             },
           );
-          setCallPhase(CALL_PHASES.IN_CALL);
+          dispatchCallEvent(CALL_EVENTS.CONNECT);
           updateStatus('Connected', 'success');
           startCallService();
         } catch (error) {
@@ -1072,7 +1092,7 @@ export default function useCallFlow() {
               });
             }
           }
-          setCallPhase(CALL_PHASES.IN_CALL);
+          dispatchCallEvent(CALL_EVENTS.CONNECT);
           updateStatus('Connected', 'success');
           startCallService();
         } catch (error) {
@@ -1296,7 +1316,7 @@ export default function useCallFlow() {
           });
           incomingCallRef.current = call;
           setIncomingCall(call);
-          setCallPhase(CALL_PHASES.INCOMING_RINGING);
+          dispatchCallEvent(CALL_EVENTS.RECEIVE);
           updateStatus(`Incoming call from ${call.callerId}`);
           showIncomingCallUi(call).catch(error => {
             logWarn('[CallFlow] showIncomingCallUi unexpected error', {
@@ -1570,7 +1590,7 @@ export default function useCallFlow() {
         activeCallIdRef.current = ack.call.callId;
         activeCallRef.current = ack.call;
         setActiveCall(ack.call);
-        setCallPhase(CALL_PHASES.OUTGOING_RINGING);
+        dispatchCallEvent(CALL_EVENTS.PLACE);
         updateStatus(`Ringing ${trimmedCalleeId}…`);
         startOutgoingRingback();
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
@@ -2467,17 +2487,37 @@ export default function useCallFlow() {
 
   // Pick the best available output (Bluetooth → wired → earpiece → speaker)
   // unless the user already chose one explicitly during this call.
-  const applyAutomaticAudioRoute = useCallback(async available => {
-    if (manualAudioRouteRef.current) return;
-    const result = await applyPreferredAudioRoute(available);
-    setAudioDevices({ available: result.available, selected: result.selected });
-    setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
-    if (!result.ok) {
-      logWarn('[CallFlow] Automatic audio routing degraded', {
-        message: result.message,
-      });
-    }
-  }, []);
+  const applyAutomaticAudioRoute = useCallback(
+    async available => {
+      if (manualAudioRouteRef.current) return;
+      const result = await applyPreferredAudioRoute(available);
+      // "Speaker on join": with no headset/Bluetooth device attached the
+      // automatic pick is the earpiece; the persisted preference upgrades
+      // that to speakerphone.
+      if (result.ok && speakerEnabledByDefault && result.selected === AUDIO_ROUTES.EARPIECE) {
+        const speakerResult = await chooseAudioRoute(AUDIO_ROUTES.SPEAKER_PHONE);
+        if (speakerResult.ok) {
+          setAudioDevices({
+            available: speakerResult.available.length > 0 ? speakerResult.available : result.available,
+            selected: speakerResult.selected,
+          });
+          setIsSpeakerEnabled(true);
+          return;
+        }
+        logWarn('[CallFlow] Speaker default unavailable; keeping automatic route', {
+          message: speakerResult.message,
+        });
+      }
+      setAudioDevices({ available: result.available, selected: result.selected });
+      setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
+      if (!result.ok) {
+        logWarn('[CallFlow] Automatic audio routing degraded', {
+          message: result.message,
+        });
+      }
+    },
+    [speakerEnabledByDefault],
+  );
 
   useEffect(() => {
     if (!isInCall) {
@@ -2545,6 +2585,7 @@ export default function useCallFlow() {
 
     // UI status
     status,
+    updateStatus,
     callSummary,
     calleePresence: presenceSearch.calleePresence,
     checkPresence,
@@ -2600,7 +2641,7 @@ export default function useCallFlow() {
     startLocalPreview,
     rehydrateCallFromPush,
 
-    // In-call controls (identical interface to useWebRTCCall for CallScreen compat)
+    // In-call controls (the interface `CallScreen` renders against)
     handleMuteToggle,
     handleVideoToggle,
     handleScreenShareToggle,

@@ -5,10 +5,9 @@ import { getStreamUrl } from './diagnostics';
  * and mirroring flags) for an active call, given which side is "primary"
  * (i.e. shown large).
  *
- * Both `useCallFlow` and the legacy `useWebRTCCall` flow expose the same
- * shape (`localStream`, `remoteStream`, `isLocalPrimary`, `isFrontCamera`),
- * so `AppShell` previously duplicated this derivation once per flow — this
- * helper is the single source of truth for that logic (DRY).
+ * Kept out of the components so the derivation from the call state
+ * (`localStream`, `remoteStream`, `isLocalPrimary`, `isFrontCamera`) has a
+ * single, testable home; `CallProvider` publishes its result.
  *
  * @param {{
  *   isLocalPrimary: boolean,

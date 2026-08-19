@@ -10,9 +10,8 @@ import { BackHandler, Platform } from 'react-native';
  * Extracted out of `AppShell` so this concern is independently testable and
  * the component itself stays focused on screen routing / composition.
  *
- * @param {boolean} isCallConnected true once either call flow has a
- *   connected (post-ringing) call; ringing/dialing screens are never
- *   minimizable.
+ * @param {boolean} isCallConnected true once the call flow has a connected
+ *   (post-ringing) call; ringing/dialing screens are never minimizable.
  */
 export default function useCallMinimize(isCallConnected) {
   // True once the user has explicitly (or automatically, via tab switch /
