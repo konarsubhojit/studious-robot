@@ -37,6 +37,7 @@ yarn-error.log*
 mobile/android/.gradle/
 mobile/android/build/
 mobile/android/app/build/
+mobile/android/app/.cxx/
 mobile/android/local.properties
 mobile/android/.cxx/
 mobile/android/.kotlin/
