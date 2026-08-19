@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
 import { getIdToken } from '../authService';
 import { loadDeviceId } from '../settingsStorage';
+import { API_ROUTES } from '../../../shared';
 
 /**
  * Owns the server-side session lifecycle: creating/refreshing the
@@ -56,7 +57,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
       platform: Platform.OS,
       idToken,
     };
-    const response = await fetch(`${trimmedUrl}/session`, {
+    const response = await fetch(`${trimmedUrl}${API_ROUTES.SESSION}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
@@ -96,7 +97,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
     const trimmedUrl = (signalingUrl ?? '').trim();
     if (!sessionId || !trimmedUrl) return null;
     try {
-      const response = await fetch(`${trimmedUrl}/session/refresh`, {
+      const response = await fetch(`${trimmedUrl}${API_ROUTES.SESSION_REFRESH}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),

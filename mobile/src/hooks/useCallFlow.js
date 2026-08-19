@@ -46,8 +46,15 @@ import {
   sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
+import { API_ROUTES } from '../../../shared';
 import { getSocketOptions } from '../socketConfig';
-import { emitWithAck, SIGNALING_VERSION } from '../socketProtocol';
+import {
+  CLIENT_EVENTS,
+  SERVER_EVENTS,
+  TRANSPORT_EVENTS,
+  createSignalingClient,
+} from '../signalingClient';
+import { SIGNALING_VERSION } from '../socketProtocol';
 import { getIceServers, getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
 import {
@@ -148,13 +155,13 @@ export const CALL_END_REASON_LABELS = {
  * progress but that no client is holding is a phantom, and the server closes
  * it out when it hears the client's own view of the world.
  *
- * @param {object} socket
+ * @param {ReturnType<import('../signalingClient').createSignalingClient>} signaling
  * @param {string[]} activeCallIds
  */
-function reportOwnCallState(socket, activeCallIds) {
+function reportOwnCallState(signaling, activeCallIds) {
   logInfo('[CallFlow] Reporting own call state after busy rejection', { activeCallIds });
-  socket.emit(
-    'call.state.report',
+  signaling.emit(
+    CLIENT_EVENTS.CALL_STATE_REPORT,
     { version: SIGNALING_VERSION, activeCallIds },
     ack => {
       if (!ack?.ok) {
@@ -257,6 +264,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
+  // Typed wrapper around `socketRef.current`: validates every payload against
+  // the shared contract and queues fire-and-forget emits while offline.
+  const signalingRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const activeCallIdRef = useRef(null);
@@ -338,6 +348,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const messaging = useMessaging({
     authedFetchRef,
     sessionIdRef,
+    signalingRef,
     signalingUrl,
     socketRef,
     userId,
@@ -370,8 +381,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit(
-        'rtc.offer',
+      signalingRef.current?.emit(
+        CLIENT_EVENTS.RTC_OFFER,
         {
           version: SIGNALING_VERSION,
           callId,
@@ -547,7 +558,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       if (!candidate || !socketRef.current?.connected) return;
       const summary = summarizeIceCandidate(candidate);
       logInfo('[CallFlow] ICE candidate sent', summary);
-      socketRef.current.emit('rtc.candidate', {
+      signalingRef.current?.emit(CLIENT_EVENTS.RTC_CANDIDATE, {
         version: SIGNALING_VERSION,
         callId: activeCallIdRef.current,
         candidate,
@@ -592,8 +603,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           await configurePeerConnection(pc);
           const offer = await pc.createOffer({ iceRestart: true });
           await pc.setLocalDescription(offer);
-          socketRef.current?.emit(
-            'rtc.offer',
+          signalingRef.current?.emit(
+            CLIENT_EVENTS.RTC_OFFER,
             {
               version: SIGNALING_VERSION,
               callId: activeCallIdRef.current,
@@ -816,6 +827,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       socketRef.current.off(); // remove all listeners before disconnect
       socketRef.current.disconnect();
       socketRef.current = null;
+      signalingRef.current = null;
     }
     resetTypingState();
   }, [resetTypingState]);
@@ -856,15 +868,17 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         auth: { sessionId, correlationId: getCorrelationId() },
       });
       socketRef.current = socket;
+      const signaling = createSignalingClient(socket);
+      signalingRef.current = signaling;
 
       // ── Incoming call ──────────────────────────────────────────────────
-      socket.on('call.incoming', ({ call }) => {
+      signaling.on(SERVER_EVENTS.CALL_INCOMING, ({ call }) => {
         logInfo('[CallFlow] Incoming call', {
           callId: call.callId,
           callerId: call.callerId,
         });
-        socket.emit(
-          'call.incoming.ack',
+        signaling.emit(
+          CLIENT_EVENTS.CALL_INCOMING_ACK,
           {
             version: SIGNALING_VERSION,
             callId: call.callId,
@@ -891,132 +905,135 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
-      socket.on('call.ringing', ({ call }) => {
+      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call }) => {
         logInfo('[CallFlow] Call ringing', { callId: call.callId });
         activeCallRef.current = call;
         setActiveCall(call);
       });
 
       // ── Call state changes ────────────────────────────────────────────
-      socket.on('call.state_changed', async ({ status: callStatus, call, reason }) => {
-        logInfo('[CallFlow] call.state_changed', {
-          callStatus,
-          callId: call?.callId,
-          reason,
-        });
-        const eventCallId = call?.callId ?? null;
-        const knownCallId =
-          activeCallIdRef.current ??
-          activeCallRef.current?.callId ??
-          incomingCallRef.current?.callId ??
-          null;
-
-        // A call that stops ringing — cancelled, declined, missed, timed out —
-        // must take its OS notification with it, otherwise the shade keeps a
-        // tappable ghost that answers a call nobody can join.
-        if (eventCallId && TERMINAL_CALL_STATUSES.has(callStatus)) {
-          logInfo('[CallFlow] Dismissing call UI for terminal transition', {
-            callId: eventCallId,
+      signaling.on(
+        SERVER_EVENTS.CALL_STATE_CHANGED,
+        async ({ status: callStatus, call, reason }) => {
+          logInfo('[CallFlow] call.state_changed', {
             callStatus,
-            reason: reason ?? null,
+            callId: call?.callId,
+            reason,
           });
-          clearPendingAnswer(eventCallId, `state_${callStatus}`);
-          displayedIncomingCallIdsRef.current.delete(eventCallId);
-          endCallKeepCall(eventCallId);
-        }
+          const eventCallId = call?.callId ?? null;
+          const knownCallId =
+            activeCallIdRef.current ??
+            activeCallRef.current?.callId ??
+            incomingCallRef.current?.callId ??
+            null;
 
-        // Transitions for a *different* call (a stale ring that ended while
-        // this one is up) must not touch the call currently in progress.
-        if (eventCallId && knownCallId && eventCallId !== knownCallId) {
-          logInfo('[CallFlow] Ignoring state change for a non-current call', {
-            callId: eventCallId,
-            knownCallId,
-            callStatus,
-          });
-          return;
-        }
+          // A call that stops ringing — cancelled, declined, missed, timed out —
+          // must take its OS notification with it, otherwise the shade keeps a
+          // tappable ghost that answers a call nobody can join.
+          if (eventCallId && TERMINAL_CALL_STATUSES.has(callStatus)) {
+            logInfo('[CallFlow] Dismissing call UI for terminal transition', {
+              callId: eventCallId,
+              callStatus,
+              reason: reason ?? null,
+            });
+            clearPendingAnswer(eventCallId, `state_${callStatus}`);
+            displayedIncomingCallIdsRef.current.delete(eventCallId);
+            endCallKeepCall(eventCallId);
+          }
 
-        if (call) {
-          activeCallRef.current = call;
-          setActiveCall(call);
-        }
+          // Transitions for a *different* call (a stale ring that ended while
+          // this one is up) must not touch the call currently in progress.
+          if (eventCallId && knownCallId && eventCallId !== knownCallId) {
+            logInfo('[CallFlow] Ignoring state change for a non-current call', {
+              callId: eventCallId,
+              knownCallId,
+              callStatus,
+            });
+            return;
+          }
 
-        switch (callStatus) {
-          case 'accepted': {
-            stopOutgoingRingback();
-            updateStatus('Call accepted, connecting media…');
-            // Caller is responsible for sending the initial RTC offer.
-            if (isCallerRef.current && call) {
-              activeCallIdRef.current = call.callId;
-              try {
-                await startLocalPreviewRef.current?.();
-                const pc = await ensurePeerConnectionRef.current?.();
-                if (!pc) break;
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                socket.emit(
-                  'rtc.offer',
-                  {
-                    version: SIGNALING_VERSION,
-                    callId: call.callId,
-                    sdp: pc.localDescription,
-                  },
-                  ack => {
-                    if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
-                  },
-                );
-              } catch (error) {
-                logError('[CallFlow] Failed to create/send RTC offer', error);
-                updateStatus('Failed to connect media', 'error');
-                endActiveCallRef.current?.('Failed to connect media', 'error');
+          if (call) {
+            activeCallRef.current = call;
+            setActiveCall(call);
+          }
+
+          switch (callStatus) {
+            case 'accepted': {
+              stopOutgoingRingback();
+              updateStatus('Call accepted, connecting media…');
+              // Caller is responsible for sending the initial RTC offer.
+              if (isCallerRef.current && call) {
+                activeCallIdRef.current = call.callId;
+                try {
+                  await startLocalPreviewRef.current?.();
+                  const pc = await ensurePeerConnectionRef.current?.();
+                  if (!pc) break;
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  signaling.emit(
+                    CLIENT_EVENTS.RTC_OFFER,
+                    {
+                      version: SIGNALING_VERSION,
+                      callId: call.callId,
+                      sdp: pc.localDescription,
+                    },
+                    ack => {
+                      if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
+                    },
+                  );
+                } catch (error) {
+                  logError('[CallFlow] Failed to create/send RTC offer', error);
+                  updateStatus('Failed to connect media', 'error');
+                  endActiveCallRef.current?.('Failed to connect media', 'error');
+                }
               }
+              break;
             }
-            break;
-          }
 
-          case 'declined':
-            endActiveCallRef.current?.('Call declined', 'info', 'declined');
-            break;
+            case 'declined':
+              endActiveCallRef.current?.('Call declined', 'info', 'declined');
+              break;
 
-          case 'missed':
-            endActiveCallRef.current?.('Call not answered', 'error', 'missed');
-            break;
+            case 'missed':
+              endActiveCallRef.current?.('Call not answered', 'error', 'missed');
+              break;
 
-          case 'busy': {
-            // Self-heal: `busy` means the server still believes one of the
-            // participants is in a call.  When this device holds no live call,
-            // say so, so the server can clear the phantom that is blocking
-            // every new call instead of the user being stuck forever.
-            const liveCallIds = [
-              activeCallIdRef.current,
-              incomingCallRef.current?.callId,
-            ].filter(id => id && id !== eventCallId);
-            if (liveCallIds.length === 0) {
-              reportOwnCallState(socket, []);
+            case 'busy': {
+              // Self-heal: `busy` means the server still believes one of the
+              // participants is in a call.  When this device holds no live call,
+              // say so, so the server can clear the phantom that is blocking
+              // every new call instead of the user being stuck forever.
+              const liveCallIds = [
+                activeCallIdRef.current,
+                incomingCallRef.current?.callId,
+              ].filter(id => id && id !== eventCallId);
+              if (liveCallIds.length === 0) {
+                reportOwnCallState(signaling, []);
+              }
+              endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
+              break;
             }
-            endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
-            break;
+
+            case 'unreachable':
+              endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
+              break;
+
+            case 'ended':
+              endActiveCallRef.current?.(
+                reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
+                'info',
+                reason ?? 'ended',
+              );
+              break;
+
+            default:
+              break;
           }
-
-          case 'unreachable':
-            endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
-            break;
-
-          case 'ended':
-            endActiveCallRef.current?.(
-              reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
-              'info',
-              reason ?? 'ended',
-            );
-            break;
-
-          default:
-            break;
-        }
-      });
+        },
+      );
 
       // ── RTC offer (callee receives offer from caller) ─────────────────
-      socket.on('rtc.offer', async ({ sdp, callId }) => {
+      signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId }) => {
         if (callId !== activeCallIdRef.current) {
           logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
           return;
@@ -1045,8 +1062,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           }
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          socket.emit(
-            'rtc.answer',
+          signaling.emit(
+            CLIENT_EVENTS.RTC_ANSWER,
             {
               version: SIGNALING_VERSION,
               callId,
@@ -1069,7 +1086,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       });
 
       // ── RTC answer (caller receives answer from callee) ───────────────
-      socket.on('rtc.answer', async ({ sdp, callId }) => {
+      signaling.on(SERVER_EVENTS.RTC_ANSWER, async ({ sdp, callId }) => {
         if (callId !== activeCallIdRef.current) {
           logWarn('[CallFlow] rtc.answer for unknown callId', { callId });
           return;
@@ -1102,7 +1119,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       });
 
       // ── RTC ICE candidates ────────────────────────────────────────────
-      socket.on('rtc.candidate', async ({ candidate, callId }) => {
+      signaling.on(SERVER_EVENTS.RTC_CANDIDATE, async ({ candidate, callId }) => {
         if (callId !== activeCallIdRef.current) return;
         const pc = peerConnectionRef.current;
         if (!pc) return;
@@ -1123,33 +1140,35 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       });
 
       // ── Chat ─────────────────────────────────────────────────────────
-      socket.on('message.received', ({ message }) => {
+      signaling.on(SERVER_EVENTS.MESSAGE_RECEIVED, ({ message }) => {
         handleMessageReceived(message);
       });
 
-      socket.on('message.delivered', ({ message }) => {
+      signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
         handleMessageDelivered(message);
       });
 
-      socket.on('message.read', ({ readerId, readAt }) => {
+      signaling.on(SERVER_EVENTS.MESSAGE_READ, ({ readerId, readAt }) => {
         handleMessageRead({ readerId, readAt });
       });
 
-      socket.on('message.typing', ({ senderId, isTyping }) => {
+      signaling.on(SERVER_EVENTS.MESSAGE_TYPING, ({ senderId, isTyping }) => {
         handleTypingEvent({ senderId, isTyping });
       });
 
       // ── In-call screen-share relay ──────────────────────────────────────
-      socket.on('call.media-state', ({ callId, mediaState }) => {
+      signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
         if (callId !== activeCallIdRef.current) return;
         setIsRemoteScreenSharing(Boolean(mediaState?.isScreenSharing));
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
-      socket.on('connect', async () => {
+      socket.on(TRANSPORT_EVENTS.CONNECT, async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         // Clear offline indicator on successful connection.
         recordConnectSuccess();
+        // Replay anything that was emitted while the socket was down.
+        signaling.flushQueue();
         // Load the conversation list as soon as the session is actually
         // live. `sessionIdRef` is only populated once `createOrGetSession`
         // resolves, which happens asynchronously — a chat-sync effect keyed
@@ -1177,8 +1196,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
               }
               const offer = await pc.createOffer({ iceRestart: true });
               await pc.setLocalDescription(offer);
-              socket.emit(
-                'rtc.offer',
+              signaling.emit(
+                CLIENT_EVENTS.RTC_OFFER,
                 {
                   version: SIGNALING_VERSION,
                   callId: activeCallIdRef.current,
@@ -1195,7 +1214,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         }
       });
 
-      socket.on('disconnect', reason => {
+      socket.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
         logWarn('[CallFlow] Socket disconnected', { reason });
         if (isInCallRef.current) {
           setIsReconnecting(true);
@@ -1203,7 +1222,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         }
       });
 
-      socket.on('connect_error', error => {
+      socket.on(TRANSPORT_EVENTS.CONNECT_ERROR, error => {
         logError('[CallFlow] Socket connect error', {
           message: error?.message,
           description: error?.description,
@@ -1218,7 +1237,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       // immediately, instead of silently operating as an unauthenticated
       // guest until some later authenticated action (e.g. `call.initiate`) is
       // rejected.
-      socket.on('session.invalid', async ({ sessionId: staleSessionId } = {}) => {
+      signaling.on(SERVER_EVENTS.SESSION_INVALID, async ({ sessionId: staleSessionId } = {}) => {
         logWarn('[CallFlow] Session invalidated by server; re-minting session', {
           sessionId: staleSessionId,
         });
@@ -1296,7 +1315,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         const sessionId = await createOrGetSession();
 
         const response = await fetch(
-          `${trimmedUrl}/calls/${encodeURIComponent(callId)}` +
+          `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}` +
             `?sessionId=${encodeURIComponent(sessionId)}`,
         );
 
@@ -1581,7 +1600,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         }
 
         updateStatus(`Calling ${trimmedCalleeId}…`);
-        const ack = await emitWithAck(socket, 'call.initiate', {
+        const ack = await signalingRef.current.request(CLIENT_EVENTS.CALL_INITIATE, {
           version: SIGNALING_VERSION,
           calleeId: trimmedCalleeId,
         });
@@ -1623,7 +1642,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await emitWithAck(socketRef.current, 'call.cancel', {
+        await signalingRef.current.request(CLIENT_EVENTS.CALL_CANCEL, {
           version: SIGNALING_VERSION,
           callId,
         });
@@ -1725,7 +1744,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     async callId => {
       const trimmedUrl = (signalingUrl ?? '').trim();
       const response = await authedFetchRef.current?.(sessionId => ({
-        url: `${trimmedUrl}/calls/${encodeURIComponent(callId)}/accept`,
+        url: `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}/accept`,
         options: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1760,7 +1779,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       if (socket) {
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
-            const ack = await emitWithAck(socket, 'call.accept', {
+            const ack = await signalingRef.current.request(CLIENT_EVENTS.CALL_ACCEPT, {
               version: SIGNALING_VERSION,
               callId,
             });
@@ -2008,7 +2027,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
       if (socketRef.current?.connected) {
         try {
-          await emitWithAck(socketRef.current, 'call.decline', {
+          await signalingRef.current.request(CLIENT_EVENTS.CALL_DECLINE, {
             version: SIGNALING_VERSION,
             callId,
           });
@@ -2021,7 +2040,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       try {
         const trimmedUrl = (signalingUrl ?? '').trim();
         const response = await authedFetchRef.current?.(sessionId => ({
-          url: `${trimmedUrl}/calls/${encodeURIComponent(callId)}/decline`,
+          url: `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}/decline`,
           options: {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2227,7 +2246,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await emitWithAck(socketRef.current, 'call.end', {
+        await signalingRef.current.request(CLIENT_EVENTS.CALL_END, {
           version: SIGNALING_VERSION,
           callId,
         });
@@ -2367,7 +2386,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // rejected/timed-out ack is logged and otherwise ignored.
   useEffect(() => {
     if (!socketRef.current?.connected || !activeCallIdRef.current) return;
-    emitWithAck(socketRef.current, 'call.media-state', {
+    signalingRef.current.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
       version: SIGNALING_VERSION,
       callId: activeCallIdRef.current,
       mediaState: { isScreenSharing },

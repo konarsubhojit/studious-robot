@@ -1,5 +1,11 @@
-/** Server-side signaling protocol version required for call.* and rtc.* events. */
-export const SIGNALING_VERSION = 1;
+import { SIGNALING_VERSION as SHARED_SIGNALING_VERSION } from '../../shared';
+
+/**
+ * Server-side signaling protocol version required for call.* and rtc.* events.
+ * Re-exported from `@wetalk/shared` so the client and the server can never
+ * disagree about the protocol version.
+ */
+export const SIGNALING_VERSION = SHARED_SIGNALING_VERSION;
 
 /**
  * Wrap a socket.io emit-with-ack in a Promise.

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
+import { API_ROUTES } from '../../../shared';
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
@@ -67,7 +68,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         const trimmedUrl = signalingUrl.trim();
         const trimmedUserId = userId.trim();
         const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}/calls?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
+          url: `${trimmedUrl}${API_ROUTES.CALLS}?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
         }));
         if (!response?.ok) return;
         const data = await response.json();

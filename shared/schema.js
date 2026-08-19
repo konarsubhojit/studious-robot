@@ -180,8 +180,18 @@ function object(shape, { passthrough = false } = {}) {
   });
 }
 
-/** Object with arbitrary string keys and uniformly typed values. @param {Schema} valueSchema */
-function record(valueSchema) {
+/**
+ * A non-null, non-array object whose internal shape belongs to another layer
+ * (SDP descriptions, ICE candidates, …). The value is returned by reference so
+ * host objects such as `RTCSessionDescription` survive validation intact.
+ */
+function opaque() {
+  return createSchema((value, path) =>
+    isPlainObject(value) ? ok(value) : fail(path, 'expected an object')
+  );
+}
+
+/** Object with arbitrary string keys and uniformly typed values. @param {Schema} valueSchema */function record(valueSchema) {
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
     const parsed = {};
@@ -213,6 +223,7 @@ const s = {
   literal,
   number,
   object,
+  opaque,
   record,
   string,
   union,

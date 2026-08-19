@@ -20,11 +20,18 @@ const { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } = require('./events');
 const MAX_MESSAGE_BODY_LENGTH = 4000;
 
 const versionField = s.literal(SIGNALING_VERSION);
+/**
+ * Server → client payloads treat `version` as advisory metadata: the client
+ * does not branch on it, so a payload that omits it is still usable. Requests
+ * in the other direction keep it mandatory (the server rejects mismatches with
+ * `unsupported_version`).
+ */
+const inboundVersionField = versionField.optional();
 const idField = s.id();
 const optionalId = s.id().optional().nullable();
 
 /** SDP / ICE / media-state blobs: shape is owned by WebRTC, keep them intact. */
-const opaqueObject = s.object({}, { passthrough: true });
+const opaqueObject = s.opaque();
 
 /**
  * A persisted call row as broadcast to participants.
@@ -38,9 +45,9 @@ const opaqueObject = s.object({}, { passthrough: true });
 const callRecord = s.object(
   {
     callId: idField,
-    callerId: idField,
-    calleeId: idField,
-    status: s.string({ min: 1 }),
+    callerId: s.id().optional(),
+    calleeId: s.id().optional(),
+    status: s.string({ min: 1 }).optional(),
   },
   { passthrough: true }
 );
@@ -58,7 +65,7 @@ const callRecord = s.object(
 const messageRecord = s.object(
   {
     messageId: idField,
-    conversationId: idField,
+    conversationId: s.id().optional(),
     senderId: idField,
     recipientId: idField,
     body: s.string(),
@@ -107,7 +114,7 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.CALL_MEDIA_STATE]: s.object({
     version: versionField,
     callId: idField,
-    mediaState: s.object({ isScreenSharing: s.boolean().optional() }, { passthrough: true }),
+    mediaState: opaqueObject,
   }),
 
   [CLIENT_EVENTS.MESSAGE_SEND]: s.object({
@@ -122,24 +129,30 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   }),
 });
 
-/** Server → client payloads. */
+/**
+ * Server → client payloads.
+ *
+ * These pin the fields the client actually dereferences and leave the rest
+ * optional, so a payload the app can safely render is never dropped just
+ * because the server started (or stopped) sending an unrelated field.
+ */
 const SERVER_EVENT_SCHEMAS = Object.freeze({
   [SERVER_EVENTS.PEER_JOINED]: s.object({ id: idField }),
   [SERVER_EVENTS.PEER_LEFT]: s.object({ id: idField }),
   [SERVER_EVENTS.ROOM_FULL]: s.object({ roomId: idField }),
 
   [SERVER_EVENTS.CALL_INCOMING]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: s.id().optional(),
     call: callRecord,
   }),
   [SERVER_EVENTS.CALL_RINGING]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: s.id().optional(),
     call: callRecord,
   }),
   [SERVER_EVENTS.CALL_STATE_CHANGED]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: optionalId,
     previousStatus: s.string().nullable().optional(),
     status: s.string({ min: 1 }),
@@ -149,50 +162,50 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
   }),
 
   [SERVER_EVENTS.RTC_OFFER]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: idField,
     fromUserId: s.id().optional(),
     sdp: opaqueObject,
   }),
   [SERVER_EVENTS.RTC_ANSWER]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: idField,
     fromUserId: s.id().optional(),
     sdp: opaqueObject,
   }),
   [SERVER_EVENTS.RTC_CANDIDATE]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: idField,
     fromUserId: s.id().optional(),
     candidate: opaqueObject,
   }),
   [SERVER_EVENTS.CALL_MEDIA_STATE]: s.object({
-    version: versionField,
+    version: inboundVersionField,
     callId: idField,
     fromUserId: s.id().optional(),
-    mediaState: s.object({ isScreenSharing: s.boolean().optional() }, { passthrough: true }),
+    mediaState: opaqueObject,
   }),
 
   [SERVER_EVENTS.MESSAGE_RECEIVED]: s.object({
-    version: versionField,
-    conversationId: idField,
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
     message: messageRecord,
   }),
   [SERVER_EVENTS.MESSAGE_DELIVERED]: s.object({
-    version: versionField,
-    conversationId: idField,
-    messageId: idField,
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
+    messageId: s.id().optional(),
     message: messageRecord,
   }),
   [SERVER_EVENTS.MESSAGE_READ]: s.object({
-    version: versionField,
-    conversationId: idField,
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
     readerId: idField,
     readAt: s.string({ min: 1 }),
   }),
   [SERVER_EVENTS.MESSAGE_TYPING]: s.object({
-    version: versionField,
-    conversationId: idField,
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
     senderId: idField,
     isTyping: s.boolean(),
   }),
@@ -205,7 +218,7 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
   [SERVER_EVENTS.SIGNALING_ERROR]: s.object(
     {
       ok: s.boolean(),
-      version: versionField,
+      version: inboundVersionField,
       event: s.string({ min: 1 }),
       error: s.object({ code: s.string({ min: 1 }), message: s.string() }),
     },

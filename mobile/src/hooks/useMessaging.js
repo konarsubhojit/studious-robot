@@ -5,7 +5,9 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
-import { emitWithAck, SIGNALING_VERSION } from '../socketProtocol';
+import { API_ROUTES } from '../../../shared';
+import { CLIENT_EVENTS } from '../signalingClient';
+import { SIGNALING_VERSION } from '../socketProtocol';
 
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
@@ -38,6 +40,7 @@ let pendingMessageIdCounter = 0;
  *   authedFetchRef: { current: Function | null },
  *   sessionIdRef: { current: string | null },
  *   signalingUrl: string,
+ *   signalingRef: { current: import('../signalingClient').SignalingClient | null },
  *   socketRef: { current: import('socket.io-client').Socket | null },
  *   userId: string,
  *   updateStatus: (message: string, severity?: string) => void,
@@ -46,6 +49,7 @@ let pendingMessageIdCounter = 0;
 export default function useMessaging({
   authedFetchRef,
   sessionIdRef,
+  signalingRef,
   signalingUrl,
   socketRef,
   userId,
@@ -101,7 +105,7 @@ export default function useMessaging({
     try {
       const trimmedUrl = signalingUrl.trim();
       const response = await authedFetchRef.current?.(sid => ({
-        url: `${trimmedUrl}/conversations?sessionId=${encodeURIComponent(sid)}`,
+        url: `${trimmedUrl}${API_ROUTES.CONVERSATIONS}?sessionId=${encodeURIComponent(sid)}`,
       }));
       if (!response?.ok) return;
       const data = await response.json();
@@ -137,7 +141,7 @@ export default function useMessaging({
             peerId: trimmedPeerId,
           });
           if (before) params.set('before', before);
-          return { url: `${trimmedUrl}/messages?${params.toString()}` };
+          return { url: `${trimmedUrl}${API_ROUTES.MESSAGES}?${params.toString()}` };
         });
         if (!response?.ok) return [];
         const data = await response.json();
@@ -177,7 +181,7 @@ export default function useMessaging({
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}/messages/read`,
+          url: `${trimmedUrl}${API_ROUTES.MESSAGES_READ}`,
           options: {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -239,13 +243,13 @@ export default function useMessaging({
         updateStatus('Message failed to send', 'error');
       };
 
-      if (!socketRef.current?.connected) {
+      if (!socketRef.current?.connected || !signalingRef?.current) {
         markFailed();
         return;
       }
 
       try {
-        const ack = await emitWithAck(socketRef.current, 'message.send', {
+        const ack = await signalingRef.current.request(CLIENT_EVENTS.MESSAGE_SEND, {
           version: SIGNALING_VERSION,
           recipientId: trimmedPeerId,
           body: trimmedBody,
@@ -262,7 +266,7 @@ export default function useMessaging({
         markFailed();
       }
     },
-    [socketRef, userId, updateStatus],
+    [signalingRef, socketRef, userId, updateStatus],
   );
 
   /**
@@ -283,8 +287,8 @@ export default function useMessaging({
     (peerId, isTyping) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
-      const socket = socketRef.current;
-      if (!socket?.connected) return;
+      const signaling = signalingRef?.current;
+      if (!signaling || !socketRef.current?.connected) return;
 
       const now = Date.now();
       if (isTyping) {
@@ -293,13 +297,13 @@ export default function useMessaging({
       }
       typingSentAtRef.current[trimmedPeerId] = now;
 
-      socket.emit('message.typing', {
+      signaling.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
         version: SIGNALING_VERSION,
         recipientId: trimmedPeerId,
         isTyping: Boolean(isTyping),
       });
     },
-    [socketRef],
+    [signalingRef, socketRef],
   );
 
   /** Sum of unreadCount across every conversation; drives the tab badge. */
