@@ -168,11 +168,13 @@ describe('SearchScreen', () => {
     expect(onOpenMessage).toHaveBeenCalledWith({ peerId: 'user-bob', messageId: 'msg-1' });
   });
 
-  test('records a completed search and replays a recent one', async () => {
+  test('replays a recent search and only records a term once a result is opened', async () => {
     const onRecordRecentSearch = jest.fn();
     const tree = render({
       recentSearches: ['carol'],
       onRecordRecentSearch,
+      onOpenConversation: jest.fn(),
+      conversations: [{ conversationId: 'conv-1', peerId: 'user-carol' }],
       onSearchContacts: jest.fn().mockResolvedValue([]),
       onSearchMessages: jest.fn().mockResolvedValue([]),
     });
@@ -182,6 +184,11 @@ describe('SearchScreen', () => {
     pressByTestId(tree, 'search-recent-row');
     await advanceDebounce();
 
+    // Searching alone is not intent: nothing is remembered until a result is
+    // opened, so prefixes typed on the way never pollute the history.
+    expect(onRecordRecentSearch).not.toHaveBeenCalled();
+
+    pressByTestId(tree, 'search-conversation-row');
     expect(onRecordRecentSearch).toHaveBeenCalledWith('carol');
   });
 });

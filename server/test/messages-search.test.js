@@ -276,3 +276,61 @@ test('GET /messages/search reports an unavailable store', async (t) => {
   const res = await getJson(url, searchPath('anything'), session);
   assert.equal(res.status, 503);
 });
+
+test('GET /messages/search drops a result the caller did not take part in', async (t) => {
+  // A store that (wrongly) hands back somebody else's message: the route's
+  // defence-in-depth filter must remove it without failing the whole page.
+  const leakyStore = {
+    type: 'memory',
+    async ready() {},
+    async saveMessage(message) {
+      return message;
+    },
+    async listMessages() {
+      return [];
+    },
+    async searchMessages({ userId }) {
+      return [
+        {
+          messageId: 'm-own',
+          conversationId: 'c-own',
+          senderId: userId,
+          recipientId: 'bob',
+          body: 'note to bob',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          messageId: 'm-foreign',
+          conversationId: 'c-foreign',
+          senderId: 'carol',
+          recipientId: 'dave',
+          body: 'note between strangers',
+          createdAt: new Date().toISOString(),
+        },
+      ];
+    },
+    async markDelivered() {
+      return null;
+    },
+    async listConversations() {
+      return [];
+    },
+    async markRead() {
+      return 0;
+    },
+    async deleteMessage() {
+      return null;
+    },
+    async close() {},
+  };
+  const { url, teardown } = await startServer({ messageStore: leakyStore });
+  t.after(teardown);
+
+  const session = await createSession(url, 'leaky-alice');
+  const res = await getJson(url, searchPath('note'), session);
+  assert.equal(res.status, 200);
+  assert.deepEqual(
+    res.body.results.map((message) => message.messageId),
+    ['m-own']
+  );
+});

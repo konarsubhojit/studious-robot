@@ -136,7 +136,8 @@ function formatTimestamp(isoString) {
  * @param {() => void} [props.onBack]
  * @param {boolean} [props.isServerUnreachable] - Shows the "local results only" note.
  * @param {string[]} [props.recentSearches]
- * @param {(term: string) => void} [props.onRecordRecentSearch]
+ * @param {(term: string) => void} [props.onRecordRecentSearch] - Called with the
+ *   term behind a result the user opened, so history reflects real searches.
  * @param {() => void} [props.onClearRecentSearches]
  */
 export default function SearchScreen({
@@ -196,7 +197,6 @@ export default function SearchScreen({
       setMessages(Array.isArray(foundMessages) ? foundMessages : []);
       setIsSearching(false);
       setHasSearched(true);
-      onRecordRecentSearch?.(term);
     }, SEARCH_DEBOUNCE_MS);
 
     return () => {
@@ -204,7 +204,14 @@ export default function SearchScreen({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [term, onSearchContacts, onSearchMessages, onRecordRecentSearch]);
+  }, [term, onSearchContacts, onSearchMessages]);
+
+  // A term is only worth remembering once the user acts on one of its results:
+  // recording every debounced query instead would fill the (short) history with
+  // the prefixes typed on the way to the real search.
+  const rememberTerm = useCallback(() => {
+    if (term) onRecordRecentSearch?.(term);
+  }, [onRecordRecentSearch, term]);
 
   const matchedConversations = useMemo(() => {
     if (!term) return [];
@@ -249,7 +256,10 @@ export default function SearchScreen({
       if (section.key === 'contacts') {
         return (
           <Pressable
-            onPress={() => onOpenProfile?.(item.userId)}
+            onPress={() => {
+              rememberTerm();
+              onOpenProfile?.(item.userId);
+            }}
             accessibilityRole="button"
             accessibilityLabel={`Open ${item.userId} profile`}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -266,7 +276,10 @@ export default function SearchScreen({
         const preview = item.lastActivity?.body ?? item.lastMessage?.body ?? '';
         return (
           <Pressable
-            onPress={() => onOpenConversation?.(item.peerId)}
+            onPress={() => {
+              rememberTerm();
+              onOpenConversation?.(item.peerId);
+            }}
             accessibilityRole="button"
             accessibilityLabel={`Open conversation with ${item.peerId}`}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -284,7 +297,10 @@ export default function SearchScreen({
       if (section.key === 'messages') {
         return (
           <Pressable
-            onPress={() => onOpenMessage?.({ peerId: item.peerId, messageId: item.messageId })}
+            onPress={() => {
+              rememberTerm();
+              onOpenMessage?.({ peerId: item.peerId, messageId: item.messageId });
+            }}
             accessibilityRole="button"
             accessibilityLabel={`Open message from ${item.peerId}`}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -306,7 +322,10 @@ export default function SearchScreen({
       const peerId = callPeerOf(item, currentUserId);
       return (
         <Pressable
-          onPress={() => onOpenProfile?.(peerId)}
+          onPress={() => {
+            rememberTerm();
+            onOpenProfile?.(peerId);
+          }}
           accessibilityRole="button"
           accessibilityLabel={`Open ${peerId} profile`}
           style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -319,7 +338,7 @@ export default function SearchScreen({
         </Pressable>
       );
     },
-    [currentUserId, onOpenConversation, onOpenMessage, onOpenProfile, styles, term],
+    [currentUserId, onOpenConversation, onOpenMessage, onOpenProfile, rememberTerm, styles, term],
   );
 
   const keyExtractor = useCallback(

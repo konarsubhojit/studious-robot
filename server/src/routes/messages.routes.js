@@ -158,6 +158,8 @@ function createMessagesRouter({ state, io }) {
    * conversation at that message.
    *
    * Response 200: { query, results: Array<message & { peerId }>, limit }
+   *   where `limit` is the page size that was applied, so a client can tell a
+   *   full page (there may be more) from a partial one (there is not).
    */
   router.get(API_ROUTES.MESSAGES_SEARCH, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
@@ -206,13 +208,17 @@ function createMessagesRouter({ state, io }) {
     }
 
     // Defence in depth: never return a message the caller did not take part in,
-    // whatever the store hands back.
+    // whatever the store hands back. Unlike `GET /messages`, which addresses a
+    // single conversation and can fail the whole request, a search spans every
+    // conversation the caller has — so an unexpected document is dropped from
+    // the page (and logged) rather than taking search down for everything else.
     const participantMatches = matches.filter(
       (message) => message.senderId === session.userId || message.recipientId === session.userId
     );
     if (participantMatches.length !== matches.length) {
-      res.status(403).json({ error: 'not a participant in this conversation' });
-      return;
+      console.error(
+        `[messages] search dropped ${matches.length - participantMatches.length} non-participant result(s)`
+      );
     }
 
     const results = participantMatches
@@ -226,7 +232,7 @@ function createMessagesRouter({ state, io }) {
           !isBlocked(state.blocks, message.peerId, session.userId)
       );
 
-    res.status(200).json({ query, results, limit: results.length });
+    res.status(200).json({ query, results, limit });
   });
 
   /**
