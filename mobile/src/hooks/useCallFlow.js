@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { Vibration } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -34,6 +33,7 @@ import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
+import { initHaptics, triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions, getMissingCallPermissions } from '../permissions';
@@ -71,9 +71,6 @@ import {
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
-
-const HAPTIC_TAP_MS = 15;
-const HAPTIC_CONNECT_MS = 30;
 
 /**
  * How long to wait for the signaling socket to connect before answering a call
@@ -168,14 +165,6 @@ function reportOwnCallState(socket, activeCallIds) {
       });
     },
   );
-}
-
-function haptic(durationMs) {
-  try {
-    Vibration.vibrate(durationMs);
-  } catch {
-    // best-effort
-  }
 }
 
 /**
@@ -463,9 +452,13 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     connectionQualityRef.current = connectionQuality;
   }, [connectionQuality]);
 
+  // Track the OS "reduce motion" accessibility setting so call haptics stay
+  // silent for users who asked for reduced motion.
+  useEffect(() => initHaptics(), []);
+
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
-    haptic(HAPTIC_CONNECT_MS);
+    triggerHaptic('connect');
     callConnectedAtRef.current = Date.now();
     if (activeCallIdRef.current) {
       Telemetry.trackCallConnected(activeCallIdRef.current);
@@ -671,7 +664,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
     displayedIncomingCallIdsRef.current.add(call.callId);
 
-    haptic(400);
+    triggerHaptic('incomingRing');
 
     logInfo('[CallFlow] Requesting incoming-call UI', {
       callId: call.callId,
@@ -717,6 +710,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       // are kept in sync with state throughout the call lifecycle.
       const callRecord = activeCallRef.current ?? incomingCallRef.current;
       const isCaller = isCallerRef.current;
+
+      triggerHaptic('end');
 
       // Dismiss any OS-level call UI (CallKeep) shown for this call.
       if (callRecord?.callId) {
@@ -1909,6 +1904,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       return;
     }
 
+    triggerHaptic('answer');
     logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
     acceptInFlightCallIdRef.current = call.callId;
     reportAnswerStage(call.callId, 'answer_attempted');
@@ -2244,7 +2240,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       updateStatus('Start preview to control audio', 'error');
       return;
     }
-    haptic(HAPTIC_TAP_MS);
+    triggerHaptic('tap');
     setIsMuted(nextMuted);
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
   }, [isMuted, updateStatus]);

@@ -2,6 +2,16 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallScreen from '../../src/components/CallScreen';
 
+jest.mock('react-native-reanimated', () => {
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: { View },
+    FadeIn: { duration: () => 'fade-in' },
+    FadeOut: { duration: () => 'fade-out' },
+  };
+});
+
 jest.mock(
   '../../src/components/CallTopBar',
   () => props => require('react').createElement('CallTopBar', props),
