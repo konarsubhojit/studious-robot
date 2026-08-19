@@ -10,6 +10,8 @@ jest.mock('@react-navigation/native', () => ({
 
 import {
   closeChatConversation,
+  openPeerProfile,
+  openSearch,
   flushPendingNavigation,
   navigationRef,
   openChatConversation,
@@ -32,6 +34,36 @@ describe('navigationRef', () => {
       screen: CHAT_SCREENS.CONVERSATION,
       params: { peerId: 'user-bob', messageId: null },
     });
+  });
+
+  test('openChatConversation carries the message to deep-link to', () => {
+    navigationRef.isReady.mockReturnValue(true);
+    openChatConversation('user-bob', { messageId: 'msg-1' });
+    expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
+      screen: CHAT_SCREENS.CONVERSATION,
+      params: { peerId: 'user-bob', messageId: 'msg-1' },
+    });
+  });
+
+  test('openSearch navigates to the search screen in the Chats stack', () => {
+    navigationRef.isReady.mockReturnValue(true);
+    openSearch();
+    expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
+      screen: CHAT_SCREENS.SEARCH,
+    });
+  });
+
+  test('openPeerProfile navigates to the profile screen, ignoring an empty id', () => {
+    navigationRef.isReady.mockReturnValue(true);
+    openPeerProfile('user-bob');
+    expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
+      screen: CHAT_SCREENS.PROFILE,
+      params: { peerId: 'user-bob' },
+    });
+
+    navigationRef.navigate.mockClear();
+    openPeerProfile('');
+    expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
   test('ignores an empty peer id', () => {

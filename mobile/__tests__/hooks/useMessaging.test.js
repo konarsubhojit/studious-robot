@@ -847,3 +847,53 @@ describe('useMessaging push-notification coordination', () => {
     expect(dismissMessageNotification).toHaveBeenCalledWith('c1');
   });
 });
+
+describe('useMessaging searchMessages', () => {
+  test('queries the search endpoint and returns the results', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [{ messageId: 'm1', peerId: 'bob', body: 'hello bob' }] }),
+    });
+
+    let results;
+    await act(async () => {
+      results = await resultRef.current.searchMessages('bob', { limit: 5 });
+    });
+
+    expect(results).toEqual([{ messageId: 'm1', peerId: 'bob', body: 'hello bob' }]);
+    const request = params.authedFetchRef.current.mock.calls[0][0]('sess-1');
+    expect(request.url).toContain('/messages/search?');
+    expect(request.url).toContain('q=bob');
+    expect(request.url).toContain('limit=5');
+  });
+
+  test('passes the abort signal through so a stale query can be cancelled', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({}) });
+    const controller = new AbortController();
+
+    await act(async () => {
+      await resultRef.current.searchMessages('bob', { signal: controller.signal });
+    });
+
+    const request = params.authedFetchRef.current.mock.calls[0][0]('sess-1');
+    expect(request.options).toEqual({ signal: controller.signal });
+  });
+
+  test('returns nothing for a blank term, without calling the server', async () => {
+    const { resultRef, params } = setup();
+    await act(async () => {
+      await expect(resultRef.current.searchMessages('   ')).resolves.toEqual([]);
+    });
+    expect(params.authedFetchRef.current).not.toHaveBeenCalled();
+  });
+
+  test('degrades to no results when the search request fails', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockRejectedValue(new Error('offline'));
+    await act(async () => {
+      await expect(resultRef.current.searchMessages('bob')).resolves.toEqual([]);
+    });
+  });
+});

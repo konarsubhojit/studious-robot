@@ -20,6 +20,9 @@ export const SEARCH_DEBOUNCE_MS = 250;
 /** Maximum rows rendered per section, so one category can't bury the others. */
 const MAX_ROWS_PER_SECTION = 8;
 
+/** Contacts, conversations, messages and calls. */
+const SECTION_COUNT = 4;
+
 /**
  * Index of `term` inside `text`, case-insensitively, or -1.
  *
@@ -415,6 +418,9 @@ export default function SearchScreen({
           </Text>
         )}
         contentContainerStyle={styles.content}
+        // Every section is capped, so the whole list is small: render it in one
+        // pass rather than letting virtualisation hide the later sections.
+        initialNumToRender={MAX_ROWS_PER_SECTION * SECTION_COUNT}
         keyboardShouldPersistTaps="handled"
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={
