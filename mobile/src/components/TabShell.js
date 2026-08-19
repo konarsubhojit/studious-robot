@@ -52,9 +52,12 @@ export default function TabShell() {
       messages={chat.messagesByPeer[peerId] ?? []}
       highlightMessageId={messageId ?? null}
       onOpenProfile={() => openPeerProfile(peerId)}
-      onSendMessage={body => chat.sendMessage(peerId, body)}
+      onSendMessage={(body, options) => chat.sendMessage(peerId, body, options)}
       onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
       onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
+      onReactToMessage={(message, emoji, action) =>
+        chat.reactToMessage(peerId, message.messageId, emoji, action)
+      }
       isOffline={chat.isChatOffline}
       onLoadOlder={chat.handleLoadOlderMessages}
       onBack={closeChatConversation}

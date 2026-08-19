@@ -9,6 +9,7 @@ const { createBlocksRouter } = require('./blocks.routes');
 const { createAuditLogRouter } = require('./auditLog.routes');
 const { createCallsRouter } = require('./calls.routes');
 const { createMessagesRouter } = require('./messages.routes');
+const { createAttachmentsRouter } = require('./attachments.routes');
 const { createTurnCredentialsRouter } = require('./turnCredentials.routes');
 
 /**
@@ -42,6 +43,7 @@ function mountRoutes(app, ctx) {
   app.use(createAuditLogRouter({ state }));
   app.use(createCallsRouter({ state, io, ringingTimeoutMs }));
   app.use(createMessagesRouter({ state, io }));
+  app.use(createAttachmentsRouter({ state }));
   app.use(createTurnCredentialsRouter({ state, fetchImpl: turnFetch, env: turnEnv }));
 }
 

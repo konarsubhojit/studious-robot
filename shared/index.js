@@ -10,6 +10,7 @@ const { s, isPlainObject } = require('./schema');
 const events = require('./signaling/events');
 const schemas = require('./signaling/schemas');
 const api = require('./api/routes');
+const messages = require('./messages');
 
 module.exports = {
   s,
@@ -17,4 +18,5 @@ module.exports = {
   ...events,
   ...schemas,
   ...api,
+  ...messages,
 };

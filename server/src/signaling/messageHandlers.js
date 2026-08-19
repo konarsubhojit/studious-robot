@@ -24,8 +24,20 @@ const {
   CLIENT_EVENTS,
   SERVER_EVENTS,
   ERROR_CODES,
+  DEFAULT_MESSAGE_TYPE,
+  MAX_REACTION_LENGTH,
+  MAX_VOICE_DURATION_MS,
+  MESSAGE_TYPES,
+  describeMessagePreview,
+  isAttachmentMessageType,
+  isSupportedMessageType,
   parseEventPayload,
 } = require('../../../shared');
+const {
+  isManagedAttachmentUrl,
+  loadR2Config,
+  validateAttachmentRequest,
+} = require('../attachments');
 
 /**
  * Text-chat signaling handlers.
@@ -40,15 +52,17 @@ const {
  * Validate a message body, returning the trimmed text or an error code.
  *
  * @param {unknown} value
+ * @param {{ allowEmpty?: boolean }} [options] - An attachment message may carry
+ *   an empty body: the caption is optional, the attachment is the content.
  * @returns {{ body: string } | { error: string, message: string }}
  */
-function validateBody(value) {
+function validateBody(value, { allowEmpty = false } = {}) {
   if (typeof value !== 'string') {
     return { error: 'bad_request', message: 'body must be a string' };
   }
 
   const trimmed = value.trim();
-  if (trimmed.length === 0) {
+  if (trimmed.length === 0 && !allowEmpty) {
     return { error: 'bad_request', message: 'body must not be empty' };
   }
   if (trimmed.length > MAX_MESSAGE_BODY_LENGTH) {
@@ -58,6 +72,87 @@ function validateBody(value) {
     };
   }
   return { body: trimmed };
+}
+
+/**
+ * Validate the attachment of a rich message.
+ *
+ * The MIME allowlist and the size cap are re-checked here, not just at
+ * presign time: `POST /attachments/presign` and `message.send` are separate
+ * requests, and only the second one decides what the recipient is shown.
+ * The URL must be one this deployment handed out — an arbitrary URL would make
+ * every recipient fetch a host of the sender's choosing.
+ *
+ * @param {string} type
+ * @param {unknown} attachment
+ * @returns {{ attachment: object } | { error: string, message: string }}
+ */
+function validateAttachment(type, attachment) {
+  if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+    return { error: 'bad_request', message: `${type} messages require an attachment` };
+  }
+
+  const config = loadR2Config();
+  if (!config) {
+    return { error: 'bad_request', message: 'attachment uploads are not enabled' };
+  }
+  if (!isManagedAttachmentUrl(config, attachment.url)) {
+    return { error: 'bad_request', message: 'attachment.url is not a managed upload' };
+  }
+
+  const validated = validateAttachmentRequest({
+    type,
+    mimeType: attachment.mimeType,
+    // A client that omits the size is treated as claiming the cap, so the
+    // check below stays a check rather than a formality.
+    sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : 1,
+  });
+  if (validated.error) {
+    return { error: 'bad_request', message: `attachment: ${validated.error}` };
+  }
+
+  const durationMs = attachment.durationMs;
+  if (durationMs !== undefined && durationMs !== null) {
+    if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > MAX_VOICE_DURATION_MS) {
+      return {
+        error: 'bad_request',
+        message: `attachment.durationMs must be between 0 and ${MAX_VOICE_DURATION_MS}`,
+      };
+    }
+  }
+
+  return {
+    attachment: {
+      url: String(attachment.url),
+      mimeType: validated.mimeType,
+      sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : null,
+      name: typeof attachment.name === 'string' ? attachment.name.slice(0, 255) : null,
+      width: Number.isInteger(attachment.width) ? attachment.width : null,
+      height: Number.isInteger(attachment.height) ? attachment.height : null,
+      durationMs: Number.isInteger(durationMs) ? durationMs : null,
+      thumbnailUrl: isManagedAttachmentUrl(config, attachment.thumbnailUrl)
+        ? attachment.thumbnailUrl
+        : null,
+    },
+  };
+}
+
+/**
+ * Validate the type of an outbound message.
+ *
+ * `system` is server-owned, so a client may not claim it; an unknown type is
+ * rejected outright (a *stored* message with an unknown type is a different
+ * matter — readers render those as a neutral placeholder).
+ *
+ * @param {unknown} value
+ * @returns {{ type: string } | { error: string, message: string }}
+ */
+function validateMessageType(value) {
+  if (value === undefined || value === null) return { type: DEFAULT_MESSAGE_TYPE };
+  if (!isSupportedMessageType(value) || value === MESSAGE_TYPES.SYSTEM) {
+    return { error: 'bad_request', message: 'unsupported message type' };
+  }
+  return { type: /** @type {string} */ (value) };
 }
 
 /**
@@ -85,7 +180,9 @@ function deliverMessage(io, state, message) {
         messageId: message.messageId,
         conversationId: message.conversationId,
         senderId: message.senderId,
-        preview: message.body,
+        // "📷 Photo" / "🎤 Voice message" rather than an empty preview for a
+        // message whose content is not text.
+        preview: describeMessagePreview(message),
       })
       .then((outcome) => {
         if (!outcome?.deadToken) return;
@@ -121,6 +218,25 @@ const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 function parseClientMessageId(value) {
   const normalised = normaliseId(value);
   return normalised && CLIENT_MESSAGE_ID_PATTERN.test(normalised) ? normalised : null;
+}
+
+/**
+ * Reactions are stored as object keys (`reactions[emoji]`), so the accepted
+ * alphabet excludes the characters Mongo reserves in field names (`.`, `$`)
+ * and anything that is not a symbol/emoji — a reaction is not a second, tiny
+ * message body.
+ *
+ * @param {unknown} value
+ * @returns {string|null} the emoji, or `null` when it is unusable.
+ */
+function validateReactionEmoji(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_REACTION_LENGTH) return null;
+  // Emoji, their modifiers and the joiners that combine them — nothing else.
+  return /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200d\ufe0f]+$/u.test(trimmed)
+    ? trimmed
+    : null;
 }
 
 function registerMessageHandlers(socket, { io, state }) {
@@ -164,7 +280,14 @@ function registerMessageHandlers(socket, { io, state }) {
       return;
     }
 
-    const validated = validateBody(parsed.body);
+    const typed = validateMessageType(parsed.type);
+    if (typed.error) {
+      acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, typed.error, typed.message, state);
+      return;
+    }
+    const carriesAttachment = isAttachmentMessageType(typed.type);
+
+    const validated = validateBody(parsed.body, { allowEmpty: carriesAttachment });
     if (validated.error) {
       acknowledgeError(
         socket,
@@ -175,6 +298,49 @@ function registerMessageHandlers(socket, { io, state }) {
         state
       );
       return;
+    }
+
+    let attachment = null;
+    if (carriesAttachment) {
+      const validatedAttachment = validateAttachment(typed.type, parsed.attachment);
+      if (validatedAttachment.error) {
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.MESSAGE_SEND,
+          validatedAttachment.error,
+          validatedAttachment.message,
+          state
+        );
+        return;
+      }
+      attachment = validatedAttachment.attachment;
+    } else if (parsed.attachment) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.BAD_REQUEST,
+        `${typed.type} messages cannot carry an attachment`,
+        state
+      );
+      return;
+    }
+
+    let replyTo = null;
+    if (parsed.replyTo !== undefined && parsed.replyTo !== null) {
+      replyTo = parseClientMessageId(parsed.replyTo);
+      if (!replyTo) {
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.MESSAGE_SEND,
+          ERROR_CODES.BAD_REQUEST,
+          'replyTo must be url-safe',
+          state
+        );
+        return;
+      }
     }
 
     // Blocklist: reject when either party has blocked the other, matching the
@@ -225,6 +391,12 @@ function registerMessageHandlers(socket, { io, state }) {
         senderId,
         recipientId,
         body: validated.body,
+        type: typed.type,
+        attachment,
+        // The quoted message is *not* required to still exist: a reply
+        // outlives the deletion of its parent, which the client renders as
+        // "Message deleted" rather than a dangling reference.
+        replyTo,
         // Client-generated id, when the sender supplies one: the store upserts
         // on `{ conversationId, messageId }`, so a send replayed from the
         // sender's durable outbox is stored exactly once.
@@ -396,6 +568,9 @@ function registerMessageHandlers(socket, { io, state }) {
       conversationId,
       messageId,
       deletedBy: requesterId,
+      // The tombstone the store left behind: the content is gone, the row
+      // remains so a reply quoting it still resolves on both clients.
+      message: deleted,
     };
     // Both sides are told, so the message disappears from the peer's open
     // conversation and from the sender's other devices.
@@ -403,6 +578,131 @@ function registerMessageHandlers(socket, { io, state }) {
     emitToUserSockets(io, requesterId, SERVER_EVENTS.MESSAGE_DELETED, envelope);
 
     acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, { messageId, conversationId });
+  });
+
+  /**
+   * `message.react` — add or remove one emoji reaction on a message in the
+   * conversation between the caller and `peerId`.
+   *
+   * The change is persisted and then fanned out to *both* participants'
+   * `user:<userId>` rooms, so every device of every participant converges on
+   * the same reaction set — including the reacting user's other devices, which
+   * is what makes an optimistic local update safe to reconcile.
+   *
+   * Idempotent: re-adding a reaction the caller already left (or removing one
+   * they never left) is a no-op that still acknowledges successfully, so a
+   * retry after a flaky connection cannot toggle the reaction off.
+   */
+  socket.on(CLIENT_EVENTS.MESSAGE_REACT, async (payload = {}, ack) => {
+    if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_REACT)) {
+      return;
+    }
+    if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.MESSAGE_REACT)) {
+      return;
+    }
+
+    const requesterId = socket.data.identity.userId;
+    const rateCheck = state.messageSendRateLimiter.check(requesterId);
+    if (!rateCheck.allowed) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_REACT,
+        ERROR_CODES.RATE_LIMITED,
+        'message rate limit exceeded',
+        state
+      );
+      return;
+    }
+
+    const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, payload, state);
+    if (!parsed) return;
+
+    const peerId = normaliseId(parsed.peerId);
+    const messageId = parseClientMessageId(parsed.messageId);
+    const emoji = validateReactionEmoji(parsed.emoji);
+    if (!peerId || peerId === requesterId || !messageId || !emoji) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_REACT,
+        ERROR_CODES.BAD_REQUEST,
+        'peerId, a url-safe messageId and an emoji are required',
+        state
+      );
+      return;
+    }
+
+    if (
+      isBlocked(state.blocks, peerId, requesterId) ||
+      isBlocked(state.blocks, requesterId, peerId)
+    ) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_REACT,
+        ERROR_CODES.FORBIDDEN,
+        'you cannot message this user',
+        state
+      );
+      return;
+    }
+
+    const conversationId = deriveConversationId(requesterId, peerId);
+    let updated;
+    try {
+      updated = await state.messageStore.reactToMessage({
+        conversationId,
+        messageId,
+        userId: requesterId,
+        emoji,
+        action: parsed.action,
+      });
+    } catch (error) {
+      console.error(`[messages] failed to persist reaction: ${error?.message}`);
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_REACT,
+        ERROR_CODES.INTERNAL_ERROR,
+        'could not store reaction',
+        state
+      );
+      return;
+    }
+
+    if (!updated) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_REACT,
+        ERROR_CODES.NOT_FOUND,
+        'message not found',
+        state
+      );
+      return;
+    }
+
+    // The stored message changed, so the cached history page is stale.
+    await invalidateCache(state, messagesCachePrefix(conversationId));
+
+    const envelope = {
+      version: SIGNALING_VERSION,
+      conversationId,
+      messageId,
+      reactions: updated.reactions ?? {},
+      actorId: requesterId,
+      emoji,
+      action: parsed.action,
+    };
+    emitToUserSockets(io, peerId, SERVER_EVENTS.MESSAGE_REACTION, envelope);
+    emitToUserSockets(io, requesterId, SERVER_EVENTS.MESSAGE_REACTION, envelope);
+
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_REACT, {
+      messageId,
+      conversationId,
+      reactions: envelope.reactions,
+    });
   });
 
   /**
@@ -444,4 +744,5 @@ module.exports = {
   registerMessageHandlers,
   deliverMessage,
   _validateBody: validateBody,
+  _validateReactionEmoji: validateReactionEmoji,
 };

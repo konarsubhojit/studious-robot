@@ -150,7 +150,7 @@ describe('ChatConversationScreen', () => {
     act(() => {
       sendButton.props.onPress();
     });
-    expect(onSendMessage).toHaveBeenCalledWith('hi there');
+    expect(onSendMessage).toHaveBeenCalledWith('hi there', { replyTo: null });
 
     const inputAfter = findByTestId(tree, 'chat-message-input');
     expect(inputAfter.props.value).toBe('');
@@ -956,5 +956,139 @@ describe('ChatConversationScreen deep-linked message', () => {
     });
 
     expect(onOpenProfile).toHaveBeenCalled();
+  });
+
+  test('renders an image attachment inline', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          body: '',
+          type: 'image',
+          attachment: { url: 'https://media.test/chatblobs/c/p.jpg', mimeType: 'image/jpeg' },
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const image = findByTestId(tree, 'chat-message-image');
+    expect(image.props.source).toEqual({ uri: 'https://media.test/chatblobs/c/p.jpg' });
+  });
+
+  test('renders an unknown message type as a neutral placeholder', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      // A message written by a newer client: this build must not blank out or
+      // crash on it.
+      messages: [makeMessage({ body: '', type: 'poll', poll: { question: 'lunch?' } })],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findByTestId(tree, 'chat-message-unsupported').props.children).toBe(
+      'Unsupported message',
+    );
+  });
+
+  test('renders a deleted message as a tombstone', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ body: '', deletedAt: '2024-01-01T00:00:00.000Z' })],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findByTestId(tree, 'chat-message-deleted').props.children).toBe('Message deleted');
+  });
+
+  test('a reply quotes the original, and still renders once it is deleted', () => {
+    const quoted = makeMessage({ messageId: 'm-original', body: 'the original' });
+    const reply = makeMessage({ messageId: 'm-reply', body: 'quoting you', replyTo: 'm-original' });
+
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [reply, quoted],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-quote')).not.toBeNull();
+
+    const withTombstone = render({
+      peerId: 'user-bob',
+      messages: [reply, { ...quoted, body: '', deletedAt: '2024-01-01T00:00:00.000Z' }],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const quote = findByTestId(withTombstone, 'chat-message-quote');
+    expect(quote.props.accessibilityLabel).toBe('Replying to: Message deleted');
+  });
+
+  test('long-pressing a bubble opens the reaction bar and reports the toggle', () => {
+    const onReactToMessage = jest.fn();
+    const message = makeMessage({ reactions: {} });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [message],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      onReactToMessage,
+    });
+
+    expect(findAllByTestId(tree, 'chat-message-reaction-bar')).toHaveLength(0);
+    act(() => {
+      findByTestId(tree, 'chat-message-bubble').props.onLongPress();
+    });
+
+    const bar = findByTestId(tree, 'chat-message-reaction-bar');
+    act(() => {
+      bar.props.children[0].props.onPress();
+    });
+
+    expect(onReactToMessage).toHaveBeenCalledWith(message, '\u{1F44D}', 'add');
+  });
+
+  test('an existing reaction chip toggles the current user reaction off', () => {
+    const onReactToMessage = jest.fn();
+    const message = makeMessage({ reactions: { '\u{1F44D}': ['user-alice'] } });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [message],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      onReactToMessage,
+    });
+
+    const chips = findByTestId(tree, 'chat-message-reactions');
+    act(() => {
+      chips.props.children[0].props.onPress();
+    });
+
+    expect(onReactToMessage).toHaveBeenCalledWith(message, '\u{1F44D}', 'remove');
+  });
+
+  test('replying from the swipe action sends the quoted messageId', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm-original' })],
+      onSendMessage,
+      currentUserId: 'user-alice',
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-message-swipe-reply').props.onPress();
+    });
+    expect(findByTestId(tree, 'chat-reply-preview')).not.toBeNull();
+
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('answering');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenCalledWith('answering', { replyTo: 'm-original' });
+    expect(findAllByTestId(tree, 'chat-reply-preview')).toHaveLength(0);
   });
 });

@@ -7,7 +7,7 @@ import {
   setActiveConversation,
 } from '../messageNotification';
 import { loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
-import { API_ROUTES } from '../../../shared';
+import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
 
@@ -40,6 +40,24 @@ export const OUTBOX_MAX_ATTEMPTS = 5;
 const OUTBOX_BASE_RETRY_MS = 1000;
 /** Ceiling for the exponential backoff between outbox drains. */
 const OUTBOX_MAX_RETRY_MS = 60_000;
+
+/**
+ * The tombstone a deleted message becomes: the content is gone, the row stays
+ * so a reply quoting it still resolves and renders "Message deleted".
+ *
+ * @param {object} message - the local copy being replaced.
+ * @param {object} [serverTombstone] - the server's version, when it sent one.
+ * @returns {object}
+ */
+function tombstoneOf(message, serverTombstone) {
+  return {
+    ...(serverTombstone ?? {}),
+    body: '',
+    attachment: null,
+    reactions: {},
+    deletedAt: serverTombstone?.deletedAt ?? message?.deletedAt ?? new Date().toISOString(),
+  };
+}
 
 /** True while a queued message may still be sent automatically. */
 function isRetryable(item) {
@@ -455,6 +473,11 @@ export default function useMessaging({
           version: SIGNALING_VERSION,
           recipientId: item.recipientId,
           body: item.body,
+          // Rich fields ride along with the queued send, so an attachment
+          // composed offline is replayed exactly like a text message.
+          ...(item.type && item.type !== MESSAGE_TYPES.TEXT ? { type: item.type } : {}),
+          ...(item.attachment ? { attachment: item.attachment } : {}),
+          ...(item.replyTo ? { replyTo: item.replyTo } : {}),
           // The server upserts on this id, so a replay of this exact send
           // resolves to the same message instead of a duplicate.
           messageId: item.messageId,
@@ -572,12 +595,23 @@ export default function useMessaging({
    *
    * @param {string} peerId
    * @param {string} body
+   * @param {{ type?: string, attachment?: object|null, replyTo?: string|null }} [options]
+   *   Rich-message fields. An attachment message (`image`/`file`/`voice`) may
+   *   have an empty body: the caption is optional, the attachment is the
+   *   content. `attachment.url` must be an already-uploaded `/chatblobs` URL —
+   *   the upload itself happens before the send, so a queued attachment
+   *   message is just another durable outbox entry.
    */
   const sendMessage = useCallback(
-    async (peerId, body) => {
+    async (peerId, body, options = {}) => {
       const trimmedPeerId = (peerId ?? '').trim();
       const trimmedBody = (body ?? '').trim();
-      if (!trimmedPeerId || !trimmedBody) return;
+      const type = options.type ?? MESSAGE_TYPES.TEXT;
+      const attachment = isAttachmentMessageType(type) ? (options.attachment ?? null) : null;
+      const replyTo = options.replyTo ?? null;
+      if (!trimmedPeerId) return;
+      // Text needs words; an attachment message needs an attachment.
+      if (attachment ? !attachment.url : !trimmedBody) return;
 
       const messageId = createMessageId();
       const createdAt = new Date().toISOString();
@@ -589,6 +623,11 @@ export default function useMessaging({
         senderId: userId,
         recipientId: trimmedPeerId,
         body: trimmedBody,
+        type,
+        attachment,
+        replyTo,
+        reactions: {},
+        deletedAt: null,
         createdAt,
         deliveredTo: [],
         readAt: null,
@@ -607,6 +646,9 @@ export default function useMessaging({
           conversationId,
           recipientId: trimmedPeerId,
           body: trimmedBody,
+          type,
+          attachment,
+          replyTo,
           createdAt,
           attempts: 0,
           lastAttemptAt: null,
@@ -724,10 +766,12 @@ export default function useMessaging({
         return false;
       }
 
-      removeMessageLocally(trimmedPeerId, messageId);
+      // Delete for everyone leaves a tombstone rather than a hole, matching
+      // what the server stored and what the peer is about to be told.
+      patchMessage(trimmedPeerId, messageId, entry => ({ ...entry, ...tombstoneOf(entry) }));
       return true;
     },
-    [discardMessage, removeMessageLocally, signalingRef, socketRef, updateStatus],
+    [discardMessage, patchMessage, signalingRef, socketRef, updateStatus],
   );
 
   /**
@@ -889,10 +933,12 @@ export default function useMessaging({
   }, []);
 
   /**
-   * A participant deleted a message: drop it from the local history so both
-   * sides converge, whichever peer initiated the delete.
+   * A participant deleted a message: replace it with the server's tombstone so
+   * both sides converge on "Message deleted" rather than on a hole — a reply
+   * that quotes the message must still resolve to something.
    *
-   * @param {{ conversationId?: string, messageId?: string, deletedBy?: string }} payload
+   * @param {{ conversationId?: string, messageId?: string, deletedBy?: string,
+   *   message?: object|null }} payload
    */
   const handleMessageDeleted = useCallback(payload => {
     const messageId = payload?.messageId;
@@ -901,13 +947,83 @@ export default function useMessaging({
       let changed = false;
       const next = {};
       Object.entries(prev).forEach(([peerId, messages]) => {
-        const filtered = messages.filter(m => m.messageId !== messageId);
-        if (filtered.length !== messages.length) changed = true;
-        next[peerId] = filtered;
+        next[peerId] = messages.map(m => {
+          if (m.messageId !== messageId) return m;
+          changed = true;
+          return { ...m, ...tombstoneOf(m, payload?.message) };
+        });
       });
       return changed ? next : prev;
     });
   }, []);
+
+  /**
+   * A reaction was added or removed on a message in one of the user's
+   * conversations, by either participant — including this user on another
+   * device, which is what makes the local optimistic update converge.
+   *
+   * @param {{ messageId?: string, reactions?: Record<string, string[]> }} payload
+   */
+  const handleMessageReaction = useCallback(payload => {
+    const messageId = payload?.messageId;
+    if (!messageId) return;
+    const reactions = payload?.reactions ?? {};
+    setMessagesByPeer(prev => {
+      let changed = false;
+      const next = {};
+      Object.entries(prev).forEach(([peerId, messages]) => {
+        next[peerId] = messages.map(m => {
+          if (m.messageId !== messageId) return m;
+          changed = true;
+          return { ...m, reactions };
+        });
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  /**
+   * Add or remove one of the local user's emoji reactions on a message.
+   *
+   * The server is authoritative: the reaction set in its acknowledgement (and
+   * in the `message.reaction` fan-out that reaches every other device) is what
+   * the UI ends up rendering, so a lost ack cannot leave the devices disagreeing.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   * @param {string} emoji
+   * @param {'add'|'remove'} action
+   * @returns {Promise<boolean>} whether the reaction was stored
+   */
+  const reactToMessage = useCallback(
+    async (peerId, messageId, emoji, action) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId || !emoji) return false;
+
+      const signaling = signalingRef?.current;
+      if (!signaling || !socketRef.current?.connected) {
+        updateStatus('Cannot react while offline', 'error');
+        return false;
+      }
+
+      try {
+        const ack = await signaling.request(CLIENT_EVENTS.MESSAGE_REACT, {
+          version: SIGNALING_VERSION,
+          peerId: trimmedPeerId,
+          messageId,
+          emoji,
+          action,
+        });
+        handleMessageReaction({ messageId, reactions: ack?.reactions ?? {} });
+        return true;
+      } catch (error) {
+        logWarn('[Messaging] reactToMessage failed', { message: error?.message });
+        updateStatus('Could not react to message', 'error');
+        return false;
+      }
+    },
+    [handleMessageReaction, signalingRef, socketRef, updateStatus],
+  );
 
   /**
    * The socket came up: connectivity is restored, so reset the backoff and
@@ -947,9 +1063,11 @@ export default function useMessaging({
     drainOutbox,
     markConversationRead,
     sendTypingIndicator,
+    reactToMessage,
     resetTypingState,
     handleMessageReceived,
     handleMessageDeleted,
+    handleMessageReaction,
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,

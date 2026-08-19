@@ -2,6 +2,7 @@
 
 const { deriveConversationId } = require('../messageStore');
 const { invalidateCallHistoryCache, persistCallRecord } = require('../callPersistence');
+const { messageTypeOf } = require('../../../shared');
 
 /**
  * Call records seen as part of a conversation's timeline.
@@ -111,7 +112,9 @@ function markMissedCallsRead(state, userId, peerId) {
  */
 function mergeTimeline(messages, callEntries, limit) {
   const entries = [
-    ...messages.map((message) => ({ ...message, type: 'text' })),
+    // A message keeps its own type (`image`, `voice`, …); only a legacy row
+    // that carries none is defaulted, so the discriminator stays truthful.
+    ...messages.map((message) => ({ ...message, type: messageTypeOf(message) })),
     ...callEntries,
   ];
   entries.sort((a, b) => {
@@ -158,7 +161,7 @@ function augmentConversationsWithCalls(state, userId, conversations) {
     const calls = byPeer.get(conversation.peerId);
     byPeer.delete(conversation.peerId);
     const lastMessage = conversation.lastMessage
-      ? { ...conversation.lastMessage, type: 'text' }
+      ? { ...conversation.lastMessage, type: messageTypeOf(conversation.lastMessage) }
       : null;
     const lastActivity =
       calls && (!lastMessage || calls.entry.createdAt > lastMessage.createdAt)

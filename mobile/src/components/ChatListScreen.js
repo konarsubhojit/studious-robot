@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { describeMessagePreview } from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import SwipeableRow from './SwipeableRow';
@@ -81,7 +82,9 @@ function lastActivityOf(conversation) {
 function formatActivityPreview(conversation) {
   const activity = lastActivityOf(conversation);
   if (!activity) return 'No messages yet';
-  if (activity.type !== 'call') return activity.body || 'No messages yet';
+  // A rich message describes itself ("📷 Photo", "🎤 Voice message", or a
+  // neutral placeholder for a type this build does not know).
+  if (activity.type !== 'call') return describeMessagePreview(activity) || 'No messages yet';
   if (activity.status === 'missed' && activity.direction === 'incoming') {
     return '📞 Missed call';
   }

@@ -103,7 +103,9 @@ test('GET /messages leaves the payload untouched unless include=calls is asked f
   assert.equal(plain.status, 200);
   assert.equal(plain.body.messages.length, 1);
   assert.equal(plain.body.messages[0].body, 'hello');
-  assert.equal(plain.body.messages[0].type, undefined);
+  // `type` is the message's own kind (rich messaging), not the call-timeline
+  // discriminator: a plain page still contains messages only.
+  assert.equal(plain.body.messages[0].type, 'text');
 });
 
 test('GET /messages?include=calls interleaves calls and messages newest-first', async (t) => {

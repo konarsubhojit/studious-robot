@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -10,6 +11,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {
+  MESSAGE_TYPES,
+  describeMessagePreview,
+  isSupportedMessageType,
+  messageTypeOf,
+} from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
@@ -32,6 +39,12 @@ const TYPING_IDLE_MS = 3000;
 const NEAR_BOTTOM_THRESHOLD = 80;
 /** Number of skeleton bubbles rendered while the first page of history loads. */
 const SKELETON_BUBBLE_COUNT = 6;
+/** Emoji offered by the long-press reaction bar. */
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+/** How long a bubble stays emphasised after its quote is tapped. */
+const QUOTE_HIGHLIGHT_MS = 1600;
+/** Rendered height of an inline image attachment. */
+const ATTACHMENT_IMAGE_HEIGHT = 180;
 
 /**
  * Lifecycle state of one of the current user's own messages.
@@ -210,6 +223,122 @@ function buildListItems(orderedEntries) {
 }
 
 /**
+ * The content of one bubble: text, an inline attachment, a tombstone, or —
+ * for a `type` this build does not know — a neutral placeholder.
+ *
+ * The placeholder is the compatibility contract: a message written by a newer
+ * client must never blank out or crash an older one.
+ *
+ * @param {{ message: object, isOwn: boolean, styles: object }} props
+ */
+function MessageContent({ message, isOwn, styles }) {
+  const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
+  const type = messageTypeOf(message);
+
+  if (message.deletedAt) {
+    return (
+      <Text style={[textStyle, styles.placeholderText]} testID="chat-message-deleted">
+        Message deleted
+      </Text>
+    );
+  }
+
+  if (!isSupportedMessageType(type)) {
+    return (
+      <Text style={[textStyle, styles.placeholderText]} testID="chat-message-unsupported">
+        {describeMessagePreview(message)}
+      </Text>
+    );
+  }
+
+  if (type === MESSAGE_TYPES.IMAGE && message.attachment?.url) {
+    return (
+      <View>
+        <Image
+          source={{ uri: message.attachment.thumbnailUrl || message.attachment.url }}
+          style={styles.attachmentImage}
+          resizeMode="cover"
+          accessibilityLabel={message.body || 'Photo'}
+          testID="chat-message-image"
+        />
+        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+      </View>
+    );
+  }
+
+  if (type === MESSAGE_TYPES.VOICE || type === MESSAGE_TYPES.FILE) {
+    return (
+      <View>
+        <Text style={textStyle} testID="chat-message-attachment">
+          {describeMessagePreview(message)}
+        </Text>
+        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+      </View>
+    );
+  }
+
+  return <Text style={textStyle}>{message.body}</Text>;
+}
+
+/**
+ * The compact quoted preview of the message a reply answers.
+ *
+ * A quote whose original was deleted (or is older than the loaded page) still
+ * renders — as "Message deleted" — so a reply never leaves a dangling
+ * reference behind.
+ *
+ * @param {{ quotedMessage: object|null, isOwn: boolean, onPress?: () => void,
+ *   styles: object }} props
+ */
+function QuotedMessage({ quotedMessage, isOwn, onPress, styles }) {
+  const label = quotedMessage ? describeMessagePreview(quotedMessage) : 'Message deleted';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Replying to: ${label || 'message'}`}
+      style={styles.quote}
+      testID="chat-message-quote">
+      <Text
+        numberOfLines={2}
+        style={[isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer, styles.quoteText]}>
+        {label || 'Message'}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * The reaction chips under a bubble, one per emoji with its count.
+ *
+ * @param {{ reactions: Record<string, string[]>, currentUserId: string,
+ *   onToggle?: (emoji: string, action: 'add'|'remove') => void, styles: object }} props
+ */
+function ReactionChips({ reactions, currentUserId, onToggle, styles }) {
+  const entries = Object.entries(reactions ?? {}).filter(([, userIds]) => userIds?.length);
+  if (!entries.length) return null;
+
+  return (
+    <View style={styles.reactionRow} testID="chat-message-reactions">
+      {entries.map(([emoji, userIds]) => {
+        const mine = userIds.includes(currentUserId);
+        return (
+          <Pressable
+            key={emoji}
+            onPress={() => onToggle?.(emoji, mine ? 'remove' : 'add')}
+            accessibilityRole="button"
+            accessibilityLabel={`${emoji} ${userIds.length}${mine ? ', reacted by you' : ''}`}
+            hitSlop={touchSlop(16)}
+            style={[styles.reactionChip, mine && styles.reactionChipMine]}>
+            <Text style={styles.reactionChipText}>{`${emoji} ${userIds.length}`}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/**
  * A single chat bubble plus its footer (timestamp + delivery status).
  *
  * Memoised so re-rendering the conversation (a new message, a typing event,
@@ -218,19 +347,37 @@ function buildListItems(orderedEntries) {
  */
 const MessageRow = memo(function MessageRow({
   message,
+  quotedMessage = null,
   isGroupEnd,
   isOwn,
   isHighlighted,
+  currentUserId,
   onRetry,
   onDelete,
+  onReply,
+  onReact,
+  onQuotePress,
 }) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
   const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
+  // Long-press opens the reaction bar for this bubble only; it closes as soon
+  // as an emoji is chosen or the bubble is pressed again.
+  const [isReactionBarOpen, setIsReactionBarOpen] = useState(false);
+  const isTombstone = Boolean(message.deletedAt);
 
   // Swipe actions only ever apply to the user's own messages: the server
   // refuses to delete somebody else's message, so never offer it here.
   const actions = [];
+  if (onReply && !isTombstone) {
+    actions.push({
+      key: 'reply',
+      label: 'Reply',
+      accessibilityLabel: 'Reply to message',
+      testID: 'chat-message-swipe-reply',
+      onPress: () => onReply(message),
+    });
+  }
   if (isOwn && status === 'failed') {
     actions.push({
       key: 'retry',
@@ -240,7 +387,7 @@ const MessageRow = memo(function MessageRow({
       onPress: () => onRetry?.(message),
     });
   }
-  if (isOwn && onDelete) {
+  if (isOwn && onDelete && !isTombstone) {
     actions.push({
       key: 'delete',
       label: 'Delete',
@@ -259,15 +406,51 @@ const MessageRow = memo(function MessageRow({
         isOwn ? styles.messageRowOwn : styles.messageRowPeer,
         !isGroupEnd && styles.messageRowGrouped,
       ]}>
-      <View
+      <Pressable
+        onLongPress={onReact && !isTombstone ? () => setIsReactionBarOpen(open => !open) : undefined}
+        accessibilityRole={onReact && !isTombstone ? 'button' : undefined}
+        accessibilityHint={onReact && !isTombstone ? 'Long press to react' : undefined}
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,
           isHighlighted && styles.bubbleHighlighted,
         ]}
-        testID={isHighlighted ? 'chat-message-highlighted' : undefined}>
-        <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>{message.body}</Text>
-      </View>
+        testID={isHighlighted ? 'chat-message-highlighted' : 'chat-message-bubble'}>
+        {message.replyTo ? (
+          <QuotedMessage
+            quotedMessage={quotedMessage}
+            isOwn={isOwn}
+            onPress={() => onQuotePress?.(message.replyTo)}
+            styles={styles}
+          />
+        ) : null}
+        <MessageContent message={message} isOwn={isOwn} styles={styles} />
+      </Pressable>
+      {isReactionBarOpen ? (
+        <View style={styles.reactionBar} testID="chat-message-reaction-bar">
+          {QUICK_REACTIONS.map(emoji => (
+            <Pressable
+              key={emoji}
+              onPress={() => {
+                setIsReactionBarOpen(false);
+                const mine = message.reactions?.[emoji]?.includes(currentUserId);
+                onReact?.(message, emoji, mine ? 'remove' : 'add');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`React with ${emoji}`}
+              hitSlop={touchSlop(16)}
+              style={styles.reactionBarButton}>
+              <Text style={styles.reactionBarEmoji}>{emoji}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      <ReactionChips
+        reactions={message.reactions}
+        currentUserId={currentUserId}
+        onToggle={onReact ? (emoji, action) => onReact(message, emoji, action) : undefined}
+        styles={styles}
+      />
       {isGroupEnd ? (
         <View style={styles.messageFooter}>
           <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
@@ -332,11 +515,14 @@ function MessageSkeleton() {
  * @param {Array<object>} [props.messages] - newest-first, as delivered by the hook.
  *   Entries tagged `type: 'call'` are rendered as call records inline in the
  *   timeline; everything else is a text message.
- * @param {(body: string) => void} props.onSendMessage
+ * @param {(body: string, options?: { replyTo?: string|null }) => void} props.onSendMessage
  * @param {(message: object) => void} [props.onRetryMessage] - Re-sends a failed message.
  *   Falls back to re-sending its body through `onSendMessage` when absent.
  * @param {(message: object) => void} [props.onDeleteMessage] - Deletes one of the user's own
  *   messages, revealed by swiping the bubble left.
+ * @param {(message: object, emoji: string, action: 'add'|'remove') => void} [props.onReactToMessage]
+ *   Adds or removes one of the user's emoji reactions, from the long-press reaction bar or
+ *   by tapping an existing chip.
  * @param {() => void} [props.onLoadOlder]
  * @param {() => void} props.onBack
  * @param {string} props.currentUserId
@@ -371,6 +557,7 @@ export default function ChatConversationScreen({
   onSendMessage,
   onRetryMessage,
   onDeleteMessage,
+  onReactToMessage,
   onLoadOlder,
   onBack,
   currentUserId,
@@ -391,6 +578,11 @@ export default function ChatConversationScreen({
   const styles = useThemedStyles(createStyles);
 
   const [draft, setDraft] = useState('');
+  // The message the composer is currently replying to, if any.
+  const [replyTarget, setReplyTarget] = useState(null);
+  // A bubble briefly emphasised because its quote was tapped; takes precedence
+  // over the deep-link highlight the screen may have been opened with.
+  const [quotedHighlightId, setQuotedHighlightId] = useState(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -413,6 +605,18 @@ export default function ChatConversationScreen({
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
   const listItems = useMemo(() => buildListItems([...messages].reverse()), [messages]);
+
+  // Resolves a reply's `replyTo` to the quoted message, when it is part of the
+  // loaded page. A miss renders as "Message deleted" rather than as nothing.
+  const messagesById = useMemo(() => {
+    const byId = new Map();
+    messages.forEach(message => {
+      if (message?.messageId) byId.set(message.messageId, message);
+    });
+    return byId;
+  }, [messages]);
+
+  const activeHighlightId = quotedHighlightId ?? highlightMessageId;
 
   // Keep the newest message in view: scroll to the bottom whenever the
   // newest message changes (a message was sent or received) and the user is
@@ -443,16 +647,23 @@ export default function ChatConversationScreen({
   // missing index (the message is older than the loaded page) is simply left
   // alone until more history is paged in.
   useEffect(() => {
-    if (!highlightMessageId) return undefined;
+    if (!activeHighlightId) return undefined;
     const index = listItems.findIndex(
-      item => item.type === 'message' && item.message.messageId === highlightMessageId,
+      item => item.type === 'message' && item.message.messageId === activeHighlightId,
     );
     if (index === -1) return undefined;
     const frame = requestAnimationFrame(() => {
       listRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.5 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [highlightMessageId, listItems]);
+  }, [activeHighlightId, listItems]);
+
+  // The quote highlight is a momentary "here it is" flash, not a mode.
+  useEffect(() => {
+    if (!quotedHighlightId) return undefined;
+    const timer = setTimeout(() => setQuotedHighlightId(null), QUOTE_HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [quotedHighlightId]);
 
   // Keep the composer and the latest message visible above the keyboard: on
   // Android in particular, the on-screen keyboard can otherwise cover both
@@ -493,10 +704,24 @@ export default function ChatConversationScreen({
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed) return;
-    onSendMessage?.(trimmed);
+    onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
+    setReplyTarget(null);
     reportTyping(false);
-  }, [draft, onSendMessage, reportTyping]);
+  }, [draft, onSendMessage, replyTarget, reportTyping]);
+
+  const handleReply = useCallback(message => setReplyTarget(message), []);
+
+  const handleReact = useCallback(
+    (message, emoji, action) => {
+      onReactToMessage?.(message, emoji, action);
+    },
+    [onReactToMessage],
+  );
+
+  const handleQuotePress = useCallback(messageId => {
+    if (messageId) setQuotedHighlightId(messageId);
+  }, []);
 
   const handleRetry = useCallback(
     message => {
@@ -571,21 +796,35 @@ export default function ChatConversationScreen({
       return (
         <MessageRow
           message={item.message}
+          quotedMessage={
+            item.message.replyTo ? (messagesById.get(item.message.replyTo) ?? null) : null
+          }
           isGroupEnd={item.isGroupEnd}
           isOwn={item.message.senderId === currentUserId}
-          isHighlighted={Boolean(highlightMessageId) && item.message.messageId === highlightMessageId}
+          isHighlighted={
+            Boolean(activeHighlightId) && item.message.messageId === activeHighlightId
+          }
+          currentUserId={currentUserId}
           onRetry={handleRetry}
           onDelete={onDeleteMessage ? handleDelete : undefined}
+          onReply={handleReply}
+          onReact={onReactToMessage ? handleReact : undefined}
+          onQuotePress={handleQuotePress}
         />
       );
     },
     [
+      activeHighlightId,
       currentUserId,
       handleDelete,
+      handleQuotePress,
+      handleReact,
+      handleReply,
       handleRetry,
-      highlightMessageId,
+      messagesById,
       onCallBack,
       onDeleteMessage,
+      onReactToMessage,
       onVideoCallBack,
       peerId,
       styles,
@@ -752,6 +991,22 @@ export default function ChatConversationScreen({
           ) : null}
         </View>
 
+        {replyTarget ? (
+          <View style={styles.replyPreview} testID="chat-reply-preview">
+            <Text numberOfLines={1} style={styles.replyPreviewText}>
+              {`Replying to: ${describeMessagePreview(replyTarget) || 'message'}`}
+            </Text>
+            <Pressable
+              onPress={() => setReplyTarget(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel reply"
+              hitSlop={touchSlop(20)}
+              testID="chat-reply-cancel">
+              <Text style={styles.replyPreviewText}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={[styles.composer, isComposerFocused && styles.composerFocused]}>
           <TextInput
             value={draft}
@@ -917,6 +1172,80 @@ const createStyles = colors =>
     },
     bubbleTextPeer: {
       color: colors.textPrimary,
+    },
+    placeholderText: {
+      fontStyle: 'italic',
+      opacity: 0.8,
+    },
+    attachmentImage: {
+      width: 220,
+      height: ATTACHMENT_IMAGE_HEIGHT,
+      borderRadius: radius.md,
+      marginBottom: spacing.xs,
+    },
+    quote: {
+      borderLeftWidth: 3,
+      borderLeftColor: colors.accent,
+      paddingLeft: spacing.sm,
+      marginBottom: spacing.xs,
+      opacity: 0.9,
+    },
+    quoteText: {
+      ...typography.hint,
+    },
+    reactionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 4,
+      marginTop: 2,
+    },
+    reactionChip: {
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+    },
+    reactionChipMine: {
+      borderColor: colors.accent,
+    },
+    reactionChipText: {
+      ...typography.hint,
+      color: colors.textPrimary,
+    },
+    reactionBar: {
+      flexDirection: 'row',
+      gap: spacing.xs,
+      marginTop: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      backgroundColor: colors.surfaceRaised,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: radius.lg,
+    },
+    reactionBarButton: {
+      paddingHorizontal: 2,
+    },
+    reactionBarEmoji: {
+      fontSize: 20,
+    },
+    replyPreview: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.accent,
+      backgroundColor: colors.surfaceRaised,
+    },
+    replyPreviewText: {
+      ...typography.hint,
+      color: colors.textSecondary,
+      flexShrink: 1,
     },
     messageFooter: {
       flexDirection: 'row',
