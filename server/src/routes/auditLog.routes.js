@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -7,14 +8,16 @@ const { getSessionFromRequest } = require('../lib/auth');
  * GET /audit-log – return the security audit entries where the authenticated
  * user is the actor or the target (oldest-first).
  *
- * @param {{ state: object }} ctx
+ * @param {{ state: { sessions: Map<string, object>, auditLog: { getForUser: (userId: string) => object[] } } }} ctx
  * @returns {import('express').Router}
  */
 function createAuditLogRouter({ state }) {
   const router = express.Router();
 
   router.get('/audit-log', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+    const session = /** @type {{ userId: string, expiresAt?: string } | null} */ (
+      getSessionFromRequest(req, state.sessions)
+    );
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;

@@ -1,3 +1,4 @@
+// @ts-check
 const DEFAULT_TRANSPORTS = ['websocket', 'polling'];
 
 export const RECONNECTION_OPTIONS = {
@@ -18,6 +19,10 @@ export function getSocketOptions(overrides = {}) {
 
 const UNRECOVERABLE_DISCONNECT_REASONS = new Set(['io client disconnect', 'io server disconnect']);
 
+/**
+ * @param {string} reason
+ * @returns {boolean}
+ */
 export function isRecoverableDisconnectReason(reason) {
   return !UNRECOVERABLE_DISCONNECT_REASONS.has(reason);
 }

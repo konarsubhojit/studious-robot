@@ -1,3 +1,16 @@
+// @ts-check
+
+/**
+ * @typedef {{ kind: string, enabled: boolean }} MediaStreamTrackLike
+ * @typedef {{ getTracks: () => MediaStreamTrackLike[] }} MediaStreamLike
+ */
+
+/**
+ * @param {MediaStreamLike | null | undefined} stream
+ * @param {string} kind
+ * @param {boolean} enabled
+ * @returns {boolean}
+ */
 export function setTrackEnabled(stream, kind, enabled) {
   if (!stream?.getTracks) {
     return false;
@@ -11,6 +24,11 @@ export function setTrackEnabled(stream, kind, enabled) {
   return tracks.length > 0;
 }
 
+/**
+ * @param {MediaStreamLike | null | undefined} stream
+ * @param {string} kind
+ * @returns {boolean}
+ */
 export function isTrackEnabled(stream, kind) {
   if (!stream?.getTracks) {
     return false;

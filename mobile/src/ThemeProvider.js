@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import { logError } from './appLogger';
@@ -40,10 +41,14 @@ export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, childr
     };
   }, []);
 
-  const setMode = useCallback(nextMode => {
-    setModeState(nextMode);
-    void saveThemeMode(nextMode);
-  }, []);
+  const setMode = useCallback(
+    /** @param {string} nextMode */
+    nextMode => {
+      setModeState(nextMode);
+      void saveThemeMode(nextMode);
+    },
+    [],
+  );
 
   const value = useMemo(
     () => buildTheme(mode, resolveScheme(mode, systemScheme), setMode),

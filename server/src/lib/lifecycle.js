@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { SHUTDOWN_DRAIN_POLL_MS } = require('../config');

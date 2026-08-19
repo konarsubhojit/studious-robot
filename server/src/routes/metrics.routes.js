@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -9,7 +10,7 @@ const { CALL_END_REASONS } = require('../config');
  *   GET /call-end-reasons – static end-reason taxonomy for clients.
  *   GET /metrics          – point-in-time telemetry snapshot for scrapers.
  *
- * @param {{ state: object }} ctx
+ * @param {{ state: { telemetry: { getSnapshot: () => object } } }} ctx
  * @returns {import('express').Router}
  */
 function createMetricsRouter({ state }) {

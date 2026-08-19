@@ -119,7 +119,7 @@ export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_M
  * with.
  *
  * @param {string} [mode] - One of THEME_MODES.
- * @param {'light'|'dark'|null} [systemScheme] - Value from `useColorScheme()`.
+ * @param {string|null} [systemScheme] - Value from `useColorScheme()`.
  * @returns {'light'|'dark'}
  */
 export function resolveScheme(mode, systemScheme) {

@@ -1,3 +1,4 @@
+// @ts-check
 import { AccessibilityInfo } from 'react-native';
 import { CALL_STATES } from './call/callStateMachine';
 
