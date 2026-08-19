@@ -204,7 +204,10 @@ A single VM instance does **not** need Redis. Redis is only required to run more
 than one server instance (multiple processes/VMs behind a load balancer), where
 it provides:
 
-- a **Pub/Sub message bus** for cross-instance call-state events, and
+- a **Pub/Sub message bus** for cross-instance call-state events and cache
+  invalidations,
+- a **shared read cache** for conversation lists, first-page chat history and
+  call history (see `server/src/cache.js`), and
 - the **Socket.IO Redis adapter** so a user's WebSocket events are delivered
   regardless of which instance holds their socket.
 

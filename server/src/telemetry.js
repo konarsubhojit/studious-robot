@@ -79,6 +79,8 @@ function createTelemetry() {
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
     signaling_errors: 0, // acknowledgeError / error ack responses
+    cache_hits: 0, // read served from the shared read cache
+    cache_misses: 0, // read that fell through to the store
   };
 
   // ── Latency histograms ────────────────────────────────────────────────────
@@ -210,6 +212,20 @@ function createTelemetry() {
   }
 
   /**
+   * Record a read served from the shared cache.
+   */
+  function recordCacheHit() {
+    counters.cache_hits += 1;
+  }
+
+  /**
+   * Record a read that missed the shared cache and hit the underlying store.
+   */
+  function recordCacheMiss() {
+    counters.cache_misses += 1;
+  }
+
+  /**
    * Return a point-in-time snapshot of all metrics.
    *
    * The shape is intentionally flat and JSON-serialisable so it can be
@@ -236,10 +252,23 @@ function createTelemetry() {
     snap.derived.call_completion_rate =
       calls_in_call > 0 ? Number((calls_ended / calls_in_call).toFixed(4)) : null;
 
+    // Cache effectiveness: null until the first cacheable read is served.
+    const { cache_hits, cache_misses } = snap.counters;
+    const cacheReads = cache_hits + cache_misses;
+    snap.derived.cache_hit_rate =
+      cacheReads > 0 ? Number((cache_hits / cacheReads).toFixed(4)) : null;
+
     return snap;
   }
 
-  return { recordCallCreated, recordCallTransition, recordSignalingError, getSnapshot };
+  return {
+    recordCallCreated,
+    recordCallTransition,
+    recordSignalingError,
+    recordCacheHit,
+    recordCacheMiss,
+    getSnapshot,
+  };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

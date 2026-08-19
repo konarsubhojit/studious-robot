@@ -21,6 +21,7 @@ const { createServer } = require('./createServer');
 const { CALL_END_REASONS, CALL_TRANSITION_CHANNEL } = require('./config');
 const { createStores, createRedisPgStores } = require('./stores');
 const { createMemoryMessageBus, createRedisMessageBus } = require('./messageBus');
+const { createCache } = require('./cache');
 const { logNotificationHubStartupStatus } = require('./push');
 
 module.exports = {
@@ -31,6 +32,7 @@ module.exports = {
   createRedisPgStores,
   createMemoryMessageBus,
   createRedisMessageBus,
+  createCache,
 };
 
 if (require.main === module) {
@@ -61,7 +63,10 @@ if (require.main === module) {
       try {
         const stores = await createRedisPgStores();
         console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
-        server = createServer({ stores, db, verifyIdToken });
+        // Share the read cache across instances so a cached conversation list
+        // is not re-read (and re-throttled) once per instance.
+        const cache = await createCache({ redisUrl: process.env.REDIS_URL });
+        server = createServer({ stores, db, verifyIdToken, cache });
         if (db) {
           await server.loadPersistedState();
         }

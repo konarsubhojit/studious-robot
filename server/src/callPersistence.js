@@ -1,20 +1,27 @@
 'use strict';
 
-function getCallHistoryCacheKey(userId, statusFilter, limit) {
-  return `${userId}::${statusFilter || '*'}::${limit}`;
-}
+const { invalidateCache, callHistoryCachePrefix } = require('./cache');
 
+/**
+ * Evict the cached `GET /calls` pages of every listed participant, on this and
+ * every other instance.
+ *
+ * Fire-and-forget by design: call-state transitions are synchronous and must
+ * not be blocked (or failed) by a cache eviction.  The shared cache evicts its
+ * local entries synchronously, so a read issued on this instance after the
+ * write can never observe the stale page.
+ *
+ * @param {object} state
+ * @param {...string} userIds
+ * @returns {void}
+ */
 function invalidateCallHistoryCache(state, ...userIds) {
-  if (!state?.callHistoryCache || userIds.length === 0) return;
-  for (const userId of userIds) {
-    if (!userId) continue;
-    const prefix = `${userId}::`;
-    for (const key of state.callHistoryCache.keys()) {
-      if (key.startsWith(prefix)) {
-        state.callHistoryCache.delete(key);
-      }
-    }
-  }
+  if (!state?.cache || userIds.length === 0) return;
+  const prefixes = userIds.filter(Boolean).map((userId) => callHistoryCachePrefix(userId));
+  if (prefixes.length === 0) return;
+  invalidateCache(state, ...prefixes).catch((error) => {
+    console.error(`[calls] call history cache invalidation failed: ${error?.message}`);
+  });
 }
 
 function toDateOrNull(value) {
@@ -144,7 +151,6 @@ async function hydrateCallsAndEventsFromDb(db, state) {
 }
 
 module.exports = {
-  getCallHistoryCacheKey,
   invalidateCallHistoryCache,
   persistCallRecord,
   persistCallEvent,

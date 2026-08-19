@@ -568,6 +568,7 @@ module.exports = {
   MAX_MESSAGE_BODY_LENGTH,
   DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
   deriveConversationId,
+  clampMessageLimit: clampLimit,
   createMessageRecord,
   createMemoryMessageStore,
   createMongoMessageStore,

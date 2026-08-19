@@ -146,7 +146,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
-| `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + shared read cache + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
 
 ## Push notifications
 
@@ -288,8 +288,19 @@ Running more than one server instance behind a load balancer requires two pieces
 of cross-instance coordination, both backed by Redis:
 
 - **Message bus** (`src/messageBus.js`) — Redis Pub/Sub used to broadcast
-  call-state transitions (channel `signaling:call.transitions`) to other
-  instances / observers.
+  call-state transitions (channel `signaling:call.transitions`) and cache
+  invalidations (channel `signaling:cache.invalidate`) to other instances /
+  observers.
+- **Read cache** (`src/cache.js`) — a shared cache in front of the hottest
+  reads: `GET /conversations` (`conv::<userId>`), the first page of
+  `GET /messages` (`msg::<conversationId>::<limit>`) and `GET /calls`
+  (`callhist::<userId>::<status>::<limit>`), each with a 30s TTL. Writes
+  (`message.send`, delivery receipts, `POST /messages/read`, call transitions)
+  evict the affected prefixes locally and publish them on the bus so every
+  instance drops its copy. Backed by Redis when `REDIS_URL` is set (`SET … PX`
+  / `GET`, `SCAN`-based prefix deletes) and by a bounded, TTL'd in-process map
+  otherwise. Hits and misses are counted in `GET /metrics`
+  (`cache_hits`, `cache_misses`, `derived.cache_hit_rate`).
 - **Socket.IO Redis adapter** — so room and per-user emits reach a user's
   sockets no matter which instance they are connected to. Each socket joins a
   `user:<userId>` room on connect; user-targeted call/RTC events are addressed to
