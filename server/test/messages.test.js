@@ -173,6 +173,71 @@ test('message.send reports no delivery receipt while the recipient is offline', 
   assert.deepEqual(confirmation.message.deliveredTo, []);
 });
 
+test('message.send stores a replayed client messageId exactly once', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const payload = {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'queued offline',
+    messageId: 'client-uuid-1',
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  // The sender's durable outbox replays the same send after a reconnect.
+  const replay = await emitWithAck(alice, 'message.send', payload);
+
+  assert.equal(first.ok, true);
+  assert.equal(first.message.messageId, 'client-uuid-1');
+  assert.equal(replay.ok, true);
+  assert.equal(replay.message.messageId, 'client-uuid-1');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 1, 'the replay must not duplicate the message');
+});
+
+test('message.send rejects a messageId already used by another message', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  const bobSession = await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'the original',
+    messageId: 'client-uuid-2',
+  });
+  // Bob tries to overwrite Alice's message by reusing its id.
+  const ack = await emitWithAck(bob, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-alice',
+    body: 'forged',
+    messageId: 'client-uuid-2',
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'bad_request');
+
+  const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+  assert.equal(history.body.messages.length, 1);
+  assert.equal(history.body.messages[0].body, 'the original');
+});
+
 test('message.send rejects an unauthenticated sender', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);

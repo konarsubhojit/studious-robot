@@ -191,6 +191,10 @@ function registerMessageHandlers(socket, { io, state }) {
         senderId,
         recipientId,
         body: validated.body,
+        // Client-generated id, when the sender supplies one: the store upserts
+        // on `{ conversationId, messageId }`, so a send replayed from the
+        // sender's durable outbox is stored exactly once.
+        messageId: parsed.messageId ? normaliseId(parsed.messageId) : undefined,
       });
     } catch (error) {
       console.error(`[messages] failed to persist message: ${error?.message}`);
@@ -200,6 +204,21 @@ function registerMessageHandlers(socket, { io, state }) {
         CLIENT_EVENTS.MESSAGE_SEND,
         ERROR_CODES.INTERNAL_ERROR,
         'could not store message',
+        state
+      );
+      return;
+    }
+
+    // A client-supplied id that already belongs to a *different* message is not
+    // a replay: the store kept the original, so echoing this payload back (or
+    // delivering it) would let a sender overwrite what the peer already sees.
+    if (message.senderId !== senderId || message.recipientId !== recipientId) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.BAD_REQUEST,
+        'messageId already used by another message',
         state
       );
       return;

@@ -122,6 +122,11 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     version: versionField,
     recipientId: idField,
     body: s.string({ min: 1, max: MAX_MESSAGE_BODY_LENGTH, trim: true }),
+    // Client-generated id for the message, so a send that is replayed from the
+    // sender's durable outbox (reconnect, app relaunch) is stored once instead
+    // of once per attempt: the store upserts on `{ conversationId, messageId }`.
+    // Optional so an older client that does not generate one still works.
+    messageId: s.id().optional(),
   }),
   [CLIENT_EVENTS.MESSAGE_TYPING]: s.object({
     version: versionField,

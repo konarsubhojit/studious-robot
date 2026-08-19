@@ -65,6 +65,32 @@ test('saveMessage fills in server-owned fields', async () => {
   assert.equal(message.readAt, null);
 });
 
+test('saveMessage is idempotent for a repeated client messageId', async () => {
+  const store = createMemoryMessageStore();
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  const first = await store.saveMessage({
+    conversationId,
+    messageId: 'dup-1',
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'first send',
+  });
+  // Simulates a client replaying the same send from its durable outbox.
+  const replay = await store.saveMessage({
+    conversationId,
+    messageId: 'dup-1',
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'retried send',
+  });
+
+  assert.equal(replay.messageId, first.messageId);
+  assert.equal(replay.body, 'first send', 'the stored message is returned, not the replay');
+  const messages = await store.listMessages({ conversationId });
+  assert.equal(messages.length, 1, 'the replay must not create a second message');
+});
+
 test('listMessages returns newest first', async () => {
   const store = createMemoryMessageStore();
   const conversationId = deriveConversationId('alice', 'bob');
@@ -383,6 +409,12 @@ function createFakeMongoClient() {
         return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
       }
       return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+    },
+    async findOne(filter) {
+      const found = docs.find(
+        (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
+      );
+      return found ? { _id: 'oid', ...found } : null;
     },
     find(query) {
       let results = docs;
