@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
 import {
   dismissMessageNotification,
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
+import { loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
@@ -31,14 +33,55 @@ function timelineEntryId(entry) {
   return entry?.messageId ?? entry?.callId;
 }
 
-// Monotonic counter used to disambiguate optimistic message ids sent within
-// the same millisecond. This is a local UI dedup key only (never sent to the
-// server), so a non-PRNG counter is preferable to `Math.random()` here.
-let pendingMessageIdCounter = 0;
+/** How many send attempts a queued message gets before it is marked failed
+ * and left for the user to retry or delete explicitly. */
+export const OUTBOX_MAX_ATTEMPTS = 5;
+/** First outbox drain retry delay; doubles per attempt up to the cap. */
+const OUTBOX_BASE_RETRY_MS = 1000;
+/** Ceiling for the exponential backoff between outbox drains. */
+const OUTBOX_MAX_RETRY_MS = 60_000;
+
+/** True while a queued message may still be sent automatically. */
+function isRetryable(item) {
+  return (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
+}
+
+/** Newest-first ordering, matching the server's message ordering. */
+function byNewestFirst(a, b) {
+  return Date.parse(b?.createdAt ?? 0) - Date.parse(a?.createdAt ?? 0);
+}
+
+/**
+ * Client-generated message id. The server upserts on
+ * `{ conversationId, messageId }`, so this is what makes a replayed send
+ * idempotent rather than a duplicate.
+ *
+ * Not a security token — it only has to be unique — so a `Math.random()`
+ * fallback is fine where the runtime has no `crypto.randomUUID`.
+ *
+ * @returns {string}
+ */
+function createMessageId() {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+    const random = (Math.random() * 16) | 0;
+    const value = char === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
 
 /**
  * Owns text chat: the conversation list, per-peer message history, optimistic
  * sending, read receipts, and typing indicators.
+ *
+ * Offline-first: the conversation list and history are hydrated from the local
+ * {@link module:storage/chatDb} store on mount and rendered immediately, then
+ * reconciled with the server in the background (always by `messageId`, never
+ * by array position). Sends go through a durable outbox that is written before
+ * the socket emit, so a message composed offline — or one caught by the app
+ * being killed mid-send — is replayed on the next connect or launch. Replay is
+ * safe because the server upserts on the client-supplied `messageId`.
  *
  * The socket lifecycle itself lives in `useCallFlow`; it forwards the raw
  * `message.*` socket events to the `handle*` methods returned here instead of
@@ -88,6 +131,24 @@ export default function useMessaging({
   // Mirrors activeChatPeerId so the message.received socket handler never
   // reads a stale value through a captured closure.
   const activeChatPeerIdRef = useRef(null);
+
+  // ─── Offline-first state ─────────────────────────────────────────────────
+  // Durable queue of sends awaiting an ack, mirrored into the local store on
+  // every mutation so it survives process death. Held in a ref (not state) so
+  // the drain loop always reads the latest queue.
+  const outboxRef = useRef([]);
+  const [pendingSendCount, setPendingSendCount] = useState(0);
+  // null until the socket reports either way, so the UI doesn't flash an
+  // "offline" banner during the first connect.
+  const [isSocketConnected, setIsSocketConnected] = useState(null);
+  const drainTimerRef = useRef(null);
+  const drainAttemptRef = useRef(0);
+  const isDrainingRef = useRef(false);
+  const drainOutboxRef = useRef(() => {});
+  // True once the local store has been read; gates persistence so an empty
+  // initial render can't overwrite the cached history with nothing.
+  const hydratedRef = useRef(false);
+  const conversationsRef = useRef([]);
 
   useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
