@@ -5,11 +5,13 @@ on:
     branches: [master]
     paths:
       - 'mobile/**'
+      - 'shared/**'
       - '.github/workflows/mobile-ci.yml'
   pull_request:
     branches: [master]
     paths:
       - 'mobile/**'
+      - 'shared/**'
       - '.github/workflows/mobile-ci.yml'
 
 # Cancel any in-progress run for the same branch so stale commits don't waste
@@ -40,6 +42,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Check types
+        run: npm run typecheck
 
       - name: Run unit tests
         run: npm test

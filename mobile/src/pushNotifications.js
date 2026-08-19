@@ -1,4 +1,5 @@
 import { Linking, Platform } from 'react-native';
+import { API_ROUTES } from '../../shared';
 import { getApp } from '@react-native-firebase/app';
 import {
   flushDurableLogs,
@@ -219,7 +220,7 @@ export function addChatLinkListener(callback) {
  */
 export async function registerPushToken({ sessionId, signalingUrl, provider, pushToken }) {
   try {
-    const response = await fetch(`${signalingUrl.trim()}/devices/register`, {
+    const response = await fetch(`${signalingUrl.trim()}${API_ROUTES.DEVICES_REGISTER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, provider, pushToken }),
@@ -254,7 +255,7 @@ export async function registerPushToken({ sessionId, signalingUrl, provider, pus
  */
 export async function unregisterPushToken({ sessionId, signalingUrl }) {
   try {
-    const response = await fetch(`${signalingUrl.trim()}/devices/unregister`, {
+    const response = await fetch(`${signalingUrl.trim()}${API_ROUTES.DEVICES_UNREGISTER}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId }),
@@ -554,7 +555,8 @@ export async function sendPushReceipt({
       (await resolveReceiptBaseUrl(remoteMessage));
     if (!signalingUrl || (!sessionId && !deviceId)) return false;
 
-    const response = await fetch(`${signalingUrl.replace(/\/+$/, '')}/devices/push-receipt`, {
+    const receiptUrl = `${signalingUrl.replace(/\/+$/, '')}${API_ROUTES.DEVICES_PUSH_RECEIPT}`;
+    const response = await fetch(receiptUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -8,9 +8,10 @@
  * call domain) can import the same canonical definitions.
  */
 
+const { SIGNALING_VERSION } = require('../../shared');
+
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
-const SIGNALING_VERSION = 1;
 
 /**
  * Message-bus channel on which call-state transitions are broadcast to other

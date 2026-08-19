@@ -6,6 +6,7 @@ const { resolveReachableChannels, userRoom } = require('../lib/state');
 const { describeActiveCallsForUser } = require('./calls');
 const { pruneDeadDevice } = require('../lib/persistence');
 const { verboseLog } = require('../lib/verbose');
+const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../../shared');
 
 const DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS = 2000;
 
@@ -53,13 +54,13 @@ function createCallEnvelope(call) {
 
 function getCallTransitionEventName(status, reason) {
   if (status === 'accepted') {
-    return 'call.accept';
+    return CLIENT_EVENTS.CALL_ACCEPT;
   }
   if (status === 'declined') {
-    return 'call.decline';
+    return CLIENT_EVENTS.CALL_DECLINE;
   }
   if (status === 'ended') {
-    return reason === 'cancelled' ? 'call.cancel' : 'call.end';
+    return reason === 'cancelled' ? CLIENT_EVENTS.CALL_CANCEL : CLIENT_EVENTS.CALL_END;
   }
   return null;
 }
@@ -317,8 +318,8 @@ function notifyCallCreated(io, state, call) {
 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
-    emitToUserSockets(io, call.calleeId, 'call.incoming', envelope);
-    emitToUserSockets(io, call.callerId, 'call.ringing', envelope);
+    emitToUserSockets(io, call.calleeId, SERVER_EVENTS.CALL_INCOMING, envelope);
+    emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, envelope);
 
     // Push fallback: deliver the incoming call to every registered device that
     // has no live socket of its own.  This is decided per device rather than
@@ -401,8 +402,8 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
     reason: reason ?? call.endReason ?? null,
     call,
   };
-  emitToUserSockets(io, call.callerId, 'call.state_changed', statePayload);
-  emitToUserSockets(io, call.calleeId, 'call.state_changed', statePayload);
+  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
+  emitToUserSockets(io, call.calleeId, SERVER_EVENTS.CALL_STATE_CHANGED, statePayload);
 
   // Broadcast the transition on the cross-instance bus (best-effort) so other
   // instances / external observers can react to call lifecycle changes. Socket

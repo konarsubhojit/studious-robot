@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 const { randomUUID } = require('node:crypto');
 const { resolveIdentityClaim } = require('../identity');
 const { getSessionFromRequest } = require('../lib/auth');
@@ -17,7 +18,7 @@ const { persistUser, persistDevice } = require('../lib/persistence');
 function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
   const router = express.Router();
 
-  router.post('/session', async (req, res) => {
+  router.post(API_ROUTES.SESSION, async (req, res) => {
     let externalIdentity;
     try {
       externalIdentity = verifyIdToken
@@ -102,7 +103,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
     res.status(201).json(session);
   });
 
-  router.get('/session', (req, res) => {
+  router.get(API_ROUTES.SESSION, (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -119,7 +120,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
    * fresh one (same userId / deviceId) is returned.  Useful for security-
    * conscious clients that periodically rotate their credentials.
    */
-  router.post('/session/refresh', (req, res) => {
+  router.post(API_ROUTES.SESSION_REFRESH, (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });

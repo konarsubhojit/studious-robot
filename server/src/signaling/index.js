@@ -28,10 +28,16 @@ const { registerMessageHandlers } = require('./messageHandlers');
 const {
   requireSocketSession,
   validateSignalingVersion,
+  parseInboundPayload,
   acknowledgeSuccess,
   acknowledgeError,
 } = require('./ack');
-const { isPlainObject } = require('../lib/normalize');
+const {
+  CLIENT_EVENTS,
+  SERVER_EVENTS,
+  ERROR_CODES,
+  TRANSPORT_EVENTS,
+} = require('../../../shared');
 const { verboseLog } = require('../lib/verbose');
 
 /**
@@ -54,7 +60,7 @@ function leaveRoom(socket, roomId, rooms) {
     rooms.delete(roomId);
   } else {
     // Notify remaining peer(s).
-    socket.to(roomId).emit('peer-left', { id: socket.id });
+    socket.to(roomId).emit(SERVER_EVENTS.PEER_LEFT, { id: socket.id });
   }
 }
 
@@ -115,7 +121,10 @@ function registerSocketHandlers(
     // Reject connections that race in after shutdown has begun: tell the client
     // this instance is draining so it can reconnect elsewhere, then disconnect.
     if (state.draining) {
-      socket.emit('server.draining', { reason: 'shutdown', ts: new Date().toISOString() });
+      socket.emit(SERVER_EVENTS.SERVER_DRAINING, {
+        reason: 'shutdown',
+        ts: new Date().toISOString(),
+      });
       socket.disconnect(true);
       return;
     }
@@ -143,7 +152,7 @@ function registerSocketHandlers(
     // discovering the downgrade indirectly when an authenticated action like
     // `call.initiate` is later rejected with `unauthorized`.
     if (identity.sessionDowngraded) {
-      socket.emit('session.invalid', { sessionId: identity.presentedSessionId });
+      socket.emit(SERVER_EVENTS.SESSION_INVALID, { sessionId: identity.presentedSessionId });
       console.log(
         `[signaling] socket ${socket.id} presented stale sessionId=${identity.presentedSessionId}; downgraded to guest user=${identity.userId}`
       );
@@ -175,7 +184,7 @@ function registerSocketHandlers(
     // Track which room this socket is currently in (one room per socket).
     let currentRoom = null;
 
-    socket.on('join-room', (roomId) => {
+    socket.on(CLIENT_EVENTS.JOIN_ROOM, (roomId) => {
       if (!socket.data.identity.sessionId) return;
       if (typeof roomId !== 'string' || roomId.length === 0) return;
 
@@ -188,7 +197,7 @@ function registerSocketHandlers(
         console.log(
           `[signaling] room-full: socket ${socket.id} rejected from room "${roomId}" (size=${room.size})`
         );
-        socket.emit('room-full', { roomId });
+        socket.emit(SERVER_EVENTS.ROOM_FULL, { roomId });
         return;
       }
 
@@ -205,53 +214,67 @@ function registerSocketHandlers(
       );
 
       // Notify existing peer that a new participant joined.
-      socket.to(roomId).emit('peer-joined', { id: socket.id });
+      socket.to(roomId).emit(SERVER_EVENTS.PEER_JOINED, { id: socket.id });
     });
 
-    socket.on('offer', ({ roomId, sdp } = {}) => {
-      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
-      console.log(`[signaling] relay offer: from ${socket.id} in room "${roomId}"`);
-      socket.to(roomId).emit('offer', { from: socket.id, sdp });
+    socket.on(CLIENT_EVENTS.ROOM_OFFER, (payload = {}) => {
+      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
+      const parsed = parseInboundPayload(socket, undefined, CLIENT_EVENTS.ROOM_OFFER, payload);
+      if (!parsed) return;
+      console.log(`[signaling] relay offer: from ${socket.id} in room "${parsed.roomId}"`);
+      socket
+        .to(parsed.roomId)
+        .emit(SERVER_EVENTS.ROOM_OFFER, { from: socket.id, sdp: parsed.sdp });
     });
 
-    socket.on('answer', ({ roomId, sdp } = {}) => {
-      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
-      console.log(`[signaling] relay answer: from ${socket.id} in room "${roomId}"`);
-      socket.to(roomId).emit('answer', { from: socket.id, sdp });
+    socket.on(CLIENT_EVENTS.ROOM_ANSWER, (payload = {}) => {
+      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
+      const parsed = parseInboundPayload(socket, undefined, CLIENT_EVENTS.ROOM_ANSWER, payload);
+      if (!parsed) return;
+      console.log(`[signaling] relay answer: from ${socket.id} in room "${parsed.roomId}"`);
+      socket
+        .to(parsed.roomId)
+        .emit(SERVER_EVENTS.ROOM_ANSWER, { from: socket.id, sdp: parsed.sdp });
     });
 
-    socket.on('ice-candidate', ({ roomId, candidate } = {}) => {
-      if (!socket.data.identity.sessionId || roomId !== currentRoom) return;
-      console.log(`[signaling] relay ice-candidate: from ${socket.id} in room "${roomId}"`);
-      socket.to(roomId).emit('ice-candidate', { from: socket.id, candidate });
+    socket.on(CLIENT_EVENTS.ROOM_ICE_CANDIDATE, (payload = {}) => {
+      if (!socket.data.identity.sessionId || payload?.roomId !== currentRoom) return;
+      const parsed = parseInboundPayload(
+        socket,
+        undefined,
+        CLIENT_EVENTS.ROOM_ICE_CANDIDATE,
+        payload
+      );
+      if (!parsed) return;
+      console.log(`[signaling] relay ice-candidate: from ${socket.id} in room "${parsed.roomId}"`);
+      socket
+        .to(parsed.roomId)
+        .emit(SERVER_EVENTS.ROOM_ICE_CANDIDATE, { from: socket.id, candidate: parsed.candidate });
     });
 
-    socket.on('call.initiate', (payload = {}, ack) => {
-      if (!requireSocketSession(socket, ack, 'call.initiate')) {
+    socket.on(CLIENT_EVENTS.CALL_INITIATE, (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, CLIENT_EVENTS.CALL_INITIATE)) {
         return;
       }
-      if (!validateSignalingVersion(socket, payload, ack, 'call.initiate')) {
+      if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.CALL_INITIATE)) {
         return;
       }
+      const parsed = parseInboundPayload(
+        socket,
+        ack,
+        CLIENT_EVENTS.CALL_INITIATE,
+        payload,
+        state
+      );
+      if (!parsed) return;
 
-      const calleeId = normaliseId(payload.calleeId);
-      if (!calleeId) {
-        acknowledgeError(
-          socket,
-          ack,
-          'call.initiate',
-          'bad_request',
-          'calleeId is required',
-          state
-        );
-        return;
-      }
+      const calleeId = normaliseId(parsed.calleeId);
       if (calleeId === socket.data.identity.userId) {
         acknowledgeError(
           socket,
           ack,
-          'call.initiate',
-          'bad_request',
+          CLIENT_EVENTS.CALL_INITIATE,
+          ERROR_CODES.BAD_REQUEST,
           'cannot call yourself',
           state
         );
@@ -273,8 +296,8 @@ function registerSocketHandlers(
         acknowledgeError(
           socket,
           ack,
-          'call.initiate',
-          'blocked',
+          CLIENT_EVENTS.CALL_INITIATE,
+          ERROR_CODES.BLOCKED,
           'you are blocked by this user',
           state
         );
@@ -296,8 +319,8 @@ function registerSocketHandlers(
         acknowledgeError(
           socket,
           ack,
-          'call.initiate',
-          'rate_limited',
+          CLIENT_EVENTS.CALL_INITIATE,
+          ERROR_CODES.RATE_LIMITED,
           'too many call attempts',
           state
         );
@@ -309,53 +332,51 @@ function registerSocketHandlers(
         calleeId,
         ringingTimeoutMs,
       });
-      logCallCorrelation(socket, call.callId, 'call.initiate');
+      logCallCorrelation(socket, call.callId, CLIENT_EVENTS.CALL_INITIATE);
       notifyCallCreated(io, state, call);
-      acknowledgeSuccess(socket, ack, 'call.initiate', { call });
+      acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INITIATE, { call });
     });
 
-    socket.on('call.incoming.ack', (payload = {}, ack) => {
-      if (!requireSocketSession(socket, ack, 'call.incoming.ack')) {
+    socket.on(CLIENT_EVENTS.CALL_INCOMING_ACK, (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, CLIENT_EVENTS.CALL_INCOMING_ACK)) {
         return;
       }
-      if (!validateSignalingVersion(socket, payload, ack, 'call.incoming.ack')) {
+      if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.CALL_INCOMING_ACK)) {
         return;
       }
-      const callId = normaliseId(payload.callId);
-      if (!callId) {
-        acknowledgeError(
-          socket,
-          ack,
-          'call.incoming.ack',
-          'bad_request',
-          'callId is required',
-          state
-        );
-        return;
-      }
+      const parsed = parseInboundPayload(
+        socket,
+        ack,
+        CLIENT_EVENTS.CALL_INCOMING_ACK,
+        payload,
+        state
+      );
+      if (!parsed) return;
+
       const identity = socket.data.identity;
-      const deviceId = normaliseId(payload.deviceId) || identity.deviceId;
+      const callId = parsed.callId;
+      const deviceId = normaliseId(parsed.deviceId) || identity.deviceId;
       markIncomingCallAcknowledged(state, callId, deviceId);
-      logCallCorrelation(socket, callId, 'call.incoming.ack');
-      acknowledgeSuccess(socket, ack, 'call.incoming.ack', { callId, deviceId });
+      logCallCorrelation(socket, callId, CLIENT_EVENTS.CALL_INCOMING_ACK);
+      acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INCOMING_ACK, { callId, deviceId });
     });
 
-    socket.on('call.accept', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_ACCEPT, (payload = {}, ack) => {
       handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
-        eventName: 'call.accept',
+        eventName: CLIENT_EVENTS.CALL_ACCEPT,
         nextStatus: 'accepted',
         authorize: (call, userId) =>
           call.calleeId === userId ? null : 'only the callee can accept a call',
       });
     });
 
-    socket.on('call.decline', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_DECLINE, (payload = {}, ack) => {
       handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
-        eventName: 'call.decline',
+        eventName: CLIENT_EVENTS.CALL_DECLINE,
         nextStatus: 'declined',
         reason: 'declined',
         authorize: (call, userId) =>
@@ -363,11 +384,11 @@ function registerSocketHandlers(
       });
     });
 
-    socket.on('call.cancel', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_CANCEL, (payload = {}, ack) => {
       handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
-        eventName: 'call.cancel',
+        eventName: CLIENT_EVENTS.CALL_CANCEL,
         nextStatus: 'ended',
         reason: 'cancelled',
         authorize: (call, userId) =>
@@ -375,11 +396,11 @@ function registerSocketHandlers(
       });
     });
 
-    socket.on('call.end', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_END, (payload = {}, ack) => {
       handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
-        eventName: 'call.end',
+        eventName: CLIENT_EVENTS.CALL_END,
         nextStatus: 'ended',
         reason: 'ended',
         authorize: (call, userId) =>
@@ -389,33 +410,30 @@ function registerSocketHandlers(
       });
     });
 
-    socket.on('rtc.offer', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.RTC_OFFER, (payload = {}, ack) => {
       handleRtcRelay(socket, ack, payload, {
         state,
         io,
-        eventName: 'rtc.offer',
+        eventName: CLIENT_EVENTS.RTC_OFFER,
         dataKey: 'sdp',
-        validateData: (value) => isPlainObject(value),
       });
     });
 
-    socket.on('rtc.answer', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.RTC_ANSWER, (payload = {}, ack) => {
       handleRtcRelay(socket, ack, payload, {
         state,
         io,
-        eventName: 'rtc.answer',
+        eventName: CLIENT_EVENTS.RTC_ANSWER,
         dataKey: 'sdp',
-        validateData: (value) => isPlainObject(value),
       });
     });
 
-    socket.on('rtc.candidate', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.RTC_CANDIDATE, (payload = {}, ack) => {
       handleRtcRelay(socket, ack, payload, {
         state,
         io,
-        eventName: 'rtc.candidate',
+        eventName: CLIENT_EVENTS.RTC_CANDIDATE,
         dataKey: 'candidate',
-        validateData: (value) => isPlainObject(value),
       });
     });
 
@@ -424,36 +442,44 @@ function registerSocketHandlers(
     // presenting" indicator on the remote side.  Reuses the generic RTC relay:
     // authorization/rate-limiting/call-state checks are identical to
     // rtc.offer/answer/candidate.
-    socket.on('call.media-state', (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_MEDIA_STATE, (payload = {}, ack) => {
       handleRtcRelay(socket, ack, payload, {
         state,
         io,
-        eventName: 'call.media-state',
+        eventName: CLIENT_EVENTS.CALL_MEDIA_STATE,
         dataKey: 'mediaState',
-        validateData: (value) => isPlainObject(value),
       });
     });
 
     // Self-heal: a client that was rejected as `busy` while holding no call of
     // its own reports what it believes is live, so the server can close out the
     // phantom calls that are blocking it.
-    socket.on('call.state.report', (payload = {}, ack) => {
-      if (!requireSocketSession(socket, ack, 'call.state.report')) {
+    socket.on(CLIENT_EVENTS.CALL_STATE_REPORT, (payload = {}, ack) => {
+      if (!requireSocketSession(socket, ack, CLIENT_EVENTS.CALL_STATE_REPORT)) {
         return;
       }
-      if (!validateSignalingVersion(socket, payload, ack, 'call.state.report')) {
+      if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.CALL_STATE_REPORT)) {
         return;
       }
+      const parsed = parseInboundPayload(
+        socket,
+        ack,
+        CLIENT_EVENTS.CALL_STATE_REPORT,
+        payload,
+        state
+      );
+      if (!parsed) return;
+
       const userId = socket.data.identity.userId;
-      const reported = Array.isArray(payload.activeCallIds)
-        ? payload.activeCallIds
-        : [payload.callId];
+      const reported = Array.isArray(parsed.activeCallIds)
+        ? parsed.activeCallIds
+        : [parsed.callId];
       const activeCallIds = reported.map((value) => normaliseId(value)).filter(Boolean);
       const cleared = reconcileClientCallState(state, userId, activeCallIds, {
         onTransition: (call, previousStatus, reason) =>
           notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),
       });
-      acknowledgeSuccess(socket, ack, 'call.state.report', {
+      acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_STATE_REPORT, {
         clearedCallIds: cleared.map((call) => call.callId),
         activeCalls: describeActiveCallsForUser(state, userId),
       });
@@ -461,7 +487,7 @@ function registerSocketHandlers(
 
     registerMessageHandlers(socket, { io, state });
 
-    socket.on('disconnect', (reason) => {
+    socket.on(TRANSPORT_EVENTS.DISCONNECT, (reason) => {
       const identity = socket.data.identity;
       if (currentRoom !== null) {
         leaveRoom(socket, currentRoom, state.rooms);

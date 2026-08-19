@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 const { CALL_END_REASONS } = require('../config');
 
 /**
@@ -32,7 +33,7 @@ function createMetricsRouter({ state }) {
    *   histograms    – latency distributions with bucket, count, sum, mean, min, max
    *   derived       – calculated rates (connect rate, completion rate)
    */
-  router.get('/metrics', (_req, res) => {
+  router.get(API_ROUTES.METRICS, (_req, res) => {
     res.status(200).json(state.telemetry.getSnapshot());
   });
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useMessaging from '../../src/hooks/useMessaging';
+import { createSignalingClient } from '../../src/signalingClient';
 import {
   dismissMessageNotification,
   markMessageSeen,
@@ -43,6 +44,11 @@ function setup(overrides = {}) {
     userId: 'alice',
     updateStatus: jest.fn(),
     ...overrides,
+  };
+  // The hook emits through the typed signaling client, which wraps the socket
+  // under test, so socket-level assertions still observe every emit.
+  params.signalingRef = params.signalingRef ?? {
+    current: createSignalingClient(params.socketRef.current),
   };
   const resultRef = { current: null };
   let tree;

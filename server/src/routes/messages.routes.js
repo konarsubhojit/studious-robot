@@ -8,6 +8,7 @@ const { deriveConversationId } = require('../messageStore');
 const { emitToUserSockets } = require('../domain/notifications');
 const { getPresenceSnapshot } = require('../lib/state');
 const { SIGNALING_VERSION } = require('../config');
+const { API_ROUTES, SERVER_EVENTS } = require('../../../shared');
 
 /**
  * Text-chat history endpoints.
@@ -31,7 +32,7 @@ function createMessagesRouter({ state, io }) {
    *
    * Response 200: { conversationId, messages: Message[], limit }
    */
-  router.get('/messages', async (req, res) => {
+  router.get(API_ROUTES.MESSAGES, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -95,7 +96,7 @@ function createMessagesRouter({ state, io }) {
    *
    * Response 200: { conversations: Array<{ conversationId, peerId, lastMessage, unreadCount, online }> }
    */
-  router.get('/conversations', async (req, res) => {
+  router.get(API_ROUTES.CONVERSATIONS, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -140,7 +141,7 @@ function createMessagesRouter({ state, io }) {
    * Body: { peerId }
    * Response 200: { conversationId, updated }
    */
-  router.post('/messages/read', async (req, res) => {
+  router.post(API_ROUTES.MESSAGES_READ, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -170,7 +171,7 @@ function createMessagesRouter({ state, io }) {
 
     if (updated > 0 && io) {
       const readAt = new Date().toISOString();
-      emitToUserSockets(io, peerId, 'message.read', {
+      emitToUserSockets(io, peerId, SERVER_EVENTS.MESSAGE_READ, {
         version: SIGNALING_VERSION,
         conversationId,
         readerId: session.userId,

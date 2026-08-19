@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Centralised design tokens for the WeTalk UI.
  *

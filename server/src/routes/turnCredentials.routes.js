@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 const { getSessionFromRequest } = require('../lib/auth');
 
 const DEFAULT_TTL_SECONDS = 60 * 60;
@@ -50,7 +51,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
   const router = express.Router();
   let cache = null;
 
-  router.get('/turn-credentials', async (req, res) => {
+  router.get(API_ROUTES.TURN_CREDENTIALS, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {

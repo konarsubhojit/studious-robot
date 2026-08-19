@@ -48,6 +48,10 @@
  */
 
 const { randomUUID } = require('crypto');
+// Maximum accepted message body length, in characters: part of the wire
+// contract, so it is owned by the shared package and enforced identically by
+// the client and the `message.send` handler.
+const { MAX_MESSAGE_BODY_LENGTH } = require('../../shared');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -55,8 +59,6 @@ const { randomUUID } = require('crypto');
 const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for {@link listMessages}. */
 const MAX_MESSAGE_LIMIT = 100;
-/** Maximum accepted message body length, in characters. */
-const MAX_MESSAGE_BODY_LENGTH = 4000;
 
 const DEFAULT_DB_NAME = 'wetalk';
 const DEFAULT_COLLECTION_NAME = 'messages';

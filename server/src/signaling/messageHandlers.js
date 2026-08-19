@@ -11,9 +11,16 @@ const push = require('../push');
 const {
   requireSocketSession,
   validateSignalingVersion,
+  parseInboundPayload,
   acknowledgeSuccess,
   acknowledgeError,
 } = require('./ack');
+const {
+  CLIENT_EVENTS,
+  SERVER_EVENTS,
+  ERROR_CODES,
+  parseEventPayload,
+} = require('../../../shared');
 
 /**
  * Text-chat signaling handlers.
@@ -62,7 +69,7 @@ function deliverMessage(io, state, message) {
     conversationId: message.conversationId,
     message,
   };
-  emitToUserSockets(io, message.recipientId, 'message.received', envelope);
+  emitToUserSockets(io, message.recipientId, SERVER_EVENTS.MESSAGE_RECEIVED, envelope);
 
   // Push fallback for devices the recipient is not currently connected on —
   // decided per device, exactly like the incoming-call fallback.
@@ -94,54 +101,56 @@ function deliverMessage(io, state, message) {
  * @param {{ io: object, state: object }} ctx
  */
 function registerMessageHandlers(socket, { io, state }) {
-  socket.on('message.send', async (payload = {}, ack) => {
-    if (!requireSocketSession(socket, ack, 'message.send')) {
+  socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, ack) => {
+    if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
       return;
     }
-    if (!validateSignalingVersion(socket, payload, ack, 'message.send')) {
+    if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
       return;
     }
 
     const senderId = socket.data.identity.userId;
+    // Rate limiting runs before schema validation so a flood of malformed
+    // payloads is throttled exactly like well-formed ones.
     const rateCheck = state.messageSendRateLimiter.check(senderId);
     if (!rateCheck.allowed) {
       acknowledgeError(
         socket,
         ack,
-        'message.send',
-        'rate_limited',
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.RATE_LIMITED,
         'message rate limit exceeded',
         state,
       );
       return;
     }
-    const recipientId = normaliseId(payload.recipientId);
-    if (!recipientId) {
-      acknowledgeError(
-        socket,
-        ack,
-        'message.send',
-        'bad_request',
-        'recipientId is required',
-        state
-      );
-      return;
-    }
+
+    const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, payload, state);
+    if (!parsed) return;
+
+    const recipientId = normaliseId(parsed.recipientId);
     if (recipientId === senderId) {
       acknowledgeError(
         socket,
         ack,
-        'message.send',
-        'bad_request',
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.BAD_REQUEST,
         'cannot message yourself',
         state
       );
       return;
     }
 
-    const validated = validateBody(payload.body);
+    const validated = validateBody(parsed.body);
     if (validated.error) {
-      acknowledgeError(socket, ack, 'message.send', validated.error, validated.message, state);
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_SEND,
+        validated.error,
+        validated.message,
+        state
+      );
       return;
     }
 
@@ -162,8 +171,8 @@ function registerMessageHandlers(socket, { io, state }) {
       acknowledgeError(
         socket,
         ack,
-        'message.send',
-        'forbidden',
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.FORBIDDEN,
         'you cannot message this user',
         state
       );
@@ -183,8 +192,8 @@ function registerMessageHandlers(socket, { io, state }) {
       acknowledgeError(
         socket,
         ack,
-        'message.send',
-        'internal_error',
+        CLIENT_EVENTS.MESSAGE_SEND,
+        ERROR_CODES.INTERNAL_ERROR,
         'could not store message',
         state
       );
@@ -197,7 +206,7 @@ function registerMessageHandlers(socket, { io, state }) {
     );
 
     deliverMessage(io, state, message);
-    acknowledgeSuccess(socket, ack, 'message.send', { message });
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message });
 
     // A connected recipient received the message on one of their live sockets
     // above, so record the delivery receipt. The sender's UI uses it to move
@@ -213,7 +222,7 @@ function registerMessageHandlers(socket, { io, state }) {
     }
 
     // Confirm back to the sender that the message left the server.
-    emitToUserSockets(io, senderId, 'message.delivered', {
+    emitToUserSockets(io, senderId, SERVER_EVENTS.MESSAGE_DELIVERED, {
       version: SIGNALING_VERSION,
       conversationId: message.conversationId,
       messageId: message.messageId,
@@ -228,19 +237,30 @@ function registerMessageHandlers(socket, { io, state }) {
    * sender does not need confirmation, matching how a throttled UI event
    * should behave (best-effort, never blocking the composer).
    */
-  socket.on('message.typing', (payload = {}) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_TYPING, (payload = {}) => {
     if (!socket.data.identity?.sessionId) return;
     if (payload?.version !== SIGNALING_VERSION) return;
 
+    // Fire-and-forget: a malformed indicator is logged and dropped rather than
+    // acknowledged, since the sender is not waiting on a reply.
+    const parsed = parseEventPayload(CLIENT_EVENTS.MESSAGE_TYPING, payload);
+    if (!parsed.success) {
+      console.warn(
+        `[messages] rejected malformed payload event=${CLIENT_EVENTS.MESSAGE_TYPING}` +
+          ` user=${socket.data.identity.userId} reason=${parsed.error.message}`
+      );
+      return;
+    }
+
     const senderId = socket.data.identity.userId;
-    const recipientId = normaliseId(payload.recipientId);
+    const recipientId = normaliseId(parsed.data.recipientId);
     if (!recipientId || recipientId === senderId) return;
 
-    emitToUserSockets(io, recipientId, 'message.typing', {
+    emitToUserSockets(io, recipientId, SERVER_EVENTS.MESSAGE_TYPING, {
       version: SIGNALING_VERSION,
       conversationId: deriveConversationId(senderId, recipientId),
       senderId,
-      isTyping: Boolean(payload.isTyping),
+      isTyping: Boolean(parsed.data.isTyping),
     });
   });
 }

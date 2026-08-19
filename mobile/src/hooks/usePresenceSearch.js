@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
+import { API_ROUTES } from '../../../shared';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
@@ -102,7 +103,7 @@ export default function usePresenceSearch({
             limit: String(limit),
           });
           if (trimmedQuery) params.set('search', trimmedQuery);
-          return { url: `${trimmedUrl}/users?${params.toString()}` };
+          return { url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}` };
         });
         if (!response?.ok) return [];
         const data = await response.json();

@@ -1,0 +1,26 @@
+{
+  // Incremental TypeScript migration - see TYPESCRIPT_MIGRATION.md.
+  //
+  // `checkJs` stays off so that unmigrated files do not fail the build; a file
+  // opts into strict checking by starting with a `// @ts-check` comment. Run
+  // `npm run typecheck` (also enforced in CI) after annotating a file.
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext", "dom"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["jest", "node"]
+  },
+  "include": ["src/**/*.js", "../shared/**/*.js"],
+  "exclude": ["node_modules", "../shared/node_modules"]
+}

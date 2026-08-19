@@ -6,6 +6,7 @@ Cloud-first project with two folders:
 | ---------- | -------------------------------------------------------- |
 | `mobile/`  | React Native app (React Native CLI)                      |
 | `server/`  | Node.js signaling server (Express + Socket.IO + `/health`) |
+| `shared/`  | Signaling/REST contracts (event names, payload schemas, routes) shared by both |
 
 This project is split into a signaling backend and a React Native mobile client.
 The backend is developed entirely in GitHub Codespaces; the mobile app uses the
@@ -72,6 +73,7 @@ Both folders expose a consistent script surface:
 | `npm start`    | Run the signaling server         | `react-native start`             |
 | `npm run dev`  | Run with `node --watch`          | —                                |
 | `npm test`     | `node --test`                    | `jest`                           |
+| `npm run typecheck` | `tsc --noEmit`              | `tsc --noEmit`                   |
 
 ## Verifying a fresh setup
 
@@ -134,7 +136,9 @@ any failure.  Run them before opening a pull request.
 | `android-apk.yml` — *Build APK(s)*          | PR / push to `master` (mobile) | —               |
 
 All three workflows run automatically.  A pull request that touches `server/`
-must pass `backend-ci.yml`; a PR touching `mobile/` must pass `mobile-ci.yml`.
+or `shared/` must pass `backend-ci.yml`; a PR touching `mobile/` or `shared/`
+must pass `mobile-ci.yml`.  Both gates run `npm run typecheck` (see
+[`TYPESCRIPT_MIGRATION.md`](./TYPESCRIPT_MIGRATION.md)) before the tests.
 The APK build is informational (the artifact is uploaded but the check does not
 gate the merge on its own).
 
