@@ -1,7 +1,10 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing, typography } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 
 function SettingsToggle({ label, hint, value, onPress, testID }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <Pressable
       onPress={onPress}
@@ -29,6 +32,8 @@ function SettingsToggle({ label, hint, value, onPress, testID }) {
  * @param {() => void} props.onToggleSpeakerDefault
  */
 export default function SettingsCard({ settings, onToggleAutoLighting, onToggleSpeakerDefault }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <View style={styles.settingsCard}>
       <Text style={styles.settingsTitle}>Settings</Text>
@@ -50,50 +55,51 @@ export default function SettingsCard({ settings, onToggleAutoLighting, onToggleS
   );
 }
 
-const styles = StyleSheet.create({
-  settingsCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
-    padding: spacing.sm + 2,
-    marginBottom: spacing.md,
-    gap: spacing.sm,
-  },
-  settingsTitle: {
-    ...typography.sectionTitle,
-    color: colors.textPrimary,
-  },
-  settingsOption: {
-    borderRadius: radius.sm + 2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceControl,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 9,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm + 2,
-  },
-  settingsOptionPressed: {
-    opacity: 0.85,
-  },
-  settingsOptionTextWrap: {
-    flexShrink: 1,
-  },
-  settingsOptionLabel: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  settingsOptionHint: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  settingsOptionValue: {
-    color: colors.accentValue,
-    fontWeight: '700',
-    minWidth: 28,
-    textAlign: 'right',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    settingsCard: {
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceRaised,
+      padding: spacing.sm + 2,
+      marginBottom: spacing.md,
+      gap: spacing.sm,
+    },
+    settingsTitle: {
+      ...typography.sectionTitle,
+      color: colors.textPrimary,
+    },
+    settingsOption: {
+      borderRadius: radius.sm + 2,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceControl,
+      paddingHorizontal: spacing.sm + 2,
+      paddingVertical: 9,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm + 2,
+    },
+    settingsOptionPressed: {
+      opacity: 0.85,
+    },
+    settingsOptionTextWrap: {
+      flexShrink: 1,
+    },
+    settingsOptionLabel: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    settingsOptionHint: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    settingsOptionValue: {
+      color: colors.accentValue,
+      fontWeight: '700',
+      minWidth: 28,
+      textAlign: 'right',
+    },
+  });

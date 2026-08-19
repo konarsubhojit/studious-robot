@@ -264,6 +264,39 @@ video track and applies lighting-adjusted camera controls:
 Controls are applied as best-effort `advanced` constraints, so unsupported values
 are ignored rather than interrupting the camera.
 
+## Theming (light & dark)
+
+The design tokens in `src/theme.js` ship two palettes — `palettes.light` and
+`palettes.dark` — that expose exactly the same token names. `ThemeProvider`
+(`src/ThemeProvider.js`, mounted in `App.js`) picks the palette from the OS
+colour scheme via `useColorScheme()`, so flipping the device theme re-themes the
+app immediately without a restart, and **Settings → Appearance** offers a
+manual **System / Light / Dark** override that is persisted to
+`wetalk-theme.json`.
+
+Components read colours through the context instead of importing `colors`:
+
+```js
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { spacing } from '../theme';
+
+export default function Example() {
+  const { colors } = useTheme();               // for inline/prop colours
+  const styles = useThemedStyles(createStyles); // rebuilt on a theme switch
+  return <View style={styles.card} />;
+}
+
+const createStyles = colors =>
+  StyleSheet.create({
+    card: { backgroundColor: colors.surface, padding: spacing.md },
+  });
+```
+
+Every text/background pairing in both palettes meets WCAG AA (4.5:1), and
+control borders clear the 3:1 non-text ratio; `__tests__/theme.test.js` asserts
+this. The video stage stays dark in both schemes so camera frames are never
+letterboxed in white.
+
 ## Export diagnostic logs
 
 Use the **Export Logs** button in the app UI to save a diagnostic log file from

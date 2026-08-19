@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
-import { colors, radius, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
 /**
@@ -19,6 +20,9 @@ export default function CallTopBar({
   participantLabel = null,
   onMinimize,
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const MCIcon = loadVectorIcons();
   const minimizeIconDef = ICONS.minimize;
 
@@ -72,72 +76,73 @@ export default function CallTopBar({
   );
 }
 
-const styles = StyleSheet.create({
-  topBar: {
-    minHeight: 44,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  leftGroup: {
-    flexShrink: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  rightGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  participantLabel: {
-    color: '#fff',
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  timerText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  qualityContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  minimizeButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  minimizeIconText: {
-    color: colors.textPrimary,
-    fontSize: 16,
-  },
-  signalBars: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 3,
-  },
-  signalBar: {
-    width: 6,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  signalBar0: {
-    height: 8,
-  },
-  signalBar1: {
-    height: 12,
-  },
-  signalBar2: {
-    height: 16,
-  },
-  signalBarActive: {
-    backgroundColor: colors.success,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    topBar: {
+      minHeight: 44,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    leftGroup: {
+      flexShrink: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    rightGroup: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    participantLabel: {
+      color: '#fff',
+      fontWeight: '600',
+      flexShrink: 1,
+    },
+    timerText: {
+      color: '#fff',
+      fontWeight: '700',
+    },
+    qualityContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    minimizeButton: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    minimizeIconText: {
+      color: colors.textPrimary,
+      fontSize: 16,
+    },
+    signalBars: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 3,
+    },
+    signalBar: {
+      width: 6,
+      borderRadius: 4,
+      backgroundColor: 'rgba(255, 255, 255, 0.35)',
+    },
+    signalBar0: {
+      height: 8,
+    },
+    signalBar1: {
+      height: 12,
+    },
+    signalBar2: {
+      height: 16,
+    },
+    signalBarActive: {
+      backgroundColor: colors.success,
+    },
+  });

@@ -3,12 +3,16 @@
  *
  * Colours, spacing, radii and typography were previously hardcoded and
  * repeated across the inline `StyleSheet` in `App.js`.  Collecting them here
- * gives every component a single source of truth and makes future theming
- * (for example a light/dark toggle) tractable.  The values intentionally match
- * the original "warm & cozy" palette so the visual result is unchanged.
+ * gives every component a single source of truth.
+ *
+ * Colours come in two palettes (`dark` and `light`) exposing exactly the same
+ * token names, so a component only has to read the palette handed to it by
+ * `ThemeProvider` (see `src/ThemeContext.js`) to support both schemes.  Every
+ * text/background pairing in the palettes below meets WCAG AA (4.5:1 for body
+ * text, 3:1 for large text and control borders).
  */
 
-export const colors = {
+const darkColors = {
   // Backgrounds / surfaces (midnight blue)
   background: '#0b1020',
   backgroundAlt: '#121a2e',
@@ -20,9 +24,10 @@ export const colors = {
   stageDark: '#070b16',
   pipBackground: '#060a13',
 
-  // Borders
-  border: '#33456f',
-  borderStage: '#3a4d7c',
+  // Borders (lightened from the original palette so control outlines clear the
+  // 3:1 non-text contrast ratio WCAG AA asks for)
+  border: '#5a70a4',
+  borderStage: '#4d64a0',
   borderInactiveBar: '#4a5f8f',
 
   // Text
@@ -39,7 +44,88 @@ export const colors = {
   success: '#5be2a2',
   warning: '#ffd27a',
   blob: '#9ec2ff',
+
+  // Translucent tints behind non-info status banners.
+  tintSuccess: 'rgba(91,226,162,0.12)',
+  tintDanger: 'rgba(255,123,138,0.15)',
+  tintWarning: 'rgba(255,210,122,0.15)',
+
+  // Foreground for content drawn on the fixed dark video overlays, which stay
+  // dark in both schemes so camera frames are never framed in white.
+  onOverlay: '#f6f8ff',
 };
+
+const lightColors = {
+  // Backgrounds / surfaces (cool daylight)
+  background: '#f4f6fb',
+  backgroundAlt: '#e8edf7',
+  surface: '#ffffff',
+  surfaceRaised: '#f1f4fb',
+  surfaceControl: '#e0e7f5',
+  surfaceBanner: '#d5def2',
+  // The video stage stays dark in both schemes: letterboxing camera frames in
+  // white is glaring and hides the (light) overlay controls drawn on top.
+  stage: '#0f172a',
+  stageDark: '#070b16',
+  pipBackground: '#060a13',
+
+  // Borders
+  border: '#7286ab',
+  borderStage: '#6a80b8',
+  borderInactiveBar: '#5d6f95',
+
+  // Text
+  textPrimary: '#101a30',
+  textSecondary: '#44506e',
+  textMuted: '#4b5877',
+  textOnAccent: '#ffffff',
+
+  // Accents / semantic
+  accent: '#1d4ed8',
+  accentButton: '#1d4ed8',
+  accentValue: '#1a45c0',
+  danger: '#b3261e',
+  success: '#116b45',
+  warning: '#8a5300',
+  blob: '#4a7bd6',
+
+  tintSuccess: 'rgba(17,107,69,0.10)',
+  tintDanger: 'rgba(179,38,30,0.10)',
+  tintWarning: 'rgba(138,83,0,0.10)',
+
+  onOverlay: '#f6f8ff',
+};
+
+/** Both palettes, keyed by the colour scheme they implement. */
+export const palettes = {
+  dark: darkColors,
+  light: lightColors,
+};
+
+/** Selectable appearance modes surfaced in Settings. */
+export const THEME_MODES = {
+  SYSTEM: 'system',
+  LIGHT: 'light',
+  DARK: 'dark',
+};
+
+export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_MODES.DARK];
+
+/**
+ * Resolve the palette to render with from the user's preference and the OS
+ * colour scheme.  Unknown modes (e.g. a corrupt persisted value) and an
+ * unknown system scheme both fall back to the dark scheme the app shipped
+ * with.
+ *
+ * @param {string} [mode] - One of THEME_MODES.
+ * @param {'light'|'dark'|null} [systemScheme] - Value from `useColorScheme()`.
+ * @returns {'light'|'dark'}
+ */
+export function resolveScheme(mode, systemScheme) {
+  if (mode === THEME_MODES.LIGHT) return 'light';
+  if (mode === THEME_MODES.DARK) return 'dark';
+  return systemScheme === 'light' ? 'light' : 'dark';
+}
 
 export const spacing = {
   xs: 4,
@@ -76,7 +162,3 @@ export const typography = {
   emphasis: { fontWeight: '700' },
   hint: { fontSize: 12 },
 };
-
-export const theme = { colors, spacing, radius, sizes, typography };
-
-export default theme;

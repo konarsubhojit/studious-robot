@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import CallStage from './CallStage';
 import CallControls from './CallControls';
@@ -49,6 +50,8 @@ export default function CallScreen({
   status,
   isCompact = false,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const [visibleStatus, setVisibleStatus] = useState(null);
   const [showControlsOverlay, setShowControlsOverlay] = useState(true);
   const controlsAutoHideTimerRef = useRef(null);
@@ -184,37 +187,38 @@ export default function CallScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  callScreen: {
-    flex: 1,
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 0,
-  },
-  callScreenCompact: {
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 0,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
-  },
-  topOverlay: {
-    gap: spacing.sm,
-  },
-  bottomOverlay: {
-    alignItems: 'center',
-  },
-  inCallStatus: {
-    alignSelf: 'flex-start',
-    maxWidth: '72%',
-    marginBottom: 0,
-  },
-  inCallStatusText: {
-    textAlign: 'left',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    callScreen: {
+      flex: 1,
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    callScreenCompact: {
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    overlay: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.lg,
+    },
+    topOverlay: {
+      gap: spacing.sm,
+    },
+    bottomOverlay: {
+      alignItems: 'center',
+    },
+    inCallStatus: {
+      alignSelf: 'flex-start',
+      maxWidth: '72%',
+      marginBottom: 0,
+    },
+    inCallStatusText: {
+      textAlign: 'left',
+    },
+  });

@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, sizes, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
 const TABS = [
@@ -49,6 +50,8 @@ const MIN_TAB_HEIGHT = sizes.minTouchTarget;
  */
 export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bottomInset = 0 }) {
   const MCIcon = loadVectorIcons();
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
 
   return (
     <View
@@ -85,48 +88,49 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
   );
 }
 
-const styles = StyleSheet.create({
-  bar: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  tab: {
-    flex: 1,
-    minHeight: MIN_TAB_HEIGHT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    paddingVertical: spacing.sm,
-  },
-  tabEmoji: {
-    fontSize: 20,
-    lineHeight: 24,
-  },
-  tabLabel: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  tabLabelActive: {
-    color: colors.textPrimary,
-  },
-  badge: {
-    position: 'absolute',
-    top: 4,
-    right: '28%',
-    backgroundColor: colors.danger,
-    borderRadius: 12,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    bar: {
+      flexDirection: 'row',
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    tab: {
+      flex: 1,
+      minHeight: MIN_TAB_HEIGHT,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+      paddingVertical: spacing.sm,
+    },
+    tabEmoji: {
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    tabLabel: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    tabLabelActive: {
+      color: colors.textPrimary,
+    },
+    badge: {
+      position: 'absolute',
+      top: 4,
+      right: '28%',
+      backgroundColor: colors.danger,
+      borderRadius: 12,
+      minWidth: 18,
+      height: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    badgeText: {
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: '700',
+    },
+  });

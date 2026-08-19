@@ -9,7 +9,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { colors, radius, spacing, typography } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing, THEME_MODES, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
@@ -24,6 +25,9 @@ import StatusBanner from './StatusBanner';
  * @param {import('react').ReactNode} props.children
  */
 function SectionLabel({ icon, children }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const MCIcon = loadVectorIcons();
   const iconDef = icon ? ICONS[icon] : null;
   return (
@@ -61,6 +65,12 @@ function SectionLabel({ icon, children }) {
  * @param {Function} [props.onToggleDeveloperMode] - Toggle developer mode on/off.
  * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
  */
+const APPEARANCE_OPTIONS = [
+  { mode: THEME_MODES.SYSTEM, label: 'System', testID: 'settings-theme-system' },
+  { mode: THEME_MODES.LIGHT, label: 'Light', testID: 'settings-theme-light' },
+  { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
+];
+
 export default function SettingsScreen({
   userId,
   onSaveUserId,
@@ -73,6 +83,9 @@ export default function SettingsScreen({
   onToggleDeveloperMode,
   status,
 }) {
+  const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const [name, setName] = useState(userId ?? '');
   const [url, setUrl] = useState(signalingUrl ?? '');
 
@@ -146,6 +159,33 @@ export default function SettingsScreen({
           style={styles.saveButton}
         />
 
+        {/* ── Appearance ──────────────────────────────────────────────────── */}
+        <SectionLabel icon="settingsAppearance">Appearance</SectionLabel>
+        <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
+        <View style={styles.segmentedRow} testID="settings-theme-mode">
+          {APPEARANCE_OPTIONS.map(option => {
+            const isSelected = option.mode === themeMode;
+            return (
+              <Pressable
+                key={option.mode}
+                onPress={() => setThemeMode(option.mode)}
+                accessibilityRole="radio"
+                accessibilityLabel={`${option.label} theme`}
+                accessibilityState={{ selected: isSelected, checked: isSelected }}
+                testID={option.testID}
+                style={({ pressed }) => [
+                  styles.segment,
+                  isSelected && styles.segmentSelected,
+                  pressed && styles.pressed,
+                ]}>
+                <Text style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         {/* ── Developer ───────────────────────────────────────────────────── */}
         {onToggleDeveloperMode ? (
           <>
@@ -196,122 +236,152 @@ export default function SettingsScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xl,
-  },
-  statusBanner: {
-    marginBottom: spacing.sm,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  backButton: {
-    height: 36,
-    width: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceControl,
-  },
-  backIcon: {
-    color: colors.textPrimary,
-    fontSize: 26,
-    lineHeight: 28,
-    marginTop: -2,
-  },
-  title: {
-    ...typography.title,
-    color: colors.textPrimary,
-  },
-  sectionLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: spacing.lg,
-    marginBottom: spacing.xs,
-  },
-  sectionLabelEmoji: {
-    fontSize: 12,
-    lineHeight: 14,
-  },
-  sectionTitle: {
-    ...typography.groupLabel,
-    color: colors.textSecondary,
-  },
-  hint: {
-    ...typography.hint,
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-  },
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    marginBottom: spacing.sm,
-  },
-  saveButton: {
-    marginBottom: spacing.sm,
-  },
-  signOutButton: {
-    minHeight: 44,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.danger,
-    backgroundColor: 'transparent',
-    marginTop: spacing.xs,
-  },
-  signOutText: {
-    color: colors.danger,
-    fontWeight: '700',
-  },
-  signOutHint: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: spacing.sm,
-  },
-  toggleRow: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  toggleTextWrap: {
-    flexShrink: 1,
-  },
-  toggleLabel: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  toggleValue: {
-    color: colors.accentValue,
-    fontWeight: '700',
-    minWidth: 28,
-    textAlign: 'right',
-  },
-  pressed: {
-    opacity: 0.78,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    flex: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    content: {
+      padding: spacing.lg,
+      paddingBottom: spacing.xl,
+    },
+    statusBanner: {
+      marginBottom: spacing.sm,
+    },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginBottom: spacing.lg,
+    },
+    backButton: {
+      height: 36,
+      width: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceControl,
+    },
+    backIcon: {
+      color: colors.textPrimary,
+      fontSize: 26,
+      lineHeight: 28,
+      marginTop: -2,
+    },
+    title: {
+      ...typography.title,
+      color: colors.textPrimary,
+    },
+    sectionLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: spacing.lg,
+      marginBottom: spacing.xs,
+    },
+    sectionLabelEmoji: {
+      fontSize: 12,
+      lineHeight: 14,
+    },
+    sectionTitle: {
+      ...typography.groupLabel,
+      color: colors.textSecondary,
+    },
+    hint: {
+      ...typography.hint,
+      color: colors.textSecondary,
+      marginBottom: spacing.sm,
+    },
+    input: {
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 10,
+      marginBottom: spacing.sm,
+    },
+    saveButton: {
+      marginBottom: spacing.sm,
+    },
+    signOutButton: {
+      minHeight: 44,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.danger,
+      backgroundColor: 'transparent',
+      marginTop: spacing.xs,
+    },
+    signOutText: {
+      color: colors.danger,
+      fontWeight: '700',
+    },
+    signOutHint: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginTop: spacing.sm,
+    },
+    toggleRow: {
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      marginBottom: spacing.sm,
+    },
+    segmentedRow: {
+      flexDirection: 'row',
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      padding: spacing.xs,
+      gap: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    segment: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.sm,
+    },
+    segmentSelected: {
+      backgroundColor: colors.accentButton,
+    },
+    segmentLabel: {
+      color: colors.textSecondary,
+      fontWeight: '600',
+    },
+    segmentLabelSelected: {
+      color: colors.textOnAccent,
+      fontWeight: '700',
+    },
+    toggleTextWrap: {
+      flexShrink: 1,
+    },
+    toggleLabel: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+      marginBottom: 2,
+    },
+    toggleValue: {
+      color: colors.accentValue,
+      fontWeight: '700',
+      minWidth: 28,
+      textAlign: 'right',
+    },
+    pressed: {
+      opacity: 0.78,
+    },
+  });

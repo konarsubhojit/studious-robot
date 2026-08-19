@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { formatCallDuration } from '../callUx';
-import { colors, spacing, typography } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { spacing, typography } from '../theme';
 
 /**
  * Slim, persistent banner shown at the top of the tab shell whenever an
@@ -22,6 +23,8 @@ export default function InCallBanner({
   elapsedCallSeconds = 0,
   onExpand,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <Pressable
       onPress={onExpand}
@@ -38,29 +41,30 @@ export default function InCallBanner({
   );
 }
 
-const styles = StyleSheet.create({
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accentButton,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
-  glyph: {
-    fontSize: 14,
-  },
-  text: {
-    ...typography.hint,
-    color: colors.textOnAccent,
-    fontWeight: '700',
-    flex: 1,
-  },
-  timer: {
-    ...typography.hint,
-    color: colors.textOnAccent,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    banner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      backgroundColor: colors.accentButton,
+    },
+    pressed: {
+      opacity: 0.85,
+    },
+    glyph: {
+      fontSize: 14,
+    },
+    text: {
+      ...typography.hint,
+      color: colors.textOnAccent,
+      fontWeight: '700',
+      flex: 1,
+    },
+    timer: {
+      ...typography.hint,
+      color: colors.textOnAccent,
+    },
+  });

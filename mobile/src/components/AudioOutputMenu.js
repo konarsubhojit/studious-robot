@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
-import { colors, radius, spacing } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 import IconButton from './IconButton';
 
 // Speaker and earpiece are always selectable; Bluetooth and wired headset are
@@ -37,6 +38,8 @@ export default function AudioOutputMenu({
   onSelect,
   disabled = false,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const [isOpen, setIsOpen] = useState(false);
   const routes = useMemo(() => buildRouteList(available), [available]);
 
@@ -99,52 +102,53 @@ export default function AudioOutputMenu({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  menu: {
-    width: '100%',
-    maxWidth: 320,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
-    padding: spacing.sm,
-    gap: spacing.xs,
-  },
-  menuTitle: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  menuItem: {
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceControl,
-  },
-  menuItemActive: {
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  menuItemPressed: {
-    opacity: 0.85,
-  },
-  menuItemText: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  menuItemCheck: {
-    color: colors.accent,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.45)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: spacing.lg,
+    },
+    menu: {
+      width: '100%',
+      maxWidth: 320,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceRaised,
+      padding: spacing.sm,
+      gap: spacing.xs,
+    },
+    menuTitle: {
+      color: colors.textPrimary,
+      fontSize: 16,
+      fontWeight: '700',
+      marginBottom: spacing.xs,
+    },
+    menuItem: {
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceControl,
+    },
+    menuItemActive: {
+      borderWidth: 1,
+      borderColor: colors.accent,
+    },
+    menuItemPressed: {
+      opacity: 0.85,
+    },
+    menuItemText: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    menuItemCheck: {
+      color: colors.accent,
+      fontWeight: '700',
+    },
+  });

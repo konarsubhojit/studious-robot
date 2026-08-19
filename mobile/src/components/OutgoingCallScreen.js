@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { deriveInitials, formatRingCountdown } from '../callUx';
-import { colors, spacing } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
 
@@ -31,6 +32,8 @@ function secondsRemaining(ringTimeoutAt) {
  * @param {Function} props.onCancel    - Called when the user presses Cancel.
  */
 export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }) {
+  const styles = useThemedStyles(createStyles);
+
   const ringTimeoutAt = activeCall?.ringTimeoutAt ?? null;
   const initials = deriveInitials(calleeId);
 
@@ -134,67 +137,68 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'space-between',
-    backgroundColor: colors.background,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-  },
-  header: {
-    alignItems: 'center',
-    paddingTop: spacing.lg,
-  },
-  headerLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
-  },
-  calleeSection: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.md,
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    backgroundColor: colors.accentButton,
-    opacity: 0.15,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 2,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  calleeId: {
-    fontSize: 30,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  countdown: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  actions: {
-    alignItems: 'center',
-    paddingBottom: spacing.lg * 2,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      justifyContent: 'space-between',
+      backgroundColor: colors.background,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.lg,
+    },
+    header: {
+      alignItems: 'center',
+      paddingTop: spacing.lg,
+    },
+    headerLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: colors.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 1.2,
+    },
+    calleeSection: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.md,
+    },
+    pulseRing: {
+      position: 'absolute',
+      width: 130,
+      height: 130,
+      borderRadius: 65,
+      backgroundColor: colors.accentButton,
+      opacity: 0.15,
+    },
+    avatar: {
+      width: 100,
+      height: 100,
+      borderRadius: 50,
+      backgroundColor: colors.surfaceRaised,
+      borderWidth: 2,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    avatarText: {
+      fontSize: 36,
+      fontWeight: '700',
+      color: colors.textPrimary,
+    },
+    calleeId: {
+      fontSize: 30,
+      fontWeight: '700',
+      color: colors.textPrimary,
+      textAlign: 'center',
+      marginTop: spacing.sm,
+    },
+    countdown: {
+      fontSize: 14,
+      color: colors.textSecondary,
+    },
+    actions: {
+      alignItems: 'center',
+      paddingBottom: spacing.lg * 2,
+    },
+  });

@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SettingsScreen from '../../src/components/SettingsScreen';
+import ThemeContext, { buildTheme } from '../../src/ThemeContext';
 
 jest.mock(
   '../../src/components/AppButton',
@@ -168,9 +169,45 @@ describe('SettingsScreen', () => {
       );
     });
 
-    ['Username', 'Signaling server', 'Developer', 'Account'].forEach(label => {
+    ['Username', 'Signaling server', 'Appearance', 'Developer', 'Account'].forEach(label => {
       const match = tree.root.findAll(n => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('appearance', () => {
+    function renderWithTheme(mode, setMode) {
+      let tree;
+      act(() => {
+        tree = renderer.create(
+          <ThemeContext.Provider
+            value={buildTheme(mode, mode === 'light' ? 'light' : 'dark', setMode)}>
+            <SettingsScreen {...baseProps} />
+          </ThemeContext.Provider>,
+        );
+      });
+      return tree;
+    }
+
+    test('marks the active appearance mode as selected', () => {
+      const tree = renderWithTheme('light', jest.fn());
+      expect(findByTestID(tree, 'settings-theme-light')[0].props.accessibilityState).toEqual({
+        selected: true,
+        checked: true,
+      });
+      expect(findByTestID(tree, 'settings-theme-system')[0].props.accessibilityState).toEqual({
+        selected: false,
+        checked: false,
+      });
+    });
+
+    test('choosing a mode calls setMode with it', () => {
+      const setMode = jest.fn();
+      const tree = renderWithTheme('system', setMode);
+      act(() => {
+        findByTestID(tree, 'settings-theme-dark')[0].props.onPress();
+      });
+      expect(setMode).toHaveBeenCalledWith('dark');
     });
   });
 });

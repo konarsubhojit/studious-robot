@@ -9,9 +9,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { colors, radius, spacing, typography } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   return (
     <View style={styles.inputRow}>
       <TextInput
@@ -65,6 +69,8 @@ function getInitials(id) {
  * @param {{ id: string, online?: boolean, testID?: string }} props
  */
 function Avatar({ id, online, testID }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <View style={styles.avatarWrap} testID={testID}>
       <View style={styles.avatarCircle}>
@@ -103,6 +109,9 @@ export default function ChatListScreen({
   isRefreshing = false,
   onOpenSettings,
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -256,158 +265,159 @@ export default function ChatListScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    padding: spacing.lg,
-  },
-  content: {
-    paddingBottom: spacing.xl,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  title: {
-    ...typography.title,
-    color: colors.textPrimary,
-  },
-  titleSpacer: {
-    flex: 1,
-  },
-  gearButton: {
-    height: 36,
-    width: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceControl,
-  },
-  gearIcon: {
-    fontSize: 18,
-  },
-  inputRow: {
-    position: 'relative',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    paddingRight: 40,
-  },
-  clearButton: {
-    position: 'absolute',
-    right: spacing.sm,
-    height: 28,
-    width: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clearButtonText: {
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  statusText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  rowPressed: {
-    opacity: 0.6,
-  },
-  rowText: {
-    flex: 1,
-  },
-  rowTitle: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  rowSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  rowMeta: {
-    alignItems: 'flex-end',
-    gap: spacing.xs,
-  },
-  rowTimestamp: {
-    color: colors.textMuted,
-    fontSize: 11,
-  },
-  unreadBadge: {
-    backgroundColor: colors.danger,
-    borderRadius: 12,
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  unreadBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  avatarWrap: {
-    position: 'relative',
-  },
-  avatarCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceControl,
-  },
-  avatarText: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  avatarStatusDot: {
-    position: 'absolute',
-    right: -1,
-    bottom: -1,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.surface,
-  },
-  presenceDotOnline: {
-    backgroundColor: colors.success,
-  },
-  presenceDotOffline: {
-    backgroundColor: colors.textSecondary,
-  },
-  empty: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: spacing.xl,
-    paddingHorizontal: spacing.lg,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    root: {
+      flex: 1,
+      padding: spacing.lg,
+    },
+    content: {
+      paddingBottom: spacing.xl,
+    },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginBottom: spacing.md,
+    },
+    title: {
+      ...typography.title,
+      color: colors.textPrimary,
+    },
+    titleSpacer: {
+      flex: 1,
+    },
+    gearButton: {
+      height: 36,
+      width: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceControl,
+    },
+    gearIcon: {
+      fontSize: 18,
+    },
+    inputRow: {
+      position: 'relative',
+      justifyContent: 'center',
+      marginBottom: spacing.md,
+    },
+    input: {
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 10,
+      paddingRight: 40,
+    },
+    clearButton: {
+      position: 'absolute',
+      right: spacing.sm,
+      height: 28,
+      width: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    clearButtonText: {
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    statusText: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      gap: spacing.sm,
+    },
+    rowPressed: {
+      opacity: 0.6,
+    },
+    rowText: {
+      flex: 1,
+    },
+    rowTitle: {
+      color: colors.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    rowSubtitle: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    rowMeta: {
+      alignItems: 'flex-end',
+      gap: spacing.xs,
+    },
+    rowTimestamp: {
+      color: colors.textMuted,
+      fontSize: 11,
+    },
+    unreadBadge: {
+      backgroundColor: colors.danger,
+      borderRadius: 12,
+      minWidth: 20,
+      height: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 6,
+    },
+    unreadBadgeText: {
+      color: '#fff',
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    avatarWrap: {
+      position: 'relative',
+    },
+    avatarCircle: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceControl,
+    },
+    avatarText: {
+      color: colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    avatarStatusDot: {
+      position: 'absolute',
+      right: -1,
+      bottom: -1,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: colors.surface,
+    },
+    presenceDotOnline: {
+      backgroundColor: colors.success,
+    },
+    presenceDotOffline: {
+      backgroundColor: colors.textSecondary,
+    },
+    empty: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      textAlign: 'center',
+      marginTop: spacing.xl,
+      paddingHorizontal: spacing.lg,
+    },
+  });
