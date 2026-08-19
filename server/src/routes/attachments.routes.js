@@ -5,6 +5,7 @@ const { API_ROUTES } = require('../../../shared');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId } = require('../lib/normalize');
 const { deriveConversationId } = require('../messageStore');
+const { isBlocked } = require('../security');
 const {
   createAttachmentKey,
   loadR2Config,
@@ -37,7 +38,7 @@ function createAttachmentsRouter({ state, env = process.env }) {
    * POST /attachments/presign
    *
    * Body: { peerId, type: 'image'|'file'|'voice', mimeType, sizeBytes }
-   * Response 200: { uploadUrl, publicUrl, expiresAt, key, headers, maxBytes }
+   * Response 200: { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }
    */
   router.post(API_ROUTES.ATTACHMENTS_PRESIGN, (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -72,6 +73,16 @@ function createAttachmentsRouter({ state, env = process.env }) {
     const peerId = normaliseId(req.body?.peerId);
     if (!peerId || peerId === session.userId) {
       res.status(400).json({ error: 'peerId must be another user' });
+      return;
+    }
+
+    // Mirror `message.send`: a blocked pair cannot exchange media either, so
+    // refuse before minting an upload credential rather than after the upload.
+    if (
+      isBlocked(state.blocks, peerId, session.userId) ||
+      isBlocked(state.blocks, session.userId, peerId)
+    ) {
+      res.status(403).json({ error: 'blocked' });
       return;
     }
 

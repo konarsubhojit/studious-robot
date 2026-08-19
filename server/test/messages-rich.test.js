@@ -207,6 +207,27 @@ test('presign rejects a disallowed MIME type and an oversized upload', async (t)
   assert.match(tooBig.body.error, /at most/);
 });
 
+test('presign refuses to mint an upload URL for a blocked peer', async (t) => {
+  withR2Env(t);
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'rich-alice');
+  const bobSession = await createSession(url, 'rich-bob');
+  assert.equal(
+    (await postJson(url, '/blocks', { blockeeId: 'rich-alice' }, bobSession)).status,
+    200
+  );
+
+  const res = await postJson(
+    url,
+    '/attachments/presign',
+    { peerId: 'rich-bob', type: 'image', mimeType: 'image/jpeg', sizeBytes: 1024 },
+    aliceSession
+  );
+  assert.equal(res.status, 403);
+});
+
 test('presign reports unavailable when R2 is not configured', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
@@ -297,6 +318,20 @@ test('message.send rejects an attachment that is not a managed upload', async (t
   });
   assert.equal(oversized.ok, false);
   assert.equal(oversized.error.code, 'bad_request');
+
+  // A URL that starts with the blob prefix but climbs back out of it once a
+  // proxy normalises the path is not a managed upload either.
+  const traversal = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'rich-bob',
+    body: '',
+    type: 'image',
+    attachment: imageAttachment({
+      url: `${R2_ENV.R2_PUBLIC_BASE_URL}/chatblobs/../private/secret.jpg`,
+    }),
+  });
+  assert.equal(traversal.ok, false);
+  assert.equal(traversal.error.code, 'bad_request');
 
   const badMime = await emitWithAck(alice, 'message.send', {
     version: VERSION,

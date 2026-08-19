@@ -243,7 +243,10 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
  */
 function isManagedAttachmentUrl(config, url) {
   if (!config || typeof url !== 'string') return false;
-  return url.startsWith(`${config.publicBaseUrl}/${ATTACHMENT_PATH_PREFIX}/`);
+  if (!url.startsWith(`${config.publicBaseUrl}/${ATTACHMENT_PATH_PREFIX}/`)) return false;
+  // `startsWith` alone would accept a URL that escapes the prefix again once a
+  // proxy normalises it (`…/chatblobs/../elsewhere`).
+  return !url.includes('..');
 }
 
 module.exports = {
