@@ -23,8 +23,19 @@ import SettingsScreen from './SettingsScreen';
  * and chat contexts, so no state lives here.
  */
 export default function TabShell() {
-  const { callFlow, settings, minimizeCallOnNavigate, startAudioCallWith, startVideoCallWith, handleExportLogs } =
-    useCall();
+  const {
+    callFlow,
+    settings,
+    isSettingsPanelVisible,
+    setIsSettingsPanelVisible,
+    handleAutoLightingToggle,
+    handleSpeakerDefaultToggle,
+    handleDeveloperModeToggle,
+    minimizeCallOnNavigate,
+    startAudioCallWith,
+    startVideoCallWith,
+    handleExportLogs,
+  } = useCall();
   const chat = useChat();
   const insets = useSafeAreaInsets();
 
@@ -74,13 +85,13 @@ export default function TabShell() {
       onRetryConnect={callFlow.retryPresenceConnect}
       onSearchUsers={callFlow.searchUsers}
       onSelectContact={callFlow.setCalleeId}
-      developerMode={settings.settings.developerModeEnabled}
-      isSettingsVisible={settings.isSettingsVisible}
-      onToggleSettings={() => settings.setIsSettingsVisible(previous => !previous)}
+      developerMode={settings.developerModeEnabled}
+      isSettingsVisible={isSettingsPanelVisible}
+      onToggleSettings={() => setIsSettingsPanelVisible(previous => !previous)}
       onExportLogs={handleExportLogs}
-      settings={settings.settings}
-      onToggleAutoLighting={settings.handleAutoLightingToggle}
-      onToggleSpeakerDefault={settings.handleSpeakerDefaultToggle}
+      settings={settings}
+      onToggleAutoLighting={handleAutoLightingToggle}
+      onToggleSpeakerDefault={handleSpeakerDefaultToggle}
       status={callFlow.status}
       callSummary={callFlow.callSummary}
       onDismissSummary={callFlow.dismissCallSummary}
@@ -110,8 +121,8 @@ export default function TabShell() {
       }}
       onClose={() => openTab(TABS.CHATS)}
       onExportLogs={handleExportLogs}
-      developerModeEnabled={settings.settings.developerModeEnabled}
-      onToggleDeveloperMode={settings.handleDeveloperModeToggle}
+      developerModeEnabled={settings.developerModeEnabled}
+      onToggleDeveloperMode={handleDeveloperModeToggle}
     />
   );
 

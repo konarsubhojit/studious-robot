@@ -51,6 +51,14 @@ export function CallProvider({ children }) {
 
   const { isCallMinimized, setIsCallMinimized } = useCallMinimize(isCallConnected);
 
+  // Whenever the machine leaves an active state (the call ended, from either
+  // side), drop the minimized flag so the next call never opens as a bubble.
+  useEffect(() => {
+    if (!isCallActive) {
+      setIsCallMinimized(false);
+    }
+  }, [isCallActive, setIsCallMinimized]);
+
   const { handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip({
     onTap: callFlow.handleSwapStreams,
   });
@@ -118,7 +126,13 @@ export function CallProvider({ children }) {
   const value = useMemo(
     () => ({
       callFlow,
-      settings: appSettings,
+      // Device preferences (see `useAppSettings`)
+      settings: appSettings.settings,
+      isSettingsPanelVisible: appSettings.isSettingsVisible,
+      setIsSettingsPanelVisible: appSettings.setIsSettingsVisible,
+      handleAutoLightingToggle: appSettings.handleAutoLightingToggle,
+      handleSpeakerDefaultToggle: appSettings.handleSpeakerDefaultToggle,
+      handleDeveloperModeToggle: appSettings.handleDeveloperModeToggle,
       // Unified call state machine view
       callState,
       isCallActive,
