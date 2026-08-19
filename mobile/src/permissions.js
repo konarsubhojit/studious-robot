@@ -202,3 +202,74 @@ export async function ensureBluetoothPermission({ requestIfNeeded = false } = {}
     message: getRuntimePermissionDeniedMessage([BLUETOOTH_CONNECT_PERMISSION]),
   };
 }
+
+// ─── Attachment (photo / camera / voice) permissions ──────────────────────
+
+const MEDIA_IMAGES_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_MEDIA_IMAGES;
+const READ_EXTERNAL_STORAGE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_EXTERNAL_STORAGE;
+
+/**
+ * The runtime permission that gates reading the photo library, which changed
+ * name (and scope) in Android 13 (API 33): `READ_MEDIA_IMAGES` replaced the
+ * broader `READ_EXTERNAL_STORAGE` for image access.
+ *
+ * @param {number} [androidApiLevel]
+ * @returns {string | undefined} `undefined` on iOS (handled by Info.plist,
+ *   not `PermissionsAndroid`) or when neither permission constant exists.
+ */
+export function getPhotoLibraryPermission(androidApiLevel = Platform.Version) {
+  if (Platform.OS !== 'android') return undefined;
+  return Number(androidApiLevel) >= 33 ? MEDIA_IMAGES_PERMISSION : READ_EXTERNAL_STORAGE_PERMISSION;
+}
+
+/** User-facing text for a denied attachment permission. */
+function getAttachmentPermissionDeniedMessage(kind) {
+  if (kind === 'photo') return 'Photo library permission is required to attach a photo';
+  if (kind === 'camera') return 'Camera permission is required to take a photo';
+  if (kind === 'voice') return 'Microphone permission is required to record a voice note';
+  return 'Required permission is missing';
+}
+
+/**
+ * Ensure the runtime permission needed to attach a photo, take a camera
+ * photo, or record a voice note is granted, requesting it if not.
+ *
+ * The file picker (`kind: 'file'`) needs no runtime grant on Android — it
+ * goes through the Storage Access Framework, which is scoped per pick — so
+ * it always resolves `ok: true` without prompting.
+ *
+ * @param {'photo'|'camera'|'voice'|'file'} kind
+ * @param {{ androidApiLevel?: number }} [options]
+ * @returns {Promise<{ ok: boolean, granted: boolean, message?: string | null }>}
+ */
+export async function ensureAttachmentPermission(kind, { androidApiLevel = Platform.Version } = {}) {
+  if (
+    Platform.OS !== 'android' ||
+    kind === 'file' ||
+    !PermissionsAndroid?.check ||
+    !PermissionsAndroid?.requestMultiple
+  ) {
+    return { ok: true, granted: true, message: null };
+  }
+
+  const permission =
+    kind === 'photo'
+      ? getPhotoLibraryPermission(androidApiLevel)
+      : kind === 'camera'
+        ? CAMERA_PERMISSION
+        : kind === 'voice'
+          ? MICROPHONE_PERMISSION
+          : undefined;
+  if (!permission) return { ok: true, granted: true, message: null };
+
+  const alreadyGranted = await PermissionsAndroid.check(permission);
+  if (alreadyGranted) return { ok: true, granted: true, message: null };
+
+  const results = await PermissionsAndroid.requestMultiple([permission]);
+  const granted = results[permission] === PermissionsAndroid.RESULTS.GRANTED;
+  return {
+    ok: granted,
+    granted,
+    message: granted ? null : getAttachmentPermissionDeniedMessage(kind),
+  };
+}

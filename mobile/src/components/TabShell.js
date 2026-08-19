@@ -71,6 +71,15 @@ export default function TabShell() {
       isStartingCall={callFlow.isPlacingCall}
       isPeerTyping={Boolean(chat.typingByPeer[peerId])}
       isLoadingMessages={chat.isLoadingMessages}
+      onPickAttachment={kind => chat.pickAndSendAttachment(peerId, kind)}
+      onStartVoiceNote={() => chat.startRecordingVoiceNote()}
+      onStopVoiceNote={() => chat.stopRecordingVoiceNoteAndSend(peerId)}
+      onCancelVoiceNote={() => chat.cancelRecordingVoiceNote()}
+      isUploadingAttachment={chat.isUploadingAttachment}
+      attachmentUploadProgress={chat.attachmentUploadProgress}
+      isRecordingVoiceNote={chat.isRecordingVoiceNote}
+      attachmentsAvailable={chat.attachmentsAvailable}
+      isVoiceNoteSupported={chat.isVoiceNoteSupported}
       onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
     />
   );
