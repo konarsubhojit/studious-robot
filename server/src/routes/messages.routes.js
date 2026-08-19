@@ -6,6 +6,13 @@ const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
 const { deriveConversationId, clampMessageLimit } = require('../messageStore');
 const {
+  toCallTimelineEntry,
+  listCallsBetween,
+  augmentConversationsWithCalls,
+  markMissedCallsRead,
+  mergeTimeline,
+} = require('../domain/callTimeline');
+const {
   readCached,
   writeCached,
   invalidateCache,
@@ -33,13 +40,19 @@ function createMessagesRouter({ state, io }) {
   const router = express.Router();
 
   /**
-   * GET /messages?peerId=…&limit=…&before=…
+   * GET /messages?peerId=…&limit=…&before=…&include=calls
    *
    * Paginated history for the conversation between the authenticated user and
    * `peerId`, newest first.  `before` is an ISO timestamp cursor: pass the
-   * `createdAt` of the oldest message you already hold to fetch the next page.
+   * `createdAt` of the oldest entry you already hold to fetch the next page.
    *
-   * Response 200: { conversationId, messages: Message[], limit }
+   * With `include=calls`, the page becomes a unified conversation timeline:
+   * call records between the same two users are normalised into entries and
+   * merge-sorted with the messages, and every entry carries a `type`
+   * discriminator (`text` or `call`).  The parameter is opt-in, so a client
+   * that omits it receives exactly the payload it always did.
+   *
+   * Response 200: { conversationId, messages: TimelineEntry[], limit }
    */
   router.get(API_ROUTES.MESSAGES, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
@@ -60,11 +73,17 @@ function createMessagesRouter({ state, io }) {
 
     const conversationId = deriveConversationId(session.userId, peerId);
     const before = normaliseOptionalString(req.query?.before);
+    const includeCalls = String(req.query?.include ?? '')
+      .split(',')
+      .map((token) => token.trim())
+      .includes('calls');
 
     // Only the first page is cacheable: deep pagination (`before` present) is
     // rare, unbounded in key space and the least latency-sensitive path.
+    // The merged timeline is not cached at all: it mixes in live call state,
+    // which is invalidated on its own schedule.
     const limit = clampMessageLimit(req.query?.limit);
-    const cacheKey = before ? null : messagesCacheKey(conversationId, limit);
+    const cacheKey = before || includeCalls ? null : messagesCacheKey(conversationId, limit);
 
     let messages = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {
@@ -91,10 +110,32 @@ function createMessagesRouter({ state, io }) {
       return;
     }
 
+    if (!includeCalls) {
+      res.status(200).json({
+        conversationId,
+        messages: participantMessages,
+        limit: participantMessages.length,
+      });
+      return;
+    }
+
+    // Calls follow the same visibility rule as `GET /conversations`: a blocked
+    // (or blocking) peer contributes nothing to the timeline.
+    const hidden =
+      isBlocked(state.blocks, session.userId, peerId) ||
+      isBlocked(state.blocks, peerId, session.userId);
+    const callEntries = hidden
+      ? []
+      : listCallsBetween(state, session.userId, peerId)
+          .filter((call) => (before ? call.createdAt < before : true))
+          .map((call) => toCallTimelineEntry(call, session.userId));
+
+    const timeline = mergeTimeline(participantMessages, callEntries, limit);
+
     res.status(200).json({
       conversationId,
-      messages: participantMessages,
-      limit: participantMessages.length,
+      messages: timeline,
+      limit: timeline.length,
     });
   });
 
@@ -135,7 +176,9 @@ function createMessagesRouter({ state, io }) {
       await writeCached(state, cacheKey, conversations);
     }
 
-    const visible = conversations
+    // Calls are part of the same relationship: fold them in so the preview and
+    // the unread badge reflect the newest activity, message or call.
+    const visible = augmentConversationsWithCalls(state, session.userId, conversations)
       .filter(
         (conversation) =>
           !isBlocked(state.blocks, session.userId, conversation.peerId) &&
@@ -153,8 +196,10 @@ function createMessagesRouter({ state, io }) {
    * POST /messages/read
    *
    * Mark every unread message the authenticated user has received from
-   * `peerId` as read.  Idempotent: replaying the call once nothing is
-   * outstanding returns `updated: 0`.
+   * `peerId` as read, and acknowledge that peer's missed calls at the same
+   * time — opening a conversation clears both halves of its unread state.
+   * Idempotent: replaying the call once nothing is outstanding returns
+   * `updated: 0`.
    *
    * When at least one message transitions to read, notifies `peerId` (the
    * original sender of those messages) over their live socket(s) with a
@@ -162,7 +207,7 @@ function createMessagesRouter({ state, io }) {
    * in realtime without waiting for a refetch.
    *
    * Body: { peerId }
-   * Response 200: { conversationId, updated }
+   * Response 200: { conversationId, updated, missedCallsRead }
    */
   router.post(API_ROUTES.MESSAGES_READ, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
@@ -212,7 +257,9 @@ function createMessagesRouter({ state, io }) {
       });
     }
 
-    res.status(200).json({ conversationId, updated });
+    const missedCallsRead = markMissedCallsRead(state, session.userId, peerId);
+
+    res.status(200).json({ conversationId, updated, missedCallsRead });
   });
 
   return router;

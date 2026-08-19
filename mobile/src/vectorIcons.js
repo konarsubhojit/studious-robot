@@ -47,6 +47,7 @@ export const ICONS = {
   settings: { icon: 'cog', emoji: '⚙️' },
   callRedial: { icon: 'phone-forward', emoji: '📞' },
   callIncoming: { icon: 'phone-incoming', emoji: '↓' },
+  callMissed: { icon: 'phone-missed', emoji: '↘' },
   callOutgoing: { icon: 'phone-outgoing', emoji: '↑' },
   callEnd: { icon: 'phone-hangup', emoji: '📵' },
   callAccept: { icon: 'phone', emoji: '📞' },

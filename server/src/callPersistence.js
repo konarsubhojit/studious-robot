@@ -42,6 +42,8 @@ function persistCallRecord(db, call) {
       calleeId: call.calleeId,
       status: call.status,
       endReason: call.endReason ?? null,
+      durationSeconds: call.durationSeconds ?? null,
+      missedReadAt: toDateOrNull(call.missedReadAt),
       createdAt: toDateOrNull(call.createdAt) ?? new Date(),
       updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
       ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
@@ -53,6 +55,8 @@ function persistCallRecord(db, call) {
         calleeId: call.calleeId,
         status: call.status,
         endReason: call.endReason ?? null,
+        durationSeconds: call.durationSeconds ?? null,
+        missedReadAt: toDateOrNull(call.missedReadAt),
         updatedAt: toDateOrNull(call.updatedAt) ?? new Date(),
         ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
       },
@@ -109,6 +113,11 @@ async function hydrateCallsAndEventsFromDb(db, state) {
         calleeId: row.calleeId,
         status: row.status,
         endReason: row.endReason ?? null,
+        durationSeconds: row.durationSeconds ?? null,
+        missedReadAt:
+          row.missedReadAt instanceof Date
+            ? row.missedReadAt.toISOString()
+            : row.missedReadAt ?? null,
         createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
         updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
         ringTimeoutAt:

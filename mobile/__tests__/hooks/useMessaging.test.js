@@ -133,6 +133,42 @@ describe('useMessaging', () => {
     ]);
   });
 
+  test('fetchMessagesForPeer requests the merged timeline and dedupes call entries', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          messages: [{ type: 'call', callId: 'c2', createdAt: '2024-01-02' }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          messages: [
+            // The server repeats the cursor entry defensively; it must not
+            // appear twice in the merged list.
+            { type: 'call', callId: 'c2', createdAt: '2024-01-02' },
+            { type: 'text', messageId: 'm1', createdAt: '2024-01-01' },
+          ],
+        }),
+      });
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer('bob');
+    });
+    const request = params.authedFetchRef.current.mock.calls[0][0]('session-1');
+    expect(request.url).toContain('include=calls');
+
+    await act(async () => {
+      await resultRef.current.fetchMessagesForPeer('bob', { before: '2024-01-02' });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([
+      { type: 'call', callId: 'c2', createdAt: '2024-01-02' },
+      { type: 'text', messageId: 'm1', createdAt: '2024-01-01' },
+    ]);
+  });
+
   test('fetchMessagesForPeer resolves to an empty array with no session or peerId', async () => {
     const { resultRef } = setup({ sessionIdRef: { current: null } });
     let messages;

@@ -74,6 +74,10 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
     endReason,
     createdAt: now,
     updatedAt: now,
+    // Seconds of connected conversation; known only once the call is terminal.
+    durationSeconds: TERMINAL_CALL_STATES.has(status) ? 0 : null,
+    // When the callee (if ever) read the missed-call entry for this call.
+    missedReadAt: null,
     ringTimeoutAt:
       status === 'ringing' ? new Date(Date.now() + ringingTimeoutMs).toISOString() : null,
   };
@@ -88,6 +92,39 @@ function createCallRecord(state, { callerId, calleeId, ringingTimeoutMs }) {
   }
 
   return call;
+}
+
+/**
+ * States a call has to have reached for media to have been connected (or to be
+ * about to connect): the point from which conversation time is measured.
+ */
+const CONNECTED_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
+
+/**
+ * Compute how long a call was connected, in whole seconds.
+ *
+ * The clock starts when the callee accepted (`answeredAt`, recorded in memory)
+ * and stops when the call reaches a terminal state.  A call that never got past
+ * `ringing` — missed, declined, cancelled, busy, unreachable — has no
+ * conversation time at all and is reported as `0` rather than `null`, so every
+ * terminal call carries a duration the client can render without guessing.
+ *
+ * `answeredAt` is deliberately not persisted: a call restored from the database
+ * mid-conversation still has `updatedAt` pointing at the moment it entered its
+ * current state, which is the same instant for `accepted`, and a close enough
+ * lower bound for the later media states.
+ *
+ * @param {CallRecord} call
+ * @param {string} previousStatus
+ * @param {number} endedAtMs
+ * @returns {number}
+ */
+function computeDurationSeconds(call, previousStatus, endedAtMs) {
+  if (!CONNECTED_CALL_STATES.has(previousStatus)) return 0;
+  const startedAtMs = call.answeredAt
+    ? toTimestamp(call.answeredAt, endedAtMs)
+    : toTimestamp(call.updatedAt ?? call.createdAt, endedAtMs);
+  return Math.max(0, Math.round((endedAtMs - startedAtMs) / 1000));
 }
 
 /**
@@ -134,12 +171,21 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
     };
   }
 
+  const previousStatus = call.status;
+  const nowMs = Date.now();
+  const durationSeconds = TERMINAL_CALL_STATES.has(toStatus)
+    ? computeDurationSeconds(call, previousStatus, nowMs)
+    : null;
   call.status = toStatus;
   const isTerminal = TERMINAL_CALL_STATES.has(toStatus);
   call.endReason = isTerminal ? reason ?? null : null;
-  call.updatedAt = new Date().toISOString();
+  call.updatedAt = new Date(nowMs).toISOString();
+  if (toStatus === 'accepted') {
+    call.answeredAt = call.updatedAt;
+  }
   if (isTerminal) {
     call.ringTimeoutAt = null;
+    call.durationSeconds = durationSeconds;
   }
 
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
@@ -442,10 +488,12 @@ function getCallExpiry(
  */
 function finalizeCall(state, call, status, reason, now) {
   const previousStatus = call.status;
+  const durationSeconds = computeDurationSeconds(call, previousStatus, now);
   call.status = status;
   call.endReason = reason;
   call.updatedAt = new Date(now).toISOString();
   call.ringTimeoutAt = null;
+  call.durationSeconds = durationSeconds;
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
   persistCallRecord(state.db, call);
   appendCallEvent(state, call.callId, status, null, reason);

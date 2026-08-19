@@ -50,6 +50,13 @@
       "when": 1787000000000,
       "tag": "0006_close_stale_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787109631354,
+      "tag": "0007_call_duration_and_missed_read",
+      "breakpoints": true
     }
   ]
 }

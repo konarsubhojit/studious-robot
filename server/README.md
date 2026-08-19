@@ -29,7 +29,11 @@ Besides the call/session/contact routes, the chat surface adds:
 
 | Method & path | Query | Response | Notes |
 | ------------- | ----- | -------- | ----- |
-| `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
+| `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
+
+With `include=calls` the page becomes a unified conversation timeline: calls between the same two users are merged in and every entry carries a `type` discriminator — `text` for a message, or `call` for `{ type, callId, conversationId, direction, status, endReason, durationSeconds, createdAt }`. The `before` cursor stays exact across the merged stream (`messageStore.nextTimestamp()` guarantees strictly-increasing message timestamps, and ties are broken by entry id). The parameter is opt-in, so omitting it returns exactly the payload it always did, and a blocked (or blocking) peer's calls are filtered out just like their conversation is in `GET /conversations`.
+
+`GET /conversations` correspondingly reports `lastActivity` — whichever of the last message and the last call is newer — alongside `lastMessage`, and counts a peer's unacknowledged missed calls in `unreadCount`. `POST /messages/read` clears both halves, returning `{ conversationId, updated, missedCallsRead }`.
 
 ### Socket.IO signaling events
 
@@ -267,6 +271,12 @@ hand-edit the generated SQL.
 # After editing db/schema.js, regenerate the migration (commit the result):
 npm run db:generate
 
+# …or give the migration a meaningful name (commit the result):
+npm run db:generate:named -- call_duration_and_missed_read
+
+# Verify the generated migrations and their journal are consistent:
+npm run db:check
+
 # Apply pending migrations (uses DATABASE_URL_DIRECT, falling back to DATABASE_URL):
 npm run db:migrate
 ```
@@ -293,7 +303,8 @@ of cross-instance coordination, both backed by Redis:
   observers.
 - **Read cache** (`src/cache.js`) — a shared cache in front of the hottest
   reads: `GET /conversations` (`conv::<userId>`), the first page of
-  `GET /messages` (`msg::<conversationId>::<limit>`) and `GET /calls`
+  `GET /messages` (`msg::<conversationId>::<limit>`, excluding the
+  `include=calls` timeline, which mixes in live call state) and `GET /calls`
   (`callhist::<userId>::<status>::<limit>`), each with a 30s TTL. Writes
   (`message.send`, delivery receipts, `POST /messages/read`, call transitions)
   evict the affected prefixes locally and publish them on the bus so every

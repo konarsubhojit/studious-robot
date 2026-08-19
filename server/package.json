@@ -12,6 +12,8 @@
     "dev": "node --watch src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "db:generate": "drizzle-kit generate",
+    "db:generate:named": "drizzle-kit generate --name",
+    "db:check": "drizzle-kit check",
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {

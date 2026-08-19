@@ -60,6 +60,34 @@ function formatConversationTimestamp(isoString) {
   return isToday ? date.toLocaleTimeString() : date.toLocaleDateString();
 }
 
+/**
+ * The conversation's newest event: a call, when the server merged one in
+ * (`lastActivity`), otherwise the last text message.
+ *
+ * @param {{ lastActivity?: object, lastMessage?: object }} conversation
+ * @returns {object | null}
+ */
+function lastActivityOf(conversation) {
+  return conversation?.lastActivity ?? conversation?.lastMessage ?? null;
+}
+
+/**
+ * One-line preview of a conversation's newest event, so a row whose latest
+ * activity was a call reads as such instead of showing a stale older message.
+ *
+ * @param {{ lastActivity?: object, lastMessage?: object }} conversation
+ * @returns {string}
+ */
+function formatActivityPreview(conversation) {
+  const activity = lastActivityOf(conversation);
+  if (!activity) return 'No messages yet';
+  if (activity.type !== 'call') return activity.body || 'No messages yet';
+  if (activity.status === 'missed' && activity.direction === 'incoming') {
+    return '📞 Missed call';
+  }
+  return activity.direction === 'outgoing' ? '📞 Outgoing call' : '📞 Incoming call';
+}
+
 /** Up to two uppercase initials derived from a userId, for the avatar circle. */
 function getInitials(id) {
   const trimmed = (id ?? '').trim();
@@ -131,7 +159,8 @@ function EmptyConversations() {
  * the conversation list once the search query is cleared.
  *
  * @param {object} props
- * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object, unreadCount?: number, online?: boolean }>} props.conversations
+ * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object,
+ *   lastActivity?: object, unreadCount?: number, online?: boolean }>} props.conversations
  * @param {(peerId: string) => void} props.onOpenConversation
  * @param {(query: string) => Promise<Array>} [props.onSearchUsers]
  * @param {() => void} [props.onRefresh]
@@ -249,12 +278,14 @@ export default function ChatListScreen({
             <View style={styles.rowText}>
               <Text style={styles.rowTitle}>{conversation.peerId}</Text>
               <Text style={styles.rowSubtitle} numberOfLines={1}>
-                {conversation.lastMessage?.body || 'No messages yet'}
+                {formatActivityPreview(conversation)}
               </Text>
             </View>
             <View style={styles.rowMeta}>
               <Text style={styles.rowTimestamp}>
-                {formatConversationTimestamp(conversation.lastMessage?.createdAt)}
+                {formatConversationTimestamp(
+                  lastActivityOf(conversation)?.createdAt,
+                )}
               </Text>
               {hasUnread ? (
                 <View style={styles.unreadBadge} testID="chat-list-unread-badge">

@@ -19,6 +19,7 @@
 const {
   pgTable,
   uuid,
+  integer,
   text,
   timestamp,
   jsonb,
@@ -52,6 +53,11 @@ const calls = pgTable(
     calleeId: text('callee_id').notNull(),
     status: text('status').notNull(),
     endReason: text('end_reason'),
+    // Seconds of connected conversation, computed server-side when the call
+    // reaches a terminal state so clients need not infer it.
+    durationSeconds: integer('duration_seconds'),
+    // When the callee acknowledged a missed call (opened the conversation).
+    missedReadAt: timestamp('missed_read_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     ringTimeoutAt: timestamp('ring_timeout_at', { withTimezone: true }),
