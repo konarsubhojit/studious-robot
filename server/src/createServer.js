@@ -8,6 +8,7 @@ const { createTelemetry } = require('./telemetry');
 const { createRateLimiter, createAuditLog } = require('./security');
 const { createStores } = require('./stores');
 const { createMessageStore } = require('./messageStore');
+const { createMemoryCache, subscribeToCacheInvalidations } = require('./cache');
 const {
   DEFAULT_RINGING_TIMEOUT_MS,
   DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
@@ -120,6 +121,11 @@ function createServer(opts = {}) {
   // the server runs unchanged when MONGODB_URI is not configured.
   const messageStore = createMessageStore({ messageStore: opts.messageStore });
 
+  // Shared read cache for hot queries (conversation lists, first-page message
+  // history, call history).  Defaults to the in-process backend; `index.js`
+  // injects a Redis-backed cache when REDIS_URL is configured.
+  const cache = opts.cache ?? createMemoryCache();
+
   const state = {
     rooms: stores.rooms,
     /** @type {Map<string, object>} userId → claimed-identity record */
@@ -134,8 +140,6 @@ function createServer(opts = {}) {
     calls: stores.calls,
     /** @type {Map<string, CallEvent[]>} callId → ordered event list */
     callEvents: stores.callEvents,
-    /** Cache of GET /calls responses keyed by userId/status/limit. */
-    callHistoryCache: new Map(),
     /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
     blocks: stores.blocks,
     /** Optional Drizzle DB handle for durable persistence. */
@@ -157,6 +161,8 @@ function createServer(opts = {}) {
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
     messageStore,
+    /** Shared read cache for conversation lists, message pages and call history. */
+    cache,
     /** Current asynchronous readiness state for the message store. */
     messageStoreStatus: messageStore.type === 'mongo' ? 'starting' : 'ready',
     /**
@@ -173,6 +179,11 @@ function createServer(opts = {}) {
      */
     draining: false,
   };
+  // Drop locally cached entries when another instance reports a write.
+  subscribeToCacheInvalidations(state).catch((error) => {
+    console.error(`[cache] failed to subscribe to invalidations: ${error?.message}`);
+  });
+
   if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
     Promise.resolve(messageStore.ready())
       .then(() => {
@@ -309,6 +320,11 @@ function createServer(opts = {}) {
       // Release the message store's connection pool (no-op for the memory store).
       if (typeof messageStore.close === 'function') {
         await messageStore.close();
+      }
+
+      // Release the cache's connection (no-op for the memory backend).
+      if (typeof cache.close === 'function') {
+        await cache.close();
       }
     })();
 

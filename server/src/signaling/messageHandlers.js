@@ -6,6 +6,11 @@ const { normaliseId } = require('../lib/normalize');
 const { isBlocked } = require('../security');
 const { emitToUserSockets } = require('../domain/notifications');
 const { resolveOfflinePushChannels } = require('../lib/state');
+const {
+  invalidateCache,
+  conversationsCachePrefix,
+  messagesCachePrefix,
+} = require('../cache');
 const { pruneDeadDevice } = require('../lib/persistence');
 const push = require('../push');
 const {
@@ -200,6 +205,15 @@ function registerMessageHandlers(socket, { io, state }) {
       return;
     }
 
+    // A new message changes both participants' conversation lists and the
+    // conversation's first history page: evict before anyone can read them.
+    await invalidateCache(
+      state,
+      conversationsCachePrefix(senderId),
+      conversationsCachePrefix(recipientId),
+      messagesCachePrefix(message.conversationId)
+    );
+
     console.log(
       `[messages] message.send messageId=${message.messageId}` +
         ` conversationId=${message.conversationId} senderId=${senderId}`
@@ -216,6 +230,9 @@ function registerMessageHandlers(socket, { io, state }) {
       try {
         deliveredMessage =
           (await state.messageStore.markDelivered(message.messageId, recipientId)) ?? message;
+        // Delivery receipts change the stored message, so the cached history
+        // page for this conversation is now stale.
+        await invalidateCache(state, messagesCachePrefix(message.conversationId));
       } catch (error) {
         console.error(`[messages] failed to mark message delivered: ${error?.message}`);
       }

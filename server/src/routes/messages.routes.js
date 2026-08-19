@@ -4,7 +4,16 @@ const express = require('express');
 const { isBlocked } = require('../security');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normaliseOptionalString } = require('../lib/normalize');
-const { deriveConversationId } = require('../messageStore');
+const { deriveConversationId, clampMessageLimit } = require('../messageStore');
+const {
+  readCached,
+  writeCached,
+  invalidateCache,
+  conversationsCacheKey,
+  conversationsCachePrefix,
+  messagesCacheKey,
+  messagesCachePrefix,
+} = require('../cache');
 const { emitToUserSockets } = require('../domain/notifications');
 const { getPresenceSnapshot } = require('../lib/state');
 const { SIGNALING_VERSION } = require('../config');
@@ -52,17 +61,25 @@ function createMessagesRouter({ state, io }) {
     const conversationId = deriveConversationId(session.userId, peerId);
     const before = normaliseOptionalString(req.query?.before);
 
-    let messages;
-    try {
-      messages = await state.messageStore.listMessages({
-        conversationId,
-        limit: req.query?.limit,
-        before: before ?? undefined,
-      });
-    } catch (error) {
-      console.error(`[messages] history lookup failed: ${error?.message}`);
-      res.status(503).json({ error: 'message store unavailable' });
-      return;
+    // Only the first page is cacheable: deep pagination (`before` present) is
+    // rare, unbounded in key space and the least latency-sensitive path.
+    const limit = clampMessageLimit(req.query?.limit);
+    const cacheKey = before ? null : messagesCacheKey(conversationId, limit);
+
+    let messages = cacheKey ? await readCached(state, cacheKey) : undefined;
+    if (messages === undefined) {
+      try {
+        messages = await state.messageStore.listMessages({
+          conversationId,
+          limit,
+          before: before ?? undefined,
+        });
+      } catch (error) {
+        console.error(`[messages] history lookup failed: ${error?.message}`);
+        res.status(503).json({ error: 'message store unavailable' });
+        return;
+      }
+      if (cacheKey) await writeCached(state, cacheKey, messages);
     }
 
     // Defence in depth: only ever return messages the caller took part in.
@@ -103,13 +120,19 @@ function createMessagesRouter({ state, io }) {
       return;
     }
 
-    let conversations;
-    try {
-      conversations = await state.messageStore.listConversations(session.userId);
-    } catch (error) {
-      console.error(`[messages] conversation summary lookup failed: ${error?.message}`);
-      res.status(503).json({ error: 'message store unavailable' });
-      return;
+    // The cached value is the raw store result: the blocklist filter and the
+    // presence flag below are evaluated per request so neither can go stale.
+    const cacheKey = conversationsCacheKey(session.userId);
+    let conversations = await readCached(state, cacheKey);
+    if (conversations === undefined) {
+      try {
+        conversations = await state.messageStore.listConversations(session.userId);
+      } catch (error) {
+        console.error(`[messages] conversation summary lookup failed: ${error?.message}`);
+        res.status(503).json({ error: 'message store unavailable' });
+        return;
+      }
+      await writeCached(state, cacheKey, conversations);
     }
 
     const visible = conversations
@@ -167,6 +190,16 @@ function createMessagesRouter({ state, io }) {
       console.error(`[messages] markRead failed: ${error?.message}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
+    }
+
+    if (updated > 0) {
+      // Read receipts change both the reader's and the sender's unread counts.
+      await invalidateCache(
+        state,
+        conversationsCachePrefix(session.userId),
+        conversationsCachePrefix(peerId),
+        messagesCachePrefix(conversationId)
+      );
     }
 
     if (updated > 0 && io) {

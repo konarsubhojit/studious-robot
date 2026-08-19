@@ -3,7 +3,7 @@
 const express = require('express');
 const { timingSafeEqual } = require('crypto');
 const { isBlocked } = require('../security');
-const { getCallHistoryCacheKey } = require('../callPersistence');
+const { callHistoryCacheKey, readCached, writeCached } = require('../cache');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId } = require('../lib/normalize');
 const {
@@ -164,7 +164,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
    *
    * Records are ordered by `createdAt` descending (most recent first).
    */
-  router.get('/calls', (req, res) => {
+  router.get('/calls', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -176,8 +176,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;
-    const cacheKey = getCallHistoryCacheKey(userId, statusFilter, limit);
-    const cached = state.callHistoryCache.get(cacheKey);
+    const cacheKey = callHistoryCacheKey(userId, statusFilter, limit);
+    const cached = await readCached(state, cacheKey);
     if (cached) {
       res.status(200).json(cached);
       return;
@@ -196,7 +196,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
       calls: userCalls.slice(0, limit),
       total: userCalls.length,
     };
-    state.callHistoryCache.set(cacheKey, payload);
+    await writeCached(state, cacheKey, payload);
     res.status(200).json(payload);
   });
 

@@ -15,6 +15,7 @@ const { createCallRecord, appendCallEvent } = require('../src/domain/calls');
 const { pruneDeadDevice } = require('../src/lib/persistence');
 const { upsertDevice } = require('../src/lib/state');
 const { createStores } = require('../src/stores');
+const { createMemoryCache } = require('../src/cache');
 const schema = require('../db/schema');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ function buildCallState(db) {
   return {
     calls: new Map(),
     callEvents: new Map(),
-    callHistoryCache: new Map(),
+    cache: createMemoryCache(),
     userConnections: new Map(),
     userDevices: new Map(),
     userSessions: new Map([['callee', new Set(['session-callee'])]]),
