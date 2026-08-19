@@ -216,7 +216,14 @@ function buildListItems(orderedEntries) {
  * a scroll-driven state update) only re-renders the bubbles whose own data
  * actually changed — the main reason a long conversation can scroll smoothly.
  */
-const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetry, onDelete }) {
+const MessageRow = memo(function MessageRow({
+  message,
+  isGroupEnd,
+  isOwn,
+  isHighlighted,
+  onRetry,
+  onDelete,
+}) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
   const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
@@ -252,7 +259,13 @@ const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetr
         isOwn ? styles.messageRowOwn : styles.messageRowPeer,
         !isGroupEnd && styles.messageRowGrouped,
       ]}>
-      <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
+      <View
+        style={[
+          styles.bubble,
+          isOwn ? styles.bubbleOwn : styles.bubblePeer,
+          isHighlighted && styles.bubbleHighlighted,
+        ]}
+        testID={isHighlighted ? 'chat-message-highlighted' : undefined}>
         <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>{message.body}</Text>
       </View>
       {isGroupEnd ? (
@@ -340,6 +353,9 @@ function MessageSkeleton() {
  *   of history is still being fetched.
  * @param {boolean} [props.isOffline] - Shows a persistent banner explaining that queued
  *   messages will be delivered once connectivity returns.
+ * @param {string | null} [props.highlightMessageId] - Message the screen was opened at
+ *   (a search result): the list scrolls to it and the bubble is emphasised.
+ * @param {() => void} [props.onOpenProfile] - Opens the peer's profile screen.
  * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
  * @param {number} [props.keyboardVerticalOffset] - Distance between the true top of the
  *   screen and this screen's root view (e.g. the safe-area top inset applied by an
@@ -350,6 +366,8 @@ function MessageSkeleton() {
 export default function ChatConversationScreen({
   peerId,
   messages = [],
+  highlightMessageId = null,
+  onOpenProfile,
   onSendMessage,
   onRetryMessage,
   onDeleteMessage,
@@ -418,6 +436,23 @@ export default function ChatConversationScreen({
       }
     }
   }, [messages, currentUserId]);
+
+  // Deep link from a search result: scroll to the message the conversation was
+  // opened at, once it is present in the loaded page. `scrollToIndex` is used
+  // rather than `scrollToEnd` because the target is usually mid-history, and a
+  // missing index (the message is older than the loaded page) is simply left
+  // alone until more history is paged in.
+  useEffect(() => {
+    if (!highlightMessageId) return undefined;
+    const index = listItems.findIndex(
+      item => item.type === 'message' && item.message.messageId === highlightMessageId,
+    );
+    if (index === -1) return undefined;
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.5 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [highlightMessageId, listItems]);
 
   // Keep the composer and the latest message visible above the keyboard: on
   // Android in particular, the on-screen keyboard can otherwise cover both
@@ -538,6 +573,7 @@ export default function ChatConversationScreen({
           message={item.message}
           isGroupEnd={item.isGroupEnd}
           isOwn={item.message.senderId === currentUserId}
+          isHighlighted={Boolean(highlightMessageId) && item.message.messageId === highlightMessageId}
           onRetry={handleRetry}
           onDelete={onDeleteMessage ? handleDelete : undefined}
         />
@@ -547,6 +583,7 @@ export default function ChatConversationScreen({
       currentUserId,
       handleDelete,
       handleRetry,
+      highlightMessageId,
       onCallBack,
       onDeleteMessage,
       onVideoCallBack,
@@ -554,6 +591,16 @@ export default function ChatConversationScreen({
       styles,
     ],
   );
+
+  const handleScrollToIndexFailed = useCallback(info => {
+    setTimeout(() => {
+      listRef.current?.scrollToIndex?.({
+        index: info.index,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    }, 100);
+  }, []);
 
   const handleScrollToBottomPress = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
@@ -590,7 +637,16 @@ export default function ChatConversationScreen({
             <Text style={styles.backButtonText}>‹</Text>
           </Pressable>
 
-          <View style={styles.headerText}>
+          <Pressable
+            style={styles.headerText}
+            onPress={onOpenProfile}
+            disabled={!onOpenProfile}
+            accessibilityRole={onOpenProfile ? 'button' : undefined}
+            accessibilityLabel={onOpenProfile ? `${peerId} profile` : undefined}
+            accessibilityHint={
+              onOpenProfile ? 'Opens contact details, calls and privacy options' : undefined
+            }
+            testID="chat-open-profile">
             <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
               {peerId}
             </Text>
@@ -610,7 +666,7 @@ export default function ChatConversationScreen({
                 <Text style={styles.headerSubtitle}>{presenceLabel}</Text>
               </View>
             ) : null}
-          </View>
+          </Pressable>
 
           {onStartAudioCall ? (
             <IconButton
@@ -665,6 +721,10 @@ export default function ChatConversationScreen({
             maxToRenderPerBatch={10}
             updateCellsBatchingPeriod={50}
             windowSize={11}
+            // Bubbles have variable heights, so a deep-linked index may not be
+            // measured yet; retry once the list has rendered further instead of
+            // letting the failure surface as a warning.
+            onScrollToIndexFailed={handleScrollToIndexFailed}
             viewabilityConfig={VIEWABILITY_CONFIG}
             onViewableItemsChanged={handleViewableItemsChanged}
             ListEmptyComponent={isLoadingMessages ? <MessageSkeleton /> : null}
@@ -842,6 +902,10 @@ const createStyles = colors =>
       shadowOpacity: 0.25,
       shadowRadius: 3,
       elevation: 2,
+    },
+    bubbleHighlighted: {
+      borderColor: colors.accent,
+      borderWidth: 2,
     },
     bubblePeer: {
       backgroundColor: colors.surfaceRaised,

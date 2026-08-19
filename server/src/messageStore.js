@@ -13,6 +13,7 @@
  * ─────────
  *   saveMessage(message)                        → Promise<savedMessage>
  *   listMessages({ conversationId, limit, before }) → Promise<message[]>
+ *   searchMessages({ userId, query, limit, before }) → Promise<message[]>
  *   markDelivered(messageId, userId)            → Promise<message|null>
  *   listConversations(userId)                   → Promise<conversationSummary[]>
  *   markRead(conversationId, userId)            → Promise<number>
@@ -156,6 +157,42 @@ function byNewestFirst(a, b) {
   return a.messageId < b.messageId ? 1 : -1;
 }
 
+/**
+ * Escape every regular-expression metacharacter in `value`, so a user-supplied
+ * search term is only ever matched literally.  Without this a term such as
+ * `.*` would match every message, and a pathological one could make the
+ * database evaluate a catastrophically backtracking pattern.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Normalise a search term: trimmed, and empty when there is nothing to match.
+ *
+ * @param {unknown} query
+ * @returns {string}
+ */
+function normaliseSearchTerm(query) {
+  return String(query ?? '').trim();
+}
+
+/**
+ * Whether `message.body` contains `term`, case-insensitively.
+ *
+ * @param {{ body?: string }} message
+ * @param {string} term
+ * @returns {boolean}
+ */
+function bodyMatches(message, term) {
+  return String(message?.body ?? '')
+    .toLowerCase()
+    .includes(term.toLowerCase());
+}
+
 // ─── In-memory store ──────────────────────────────────────────────────────────
 
 /**
@@ -196,6 +233,19 @@ function createMemoryMessageStore() {
       return messages
         .filter((message) => message.conversationId === conversationId)
         .filter((message) => (before ? message.createdAt < before : true))
+        .sort(byNewestFirst)
+        .slice(0, cap)
+        .map((message) => ({ ...message }));
+    },
+
+    async searchMessages({ userId, query, limit, before } = {}) {
+      const term = normaliseSearchTerm(query);
+      if (!term || !userId) return [];
+      const cap = clampLimit(limit);
+      return messages
+        .filter((message) => message.senderId === userId || message.recipientId === userId)
+        .filter((message) => (before ? message.createdAt < before : true))
+        .filter((message) => bodyMatches(message, term))
         .sort(byNewestFirst)
         .slice(0, cap)
         .map((message) => ({ ...message }));
@@ -407,6 +457,13 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         // tiebreak sort (Cosmos composite indexes must match sorted fields
         // exactly, including the tiebreak field).
         await createIndexOrWarn(messages, { conversationId: 1, createdAt: -1, messageId: -1 });
+        // Supports `searchMessages`' body lookup. Deliberately a plain
+        // shard-key-prefixed index rather than a `text` index: Azure Cosmos DB
+        // for MongoDB (RU) does not support text indexes / `$text`, so the
+        // search is expressed as a case-insensitive literal match on `body`
+        // (see `searchMessages`), which is served identically on the in-memory
+        // store, MongoDB/vCore and Cosmos RU.
+        await createIndexOrWarn(messages, { conversationId: 1, body: 1 });
 
         const host = safeMongoHost(mongoClient, uri);
         const retryWritesDisabled = /retrywrites=false/i.test(uri || '');
@@ -475,6 +532,34 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         .toArray();
       // Strip the driver-managed `_id` so the wire shape matches the memory store.
       return found.map(({ _id, ...rest }) => rest);
+    },
+
+    async searchMessages({ userId, query, limit, before } = {}) {
+      const term = normaliseSearchTerm(query);
+      if (!term || !userId) return [];
+      const cap = clampLimit(limit);
+      const { messages } = await connect();
+      const filter = {
+        $or: [{ senderId: userId }, { recipientId: userId }],
+        // Literal, case-insensitive substring match: the term is escaped so a
+        // user cannot inject a pattern, and no `$text` is used because Cosmos
+        // RU does not implement it.
+        body: { $regex: escapeRegExp(term), $options: 'i' },
+      };
+      if (before) {
+        filter.createdAt = { $lt: before };
+      }
+      // Deliberately no `.sort()`: the query fans out across every
+      // conversation the user takes part in (i.e. across shard-key
+      // partitions), which Cosmos DB for MongoDB (RU) rejects unless a
+      // matching composite index serves it — impossible for a cross-partition
+      // sort. Sorting happens in application code, exactly as
+      // `listConversations` does, and the page is cut afterwards.
+      const found = await messages.find(filter).toArray();
+      return found
+        .map(({ _id, ...rest }) => rest)
+        .sort(byNewestFirst)
+        .slice(0, cap);
     },
 
     async markDelivered(messageId, userId) {

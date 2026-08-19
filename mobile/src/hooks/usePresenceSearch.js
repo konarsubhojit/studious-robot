@@ -86,12 +86,15 @@ export default function usePresenceSearch({
    * `{ userId, status, online, lastSeen }` entries, or an empty array when the
    * request fails or no session exists.  Never throws.
    *
+   * Pass a `signal` to cancel an in-flight request — the unified search screen
+   * aborts the previous lookup on every keystroke.
+   *
    * @param {string} [query] optional substring filter
-   * @param {number} [limit=20] max results
+   * @param {{ limit?: number, signal?: AbortSignal }} [options]
    * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
    */
   const searchUsers = useCallback(
-    async (query = '', limit = 20) => {
+    async (query = '', { limit = 20, signal } = {}) => {
       const sessionId = sessionIdRef.current;
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!sessionId || !trimmedUrl) return [];
@@ -103,13 +106,19 @@ export default function usePresenceSearch({
             limit: String(limit),
           });
           if (trimmedQuery) params.set('search', trimmedQuery);
-          return { url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}` };
+          return {
+            url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}`,
+            options: signal ? { signal } : undefined,
+          };
         });
         if (!response?.ok) return [];
         const data = await response.json();
         return Array.isArray(data.users) ? data.users : [];
       } catch (error) {
-        logWarn('[PresenceSearch] searchUsers failed', { message: error?.message });
+        // An aborted request is the expected outcome of a newer keystroke.
+        if (error?.name !== 'AbortError') {
+          logWarn('[PresenceSearch] searchUsers failed', { message: error?.message });
+        }
         return [];
       }
     },

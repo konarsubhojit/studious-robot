@@ -25,6 +25,7 @@ import {
   subscribeAudioDevices,
 } from '../audioRouting';
 import { startCallService, stopCallService } from '../callService';
+import useBlocks from './useBlocks';
 import useCallHistory from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
 import useIdentity from './useIdentity';
@@ -329,6 +330,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     signalingUrl,
     userId,
   });
+
+  const blocks = useBlocks({ authedFetchRef, sessionIdRef, signalingUrl });
+  const { fetchBlocks } = blocks;
   const { addToHistory } = callHistory;
 
   const presenceSearch = usePresenceSearch({
@@ -1185,6 +1189,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         // manually pulls to refresh. Firing here guarantees it runs once the
         // session/socket are actually ready, on cold start and on reconnect.
         fetchConversations();
+        // The blocklist gates who can appear in the directory, the chat list
+        // and search, so it is loaded on the same "session is live" signal.
+        fetchBlocks();
         // Flush any chat message queued while the socket was down (including
         // one composed in a previous run of the app).
         handleSocketConnected();
@@ -1285,6 +1292,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       sessionIdRef,
       deviceIdRef,
       fetchConversations,
+      fetchBlocks,
     ],
   );
 
@@ -1494,6 +1502,38 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     return () => clearInterval(timer);
   }, [userId, signalingUrl, refreshSession, updateStatus, sessionIdRef]);
+
+  /**
+   * Block `peerId` and immediately drop them from the local conversation list:
+   * the server hides a blocked peer from `GET /conversations`, so refetching
+   * is what makes the block visible in both directions right away.
+   *
+   * @param {string} peerId
+   * @returns {Promise<boolean>}
+   */
+  const blockPeer = useCallback(
+    async peerId => {
+      const applied = await blocks.blockUser(peerId);
+      if (applied) await fetchConversations();
+      return applied;
+    },
+    [blocks, fetchConversations],
+  );
+
+  /**
+   * Reverse a block, restoring the peer's conversation and directory entry.
+   *
+   * @param {string} peerId
+   * @returns {Promise<boolean>}
+   */
+  const unblockPeer = useCallback(
+    async peerId => {
+      const removed = await blocks.unblockUser(peerId);
+      if (removed) await fetchConversations();
+      return removed;
+    },
+    [blocks, fetchConversations],
+  );
 
   /**
    * Manually retry the presence socket connection when the server appears
@@ -2629,6 +2669,13 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     isServerUnreachable: presenceSearch.isServerUnreachable,
     retryPresenceConnect,
 
+    // Blocklist
+    blockedUsers: blocks.blockedUsers,
+    isUserBlocked: blocks.isUserBlocked,
+    fetchBlocks,
+    blockPeer,
+    unblockPeer,
+
     // Call history
     callHistory: callHistory.callHistory,
     missedCallCount: callHistory.missedCallCount,
@@ -2643,6 +2690,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     setActiveChatPeerId: messaging.setActiveChatPeerId,
     fetchConversations,
     fetchMessagesForPeer: messaging.fetchMessagesForPeer,
+    searchMessages: messaging.searchMessages,
     sendMessage: messaging.sendMessage,
     retryMessage: messaging.retryMessage,
     discardMessage: messaging.discardMessage,

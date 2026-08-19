@@ -900,3 +900,61 @@ describe('ChatConversationScreen', () => {
     );
   });
 });
+
+describe('ChatConversationScreen deep-linked message', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  test('highlights the deep-linked message and scrolls it into view', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'msg-1' }), makeMessage({ messageId: 'msg-2' })],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      highlightMessageId: 'msg-1',
+    });
+
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(1);
+  });
+
+  test('highlights nothing when the message is not in the loaded page', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'msg-1' })],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      highlightMessageId: 'msg-missing',
+    });
+
+    expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(0);
+  });
+
+  test('opens the peer profile from the header', () => {
+    const onOpenProfile = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      onOpenProfile,
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-open-profile').props.onPress();
+    });
+
+    expect(onOpenProfile).toHaveBeenCalled();
+  });
+});

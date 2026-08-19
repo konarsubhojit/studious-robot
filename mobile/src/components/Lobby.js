@@ -174,6 +174,7 @@ export default function Lobby({
   // ── Contact directory ─────────────────────────────────────────────────────
   onSearchUsers,
   onSelectContact,
+  onOpenSearch,
   // ── Developer tools ───────────────────────────────────────────────────────
   developerMode,
   isSettingsVisible,
@@ -220,6 +221,18 @@ export default function Lobby({
             </Pressable>
           ) : null}
           <View style={styles.titleSpacer} />
+          {onOpenSearch ? (
+            <Pressable
+              onPress={onOpenSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Search"
+              accessibilityHint="Search contacts, conversations, messages and calls"
+              hitSlop={touchSlop(44)}
+              testID="lobby-open-search"
+              style={styles.gearButton}>
+              <Text style={styles.gearIcon}>🔍</Text>
+            </Pressable>
+          ) : null}
           {onOpenSettings ? (
             <Pressable
               onPress={onOpenSettings}

@@ -31,6 +31,13 @@ describe('linking config', () => {
     expect(route?.params).toEqual({ peerId: 'user-bob' });
   });
 
+  test('maps the search and profile paths to their screens', () => {
+    expect(resolveLeafRoute('/chats/search')?.name).toBe(CHAT_SCREENS.SEARCH);
+    const profile = resolveLeafRoute('/chats/profile/user-bob');
+    expect(profile?.name).toBe(CHAT_SCREENS.PROFILE);
+    expect(profile?.params).toEqual({ peerId: 'user-bob' });
+  });
+
   test('ignores a URL that matches no screen', () => {
     expect(getStateFromPath('/nothing-here', linking.config)).toBeUndefined();
   });

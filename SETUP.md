@@ -199,6 +199,7 @@ differences below:
 | Connection string | standard `mongodb://…` / `mongodb+srv://…` | requires `retrywrites=false` in the connection string |
 | Unique indexes | any field | must include the shard key (`conversationId`) |
 | Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 |
+| Text search | `text` indexes / `$text` supported | not supported — message search uses a literal, case-insensitive `$regex` on `body` instead |
 | Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
 
 The store creates all indexes with `conversationId` (the shard key) as a
@@ -207,6 +208,12 @@ vCore, real MongoDB, and the in-memory store. `saveMessage` also upserts on
 `{ conversationId, messageId }` so duplicate client sends (e.g. a mobile
 retry) never create a second message, even on a backend where the unique
 index could not be created.
+
+`GET /messages/search` is served by the `{ conversationId: 1, body: 1 }`
+index and sorts its (bounded) result page in application code, because a
+search fans out across every conversation the caller takes part in and
+Cosmos RU rejects a cross-partition sort — the same reasoning
+`listConversations` already follows.
 
 At startup, the server logs the active Mongo host, database, collection, and
 whether `retryWrites` is disabled, so you can confirm which backend is live

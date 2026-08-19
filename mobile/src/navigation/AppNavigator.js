@@ -56,7 +56,21 @@ function ChatListRoute() {
 
 function ChatConversationRoute({ route }) {
   const { renderChatConversation } = useContext(ScreenRenderersContext);
-  return renderChatConversation?.(route.params?.peerId ?? null) ?? null;
+  return (
+    renderChatConversation?.(route.params?.peerId ?? null, {
+      messageId: route.params?.messageId ?? null,
+    }) ?? null
+  );
+}
+
+function SearchRoute() {
+  const { renderSearch } = useContext(ScreenRenderersContext);
+  return renderSearch?.() ?? null;
+}
+
+function PeerProfileRoute({ route }) {
+  const { renderPeerProfile } = useContext(ScreenRenderersContext);
+  return renderPeerProfile?.(route.params?.peerId ?? null) ?? null;
 }
 
 function CallsRoute() {
@@ -79,6 +93,8 @@ function ChatsNavigator() {
     <ChatStack.Navigator screenOptions={{ headerShown: false }}>
       <ChatStack.Screen name={CHAT_SCREENS.LIST} component={ChatListRoute} />
       <ChatStack.Screen name={CHAT_SCREENS.CONVERSATION} component={ChatConversationRoute} />
+      <ChatStack.Screen name={CHAT_SCREENS.SEARCH} component={SearchRoute} />
+      <ChatStack.Screen name={CHAT_SCREENS.PROFILE} component={PeerProfileRoute} />
     </ChatStack.Navigator>
   );
 }
@@ -106,7 +122,10 @@ function ChatsNavigator() {
  * @param {(route: { activeTab: string, chatPeerId: string | null }) => void}
  *   [props.onRouteChange] reports the current tab / open conversation.
  * @param {() => React.ReactNode} props.renderChatList
- * @param {(peerId: string | null) => React.ReactNode} props.renderChatConversation
+ * @param {(peerId: string | null, options: { messageId: string | null }) => React.ReactNode}
+ *   props.renderChatConversation
+ * @param {() => React.ReactNode} [props.renderSearch]
+ * @param {(peerId: string | null) => React.ReactNode} [props.renderPeerProfile]
  * @param {() => React.ReactNode} props.renderCalls
  * @param {() => React.ReactNode} props.renderSettings
  */
@@ -117,6 +136,8 @@ export default function AppNavigator({
   onRouteChange,
   renderChatList,
   renderChatConversation,
+  renderSearch,
+  renderPeerProfile,
   renderCalls,
   renderSettings,
 }) {
@@ -176,7 +197,14 @@ export default function AppNavigator({
 
   return (
     <ScreenRenderersContext.Provider
-      value={{ renderChatList, renderChatConversation, renderCalls, renderSettings }}>
+      value={{
+        renderChatList,
+        renderChatConversation,
+        renderSearch,
+        renderPeerProfile,
+        renderCalls,
+        renderSettings,
+      }}>
       <NavigationContainer
         ref={navigationRef}
         theme={navigationTheme}

@@ -110,7 +110,7 @@ describe('usePresenceSearch', () => {
 
     let users;
     await act(async () => {
-      users = await resultRef.current.searchUsers('bo', 10);
+      users = await resultRef.current.searchUsers('bo', { limit: 10 });
     });
 
     expect(users).toEqual([{ userId: 'bob', status: 'online', online: true }]);

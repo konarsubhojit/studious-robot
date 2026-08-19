@@ -140,6 +140,102 @@ function createMessagesRouter({ state, io }) {
   });
 
   /**
+   * GET /messages/search?q=…&limit=…&before=…
+   *
+   * Full-history text search across every conversation the authenticated user
+   * participates in, newest first.  `before` is an ISO timestamp cursor with
+   * the same meaning as on `GET /messages`: pass the `createdAt` of the oldest
+   * result you already hold to fetch the next page.
+   *
+   * The scoping is enforced server-side twice: the store only ever matches
+   * documents where the caller is the sender or the recipient, and the result
+   * set is re-checked here — the same "defence in depth" participant filter
+   * `GET /messages` applies.  Conversations with a blocked (or blocking) peer
+   * are excluded, exactly as they are from `GET /conversations`.
+   *
+   * Each result carries enough context (`conversationId`, `peerId`,
+   * `messageId`, `createdAt`) for the client to deep-link into the
+   * conversation at that message.
+   *
+   * Response 200: { query, results: Array<message & { peerId }>, limit }
+   *   where `limit` is the page size that was applied, so a client can tell a
+   *   full page (there may be more) from a partial one (there is not).
+   */
+  router.get(API_ROUTES.MESSAGES_SEARCH, async (req, res) => {
+    const session = getSessionFromRequest(req, state.sessions);
+    if (!session) {
+      res.status(401).json({ error: 'invalid session' });
+      return;
+    }
+
+    // Search is the most expensive read the API serves (it fans out across
+    // every conversation the user is part of), so it is rate limited per user.
+    const rateCheck = state.messageSearchRateLimiter.check(session.userId);
+    if (!rateCheck.allowed) {
+      state.auditLog.record({
+        event: 'message_search.rate_limited',
+        actor: session.userId,
+        outcome: 'rejected',
+      });
+      res.status(429).json({
+        error: 'too many requests',
+        retryAfter: Math.ceil((rateCheck.resetAt - Date.now()) / 1000),
+      });
+      return;
+    }
+
+    const query = normaliseOptionalString(req.query?.q);
+    if (!query) {
+      res.status(400).json({ error: 'q is required' });
+      return;
+    }
+
+    const limit = clampMessageLimit(req.query?.limit);
+    const before = normaliseOptionalString(req.query?.before);
+
+    let matches;
+    try {
+      matches = await state.messageStore.searchMessages({
+        userId: session.userId,
+        query,
+        limit,
+        before: before ?? undefined,
+      });
+    } catch (error) {
+      console.error(`[messages] search failed: ${error?.message}`);
+      res.status(503).json({ error: 'message store unavailable' });
+      return;
+    }
+
+    // Defence in depth: never return a message the caller did not take part in,
+    // whatever the store hands back. Unlike `GET /messages`, which addresses a
+    // single conversation and can fail the whole request, a search spans every
+    // conversation the caller has — so an unexpected document is dropped from
+    // the page (and logged) rather than taking search down for everything else.
+    const participantMatches = matches.filter(
+      (message) => message.senderId === session.userId || message.recipientId === session.userId
+    );
+    if (participantMatches.length !== matches.length) {
+      console.error(
+        `[messages] search dropped ${matches.length - participantMatches.length} non-participant result(s)`
+      );
+    }
+
+    const results = participantMatches
+      .map((message) => ({
+        ...message,
+        peerId: message.senderId === session.userId ? message.recipientId : message.senderId,
+      }))
+      .filter(
+        (message) =>
+          !isBlocked(state.blocks, session.userId, message.peerId) &&
+          !isBlocked(state.blocks, message.peerId, session.userId)
+      );
+
+    res.status(200).json({ query, results, limit });
+  });
+
+  /**
    * GET /conversations
    *
    * Chat-list summary for the authenticated user: one entry per conversation

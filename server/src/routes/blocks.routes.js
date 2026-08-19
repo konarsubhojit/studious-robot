@@ -5,6 +5,7 @@ const { addBlock, removeBlock, listBlocks } = require('../security');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId } = require('../lib/normalize');
 const { persistBlock, deletePersistedBlock } = require('../lib/persistence');
+const { API_ROUTES } = require('../../../shared');
 
 /**
  * Block management: block / unblock / list.
@@ -24,7 +25,7 @@ function createBlocksRouter({ state, db }) {
    * Body: { blockeeId: string }
    * Response 200: { blockerId, blockeeId }
    */
-  router.post('/blocks', async (req, res) => {
+  router.post(API_ROUTES.BLOCKS, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -62,7 +63,7 @@ function createBlocksRouter({ state, db }) {
    * Response 200: { blockerId, blockeeId }
    * Response 404: when the block did not exist
    */
-  router.delete('/blocks/:blockeeId', async (req, res) => {
+  router.delete(`${API_ROUTES.BLOCKS}/:blockeeId`, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -101,7 +102,7 @@ function createBlocksRouter({ state, db }) {
    *
    * Response 200: { blockedUsers: string[] }
    */
-  router.get('/blocks', (req, res) => {
+  router.get(API_ROUTES.BLOCKS, (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });

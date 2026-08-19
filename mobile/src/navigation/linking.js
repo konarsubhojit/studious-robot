@@ -30,6 +30,8 @@ const linking = {
         screens: {
           [CHAT_SCREENS.LIST]: '',
           [CHAT_SCREENS.CONVERSATION]: 'peer/:peerId',
+          [CHAT_SCREENS.SEARCH]: 'search',
+          [CHAT_SCREENS.PROFILE]: 'profile/:peerId',
         },
       },
       [TABS.CALLS]: 'calls',
