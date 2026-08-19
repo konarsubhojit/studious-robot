@@ -76,6 +76,29 @@ export function formatCallEntryLabel(entry) {
 }
 
 /**
+ * Plural noun per outcome for a collapsed run of calls, so a group reads as
+ * "3 missed calls" rather than repeating the singular row label.
+ */
+const GROUP_NOUNS = {
+  outgoing: {
+    ended: 'outgoing calls',
+    missed: 'unanswered calls',
+    declined: 'declined calls',
+    cancelled: 'cancelled calls',
+    busy: 'busy calls',
+    unreachable: 'unavailable calls',
+  },
+  incoming: {
+    ended: 'incoming calls',
+    missed: 'missed calls',
+    declined: 'declined calls',
+    cancelled: 'missed calls',
+    busy: 'busy calls',
+    unreachable: 'unavailable calls',
+  },
+};
+
+/**
  * Label for a collapsed run of same-direction/same-outcome calls, e.g.
  * "3 missed calls".
  *
@@ -85,8 +108,8 @@ export function formatCallEntryLabel(entry) {
 export function formatCallGroupLabel(entries) {
   const [first] = entries;
   const direction = first?.direction === 'outgoing' ? 'outgoing' : 'incoming';
-  const noun = OUTCOME_LABELS[direction][first?.status] ?? 'Call';
-  return `${entries.length} × ${noun.toLowerCase()}`;
+  const noun = GROUP_NOUNS[direction][first?.status] ?? 'calls';
+  return `${entries.length} ${noun}`;
 }
 
 function formatTimestamp(isoString) {
@@ -102,7 +125,7 @@ function formatTimestamp(isoString) {
  * than as something either party said.
  *
  * A run of consecutive calls with the same direction and outcome arrives as a
- * single row ("3 × missed call") that expands on tap, so a redial storm can't
+ * single row ("3 missed calls") that expands on tap, so a redial storm can't
  * bury the messages around it. A single call's tap offers to call the peer
  * back, by audio or video.
  *

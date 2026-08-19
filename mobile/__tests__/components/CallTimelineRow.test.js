@@ -83,7 +83,7 @@ describe('CallTimelineRow', () => {
     const tree = render({ entries, peerId: 'user-bob' });
 
     const collapsed = tree.root.findAll(node => node.props?.testID === 'chat-call-entry')[0];
-    expect(collapsed.props.accessibilityLabel).toBe('3 × missed call');
+    expect(collapsed.props.accessibilityLabel).toBe('3 missed calls');
 
     act(() => {
       collapsed.props.onPress();

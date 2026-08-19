@@ -847,7 +847,7 @@ describe('ChatConversationScreen', () => {
     const rows = findAllByTestId(tree, 'chat-call-timeline-row');
     expect(rows).toHaveLength(1);
     expect(findByTestId(tree, 'chat-call-entry').props.accessibilityLabel).toBe(
-      '3 × missed call',
+      '3 missed calls',
     );
   });
 });

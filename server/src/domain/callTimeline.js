@@ -75,23 +75,6 @@ function isUnreadMissedCall(call, userId) {
 }
 
 /**
- * Number of unacknowledged missed calls `userId` has from `peerId`.
- *
- * @param {object} state
- * @param {string} userId
- * @param {string} peerId
- * @returns {number}
- */
-function countUnreadMissedCalls(state, userId, peerId) {
-  let count = 0;
-  for (const call of state.calls.values()) {
-    if (call.callerId !== peerId || call.calleeId !== userId) continue;
-    if (isUnreadMissedCall(call, userId)) count += 1;
-  }
-  return count;
-}
-
-/**
  * Acknowledge every missed call `userId` has from `peerId`, mirroring
  * `markRead` for messages: opening the conversation clears both.
  *
@@ -211,7 +194,6 @@ module.exports = {
   augmentConversationsWithCalls,
   listCallsBetween,
   isUnreadMissedCall,
-  countUnreadMissedCalls,
   markMissedCallsRead,
   mergeTimeline,
 };
