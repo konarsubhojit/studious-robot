@@ -148,6 +148,18 @@ export const sizes = {
   minTouchTarget: 56,
 };
 
+/**
+ * `hitSlop` (dp, per edge) that grows a control rendered at `size` dp up to
+ * `sizes.minTouchTarget`, so small icon buttons stay comfortably tappable
+ * without inflating the visual design.
+ *
+ * @param {number} size - Rendered width/height of the control, in dp.
+ * @returns {number} slop to apply on every edge (0 when the control is already big enough).
+ */
+export function touchSlop(size) {
+  return Math.max(0, Math.ceil((sizes.minTouchTarget - size) / 2));
+}
+
 export const typography = {
   title: { fontSize: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 16, fontWeight: '700' },

@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, THEME_MODES, typography } from '../theme';
+import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
@@ -31,7 +31,7 @@ function SectionLabel({ icon, children }) {
   const MCIcon = loadVectorIcons();
   const iconDef = icon ? ICONS[icon] : null;
   return (
-    <View style={styles.sectionLabelRow}>
+    <View style={styles.sectionLabelRow} accessibilityRole="header">
       {iconDef && MCIcon ? (
         <MCIcon name={iconDef.icon} size={14} color={colors.textSecondary} />
       ) : iconDef ? (
@@ -107,11 +107,15 @@ export default function SettingsScreen({
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Back"
+            accessibilityHint="Returns to the previous screen"
+            hitSlop={touchSlop(44)}
             testID="settings-back"
             style={styles.backButton}>
             <Text style={styles.backIcon}>‹</Text>
           </Pressable>
-          <Text style={styles.title}>Settings</Text>
+          <Text style={styles.title} accessibilityRole="header">
+            Settings
+          </Text>
         </View>
 
         {/* ── Username ────────────────────────────────────────────────────── */}
@@ -126,6 +130,7 @@ export default function SettingsScreen({
           autoCorrect={false}
           style={styles.input}
           accessibilityLabel="Username"
+          accessibilityHint="Other people will call you by this name"
           testID="settings-username-input"
         />
         <AppButton
@@ -149,6 +154,7 @@ export default function SettingsScreen({
           keyboardType="url"
           style={styles.input}
           accessibilityLabel="Signaling server URL"
+          accessibilityHint="The address of the server that routes your calls"
           testID="settings-signaling-input"
         />
         <AppButton
@@ -162,7 +168,10 @@ export default function SettingsScreen({
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionLabel icon="settingsAppearance">Appearance</SectionLabel>
         <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
-        <View style={styles.segmentedRow} testID="settings-theme-mode">
+        <View
+          style={styles.segmentedRow}
+          accessibilityRole="radiogroup"
+          testID="settings-theme-mode">
           {APPEARANCE_OPTIONS.map(option => {
             const isSelected = option.mode === themeMode;
             return (
@@ -223,6 +232,7 @@ export default function SettingsScreen({
           onPress={onSignOut}
           accessibilityRole="button"
           accessibilityLabel="Sign out"
+          accessibilityHint="Clears your identity on this device and returns to registration"
           testID="settings-sign-out"
           style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
           <Text style={styles.signOutText}>Sign out</Text>
@@ -256,9 +266,9 @@ const createStyles = colors =>
       marginBottom: spacing.lg,
     },
     backButton: {
-      height: 36,
-      width: 36,
-      borderRadius: 18,
+      height: 44,
+      width: 44,
+      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.surfaceControl,
@@ -307,7 +317,7 @@ const createStyles = colors =>
       marginBottom: spacing.sm,
     },
     signOutButton: {
-      minHeight: 44,
+      minHeight: sizes.minTouchTarget,
       borderRadius: radius.pill,
       alignItems: 'center',
       justifyContent: 'center',
@@ -326,6 +336,7 @@ const createStyles = colors =>
       marginTop: spacing.sm,
     },
     toggleRow: {
+      minHeight: sizes.minTouchTarget,
       borderRadius: radius.sm,
       borderWidth: 1,
       borderColor: colors.border,
@@ -350,7 +361,7 @@ const createStyles = colors =>
     },
     segment: {
       flex: 1,
-      minHeight: 40,
+      minHeight: 48,
       borderRadius: radius.pill,
       alignItems: 'center',
       justifyContent: 'center',

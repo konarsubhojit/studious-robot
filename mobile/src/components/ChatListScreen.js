@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { radius, spacing, touchSlop, typography } from '../theme';
 import SwipeableRow from './SwipeableRow';
 
 /** Number of placeholder rows shown while the conversation list loads. */
@@ -38,6 +38,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
           onPress={() => onChangeText('')}
           accessibilityRole="button"
           accessibilityLabel={`Clear ${accessibilityLabel}`}
+          hitSlop={touchSlop(28)}
           testID={`${testID}-clear`}
           style={styles.clearButton}>
           <Text style={styles.clearButtonText}>✕</Text>
@@ -290,13 +291,17 @@ export default function ChatListScreen({
   return (
     <View style={styles.root} testID="chat-list-root">
       <View style={styles.titleRow}>
-        <Text style={styles.title}>Chats</Text>
+        <Text style={styles.title} accessibilityRole="header">
+          Chats
+        </Text>
         <View style={styles.titleSpacer} />
         {onOpenSettings ? (
           <Pressable
             onPress={onOpenSettings}
             accessibilityRole="button"
             accessibilityLabel="Settings"
+            accessibilityHint="Opens account and connection settings"
+            hitSlop={touchSlop(36)}
             testID="chat-list-open-settings"
             style={styles.gearButton}>
             <Text style={styles.gearIcon}>⚙️</Text>

@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } fro
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 import AppButton from './AppButton';
+import ErrorState from './ErrorState';
 import StatusBanner from './StatusBanner';
 
 /**
@@ -34,10 +35,14 @@ export default function RegistrationScreen({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Remembered so a failed attempt can be retried from the error state
+  // without the user having to work out which button they pressed.
+  const [lastMethod, setLastMethod] = useState(null);
 
   const submit = method => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    setLastMethod(method);
     onRegister({
       userId: trimmed,
       method,
@@ -46,6 +51,8 @@ export default function RegistrationScreen({
     });
   };
   const emailReady = name.trim() && email.trim() && password.length >= 6;
+  const hasError = status?.severity === 'error' && Boolean(status?.message);
+  const canRetry = Boolean(lastMethod) && !isLoading;
 
   return (
     <KeyboardAvoidingView
@@ -55,14 +62,29 @@ export default function RegistrationScreen({
         {/* ── Brand / hero section ───────────────────────────────────────── */}
         <View style={styles.hero}>
           <Text style={styles.logoGlyph}>📞</Text>
-          <Text style={styles.appName}>WeTalk</Text>
+          <Text style={styles.appName} accessibilityRole="header">
+            WeTalk
+          </Text>
           <Text style={styles.tagline}>Simple, warm one-to-one video calls</Text>
         </View>
 
         {/* ── Registration form ──────────────────────────────────────────── */}
         <View style={styles.form}>
-          <StatusBanner status={status} />
-          <Text style={styles.formTitle}>Choose your username</Text>
+          {hasError ? (
+            <ErrorState
+              title="Couldn't complete sign-in"
+              description={status.message}
+              actionLabel="Try again"
+              actionHint="Retries the last sign-in attempt"
+              onAction={canRetry ? () => submit(lastMethod) : undefined}
+              testID="registration-error"
+            />
+          ) : (
+            <StatusBanner status={status} />
+          )}
+          <Text style={styles.formTitle} accessibilityRole="header">
+            Choose your username
+          </Text>
           <Text style={styles.formHint}>
             Other people will call you by this name.
             {'\n'}You can change it later in Settings.
@@ -79,6 +101,7 @@ export default function RegistrationScreen({
             onSubmitEditing={() => submit('email-register')}
             style={styles.input}
             accessibilityLabel="Your username"
+            accessibilityHint="Other people will call you by this name"
             testID="registration-username-input"
           />
 
@@ -94,6 +117,8 @@ export default function RegistrationScreen({
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="email-address"
+            textContentType="emailAddress"
+            autoComplete="email"
             style={styles.input}
             accessibilityLabel="Email address"
             testID="registration-email-input"
@@ -106,10 +131,13 @@ export default function RegistrationScreen({
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
+            textContentType="password"
+            autoComplete="password"
             returnKeyType="done"
             onSubmitEditing={() => submit('email-register')}
             style={styles.input}
             accessibilityLabel="Password"
+            accessibilityHint="At least 6 characters"
             testID="registration-password-input"
           />
 
@@ -118,12 +146,14 @@ export default function RegistrationScreen({
             onPress={() => submit('email-register')}
             disabled={!emailReady || isLoading}
             accessibilityLabel="Create account"
+            accessibilityHint="Creates an account with the username, email and password above"
             testID="registration-email-register"
           />
           <AppButton
             title="Sign in with email"
             onPress={() => submit('email-sign-in')}
             disabled={!emailReady || isLoading}
+            accessibilityHint="Signs in to an existing account with the email and password above"
             testID="registration-email-sign-in"
           />
           <AppButton

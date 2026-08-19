@@ -95,7 +95,9 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
     <View style={styles.container} testID="incoming-call-screen">
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Text style={styles.headerLabel}>Incoming call</Text>
+        <Text style={styles.headerLabel} accessibilityRole="header">
+          Incoming call
+        </Text>
       </View>
 
       {/* ── Caller info ───────────────────────────────────────────────────── */}
@@ -105,16 +107,29 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
           style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
           accessible={false}
         />
-        <View style={styles.avatar}>
+        <View
+          style={styles.avatar}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants">
           <Text style={styles.avatarText}>{initials}</Text>
         </View>
 
-        <Text style={styles.callerId} testID="incoming-caller-id">
+        <Text
+          style={styles.callerId}
+          accessibilityLabel={`Incoming call from ${callerId}`}
+          testID="incoming-caller-id">
           {callerId}
         </Text>
 
         {ringTimeoutAt ? (
-          <Text style={styles.countdown} testID="incoming-countdown">
+          <Text
+            style={styles.countdown}
+            accessibilityLabel={
+              secondsLeft > 0
+                ? `Rings for ${formatRingCountdown(secondsLeft)}`
+                : 'The call timed out'
+            }
+            testID="incoming-countdown">
             {secondsLeft > 0 ? `Rings for ${formatRingCountdown(secondsLeft)}` : 'Timed out'}
           </Text>
         ) : null}
@@ -129,6 +144,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
           variant="danger"
           size={72}
           accessibilityLabel="Decline incoming call"
+          accessibilityHint="Rejects the call and tells the caller you are unavailable"
           testID="incoming-decline"
         />
         <IconButton
@@ -138,6 +154,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
           variant="success"
           size={72}
           accessibilityLabel="Accept incoming call"
+          accessibilityHint="Answers the call and connects audio and video"
           testID="incoming-accept"
         />
       </View>

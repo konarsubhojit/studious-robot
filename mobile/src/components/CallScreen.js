@@ -6,6 +6,7 @@ import { spacing } from '../theme';
 import CallStage from './CallStage';
 import CallControls from './CallControls';
 import CallTopBar from './CallTopBar';
+import ErrorState from './ErrorState';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
 
@@ -154,7 +155,17 @@ export default function CallScreen({
               onMinimize={onMinimize}
             />
             {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
-            {visibleStatus ? (
+            {visibleStatus?.severity === 'error' ? (
+              <ErrorState
+                title="Call problem"
+                description={visibleStatus.message}
+                actionLabel="Retry connection"
+                actionHint="Renegotiates the call connection now"
+                onAction={onRetry}
+                style={styles.inCallError}
+                testID="call-error-state"
+              />
+            ) : visibleStatus ? (
               <StatusBanner
                 status={visibleStatus}
                 style={styles.inCallStatus}
@@ -219,6 +230,11 @@ const createStyles = colors =>
     },
     bottomOverlay: {
       alignItems: 'center',
+    },
+    inCallError: {
+      alignSelf: 'flex-start',
+      maxWidth: '80%',
+      marginBottom: 0,
     },
     inCallStatus: {
       alignSelf: 'flex-start',

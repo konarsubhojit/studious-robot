@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import IconButton from './IconButton';
 
@@ -185,7 +185,9 @@ const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetr
         <Pressable
           onPress={() => onRetry?.(message.body)}
           accessibilityRole="button"
-          accessibilityLabel="Retry sending message">
+          accessibilityLabel="Retry sending message"
+          accessibilityHint="Sends this message again"
+          hitSlop={touchSlop(20)}>
           <Text style={styles.failedText}>Failed to send · tap to retry</Text>
         </Pressable>
       ) : null}
@@ -442,13 +444,14 @@ export default function ChatConversationScreen({
             onPress={onBack}
             accessibilityRole="button"
             accessibilityLabel="Back to chat list"
+            hitSlop={touchSlop(36)}
             testID="chat-back"
             style={styles.backButton}>
             <Text style={styles.backButtonText}>‹</Text>
           </Pressable>
 
           <View style={styles.headerText}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
+            <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
               {peerId}
             </Text>
             {isPeerTyping ? (
@@ -526,6 +529,7 @@ export default function ChatConversationScreen({
               onPress={handleScrollToBottomPress}
               accessibilityRole="button"
               accessibilityLabel="Scroll to newest message"
+              hitSlop={touchSlop(36)}
               testID="chat-scroll-to-bottom"
               style={styles.scrollToBottomFab}>
               <Text style={styles.scrollToBottomIcon}>↓</Text>
@@ -548,6 +552,7 @@ export default function ChatConversationScreen({
             placeholderTextColor={colors.textSecondary}
             style={[styles.composerInput, isComposerFocused && styles.composerInputFocused]}
             multiline
+            accessibilityLabel={`Message to ${peerId}`}
             testID="chat-message-input"
           />
           <IconButton
@@ -557,6 +562,7 @@ export default function ChatConversationScreen({
             disabled={!draft.trim() || isSending}
             size={44}
             accessibilityLabel="Send message"
+            accessibilityHint={`Sends the message to ${peerId}`}
             testID="chat-message-send"
           />
         </View>

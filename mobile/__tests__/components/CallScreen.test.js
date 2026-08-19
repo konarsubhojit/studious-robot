@@ -164,13 +164,17 @@ describe('CallScreen', () => {
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(0);
   });
 
-  test('keeps error status messages visible', () => {
+  test('keeps error statuses visible as an actionable error state', () => {
     jest.useFakeTimers();
+    const onRetry = jest.fn();
 
     act(() => {
       tree = renderer.create(
         <CallScreen
-          {...createProps({ status: { message: 'Failed to create offer', severity: 'error' } })}
+          {...createProps({
+            status: { message: 'Failed to create offer', severity: 'error' },
+            onRetry,
+          })}
         />,
       );
     });
@@ -179,7 +183,15 @@ describe('CallScreen', () => {
       jest.advanceTimersByTime(3000);
     });
 
-    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+    // Errors are surfaced with a recovery action instead of a bare status line.
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
+    const errorState = tree.root.findAll(n => n.props.testID === 'call-error-state');
+    expect(errorState.length).toBeGreaterThanOrEqual(1);
+    const retry = tree.root.find(n => n.props.testID === 'call-error-state-action');
+    act(() => {
+      retry.props.onPress();
+    });
+    expect(onRetry).toHaveBeenCalled();
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
   });
 });
