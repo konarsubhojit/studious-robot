@@ -26,7 +26,8 @@ import { useTheme, useThemedStyles } from './ThemeContext';
  * `useCompactCallView`).
  */
 export default function AppShell() {
-  const { callFlow, callState, isCallConnected, isCallMinimized, isCompact } = useCall();
+  const { callFlow, callState, isBubbleDismissed, isCallConnected, isCallMinimized, isCompact } =
+    useCall();
   const insets = useSafeAreaInsets();
   const { colors, scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -41,7 +42,10 @@ export default function AppShell() {
     !isCallFullScreen &&
     callState !== CALL_STATES.OUTGOING_RINGING &&
     callState !== CALL_STATES.INCOMING_RINGING;
-  const isBubbleVisible = isTabShellActive && isCallConnected && isCallMinimized;
+  const isCallMinimizedInShell = isTabShellActive && isCallConnected && isCallMinimized;
+  // The bubble can be flung away; the banner above the tab shell always stays
+  // so a minimized call is never invisible.
+  const isBubbleVisible = isCallMinimizedInShell && !isBubbleDismissed;
 
   let screenContent;
   if (callFlow.isLoadingIdentity) {
@@ -108,7 +112,7 @@ export default function AppShell() {
           </Text>
         </View>
       ) : null}
-      {isBubbleVisible ? <MinimizedCallBanner /> : null}
+      {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
       <StatusBar
@@ -189,7 +193,7 @@ function MinimizedCallBanner() {
 
 /** Draggable bubble overlaying the tab shell while a call is minimized. */
 function MinimizedCallBubble() {
-  const { callFlow, participantLabel, expandCall, endCall } = useCall();
+  const { callFlow, participantLabel, expandCall, endCall, dismissBubble } = useCall();
 
   return (
     <FloatingCallBubble
@@ -201,6 +205,7 @@ function MinimizedCallBubble() {
       onMuteToggle={callFlow.handleMuteToggle}
       onEndCall={endCall}
       onStopScreenShare={callFlow.handleScreenShareToggle}
+      onDismiss={dismissBubble}
     />
   );
 }

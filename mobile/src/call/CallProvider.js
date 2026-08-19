@@ -49,7 +49,8 @@ export function CallProvider({ children }) {
   // always take over the whole display.
   const isCallConnected = callState === CALL_STATES.IN_CALL;
 
-  const { isCallMinimized, setIsCallMinimized } = useCallMinimize(isCallConnected);
+  const { isCallMinimized, setIsCallMinimized, isBubbleDismissed, dismissBubble } =
+    useCallMinimize(isCallConnected);
 
   // Whenever the machine leaves an active state (the call ended, from either
   // side), drop the minimized flag so the next call never opens as a bubble.
@@ -142,6 +143,8 @@ export function CallProvider({ children }) {
       streams,
       // Minimize / restore
       isCallMinimized,
+      isBubbleDismissed,
+      dismissBubble,
       minimizeCall,
       expandCall,
       minimizeCallOnNavigate,
@@ -163,7 +166,9 @@ export function CallProvider({ children }) {
       endCall,
       expandCall,
       handleCallStageLayout,
+      dismissBubble,
       handleExportLogs,
+      isBubbleDismissed,
       isCallActive,
       isCallConnected,
       isCallMinimized,

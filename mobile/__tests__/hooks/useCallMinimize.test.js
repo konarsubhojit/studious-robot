@@ -76,4 +76,39 @@ describe('useCallMinimize', () => {
     setup(false);
     expect(addListenerSpy).not.toHaveBeenCalled();
   });
+
+  test('starts with the floating bubble undismissed', () => {
+    const { resultRef } = setup(true);
+    expect(resultRef.current.isBubbleDismissed).toBe(false);
+  });
+
+  test('dismissBubble hides the floating bubble', () => {
+    const { resultRef } = setup(true);
+    act(() => {
+      resultRef.current.setIsCallMinimized(true);
+    });
+    act(() => {
+      resultRef.current.dismissBubble();
+    });
+    expect(resultRef.current.isBubbleDismissed).toBe(true);
+  });
+
+  test('restoring the call full-screen brings the bubble back', () => {
+    const { resultRef } = setup(true);
+    act(() => {
+      resultRef.current.setIsCallMinimized(true);
+    });
+    act(() => {
+      resultRef.current.dismissBubble();
+    });
+    act(() => {
+      resultRef.current.setIsCallMinimized(false);
+    });
+    expect(resultRef.current.isBubbleDismissed).toBe(false);
+
+    act(() => {
+      resultRef.current.setIsCallMinimized(true);
+    });
+    expect(resultRef.current.isBubbleDismissed).toBe(false);
+  });
 });
