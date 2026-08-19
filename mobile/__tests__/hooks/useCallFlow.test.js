@@ -4,6 +4,13 @@ import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hook
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
+// The messaging hook hydrates from (and persists to) the local chat store; the
+// store itself is covered by `__tests__/storage/chatDb.test.js`.
+jest.mock('../../src/storage/chatDb', () => ({
+  loadChatSnapshot: jest.fn(async () => ({ conversations: [], messagesByPeer: {}, outbox: [] })),
+  saveChatSnapshot: jest.fn(),
+}));
+
 jest.mock('socket.io-client', () => ({
   io: jest.fn(() => ({
     connected: true,
@@ -2127,7 +2134,7 @@ describe('useCallFlow chat', () => {
 
   // ── sendMessage ────────────────────────────────────────────────────────────
 
-  test('sendMessage fails immediately (no optimistic reconciliation) when there is no connected socket', async () => {
+  test('sendMessage queues the message durably when there is no connected socket', async () => {
     const { resultRef, tree } = renderHook();
     await act(async () => {
       resultRef.current.setUserId('alice');
@@ -2145,8 +2152,14 @@ describe('useCallFlow chat', () => {
 
     const messages = resultRef.current.messagesByPeer.bob;
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ body: 'hi there', failed: true, pending: false });
-    expect(resultRef.current.status.severity).toBe('error');
+    // Queued rather than failed: it is replayed once the socket comes up.
+    expect(messages[0]).toMatchObject({ body: 'hi there', pending: true, syncState: 'pending' });
+    expect(resultRef.current.pendingSendCount).toBe(1);
+
+    // Unmount so the queued message's retry timer does not outlive the test.
+    act(() => {
+      tree.unmount();
+    });
   });
 
   test('sendMessage optimistically appends then reconciles with the server-confirmed message on ack', async () => {
@@ -2190,6 +2203,8 @@ describe('useCallFlow chat', () => {
       version: 1,
       recipientId: 'bob',
       body: 'hi there',
+      // Client-generated so the server's upsert makes a replay idempotent.
+      messageId: expect.any(String),
     });
 
     const messages = resultRef.current.messagesByPeer.bob;
@@ -2199,10 +2214,10 @@ describe('useCallFlow chat', () => {
       body: 'hi there',
       pending: false,
     });
-    expect(messages[0].failed).toBeUndefined();
+    expect(messages[0].failed).toBe(false);
   });
 
-  test('sendMessage marks the optimistic message failed and surfaces a status error when the ack rejects', async () => {
+  test('sendMessage marks the optimistic message failed and surfaces a status error once its retries are exhausted', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     const { io } = require('socket.io-client');
@@ -2216,6 +2231,12 @@ describe('useCallFlow chat', () => {
     await act(async () => {
       await resultRef.current.sendMessage('bob', 'hi there');
     });
+    // Drain until the automatic attempt budget is spent.
+    for (let attempt = 1; attempt < 5; attempt += 1) {
+      await act(async () => {
+        await resultRef.current.drainOutbox();
+      });
+    }
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
