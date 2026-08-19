@@ -119,6 +119,52 @@ describe('CallScreen', () => {
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
   });
 
+  test('unmounts the whole control deck when the overlay is dismissed', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps()} />);
+    });
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'call-screen-root' }).props.onPress();
+    });
+    // Hidden means gone: controls that are only faded out keep their icons on
+    // screen and stack up with the next set that is rendered.
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(0);
+    expect(tree.root.findAllByType('CallTopBar')).toHaveLength(0);
+  });
+
+  test('restores the controls when the call leaves compact mode', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ isCompact: true })} />);
+    });
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(0);
+
+    act(() => {
+      tree.update(<CallScreen {...createProps({ isCompact: false })} />);
+    });
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+  });
+
+  test('never renders more than one control deck across call-state changes', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps()} />);
+    });
+
+    [
+      { isReconnecting: true },
+      { isReconnecting: false, status: { message: 'Reconnecting', severity: 'error' } },
+      { isCompact: true },
+      { isCompact: false, isScreenSharing: true },
+    ].forEach(overrides => {
+      act(() => {
+        tree.update(<CallScreen {...createProps(overrides)} />);
+      });
+      expect(tree.root.findAllByType('CallControls').length).toBeLessThanOrEqual(1);
+      expect(tree.root.findAllByType('CallTopBar').length).toBeLessThanOrEqual(1);
+    });
+  });
+
   test('forwards isMuted and isVideoEnabled to CallStage', () => {
     act(() => {
       tree = renderer.create(

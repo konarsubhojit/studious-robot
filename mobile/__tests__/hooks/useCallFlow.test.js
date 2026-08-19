@@ -2763,6 +2763,163 @@ describe('useCallFlow chat', () => {
       mediaState: { isScreenSharing: true },
     });
   });
+
+  // ── call.connected ────────────────────────────────────────────────────────
+  //
+  // Nothing else advances a call out of `connecting_media`, so a client that
+  // never reports its connected peer connection is force-ended by the server's
+  // stale-call sweep with `media_connect_timeout` while media is still flowing.
+
+  /**
+   * Accept an incoming call with a peer-connection stub whose state callbacks
+   * the test can fire by hand.
+   */
+  async function acceptCallWithPeerConnection(callId) {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId, callerId: 'bob' } });
+    });
+    await act(async () => {});
+
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    mediaDevices.getUserMedia.mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    const peerConnection = {
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => []),
+      onicecandidate: null,
+      ontrack: null,
+      oniceconnectionstatechange: null,
+      onconnectionstatechange: null,
+      close: jest.fn(),
+      iceConnectionState: 'checking',
+      connectionState: 'connecting',
+      getStats: jest.fn().mockResolvedValue(new Map()),
+    };
+    RTCPeerConnection.mockImplementation(() => peerConnection);
+
+    const { io } = require('socket.io-client');
+    const socketMock = io.mock.results[io.mock.results.length - 1].value;
+    const emits = [];
+    socketMock.emit.mockImplementation((event, payload, cb) => {
+      emits.push({ event, payload });
+      if (event === 'call.accept') {
+        cb?.({ ok: true, call: { callId, callerId: 'bob', calleeId: 'alice' } });
+      } else {
+        cb?.({ ok: true });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    return { resultRef, tree, peerConnection, emits };
+  }
+
+  test('reports call.connected once media reaches the connected ICE state', async () => {
+    const { peerConnection, emits } = await acceptCallWithPeerConnection('call-connected-1');
+
+    expect(peerConnection.oniceconnectionstatechange).toEqual(expect.any(Function));
+
+    await act(async () => {
+      peerConnection.iceConnectionState = 'connected';
+      peerConnection.oniceconnectionstatechange();
+    });
+
+    const connectedEmits = emits.filter(entry => entry.event === 'call.connected');
+    expect(connectedEmits).toHaveLength(1);
+    expect(connectedEmits[0].payload).toEqual({
+      version: 1,
+      callId: 'call-connected-1',
+      iceState: 'connected',
+    });
+
+    // Repeated state callbacks (and the connection-state callback firing for
+    // the same event) must not re-report.
+    await act(async () => {
+      peerConnection.iceConnectionState = 'completed';
+      peerConnection.oniceconnectionstatechange();
+      peerConnection.connectionState = 'connected';
+      peerConnection.onconnectionstatechange();
+    });
+    expect(emits.filter(entry => entry.event === 'call.connected')).toHaveLength(1);
+  });
+
+  test('heartbeats over call.media-state while the call is connected', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-connected-2');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange();
+      });
+
+      const beatsBefore = emits.filter(
+        entry => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
+      ).length;
+
+      await act(async () => {
+        jest.advanceTimersByTime(60000);
+      });
+
+      const beats = emits.filter(
+        entry => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
+      );
+      expect(beats.length).toBeGreaterThan(beatsBefore);
+      expect(beats[0].payload).toEqual({
+        version: 1,
+        callId: 'call-connected-2',
+        mediaState: { isScreenSharing: false, heartbeat: true },
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('reports lost media only after ICE fails to recover', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-connected-3');
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'disconnected';
+        peerConnection.oniceconnectionstatechange();
+      });
+      // Still inside the grace window: a transient dip is not reported.
+      expect(emits.some(entry => entry.event === 'call.connected')).toBe(false);
+
+      // Recovery cancels the pending report entirely.
+      await act(async () => {
+        peerConnection.iceConnectionState = 'connected';
+        peerConnection.oniceconnectionstatechange();
+        jest.advanceTimersByTime(30000);
+      });
+      expect(
+        emits.filter(entry => entry.payload?.iceState === 'disconnected'),
+      ).toHaveLength(0);
+
+      // A connection that never comes back is reported so the server can end
+      // the call instead of waiting for a sweep.
+      await act(async () => {
+        peerConnection.iceConnectionState = 'failed';
+        peerConnection.oniceconnectionstatechange();
+        jest.advanceTimersByTime(30000);
+      });
+      expect(emits.filter(entry => entry.payload?.iceState === 'failed')).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 

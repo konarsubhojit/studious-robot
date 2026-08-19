@@ -98,6 +98,18 @@ export default function CallScreen({
     return () => clearTimeout(timeout);
   }, [isCompact, isReconnecting, status?.message, status?.severity]);
 
+  // Leaving compact mode (Picture-in-Picture / minimised call) must bring the
+  // chrome back: the overlay was force-hidden on the way in, and without this
+  // the restored full-screen call has no visible controls at all until the
+  // user happens to tap the video.
+  useEffect(() => {
+    if (!isCompact) setShowControlsOverlay(true);
+  }, [isCompact]);
+
+  // Every timer this screen owns is cleared on unmount, so a call that ends
+  // mid-animation cannot hide (or re-show) the controls of the *next* call.
+  useEffect(() => clearControlsAutoHide, [clearControlsAutoHide]);
+
   useEffect(() => {
     if (isCompact) {
       clearControlsAutoHide();
@@ -220,6 +232,10 @@ const createStyles = colors =>
     },
     overlay: {
       ...StyleSheet.absoluteFillObject,
+      // Pinned above the video stage (and any PiP window) so the control deck
+      // can never end up interleaved with the layers it floats over.
+      zIndex: 2,
+      elevation: 2,
       justifyContent: 'space-between',
       paddingHorizontal: spacing.md,
       paddingTop: spacing.sm,
