@@ -128,6 +128,13 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     // Optional so an older client that does not generate one still works.
     messageId: s.id().optional(),
   }),
+  [CLIENT_EVENTS.MESSAGE_DELETE]: s.object({
+    version: versionField,
+    // The conversation is derived from the pair, so the peer identifies it
+    // without the client having to know the server's conversation id.
+    peerId: idField,
+    messageId: idField,
+  }),
   [CLIENT_EVENTS.MESSAGE_TYPING]: s.object({
     version: versionField,
     recipientId: idField,
@@ -202,6 +209,12 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     conversationId: s.id().optional(),
     messageId: s.id().optional(),
     message: messageRecord,
+  }),
+  [SERVER_EVENTS.MESSAGE_DELETED]: s.object({
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
+    messageId: idField,
+    deletedBy: idField,
   }),
   [SERVER_EVENTS.MESSAGE_READ]: s.object({
     version: inboundVersionField,

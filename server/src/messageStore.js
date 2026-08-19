@@ -16,6 +16,7 @@
  *   markDelivered(messageId, userId)            → Promise<message|null>
  *   listConversations(userId)                   → Promise<conversationSummary[]>
  *   markRead(conversationId, userId)            → Promise<number>
+ *   deleteMessage(conversationId, messageId, userId) → Promise<message|null>
  *   close()                                     → Promise<void>
  *
  * Message document shape
@@ -254,6 +255,20 @@ function createMemoryMessageStore() {
         }
       }
       return updated;
+    },
+
+    async deleteMessage(conversationId, messageId, userId) {
+      const index = messages.findIndex(
+        (candidate) =>
+          candidate.conversationId === conversationId &&
+          candidate.messageId === messageId &&
+          // Only the author may delete: a participant cannot remove what the
+          // other person said.
+          candidate.senderId === userId
+      );
+      if (index === -1) return null;
+      const [removed] = messages.splice(index, 1);
+      return { ...removed };
     },
 
     async close() {
@@ -527,6 +542,18 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         { $set: { readAt: nextTimestamp() } }
       );
       return result?.modifiedCount ?? 0;
+    },
+
+    async deleteMessage(conversationId, messageId, userId) {
+      const { messages } = await connect();
+      // The `senderId` in the filter is the authorisation check: a delete for
+      // someone else's message matches nothing and reports "not found".
+      // Shard-key (`conversationId`) prefixed so Cosmos can route the delete.
+      const existing = await messages.findOne({ conversationId, messageId, senderId: userId });
+      if (!existing?.messageId) return null;
+      await messages.deleteOne({ conversationId, messageId, senderId: userId });
+      const { _id, ...rest } = existing;
+      return rest;
     },
 
     async close() {

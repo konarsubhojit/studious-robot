@@ -267,6 +267,111 @@ function registerMessageHandlers(socket, { io, state }) {
   });
 
   /**
+   * `message.delete` — remove one of the *sender's own* messages from the
+   * conversation, for both participants.
+   *
+   * Authorisation lives in the store: the delete is filtered on `senderId`, so
+   * a request for a message the caller did not write matches nothing and is
+   * reported as `not_found` rather than silently succeeding.
+   */
+  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, ack) => {
+    if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
+      return;
+    }
+    if (!validateSignalingVersion(socket, payload, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
+      return;
+    }
+
+    const requesterId = socket.data.identity.userId;
+    // Deletes are cheap but still writes: rate limit them like sends so a
+    // malicious client cannot hammer the store.
+    const rateCheck = state.messageSendRateLimiter.check(requesterId);
+    if (!rateCheck.allowed) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.RATE_LIMITED,
+        'message rate limit exceeded',
+        state
+      );
+      return;
+    }
+
+    const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, payload, state);
+    if (!parsed) return;
+
+    const peerId = normaliseId(parsed.peerId);
+    const messageId = normaliseId(parsed.messageId);
+    if (!peerId || peerId === requesterId || !messageId) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.BAD_REQUEST,
+        'peerId and messageId are required',
+        state
+      );
+      return;
+    }
+
+    const conversationId = deriveConversationId(requesterId, peerId);
+    let deleted;
+    try {
+      deleted = await state.messageStore.deleteMessage(conversationId, messageId, requesterId);
+    } catch (error) {
+      console.error(`[messages] failed to delete message: ${error?.message}`);
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.INTERNAL_ERROR,
+        'could not delete message',
+        state
+      );
+      return;
+    }
+
+    if (!deleted) {
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.NOT_FOUND,
+        'message not found',
+        state
+      );
+      return;
+    }
+
+    // The conversation list preview and the history page both change.
+    await invalidateCache(
+      state,
+      conversationsCachePrefix(requesterId),
+      conversationsCachePrefix(peerId),
+      messagesCachePrefix(conversationId)
+    );
+
+    console.log(
+      `[messages] message.delete messageId=${messageId}` +
+        ` conversationId=${conversationId} userId=${requesterId}`
+    );
+
+    const envelope = {
+      version: SIGNALING_VERSION,
+      conversationId,
+      messageId,
+      deletedBy: requesterId,
+    };
+    // Both sides are told, so the message disappears from the peer's open
+    // conversation and from the sender's other devices.
+    emitToUserSockets(io, peerId, SERVER_EVENTS.MESSAGE_DELETED, envelope);
+    emitToUserSockets(io, requesterId, SERVER_EVENTS.MESSAGE_DELETED, envelope);
+
+    acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE, { messageId, conversationId });
+  });
+
+  /**
    * `message.typing` — ephemeral, fire-and-forget typing indicator. Not
    * persisted; simply relayed to the recipient's live socket(s) so their chat
    * UI can show/hide a "user is typing…" hint. No ack is sent back since the

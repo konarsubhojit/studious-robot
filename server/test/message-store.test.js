@@ -206,6 +206,35 @@ test('saved messages are snapshots, not live references', async () => {
 
 // ─── listConversations ────────────────────────────────────────────────────────
 
+test('deleteMessage removes only the author own message', async () => {
+  const store = createMemoryMessageStore();
+  const conversationId = deriveConversationId('alice', 'bob');
+  const mine = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'mine',
+  });
+  await store.saveMessage({
+    conversationId,
+    senderId: 'bob',
+    recipientId: 'alice',
+    body: 'theirs',
+  });
+
+  assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'bob'), null);
+  const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
+  assert.equal(deleted.body, 'mine');
+  // Idempotent: a repeated delete simply finds nothing.
+  assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'alice'), null);
+
+  const remaining = await store.listMessages({ conversationId });
+  assert.deepEqual(
+    remaining.map((m) => m.body),
+    ['theirs']
+  );
+});
+
 test('listConversations returns one entry per conversation, newest first', async () => {
   const store = createMemoryMessageStore();
 
@@ -383,6 +412,11 @@ test('createMongoMessageStore requires a uri', () => {
 
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
+/** Whether `doc` matches every field of an equality-only `filter`. */
+function matchesFilter(doc, filter) {
+  return Object.entries(filter).every(([field, value]) => doc[field] === value);
+}
+
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
 function createFakeMongoClient() {
   const docs = [];
@@ -411,10 +445,14 @@ function createFakeMongoClient() {
       return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
     },
     async findOne(filter) {
-      const found = docs.find(
-        (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
-      );
+      const found = docs.find((d) => matchesFilter(d, filter));
       return found ? { _id: 'oid', ...found } : null;
+    },
+    async deleteOne(filter) {
+      const index = docs.findIndex((d) => matchesFilter(d, filter));
+      if (index === -1) return { deletedCount: 0 };
+      docs.splice(index, 1);
+      return { deletedCount: 1 };
     },
     find(query) {
       let results = docs;
@@ -584,6 +622,27 @@ test('mongo store saveMessage is idempotent for a repeated messageId', async () 
   const messages = await store.listMessages({ conversationId });
   assert.equal(messages.length, 1, 'the duplicate write must not create a second document');
   assert.equal(messages[0].body, 'first send', 'the original document is preserved');
+
+  await store.close();
+});
+
+test('mongo store deleteMessage only removes the author own message', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  const mine = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'mine',
+  });
+
+  assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'bob'), null);
+  const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
+  assert.equal(deleted.body, 'mine');
+  assert.equal(deleted._id, undefined);
+  assert.deepEqual(await store.listMessages({ conversationId }), []);
 
   await store.close();
 });
