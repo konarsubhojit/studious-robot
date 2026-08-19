@@ -10,7 +10,7 @@ import IncomingCallScreen from './components/IncomingCallScreen';
 import OutgoingCallScreen from './components/OutgoingCallScreen';
 import RegistrationScreen from './components/RegistrationScreen';
 import TabShell from './components/TabShell';
-import { getStartupIssues } from './startupHealth';
+import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 
 /**
@@ -30,7 +30,7 @@ export default function AppShell() {
   const insets = useSafeAreaInsets();
   const { colors, scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const startupIssues = getStartupIssues();
+  const startupIssues = getDegradations();
 
   // OS PiP always short-circuits to the compact CallScreen, taking precedence
   // over the in-app minimize state.

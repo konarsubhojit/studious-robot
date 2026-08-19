@@ -15,6 +15,7 @@ import {
   callStateReducer,
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
+import { emitEvent, emitMetric, getCorrelationId } from '../observability';
 import {
   applyPreferredAudioRoute,
   AUDIO_ROUTES,
@@ -587,6 +588,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       const state = pc.iceConnectionState;
       logInfo('[CallFlow] ICE connection state', { state });
       if (state !== 'failed') return;
+      emitMetric('call.ice_failed', 1, { callId: activeCallIdRef.current });
       if (!isCallerRef.current || !socketRef.current?.connected) return;
       logWarn('[CallFlow] ICE failed; attempting restart');
       if (activeCallIdRef.current) {
@@ -746,7 +748,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       if (callRecord?.callId) {
         const qos = Telemetry.trackCallEnd(callRecord.callId);
         if (qos) {
-          logInfo('[CallFlow] call QoS summary', qos);
+          emitEvent('info', 'call.qos', qos);
         }
       }
 
@@ -852,9 +854,11 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       disconnectSocket();
 
       logInfo('[CallFlow] Connecting socket', { signalingUrl });
+      // The correlation id travels on the handshake so the server can stamp it
+      // on its own signaling logs, making a failed call traceable end to end.
       const socket = io(signalingUrl.trim(), {
         ...getSocketOptions(),
-        auth: { sessionId },
+        auth: { sessionId, correlationId: getCorrelationId() },
       });
       socketRef.current = socket;
 
@@ -1164,6 +1168,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
           Telemetry.trackReconnect(activeCallIdRef.current);
+          emitMetric('call.reconnect', 1, { callId: activeCallIdRef.current });
         }
         // When the caller's socket reconnects mid-call, send an ICE-restart
         // offer so the peer connection can negotiate a new network path.
@@ -1594,6 +1599,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         updateStatus(`Ringing ${trimmedCalleeId}…`);
         startOutgoingRingback();
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
+        emitEvent('info', 'call.started', { callId: ack.call.callId, direction: 'outgoing' });
       } catch (error) {
         logError('[CallFlow] placeCall failed', error);
         updateStatus(`Failed to place call: ${error.message}`, 'error');
@@ -1932,6 +1938,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       clearPendingAnswer(call.callId, 'answered');
       updateStatus('Connecting…');
       Telemetry.trackCallStart(call.callId, sessionIdRef.current);
+      emitEvent('info', 'call.started', { callId: call.callId, direction: 'incoming' });
       // Stop any ringing (CallKeep system UI transitions to in-call state;
       // JS fallback ringtone stops here in case CallKeep was unavailable).
       stopIncomingRingtone();

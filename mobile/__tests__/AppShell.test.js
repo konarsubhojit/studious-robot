@@ -14,7 +14,7 @@ jest.mock('../src/appLogger', () => ({
   getLogsForExport: jest.fn(async () => ''),
 }));
 
-jest.mock('../src/startupHealth', () => ({ getStartupIssues: () => [] }));
+jest.mock('../src/observability', () => ({ getDegradations: () => [] }));
 
 jest.mock('../src/hooks/useCallFlow', () => ({
   __esModule: true,
