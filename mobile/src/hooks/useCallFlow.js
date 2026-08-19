@@ -106,6 +106,24 @@ const TERMINAL_CALL_STATUSES = new Set([
   'unreachable',
 ]);
 
+/**
+ * How often a connected client reports call liveness to the server.
+ *
+ * Mirrors `CALL_HEARTBEAT_INTERVAL_MS` on the server, which ends a connected
+ * call only after several consecutive beats are missed.
+ */
+const CALL_HEARTBEAT_INTERVAL_MS = 30000;
+
+/**
+ * How long a peer connection may stay `disconnected`/`failed` before the loss
+ * of media is reported to the server.
+ *
+ * ICE routinely dips through `disconnected` during a network handoff and
+ * recovers on its own (and the caller additionally attempts an ICE restart on
+ * `failed`), so reporting immediately would tear down recoverable calls.
+ */
+const ICE_FAILURE_GRACE_MS = 12000;
+
 /** How many answered callIds are remembered for duplicate-accept suppression. */
 const ANSWERED_CALL_HISTORY_LIMIT = 20;
 
@@ -277,6 +295,16 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const isPlacingCallRef = useRef(false);
   const callConnectedAtRef = useRef(null);
   const elapsedTimerRef = useRef(null);
+  // Guards against re-emitting `call.connected` for the same call (both ICE
+  // and connection-state callbacks fire, often more than once).
+  const connectedReportedCallIdRef = useRef(null);
+  // Periodic in-call liveness report to the server (see CALL_HEARTBEAT_INTERVAL_MS).
+  const heartbeatTimerRef = useRef(null);
+  // Pending "media is gone" report, cancelled if ICE recovers in time.
+  const iceFailureTimerRef = useRef(null);
+  // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
+  // without re-creating the timer on every toggle.
+  const isScreenSharingRef = useRef(false);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
   const connectionStatsRef = useRef({
     timestampMs: null,
@@ -476,6 +504,105 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // silent for users who asked for reduced motion.
   useEffect(() => initHaptics(), []);
 
+  /** Stop the in-call liveness heartbeat (idempotent). */
+  const stopCallHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Report call liveness to the server every `CALL_HEARTBEAT_INTERVAL_MS`.
+   *
+   * Reuses the existing `call.media-state` relay: the server stamps the call
+   * on every inbound frame, which is how it tells a long healthy conversation
+   * apart from one both devices silently abandoned.
+   */
+  const startCallHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) return;
+    heartbeatTimerRef.current = setInterval(() => {
+      const callId = activeCallIdRef.current;
+      if (!callId || !socketRef.current?.connected) return;
+      signalingRef.current
+        ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
+          version: SIGNALING_VERSION,
+          callId,
+          mediaState: { isScreenSharing: isScreenSharingRef.current, heartbeat: true },
+        })
+        .catch(error => {
+          logWarn('[CallFlow] call heartbeat failed', { message: error?.message });
+        });
+    }, CALL_HEARTBEAT_INTERVAL_MS);
+  }, []);
+
+  /** Cancel a pending "media is gone" report because ICE recovered. */
+  const clearMediaFailureReport = useCallback(() => {
+    if (iceFailureTimerRef.current) {
+      clearTimeout(iceFailureTimerRef.current);
+      iceFailureTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Tell the server this device's media is connected.
+   *
+   * This is the only signal that advances the call out of `connecting_media`;
+   * without it the server's stale-call sweep force-ends every answered call
+   * with `media_connect_timeout` while media is still flowing.  Both peers
+   * report and the server accepts whichever arrives first.
+   *
+   * @param {string} iceState - the observed peer-connection/ICE state.
+   */
+  const reportCallConnected = useCallback(
+    iceState => {
+      const callId = activeCallIdRef.current;
+      if (!callId) return;
+      clearMediaFailureReport();
+      startCallHeartbeat();
+      if (connectedReportedCallIdRef.current === callId) return;
+      connectedReportedCallIdRef.current = callId;
+      logInfo('[CallFlow] Media connected; reporting call.connected', { callId, iceState });
+      signalingRef.current?.emit(
+        CLIENT_EVENTS.CALL_CONNECTED,
+        { version: SIGNALING_VERSION, callId, iceState },
+        ack => {
+          if (!ack?.ok) logWarn('[CallFlow] call.connected ack failed', ack?.error);
+        },
+      );
+    },
+    [clearMediaFailureReport, startCallHeartbeat],
+  );
+
+  /**
+   * Report that media was lost, after a grace period.
+   *
+   * ICE dips through `disconnected` on any network handoff and often recovers
+   * (the caller also attempts an ICE restart on `failed`), so the report is
+   * delayed and cancelled the moment the connection comes back — but once the
+   * grace period lapses the server ends the call immediately instead of
+   * leaving it stranded until a sweep notices.
+   *
+   * @param {string} iceState
+   */
+  const reportMediaFailure = useCallback(iceState => {
+    if (iceFailureTimerRef.current || !activeCallIdRef.current) return;
+    iceFailureTimerRef.current = setTimeout(() => {
+      iceFailureTimerRef.current = null;
+      const callId = activeCallIdRef.current;
+      const pc = peerConnectionRef.current;
+      if (!callId || !pc) return;
+      const currentState = pc.iceConnectionState ?? pc.connectionState;
+      if (currentState === 'connected' || currentState === 'completed') return;
+      logWarn('[CallFlow] Media did not recover; reporting failure', { callId, currentState });
+      signalingRef.current?.emit(CLIENT_EVENTS.CALL_CONNECTED, {
+        version: SIGNALING_VERSION,
+        callId,
+        iceState: iceState === 'failed' ? 'failed' : 'disconnected',
+      });
+    }, ICE_FAILURE_GRACE_MS);
+  }, []);
+
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
     triggerHaptic('connect');
@@ -525,6 +652,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
       peerConnectionRef.current.oniceconnectionstatechange = null;
+      peerConnectionRef.current.onconnectionstatechange = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -594,12 +722,37 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       }
     };
 
+    // The server has no other way of knowing media established: `connected`
+    // here is what advances the call out of `connecting_media` and exempts it
+    // from the media-connect sweep.
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      logInfo('[CallFlow] Peer connection state', { state });
+      if (state === 'connected') {
+        reportCallConnected(state);
+      } else if (state === 'disconnected' || state === 'failed') {
+        reportMediaFailure(state);
+      }
+    };
+
     // Trigger an ICE restart when the caller detects ICE failure so the call
     // can survive a network handoff without tearing down entirely.
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       logInfo('[CallFlow] ICE connection state', { state });
+      if (state === 'connected' || state === 'completed') {
+        reportCallConnected(state);
+        return;
+      }
+      if (state === 'disconnected') {
+        reportMediaFailure(state);
+        return;
+      }
       if (state !== 'failed') return;
+      // A failed connection is reported too (after the grace period) so the
+      // server ends the call promptly rather than waiting for a sweep; the
+      // report is cancelled if the ICE restart below succeeds.
+      reportMediaFailure(state);
       emitMetric('call.ice_failed', 1, { callId: activeCallIdRef.current });
       if (!isCallerRef.current || !socketRef.current?.connected) return;
       logWarn('[CallFlow] ICE failed; attempting restart');
@@ -630,7 +783,13 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     peerConnectionRef.current = pc;
     return configurePeerConnection(pc);
-  }, [configurePeerConnection, markCallConnected, updateStatus]);
+  }, [
+    configurePeerConnection,
+    markCallConnected,
+    reportCallConnected,
+    reportMediaFailure,
+    updateStatus,
+  ]);
 
   // ─── Local media ──────────────────────────────────────────────────────────
 
@@ -791,6 +950,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
+      stopCallHeartbeat();
+      clearMediaFailureReport();
+      connectedReportedCallIdRef.current = null;
 
       activeCallIdRef.current = null;
       isCallerRef.current = false;
@@ -814,10 +976,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     },
     [
       addToHistory,
+      clearMediaFailureReport,
       closePeerConnection,
       releaseLocalMedia,
       resetScreenShare,
       setIsCompactView,
+      stopCallHeartbeat,
       updateStatus,
     ],
   );
@@ -1175,7 +1339,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       // ── In-call screen-share relay ──────────────────────────────────────
       signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
         if (callId !== activeCallIdRef.current) return;
-        setIsRemoteScreenSharing(Boolean(mediaState?.isScreenSharing));
+        // A liveness heartbeat that carries no sharing flag must not clear the
+        // "they are presenting" banner.
+        if (!mediaState || !('isScreenSharing' in mediaState)) return;
+        setIsRemoteScreenSharing(Boolean(mediaState.isScreenSharing));
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
@@ -1574,9 +1741,11 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
+      stopCallHeartbeat();
+      clearMediaFailureReport();
       stopCallService();
     };
-  }, [closePeerConnection, disconnectSocket]);
+  }, [clearMediaFailureReport, closePeerConnection, disconnectSocket, stopCallHeartbeat]);
 
   // ─── Deep-link / push-notification entry points ───────────────────────────
 
@@ -2445,6 +2614,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // CallStage can render a "they are presenting" banner. Best-effort: a
   // rejected/timed-out ack is logged and otherwise ignored.
   useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
     if (!socketRef.current?.connected || !activeCallIdRef.current) return;
     signalingRef.current.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
       version: SIGNALING_VERSION,

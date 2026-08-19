@@ -7,6 +7,8 @@ const {
   DEFAULT_RINGING_TIMEOUT_MS,
   DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
   DEFAULT_MAX_CALL_DURATION_MS,
+  DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+  CONNECTED_CALL_STATUS,
 } = require('../config');
 const { resolveReachableChannels, hasKnownUser } = require('../lib/state');
 const {
@@ -270,6 +272,26 @@ function isSingleInstanceMode(state) {
 }
 
 /**
+ * Record that a participant of `callId` is still alive.
+ *
+ * Connected calls have no media-setup deadline, so the heartbeat is what tells
+ * an abandoned conversation (both devices gone without a `call.end`) apart
+ * from a long healthy one.  Best-effort and in-memory only: it is a liveness
+ * signal, not part of the persisted call record.
+ *
+ * @param {object} state
+ * @param {string} callId
+ * @param {number} [now]
+ * @returns {boolean} Whether a live call was found and stamped.
+ */
+function recordCallHeartbeat(state, callId, now = Date.now()) {
+  const call = state.calls.get(callId);
+  if (!call || TERMINAL_CALL_STATES.has(call.status)) return false;
+  call.lastHeartbeatAt = new Date(now).toISOString();
+  return true;
+}
+
+/**
  * Advance every `ringing` call whose `ringTimeoutAt` is ≤ `now` to `missed`,
  * and force-end every other **non-terminal** call that has been stuck in its
  * state for longer than that state's window.
@@ -283,7 +305,7 @@ function isSingleInstanceMode(state) {
  * @param {object} state
  * @param {number} now - Unix timestamp in ms.
  * @param {(call: CallRecord, previousStatus: string, reason: string) => void} [onTransition]
- * @param {{ ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number }} [options]
+ * @param {{ ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number, heartbeatTimeoutMs?: number }} [options]
  * @returns {number} Number of calls transitioned.
  */
 function tickRingingTimeouts(state, now, onTransition, options = {}) {
@@ -345,7 +367,7 @@ function endCallsForDisconnectedParticipant(
  * both participants permanently busy across every future restart.
  *
  * @param {object} state
- * @param {{ now?: number, ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number }} [options]
+ * @param {{ now?: number, ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number, heartbeatTimeoutMs?: number }} [options]
  * @returns {number} Number of calls closed out.
  */
 function sanitizeHydratedCalls(state, { now = Date.now(), ...timeouts } = {}) {
@@ -434,7 +456,7 @@ function toTimestamp(value, fallback) {
  * Resolve the terminal transition a non-terminal call is due for, if any.
  *
  * @param {CallRecord} call
- * @param {{ ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number }} timeouts
+ * @param {{ ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number, heartbeatTimeoutMs?: number }} timeouts
  * @returns {{ status: string, reason: string, deadlineMs: number }|null}
  */
 function getCallExpiry(
@@ -443,6 +465,7 @@ function getCallExpiry(
     ringingTimeoutMs = DEFAULT_RINGING_TIMEOUT_MS,
     mediaConnectTimeoutMs = DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
     maxCallDurationMs = DEFAULT_MAX_CALL_DURATION_MS,
+    heartbeatTimeoutMs = DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
   } = {}
 ) {
   if (TERMINAL_CALL_STATES.has(call.status)) return null;
@@ -464,12 +487,25 @@ function getCallExpiry(
         reason: 'media_connect_timeout',
         deadlineMs: enteredStateMs + mediaConnectTimeoutMs,
       };
-    case 'in_call':
-      return {
-        status: 'ended',
-        reason: 'max_duration_exceeded',
-        deadlineMs: enteredStateMs + maxCallDurationMs,
-      };
+    case CONNECTED_CALL_STATUS: {
+      // A connected call is a legitimate long-lived steady state: it is never
+      // subject to the media-setup deadline.  It ends on explicit hangup, on
+      // participant disconnect, when its heartbeat stops (only once the client
+      // has proven it sends them), or at the absolute duration cap.
+      const durationDeadlineMs = enteredStateMs + maxCallDurationMs;
+      if (!call.lastHeartbeatAt) {
+        return {
+          status: 'ended',
+          reason: 'max_duration_exceeded',
+          deadlineMs: durationDeadlineMs,
+        };
+      }
+      const heartbeatDeadlineMs =
+        toTimestamp(call.lastHeartbeatAt, enteredStateMs) + heartbeatTimeoutMs;
+      return heartbeatDeadlineMs < durationDeadlineMs
+        ? { status: 'ended', reason: 'heartbeat_timeout', deadlineMs: heartbeatDeadlineMs }
+        : { status: 'ended', reason: 'max_duration_exceeded', deadlineMs: durationDeadlineMs };
+    }
     default:
       return null;
   }
@@ -508,6 +544,10 @@ module.exports = {
   describeActiveCallsForUser,
   isCalleeUnreachable,
   isSingleInstanceMode,
+  recordCallHeartbeat,
+  // Exported for the state-machine invariant test, which asserts every
+  // non-terminal status has a bounded — and appropriate — timeout.
+  getCallExpiry,
   tickRingingTimeouts,
   endCallsForDisconnectedParticipant,
   reconcileClientCallState,

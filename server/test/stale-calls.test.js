@@ -14,7 +14,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
-const { DEFAULT_MEDIA_CONNECT_TIMEOUT_MS } = require('../src/config.js');
+const {
+  CALL_TRANSITIONS,
+  CONNECTED_CALL_STATUS,
+  DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+  DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+  TERMINAL_CALL_STATES,
+} = require('../src/config.js');
+const { getCallExpiry } = require('../src/domain/calls.js');
 const { captureConsoleLog } = require('./helpers');
 const schema = require('../db/schema');
 
@@ -88,6 +95,21 @@ function waitFor(socket, event, timeoutMs = 2000) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Resolve on the first `call.state_changed` carrying `status`. */
+function waitForStatus(socket, status, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Timeout waiting for status "${status}"`)),
+      timeoutMs
+    );
+    socket.on('call.state_changed', (payload) => {
+      if (payload?.status !== status) return;
+      clearTimeout(timer);
+      resolve(payload);
+    });
+  });
+}
 
 /** Drive a call through to `connecting_media` over HTTP + sockets. */
 async function startConnectingMediaCall(url, callerSession, calleeSession) {
@@ -375,5 +397,197 @@ test('call.state.report: a call the client still holds is left untouched', async
     assert.equal(getCall(callId).status, 'accepted');
   } finally {
     await teardown(caller);
+  }
+});
+
+// ─── 5. call.connected: the transition that makes a call survive the sweep ───
+
+test('call.connected: media reaching the connected ICE state advances the call', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  let callee;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+    callee = await connect(url, { sessionId: calleeSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
+    assert.equal(getCall(callId).status, 'connecting_media');
+
+    const stateChanged = waitForStatus(callee, CONNECTED_CALL_STATUS);
+    const ack = await emitWithAck(caller, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: 'connected',
+    });
+    assert.equal(ack.ok, true);
+    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal((await stateChanged).status, CONNECTED_CALL_STATUS);
+
+    // The peer reports too; the second report is absorbed, not rejected.
+    const second = await emitWithAck(callee, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: 'completed',
+    });
+    assert.equal(second.ok, true);
+    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+  } finally {
+    await teardown(caller, callee);
+  }
+});
+
+test('sweep: a connected call is never ended by the media-connect timeout', async () => {
+  const { url, getCall, tickRingingTimeouts, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
+    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+
+    // Well past the media-connect window: a healthy call must stay up.
+    assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_MEDIA_CONNECT_TIMEOUT_MS + 30_000), 0);
+    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+
+    // …and when it does eventually expire it is because the device stopped
+    // reporting liveness, never because media "failed to connect".
+    assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS + 5_000), 1);
+    assert.equal(getCall(callId).endReason, 'heartbeat_timeout');
+  } finally {
+    await teardown(caller);
+  }
+});
+
+test('call.connected: an unrecovered ICE failure ends the call without waiting for a sweep', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    const ack = await emitWithAck(caller, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: 'failed',
+    });
+    assert.equal(ack.ok, true);
+
+    const call = getCall(callId);
+    assert.equal(call.status, 'ended');
+    assert.equal(call.endReason, 'media_failed');
+  } finally {
+    await teardown(caller);
+  }
+});
+
+test('heartbeat: a connected call is aged out only once its liveness reports stop', async () => {
+  const { url, getCall, tickRingingTimeouts, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+
+    // A heartbeat that is still fresh keeps the call alive.
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: false, heartbeat: true },
+    });
+    assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS - 5_000), 0);
+    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+
+    // Once the beats stop, the abandoned call is closed out long before the
+    // absolute duration cap would have fired.
+    assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS + 5_000), 1);
+    assert.equal(getCall(callId).endReason, 'heartbeat_timeout');
+  } finally {
+    await teardown(caller);
+  }
+});
+
+test('heartbeat: only an explicit liveness report refreshes a connected call', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
+    const stampedAt = getCall(callId).lastHeartbeatAt;
+    assert.ok(stampedAt, 'call.connected must stamp the first liveness report');
+
+    // A client that predates the heartbeat still emits `call.media-state` when
+    // screen sharing is toggled. Those frames must not be mistaken for
+    // liveness, or an abandoned call is kept alive by a stray UI toggle.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: true },
+    });
+    assert.equal(getCall(callId).lastHeartbeatAt, stampedAt);
+
+    await emitWithAck(caller, 'call.media-state', {
+      version: 1,
+      callId,
+      mediaState: { isScreenSharing: true, heartbeat: true },
+    });
+    assert.notEqual(getCall(callId).lastHeartbeatAt, stampedAt);
+  } finally {
+    await teardown(caller);
+  }
+});
+
+// ─── 6. State-machine regression guard ───────────────────────────────────────
+
+test('guard: every non-terminal status has a forward transition and a bounded timeout', () => {
+  for (const [status, nextStates] of CALL_TRANSITIONS) {
+    assert.ok(
+      [...nextStates].some((next) => !TERMINAL_CALL_STATES.has(next)) ||
+        status === CONNECTED_CALL_STATUS,
+      `status "${status}" has no forward (non-terminal) transition, so it can only ever time out`
+    );
+
+    const expiry = getCallExpiry(
+      { status, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      {}
+    );
+    assert.ok(expiry, `status "${status}" has no timeout and could stay active forever`);
+    assert.ok(TERMINAL_CALL_STATES.has(expiry.status));
+  }
+});
+
+test('guard: the connected steady state is never subject to the media-connect timeout', () => {
+  const now = Date.now();
+  const call = {
+    status: CONNECTED_CALL_STATUS,
+    createdAt: new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString(),
+  };
+  const expiry = getCallExpiry(call, {});
+  assert.notEqual(expiry.reason, 'media_connect_timeout');
+  assert.ok(
+    expiry.deadlineMs - now > DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+    'a connected call must outlive the media-connect window by a wide margin'
+  );
+
+  // Only a status that is still setting up media may carry that reason.
+  for (const status of ['accepted', 'connecting_media']) {
+    assert.equal(getCallExpiry({ ...call, status }, {}).reason, 'media_connect_timeout');
   }
 });

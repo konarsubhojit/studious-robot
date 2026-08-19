@@ -227,6 +227,8 @@ jobs:
             "android.permission.BLUETOOTH_CONNECT"
             "android.permission.VIBRATE"
             "android.permission.USE_FULL_SCREEN_INTENT"
+            "android.permission.FOREGROUND_SERVICE"
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
           )
 
           for permission in "${REQUIRED_PERMISSIONS[@]}"; do
@@ -236,6 +238,16 @@ jobs:
               exit 1
             fi
           done
+
+          # Screen sharing captures through MediaProjection, which delivers no
+          # frames unless react-native-webrtc's foreground service survives the
+          # manifest merge into the assembled APK (the remote peer would only
+          # ever see black). Permissions alone do not prove the service is there.
+          MANIFEST_DUMP="$("$AAPT_PATH" dump xmltree "$APK_PATH" AndroidManifest.xml)"
+          if ! grep -Fq "MediaProjectionService" <<<"$MANIFEST_DUMP"; then
+            echo "::error::Built APK does not declare the WebRTC MediaProjection foreground service"
+            exit 1
+          fi
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4

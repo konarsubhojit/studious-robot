@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
 import { useThemedStyles } from '../ThemeContext';
@@ -53,8 +53,18 @@ export default function AudioOutputMenu({
     onSelect(route);
   };
 
+  // The trigger is disabled when the call has no local media (call ending,
+  // media released). Leaving the dropdown open in that state strands its
+  // layer over the call UI, so it is closed with the control it belongs to.
+  useEffect(() => {
+    if (disabled) setIsOpen(false);
+  }, [disabled]);
+
   return (
-    <>
+    // A plain View (not a fragment): the parent control deck lays its children
+    // out in a gapped flex row, and a second child — even the zero-sized modal
+    // host — adds a phantom slot that shifts the icons out of alignment.
+    <View style={styles.trigger}>
       <IconButton
         icon={currentIcon}
         onPress={() => setIsOpen(true)}
@@ -65,45 +75,49 @@ export default function AudioOutputMenu({
         testID="audio-output-trigger"
       />
 
-      <Modal
-        visible={isOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsOpen(false)}>
-        <Pressable
-          style={styles.backdrop}
-          accessibilityLabel="Close audio output menu"
-          onPress={() => setIsOpen(false)}>
-          <View style={styles.menu} accessibilityRole="menu">
-            <Text style={styles.menuTitle}>Audio output</Text>
-            {routes.map(route => {
-              const isActive = route === effectiveSelected;
-              return (
-                <Pressable
-                  key={route}
-                  onPress={() => handleSelect(route)}
-                  accessibilityRole="menuitem"
-                  accessibilityState={{ selected: isActive }}
-                  testID={`audio-output-${route}`}
-                  style={({ pressed }) => [
-                    styles.menuItem,
-                    isActive && styles.menuItemActive,
-                    pressed && styles.menuItemPressed,
-                  ]}>
-                  <Text style={styles.menuItemText}>{getAudioRouteLabel(route)}</Text>
-                  {isActive ? <Text style={styles.menuItemCheck}>✓</Text> : null}
-                </Pressable>
-              );
-            })}
-          </View>
-        </Pressable>
-      </Modal>
-    </>
+      {/* Rendered only while open: an invisible-but-mounted modal keeps a
+          stale layer (and its icons) in the tree after the menu is closed. */}
+      {isOpen ? (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setIsOpen(false)}>
+          <Pressable
+            style={styles.backdrop}
+            accessibilityLabel="Close audio output menu"
+            onPress={() => setIsOpen(false)}>
+            <View style={styles.menu} accessibilityRole="menu">
+              <Text style={styles.menuTitle}>Audio output</Text>
+              {routes.map(route => {
+                const isActive = route === effectiveSelected;
+                return (
+                  <Pressable
+                    key={route}
+                    onPress={() => handleSelect(route)}
+                    accessibilityRole="menuitem"
+                    accessibilityState={{ selected: isActive }}
+                    testID={`audio-output-${route}`}
+                    style={({ pressed }) => [
+                      styles.menuItem,
+                      isActive && styles.menuItemActive,
+                      pressed && styles.menuItemPressed,
+                    ]}>
+                    <Text style={styles.menuItemText}>{getAudioRouteLabel(route)}</Text>
+                    {isActive ? <Text style={styles.menuItemCheck}>✓</Text> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Modal>
+      ) : null}
+    </View>
   );
 }
 
 const createStyles = colors =>
   StyleSheet.create({
+    trigger: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     backdrop: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.45)',

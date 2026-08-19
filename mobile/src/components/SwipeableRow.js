@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { triggerHaptic } from '../haptics';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 
@@ -31,6 +32,11 @@ export default function SwipeableRow({ actions = [], children }) {
 
   const panResponder = useMemo(() => {
     const settle = toValue => {
+      // A short tick when the tray latches open, so the row confirms itself
+      // without the user having to look away from the list.
+      if (toValue !== 0 && offsetRef.current !== toValue) {
+        triggerHaptic('tap');
+      }
       offsetRef.current = toValue;
       Animated.spring(translateX, {
         toValue,
@@ -83,7 +89,19 @@ export default function SwipeableRow({ actions = [], children }) {
           </Pressable>
         ))}
       </View>
+      {/* Every swipe action is also an accessibility action, so the row is
+          fully operable by assistive tech that cannot perform the drag. */}
       <Animated.View
+        accessibilityActions={actions.map(action => ({
+          name: action.key,
+          label: action.accessibilityLabel ?? action.label,
+        }))}
+        onAccessibilityAction={event => {
+          const action = actions.find(candidate => candidate.key === event.nativeEvent.actionName);
+          if (!action) return;
+          close();
+          action.onPress?.();
+        }}
         style={[styles.row, { transform: [{ translateX }] }]}
         {...panResponder.panHandlers}>
         {children}

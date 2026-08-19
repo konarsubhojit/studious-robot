@@ -58,4 +58,56 @@ describe('AudioOutputMenu', () => {
 
     expect(onSelect).toHaveBeenCalledWith(AUDIO_ROUTES.EARPIECE);
   });
+  test('unmounts the menu layer entirely once a route is chosen', () => {
+    const { Modal } = require('react-native');
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <AudioOutputMenu available={[]} selected={null} isSpeakerEnabled onSelect={() => {}} />,
+      );
+    });
+    expect(tree.root.findAllByType(Modal)).toHaveLength(0);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'audio-output-trigger' }).props.onPress();
+    });
+    expect(tree.root.findAllByType(Modal)).toHaveLength(1);
+
+    act(() => {
+      tree.root.findByProps({ testID: `audio-output-${AUDIO_ROUTES.EARPIECE}` }).props.onPress();
+    });
+    // Nothing of the menu may survive its own close: a mounted-but-invisible
+    // layer is what leaves stale icons floating over the call UI.
+    expect(tree.root.findAllByType(Modal)).toHaveLength(0);
+    expect(
+      tree.root.findAllByProps({ testID: `audio-output-${AUDIO_ROUTES.EARPIECE}` }),
+    ).toHaveLength(0);
+  });
+
+  test('closes an open menu when the control is disabled by a call-state change', () => {
+    const { Modal } = require('react-native');
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <AudioOutputMenu available={[]} selected={null} isSpeakerEnabled onSelect={() => {}} />,
+      );
+    });
+    act(() => {
+      tree.root.findByProps({ testID: 'audio-output-trigger' }).props.onPress();
+    });
+    expect(tree.root.findAllByType(Modal)).toHaveLength(1);
+
+    act(() => {
+      tree.update(
+        <AudioOutputMenu
+          available={[]}
+          selected={null}
+          isSpeakerEnabled
+          onSelect={() => {}}
+          disabled
+        />,
+      );
+    });
+    expect(tree.root.findAllByType(Modal)).toHaveLength(0);
+  });
 });
