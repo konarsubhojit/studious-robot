@@ -371,10 +371,16 @@ export default function useMessaging({
     const peerId = message.recipientId;
     setMessagesByPeer(prev => {
       const existing = prev[peerId] ?? [];
-      if (existing.some(m => m.messageId === message.messageId)) {
-        return prev;
+      const index = existing.findIndex(m => m.messageId === message.messageId);
+      if (index === -1) {
+        return { ...prev, [peerId]: [message, ...existing] };
       }
-      return { ...prev, [peerId]: [message, ...existing] };
+      // Already held (the send ack raced ahead of this event): merge the
+      // server's copy in so the delivery receipt (`deliveredTo`) flips the
+      // message's status tick from "sent" to "delivered".
+      const next = [...existing];
+      next[index] = { ...next[index], ...message };
+      return { ...prev, [peerId]: next };
     });
   }, []);
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   Keyboard,
@@ -23,6 +23,41 @@ const TYPING_IDLE_MS = 3000;
 /** Distance (px) from the bottom of the message list still considered
  * "at the bottom" for auto-scroll / scroll-to-bottom-FAB purposes. */
 const NEAR_BOTTOM_THRESHOLD = 80;
+/** Number of skeleton bubbles rendered while the first page of history loads. */
+const SKELETON_BUBBLE_COUNT = 6;
+
+/**
+ * Lifecycle state of one of the current user's own messages.
+ *
+ * - `sending`   optimistic local copy, not yet acked by the server
+ * - `failed`    the send was rejected / the socket was down
+ * - `sent`      stored by the server, not yet handed to the recipient
+ * - `delivered` handed to at least one of the recipient's connected devices
+ * - `read`      the recipient opened the conversation
+ *
+ * @param {{ pending?: boolean, failed?: boolean, readAt?: string | null,
+ *   deliveredTo?: string[], recipientId?: string }} message
+ * @returns {'sending'|'failed'|'sent'|'delivered'|'read'}
+ */
+function getMessageStatus(message) {
+  if (message?.failed) return 'failed';
+  if (message?.pending) return 'sending';
+  if (message?.readAt) return 'read';
+  const deliveredTo = Array.isArray(message?.deliveredTo) ? message.deliveredTo : [];
+  const reachedRecipient = message?.recipientId
+    ? deliveredTo.includes(message.recipientId)
+    : deliveredTo.length > 0;
+  return reachedRecipient ? 'delivered' : 'sent';
+}
+
+/** Only items at least this visible count for the pinned date pill. */
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 10 };
+
+const STATUS_LABELS = {
+  sent: 'Sent',
+  delivered: 'Delivered',
+  read: 'Read',
+};
 
 function formatMessageTimestamp(isoString) {
   if (!isoString) return '';
@@ -55,11 +90,16 @@ function formatDateSeparator(date) {
  * group, so consecutive bubbles from one sender only show a single
  * timestamp/tick at the bottom of the group (Teams/Slack-style grouping).
  *
+ * Each message item also carries the date label of the day it belongs to, so
+ * the pinned (sticky) date pill can be derived from whichever message is
+ * currently at the top of the viewport without re-scanning the list.
+ *
  * @param {Array<object>} orderedMessages oldest-first
- * @returns {Array<{ key: string, type: 'date', label: string } | { key: string, type: 'message', message: object, isGroupEnd: boolean }>}
+ * @returns {Array<{ key: string, type: 'date', label: string } | { key: string, type: 'message', message: object, isGroupEnd: boolean, dateLabel: string | null }>}
  */
 function buildListItems(orderedMessages) {
   const items = [];
+  let currentDateLabel = null;
   orderedMessages.forEach((message, index) => {
     const createdAt = new Date(message.createdAt);
     const previous = orderedMessages[index - 1];
@@ -68,10 +108,11 @@ function buildListItems(orderedMessages) {
       hasValidDate &&
       (!previous || !isSameCalendarDay(createdAt, new Date(previous.createdAt)))
     ) {
+      currentDateLabel = formatDateSeparator(createdAt);
       items.push({
         key: `date-${message.messageId}`,
         type: 'date',
-        label: formatDateSeparator(createdAt),
+        label: currentDateLabel,
       });
     }
 
@@ -90,9 +131,87 @@ function buildListItems(orderedMessages) {
       isGroupEnd = !(sameDay && withinGap);
     }
 
-    items.push({ key: message.messageId, type: 'message', message, isGroupEnd });
+    items.push({
+      key: message.messageId,
+      type: 'message',
+      message,
+      isGroupEnd,
+      dateLabel: currentDateLabel,
+    });
   });
   return items;
+}
+
+/**
+ * A single chat bubble plus its footer (timestamp + delivery status).
+ *
+ * Memoised so re-rendering the conversation (a new message, a typing event,
+ * a scroll-driven state update) only re-renders the bubbles whose own data
+ * actually changed — the main reason a long conversation can scroll smoothly.
+ */
+const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetry }) {
+  const styles = useThemedStyles(createStyles);
+  const status = getMessageStatus(message);
+  const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
+
+  return (
+    <View
+      testID="chat-message-row"
+      style={[
+        styles.messageRow,
+        isOwn ? styles.messageRowOwn : styles.messageRowPeer,
+        !isGroupEnd && styles.messageRowGrouped,
+      ]}>
+      <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
+        <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>{message.body}</Text>
+      </View>
+      {isGroupEnd ? (
+        <View style={styles.messageFooter}>
+          <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
+            {formatMessageTimestamp(message.createdAt)}
+          </Text>
+          {isTicked ? (
+            <Text
+              style={[styles.tick, status === 'read' && styles.tickRead]}
+              testID="chat-message-tick"
+              accessibilityLabel={STATUS_LABELS[status]}>
+              {status === 'sent' ? '✓' : '✓✓'}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {status === 'sending' ? <Text style={styles.pendingText}>Sending…</Text> : null}
+      {status === 'failed' ? (
+        <Pressable
+          onPress={() => onRetry?.(message.body)}
+          accessibilityRole="button"
+          accessibilityLabel="Retry sending message">
+          <Text style={styles.failedText}>Failed to send · tap to retry</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+});
+
+/** Placeholder bubbles shown while the first page of history is still loading. */
+function MessageSkeleton() {
+  const styles = useThemedStyles(createStyles);
+
+  return (
+    <View style={styles.skeletonList} testID="chat-message-skeleton">
+      {Array.from({ length: SKELETON_BUBBLE_COUNT }, (_unused, index) => (
+        <View
+          key={`skeleton-${index}`}
+          style={[
+            styles.messageRow,
+            index % 2 === 0 ? styles.messageRowPeer : styles.messageRowOwn,
+            styles.skeletonBubble,
+            index % 3 === 0 ? styles.skeletonBubbleShort : null,
+          ]}
+        />
+      ))}
+    </View>
+  );
 }
 
 /**
@@ -115,6 +234,8 @@ function buildListItems(orderedMessages) {
  * @param {boolean} [props.isStartingCall] - True while a call to this peer is being placed;
  *   shows a loading spinner on the call header buttons instead of the icon.
  * @param {boolean} [props.isPeerTyping] - Shows a "peer is typing…" hint under the header.
+ * @param {boolean} [props.isLoadingMessages] - Shows skeleton bubbles while the first page
+ *   of history is still being fetched.
  * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
  * @param {number} [props.keyboardVerticalOffset] - Distance between the true top of the
  *   screen and this screen's root view (e.g. the safe-area top inset applied by an
@@ -135,6 +256,7 @@ export default function ChatConversationScreen({
   isSending = false,
   isStartingCall = false,
   isPeerTyping = false,
+  isLoadingMessages = false,
   onTypingChange,
   keyboardVerticalOffset = 0,
 }) {
@@ -145,6 +267,10 @@ export default function ChatConversationScreen({
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  // Date label of the topmost visible message, rendered as a pinned pill over
+  // the list so the day being read stays on screen while its inline separator
+  // scrolls away (sticky date separator).
+  const [stickyDateLabel, setStickyDateLabel] = useState(null);
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef(null);
   const listRef = useRef(null);
@@ -258,6 +384,35 @@ export default function ChatConversationScreen({
     [onLoadOlder],
   );
 
+  // Pin the day of the topmost visible message: FlatList reports viewable
+  // items in render order, so the first message item in that list is the one
+  // at the top of the viewport.
+  const handleViewableItemsChanged = useCallback(({ viewableItems }) => {
+    const topMessage = viewableItems.find(entry => entry.item?.type === 'message');
+    setStickyDateLabel(topMessage?.item?.dateLabel ?? null);
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }) => {
+      if (item.type === 'date') {
+        return (
+          <View style={styles.dateSeparator} testID="chat-date-separator">
+            <Text style={styles.dateSeparatorText}>{item.label}</Text>
+          </View>
+        );
+      }
+      return (
+        <MessageRow
+          message={item.message}
+          isGroupEnd={item.isGroupEnd}
+          isOwn={item.message.senderId === currentUserId}
+          onRetry={handleRetry}
+        />
+      );
+    },
+    [currentUserId, handleRetry, styles],
+  );
+
   const handleScrollToBottomPress = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     setShowScrollToBottom(false);
@@ -348,60 +503,24 @@ export default function ChatConversationScreen({
             onScroll={handleScroll}
             scrollEventThrottle={32}
             keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => {
-              if (item.type === 'date') {
-                return (
-                  <View style={styles.dateSeparator} testID="chat-date-separator">
-                    <Text style={styles.dateSeparatorText}>{item.label}</Text>
-                  </View>
-                );
-              }
-
-              const message = item.message;
-              const isOwn = message.senderId === currentUserId;
-              const showFooter = item.isGroupEnd;
-              const isRead = Boolean(message.readAt);
-              return (
-                <View
-                  testID="chat-message-row"
-                  style={[
-                    styles.messageRow,
-                    isOwn ? styles.messageRowOwn : styles.messageRowPeer,
-                    !item.isGroupEnd && styles.messageRowGrouped,
-                  ]}>
-                  <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubblePeer]}>
-                    <Text style={isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer}>
-                      {message.body}
-                    </Text>
-                  </View>
-                  {showFooter ? (
-                    <View style={styles.messageFooter}>
-                      <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
-                        {formatMessageTimestamp(message.createdAt)}
-                      </Text>
-                      {isOwn && !message.pending && !message.failed ? (
-                        <Text
-                          style={[styles.tick, isRead && styles.tickRead]}
-                          testID="chat-message-tick"
-                          accessibilityLabel={isRead ? 'Read' : 'Sent'}>
-                          {isRead ? '✓✓' : '✓'}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                  {message.pending ? <Text style={styles.pendingText}>Sending…</Text> : null}
-                  {message.failed ? (
-                    <Pressable
-                      onPress={() => handleRetry(message.body)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry sending message">
-                      <Text style={styles.failedText}>Failed to send · tap to retry</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              );
-            }}
+            renderItem={renderItem}
+            // Virtualization tuning: keep a bounded number of bubbles mounted
+            // so a long conversation (thousands of messages) scrolls without
+            // the frame drops an unbounded, fully-mounted list would cause.
+            removeClippedSubviews
+            initialNumToRender={15}
+            maxToRenderPerBatch={10}
+            updateCellsBatchingPeriod={50}
+            windowSize={11}
+            viewabilityConfig={VIEWABILITY_CONFIG}
+            onViewableItemsChanged={handleViewableItemsChanged}
+            ListEmptyComponent={isLoadingMessages ? <MessageSkeleton /> : null}
           />
+          {stickyDateLabel ? (
+            <View style={styles.stickyDate} pointerEvents="none" testID="chat-sticky-date">
+              <Text style={styles.dateSeparatorText}>{stickyDateLabel}</Text>
+            </View>
+          ) : null}
           {showScrollToBottom ? (
             <Pressable
               onPress={handleScrollToBottomPress}
@@ -513,6 +632,26 @@ const createStyles = colors =>
       paddingVertical: 2,
       borderRadius: radius.sm,
       overflow: 'hidden',
+    },
+    stickyDate: {
+      position: 'absolute',
+      top: spacing.xs,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+    },
+    skeletonList: {
+      gap: spacing.sm,
+    },
+    skeletonBubble: {
+      height: 36,
+      width: '60%',
+      borderRadius: radius.lg,
+      backgroundColor: colors.surfaceRaised,
+      opacity: 0.6,
+    },
+    skeletonBubbleShort: {
+      width: '40%',
     },
     messageRow: {
       marginBottom: spacing.sm,

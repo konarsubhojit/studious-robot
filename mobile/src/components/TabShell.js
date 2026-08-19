@@ -53,6 +53,7 @@ export default function TabShell() {
       onStartVideoCall={() => startVideoCallWith(peerId)}
       isStartingCall={callFlow.isPlacingCall}
       isPeerTyping={Boolean(chat.typingByPeer[peerId])}
+      isLoadingMessages={chat.isLoadingMessages}
       onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
     />
   );
@@ -64,6 +65,8 @@ export default function TabShell() {
       onSearchUsers={chat.searchUsers}
       onRefresh={chat.handleRefreshConversations}
       isRefreshing={chat.isRefreshingConversations}
+      isLoading={chat.isLoadingConversations}
+      onMarkRead={chat.markConversationRead}
       onOpenSettings={() => openTab(TABS.SETTINGS)}
     />
   );

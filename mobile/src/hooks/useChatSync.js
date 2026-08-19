@@ -34,12 +34,27 @@ export default function useChatSync({
   // Presence snapshot for the currently open conversation's peer.
   const [peerPresence, setPeerPresence] = useState(null);
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
+  // True while the very first conversation-list / message-history fetch is in
+  // flight, so the screens can show skeleton placeholders instead of an
+  // "empty" state that is really just "not loaded yet".
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
 
   // Fetch the conversation list once identity is established.
   useEffect(() => {
-    if (isRegistered) {
-      fetchConversations();
-    }
+    if (!isRegistered) return undefined;
+    let cancelled = false;
+    setIsLoadingConversations(true);
+    // `catch` before `finally` so a rejected fetch clears the flag instead of
+    // leaving the skeleton up behind an unhandled rejection.
+    Promise.resolve(fetchConversations())
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsLoadingConversations(false);
+      });
+    return () => {
+      cancelled = true;
+    };
     // Only re-run when registration status flips; fetchConversations is
     // stable for a given signalingUrl.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -49,11 +64,20 @@ export default function useChatSync({
   // conversation, and load history + mark it read whenever one is opened.
   useEffect(() => {
     setActiveChatPeerId(chatPeerId);
+    let cancelled = false;
     if (chatPeerId) {
-      fetchMessagesForPeer(chatPeerId);
+      setIsLoadingMessages(true);
+      Promise.resolve(fetchMessagesForPeer(chatPeerId))
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setIsLoadingMessages(false);
+        });
       markConversationRead(chatPeerId);
+    } else {
+      setIsLoadingMessages(false);
     }
     return () => {
+      cancelled = true;
       setActiveChatPeerId(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,6 +119,8 @@ export default function useChatSync({
 
   return {
     peerPresence,
+    isLoadingConversations,
+    isLoadingMessages,
     isRefreshingConversations,
     handleRefreshConversations,
     handleLoadOlderMessages,

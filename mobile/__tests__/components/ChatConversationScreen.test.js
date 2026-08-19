@@ -279,6 +279,86 @@ describe('ChatConversationScreen', () => {
     expect(tick.props.accessibilityLabel).toBe('Read');
   });
 
+  test('renders a delivered tick (✓✓) for own messages the recipient received', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'delivered-1',
+          senderId: 'user-alice',
+          recipientId: 'user-bob',
+          deliveredTo: ['user-bob'],
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const tick = findByTestId(tree, 'chat-message-tick');
+    expect(tick.props.children).toBe('✓✓');
+    expect(tick.props.accessibilityLabel).toBe('Delivered');
+  });
+
+  test('shows skeleton bubbles while the first page of history loads', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      isLoadingMessages: true,
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-skeleton')).not.toBeNull();
+  });
+
+  test('does not show skeleton bubbles once messages have loaded', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage()],
+      isLoadingMessages: false,
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-skeleton')).toBeNull();
+  });
+
+  test('pins the date of the topmost visible message as a sticky separator', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage()],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const list = findByTestId(tree, 'chat-message-list');
+    const messageItem = list.props.data.find(item => item.type === 'message');
+    expect(findByTestId(tree, 'chat-sticky-date')).toBeNull();
+
+    act(() => {
+      list.props.onViewableItemsChanged({ viewableItems: [{ item: messageItem }] });
+    });
+    const sticky = findByTestId(tree, 'chat-sticky-date');
+    expect(sticky).not.toBeNull();
+    expect(messageItem.dateLabel).toBe('Today');
+  });
+
+  test('caps how many message cells the list mounts at once', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: Array.from({ length: 50 }, (_unused, index) =>
+        makeMessage({ messageId: `msg-${index}` }),
+      ),
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    const list = findByTestId(tree, 'chat-message-list');
+    expect(list.props.initialNumToRender).toBeLessThan(50);
+    expect(list.props.removeClippedSubviews).toBe(true);
+    expect(findAllByTestId(tree, 'chat-message-row').length).toBeLessThan(50);
+  });
+
   test('shows a typing indicator in the header when isPeerTyping is true', () => {
     const tree = render({
       peerId: 'user-bob',
