@@ -115,6 +115,9 @@ describe('callKeep with the native module present', () => {
     await mod.setupCallKeep();
     const [options] = mockCallKeep.setup.mock.calls[0];
     expect(options.android.selfManaged).toBe(true);
+    expect(options.android.additionalPermissions).not.toContain(
+      'android.permission.READ_PHONE_NUMBERS',
+    );
   });
 
   test('setupCallKeep survives the Activity-less background push context', async () => {
