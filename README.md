@@ -116,7 +116,8 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/signaling.test.js`              | Legacy join-room signaling                                   |
 | `server` | `test/health.test.js`                 | Health endpoint                                              |
 | `mobile` | `__tests__/hooks/useCallFlow.test.js` | Call phases, push rehydration (all terminal + ringing states), camera switch |
-| `mobile` | `__tests__/hooks/useWebRTCCall.test.js` | WebRTC camera switch hardening                             |
+| `mobile` | `__tests__/call/callStateMachine.test.js` | Call state machine transitions (idle → ringing → connected → ended) |
+| `mobile` | `__tests__/AppShell.test.js`          | Screen routing for each call state, minimize/restore          |
 | `mobile` | `__tests__/hooks/useCompactCallView.test.js` | PiP compact-view logic                               |
 | `mobile` | `__tests__/hooks/useScreenShare.test.js` | Screen sharing start/stop, optional screen audio + renegotiation |
 | `mobile` | `__tests__/screenShare.test.js`       | `getDisplayMedia` capture, audio fallback, cancellation      |

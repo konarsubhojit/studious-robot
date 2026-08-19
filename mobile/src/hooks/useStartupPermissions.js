@@ -11,7 +11,7 @@ import { ensureCallPermissions } from '../permissions';
  * A first-time user sees one consolidated system permission flow up front;
  * a user who declines something here still gets the narrower,
  * feature-specific prompt/message later (see `ensureCallPermissions` call
- * sites in `useCallFlow` and `useWebRTCCall`).
+ * sites in `useCallFlow`).
  *
  * Extracted out of `useCallFlow` so this one-time startup concern stays
  * isolated from that hook's call-lifecycle/session/WebRTC responsibilities.

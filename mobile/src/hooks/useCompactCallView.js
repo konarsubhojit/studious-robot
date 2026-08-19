@@ -17,7 +17,7 @@ import {
  * enters or leaves PiP on its own (Android 12+ auto-enter, the window's expand
  * button, or the user closing the window).
  *
- * Extracted from `useWebRTCCall` so that PiP / display concerns stay isolated
+ * Extracted from the call hook so that PiP / display concerns stay isolated
  * from call-lifecycle logic.
  *
  * @param {React.MutableRefObject<boolean>} isInRoomRef - Ref that is `true`

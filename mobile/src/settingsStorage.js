@@ -74,7 +74,7 @@ export const SETTINGS_FILE_PATH = SETTINGS_FILE;
 
 // ─── User identity storage ────────────────────────────────────────────────────
 // Kept in a separate file so it does not interfere with the app-settings file
-// that useWebRTCCall manages independently.
+// that useAppSettings manages independently.
 
 const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
 

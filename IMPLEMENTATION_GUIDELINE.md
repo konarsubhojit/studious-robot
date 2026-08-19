@@ -20,7 +20,8 @@ These gaps are complete and covered by tests (`cd mobile && npm test`):
    unregistered on sign-out. Degrades to a graceful no-op when the native
    messaging library is absent (mirrors the server's env-gated push delivery).
 2. **Settings screen** — `mobile/src/components/SettingsScreen.js` (change
-   username, change signaling URL, sign out), routed from `App.js` and reachable
+   username, change signaling URL, sign out), wired up in
+   `mobile/src/components/TabShell.js` and reachable
    via the ⚙️ gear in the Lobby title bar. The RegistrationScreen "change your
    username in Settings" hint is now truthful.
 3. **Presence indicator** — `checkPresence()` + `calleePresence` in

@@ -2641,7 +2641,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     startLocalPreview,
     rehydrateCallFromPush,
 
-    // In-call controls (identical interface to useWebRTCCall for CallScreen compat)
+    // In-call controls (the interface `CallScreen` renders against)
     handleMuteToggle,
     handleVideoToggle,
     handleScreenShareToggle,
