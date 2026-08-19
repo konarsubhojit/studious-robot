@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
-index 025480a..4034b8b 100644
+index 025480a..67bc40b 100644
 --- a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
 +++ b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/RNCallKeepModule.java
 @@ -434,7 +434,8 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
@@ -22,7 +22,7 @@ index 025480a..4034b8b 100644
      public void startCall(String uuid, String number, String callerName) {
          this.startCall(uuid, number, callerName, false, null);
      }
-@@ -1145,7 +1147,22 @@
+@@ -1145,7 +1147,22 @@ public class RNCallKeepModule extends ReactContextBaseJavaModule implements Life
  
          telephonyManager = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
  
@@ -46,3 +46,36 @@ index 025480a..4034b8b 100644
      }
  
      public void sendEventToJS(String eventName, @Nullable WritableMap params) {
+diff --git a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java
+index 5d58692..b00d546 100644
+--- a/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java
++++ b/node_modules/react-native-callkeep/android/src/main/java/io/wazo/callkeep/VoiceConnectionService.java
+@@ -461,16 +461,21 @@ public class VoiceConnectionService extends ConnectionService {
+         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+             Context context = getApplicationContext();
+             TelecomManager telecomManager = (TelecomManager) context.getSystemService(context.TELECOM_SERVICE);
+-            PhoneAccount phoneAccount = telecomManager.getPhoneAccount(request.getAccountHandle());
++            try {
++                PhoneAccount phoneAccount = telecomManager.getPhoneAccount(request.getAccountHandle());
+ 
+-            //If the phone account is self managed, then this connection must also be self managed.
+-            if((phoneAccount.getCapabilities() & PhoneAccount.CAPABILITY_SELF_MANAGED) == PhoneAccount.CAPABILITY_SELF_MANAGED) {
+-                Log.d(TAG, "[VoiceConnectionService] PhoneAccount is SELF_MANAGED, so connection will be too");
++                //If the phone account is self managed, then this connection must also be self managed.
++                if(phoneAccount != null && (phoneAccount.getCapabilities() & PhoneAccount.CAPABILITY_SELF_MANAGED) == PhoneAccount.CAPABILITY_SELF_MANAGED) {
++                    Log.d(TAG, "[VoiceConnectionService] PhoneAccount is SELF_MANAGED, so connection will be too");
++                    connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED);
++                }
++                else {
++                    Log.d(TAG, "[VoiceConnectionService] PhoneAccount is not SELF_MANAGED, so connection won't be either");
++                }
++            } catch (SecurityException e) {
++                Log.w(TAG, "[VoiceConnectionService] Unable to inspect PhoneAccount; treating incoming connection as SELF_MANAGED", e);
+                 connection.setConnectionProperties(Connection.PROPERTY_SELF_MANAGED);
+             }
+-            else {
+-                Log.d(TAG, "[VoiceConnectionService] PhoneAccount is not SELF_MANAGED, so connection won't be either");
+-            }
+         }
+ 
+         connection.setInitializing();
