@@ -360,6 +360,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     markConversationRead,
     resetTypingState,
     handleMessageReceived,
+    handleMessageDeleted,
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,
@@ -1146,6 +1147,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         handleMessageReceived(message);
       });
 
+      signaling.on(SERVER_EVENTS.MESSAGE_DELETED, payload => {
+        handleMessageDeleted(payload);
+      });
+
       signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
         handleMessageDelivered(message);
       });
@@ -1269,6 +1274,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       showIncomingCallUi,
       signalingUrl,
       handleMessageReceived,
+      handleMessageDeleted,
       handleMessageDelivered,
       handleMessageRead,
       handleTypingEvent,
@@ -2640,6 +2646,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     sendMessage: messaging.sendMessage,
     retryMessage: messaging.retryMessage,
     discardMessage: messaging.discardMessage,
+    deleteMessage: messaging.deleteMessage,
     drainOutbox: messaging.drainOutbox,
     isChatOffline: messaging.isOffline,
     pendingSendCount: messaging.pendingSendCount,

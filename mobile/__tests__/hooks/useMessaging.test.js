@@ -409,6 +409,92 @@ describe('useMessaging', () => {
     expect(chatDb.__snapshot.outbox).toEqual([]);
   });
 
+  test('deleteMessage removes a sent message on the server and locally', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'oops');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    let deleted;
+    await act(async () => {
+      deleted = await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(deleted).toBe(true);
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.delete',
+      expect.objectContaining({ peerId: 'bob', messageId }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+  });
+
+  test('deleteMessage discards a still-queued message without contacting the server', async () => {
+    const socket = makeSocket({ connected: false });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'never sent');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    await act(async () => {
+      await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(socket.emit).not.toHaveBeenCalled();
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(chatDb.__snapshot.outbox).toEqual([]);
+  });
+
+  test('deleteMessage reports an error when a sent message cannot be deleted', async () => {
+    const socket = makeSocket();
+    const { resultRef, params } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'keep me');
+    });
+    const messageId = resultRef.current.messagesByPeer.bob[0].messageId;
+
+    socket.emit = jest.fn((event, payload, callback) =>
+      callback({ ok: false, error: { message: 'nope' } }),
+    );
+    let deleted;
+    await act(async () => {
+      deleted = await resultRef.current.deleteMessage('bob', messageId);
+    });
+
+    expect(deleted).toBe(false);
+    expect(params.updateStatus).toHaveBeenCalledWith('Could not delete message', 'error');
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+  });
+
+  test('handleMessageDeleted drops a message the peer deleted', () => {
+    const { resultRef } = setup();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'hi',
+      });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+
+    act(() => {
+      resultRef.current.handleMessageDeleted({
+        conversationId: 'c1',
+        messageId: 'm-1',
+        deletedBy: 'bob',
+      });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+  });
+
   test('isOffline follows the socket lifecycle', async () => {
     const { resultRef } = setup();
     expect(resultRef.current.isOffline).toBe(false);

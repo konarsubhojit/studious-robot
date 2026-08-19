@@ -610,6 +610,21 @@ export default function useMessaging({
   );
 
   /**
+   * Remove one message from the local history, wherever it lives.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   */
+  const removeMessageLocally = useCallback((peerId, messageId) => {
+    setMessagesByPeer(prev => {
+      const existing = prev[peerId];
+      if (!existing) return prev;
+      const next = existing.filter(m => m.messageId !== messageId);
+      return next.length === existing.length ? prev : { ...prev, [peerId]: next };
+    });
+  }, []);
+
+  /**
    * Drop a message that never made it to the server: it leaves both the local
    * history and the outbox, so it is never replayed.
    *
@@ -621,16 +636,57 @@ export default function useMessaging({
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
       persistOutbox(outboxRef.current.filter(item => item.messageId !== messageId));
-      setMessagesByPeer(prev => {
-        const existing = prev[trimmedPeerId];
-        if (!existing) return prev;
-        return { ...prev, [trimmedPeerId]: existing.filter(m => m.messageId !== messageId) };
-      });
+      removeMessageLocally(trimmedPeerId, messageId);
     },
-    [persistOutbox],
+    [persistOutbox, removeMessageLocally],
   );
 
   /**
+   * Delete a message the local user sent.  Unsent messages (still in the
+   * outbox) are simply discarded locally; a message the server already stored
+   * is deleted there too, so it disappears for the recipient as well.
+   *
+   * @param {string} peerId
+   * @param {string} messageId
+   * @returns {Promise<boolean>} whether the message is gone
+   */
+  const deleteMessage = useCallback(
+    async (peerId, messageId) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId) return false;
+
+      // Never delivered: nothing on the server to delete.
+      if (outboxRef.current.some(item => item.messageId === messageId)) {
+        discardMessage(trimmedPeerId, messageId);
+        return true;
+      }
+
+      const signaling = signalingRef?.current;
+      if (!signaling || !socketRef.current?.connected) {
+        updateStatus('Cannot delete while offline', 'error');
+        return false;
+      }
+
+      try {
+        await signaling.request(CLIENT_EVENTS.MESSAGE_DELETE, {
+          version: SIGNALING_VERSION,
+          peerId: trimmedPeerId,
+          messageId,
+        });
+      } catch (error) {
+        logWarn('[Messaging] deleteMessage failed', { message: error?.message });
+        updateStatus('Could not delete message', 'error');
+        return false;
+      }
+
+      removeMessageLocally(trimmedPeerId, messageId);
+      return true;
+    },
+    [discardMessage, removeMessageLocally, signalingRef, socketRef, updateStatus],
+  );
+
+  /**
+   * Notify `peerId` that the local user is (or has stopped) typing  /**
    * Notify `peerId` that the local user is (or has stopped) typing in their
    * conversation, via the ephemeral `message.typing` socket event. Silently a
    * no-op when there is no connected socket — typing indicators are a
@@ -788,6 +844,27 @@ export default function useMessaging({
   }, []);
 
   /**
+   * A participant deleted a message: drop it from the local history so both
+   * sides converge, whichever peer initiated the delete.
+   *
+   * @param {{ conversationId?: string, messageId?: string, deletedBy?: string }} payload
+   */
+  const handleMessageDeleted = useCallback(payload => {
+    const messageId = payload?.messageId;
+    if (!messageId) return;
+    setMessagesByPeer(prev => {
+      let changed = false;
+      const next = {};
+      Object.entries(prev).forEach(([peerId, messages]) => {
+        const filtered = messages.filter(m => m.messageId !== messageId);
+        if (filtered.length !== messages.length) changed = true;
+        next[peerId] = filtered;
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  /**
    * The socket came up: connectivity is restored, so reset the backoff and
    * flush anything the outbox still holds.
    */
@@ -820,11 +897,13 @@ export default function useMessaging({
     sendMessage,
     retryMessage,
     discardMessage,
+    deleteMessage,
     drainOutbox,
     markConversationRead,
     sendTypingIndicator,
     resetTypingState,
     handleMessageReceived,
+    handleMessageDeleted,
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,

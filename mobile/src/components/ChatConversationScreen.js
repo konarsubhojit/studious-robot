@@ -15,6 +15,8 @@ import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
+import StatusBanner from './StatusBanner';
+import SwipeableRow from './SwipeableRow';
 
 /** Consecutive own-sender messages within this many minutes are grouped
  * (only the last bubble in the group shows a timestamp/tick). */
@@ -214,12 +216,35 @@ function buildListItems(orderedEntries) {
  * a scroll-driven state update) only re-renders the bubbles whose own data
  * actually changed — the main reason a long conversation can scroll smoothly.
  */
-const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetry }) {
+const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetry, onDelete }) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
   const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
 
-  return (
+  // Swipe actions only ever apply to the user's own messages: the server
+  // refuses to delete somebody else's message, so never offer it here.
+  const actions = [];
+  if (isOwn && status === 'failed') {
+    actions.push({
+      key: 'retry',
+      label: 'Retry',
+      accessibilityLabel: 'Retry sending message',
+      testID: 'chat-message-swipe-retry',
+      onPress: () => onRetry?.(message),
+    });
+  }
+  if (isOwn && onDelete) {
+    actions.push({
+      key: 'delete',
+      label: 'Delete',
+      accessibilityLabel: 'Delete message',
+      testID: 'chat-message-swipe-delete',
+      destructive: true,
+      onPress: () => onDelete(message),
+    });
+  }
+
+  const row = (
     <View
       testID="chat-message-row"
       style={[
@@ -248,16 +273,18 @@ const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetr
       {status === 'sending' ? <Text style={styles.pendingText}>Sending…</Text> : null}
       {status === 'failed' ? (
         <Pressable
-          onPress={() => onRetry?.(message.body)}
+          onPress={() => onRetry?.(message)}
           accessibilityRole="button"
           accessibilityLabel="Retry sending message"
           accessibilityHint="Sends this message again"
           hitSlop={touchSlop(20)}>
-          <Text style={styles.failedText}>Failed to send · tap to retry</Text>
+          <Text style={styles.failedText}>Failed to send · tap to retry, swipe to delete</Text>
         </Pressable>
       ) : null}
     </View>
   );
+
+  return actions.length ? <SwipeableRow actions={actions}>{row}</SwipeableRow> : row;
 });
 
 /** Placeholder bubbles shown while the first page of history is still loading. */
@@ -293,6 +320,10 @@ function MessageSkeleton() {
  *   Entries tagged `type: 'call'` are rendered as call records inline in the
  *   timeline; everything else is a text message.
  * @param {(body: string) => void} props.onSendMessage
+ * @param {(message: object) => void} [props.onRetryMessage] - Re-sends a failed message.
+ *   Falls back to re-sending its body through `onSendMessage` when absent.
+ * @param {(message: object) => void} [props.onDeleteMessage] - Deletes one of the user's own
+ *   messages, revealed by swiping the bubble left.
  * @param {() => void} [props.onLoadOlder]
  * @param {() => void} props.onBack
  * @param {string} props.currentUserId
@@ -307,6 +338,8 @@ function MessageSkeleton() {
  * @param {boolean} [props.isPeerTyping] - Shows a "peer is typing…" hint under the header.
  * @param {boolean} [props.isLoadingMessages] - Shows skeleton bubbles while the first page
  *   of history is still being fetched.
+ * @param {boolean} [props.isOffline] - Shows a persistent banner explaining that queued
+ *   messages will be delivered once connectivity returns.
  * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
  * @param {number} [props.keyboardVerticalOffset] - Distance between the true top of the
  *   screen and this screen's root view (e.g. the safe-area top inset applied by an
@@ -318,6 +351,8 @@ export default function ChatConversationScreen({
   peerId,
   messages = [],
   onSendMessage,
+  onRetryMessage,
+  onDeleteMessage,
   onLoadOlder,
   onBack,
   currentUserId,
@@ -330,6 +365,7 @@ export default function ChatConversationScreen({
   isStartingCall = false,
   isPeerTyping = false,
   isLoadingMessages = false,
+  isOffline = false,
   onTypingChange,
   keyboardVerticalOffset = 0,
 }) {
@@ -428,10 +464,21 @@ export default function ChatConversationScreen({
   }, [draft, onSendMessage, reportTyping]);
 
   const handleRetry = useCallback(
-    body => {
-      onSendMessage?.(body);
+    message => {
+      if (onRetryMessage) {
+        onRetryMessage(message);
+        return;
+      }
+      onSendMessage?.(message?.body);
     },
-    [onSendMessage],
+    [onRetryMessage, onSendMessage],
+  );
+
+  const handleDelete = useCallback(
+    message => {
+      onDeleteMessage?.(message);
+    },
+    [onDeleteMessage],
   );
 
   const handleScroll = useCallback(
@@ -492,10 +539,20 @@ export default function ChatConversationScreen({
           isGroupEnd={item.isGroupEnd}
           isOwn={item.message.senderId === currentUserId}
           onRetry={handleRetry}
+          onDelete={onDeleteMessage ? handleDelete : undefined}
         />
       );
     },
-    [currentUserId, handleRetry, onCallBack, onVideoCallBack, peerId, styles],
+    [
+      currentUserId,
+      handleDelete,
+      handleRetry,
+      onCallBack,
+      onDeleteMessage,
+      onVideoCallBack,
+      peerId,
+      styles,
+    ],
   );
 
   const handleScrollToBottomPress = useCallback(() => {
@@ -578,6 +635,16 @@ export default function ChatConversationScreen({
             />
           ) : null}
         </View>
+
+        {isOffline ? (
+          <StatusBanner
+            status={{
+              message: "Offline — messages will send when you're back",
+              severity: 'warning',
+            }}
+            style={styles.offlineBanner}
+          />
+        ) : null}
 
         <View style={styles.listContainer}>
           <FlatList
@@ -701,6 +768,10 @@ const createStyles = colors =>
     },
     presenceDotText: {
       fontSize: 8,
+    },
+    offlineBanner: {
+      marginHorizontal: spacing.md,
+      marginBottom: spacing.xs,
     },
     listContainer: {
       flex: 1,
