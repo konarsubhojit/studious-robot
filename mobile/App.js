@@ -32,7 +32,8 @@ import {
 } from './src/navigation/navigationRef';
 import { clearNavigationState } from './src/navigation/navigationState';
 import { TABS } from './src/navigation/routes';
-import { colors } from './src/theme';
+import { useTheme, useThemedStyles } from './src/ThemeContext';
+import ThemeProvider from './src/ThemeProvider';
 import { getStartupIssues } from './src/startupHealth';
 
 /**
@@ -60,7 +61,9 @@ import { getStartupIssues } from './src/startupHealth';
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppShell />
+      <ThemeProvider>
+        <AppShell />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
@@ -219,6 +222,8 @@ function AppShell() {
   const isCompact = callFlowActive ? callFlow.isCompactView : call.isCompactView;
 
   const insets = useSafeAreaInsets();
+  const { colors, scheme } = useTheme();
+  const styles = useThemedStyles(createStyles);
 
   let screenContent;
   let floatingBubble = null;
@@ -523,7 +528,7 @@ function AppShell() {
           {screenContent}
           {floatingBubble}
           <StatusBar
-            barStyle="light-content"
+            barStyle={scheme === 'light' ? 'dark-content' : 'light-content'}
             backgroundColor={colors.background}
             translucent={false}
           />
@@ -533,26 +538,27 @@ function AppShell() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  containerCompact: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  tabShellRoot: {
-    flex: 1,
-  },
-  degradedBanner: {
-    backgroundColor: colors.danger,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  degradedBannerText: {
-    color: colors.textOnAccent,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    containerCompact: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    tabShellRoot: {
+      flex: 1,
+    },
+    degradedBanner: {
+      backgroundColor: colors.danger,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    degradedBannerText: {
+      color: colors.textOnAccent,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+  });

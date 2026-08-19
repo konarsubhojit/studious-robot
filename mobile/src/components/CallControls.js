@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, spacing } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { spacing } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
 
@@ -28,6 +29,8 @@ export default function CallControls({
   onScreenAudioToggle,
   onLeave,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <View style={styles.controls}>
       <View style={styles.mediaRow}>
@@ -116,21 +119,22 @@ export default function CallControls({
   );
 }
 
-const styles = StyleSheet.create({
-  controls: {
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-    alignItems: 'center',
-  },
-  sharingLabel: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  mediaRow: {
-    flexDirection: 'row',
-    gap: spacing.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    controls: {
+      gap: spacing.sm,
+      marginBottom: spacing.sm,
+      alignItems: 'center',
+    },
+    sharingLabel: {
+      color: colors.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    mediaRow: {
+      flexDirection: 'row',
+      gap: spacing.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });

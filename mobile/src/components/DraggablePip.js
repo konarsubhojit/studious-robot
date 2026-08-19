@@ -3,7 +3,8 @@ import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 import SafeRTCView from '../SafeRTCView';
 import { PIP_HEIGHT, PIP_WIDTH } from '../pipConstants';
-import { colors, radius, spacing, typography } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 
 /**
  * Draggable picture-in-picture self-view. Tap swaps streams; drag repositions
@@ -28,6 +29,8 @@ export default function DraggablePip({
   isMuted = false,
   isVideoEnabled = true,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const showVideoOff = mirror && !isVideoEnabled;
   const showMutedBadge = mirror && isMuted;
 
@@ -62,47 +65,48 @@ export default function DraggablePip({
   );
 }
 
-const styles = StyleSheet.create({
-  localPip: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: PIP_WIDTH,
-    height: PIP_HEIGHT,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: colors.accent,
-    backgroundColor: colors.pipBackground,
-  },
-  localPipStream: {
-    flex: 1,
-  },
-  videoOffOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xs,
-  },
-  videoOffText: {
-    color: colors.textPrimary,
-    ...typography.hint,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  muteBadge: {
-    position: 'absolute',
-    bottom: spacing.xs,
-    left: spacing.xs,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.xs + 2,
-    paddingVertical: 2,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-  },
-  muteBadgeText: {
-    color: colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    localPip: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: PIP_WIDTH,
+      height: PIP_HEIGHT,
+      borderRadius: radius.md,
+      overflow: 'hidden',
+      borderWidth: 2,
+      borderColor: colors.accent,
+      backgroundColor: colors.pipBackground,
+    },
+    localPipStream: {
+      flex: 1,
+    },
+    videoOffOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.72)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: spacing.xs,
+    },
+    videoOffText: {
+      color: colors.textPrimary,
+      ...typography.hint,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    muteBadge: {
+      position: 'absolute',
+      bottom: spacing.xs,
+      left: spacing.xs,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.xs + 2,
+      paddingVertical: 2,
+      backgroundColor: 'rgba(0,0,0,0.65)',
+    },
+    muteBadgeText: {
+      color: colors.textPrimary,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+  });

@@ -9,7 +9,8 @@ import {
   View,
 } from 'react-native';
 import { formatCallDuration } from '../callUx';
-import { colors, radius, spacing, typography } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
 
 const BUBBLE_WIDTH = 180;
@@ -53,6 +54,8 @@ export default function FloatingCallBubble({
   onEndCall,
   onStopScreenShare,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const { width, height } = useWindowDimensions();
 
   const maxX = Math.max(BUBBLE_MARGIN, width - BUBBLE_WIDTH - BUBBLE_MARGIN);
@@ -145,52 +148,53 @@ export default function FloatingCallBubble({
   );
 }
 
-const styles = StyleSheet.create({
-  bubble: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: BUBBLE_WIDTH,
-    height: BUBBLE_HEIGHT,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.sm,
-    gap: spacing.xs,
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 8,
-    zIndex: 999,
-  },
-  body: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: spacing.xs,
-  },
-  glyph: {
-    fontSize: 20,
-  },
-  textWrap: {
-    flexShrink: 1,
-  },
-  label: {
-    ...typography.hint,
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
-  timer: {
-    ...typography.hint,
-    color: colors.textSecondary,
-  },
-  actions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    bubble: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: BUBBLE_WIDTH,
+      height: BUBBLE_HEIGHT,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surfaceRaised,
+      borderWidth: 1,
+      borderColor: colors.border,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.sm,
+      gap: spacing.xs,
+      shadowColor: '#000',
+      shadowOpacity: 0.3,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 8,
+      zIndex: 999,
+    },
+    body: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      gap: spacing.xs,
+    },
+    glyph: {
+      fontSize: 20,
+    },
+    textWrap: {
+      flexShrink: 1,
+    },
+    label: {
+      ...typography.hint,
+      color: colors.textPrimary,
+      fontWeight: '700',
+    },
+    timer: {
+      ...typography.hint,
+      color: colors.textSecondary,
+    },
+    actions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+  });

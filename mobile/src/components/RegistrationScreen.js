@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
 
@@ -27,6 +28,9 @@ export default function RegistrationScreen({
   isGoogleSignInAvailable = true,
   isMicrosoftSignInAvailable = true,
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -140,67 +144,68 @@ export default function RegistrationScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: spacing.lg * 2,
-    justifyContent: 'center',
-    gap: spacing.lg * 2,
-  },
-  hero: {
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  logoGlyph: {
-    fontSize: 60,
-  },
-  appName: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  tagline: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  form: {
-    gap: spacing.md,
-  },
-  formTitle: {
-    color: colors.textPrimary,
-    fontWeight: '700',
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  formHint: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  optionalLabel: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  optionalHint: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    fontSize: 16,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    content: {
+      flex: 1,
+      paddingHorizontal: spacing.lg * 2,
+      justifyContent: 'center',
+      gap: spacing.lg * 2,
+    },
+    hero: {
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    logoGlyph: {
+      fontSize: 60,
+    },
+    appName: {
+      fontSize: 36,
+      fontWeight: '700',
+      color: colors.textPrimary,
+    },
+    tagline: {
+      color: colors.textSecondary,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    form: {
+      gap: spacing.md,
+    },
+    formTitle: {
+      color: colors.textPrimary,
+      fontWeight: '700',
+      fontSize: 18,
+      textAlign: 'center',
+    },
+    formHint: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      textAlign: 'center',
+      lineHeight: 20,
+    },
+    optionalLabel: {
+      color: colors.textPrimary,
+      fontWeight: '600',
+      fontSize: 14,
+    },
+    optionalHint: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    input: {
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 12,
+      fontSize: 16,
+    },
+  });

@@ -13,13 +13,17 @@ import {
 import SafeRTCView from '../SafeRTCView';
 import { CALL_END_REASON_LABELS } from '../hooks/useCallFlow';
 import { formatCallDuration } from '../callUx';
-import { colors, radius, sizes, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import SettingsCard from './SettingsCard';
 import StatusBanner from './StatusBanner';
 
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   return (
     <View style={styles.inputRow}>
       <TextInput
@@ -54,6 +58,9 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  * `onSearchUsers` handler is provided (i.e. when contact search is disabled).
  */
 function ContactDirectory({ onSearchUsers, onSelectContact }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -190,6 +197,9 @@ export default function Lobby({
   onMarkMissedRead,
   onRedial,
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const MCIcon = loadVectorIcons();
 
   return (
@@ -438,278 +448,279 @@ export default function Lobby({
   );
 }
 
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
-  content: {
-    padding: spacing.lg,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  missedBadge: {
-    backgroundColor: colors.danger,
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  missedBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  titleSpacer: {
-    flex: 1,
-  },
-  gearButton: {
-    height: 36,
-    width: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceControl,
-  },
-  gearIcon: {
-    fontSize: 18,
-  },
-  offlineBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(240,141,137,0.15)',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.danger,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.md,
-    gap: spacing.sm,
-  },
-  offlineBannerText: {
-    flex: 1,
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  offlineRetryButton: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    backgroundColor: colors.danger,
-  },
-  offlineRetryText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  presenceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginTop: -spacing.sm + 2,
-    marginBottom: spacing.sm,
-  },
-  presenceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  presenceDotOnline: {
-    backgroundColor: colors.success,
-  },
-  presenceDotOffline: {
-    backgroundColor: colors.textSecondary,
-  },
-  presenceText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: spacing.lg,
-  },
-  summaryCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surfaceRaised,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  summaryTextWrap: {
-    flexShrink: 1,
-  },
-  summaryTitle: {
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
-  summaryDetail: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  summaryDismiss: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  summaryDismissText: {
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  previewStream: {
-    height: 220,
-    borderRadius: radius.lg,
-    marginBottom: spacing.lg,
-    overflow: 'hidden',
-    backgroundColor: colors.backgroundAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inputRow: {
-    position: 'relative',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  input: {
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    paddingRight: 40,
-  },
-  clearButton: {
-    position: 'absolute',
-    right: spacing.sm,
-    height: 28,
-    width: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  clearButtonText: {
-    color: colors.textSecondary,
-    fontWeight: '700',
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  callButton: {
-    marginBottom: spacing.sm,
-  },
-  contactStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  contactStatusText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  contactRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: sizes.minTouchTarget,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  contactText: {
-    flex: 1,
-  },
-  contactName: {
-    color: colors.textPrimary,
-    fontSize: 14,
-  },
-  contactDetail: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    marginTop: 1,
-  },
-  contactEmpty: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    paddingVertical: spacing.sm,
-  },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: sizes.minTouchTarget,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    gap: spacing.sm,
-  },
-  historyRowMissed: {
-    backgroundColor: colors.surfaceRaised ?? colors.surface,
-  },
-  historyRowPressed: {
-    opacity: 0.6,
-  },
-  historyIconWrap: {
-    width: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  historyIcon: {
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  historyRedialIconWrap: {
-    width: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: spacing.sm,
-  },
-  historyRedialIcon: {
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  historyText: {
-    flex: 1,
-  },
-  historyPeer: {
-    color: colors.textPrimary,
-    fontSize: 14,
-  },
-  historyPeerMissed: {
-    color: colors.danger,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  historyDetail: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    marginTop: 1,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    flex: {
+      flex: 1,
+    },
+    content: {
+      padding: spacing.lg,
+    },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    title: {
+      fontSize: 28,
+      fontWeight: '600',
+      color: colors.textPrimary,
+    },
+    missedBadge: {
+      backgroundColor: colors.danger,
+      borderRadius: 12,
+      minWidth: 24,
+      height: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 6,
+    },
+    missedBadgeText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    titleSpacer: {
+      flex: 1,
+    },
+    gearButton: {
+      height: 36,
+      width: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceControl,
+    },
+    gearIcon: {
+      fontSize: 18,
+    },
+    offlineBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: 'rgba(240,141,137,0.15)',
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.danger,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      marginBottom: spacing.md,
+      gap: spacing.sm,
+    },
+    offlineBannerText: {
+      flex: 1,
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    offlineRetryButton: {
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+      backgroundColor: colors.danger,
+    },
+    offlineRetryText: {
+      color: '#fff',
+      fontWeight: '700',
+      fontSize: 12,
+    },
+    presenceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      marginTop: -spacing.sm + 2,
+      marginBottom: spacing.sm,
+    },
+    presenceDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    presenceDotOnline: {
+      backgroundColor: colors.success,
+    },
+    presenceDotOffline: {
+      backgroundColor: colors.textSecondary,
+    },
+    presenceText: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      marginBottom: spacing.lg,
+    },
+    summaryCard: {
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceRaised,
+      padding: spacing.md,
+      marginBottom: spacing.lg,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    summaryTextWrap: {
+      flexShrink: 1,
+    },
+    summaryTitle: {
+      color: colors.textPrimary,
+      fontWeight: '700',
+    },
+    summaryDetail: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    summaryDismiss: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    summaryDismissText: {
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    previewStream: {
+      height: 220,
+      borderRadius: radius.lg,
+      marginBottom: spacing.lg,
+      overflow: 'hidden',
+      backgroundColor: colors.backgroundAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    inputRow: {
+      position: 'relative',
+      justifyContent: 'center',
+      marginBottom: spacing.md,
+    },
+    input: {
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 10,
+      paddingRight: 40,
+    },
+    clearButton: {
+      position: 'absolute',
+      right: spacing.sm,
+      height: 28,
+      width: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    clearButtonText: {
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10,
+      marginBottom: spacing.sm,
+    },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.textSecondary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginTop: spacing.lg,
+      marginBottom: spacing.sm,
+    },
+    callButton: {
+      marginBottom: spacing.sm,
+    },
+    contactStatusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    contactStatusText: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    contactRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minHeight: sizes.minTouchTarget,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      gap: spacing.sm,
+    },
+    contactText: {
+      flex: 1,
+    },
+    contactName: {
+      color: colors.textPrimary,
+      fontSize: 14,
+    },
+    contactDetail: {
+      color: colors.textSecondary,
+      fontSize: 11,
+      marginTop: 1,
+    },
+    contactEmpty: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      paddingVertical: spacing.sm,
+    },
+    historyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      minHeight: sizes.minTouchTarget,
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+      gap: spacing.sm,
+    },
+    historyRowMissed: {
+      backgroundColor: colors.surfaceRaised ?? colors.surface,
+    },
+    historyRowPressed: {
+      opacity: 0.6,
+    },
+    historyIconWrap: {
+      width: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    historyIcon: {
+      fontSize: 16,
+      textAlign: 'center',
+    },
+    historyRedialIconWrap: {
+      width: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: spacing.sm,
+    },
+    historyRedialIcon: {
+      fontSize: 18,
+      textAlign: 'center',
+    },
+    historyText: {
+      flex: 1,
+    },
+    historyPeer: {
+      color: colors.textPrimary,
+      fontSize: 14,
+    },
+    historyPeerMissed: {
+      color: colors.danger,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    historyDetail: {
+      color: colors.textSecondary,
+      fontSize: 11,
+      marginTop: 1,
+    },
+  });

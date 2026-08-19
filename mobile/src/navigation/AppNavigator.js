@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { DefaultTheme, DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AppTabBar from '../components/AppTabBar';
-import { colors } from '../theme';
+import { useTheme } from '../ThemeContext';
 import linking from './linking';
 import { flushPendingNavigation, navigationRef } from './navigationRef';
 import {
@@ -27,18 +27,27 @@ const ScreenRenderersContext = createContext({});
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
 
-/** Dark navigation theme so native transitions don't flash a white card. */
-const navigationTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    primary: colors.accent,
-    background: colors.background,
-    card: colors.surface,
-    text: colors.textPrimary,
-    border: colors.border,
-  },
-};
+/**
+ * Navigation theme mirroring the app palette, so native transitions never
+ * flash a card in the opposite scheme.
+ *
+ * @param {'light'|'dark'} scheme
+ * @param {object} colors
+ */
+function buildNavigationTheme(scheme, colors) {
+  const base = scheme === 'light' ? DefaultTheme : DarkTheme;
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: colors.accent,
+      background: colors.background,
+      card: colors.surface,
+      text: colors.textPrimary,
+      border: colors.border,
+    },
+  };
+}
 
 function ChatListRoute() {
   const { renderChatList } = useContext(ScreenRenderersContext);
@@ -115,6 +124,9 @@ export default function AppNavigator({
   // (and the remount caused by a full-screen call ending) lands the user back
   // on the screen they left. State already read in this process is available
   // synchronously, so only a genuine cold start renders an empty first frame.
+  const { colors, scheme } = useTheme();
+  const navigationTheme = useMemo(() => buildNavigationTheme(scheme, colors), [scheme, colors]);
+
   const cachedState = getCachedNavigationState();
   const [initialState, setInitialState] = useState(cachedState ?? undefined);
   const [isRestoring, setIsRestoring] = useState(cachedState === undefined);

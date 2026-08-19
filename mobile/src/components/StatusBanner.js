@@ -1,12 +1,14 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 
-const SEVERITY_COLOR = {
-  info: colors.textMuted,
-  success: colors.success,
-  error: colors.danger,
-  warning: colors.warning,
-};
+const severityColor = (colors, severity) =>
+  ({
+    info: colors.textMuted,
+    success: colors.success,
+    error: colors.danger,
+    warning: colors.warning,
+  }[severity] ?? colors.textMuted);
 
 const SEVERITY_BG = {
   info: null,
@@ -26,6 +28,8 @@ const SEVERITY_BG = {
  * @param {object} [props.textStyle]
  */
 export default function StatusBanner({ status, style, textStyle }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const message = status?.message || '';
   const severity = status?.severity || 'info';
   const bg = SEVERITY_BG[severity];
@@ -41,7 +45,7 @@ export default function StatusBanner({ status, style, textStyle }) {
       <Text
         testID="status-banner"
         accessibilityRole="text"
-        style={[styles.status, { color: SEVERITY_COLOR[severity] || colors.textMuted }, textStyle]}
+        style={[styles.status, { color: severityColor(colors, severity) }, textStyle]}
         numberOfLines={2}>
         {message}
       </Text>
@@ -49,14 +53,15 @@ export default function StatusBanner({ status, style, textStyle }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  status: {
-    textAlign: 'center',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      borderRadius: radius.sm,
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      marginBottom: spacing.xs,
+    },
+    status: {
+      textAlign: 'center',
+    },
+  });

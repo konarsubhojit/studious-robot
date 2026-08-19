@@ -10,7 +10,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { colors, radius, spacing, typography } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import IconButton from './IconButton';
 
@@ -137,6 +138,9 @@ export default function ChatConversationScreen({
   onTypingChange,
   keyboardVerticalOffset = 0,
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
   const [draft, setDraft] = useState('');
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -442,202 +446,203 @@ export default function ChatConversationScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
-  root: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  backButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backButtonText: {
-    color: colors.textPrimary,
-    fontSize: 28,
-    lineHeight: 28,
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerTitle: {
-    ...typography.sectionTitle,
-    color: colors.textPrimary,
-  },
-  headerSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: 1,
-  },
-  presenceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 1,
-  },
-  presenceDotText: {
-    fontSize: 8,
-  },
-  listContainer: {
-    flex: 1,
-  },
-  messageList: {
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  dateSeparator: {
-    alignItems: 'center',
-    marginVertical: spacing.sm,
-  },
-  dateSeparatorText: {
-    ...typography.hint,
-    color: colors.textSecondary,
-    backgroundColor: colors.surfaceRaised,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    borderRadius: radius.sm,
-    overflow: 'hidden',
-  },
-  messageRow: {
-    marginBottom: spacing.sm,
-    maxWidth: '80%',
-  },
-  messageRowGrouped: {
-    marginBottom: 2,
-  },
-  messageRowOwn: {
-    alignSelf: 'flex-end',
-    alignItems: 'flex-end',
-  },
-  messageRowPeer: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
-  },
-  bubble: {
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  bubbleOwn: {
-    backgroundColor: colors.accentButton,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  bubblePeer: {
-    backgroundColor: colors.surfaceRaised,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  bubbleTextOwn: {
-    color: colors.textOnAccent,
-  },
-  bubbleTextPeer: {
-    color: colors.textPrimary,
-  },
-  messageFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
-  },
-  timestamp: {
-    ...typography.hint,
-    color: colors.textMuted,
-  },
-  timestampOwn: {
-    textAlign: 'right',
-  },
-  tick: {
-    fontSize: 14,
-    color: colors.textMuted,
-  },
-  tickRead: {
-    color: colors.success,
-  },
-  pendingText: {
-    ...typography.hint,
-    color: colors.textMuted,
-    fontStyle: 'italic',
-  },
-  failedText: {
-    ...typography.hint,
-    color: colors.danger,
-    fontWeight: '600',
-  },
-  scrollToBottomFab: {
-    position: 'absolute',
-    right: spacing.md,
-    bottom: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.surfaceControl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  scrollToBottomIcon: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    lineHeight: 18,
-  },
-  scrollToBottomText: {
-    ...typography.hint,
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  composerFocused: {
-    backgroundColor: colors.backgroundAlt,
-  },
-  composerInput: {
-    flex: 1,
-    maxHeight: 120,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.textPrimary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  composerInputFocused: {
-    borderColor: colors.accent,
-    borderWidth: 2,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    flex: {
+      flex: 1,
+    },
+    root: {
+      flex: 1,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      padding: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    backButton: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    backButtonText: {
+      color: colors.textPrimary,
+      fontSize: 28,
+      lineHeight: 28,
+    },
+    headerText: {
+      flex: 1,
+    },
+    headerTitle: {
+      ...typography.sectionTitle,
+      color: colors.textPrimary,
+    },
+    headerSubtitle: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginTop: 1,
+    },
+    presenceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 1,
+    },
+    presenceDotText: {
+      fontSize: 8,
+    },
+    listContainer: {
+      flex: 1,
+    },
+    messageList: {
+      padding: spacing.md,
+      gap: spacing.sm,
+    },
+    dateSeparator: {
+      alignItems: 'center',
+      marginVertical: spacing.sm,
+    },
+    dateSeparatorText: {
+      ...typography.hint,
+      color: colors.textSecondary,
+      backgroundColor: colors.surfaceRaised,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      borderRadius: radius.sm,
+      overflow: 'hidden',
+    },
+    messageRow: {
+      marginBottom: spacing.sm,
+      maxWidth: '80%',
+    },
+    messageRowGrouped: {
+      marginBottom: 2,
+    },
+    messageRowOwn: {
+      alignSelf: 'flex-end',
+      alignItems: 'flex-end',
+    },
+    messageRowPeer: {
+      alignSelf: 'flex-start',
+      alignItems: 'flex-start',
+    },
+    bubble: {
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    bubbleOwn: {
+      backgroundColor: colors.accentButton,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.25,
+      shadowRadius: 3,
+      elevation: 2,
+    },
+    bubblePeer: {
+      backgroundColor: colors.surfaceRaised,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    bubbleTextOwn: {
+      color: colors.textOnAccent,
+    },
+    bubbleTextPeer: {
+      color: colors.textPrimary,
+    },
+    messageFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 2,
+    },
+    timestamp: {
+      ...typography.hint,
+      color: colors.textMuted,
+    },
+    timestampOwn: {
+      textAlign: 'right',
+    },
+    tick: {
+      fontSize: 14,
+      color: colors.textMuted,
+    },
+    tickRead: {
+      color: colors.success,
+    },
+    pendingText: {
+      ...typography.hint,
+      color: colors.textMuted,
+      fontStyle: 'italic',
+    },
+    failedText: {
+      ...typography.hint,
+      color: colors.danger,
+      fontWeight: '600',
+    },
+    scrollToBottomFab: {
+      position: 'absolute',
+      right: spacing.md,
+      bottom: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: colors.surfaceControl,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.3,
+      shadowRadius: 4,
+      elevation: 4,
+    },
+    scrollToBottomIcon: {
+      color: colors.textPrimary,
+      fontSize: 16,
+      lineHeight: 18,
+    },
+    scrollToBottomText: {
+      ...typography.hint,
+      color: colors.textPrimary,
+      fontWeight: '600',
+    },
+    composer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: spacing.sm,
+      padding: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    composerFocused: {
+      backgroundColor: colors.backgroundAlt,
+    },
+    composerInput: {
+      flex: 1,
+      maxHeight: 120,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      color: colors.textPrimary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    composerInputFocused: {
+      borderColor: colors.accent,
+      borderWidth: 2,
+      shadowColor: colors.accent,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.4,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+  });

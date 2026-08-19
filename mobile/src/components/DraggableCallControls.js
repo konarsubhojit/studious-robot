@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
-import { colors, radius, spacing } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 import CallControls from './CallControls';
 
 /**
@@ -42,6 +43,8 @@ export default function DraggableCallControls({
   onCameraSwitch,
   onLeave,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   // Measure the actual panel height after first layout so the clamp bounds
@@ -122,28 +125,29 @@ export default function DraggableCallControls({
   );
 }
 
-const styles = StyleSheet.create({
-  panel: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  dragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: spacing.sm,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    panel: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.md,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.35,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    dragHandle: {
+      width: 36,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.border,
+      alignSelf: 'center',
+      marginBottom: spacing.sm,
+    },
+  });

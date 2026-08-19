@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 
 /**
  * Unified pill button used across both the lobby and the in-call controls so
@@ -26,6 +27,8 @@ export default function AppButton({
   accessibilityHint,
   testID,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   return (
     <Pressable
       onPress={onPress}
@@ -47,32 +50,33 @@ export default function AppButton({
   );
 }
 
-const styles = StyleSheet.create({
-  button: {
-    flex: 1,
-    minHeight: 48,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accentButton,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.24,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  buttonActive: {
-    backgroundColor: colors.danger,
-  },
-  buttonDisabled: {
-    opacity: 0.55,
-  },
-  buttonPressed: {
-    opacity: 0.88,
-  },
-  buttonText: {
-    color: colors.textOnAccent,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    button: {
+      flex: 1,
+      minHeight: 48,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.accentButton,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.24,
+      shadowRadius: 4,
+      elevation: 3,
+    },
+    buttonActive: {
+      backgroundColor: colors.danger,
+    },
+    buttonDisabled: {
+      opacity: 0.55,
+    },
+    buttonPressed: {
+      opacity: 0.88,
+    },
+    buttonText: {
+      color: colors.textOnAccent,
+      fontWeight: '700',
+    },
+  });
