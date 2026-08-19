@@ -2,41 +2,36 @@ import RNFS from 'react-native-fs';
 import { MAX_VOICE_DURATION_MS } from '../../shared';
 
 /**
- * Lazy-loaded wrapper around `react-native-audio-recorder-player`, following
+ * Lazy-loaded wrapper around `react-native-nitro-sound` (the maintained
+ * successor to the deprecated `react-native-audio-recorder-player`), following
  * the same optional-native-module pattern as `vectorIcons.js` /
  * `attachmentPicker.js`.
  */
 
 let _recorderCache;
 
-/** @returns {typeof import('react-native-audio-recorder-player').default | null} */
+/** @returns {typeof import('react-native-nitro-sound').default | null} */
 function loadRecorderModule() {
   if (_recorderCache !== undefined) return _recorderCache;
   try {
-    _recorderCache = require('react-native-audio-recorder-player').default;
+    const sound = require('react-native-nitro-sound').default;
+    // The default export is a lazy proxy around the Nitro HybridObject, so the
+    // native module only shows up as missing once a member is touched.
+    _recorderCache = typeof sound?.startRecorder === 'function' ? sound : null;
   } catch {
     _recorderCache = null;
   }
   return _recorderCache;
 }
 
-/** Reset the cached module and any in-progress recorder instance (tests only). */
+/** Reset the cached module and any in-progress recorder state (tests only). */
 export function _resetVoiceRecorderCache() {
   _recorderCache = undefined;
-  _recorderInstance = null;
   _lastPositionMs = 0;
 }
 
-let _recorderInstance = null;
 /** Elapsed recording time (ms), updated by the record-back listener while recording. */
 let _lastPositionMs = 0;
-
-function getRecorderInstance() {
-  const RecorderModule = loadRecorderModule();
-  if (!RecorderModule) return null;
-  if (!_recorderInstance) _recorderInstance = new RecorderModule();
-  return _recorderInstance;
-}
 
 /** Whether the voice-recorder native module is linked. */
 export function isVoiceRecorderAvailable() {
@@ -50,7 +45,7 @@ export function isVoiceRecorderAvailable() {
  *   the native module isn't linked.
  */
 export async function startVoiceRecording() {
-  const recorder = getRecorderInstance();
+  const recorder = loadRecorderModule();
   if (!recorder) return false;
   _lastPositionMs = 0;
   recorder.addRecordBackListener?.(event => {
@@ -67,7 +62,7 @@ export async function startVoiceRecording() {
  *   `null` when nothing was recording (module not linked, or never started).
  */
 export async function stopVoiceRecording() {
-  const recorder = getRecorderInstance();
+  const recorder = loadRecorderModule();
   if (!recorder) return null;
   const uri = await recorder.stopRecorder();
   const durationMs = Math.min(_lastPositionMs, MAX_VOICE_DURATION_MS);
