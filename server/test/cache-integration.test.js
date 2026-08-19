@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 
 const { createServer } = require('../src/index.js');
 const { createMemoryMessageStore } = require('../src/messageStore');
+const { createMemoryMessageBus } = require('../src/messageBus');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -256,4 +257,43 @@ test('creating a call invalidates the cached call history of both participants',
 
   assert.equal((await getJson(url, '/calls', aliceSession)).body.calls.length, 1);
   assert.equal((await getJson(url, '/calls', bobSession)).body.calls.length, 1);
+});
+
+// ─── Cross-instance invalidation ──────────────────────────────────────────────
+
+test('a write on one instance invalidates the cached read of another instance', async (t) => {
+  // Two instances sharing one message store and one bus, each with its own
+  // in-process cache — the shape of a REDIS_URL deployment behind a balancer.
+  const messageStore = createMemoryMessageStore();
+  const messageBus = createMemoryMessageBus();
+  t.after(() => messageBus.close());
+
+  const instanceA = await startServer({ messageStore, messageBus });
+  const instanceB = await startServer({ messageStore, messageBus });
+  t.after(instanceA.teardown);
+  t.after(instanceB.teardown);
+
+  const aliceSession = await createSession(instanceA.url, 'xi-alice');
+  const bobSessionOnB = await createSession(instanceB.url, 'xi-bob');
+  const alice = await connectSocket(instanceA.url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  // Warm instance B's cache while the conversation is still empty.
+  const warm = await getJson(instanceB.url, '/conversations', bobSessionOnB);
+  assert.deepEqual(warm.body.conversations, []);
+
+  // Write on instance A.
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'xi-bob',
+    body: 'across instances',
+  });
+  assert.equal(ack.ok, true);
+
+  // Let the bus deliver the invalidation to instance B.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  const fresh = await getJson(instanceB.url, '/conversations', bobSessionOnB);
+  assert.equal(fresh.body.conversations.length, 1);
+  assert.equal(fresh.body.conversations[0].lastMessage.body, 'across instances');
 });
