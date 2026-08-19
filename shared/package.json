@@ -1,0 +1,11 @@
+{
+  "name": "@wetalk/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Signaling/API contracts (event names, payload schemas, REST routes) shared by the mobile app and the server.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

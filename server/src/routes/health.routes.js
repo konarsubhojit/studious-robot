@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 
 /**
  * GET /health – liveness/readiness probe.
@@ -14,7 +15,7 @@ const express = require('express');
 function createHealthRouter({ state }) {
   const router = express.Router();
 
-  router.get('/health', (_req, res) => {
+  router.get(API_ROUTES.HEALTH, (_req, res) => {
     // While draining, report unhealthy so load balancers / orchestrators stop
     // routing new traffic to this instance during a rolling deploy.
     if (state.draining) {

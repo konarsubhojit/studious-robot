@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 const { getSessionFromRequest } = require('../lib/auth');
 const { normaliseId, normalisePushProvider, sanitizeForLog } = require('../lib/normalize');
 const { upsertDevice } = require('../lib/state');
@@ -41,7 +42,7 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 function createDevicesRouter({ state, db }) {
   const router = express.Router();
 
-  router.post('/devices/register', async (req, res) => {
+  router.post(API_ROUTES.DEVICES_REGISTER, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -82,7 +83,7 @@ function createDevicesRouter({ state, db }) {
     });
   });
 
-  router.post('/devices/unregister', async (req, res) => {
+  router.post(API_ROUTES.DEVICES_UNREGISTER, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
@@ -116,7 +117,7 @@ function createDevicesRouter({ state, db }) {
     });
   });
 
-  router.post('/devices/push-receipt', (req, res) => {
+  router.post(API_ROUTES.DEVICES_PUSH_RECEIPT, (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
     const callId = normaliseId(req.body?.callId);

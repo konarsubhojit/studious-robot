@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { API_ROUTES } = require('../../../shared');
 const { USER_DIRECTORY_DEFAULT_LIMIT, USER_DIRECTORY_MAX_LIMIT } = require('../config');
 const { isBlocked } = require('../security');
 const { getSessionFromRequest } = require('../lib/auth');
@@ -48,7 +49,7 @@ function createDirectoryRouter({ state }) {
    *
    * Response 200: { users: Array<{ userId, status, online, lastSeen }>, total }
    */
-  router.get('/users', (req, res) => {
+  router.get(API_ROUTES.USERS, (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });

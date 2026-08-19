@@ -1,6 +1,7 @@
 'use strict';
 
 const { SIGNALING_VERSION } = require('../config');
+const { ERROR_CODES, SERVER_EVENTS, parseEventPayload } = require('../../../shared');
 
 /**
  * Socket.IO acknowledgement envelope helpers and pre-handler guards.
@@ -16,7 +17,13 @@ function requireSocketSession(socket, ack, eventName) {
     return true;
   }
 
-  acknowledgeError(socket, ack, eventName, 'unauthorized', 'a valid session is required');
+  acknowledgeError(
+    socket,
+    ack,
+    eventName,
+    ERROR_CODES.UNAUTHORIZED,
+    'a valid session is required'
+  );
   return false;
 }
 
@@ -29,10 +36,46 @@ function validateSignalingVersion(socket, payload, ack, eventName) {
     socket,
     ack,
     eventName,
-    'unsupported_version',
+    ERROR_CODES.UNSUPPORTED_VERSION,
     `version ${SIGNALING_VERSION} is required`
   );
   return false;
+}
+
+/**
+ * Validate an inbound payload against its shared schema.
+ *
+ * A payload that does not match the contract is rejected with a `bad_request`
+ * acknowledgement and logged, so a malformed (or hostile) event can never take
+ * a handler down by dereferencing a missing field.
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {Function|undefined} ack
+ * @param {string} eventName
+ * @param {unknown} payload
+ * @param {object} [state]
+ * @returns {object | null} the parsed payload, or `null` when it was rejected.
+ */
+function parseInboundPayload(socket, ack, eventName, payload, state) {
+  const result = parseEventPayload(eventName, payload);
+  if (result.success) {
+    return result.data;
+  }
+
+  console.warn(
+    `[signaling] rejected malformed payload event=${eventName}` +
+      ` socket=${socket?.id ?? 'unknown'} user=${socket?.data?.identity?.userId ?? 'unknown'}` +
+      ` reason=${result.error.message}`
+  );
+  acknowledgeError(
+    socket,
+    ack,
+    eventName,
+    ERROR_CODES.BAD_REQUEST,
+    result.error.message,
+    state
+  );
+  return null;
 }
 
 function acknowledgeSuccess(socket, ack, eventName, data) {
@@ -83,12 +126,13 @@ function acknowledgeError(socket, ack, eventName, code, message, state) {
     return;
   }
 
-  socket?.emit('signaling.error', payload);
+  socket?.emit(SERVER_EVENTS.SIGNALING_ERROR, payload);
 }
 
 module.exports = {
   requireSocketSession,
   validateSignalingVersion,
+  parseInboundPayload,
   acknowledgeSuccess,
   acknowledgeError,
 };

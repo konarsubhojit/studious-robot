@@ -7,9 +7,11 @@ const { notifyCallTransition, emitToUserSockets } = require('../domain/notificat
 const {
   requireSocketSession,
   validateSignalingVersion,
+  parseInboundPayload,
   acknowledgeSuccess,
   acknowledgeError,
 } = require('./ack');
+const { ERROR_CODES } = require('../../../shared');
 
 /**
  * Generic Socket.IO handlers for authenticated call-state transitions and RTC
@@ -34,19 +36,12 @@ function handleSocketCallTransition(socket, ack, payload, options) {
     return;
   }
 
-  const callId = normaliseId(payload.callId);
-  if (!callId) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'bad_request',
-      'callId is required',
-      options.state
-    );
+  const parsed = parseInboundPayload(socket, ack, options.eventName, payload, options.state);
+  if (!parsed) {
     return;
   }
 
+  const callId = normaliseId(parsed.callId);
   const call = options.state.calls.get(callId);
   if (!call) {
     acknowledgeError(
@@ -66,7 +61,7 @@ function handleSocketCallTransition(socket, ack, payload, options) {
       socket,
       ack,
       options.eventName,
-      'forbidden',
+      ERROR_CODES.FORBIDDEN,
       authorizationError,
       options.state
     );
@@ -134,38 +129,20 @@ function handleRtcRelay(socket, ack, payload, options) {
       socket,
       ack,
       options.eventName,
-      'rate_limited',
+      ERROR_CODES.RATE_LIMITED,
       'too many signaling events',
       options.state
     );
     return;
   }
 
-  const callId = normaliseId(payload.callId);
-  if (!callId) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'bad_request',
-      'callId is required',
-      options.state
-    );
+  const parsed = parseInboundPayload(socket, ack, options.eventName, payload, options.state);
+  if (!parsed) {
     return;
   }
 
-  const value = payload[options.dataKey];
-  if (!options.validateData(value)) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'bad_request',
-      `${options.dataKey} is required`,
-      options.state
-    );
-    return;
-  }
+  const callId = normaliseId(parsed.callId);
+  const value = parsed[options.dataKey];
 
   const call = options.state.calls.get(callId);
   if (!call) {
@@ -185,7 +162,7 @@ function handleRtcRelay(socket, ack, payload, options) {
       socket,
       ack,
       options.eventName,
-      'forbidden',
+      ERROR_CODES.FORBIDDEN,
       'not a participant in this call',
       options.state
     );

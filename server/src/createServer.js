@@ -3,6 +3,7 @@
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
+const { SERVER_EVENTS } = require('../../shared');
 const { createTelemetry } = require('./telemetry');
 const { createRateLimiter, createAuditLog } = require('./security');
 const { createStores } = require('./stores');
@@ -281,7 +282,7 @@ function createServer(opts = {}) {
       clearInterval(pollTimer);
 
       // Tell connected clients to reconnect elsewhere.
-      io.emit('server.draining', { reason, ts: new Date().toISOString() });
+      io.emit(SERVER_EVENTS.SERVER_DRAINING, { reason, ts: new Date().toISOString() });
 
       // Drop this instance's connections from presence so peers see users go
       // offline promptly rather than waiting for socket teardown.
