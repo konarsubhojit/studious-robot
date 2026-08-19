@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   Keyboard,
@@ -20,6 +21,7 @@ import {
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import AttachSheet from './AttachSheet';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
@@ -43,6 +45,8 @@ const SKELETON_BUBBLE_COUNT = 6;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 /** How long a bubble stays emphasised after its quote is tapped. */
 const QUOTE_HIGHLIGHT_MS = 1600;
+/** How long the "attachments aren't available" notice stays visible. */
+const ATTACHMENTS_UNAVAILABLE_NOTICE_MS = 4000;
 /** Rendered height of an inline image attachment. */
 const ATTACHMENT_IMAGE_HEIGHT = 180;
 
@@ -548,6 +552,19 @@ function MessageSkeleton() {
  *   ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate
  *   parent, not the screen, so without this offset it under-compensates for the
  *   keyboard by exactly that amount and the composer stays partly covered.
+ * @param {(kind: 'photo'|'camera'|'file') => void} [props.onPickAttachment] - Runs the
+ *   named picker, uploads the result, and sends it as an attachment message.
+ * @param {() => void} [props.onStartVoiceNote] - Starts recording a voice note.
+ * @param {() => void} [props.onStopVoiceNote] - Stops recording and sends the voice note.
+ * @param {() => void} [props.onCancelVoiceNote] - Stops recording without sending.
+ * @param {boolean} [props.isUploadingAttachment] - An attachment pick is uploading.
+ * @param {number} [props.attachmentUploadProgress] - Upload progress, 0–1.
+ * @param {boolean} [props.isRecordingVoiceNote] - A voice note is currently being recorded.
+ * @param {boolean} [props.attachmentsAvailable] - Whether this server has attachment
+ *   uploads configured; the attach control stays visible either way (never silently
+ *   absent) but is disabled with an explanatory message when this is `false`.
+ * @param {boolean} [props.isVoiceNoteSupported] - Whether the voice-recorder native
+ *   module is linked on this build.
  */
 export default function ChatConversationScreen({
   peerId,
@@ -573,6 +590,15 @@ export default function ChatConversationScreen({
   isOffline = false,
   onTypingChange,
   keyboardVerticalOffset = 0,
+  onPickAttachment,
+  onStartVoiceNote,
+  onStopVoiceNote,
+  onCancelVoiceNote,
+  isUploadingAttachment = false,
+  attachmentUploadProgress = 0,
+  isRecordingVoiceNote = false,
+  attachmentsAvailable = true,
+  isVoiceNoteSupported = false,
 }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -584,6 +610,8 @@ export default function ChatConversationScreen({
   // over the deep-link highlight the screen may have been opened with.
   const [quotedHighlightId, setQuotedHighlightId] = useState(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [isAttachSheetOpen, setIsAttachSheetOpen] = useState(false);
+  const [showAttachmentsUnavailable, setShowAttachmentsUnavailable] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   // Date label of the topmost visible message, rendered as a pinned pill over
@@ -665,6 +693,18 @@ export default function ChatConversationScreen({
     return () => clearTimeout(timer);
   }, [quotedHighlightId]);
 
+  // The unconfigured-server notice is momentary too: the attach control stays
+  // visible and tappable (never silently absent), it just explains itself
+  // again each time rather than blocking the composer.
+  useEffect(() => {
+    if (!showAttachmentsUnavailable) return undefined;
+    const timer = setTimeout(
+      () => setShowAttachmentsUnavailable(false),
+      ATTACHMENTS_UNAVAILABLE_NOTICE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [showAttachmentsUnavailable]);
+
   // Keep the composer and the latest message visible above the keyboard: on
   // Android in particular, the on-screen keyboard can otherwise cover both
   // the text being typed and the send button until the keyboard is dismissed.
@@ -710,6 +750,33 @@ export default function ChatConversationScreen({
     reportTyping(false);
   }, [draft, onSendMessage, replyTarget, reportTyping]);
 
+  const handleAttachPress = useCallback(() => {
+    if (!attachmentsAvailable) {
+      setShowAttachmentsUnavailable(true);
+      return;
+    }
+    setIsAttachSheetOpen(true);
+  }, [attachmentsAvailable]);
+
+  const handlePickAttachment = useCallback(
+    kind => {
+      onPickAttachment?.(kind);
+    },
+    [onPickAttachment],
+  );
+
+  const handleMicPress = useCallback(() => {
+    if (isRecordingVoiceNote) {
+      onStopVoiceNote?.();
+    } else {
+      onStartVoiceNote?.();
+    }
+  }, [isRecordingVoiceNote, onStartVoiceNote, onStopVoiceNote]);
+
+  const handleCancelVoiceNote = useCallback(() => {
+    onCancelVoiceNote?.();
+  }, [onCancelVoiceNote]);
+
   const handleReply = useCallback(message => setReplyTarget(message), []);
 
   const handleReact = useCallback(
@@ -736,7 +803,20 @@ export default function ChatConversationScreen({
 
   const handleDelete = useCallback(
     message => {
-      onDeleteMessage?.(message);
+      if (!onDeleteMessage) return;
+      Alert.alert(
+        'Delete message?',
+        'This removes the message for everyone. This cannot be undone.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => onDeleteMessage(message),
+          },
+        ],
+        { cancelable: true },
+      );
     },
     [onDeleteMessage],
   );
@@ -1007,7 +1087,35 @@ export default function ChatConversationScreen({
           </View>
         ) : null}
 
+        {isUploadingAttachment ? (
+          <View style={styles.uploadNotice} testID="chat-attachment-upload-progress">
+            <Text style={styles.uploadNoticeText}>
+              {`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
+            </Text>
+          </View>
+        ) : null}
+
+        {showAttachmentsUnavailable ? (
+          <View style={styles.uploadNotice} testID="chat-attachments-unavailable-notice">
+            <Text style={styles.uploadNoticeText}>Attachments aren't available on this server</Text>
+          </View>
+        ) : null}
+
         <View style={[styles.composer, isComposerFocused && styles.composerFocused]}>
+          <IconButton
+            icon="attachmentAttach"
+            onPress={handleAttachPress}
+            variant="default"
+            disabled={isUploadingAttachment || isRecordingVoiceNote}
+            size={40}
+            accessibilityLabel="Add attachment"
+            accessibilityHint={
+              attachmentsAvailable
+                ? 'Opens options to send a photo, take a photo, or send a file'
+                : "Attachments aren't available on this server"
+            }
+            testID="chat-attach-button"
+          />
           <TextInput
             value={draft}
             onChangeText={handleChangeText}
@@ -1020,6 +1128,33 @@ export default function ChatConversationScreen({
             accessibilityLabel={`Message to ${peerId}`}
             testID="chat-message-input"
           />
+          {!draft.trim() ? (
+            <IconButton
+              icon={isRecordingVoiceNote ? 'attachmentMicStop' : 'attachmentMic'}
+              onPress={handleMicPress}
+              variant={isRecordingVoiceNote ? 'active' : 'default'}
+              disabled={!isVoiceNoteSupported || isUploadingAttachment}
+              size={44}
+              accessibilityLabel={isRecordingVoiceNote ? 'Stop and send voice note' : 'Record voice note'}
+              accessibilityHint={
+                isVoiceNoteSupported
+                  ? undefined
+                  : 'Voice notes are not supported on this build'
+              }
+              testID="chat-mic-button"
+            />
+          ) : null}
+          {isRecordingVoiceNote ? (
+            <IconButton
+              icon="dismiss"
+              onPress={handleCancelVoiceNote}
+              variant="danger"
+              size={40}
+              accessibilityLabel="Cancel voice note"
+              accessibilityHint="Stops recording without sending"
+              testID="chat-mic-cancel-button"
+            />
+          ) : null}
           <IconButton
             icon="➤"
             onPress={handleSend}
@@ -1032,6 +1167,12 @@ export default function ChatConversationScreen({
           />
         </View>
       </View>
+
+      <AttachSheet
+        visible={isAttachSheetOpen}
+        onClose={() => setIsAttachSheetOpen(false)}
+        onSelect={handlePickAttachment}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1246,6 +1387,15 @@ const createStyles = colors =>
       ...typography.hint,
       color: colors.textSecondary,
       flexShrink: 1,
+    },
+    uploadNotice: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: colors.surfaceRaised,
+    },
+    uploadNoticeText: {
+      ...typography.hint,
+      color: colors.textSecondary,
     },
     messageFooter: {
       flexDirection: 'row',

@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
 
 jest.mock(
@@ -202,6 +202,9 @@ describe('ChatConversationScreen', () => {
   test('swiping an own message exposes delete, and retry for failed sends', () => {
     const onDeleteMessage = jest.fn();
     const onRetryMessage = jest.fn();
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, message, buttons) => {
+      buttons?.find(button => button.style === 'destructive')?.onPress?.();
+    });
     const tree = render({
       peerId: 'user-bob',
       messages: [
@@ -222,9 +225,11 @@ describe('ChatConversationScreen', () => {
     act(() => {
       findByTestId(tree, 'chat-message-swipe-delete').props.onPress();
     });
+    expect(alertSpy).toHaveBeenCalledTimes(1);
     expect(onDeleteMessage).toHaveBeenCalledWith(
       expect.objectContaining({ messageId: 'failed-1' }),
     );
+    alertSpy.mockRestore();
 
     act(() => {
       findByTestId(tree, 'chat-message-swipe-retry').props.onPress();
@@ -1090,5 +1095,152 @@ describe('ChatConversationScreen deep-linked message', () => {
 
     expect(onSendMessage).toHaveBeenCalledWith('answering', { replyTo: 'm-original' });
     expect(findAllByTestId(tree, 'chat-reply-preview')).toHaveLength(0);
+  });
+});
+
+describe('ChatConversationScreen attachments', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  test('attach and mic controls are always visible in the composer', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findByTestId(tree, 'chat-attach-button')).not.toBeNull();
+    expect(findByTestId(tree, 'chat-mic-button')).not.toBeNull();
+  });
+
+  test('tapping attach opens a sheet, and picking an option calls onPickAttachment', () => {
+    const onPickAttachment = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onPickAttachment,
+    });
+
+    expect(findAllByTestId(tree, 'chat-attach-sheet')).toHaveLength(0);
+
+    act(() => {
+      findByTestId(tree, 'chat-attach-button').props.onPress();
+    });
+    expect(findByTestId(tree, 'chat-attach-sheet')).not.toBeNull();
+
+    act(() => {
+      findByTestId(tree, 'chat-attach-option-photo').props.onPress();
+    });
+    expect(onPickAttachment).toHaveBeenCalledWith('photo');
+    expect(findAllByTestId(tree, 'chat-attach-sheet')).toHaveLength(0);
+  });
+
+  test('tapping attach while attachments are unavailable shows a notice instead of the sheet', () => {
+    const onPickAttachment = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onPickAttachment,
+      attachmentsAvailable: false,
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-attach-button').props.onPress();
+    });
+
+    expect(findAllByTestId(tree, 'chat-attach-sheet')).toHaveLength(0);
+    expect(findByTestId(tree, 'chat-attachments-unavailable-notice')).not.toBeNull();
+    expect(onPickAttachment).not.toHaveBeenCalled();
+  });
+
+  test('the mic button toggles voice-note recording', () => {
+    const onStartVoiceNote = jest.fn();
+    const onStopVoiceNote = jest.fn();
+    const props = {
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onStartVoiceNote,
+      onStopVoiceNote,
+      isVoiceNoteSupported: true,
+      isRecordingVoiceNote: false,
+    };
+    const tree = render(props);
+
+    act(() => {
+      findByTestId(tree, 'chat-mic-button').props.onPress();
+    });
+    expect(onStartVoiceNote).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      tree.update(<ChatConversationScreen {...props} isRecordingVoiceNote />);
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-mic-button').props.onPress();
+    });
+    expect(onStopVoiceNote).toHaveBeenCalledTimes(1);
+  });
+
+  test('a cancel button appears only while recording and stops without sending', () => {
+    const onCancelVoiceNote = jest.fn();
+    const props = {
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onCancelVoiceNote,
+      isVoiceNoteSupported: true,
+      isRecordingVoiceNote: false,
+    };
+    const tree = render(props);
+
+    expect(findAllByTestId(tree, 'chat-mic-cancel-button')).toHaveLength(0);
+
+    act(() => {
+      tree.update(<ChatConversationScreen {...props} isRecordingVoiceNote />);
+    });
+    expect(findByTestId(tree, 'chat-mic-cancel-button')).not.toBeNull();
+
+    act(() => {
+      findByTestId(tree, 'chat-mic-cancel-button').props.onPress();
+    });
+    expect(onCancelVoiceNote).toHaveBeenCalledTimes(1);
+  });
+
+  test('shows upload progress while an attachment is uploading', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      isUploadingAttachment: true,
+      attachmentUploadProgress: 0.42,
+    });
+
+    const notice = findByTestId(tree, 'chat-attachment-upload-progress');
+    expect(notice).not.toBeNull();
+    const text = notice.findAll(n => typeof n.props?.children === 'string')[0];
+    expect(text.props.children).toContain('42%');
   });
 });

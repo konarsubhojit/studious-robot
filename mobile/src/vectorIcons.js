@@ -81,4 +81,7 @@ export const ICONS = {
   settingsAppearance: { icon: 'theme-light-dark', emoji: '🌗' },
   settingsDeveloper: { icon: 'code-tags', emoji: '🛠️' },
   settingsAccountSection: { icon: 'shield-account-outline', emoji: '🧾' },
+  attachmentAttach: { icon: 'paperclip', emoji: '📎' },
+  attachmentMic: { icon: 'microphone', emoji: '🎤' },
+  attachmentMicStop: { icon: 'stop-circle-outline', emoji: '⏹️' },
 };

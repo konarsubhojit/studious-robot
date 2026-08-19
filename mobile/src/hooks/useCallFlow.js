@@ -25,6 +25,7 @@ import {
   subscribeAudioDevices,
 } from '../audioRouting';
 import { startCallService, stopCallService } from '../callService';
+import useAttachments from './useAttachments';
 import useBlocks from './useBlocks';
 import useCallHistory from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
@@ -400,6 +401,13 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     handleSocketConnected,
     handleSocketDisconnected,
   } = messaging;
+
+  const attachments = useAttachments({
+    authedFetchRef,
+    signalingUrl,
+    sendMessage: messaging.sendMessage,
+    updateStatus,
+  });
 
   // Renegotiate the active peer connection (used when screen audio adds or
   // removes a sender). The remote peer answers renegotiation offers with the
@@ -2879,6 +2887,17 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     typingByPeer: messaging.typingByPeer,
     sendTypingIndicator: messaging.sendTypingIndicator,
     isRemoteScreenSharing,
+
+    // Attachments (photo / camera / file / voice note)
+    pickAndSendAttachment: attachments.pickAndSend,
+    startRecordingVoiceNote: attachments.startRecordingVoiceNote,
+    stopRecordingVoiceNoteAndSend: attachments.stopRecordingVoiceNoteAndSend,
+    cancelRecordingVoiceNote: attachments.cancelRecordingVoiceNote,
+    isUploadingAttachment: attachments.isUploading,
+    attachmentUploadProgress: attachments.uploadProgress,
+    isRecordingVoiceNote: attachments.isRecordingVoiceNote,
+    attachmentsAvailable: attachments.attachmentsAvailable,
+    isVoiceNoteSupported: attachments.isVoiceNoteSupported,
 
     // In-call media state
     localStream,

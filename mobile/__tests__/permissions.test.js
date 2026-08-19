@@ -10,6 +10,8 @@ jest.mock('react-native', () => ({
       RECORD_AUDIO: 'android.permission.RECORD_AUDIO',
       BLUETOOTH_CONNECT: 'android.permission.BLUETOOTH_CONNECT',
       POST_NOTIFICATIONS: 'android.permission.POST_NOTIFICATIONS',
+      READ_MEDIA_IMAGES: 'android.permission.READ_MEDIA_IMAGES',
+      READ_EXTERNAL_STORAGE: 'android.permission.READ_EXTERNAL_STORAGE',
     },
     RESULTS: {
       GRANTED: 'granted',
@@ -25,10 +27,12 @@ jest.mock('react-native', () => ({
 
 import { Platform } from 'react-native';
 import {
+  ensureAttachmentPermission,
   ensureBluetoothPermission,
   ensureCallPermissions,
   getCallRuntimePermissions,
   getMissingCallPermissions,
+  getPhotoLibraryPermission,
   requiresBluetoothConnectPermission,
   requiresPostNotificationsPermission,
 } from '../src/permissions';
@@ -210,5 +214,66 @@ describe('permissions helpers', () => {
       message: null,
     });
     expect(mockCheck).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureAttachmentPermission', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Platform.OS = 'android';
+    Platform.Version = 31;
+  });
+
+  test('resolves the API-33+ photo permission to READ_MEDIA_IMAGES', () => {
+    expect(getPhotoLibraryPermission(33)).toBe('android.permission.READ_MEDIA_IMAGES');
+    expect(getPhotoLibraryPermission(32)).toBe('android.permission.READ_EXTERNAL_STORAGE');
+  });
+
+  test('is a no-op on iOS', async () => {
+    Platform.OS = 'ios';
+    await expect(ensureAttachmentPermission('photo')).resolves.toEqual({
+      ok: true,
+      granted: true,
+      message: null,
+    });
+    expect(mockCheck).not.toHaveBeenCalled();
+  });
+
+  test('never prompts for the file picker (Storage Access Framework, no runtime grant)', async () => {
+    await expect(ensureAttachmentPermission('file')).resolves.toEqual({
+      ok: true,
+      granted: true,
+      message: null,
+    });
+    expect(mockCheck).not.toHaveBeenCalled();
+  });
+
+  test('skips the prompt when already granted', async () => {
+    mockCheck.mockResolvedValue(true);
+    await expect(ensureAttachmentPermission('camera')).resolves.toEqual({
+      ok: true,
+      granted: true,
+      message: null,
+    });
+    expect(mockRequestMultiple).not.toHaveBeenCalled();
+  });
+
+  test('requests and reports denial with an actionable message', async () => {
+    mockCheck.mockResolvedValue(false);
+    mockRequestMultiple.mockResolvedValue({ 'android.permission.RECORD_AUDIO': 'denied' });
+    const result = await ensureAttachmentPermission('voice');
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/microphone/i);
+  });
+
+  test('requests and reports the granted photo permission', async () => {
+    Platform.Version = 33;
+    mockCheck.mockResolvedValue(false);
+    mockRequestMultiple.mockResolvedValue({ 'android.permission.READ_MEDIA_IMAGES': 'granted' });
+    await expect(ensureAttachmentPermission('photo')).resolves.toEqual({
+      ok: true,
+      granted: true,
+      message: null,
+    });
   });
 });
