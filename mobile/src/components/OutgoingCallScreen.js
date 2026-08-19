@@ -106,7 +106,10 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
           style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
           accessible={false}
         />
-        <View style={styles.avatar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <View
+          style={styles.avatar}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants">
           <Text style={styles.avatarText}>{initials}</Text>
         </View>
 

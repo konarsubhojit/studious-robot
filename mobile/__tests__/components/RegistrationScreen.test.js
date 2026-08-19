@@ -141,9 +141,7 @@ describe('RegistrationScreen', () => {
     expect(
       tree.root.findAll(n => n.props.testID === 'registration-error').length,
     ).toBeGreaterThanOrEqual(1);
-    expect(
-      tree.root.findAll(n => n.props.testID === 'registration-error-action'),
-    ).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'registration-error-action')).toHaveLength(0);
 
     act(() => {
       tree.root

@@ -13,7 +13,7 @@ import {
 import { CALL_END_REASON_LABELS } from '../hooks/useCallFlow';
 import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, sizes, spacing } from '../theme';
+import { radius, sizes, spacing, touchSlop } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import ErrorState from './ErrorState';
@@ -42,7 +42,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
           onPress={() => onChangeText('')}
           accessibilityRole="button"
           accessibilityLabel={`Clear ${accessibilityLabel}`}
-          hitSlop={sizes.minTouchTarget / 4}
+          hitSlop={touchSlop(32)}
           testID={`${testID}-clear`}
           style={styles.clearButton}>
           <Text style={styles.clearButtonText}>✕</Text>
@@ -213,7 +213,7 @@ export default function Lobby({
                 missedCallCount === 1 ? '' : 's'
               }`}
               accessibilityHint="Marks missed calls as seen"
-              hitSlop={sizes.minTouchTarget / 4}
+              hitSlop={touchSlop(24)}
               testID="missed-calls-badge"
               style={styles.missedBadge}>
               <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
@@ -226,7 +226,7 @@ export default function Lobby({
               accessibilityRole="button"
               accessibilityLabel="Settings"
               accessibilityHint="Opens account and connection settings"
-              hitSlop={sizes.minTouchTarget / 4}
+              hitSlop={touchSlop(44)}
               testID="lobby-open-settings"
               style={styles.gearButton}>
               <Text style={styles.gearIcon}>⚙️</Text>
@@ -261,7 +261,7 @@ export default function Lobby({
               onPress={onDismissSummary}
               accessibilityRole="button"
               accessibilityLabel="Dismiss last call summary"
-              hitSlop={sizes.minTouchTarget / 4}
+              hitSlop={touchSlop(28)}
               testID="dismiss-summary"
               style={styles.summaryDismiss}>
               <Text style={styles.summaryDismissText}>✕</Text>
@@ -377,7 +377,9 @@ export default function Lobby({
           onPress={onCall}
           disabled={!userId?.trim() || !calleeId?.trim()}
           accessibilityHint={
-            calleeId?.trim() ? `Starts a call with ${calleeId.trim()}` : 'Enter a callee user ID first'
+            calleeId?.trim()
+              ? `Starts a call with ${calleeId.trim()}`
+              : 'Enter a callee user ID first'
           }
           testID="lobby-call"
           style={styles.callButton}

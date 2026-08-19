@@ -1,4 +1,11 @@
-import { palettes, resolveScheme, THEME_MODE_VALUES, THEME_MODES } from '../src/theme';
+import {
+  palettes,
+  resolveScheme,
+  sizes,
+  THEME_MODE_VALUES,
+  THEME_MODES,
+  touchSlop,
+} from '../src/theme';
 
 /** Relative luminance of a #rrggbb colour, per WCAG 2.1. */
 function luminance(hex) {
@@ -70,5 +77,17 @@ describe('resolveScheme', () => {
 
   test('THEME_MODE_VALUES lists every selectable mode', () => {
     expect(THEME_MODE_VALUES).toEqual(['system', 'light', 'dark']);
+  });
+});
+
+describe('touchSlop', () => {
+  test('grows a small control up to the minimum touch target', () => {
+    expect(24 + 2 * touchSlop(24)).toBeGreaterThanOrEqual(sizes.minTouchTarget);
+    expect(36 + 2 * touchSlop(36)).toBeGreaterThanOrEqual(sizes.minTouchTarget);
+  });
+
+  test('adds nothing to a control that already meets the target', () => {
+    expect(touchSlop(sizes.minTouchTarget)).toBe(0);
+    expect(touchSlop(72)).toBe(0);
   });
 });

@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, sizes, spacing, typography } from '../theme';
+import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import IconButton from './IconButton';
 
@@ -187,7 +187,7 @@ const MessageRow = memo(function MessageRow({ message, isGroupEnd, isOwn, onRetr
           accessibilityRole="button"
           accessibilityLabel="Retry sending message"
           accessibilityHint="Sends this message again"
-          hitSlop={sizes.minTouchTarget / 4}>
+          hitSlop={touchSlop(20)}>
           <Text style={styles.failedText}>Failed to send · tap to retry</Text>
         </Pressable>
       ) : null}
@@ -444,7 +444,7 @@ export default function ChatConversationScreen({
             onPress={onBack}
             accessibilityRole="button"
             accessibilityLabel="Back to chat list"
-            hitSlop={sizes.minTouchTarget / 4}
+            hitSlop={touchSlop(36)}
             testID="chat-back"
             style={styles.backButton}>
             <Text style={styles.backButtonText}>‹</Text>
@@ -529,7 +529,7 @@ export default function ChatConversationScreen({
               onPress={handleScrollToBottomPress}
               accessibilityRole="button"
               accessibilityLabel="Scroll to newest message"
-              hitSlop={sizes.minTouchTarget / 4}
+              hitSlop={touchSlop(36)}
               testID="chat-scroll-to-bottom"
               style={styles.scrollToBottomFab}>
               <Text style={styles.scrollToBottomIcon}>↓</Text>

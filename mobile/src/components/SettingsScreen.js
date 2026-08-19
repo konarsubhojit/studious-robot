@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, sizes, spacing, THEME_MODES, typography } from '../theme';
+import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
@@ -108,7 +108,7 @@ export default function SettingsScreen({
             accessibilityRole="button"
             accessibilityLabel="Back"
             accessibilityHint="Returns to the previous screen"
-            hitSlop={sizes.minTouchTarget / 4}
+            hitSlop={touchSlop(44)}
             testID="settings-back"
             style={styles.backButton}>
             <Text style={styles.backIcon}>‹</Text>
@@ -168,7 +168,10 @@ export default function SettingsScreen({
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionLabel icon="settingsAppearance">Appearance</SectionLabel>
         <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
-        <View style={styles.segmentedRow} accessibilityRole="radiogroup" testID="settings-theme-mode">
+        <View
+          style={styles.segmentedRow}
+          accessibilityRole="radiogroup"
+          testID="settings-theme-mode">
           {APPEARANCE_OPTIONS.map(option => {
             const isSelected = option.mode === themeMode;
             return (

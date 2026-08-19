@@ -72,7 +72,7 @@ export default function RegistrationScreen({
         <View style={styles.form}>
           {hasError ? (
             <ErrorState
-              title="Sign-in failed"
+              title="Couldn't complete sign-in"
               description={status.message}
               actionLabel="Try again"
               actionHint="Retries the last sign-in attempt"

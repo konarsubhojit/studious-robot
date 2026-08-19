@@ -116,7 +116,9 @@ export default function AppShell() {
           title="Calling may not work reliably"
           description={`${startupIssues
             .map(issue => issue.message)
-            .join('; ')}. Incoming calls can be missed until this is fixed — check that WeTalk is allowed to show notifications and manage calls, then restart the app.`}
+            .join(
+              '; ',
+            )}. Incoming calls can be missed until this is fixed — check that WeTalk is allowed to show notifications and manage calls, then restart the app.`}
           actionLabel="Open device settings"
           actionHint="Opens WeTalk's permissions in the device settings app"
           onAction={openDeviceSettings}
