@@ -4,7 +4,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from './src/appLogger';
 import { deriveCallStreams } from './src/callStreamHelpers';
-import AppTabBar from './src/components/AppTabBar';
 import CallScreen from './src/components/CallScreen';
 import ChatConversationScreen from './src/components/ChatConversationScreen';
 import ChatListScreen from './src/components/ChatListScreen';
@@ -23,8 +22,16 @@ import useCallMinimize from './src/hooks/useCallMinimize';
 import useChatDeepLink from './src/hooks/useChatDeepLink';
 import useChatSync from './src/hooks/useChatSync';
 import usePictureInPicturePip from './src/hooks/usePictureInPicturePip';
-import useTabShellBackNavigation from './src/hooks/useTabShellBackNavigation';
 import useWebRTCCall from './src/hooks/useWebRTCCall';
+import AppNavigator from './src/navigation/AppNavigator';
+import {
+  closeChatConversation,
+  openChatConversation,
+  openTab,
+  resetNavigation,
+} from './src/navigation/navigationRef';
+import { clearNavigationState } from './src/navigation/navigationState';
+import { TABS } from './src/navigation/routes';
 import { colors } from './src/theme';
 import { getStartupIssues } from './src/startupHealth';
 
@@ -36,9 +43,10 @@ import { getStartupIssues } from './src/startupHealth';
  * its unauthenticated room-join UI is intentionally disabled.
  *
  * Navigation shell: once identity is registered and no call is ringing, the
- * app renders a lightweight hand-rolled tab shell (Chats / Calls / Settings)
- * built from plain state + View/Pressable — no react-navigation or other new
- * native dependency, so it stays verifiable with the existing Jest setup.
+ * app renders the React Navigation shell (`src/navigation/AppNavigator`) — a
+ * bottom-tab navigator (Chats / Calls / Settings) whose Chats tab hosts a
+ * native stack for the conversation screen, giving native transitions, URL
+ * (deep-link) routing and navigation-state restoration.
  * A connected call normally takes over the full screen (as before); pressing
  * the minimize button in `CallTopBar`, tapping a bottom tab, or the Android
  * hardware back button instead shrinks it to a small draggable
@@ -71,9 +79,14 @@ function AppShell() {
   const call = useWebRTCCall();
 
   // ── Navigation shell state ─────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('chats');
-  // peerId of the conversation open within the Chats tab; null = chat list.
+  // peerId of the conversation currently open in the Chats tab (null = chat
+  // list). React Navigation owns the routing; this only mirrors the part of it
+  // the chat-sync hook below needs to react to.
   const [chatPeerId, setChatPeerId] = useState(null);
+
+  const handleRouteChange = useCallback(route => {
+    setChatPeerId(route.chatPeerId);
+  }, []);
 
   // Active call source: prefer callFlow when it has a live call/in-call session.
   const callFlowActive = callFlow.callPhase !== CALL_PHASES.IDLE || callFlow.isInCall;
@@ -150,13 +163,12 @@ function AppShell() {
 
   // Open the conversation a tapped message notification points at
   // (`wetalk://chat/{conversationId}`), including from a cold start.
+  // Routed through the navigation container ref so the link opens a real
+  // route (animated, restorable) instead of ad-hoc component state.
   useChatDeepLink({
     userId: callFlow.userId,
     conversations: callFlow.conversations,
-    onOpenConversation: useCallback(peerId => {
-      setActiveTab('chats');
-      setChatPeerId(peerId);
-    }, []),
+    onOpenConversation: openChatConversation,
   });
 
   // ── Call initiation (video / audio-only) ──────────────────────────────────
@@ -168,12 +180,14 @@ function AppShell() {
     handleVideoToggle: callFlow.handleVideoToggle,
   });
 
-  const handleChangeTab = tab => {
+  // Tapping a bottom tab while a connected call is full-screen shrinks it to
+  // the FloatingCallBubble rather than tearing the call down. Memoized so the
+  // navigator's tab bar is not rebuilt on every render of this shell.
+  const handleTabPress = useCallback(() => {
     if (isCallConnected && !isCallMinimized) {
       setIsCallMinimized(true);
     }
-    setActiveTab(tab);
-  };
+  }, [isCallConnected, isCallMinimized, setIsCallMinimized]);
 
   const handleEndCallFlowCall = () => {
     setIsCallMinimized(false);
@@ -331,113 +345,120 @@ function AppShell() {
       />
     );
   } else {
-    // No full-screen call to show: render the tab shell. A connected call
-    // that has been explicitly minimized overlays a FloatingCallBubble on top.
+    // No full-screen call to show: render the navigation shell. A connected
+    // call that has been explicitly minimized overlays a FloatingCallBubble.
     isTabShellActive = true;
-    let tabContent;
-    if (activeTab === 'chats') {
-      tabContent = chatPeerId ? (
-        <ChatConversationScreen
-          peerId={chatPeerId}
-          messages={callFlow.messagesByPeer[chatPeerId] ?? []}
-          onSendMessage={body => callFlow.sendMessage(chatPeerId, body)}
-          onLoadOlder={handleLoadOlderMessages}
-          onBack={() => setChatPeerId(null)}
-          currentUserId={callFlow.userId}
-          peerPresence={peerPresence}
-          keyboardVerticalOffset={insets.top}
-          onStartAudioCall={() => startAudioCallWith(chatPeerId)}
-          onStartVideoCall={() => startVideoCallWith(chatPeerId)}
-          isStartingCall={callFlow.isPlacingCall}
-          isPeerTyping={Boolean(callFlow.typingByPeer[chatPeerId])}
-          onTypingChange={isTyping => callFlow.sendTypingIndicator(chatPeerId, isTyping)}
-        />
-      ) : (
-        <ChatListScreen
-          conversations={callFlow.conversations}
-          onOpenConversation={peerId => setChatPeerId(peerId)}
-          onSearchUsers={callFlow.searchUsers}
-          onRefresh={handleRefreshConversations}
-          isRefreshing={isRefreshingConversations}
-          onOpenSettings={() => setActiveTab('settings')}
-        />
-      );
-    } else if (activeTab === 'calls') {
-      tabContent = (
-        <Lobby
-          userId={callFlow.userId}
-          onChangeUserId={callFlow.editUserId}
-          calleeId={callFlow.calleeId}
-          onChangeCalleeId={callFlow.setCalleeId}
-          onCall={() => {
-            callFlow.placeCall().catch(error => {
-              logError('placeCall unhandled rejection', error);
-            });
-          }}
-          calleePresence={callFlow.calleePresence}
-          onOpenSettings={() => setActiveTab('settings')}
-          isServerUnreachable={callFlow.isServerUnreachable}
-          onRetryConnect={callFlow.retryPresenceConnect}
-          onSearchUsers={callFlow.searchUsers}
-          onSelectContact={callFlow.setCalleeId}
-          developerMode={false}
-          signalingUrl={call.signalingUrl}
-          onChangeSignalingUrl={call.setSignalingUrl}
-          roomId={call.roomId}
-          onChangeRoomId={call.setRoomId}
-          localPreviewStreamUrl={localPreviewStreamUrl}
-          hasLocalStream={Boolean(call.localStream)}
-          onStartPreview={() => {
-            call.startLocalPreview().catch(error => {
-              logError('startLocalPreview failed (permissions/device)', error);
-            });
-          }}
-          onJoinRoom={call.handleRoomButtonPress}
-          isSettingsVisible={call.isSettingsVisible}
-          onToggleSettings={() => call.setIsSettingsVisible(previous => !previous)}
-          onExportLogs={call.handleExportLogs}
-          settings={call.settings}
-          onToggleAutoLighting={call.handleAutoLightingToggle}
-          onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
-          status={callFlow.userId ? callFlow.status : call.status}
-          callSummary={callFlow.callSummary ?? call.callSummary}
-          onDismissSummary={
-            callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary
-          }
-          callHistory={callFlow.callHistory}
-          missedCallCount={callFlow.missedCallCount}
-          onMarkMissedRead={callFlow.markMissedCallsRead}
-          onRedial={peerId => startVideoCallWith(peerId)}
-        />
-      );
-    } else {
-      tabContent = (
-        <SettingsScreen
-          userId={callFlow.userId}
-          onSaveUserId={callFlow.updateUserId}
-          signalingUrl={callFlow.signalingUrl}
-          onSaveSignalingUrl={callFlow.setSignalingUrl}
-          status={callFlow.status}
-          onSignOut={() => {
-            setActiveTab('chats');
-            callFlow.unregisterUser().catch(error => {
-              logError('unregisterUser failed', error);
-            });
-          }}
-          onClose={() => setActiveTab('chats')}
-          onExportLogs={call.handleExportLogs}
-        />
-      );
-    }
+
+    const renderChatConversation = peerId => (
+      <ChatConversationScreen
+        peerId={peerId}
+        messages={callFlow.messagesByPeer[peerId] ?? []}
+        onSendMessage={body => callFlow.sendMessage(peerId, body)}
+        onLoadOlder={handleLoadOlderMessages}
+        onBack={closeChatConversation}
+        currentUserId={callFlow.userId}
+        peerPresence={peerPresence}
+        keyboardVerticalOffset={insets.top}
+        onStartAudioCall={() => startAudioCallWith(peerId)}
+        onStartVideoCall={() => startVideoCallWith(peerId)}
+        isStartingCall={callFlow.isPlacingCall}
+        isPeerTyping={Boolean(callFlow.typingByPeer[peerId])}
+        onTypingChange={isTyping => callFlow.sendTypingIndicator(peerId, isTyping)}
+      />
+    );
+
+    const renderChatList = () => (
+      <ChatListScreen
+        conversations={callFlow.conversations}
+        onOpenConversation={openChatConversation}
+        onSearchUsers={callFlow.searchUsers}
+        onRefresh={handleRefreshConversations}
+        isRefreshing={isRefreshingConversations}
+        onOpenSettings={() => openTab(TABS.SETTINGS)}
+      />
+    );
+
+    const renderCalls = () => (
+      <Lobby
+        userId={callFlow.userId}
+        onChangeUserId={callFlow.editUserId}
+        calleeId={callFlow.calleeId}
+        onChangeCalleeId={callFlow.setCalleeId}
+        onCall={() => {
+          callFlow.placeCall().catch(error => {
+            logError('placeCall unhandled rejection', error);
+          });
+        }}
+        calleePresence={callFlow.calleePresence}
+        onOpenSettings={() => openTab(TABS.SETTINGS)}
+        isServerUnreachable={callFlow.isServerUnreachable}
+        onRetryConnect={callFlow.retryPresenceConnect}
+        onSearchUsers={callFlow.searchUsers}
+        onSelectContact={callFlow.setCalleeId}
+        developerMode={false}
+        signalingUrl={call.signalingUrl}
+        onChangeSignalingUrl={call.setSignalingUrl}
+        roomId={call.roomId}
+        onChangeRoomId={call.setRoomId}
+        localPreviewStreamUrl={localPreviewStreamUrl}
+        hasLocalStream={Boolean(call.localStream)}
+        onStartPreview={() => {
+          call.startLocalPreview().catch(error => {
+            logError('startLocalPreview failed (permissions/device)', error);
+          });
+        }}
+        onJoinRoom={call.handleRoomButtonPress}
+        isSettingsVisible={call.isSettingsVisible}
+        onToggleSettings={() => call.setIsSettingsVisible(previous => !previous)}
+        onExportLogs={call.handleExportLogs}
+        settings={call.settings}
+        onToggleAutoLighting={call.handleAutoLightingToggle}
+        onToggleSpeakerDefault={call.handleSpeakerDefaultToggle}
+        status={callFlow.userId ? callFlow.status : call.status}
+        callSummary={callFlow.callSummary ?? call.callSummary}
+        onDismissSummary={
+          callFlow.callSummary ? callFlow.dismissCallSummary : call.dismissCallSummary
+        }
+        callHistory={callFlow.callHistory}
+        missedCallCount={callFlow.missedCallCount}
+        onMarkMissedRead={callFlow.markMissedCallsRead}
+        onRedial={peerId => startVideoCallWith(peerId)}
+      />
+    );
+
+    const renderSettings = () => (
+      <SettingsScreen
+        userId={callFlow.userId}
+        onSaveUserId={callFlow.updateUserId}
+        signalingUrl={callFlow.signalingUrl}
+        onSaveSignalingUrl={callFlow.setSignalingUrl}
+        status={callFlow.status}
+        onSignOut={() => {
+          // Reset first, then clear: the reset's own state write can only ever
+          // race with the clear as the (harmless) default route, never as the
+          // signed-out user's open conversation.
+          resetNavigation();
+          clearNavigationState();
+          callFlow.unregisterUser().catch(error => {
+            logError('unregisterUser failed', error);
+          });
+        }}
+        onClose={() => openTab(TABS.CHATS)}
+        onExportLogs={call.handleExportLogs}
+      />
+    );
 
     screenContent = (
       <View style={styles.tabShellRoot} testID="app-tab-shell">
-        <View style={styles.tabShellContent}>{tabContent}</View>
-        <AppTabBar
-          activeTab={activeTab}
-          onChangeTab={handleChangeTab}
+        <AppNavigator
           unreadCount={callFlow.unreadTotal}
           bottomInset={insets.bottom}
+          onTabPress={handleTabPress}
+          onRouteChange={handleRouteChange}
+          renderChatList={renderChatList}
+          renderChatConversation={renderChatConversation}
+          renderCalls={renderCalls}
+          renderSettings={renderSettings}
         />
       </View>
     );
@@ -475,15 +496,6 @@ function AppShell() {
       );
     }
   }
-
-  useTabShellBackNavigation({
-    enabled: isTabShellActive,
-    chatPeerId,
-    onCloseChat: () => setChatPeerId(null),
-    activeTab,
-    defaultTab: 'chats',
-    onNavigateToDefaultTab: handleChangeTab,
-  });
 
   // Padding depends on runtime-only values (measured safe-area insets, and
   // whether the tab shell — which pads its own bottom edge — is active), so
@@ -531,9 +543,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   tabShellRoot: {
-    flex: 1,
-  },
-  tabShellContent: {
     flex: 1,
   },
   degradedBanner: {

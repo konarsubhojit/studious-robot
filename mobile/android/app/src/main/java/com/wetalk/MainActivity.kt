@@ -32,8 +32,16 @@ class MainActivity : ReactActivity() {
   override fun createReactActivityDelegate(): ReactActivityDelegate =
     DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
+  /**
+   * Passes `null` to `super.onCreate` (instead of forwarding
+   * `savedInstanceState`) as react-native-screens requires: it stops Android
+   * from restoring the native fragment hierarchy of a killed process, which
+   * would otherwise leave stale/crashing screens behind when React Navigation
+   * re-creates them. Navigation state is restored from JS instead — see
+   * `mobile/src/navigation/navigationState.js`.
+   */
   override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
+    super.onCreate(null)
     handleIncomingCallIntent(intent)
   }
 
