@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -11,6 +11,10 @@ import {
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
+import SwipeableRow from './SwipeableRow';
+
+/** Number of placeholder rows shown while the conversation list loads. */
+const SKELETON_ROW_COUNT = 6;
 
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }) {
   const { colors } = useTheme();
@@ -89,6 +93,38 @@ function Avatar({ id, online, testID }) {
   );
 }
 
+/** Placeholder rows shown while the conversation list is being fetched. */
+function ConversationSkeleton() {
+  const styles = useThemedStyles(createStyles);
+
+  return (
+    <View testID="chat-list-skeleton">
+      {Array.from({ length: SKELETON_ROW_COUNT }, (_unused, index) => (
+        <View key={`skeleton-${index}`} style={styles.row}>
+          <View style={[styles.avatarCircle, styles.skeletonBlock]} />
+          <View style={styles.rowText}>
+            <View style={[styles.skeletonBlock, styles.skeletonTitle]} />
+            <View style={[styles.skeletonBlock, styles.skeletonSubtitle]} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** Illustrated placeholder shown when the user has no conversations yet. */
+function EmptyConversations() {
+  const styles = useThemedStyles(createStyles);
+
+  return (
+    <View style={styles.emptyState} testID="chat-list-empty">
+      <Text style={styles.emptyIllustration}>💬</Text>
+      <Text style={styles.emptyTitle}>No conversations yet</Text>
+      <Text style={styles.empty}>Search for a contact above to start chatting</Text>
+    </View>
+  );
+}
+
 /**
  * Teams/Slack-style chat list: a searchable contact directory that swaps to
  * the conversation list once the search query is cleared.
@@ -99,6 +135,10 @@ function Avatar({ id, online, testID }) {
  * @param {(query: string) => Promise<Array>} [props.onSearchUsers]
  * @param {() => void} [props.onRefresh]
  * @param {boolean} [props.isRefreshing]
+ * @param {boolean} [props.isLoading] - Shows skeleton rows while the first conversation
+ *   list fetch is still in flight.
+ * @param {(peerId: string) => void} [props.onMarkRead] - Swipe action: mark a
+ *   conversation read without opening it.
  * @param {() => void} [props.onOpenSettings]
  */
 export default function ChatListScreen({
@@ -107,6 +147,8 @@ export default function ChatListScreen({
   onSearchUsers,
   onRefresh,
   isRefreshing = false,
+  isLoading = false,
+  onMarkRead,
   onOpenSettings,
 }) {
   const { colors } = useTheme();
@@ -152,6 +194,98 @@ export default function ChatListScreen({
   }, [query, runSearch]);
 
   const isSearchMode = query.trim().length > 0;
+  // While a search request is in flight the previous results are hidden, so
+  // stale matches for an older query are never shown next to the spinner.
+  const listData = isSearchMode ? (isSearching ? [] : results) : conversations;
+
+  const renderContactRow = useCallback(
+    contact => (
+      <Pressable
+        onPress={() => onOpenConversation?.(contact.userId)}
+        accessibilityRole="button"
+        accessibilityLabel={`Chat with ${contact.userId}`}
+        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+        testID="chat-list-contact-row">
+        <Avatar id={contact.userId} online={contact.online} testID="chat-list-contact-avatar" />
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>{contact.userId}</Text>
+          <Text style={styles.rowSubtitle}>{contact.online ? 'Online' : 'Offline'}</Text>
+        </View>
+      </Pressable>
+    ),
+    [onOpenConversation, styles],
+  );
+
+  const renderConversationRow = useCallback(
+    conversation => {
+      const hasUnread = conversation.unreadCount > 0;
+      const actions =
+        onMarkRead && hasUnread
+          ? [
+              {
+                key: 'mark-read',
+                label: 'Mark read',
+                accessibilityLabel: `Mark conversation with ${conversation.peerId} as read`,
+                testID: 'chat-list-mark-read',
+                onPress: () => onMarkRead(conversation.peerId),
+              },
+            ]
+          : [];
+
+      return (
+        <SwipeableRow actions={actions}>
+          <Pressable
+            onPress={() => onOpenConversation?.(conversation.peerId)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open conversation with ${conversation.peerId}`}
+            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            testID="chat-list-row">
+            <Avatar
+              id={conversation.peerId}
+              online={conversation.online}
+              testID="chat-list-avatar"
+            />
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{conversation.peerId}</Text>
+              <Text style={styles.rowSubtitle} numberOfLines={1}>
+                {conversation.lastMessage?.body || 'No messages yet'}
+              </Text>
+            </View>
+            <View style={styles.rowMeta}>
+              <Text style={styles.rowTimestamp}>
+                {formatConversationTimestamp(conversation.lastMessage?.createdAt)}
+              </Text>
+              {hasUnread ? (
+                <View style={styles.unreadBadge} testID="chat-list-unread-badge">
+                  <Text style={styles.unreadBadgeText}>{conversation.unreadCount}</Text>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        </SwipeableRow>
+      );
+    },
+    [onMarkRead, onOpenConversation, styles],
+  );
+
+  const renderItem = useCallback(
+    ({ item }) => (isSearchMode ? renderContactRow(item) : renderConversationRow(item)),
+    [isSearchMode, renderContactRow, renderConversationRow],
+  );
+
+  let emptyComponent = null;
+  if (isSearchMode) {
+    emptyComponent =
+      !isSearching && hasSearched ? (
+        <Text style={styles.empty} testID="chat-list-empty">
+          No matching contacts
+        </Text>
+      ) : null;
+  } else if (isLoading) {
+    emptyComponent = <ConversationSkeleton />;
+  } else {
+    emptyComponent = <EmptyConversations />;
+  }
 
   return (
     <View style={styles.root} testID="chat-list-root">
@@ -178,89 +312,34 @@ export default function ChatListScreen({
         testID="chat-list-search-input"
       />
 
-      <ScrollView
+      <FlatList
+        testID="chat-list"
+        data={listData}
+        keyExtractor={item => (isSearchMode ? item.userId : item.conversationId)}
+        renderItem={renderItem}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        // Virtualization tuning so a long conversation/contact list mounts a
+        // bounded number of rows instead of all of them at once.
+        removeClippedSubviews
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={11}
+        ListHeaderComponent={
+          isSearchMode && isSearching ? (
+            <View style={styles.statusRow} testID="chat-list-searching">
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={styles.statusText}>Searching…</Text>
+            </View>
+          ) : null
+        }
+        ListEmptyComponent={emptyComponent}
         refreshControl={
           onRefresh ? (
             <RefreshControl refreshing={Boolean(isRefreshing)} onRefresh={onRefresh} />
           ) : undefined
-        }>
-        {isSearchMode ? (
-          <>
-            {isSearching ? (
-              <View style={styles.statusRow} testID="chat-list-searching">
-                <ActivityIndicator size="small" color={colors.textSecondary} />
-                <Text style={styles.statusText}>Searching…</Text>
-              </View>
-            ) : null}
-            {!isSearching && results.length > 0
-              ? results.map(contact => (
-                  <Pressable
-                    key={contact.userId}
-                    onPress={() => onOpenConversation?.(contact.userId)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Chat with ${contact.userId}`}
-                    style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-                    testID="chat-list-contact-row">
-                    <Avatar
-                      id={contact.userId}
-                      online={contact.online}
-                      testID="chat-list-contact-avatar"
-                    />
-                    <View style={styles.rowText}>
-                      <Text style={styles.rowTitle}>{contact.userId}</Text>
-                      <Text style={styles.rowSubtitle}>
-                        {contact.online ? 'Online' : 'Offline'}
-                      </Text>
-                    </View>
-                  </Pressable>
-                ))
-              : null}
-            {!isSearching && hasSearched && results.length === 0 ? (
-              <Text style={styles.empty} testID="chat-list-empty">
-                No matching contacts
-              </Text>
-            ) : null}
-          </>
-        ) : conversations.length > 0 ? (
-          conversations.map(conversation => (
-            <Pressable
-              key={conversation.conversationId}
-              onPress={() => onOpenConversation?.(conversation.peerId)}
-              accessibilityRole="button"
-              accessibilityLabel={`Open conversation with ${conversation.peerId}`}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-              testID="chat-list-row">
-              <Avatar
-                id={conversation.peerId}
-                online={conversation.online}
-                testID="chat-list-avatar"
-              />
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{conversation.peerId}</Text>
-                <Text style={styles.rowSubtitle} numberOfLines={1}>
-                  {conversation.lastMessage?.body || 'No messages yet'}
-                </Text>
-              </View>
-              <View style={styles.rowMeta}>
-                <Text style={styles.rowTimestamp}>
-                  {formatConversationTimestamp(conversation.lastMessage?.createdAt)}
-                </Text>
-                {conversation.unreadCount > 0 ? (
-                  <View style={styles.unreadBadge} testID="chat-list-unread-badge">
-                    <Text style={styles.unreadBadgeText}>{conversation.unreadCount}</Text>
-                  </View>
-                ) : null}
-              </View>
-            </Pressable>
-          ))
-        ) : (
-          <Text style={styles.empty} testID="chat-list-empty">
-            No conversations yet — search for a contact to start chatting
-          </Text>
-        )}
-      </ScrollView>
+        }
+      />
     </View>
   );
 }
@@ -412,6 +491,32 @@ const createStyles = colors =>
     },
     presenceDotOffline: {
       backgroundColor: colors.textSecondary,
+    },
+    skeletonBlock: {
+      backgroundColor: colors.surfaceControl,
+      borderRadius: radius.sm,
+      opacity: 0.6,
+    },
+    skeletonTitle: {
+      height: 12,
+      width: '45%',
+    },
+    skeletonSubtitle: {
+      height: 10,
+      width: '70%',
+      marginTop: 6,
+    },
+    emptyState: {
+      alignItems: 'center',
+      marginTop: spacing.xl,
+      gap: spacing.xs,
+    },
+    emptyIllustration: {
+      fontSize: 48,
+    },
+    emptyTitle: {
+      ...typography.sectionTitle,
+      color: colors.textPrimary,
     },
     empty: {
       color: colors.textSecondary,

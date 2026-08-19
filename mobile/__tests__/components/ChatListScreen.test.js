@@ -71,6 +71,35 @@ describe('ChatListScreen', () => {
     expect(onOpenConversation).toHaveBeenCalledWith('user-carol');
   });
 
+  test('shows skeleton rows while the conversation list is loading', () => {
+    const tree = render({ conversations: [], isLoading: true, onOpenConversation: jest.fn() });
+    expect(findByTestId(tree, 'chat-list-skeleton')).not.toBeNull();
+    expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
+  });
+
+  test('swiping a conversation exposes a mark-read action that reports the peerId', () => {
+    const onMarkRead = jest.fn();
+    const tree = render({
+      conversations: [makeConversation({ peerId: 'user-carol', unreadCount: 2 })],
+      onOpenConversation: jest.fn(),
+      onMarkRead,
+    });
+    const action = findByTestId(tree, 'chat-list-mark-read');
+    act(() => {
+      action.props.onPress();
+    });
+    expect(onMarkRead).toHaveBeenCalledWith('user-carol');
+  });
+
+  test('offers no mark-read action for a conversation that is already read', () => {
+    const tree = render({
+      conversations: [makeConversation({ unreadCount: 0 })],
+      onOpenConversation: jest.fn(),
+      onMarkRead: jest.fn(),
+    });
+    expect(findByTestId(tree, 'chat-list-mark-read')).toBeNull();
+  });
+
   test('searching swaps to contact results and tapping a result opens a conversation', async () => {
     jest.useFakeTimers();
     const onOpenConversation = jest.fn();

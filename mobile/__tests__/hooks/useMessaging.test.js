@@ -338,6 +338,26 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
   });
 
+  test('handleMessageDelivered merges a delivery receipt into the message already held', () => {
+    const { resultRef } = setup();
+    act(() => {
+      resultRef.current.handleMessageDelivered({
+        messageId: 'm1',
+        recipientId: 'bob',
+        deliveredTo: [],
+      });
+    });
+    act(() => {
+      resultRef.current.handleMessageDelivered({
+        messageId: 'm1',
+        recipientId: 'bob',
+        deliveredTo: ['bob'],
+      });
+    });
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0].deliveredTo).toEqual(['bob']);
+  });
+
   test('handleMessageRead marks own sent messages to that peer as read', () => {
     const { resultRef } = setup();
     act(() => {

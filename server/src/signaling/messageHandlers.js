@@ -199,12 +199,25 @@ function registerMessageHandlers(socket, { io, state }) {
     deliverMessage(io, state, message);
     acknowledgeSuccess(socket, ack, 'message.send', { message });
 
+    // A connected recipient received the message on one of their live sockets
+    // above, so record the delivery receipt. The sender's UI uses it to move
+    // the message's status from "sent" to "delivered".
+    let deliveredMessage = message;
+    if ((state.userConnections.get(recipientId)?.size ?? 0) > 0) {
+      try {
+        deliveredMessage =
+          (await state.messageStore.markDelivered(message.messageId, recipientId)) ?? message;
+      } catch (error) {
+        console.error(`[messages] failed to mark message delivered: ${error?.message}`);
+      }
+    }
+
     // Confirm back to the sender that the message left the server.
     emitToUserSockets(io, senderId, 'message.delivered', {
       version: SIGNALING_VERSION,
       conversationId: message.conversationId,
       messageId: message.messageId,
-      message,
+      message: deliveredMessage,
     });
   });
 

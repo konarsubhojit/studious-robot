@@ -127,6 +127,52 @@ test('message.send delivers to the recipient and acks the sender', async (t) => 
   assert.equal(confirmation.messageId, ack.message.messageId);
 });
 
+test('message.send records a delivery receipt when the recipient is connected', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  const bobSession = await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const delivered = new Promise((resolve) => alice.once('message.delivered', resolve));
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'hello bob',
+  });
+
+  const confirmation = await delivered;
+  assert.deepEqual(confirmation.message.deliveredTo, ['msg-bob']);
+});
+
+test('message.send reports no delivery receipt while the recipient is offline', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'msg-alice');
+  await createSession(url, 'msg-bob');
+
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const delivered = new Promise((resolve) => alice.once('message.delivered', resolve));
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'msg-bob',
+    body: 'hello bob',
+  });
+
+  const confirmation = await delivered;
+  assert.deepEqual(confirmation.message.deliveredTo, []);
+});
+
 test('message.send rejects an unauthenticated sender', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);

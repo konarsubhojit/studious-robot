@@ -106,6 +106,48 @@ describe('useChatSync', () => {
     expect(resultRef.current.peerPresence).toBeNull();
   });
 
+  test('isLoadingConversations is true only while the first conversation fetch is in flight', async () => {
+    let resolveFetch;
+    const fetchConversations = jest.fn(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { resultRef } = await setup({ fetchConversations });
+    expect(resultRef.current.isLoadingConversations).toBe(true);
+
+    await act(async () => {
+      resolveFetch();
+      await Promise.resolve();
+    });
+    expect(resultRef.current.isLoadingConversations).toBe(false);
+  });
+
+  test('isLoadingMessages tracks the open conversation history fetch', async () => {
+    let resolveFetch;
+    const fetchMessagesForPeer = jest.fn(
+      () =>
+        new Promise(resolve => {
+          resolveFetch = resolve;
+        }),
+    );
+    const { resultRef, params, tree } = await setup({ fetchMessagesForPeer });
+    expect(resultRef.current.isLoadingMessages).toBe(false);
+
+    await act(async () => {
+      tree.update(<TestHook resultRef={resultRef} params={{ ...params, chatPeerId: 'user-bob' }} />);
+      await Promise.resolve();
+    });
+    expect(resultRef.current.isLoadingMessages).toBe(true);
+
+    await act(async () => {
+      resolveFetch([]);
+      await Promise.resolve();
+    });
+    expect(resultRef.current.isLoadingMessages).toBe(false);
+  });
+
   test('handleRefreshConversations toggles isRefreshingConversations around the fetch', async () => {
     let resolveFetch;
     const fetchConversations = jest.fn(
