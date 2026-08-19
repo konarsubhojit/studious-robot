@@ -51,6 +51,7 @@ Every `call.*`/`rtc.*` client event requires a socket authenticated with `auth.s
 | `call.decline`   | `{ version, callId }`                   | `{ ok, version, event, call }`     | Callee-only. |
 | `call.cancel`    | `{ version, callId }`                   | `{ ok, version, event, call }`     | Caller-only. |
 | `call.end`       | `{ version, callId }`                   | `{ ok, version, event, call }`     | Either participant may end an active call. |
+| `call.connected` | `{ version, callId, iceState? }`        | `{ ok, version, event, call }`     | Participants only. Reports the local `RTCPeerConnection` state: `connected`/`completed` advances the call to `in_call` (the first report wins, later ones are idempotent), while `disconnected`/`failed` ends it with `media_failed`. Without this event a call never leaves `connecting_media` and is force-ended by the stale-call sweep with `media_connect_timeout`. |
 | `rtc.offer`      | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
 | `rtc.answer`     | `{ version, callId, sdp }`              | `{ ok, version, event, callId }`   | Accepted call participants only. |
 | `rtc.candidate`  | `{ version, callId, candidate }`        | `{ ok, version, event, callId }`   | Accepted call participants only. |

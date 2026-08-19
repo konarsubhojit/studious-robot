@@ -167,6 +167,20 @@ export default function useScreenShare({
         pc.addTrack?.(videoTrack, stream);
       }
 
+      // A share that shows nothing on the remote side is almost always a track
+      // that never reached the peer connection, so record exactly what was
+      // attached and in which direction the transceiver ends up negotiated.
+      logInfo('Screen track attached to peer connection', {
+        replacedSender: Boolean(videoSender),
+        trackId: videoTrack?.id ?? null,
+        trackEnabled: videoTrack?.enabled !== false,
+        direction:
+          pc
+            .getTransceivers?.()
+            ?.find(transceiver => transceiver.sender?.track?.id === videoTrack?.id)?.direction ??
+          null,
+      });
+
       // Keep the camera track alive (but paused) so it can be restored without
       // re-prompting for permissions or re-opening the camera device.
       if (cameraTrack) {
@@ -206,6 +220,9 @@ export default function useScreenShare({
 
       try {
         await renegotiateRef.current?.();
+        logInfo('Renegotiation after screen share start completed', {
+          signalingState: pc.signalingState ?? null,
+        });
       } catch (error) {
         logWarn('Renegotiation after screen share start failed', {
           message: error?.message,
