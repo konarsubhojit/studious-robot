@@ -10,7 +10,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import SafeRTCView from '../SafeRTCView';
 import { CALL_END_REASON_LABELS } from '../hooks/useCallFlow';
 import { formatCallDuration } from '../callUx';
 import { colors, radius, sizes, spacing } from '../theme';
@@ -141,14 +140,13 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
 }
 
 /**
- * Pre-call lobby: branding, last-call summary, self preview, connection inputs,
- * primary actions, and the settings panel.
+ * Pre-call lobby: branding, last-call summary, recent calls, the contact
+ * directory and the call form.
  *
- * The lobby exposes two ways to start a call:
- *   1. **Call** – server-authoritative flow using `userId` / `calleeId`.
- *      The server manages call state and drives the outgoing/incoming screens.
- *   2. **Join Room** – legacy direct-room flow using a shared `roomId`.
- *      Only shown when `developerMode` is enabled (toggled in Settings).
+ * Calls are placed through the server-authoritative flow using `userId` /
+ * `calleeId`; the server manages call state and drives the outgoing/incoming
+ * screens.  The developer tools (diagnostic log export and the media settings
+ * panel) are shown only when `developerMode` is enabled in Settings.
  */
 export default function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
@@ -165,16 +163,8 @@ export default function Lobby({
   // ── Contact directory ─────────────────────────────────────────────────────
   onSearchUsers,
   onSelectContact,
-  // ── Legacy room-join flow ────────────────────────────────────────────────
+  // ── Developer tools ───────────────────────────────────────────────────────
   developerMode,
-  signalingUrl,
-  onChangeSignalingUrl,
-  roomId,
-  onChangeRoomId,
-  localPreviewStreamUrl,
-  hasLocalStream,
-  onStartPreview,
-  onJoinRoom,
   isSettingsVisible,
   onToggleSettings,
   onExportLogs,
@@ -328,16 +318,6 @@ export default function Lobby({
           </View>
         ) : null}
 
-        {hasLocalStream ? (
-          <SafeRTCView
-            fallbackLabel="Preview unavailable"
-            style={styles.previewStream}
-            streamURL={localPreviewStreamUrl}
-            objectFit="cover"
-            mirror
-          />
-        ) : null}
-
         {/* ── Server-authoritative call section ─────────────────────────── */}
         <Text style={styles.sectionTitle}>Call</Text>
 
@@ -384,34 +364,10 @@ export default function Lobby({
 
         <ContactDirectory onSearchUsers={onSearchUsers} onSelectContact={onSelectContact} />
 
-        {/* ── Legacy room-join section (developer mode only) ─────────────── */}
+        {/* ── Developer tools (developer mode only) ──────────────────────── */}
         {developerMode ? (
-          <View testID="developer-room-section">
-            <Text style={styles.sectionTitle}>Join Room</Text>
-
-            <ClearableInput
-              value={signalingUrl}
-              onChangeText={onChangeSignalingUrl}
-              placeholder="Signaling URL"
-              accessibilityLabel="Signaling URL"
-              testID="input-signaling-url"
-            />
-            <ClearableInput
-              value={roomId}
-              onChangeText={onChangeRoomId}
-              placeholder="Room ID"
-              accessibilityLabel="Room ID"
-              testID="input-room-id"
-            />
-
-            <View style={styles.row}>
-              <AppButton
-                title="Start Preview"
-                onPress={onStartPreview}
-                testID="lobby-start-preview"
-              />
-              <AppButton title="Join Room" onPress={onJoinRoom} testID="lobby-join-room" />
-            </View>
+          <View testID="developer-tools-section">
+            <Text style={styles.sectionTitle}>Developer tools</Text>
 
             <View style={styles.row}>
               <AppButton
@@ -570,15 +526,6 @@ const styles = StyleSheet.create({
   summaryDismissText: {
     color: colors.textSecondary,
     fontWeight: '700',
-  },
-  previewStream: {
-    height: 220,
-    borderRadius: radius.lg,
-    marginBottom: spacing.lg,
-    overflow: 'hidden',
-    backgroundColor: colors.backgroundAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   inputRow: {
     position: 'relative',

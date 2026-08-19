@@ -31,14 +31,6 @@ const baseProps = {
   calleeId: 'user-bob',
   onChangeCalleeId: jest.fn(),
   onCall: jest.fn(),
-  signalingUrl: 'http://localhost:4173',
-  onChangeSignalingUrl: jest.fn(),
-  roomId: '',
-  onChangeRoomId: jest.fn(),
-  localPreviewStreamUrl: null,
-  hasLocalStream: false,
-  onStartPreview: jest.fn(),
-  onJoinRoom: jest.fn(),
   isSettingsVisible: false,
   onToggleSettings: jest.fn(),
   onExportLogs: jest.fn(),
@@ -192,34 +184,44 @@ describe('Lobby – call history section', () => {
   });
 });
 
-describe('Lobby – developer mode (legacy room-join section)', () => {
+describe('Lobby – developer mode (developer tools section)', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('hides the legacy room-join section by default (developerMode off)', () => {
+  test('hides the developer tools by default (developerMode off)', () => {
     let tree;
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} developerMode={false} />);
     });
-    expect(tree.root.findAll(n => n.props.testID === 'developer-room-section')).toHaveLength(0);
-    expect(tree.root.findAll(n => n.props.testID === 'input-signaling-url')).toHaveLength(0);
-    expect(tree.root.findAll(n => n.props.testID === 'input-room-id')).toHaveLength(0);
-    expect(tree.root.findAll(n => n.props.testID === 'lobby-join-room')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'developer-tools-section')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-export-logs')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-settings')).toHaveLength(0);
   });
 
-  test('shows the legacy room-join section when developerMode is on', () => {
+  test('shows the developer tools when developerMode is on', () => {
     let tree;
     act(() => {
       tree = renderer.create(<Lobby {...baseProps} developerMode />);
     });
     expect(
-      tree.root.findAll(n => n.props.testID === 'developer-room-section').length,
+      tree.root.findAll(n => n.props.testID === 'developer-tools-section').length,
     ).toBeGreaterThanOrEqual(1);
     expect(
-      tree.root.findAll(n => n.props.testID === 'input-signaling-url').length,
+      tree.root.findAll(n => n.props.testID === 'lobby-export-logs').length,
     ).toBeGreaterThanOrEqual(1);
     expect(
-      tree.root.findAll(n => n.props.testID === 'lobby-join-room').length,
+      tree.root.findAll(n => n.props.testID === 'lobby-settings').length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  test('no room-join affordances remain', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} developerMode />);
+    });
+    expect(tree.root.findAll(n => n.props.testID === 'input-signaling-url')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'input-room-id')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-join-room')).toHaveLength(0);
+    expect(tree.root.findAll(n => n.props.testID === 'lobby-start-preview')).toHaveLength(0);
   });
 
   test('the server-authoritative Call button is shown regardless of developerMode', () => {
