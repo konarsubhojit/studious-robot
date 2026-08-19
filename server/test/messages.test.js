@@ -261,7 +261,7 @@ test('message.send rejects a messageId that is not url-safe', async (t) => {
   assert.equal(history.body.messages.length, 0);
 });
 
-test('message.delete removes the sender own message for both participants', async (t) => {
+test('message.delete tombstones the sender own message for both participants', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);
 
@@ -295,11 +295,18 @@ test('message.delete removes the sender own message for both participants', asyn
   const notice = await peerNotified;
   assert.equal(notice.messageId, messageId);
   assert.equal(notice.deletedBy, 'msg-alice');
+  assert.equal(notice.message.body, '');
+  assert.ok(notice.message.deletedAt);
 
+  // The content is gone for both participants, but the tombstone remains so a
+  // reply quoting it still resolves.
   const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
-  assert.equal(history.body.messages.length, 0);
+  assert.equal(history.body.messages.length, 1);
+  assert.equal(history.body.messages[0].body, '');
+  assert.ok(history.body.messages[0].deletedAt);
   const peerHistory = await getJson(url, '/messages?peerId=msg-alice', bobSession);
-  assert.equal(peerHistory.body.messages.length, 0);
+  assert.equal(peerHistory.body.messages.length, 1);
+  assert.equal(peerHistory.body.messages[0].body, '');
 });
 
 test('message.delete refuses to delete the peer message', async (t) => {

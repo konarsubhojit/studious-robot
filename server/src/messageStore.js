@@ -18,6 +18,7 @@
  *   listConversations(userId)                   → Promise<conversationSummary[]>
  *   markRead(conversationId, userId)            → Promise<number>
  *   deleteMessage(conversationId, messageId, userId) → Promise<message|null>
+ *   reactToMessage({ conversationId, messageId, userId, emoji, action }) → Promise<message|null>
  *   close()                                     → Promise<void>
  *
  * Message document shape
@@ -28,10 +29,20 @@
  *     senderId:      string,
  *     recipientId:   string,
  *     body:          string,
+ *     type:          'text'|'image'|'file'|'voice'|'system',
+ *     attachment:    object | null,   // { url, mimeType, sizeBytes, … }
+ *     replyTo:       string | null,   // messageId this message quotes
+ *     reactions:     Record<string, string[]>,  // emoji → reacting userIds
+ *     deletedAt:     string (ISO 8601) | null,  // tombstone, see deleteMessage
  *     createdAt:     string (ISO 8601),
  *     deliveredTo:   string[],
  *     readAt:        string (ISO 8601) | null,
  *   }
+ *
+ * Rows written before rich messaging existed carry none of `type`,
+ * `attachment`, `replyTo`, `reactions` or `deletedAt`; every reader therefore
+ * defaults the type to `"text"` (see `@wetalk/shared`'s `messageTypeOf`) and
+ * treats the rest as absent.
  *
  * Conversation summary shape (returned by `listConversations`)
  * ──────────────────────────────────────────────────────────
@@ -53,7 +64,11 @@ const { randomUUID } = require('crypto');
 // Maximum accepted message body length, in characters: part of the wire
 // contract, so it is owned by the shared package and enforced identically by
 // the client and the `message.send` handler.
-const { MAX_MESSAGE_BODY_LENGTH } = require('../../shared');
+const {
+  DEFAULT_MESSAGE_TYPE,
+  MAX_MESSAGE_BODY_LENGTH,
+  isSupportedMessageType,
+} = require('../../shared');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,9 +130,34 @@ function nextTimestamp() {
 }
 
 /**
+ * Normalise a reactions map: emoji → unique reacting userIds, dropping
+ * anything that is not a non-empty array of ids.
+ *
+ * @param {unknown} value
+ * @returns {Record<string, string[]>}
+ */
+function normaliseReactions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  /** @type {Record<string, string[]>} */
+  const reactions = {};
+  for (const [emoji, userIds] of Object.entries(value)) {
+    if (!Array.isArray(userIds)) continue;
+    const unique = [...new Set(userIds.filter((userId) => typeof userId === 'string' && userId))];
+    if (unique.length) reactions[emoji] = unique;
+  }
+  return reactions;
+}
+
+/**
  * Build a complete message document, filling in server-owned fields.
  *
- * @param {{ conversationId?: string, senderId: string, recipientId: string, body: string }} message
+ * The rich fields are always materialised (rather than omitted when unused) so
+ * every newly written row has one shape; readers still default a *legacy* row
+ * with no `type` to `"text"`.
+ *
+ * @param {{ conversationId?: string, senderId: string, recipientId: string, body: string,
+ *   type?: string, attachment?: object|null, replyTo?: string|null,
+ *   reactions?: Record<string, string[]>, deletedAt?: string|null }} message
  * @returns {object}
  */
 function createMessageRecord(message) {
@@ -128,10 +168,60 @@ function createMessageRecord(message) {
     senderId: message.senderId,
     recipientId: message.recipientId,
     body: message.body,
+    // An unknown type is never persisted: the store owns what it can describe,
+    // and a client sending one is rejected long before this point.
+    type: isSupportedMessageType(message.type) ? message.type : DEFAULT_MESSAGE_TYPE,
+    attachment: message.attachment ?? null,
+    replyTo: message.replyTo ?? null,
+    reactions: normaliseReactions(message.reactions),
+    deletedAt: message.deletedAt ?? null,
     createdAt: message.createdAt || nextTimestamp(),
     deliveredTo: Array.isArray(message.deliveredTo) ? [...message.deliveredTo] : [],
     readAt: message.readAt ?? null,
   };
+}
+
+/**
+ * Redact a message in place, leaving a tombstone: the content is gone for both
+ * participants, but the row survives so a reply that quotes it still resolves
+ * (and renders "Message deleted" instead of a dangling reference).
+ *
+ * @param {object} message
+ * @param {string} deletedAt
+ * @returns {object} the same object, mutated.
+ */
+function applyTombstone(message, deletedAt) {
+  message.body = '';
+  message.attachment = null;
+  message.reactions = {};
+  message.deletedAt = deletedAt;
+  return message;
+}
+
+/**
+ * Apply one reaction change to a reactions map, returning a new map.
+ *
+ * Idempotent in both directions: adding a reaction a user already left, or
+ * removing one they never left, leaves the map unchanged — so a retried
+ * `message.react` converges rather than toggling.
+ *
+ * @param {Record<string, string[]>} reactions
+ * @param {string} emoji
+ * @param {string} userId
+ * @param {'add'|'remove'} action
+ * @returns {Record<string, string[]>}
+ */
+function applyReaction(reactions, emoji, userId, action) {
+  const next = { ...normaliseReactions(reactions) };
+  const current = next[emoji] ?? [];
+  if (action === 'add') {
+    if (!current.includes(userId)) next[emoji] = [...current, userId];
+    return next;
+  }
+  const remaining = current.filter((candidate) => candidate !== userId);
+  if (remaining.length) next[emoji] = remaining;
+  else delete next[emoji];
+  return next;
 }
 
 /**
@@ -308,17 +398,31 @@ function createMemoryMessageStore() {
     },
 
     async deleteMessage(conversationId, messageId, userId) {
-      const index = messages.findIndex(
+      const message = messages.find(
         (candidate) =>
           candidate.conversationId === conversationId &&
           candidate.messageId === messageId &&
           // Only the author may delete: a participant cannot remove what the
           // other person said.
-          candidate.senderId === userId
+          candidate.senderId === userId &&
+          // Idempotent: a repeated delete finds an already-tombstoned row and
+          // reports "not found" rather than re-notifying both participants.
+          !candidate.deletedAt
       );
-      if (index === -1) return null;
-      const [removed] = messages.splice(index, 1);
-      return { ...removed };
+      if (!message) return null;
+      return { ...applyTombstone(message, nextTimestamp()) };
+    },
+
+    async reactToMessage({ conversationId, messageId, userId, emoji, action } = {}) {
+      const message = messages.find(
+        (candidate) =>
+          candidate.conversationId === conversationId &&
+          candidate.messageId === messageId &&
+          !candidate.deletedAt
+      );
+      if (!message) return null;
+      message.reactions = applyReaction(message.reactions, emoji, userId, action);
+      return { ...message };
     },
 
     async close() {
@@ -633,11 +737,37 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       const { messages } = await connect();
       // The `senderId` in the filter is the authorisation check: a delete for
       // someone else's message matches nothing and reports "not found".
-      // Shard-key (`conversationId`) prefixed so Cosmos can route the delete.
+      // Shard-key (`conversationId`) prefixed so Cosmos can route the write.
       const existing = await messages.findOne({ conversationId, messageId, senderId: userId });
-      if (!existing?.messageId) return null;
-      await messages.deleteOne({ conversationId, messageId, senderId: userId });
+      if (!existing?.messageId || existing.deletedAt) return null;
       const { _id, ...rest } = existing;
+      // A tombstone rather than a deletion: the content goes, the row stays so
+      // a reply quoting it still resolves on both clients.
+      const tombstone = applyTombstone(rest, nextTimestamp());
+      await messages.updateOne(
+        { conversationId, messageId, senderId: userId },
+        {
+          $set: {
+            body: tombstone.body,
+            attachment: tombstone.attachment,
+            reactions: tombstone.reactions,
+            deletedAt: tombstone.deletedAt,
+          },
+        }
+      );
+      return tombstone;
+    },
+
+    async reactToMessage({ conversationId, messageId, userId, emoji, action } = {}) {
+      const { messages } = await connect();
+      const existing = await messages.findOne({ conversationId, messageId });
+      if (!existing?.messageId || existing.deletedAt) return null;
+      const { _id, ...rest } = existing;
+      rest.reactions = applyReaction(rest.reactions, emoji, userId, action);
+      await messages.updateOne(
+        { conversationId, messageId },
+        { $set: { reactions: rest.reactions } }
+      );
       return rest;
     },
 
@@ -706,6 +836,7 @@ module.exports = {
   deriveConversationId,
   clampMessageLimit: clampLimit,
   createMessageRecord,
+  applyReaction,
   createMemoryMessageStore,
   createMongoMessageStore,
   createMessageStore,

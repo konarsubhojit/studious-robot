@@ -267,7 +267,7 @@ test('saved messages are snapshots, not live references', async () => {
 
 // ─── listConversations ────────────────────────────────────────────────────────
 
-test('deleteMessage removes only the author own message', async () => {
+test('deleteMessage tombstones only the author own message', async () => {
   const store = createMemoryMessageStore();
   const conversationId = deriveConversationId('alice', 'bob');
   const mine = await store.saveMessage({
@@ -285,14 +285,17 @@ test('deleteMessage removes only the author own message', async () => {
 
   assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'bob'), null);
   const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
-  assert.equal(deleted.body, 'mine');
-  // Idempotent: a repeated delete simply finds nothing.
+  // "Delete for everyone" leaves a tombstone: the content is gone, the row
+  // stays so a reply quoting it still resolves.
+  assert.equal(deleted.body, '');
+  assert.ok(deleted.deletedAt);
+  // Idempotent: a repeated delete finds an already-tombstoned row.
   assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'alice'), null);
 
   const remaining = await store.listMessages({ conversationId });
   assert.deepEqual(
     remaining.map((m) => m.body),
-    ['theirs']
+    ['theirs', '']
   );
 });
 
@@ -497,7 +500,14 @@ function createFakeMongoClient() {
         (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
       );
       if (existing) {
-        return { matchedCount: 1, modifiedCount: 0, upsertedCount: 0 };
+        // `$setOnInsert` is a no-op on an existing document; `$set` (used by
+        // the tombstone/reaction writes) is applied.
+        if (update.$set) Object.assign(existing, update.$set);
+        return {
+          matchedCount: 1,
+          modifiedCount: update.$set ? 1 : 0,
+          upsertedCount: 0,
+        };
       }
       if (options?.upsert) {
         docs.push({ ...update.$setOnInsert });
@@ -737,7 +747,7 @@ test('mongo store saveMessage is idempotent for a repeated messageId', async () 
   await store.close();
 });
 
-test('mongo store deleteMessage only removes the author own message', async () => {
+test('mongo store deleteMessage only tombstones the author own message', async () => {
   const fake = createFakeMongoClient();
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
   const conversationId = deriveConversationId('alice', 'bob');
@@ -751,9 +761,13 @@ test('mongo store deleteMessage only removes the author own message', async () =
 
   assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'bob'), null);
   const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
-  assert.equal(deleted.body, 'mine');
+  assert.equal(deleted.body, '');
+  assert.ok(deleted.deletedAt);
   assert.equal(deleted._id, undefined);
-  assert.deepEqual(await store.listMessages({ conversationId }), []);
+  const remaining = await store.listMessages({ conversationId });
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].body, '');
+  assert.ok(remaining[0].deletedAt);
 
   await store.close();
 });

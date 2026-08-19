@@ -3,6 +3,7 @@
 
 const { s } = require('../schema');
 const { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } = require('./events');
+const { KNOWN_MESSAGE_TYPES, MAX_REACTION_LENGTH } = require('../messages');
 
 /**
  * Payload schema for every signaling event, keyed by event name.
@@ -54,7 +55,32 @@ const callRecord = s.object(
 );
 
 /**
+ * An attachment stored in object storage and referenced by a message.
+ *
+ * Only `url` and `mimeType` are required: the optional dimensions/duration are
+ * rendering hints the sender supplies when it knows them.
+ */
+const attachmentRecord = s.object(
+  {
+    url: s.string({ min: 1, max: 2048, trim: true }),
+    mimeType: s.string({ min: 1, max: 255, trim: true }),
+    sizeBytes: s.number({ min: 0, integer: true }).optional(),
+    name: s.string({ max: 255 }).optional().nullable(),
+    width: s.number({ min: 0, integer: true }).optional().nullable(),
+    height: s.number({ min: 0, integer: true }).optional().nullable(),
+    durationMs: s.number({ min: 0, integer: true }).optional().nullable(),
+    thumbnailUrl: s.string({ max: 2048 }).optional().nullable(),
+  },
+  { passthrough: true }
+);
+
+/**
  * A persisted chat message row.
+ *
+ * `type` is deliberately a free-form string rather than an enum: a client must
+ * be able to *receive* a type it does not understand (and render a neutral
+ * placeholder) instead of dropping the event. Legacy rows carry no `type` at
+ * all, which readers default to `"text"`.
  *
  * @typedef {object} MessageRecord
  * @property {string} messageId
@@ -70,6 +96,11 @@ const messageRecord = s.object(
     senderId: idField,
     recipientId: idField,
     body: s.string(),
+    type: s.string({ max: 32 }).optional(),
+    attachment: attachmentRecord.optional().nullable(),
+    replyTo: s.string({ max: 128 }).optional().nullable(),
+    reactions: s.record(s.array(s.id())).optional().nullable(),
+    deletedAt: s.string().optional().nullable(),
   },
   { passthrough: true }
 );
@@ -121,7 +152,14 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
   [CLIENT_EVENTS.MESSAGE_SEND]: s.object({
     version: versionField,
     recipientId: idField,
-    body: s.string({ min: 1, max: MAX_MESSAGE_BODY_LENGTH, trim: true }),
+    // An attachment message may carry an empty body (the caption is optional),
+    // so emptiness is checked by the handler against the message `type` rather
+    // than here. Outbound `type` *is* an enum: a client may only ever send a
+    // type this protocol version defines.
+    body: s.string({ max: MAX_MESSAGE_BODY_LENGTH, trim: true }),
+    type: s.enum(KNOWN_MESSAGE_TYPES).optional(),
+    attachment: attachmentRecord.optional().nullable(),
+    replyTo: s.id().optional().nullable(),
     // Client-generated id for the message, so a send that is replayed from the
     // sender's durable outbox (reconnect, app relaunch) is stored once instead
     // of once per attempt: the store upserts on `{ conversationId, messageId }`.
@@ -134,6 +172,13 @@ const CLIENT_EVENT_SCHEMAS = Object.freeze({
     // without the client having to know the server's conversation id.
     peerId: idField,
     messageId: idField,
+  }),
+  [CLIENT_EVENTS.MESSAGE_REACT]: s.object({
+    version: versionField,
+    peerId: idField,
+    messageId: idField,
+    emoji: s.string({ min: 1, max: MAX_REACTION_LENGTH, trim: true }),
+    action: s.enum(['add', 'remove']),
   }),
   [CLIENT_EVENTS.MESSAGE_TYPING]: s.object({
     version: versionField,
@@ -215,6 +260,19 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     conversationId: s.id().optional(),
     messageId: idField,
     deletedBy: idField,
+    // The tombstone left behind by a "delete for everyone", so a client can
+    // replace the bubble in place instead of dropping it (and so a reply that
+    // quotes it still resolves).
+    message: messageRecord.optional().nullable(),
+  }),
+  [SERVER_EVENTS.MESSAGE_REACTION]: s.object({
+    version: inboundVersionField,
+    conversationId: s.id().optional(),
+    messageId: idField,
+    reactions: s.record(s.array(s.id())),
+    actorId: idField,
+    emoji: s.string({ min: 1 }),
+    action: s.enum(['add', 'remove']),
   }),
   [SERVER_EVENTS.MESSAGE_READ]: s.object({
     version: inboundVersionField,
