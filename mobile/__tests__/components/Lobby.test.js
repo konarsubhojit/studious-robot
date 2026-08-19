@@ -325,3 +325,38 @@ describe('Lobby – contact directory', () => {
     jest.useRealTimers();
   });
 });
+
+describe('Lobby – server unreachable', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('explains the failure and offers a retry action', () => {
+    const onRetryConnect = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <Lobby {...baseProps} isServerUnreachable onRetryConnect={onRetryConnect} />,
+      );
+    });
+
+    const banner = tree.root.find(
+      n => typeof n.type === 'string' && n.props.testID === 'offline-banner',
+    );
+    expect(banner.props.accessibilityRole).toBe('alert');
+
+    const retry = tree.root.find(
+      n => n.props?.testID === 'offline-banner-action' && typeof n.props.onPress === 'function',
+    );
+    act(() => {
+      retry.props.onPress();
+    });
+    expect(onRetryConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test('hides the banner while the server is reachable', () => {
+    let tree;
+    act(() => {
+      tree = renderer.create(<Lobby {...baseProps} />);
+    });
+    expect(tree.root.findAll(n => n.props.testID === 'offline-banner')).toHaveLength(0);
+  });
+});

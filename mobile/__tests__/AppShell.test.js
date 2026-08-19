@@ -14,7 +14,7 @@ jest.mock('../src/appLogger', () => ({
   getLogsForExport: jest.fn(async () => ''),
 }));
 
-jest.mock('../src/observability', () => ({ getDegradations: () => [] }));
+jest.mock('../src/observability', () => ({ getDegradations: jest.fn(() => []) }));
 
 jest.mock('../src/hooks/useCallFlow', () => ({
   __esModule: true,
@@ -77,6 +77,7 @@ jest.mock('../src/components/InCallBanner', () => {
 });
 
 import React from 'react';
+import { AccessibilityInfo, Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import renderer, { act } from 'react-test-renderer';
 import AppShell from '../src/AppShell';
@@ -84,6 +85,7 @@ import { CALL_STATES } from '../src/call/callStateMachine';
 import { CallProvider, useCall } from '../src/call/CallProvider';
 import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
+import { getDegradations } from '../src/observability';
 
 function makeCallFlow(overrides = {}) {
   return {
@@ -289,5 +291,71 @@ describe('CallProvider', () => {
       callRef.current.minimizeCallOnNavigate();
     });
     expect(callRef.current.isCallMinimized).toBe(true);
+  });
+});
+
+describe('AppShell accessibility and error states', () => {
+  let announce;
+
+  beforeEach(() => {
+    announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation();
+    announce.mockClear();
+    getDegradations.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    callRef.current = null;
+  });
+
+  test('announces an incoming call to screen readers', async () => {
+    useCallFlow.mockReturnValue(
+      makeCallFlow({
+        callPhase: CALL_STATES.INCOMING_RINGING,
+        incomingCall: { callId: 'call-1', callerId: 'user-alice' },
+      }),
+    );
+    await renderShell();
+
+    expect(announce).toHaveBeenCalledWith('Incoming call from user-alice');
+  });
+
+  test('announces a connected call', async () => {
+    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }));
+    await renderShell();
+
+    expect(announce).toHaveBeenCalledWith('Call connected');
+  });
+
+  test('says nothing while idle', async () => {
+    useCallFlow.mockReturnValue(makeCallFlow());
+    await renderShell();
+
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  test('offers a recovery action for startup degradations', async () => {
+    const openSettings = jest
+      .spyOn(Linking, 'openSettings')
+      .mockImplementation(() => Promise.resolve());
+    getDegradations.mockReturnValue([
+      { source: 'backgroundPush', message: 'Background push handler unavailable' },
+    ]);
+    useCallFlow.mockReturnValue(makeCallFlow());
+    const tree = await renderShell();
+
+    const [banner] = findByTestID(tree, 'startup-degraded-banner');
+    expect(banner.props.accessibilityRole).toBe('alert');
+
+    const action = tree.root.find(
+      node =>
+        node.props?.testID === 'startup-degraded-banner-action' &&
+        typeof node.props.onPress === 'function',
+    );
+    expect(action.props.accessibilityRole).toBe('button');
+    await act(async () => {
+      action.props.onPress();
+    });
+    expect(openSettings).toHaveBeenCalled();
   });
 });

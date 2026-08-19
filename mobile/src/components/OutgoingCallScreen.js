@@ -94,7 +94,9 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
     <View style={styles.container} testID="outgoing-call-screen">
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
-        <Text style={styles.headerLabel}>Calling…</Text>
+        <Text style={styles.headerLabel} accessibilityRole="header">
+          Calling…
+        </Text>
       </View>
 
       {/* ── Callee info ───────────────────────────────────────────────────── */}
@@ -104,16 +106,26 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
           style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
           accessible={false}
         />
-        <View style={styles.avatar}>
+        <View style={styles.avatar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           <Text style={styles.avatarText}>{initials}</Text>
         </View>
 
-        <Text style={styles.calleeId} testID="outgoing-callee-id">
+        <Text
+          style={styles.calleeId}
+          accessibilityLabel={`Calling ${calleeId || 'unknown contact'}`}
+          testID="outgoing-callee-id">
           {calleeId || 'Unknown'}
         </Text>
 
         {ringTimeoutAt ? (
-          <Text style={styles.countdown} testID="outgoing-countdown">
+          <Text
+            style={styles.countdown}
+            accessibilityLabel={
+              secondsLeft > 0
+                ? `Rings for ${formatRingCountdown(secondsLeft)}`
+                : 'The call timed out'
+            }
+            testID="outgoing-countdown">
             {secondsLeft > 0 ? formatRingCountdown(secondsLeft) : 'Timed out'}
           </Text>
         ) : null}
@@ -128,6 +140,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
           variant="danger"
           size={72}
           accessibilityLabel="Cancel outgoing call"
+          accessibilityHint="Stops calling and returns to the lobby"
           testID="outgoing-cancel"
         />
       </View>

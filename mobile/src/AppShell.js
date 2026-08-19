@@ -1,9 +1,12 @@
-import { StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { announceForAccessibility, describeCallState } from './accessibilityAnnouncer';
 import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
 import { useCall } from './call/CallProvider';
 import CallScreen from './components/CallScreen';
+import ErrorState from './components/ErrorState';
 import FloatingCallBubble from './components/FloatingCallBubble';
 import InCallBanner from './components/InCallBanner';
 import IncomingCallScreen from './components/IncomingCallScreen';
@@ -12,6 +15,7 @@ import RegistrationScreen from './components/RegistrationScreen';
 import TabShell from './components/TabShell';
 import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
+import { spacing } from './theme';
 
 /**
  * Screen router: picks what the app shows for the current call state and
@@ -32,6 +36,8 @@ export default function AppShell() {
   const { colors, scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
   const startupIssues = getDegradations();
+
+  useCallStateAnnouncements(callState, callFlow.incomingCall?.callerId, callFlow.calleeId);
 
   // OS PiP always short-circuits to the compact CallScreen, taking precedence
   // over the in-app minimize state.
@@ -106,11 +112,17 @@ export default function AppShell() {
   return (
     <View style={[styles.container, rootContainerStyle]}>
       {startupIssues.length > 0 ? (
-        <View style={styles.degradedBanner} testID="startup-degraded-banner">
-          <Text style={styles.degradedBannerText}>
-            {`Calling degraded: ${startupIssues.map(issue => issue.message).join('; ')}`}
-          </Text>
-        </View>
+        <ErrorState
+          title="Calling may not work reliably"
+          description={`${startupIssues
+            .map(issue => issue.message)
+            .join('; ')}. Incoming calls can be missed until this is fixed — check that WeTalk is allowed to show notifications and manage calls, then restart the app.`}
+          actionLabel="Open device settings"
+          actionHint="Opens WeTalk's permissions in the device settings app"
+          onAction={openDeviceSettings}
+          style={styles.degradedBanner}
+          testID="startup-degraded-banner"
+        />
       ) : null}
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
@@ -122,6 +134,35 @@ export default function AppShell() {
       />
     </View>
   );
+}
+
+/**
+ * Announce every call state transition to screen readers, so an incoming call
+ * or a connected/ended call is spoken rather than only shown.
+ *
+ * @param {string} callState
+ * @param {string|null|undefined} callerId
+ * @param {string|null|undefined} calleeId
+ */
+function useCallStateAnnouncements(callState, callerId, calleeId) {
+  const previousStateRef = useRef(null);
+
+  useEffect(() => {
+    if (previousStateRef.current === callState) return;
+    previousStateRef.current = callState;
+    const message = describeCallState(callState, { callerId, calleeId });
+    if (message) announceForAccessibility(message);
+    // The peer ids are read at announcement time only: a peer changing while
+    // the state stays put must not re-announce the same transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callState]);
+}
+
+/** Open the OS settings page for the app so the user can grant what's missing. */
+function openDeviceSettings() {
+  Promise.resolve(Linking.openSettings?.()).catch(error => {
+    logError('openSettings failed', error);
+  });
 }
 
 /** Full-screen view of the connected call. */
@@ -221,13 +262,7 @@ const createStyles = colors =>
       backgroundColor: colors.background,
     },
     degradedBanner: {
-      backgroundColor: colors.danger,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-    },
-    degradedBannerText: {
-      color: colors.textOnAccent,
-      fontSize: 13,
-      fontWeight: '700',
+      marginHorizontal: spacing.md,
+      marginTop: spacing.sm,
     },
   });

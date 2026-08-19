@@ -124,4 +124,63 @@ describe('RegistrationScreen', () => {
     expect(microsoftButton.props.disabled).toBe(true);
     expect(microsoftButton.props.title).toMatch(/unavailable/i);
   });
+
+  test('surfaces a failed sign-in as an error state that retries the last attempt', () => {
+    const onRegister = jest.fn();
+    let tree;
+    act(() => {
+      tree = renderer.create(
+        <RegistrationScreen
+          onRegister={onRegister}
+          status={{ message: 'Server unreachable', severity: 'error' }}
+        />,
+      );
+    });
+
+    // No attempt yet: the error is explained, but there is nothing to retry.
+    expect(
+      tree.root.findAll(n => n.props.testID === 'registration-error').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      tree.root.findAll(n => n.props.testID === 'registration-error-action'),
+    ).toHaveLength(0);
+
+    act(() => {
+      tree.root
+        .findAll(n => n.props.testID === 'registration-username-input')[0]
+        .props.onChangeText('alice');
+    });
+    act(() => {
+      tree.root
+        .findAll(n => n.props.testID === 'registration-email-input')[0]
+        .props.onChangeText('alice@example.com');
+    });
+    act(() => {
+      tree.root
+        .findAll(n => n.props.testID === 'registration-password-input')[0]
+        .props.onChangeText('secret12');
+    });
+    act(() => {
+      tree.root
+        .findAllByType('AppButton')
+        .find(button => button.props.testID === 'registration-email-register')
+        .props.onPress();
+    });
+    expect(onRegister).toHaveBeenCalledTimes(1);
+
+    const retry = tree.root.find(
+      n => n.props?.testID === 'registration-error-action' && typeof n.props.onPress === 'function',
+    );
+    act(() => {
+      retry.props.onPress();
+    });
+
+    expect(onRegister).toHaveBeenCalledTimes(2);
+    expect(onRegister).toHaveBeenLastCalledWith({
+      userId: 'alice',
+      method: 'email-register',
+      email: 'alice@example.com',
+      password: 'secret12',
+    });
+  });
 });

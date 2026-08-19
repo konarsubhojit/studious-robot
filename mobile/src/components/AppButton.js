@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing } from '../theme';
+import { radius, sizes, spacing } from '../theme';
 
 /**
  * Unified pill button used across both the lobby and the in-call controls so
@@ -54,7 +54,7 @@ const createStyles = colors =>
   StyleSheet.create({
     button: {
       flex: 1,
-      minHeight: 48,
+      minHeight: sizes.minTouchTarget,
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       alignItems: 'center',

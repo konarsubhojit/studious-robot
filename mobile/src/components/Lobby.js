@@ -16,6 +16,7 @@ import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
+import ErrorState from './ErrorState';
 import SettingsCard from './SettingsCard';
 import StatusBanner from './StatusBanner';
 
@@ -41,6 +42,7 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
           onPress={() => onChangeText('')}
           accessibilityRole="button"
           accessibilityLabel={`Clear ${accessibilityLabel}`}
+          hitSlop={sizes.minTouchTarget / 4}
           testID={`${testID}-clear`}
           style={styles.clearButton}>
           <Text style={styles.clearButtonText}>✕</Text>
@@ -100,7 +102,9 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
 
   return (
     <View testID="contact-directory">
-      <Text style={styles.sectionTitle}>Contacts</Text>
+      <Text style={styles.sectionTitle} accessibilityRole="header">
+        Contacts
+      </Text>
       <ClearableInput
         value={query}
         onChangeText={setQuery}
@@ -198,7 +202,9 @@ export default function Lobby({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.titleRow}>
-          <Text style={styles.title}>WeTalk</Text>
+          <Text style={styles.title} accessibilityRole="header">
+            WeTalk
+          </Text>
           {missedCallCount > 0 ? (
             <Pressable
               onPress={onMarkMissedRead}
@@ -206,6 +212,8 @@ export default function Lobby({
               accessibilityLabel={`${missedCallCount} missed call${
                 missedCallCount === 1 ? '' : 's'
               }`}
+              accessibilityHint="Marks missed calls as seen"
+              hitSlop={sizes.minTouchTarget / 4}
               testID="missed-calls-badge"
               style={styles.missedBadge}>
               <Text style={styles.missedBadgeText}>{missedCallCount}</Text>
@@ -217,6 +225,8 @@ export default function Lobby({
               onPress={onOpenSettings}
               accessibilityRole="button"
               accessibilityLabel="Settings"
+              accessibilityHint="Opens account and connection settings"
+              hitSlop={sizes.minTouchTarget / 4}
               testID="lobby-open-settings"
               style={styles.gearButton}>
               <Text style={styles.gearIcon}>⚙️</Text>
@@ -227,21 +237,14 @@ export default function Lobby({
 
         {/* ── Offline / server-unreachable banner ─────────────────────── */}
         {isServerUnreachable ? (
-          <View style={styles.offlineBanner} accessibilityRole="alert" testID="offline-banner">
-            <Text style={styles.offlineBannerText}>
-              Cannot reach server - check your connection
-            </Text>
-            {onRetryConnect ? (
-              <Pressable
-                onPress={onRetryConnect}
-                accessibilityRole="button"
-                accessibilityLabel="Retry server connection"
-                testID="offline-retry"
-                style={styles.offlineRetryButton}>
-                <Text style={styles.offlineRetryText}>Retry</Text>
-              </Pressable>
-            ) : null}
-          </View>
+          <ErrorState
+            title="Server unreachable"
+            description="Calls and messages can't be delivered until the app reconnects. Check your internet connection, or the signaling server address in Settings."
+            actionLabel="Retry"
+            actionHint="Tries to reconnect to the signaling server"
+            onAction={onRetryConnect}
+            testID="offline-banner"
+          />
         ) : null}
 
         {callSummary ? (
@@ -258,6 +261,7 @@ export default function Lobby({
               onPress={onDismissSummary}
               accessibilityRole="button"
               accessibilityLabel="Dismiss last call summary"
+              hitSlop={sizes.minTouchTarget / 4}
               testID="dismiss-summary"
               style={styles.summaryDismiss}>
               <Text style={styles.summaryDismissText}>✕</Text>
@@ -267,7 +271,9 @@ export default function Lobby({
 
         {Array.isArray(callHistory) && callHistory.length > 0 ? (
           <View testID="call-history-section">
-            <Text style={styles.sectionTitle}>Recent calls</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">
+              Recent calls
+            </Text>
             {callHistory.slice(0, 5).map(entry => {
               const isMissed =
                 entry.direction === 'incoming' &&
@@ -329,7 +335,9 @@ export default function Lobby({
         ) : null}
 
         {/* ── Server-authoritative call section ─────────────────────────── */}
-        <Text style={styles.sectionTitle}>Call</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">
+          Call
+        </Text>
 
         <ClearableInput
           value={userId}
@@ -368,6 +376,9 @@ export default function Lobby({
           title="Call"
           onPress={onCall}
           disabled={!userId?.trim() || !calleeId?.trim()}
+          accessibilityHint={
+            calleeId?.trim() ? `Starts a call with ${calleeId.trim()}` : 'Enter a callee user ID first'
+          }
           testID="lobby-call"
           style={styles.callButton}
         />
@@ -377,7 +388,9 @@ export default function Lobby({
         {/* ── Developer tools (developer mode only) ──────────────────────── */}
         {developerMode ? (
           <View testID="developer-tools-section">
-            <Text style={styles.sectionTitle}>Developer tools</Text>
+            <Text style={styles.sectionTitle} accessibilityRole="header">
+              Developer tools
+            </Text>
 
             <View style={styles.row}>
               <AppButton
@@ -440,45 +453,15 @@ const createStyles = colors =>
       flex: 1,
     },
     gearButton: {
-      height: 36,
-      width: 36,
-      borderRadius: 18,
+      height: 44,
+      width: 44,
+      borderRadius: 22,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.surfaceControl,
     },
     gearIcon: {
       fontSize: 18,
-    },
-    offlineBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: 'rgba(240,141,137,0.15)',
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.danger,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-      marginBottom: spacing.md,
-      gap: spacing.sm,
-    },
-    offlineBannerText: {
-      flex: 1,
-      color: colors.danger,
-      fontSize: 13,
-      fontWeight: '600',
-    },
-    offlineRetryButton: {
-      borderRadius: radius.pill,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 6,
-      backgroundColor: colors.danger,
-    },
-    offlineRetryText: {
-      color: '#fff',
-      fontWeight: '700',
-      fontSize: 12,
     },
     presenceRow: {
       flexDirection: 'row',
@@ -556,8 +539,8 @@ const createStyles = colors =>
     clearButton: {
       position: 'absolute',
       right: spacing.sm,
-      height: 28,
-      width: 28,
+      height: 32,
+      width: 32,
       alignItems: 'center',
       justifyContent: 'center',
     },
