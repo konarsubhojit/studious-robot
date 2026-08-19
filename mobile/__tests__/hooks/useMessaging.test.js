@@ -409,7 +409,7 @@ describe('useMessaging', () => {
     expect(chatDb.__snapshot.outbox).toEqual([]);
   });
 
-  test('deleteMessage removes a sent message on the server and locally', async () => {
+  test('deleteMessage tombstones a sent message on the server and locally', async () => {
     const socket = makeSocket();
     const { resultRef } = setup({ socketRef: { current: socket } });
 
@@ -429,7 +429,11 @@ describe('useMessaging', () => {
       expect.objectContaining({ peerId: 'bob', messageId }),
       expect.any(Function),
     );
-    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    // A delete leaves a tombstone rather than a hole, so a reply that quotes
+    // the message still resolves to something renderable.
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0].body).toBe('');
+    expect(resultRef.current.messagesByPeer.bob[0].deletedAt).toBeTruthy();
   });
 
   test('deleteMessage discards a still-queued message without contacting the server', async () => {
@@ -472,7 +476,7 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
   });
 
-  test('handleMessageDeleted drops a message the peer deleted', () => {
+  test('handleMessageDeleted tombstones a message the peer deleted', () => {
     const { resultRef } = setup();
 
     act(() => {
@@ -490,9 +494,12 @@ describe('useMessaging', () => {
         conversationId: 'c1',
         messageId: 'm-1',
         deletedBy: 'bob',
+        message: { messageId: 'm-1', body: '', deletedAt: '2024-01-01T00:00:00.000Z' },
       });
     });
-    expect(resultRef.current.messagesByPeer.bob).toEqual([]);
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0].body).toBe('');
+    expect(resultRef.current.messagesByPeer.bob[0].deletedAt).toBe('2024-01-01T00:00:00.000Z');
   });
 
   test('isOffline follows the socket lifecycle', async () => {
@@ -894,6 +901,118 @@ describe('useMessaging searchMessages', () => {
     params.authedFetchRef.current.mockRejectedValue(new Error('offline'));
     await act(async () => {
       await expect(resultRef.current.searchMessages('bob')).resolves.toEqual([]);
+    });
+  });
+
+  test('sendMessage queues an attachment message with its rich fields', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    const attachment = {
+      url: 'https://media.test/chatblobs/alice:bob/photo.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 2048,
+    };
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', '', { type: 'image', attachment });
+    });
+
+    // An attachment message needs no body: the attachment is the content.
+    const [queued] = resultRef.current.messagesByPeer.bob;
+    expect(queued.type).toBe('image');
+    expect(queued.attachment).toEqual(attachment);
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.send',
+      expect.objectContaining({ type: 'image', attachment }),
+      expect.any(Function),
+    );
+  });
+
+  test('sendMessage still ignores an empty text message', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', '   ');
+    });
+
+    expect(resultRef.current.messagesByPeer.bob).toBeUndefined();
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  test('sendMessage forwards replyTo so a reply quotes the original', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'answering', { replyTo: 'm-original' });
+    });
+
+    expect(resultRef.current.messagesByPeer.bob[0].replyTo).toBe('m-original');
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.send',
+      expect.objectContaining({ replyTo: 'm-original' }),
+      expect.any(Function),
+    );
+  });
+
+  test('reactToMessage stores the server reaction set', async () => {
+    const socket = makeSocket({
+      ackResponse: { ok: true, reactions: { '\u{1F44D}': ['alice'] } },
+    });
+    const { resultRef } = setup({ socketRef: { current: socket } });
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'react to me',
+      });
+    });
+
+    let reacted;
+    await act(async () => {
+      reacted = await resultRef.current.reactToMessage('bob', 'm-1', '\u{1F44D}', 'add');
+    });
+
+    expect(reacted).toBe(true);
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.react',
+      expect.objectContaining({
+        peerId: 'bob',
+        messageId: 'm-1',
+        emoji: '\u{1F44D}',
+        action: 'add',
+      }),
+      expect.any(Function),
+    );
+    expect(resultRef.current.messagesByPeer.bob[0].reactions).toEqual({
+      '\u{1F44D}': ['alice'],
+    });
+  });
+
+  test('handleMessageReaction converges a reaction made on another device', () => {
+    const { resultRef } = setup();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-1',
+        conversationId: 'c1',
+        senderId: 'bob',
+        body: 'hi',
+      });
+    });
+
+    act(() => {
+      resultRef.current.handleMessageReaction({
+        messageId: 'm-1',
+        reactions: { '\u{2764}\u{FE0F}': ['alice', 'bob'] },
+      });
+    });
+
+    expect(resultRef.current.messagesByPeer.bob[0].reactions).toEqual({
+      '\u{2764}\u{FE0F}': ['alice', 'bob'],
     });
   });
 });
