@@ -77,6 +77,7 @@ export const ICONS = {
   settingsUsername: { icon: 'account-outline', emoji: '👤' },
   settingsServer: { icon: 'server-network', emoji: '🌐' },
   settingsRecovery: { icon: 'key-variant', emoji: '🔑' },
+  settingsAppearance: { icon: 'theme-light-dark', emoji: '🌗' },
   settingsDeveloper: { icon: 'code-tags', emoji: '🛠️' },
   settingsAccountSection: { icon: 'shield-account-outline', emoji: '🧾' },
 };

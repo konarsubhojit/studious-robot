@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppShell from './src/AppShell';
 import { CallProvider } from './src/call/CallProvider';
 import { ChatProvider } from './src/chat/ChatProvider';
+import ThemeProvider from './src/ThemeProvider';
 
 /**
  * Composition root: providers only.
@@ -11,6 +12,8 @@ import { ChatProvider } from './src/chat/ChatProvider';
  * - `SafeAreaProvider` so screens can read real device insets (status bar /
  *   notch and the bottom gesture-navigation bar) instead of the iOS-only,
  *   Android-no-op `SafeAreaView`.
+ * - `ThemeProvider` resolves the active colour scheme (system / light / dark)
+ *   and hands the matching palette to every themed component.
  * - `CallProvider` owns the single call state machine (idle → outgoing /
  *   incoming → connected → ended) plus everything hanging off it, so screens
  *   never have to reconcile competing call sources.
@@ -23,11 +26,13 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <CallProvider>
-          <ChatProvider>
-            <AppShell />
-          </ChatProvider>
-        </CallProvider>
+        <ThemeProvider>
+          <CallProvider>
+            <ChatProvider>
+              <AppShell />
+            </ChatProvider>
+          </CallProvider>
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

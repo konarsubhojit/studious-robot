@@ -11,7 +11,7 @@ import OutgoingCallScreen from './components/OutgoingCallScreen';
 import RegistrationScreen from './components/RegistrationScreen';
 import TabShell from './components/TabShell';
 import { getStartupIssues } from './startupHealth';
-import { colors } from './theme';
+import { useTheme, useThemedStyles } from './ThemeContext';
 
 /**
  * Screen router: picks what the app shows for the current call state and
@@ -28,6 +28,8 @@ import { colors } from './theme';
 export default function AppShell() {
   const { callFlow, callState, isCallConnected, isCallMinimized, isCompact } = useCall();
   const insets = useSafeAreaInsets();
+  const { colors, scheme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const startupIssues = getStartupIssues();
 
   // OS PiP always short-circuits to the compact CallScreen, taking precedence
@@ -109,7 +111,11 @@ export default function AppShell() {
       {isBubbleVisible ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
-      <StatusBar barStyle="light-content" backgroundColor={colors.background} translucent={false} />
+      <StatusBar
+        barStyle={scheme === 'light' ? 'dark-content' : 'light-content'}
+        backgroundColor={colors.background}
+        translucent={false}
+      />
     </View>
   );
 }
@@ -199,23 +205,24 @@ function MinimizedCallBubble() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  containerCompact: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  degradedBanner: {
-    backgroundColor: colors.danger,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  degradedBannerText: {
-    color: colors.textOnAccent,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    containerCompact: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    degradedBanner: {
+      backgroundColor: colors.danger,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    degradedBannerText: {
+      color: colors.textOnAccent,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+  });

@@ -1,19 +1,22 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, spacing } from '../theme';
 
-const SEVERITY_COLOR = {
-  info: colors.textMuted,
-  success: colors.success,
-  error: colors.danger,
-  warning: colors.warning,
-};
+/** Tinted background style for a severity, or `null` for plain 'info'. */
+const severityTint = (styles, severity) =>
+  ({
+    success: styles.containerSuccess,
+    error: styles.containerError,
+    warning: styles.containerWarning,
+  }[severity] ?? null);
 
-const SEVERITY_BG = {
-  info: null,
-  success: 'rgba(139,231,165,0.12)',
-  error: 'rgba(240,141,137,0.15)',
-  warning: 'rgba(255,210,122,0.15)',
-};
+const severityColor = (colors, severity) =>
+  ({
+    info: colors.textMuted,
+    success: colors.success,
+    error: colors.danger,
+    warning: colors.warning,
+  }[severity] ?? colors.textMuted);
 
 /**
  * Single-line status message whose colour reflects severity (info / success /
@@ -26,22 +29,22 @@ const SEVERITY_BG = {
  * @param {object} [props.textStyle]
  */
 export default function StatusBanner({ status, style, textStyle }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const message = status?.message || '';
   const severity = status?.severity || 'info';
-  const bg = SEVERITY_BG[severity];
+  const tint = severityTint(styles, severity);
 
   if (!message) {
     return null;
   }
 
   return (
-    <View
-      style={[styles.container, bg ? { backgroundColor: bg } : null, style]}
-      accessibilityLiveRegion="polite">
+    <View style={[styles.container, tint, style]} accessibilityLiveRegion="polite">
       <Text
         testID="status-banner"
         accessibilityRole="text"
-        style={[styles.status, { color: SEVERITY_COLOR[severity] || colors.textMuted }, textStyle]}
+        style={[styles.status, { color: severityColor(colors, severity) }, textStyle]}
         numberOfLines={2}>
         {message}
       </Text>
@@ -49,14 +52,24 @@ export default function StatusBanner({ status, style, textStyle }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  status: {
-    textAlign: 'center',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    container: {
+      borderRadius: radius.sm,
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      marginBottom: spacing.xs,
+    },
+    containerSuccess: {
+      backgroundColor: colors.tintSuccess,
+    },
+    containerError: {
+      backgroundColor: colors.tintDanger,
+    },
+    containerWarning: {
+      backgroundColor: colors.tintWarning,
+    },
+    status: {
+      textAlign: 'center',
+    },
+  });

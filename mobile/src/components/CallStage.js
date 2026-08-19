@@ -1,6 +1,7 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
-import { colors, radius, spacing, typography } from '../theme';
+import { useThemedStyles } from '../ThemeContext';
+import { radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
 
 /**
@@ -40,6 +41,8 @@ export default function CallStage({
   isRemoteScreenSharing = false,
   participantLabel = null,
 }) {
+  const styles = useThemedStyles(createStyles);
+
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
@@ -93,51 +96,52 @@ export default function CallStage({
   );
 }
 
-const styles = StyleSheet.create({
-  callStage: {
-    flex: 1,
-    minHeight: 0,
-    borderRadius: 0,
-    overflow: 'hidden',
-    marginBottom: 0,
-    backgroundColor: colors.stage,
-    borderWidth: 0,
-  },
-  callStageCompact: {
-    marginBottom: 0,
-    minHeight: 0,
-    borderRadius: 0,
-    borderWidth: 0,
-  },
-  callStageLandscape: {
-    minHeight: 120,
-  },
-  remoteStream: {
-    flex: 1,
-    backgroundColor: colors.stageDark,
-  },
-  remotePlaceholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.backgroundAlt,
-  },
-  remotePlaceholderText: {
-    color: colors.textMuted,
-    fontSize: 16,
-  },
-  presenterBanner: {
-    position: 'absolute',
-    top: spacing.sm,
-    alignSelf: 'center',
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-  },
-  presenterBannerText: {
-    color: colors.accent,
-    ...typography.hint,
-    fontWeight: '700',
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    callStage: {
+      flex: 1,
+      minHeight: 0,
+      borderRadius: 0,
+      overflow: 'hidden',
+      marginBottom: 0,
+      backgroundColor: colors.stage,
+      borderWidth: 0,
+    },
+    callStageCompact: {
+      marginBottom: 0,
+      minHeight: 0,
+      borderRadius: 0,
+      borderWidth: 0,
+    },
+    callStageLandscape: {
+      minHeight: 120,
+    },
+    remoteStream: {
+      flex: 1,
+      backgroundColor: colors.stageDark,
+    },
+    remotePlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.backgroundAlt,
+    },
+    remotePlaceholderText: {
+      color: colors.textMuted,
+      fontSize: 16,
+    },
+    presenterBanner: {
+      position: 'absolute',
+      top: spacing.sm,
+      alignSelf: 'center',
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    },
+    presenterBannerText: {
+      color: colors.accent,
+      ...typography.hint,
+      fontWeight: '700',
+    },
+  });

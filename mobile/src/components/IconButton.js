@@ -1,5 +1,6 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
 /**
@@ -34,7 +35,10 @@ export default function IconButton({
   testID,
   accessibilityLabel,
 }) {
-  const bgColor = VARIANT_COLORS[variant] ?? colors.surfaceControl;
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const bgColor = variantColor(colors, variant);
+  const glyphColor = iconColor(colors, variant);
   const iconSize = Math.round(size * 0.42);
   const isDisabled = disabled || loading;
 
@@ -46,18 +50,12 @@ export default function IconButton({
     iconContent = (
       <ActivityIndicator
         size="small"
-        color={ICON_COLORS[variant] ?? colors.textPrimary}
+        color={glyphColor}
         testID={testID ? `${testID}-loading` : undefined}
       />
     );
   } else if (iconDef && MCIcon) {
-    iconContent = (
-      <MCIcon
-        name={iconDef.icon}
-        size={iconSize}
-        color={ICON_COLORS[variant] ?? colors.textPrimary}
-      />
-    );
+    iconContent = <MCIcon name={iconDef.icon} size={iconSize} color={glyphColor} />;
   } else {
     const glyph = iconDef ? iconDef.emoji : icon;
     iconContent = <Text style={[styles.icon, { fontSize: iconSize }]}>{glyph}</Text>;
@@ -89,47 +87,51 @@ export default function IconButton({
   );
 }
 
-const VARIANT_COLORS = {
-  default: colors.surfaceControl,
-  danger: colors.danger,
-  success: colors.success,
-  active: colors.accentButton,
-  muted: colors.surfaceBanner,
-};
+/** Circle background colour per variant, resolved from the active palette. */
+const variantColor = (colors, variant) =>
+  ({
+    default: colors.surfaceControl,
+    danger: colors.danger,
+    success: colors.success,
+    active: colors.accentButton,
+    muted: colors.surfaceBanner,
+  }[variant] ?? colors.surfaceControl);
 
 /** Foreground colour for vector icon glyphs per variant. */
-const ICON_COLORS = {
-  default: colors.textPrimary,
-  danger: '#fff',
-  success: '#fff',
-  active: colors.textOnAccent,
-  muted: colors.textSecondary,
-};
+const iconColor = (colors, variant) =>
+  ({
+    default: colors.textPrimary,
+    danger: '#fff',
+    success: '#fff',
+    active: colors.textOnAccent,
+    muted: colors.textSecondary,
+  }[variant] ?? colors.textPrimary);
 
-const styles = StyleSheet.create({
-  wrapper: {
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  circle: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  icon: {
-    textAlign: 'center',
-    includeFontPadding: false,
-    lineHeight: undefined,
-  },
-  label: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 2,
-  },
-  disabled: {
-    opacity: 0.45,
-  },
-  pressed: {
-    opacity: 0.78,
-  },
-});
+const createStyles = colors =>
+  StyleSheet.create({
+    wrapper: {
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    circle: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    icon: {
+      textAlign: 'center',
+      includeFontPadding: false,
+      lineHeight: undefined,
+    },
+    label: {
+      color: colors.textSecondary,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: 2,
+    },
+    disabled: {
+      opacity: 0.45,
+    },
+    pressed: {
+      opacity: 0.78,
+    },
+  });

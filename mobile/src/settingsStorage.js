@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
+import { THEME_MODE_VALUES, THEME_MODES } from './theme';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
@@ -128,6 +129,55 @@ export async function saveIdentity(identity) {
 }
 
 export const IDENTITY_FILE_PATH = IDENTITY_FILE;
+
+// ─── Appearance (theme) preference ────────────────────────────────────────────
+// Stored in its own file for the same reason as the identity: `saveSettings`
+// rewrites the whole app-settings document, so sharing it would let a theme
+// change clobber settings written by another part of the app.
+
+const THEME_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-theme.json`;
+
+/**
+ * Load the persisted appearance mode ('system' | 'light' | 'dark').  Unknown
+ * or unreadable values fall back to 'system'.
+ *
+ * @returns {Promise<string>}
+ */
+export async function loadThemeMode() {
+  try {
+    const exists = await RNFS.exists(THEME_FILE);
+    if (!exists) return THEME_MODES.SYSTEM;
+    const content = await RNFS.readFile(THEME_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    return THEME_MODE_VALUES.includes(parsed?.mode) ? parsed.mode : THEME_MODES.SYSTEM;
+  } catch (error) {
+    logError('Failed to load theme mode; using system default', {
+      message: error?.message,
+    });
+    return THEME_MODES.SYSTEM;
+  }
+}
+
+/**
+ * Persist the appearance mode.  Failures are logged but never thrown so a
+ * write error can't break the toggle that triggered it.
+ *
+ * @param {string} mode
+ * @returns {Promise<boolean>} whether the write succeeded
+ */
+export async function saveThemeMode(mode) {
+  const safeMode = THEME_MODE_VALUES.includes(mode) ? mode : THEME_MODES.SYSTEM;
+  try {
+    await RNFS.writeFile(THEME_FILE, JSON.stringify({ mode: safeMode }), 'utf8');
+    logInfo('Theme mode persisted', { mode: safeMode });
+    return true;
+  } catch (error) {
+    logError('Failed to persist theme mode', { message: error?.message });
+    return false;
+  }
+}
+
+export const THEME_FILE_PATH = THEME_FILE;
 
 // ─── Stable device identifier ─────────────────────────────────────────────────
 // The signaling server keys device records (and therefore push registrations)

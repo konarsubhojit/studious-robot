@@ -14,9 +14,11 @@ import RNFS from 'react-native-fs';
 import {
   loadIdentity,
   loadSettings,
+  loadThemeMode,
   mergeSettings,
   saveIdentity,
   saveSettings,
+  saveThemeMode,
 } from '../src/settingsStorage';
 
 const DEFAULTS = { autoCameraLightingEnabled: false, speakerEnabledByDefault: true };
@@ -132,9 +134,7 @@ describe('settingsStorage', () => {
   describe('saveIdentity', () => {
     test('writes JSON and resolves true on success', async () => {
       RNFS.writeFile.mockResolvedValue();
-      await expect(
-        saveIdentity({ userId: 'bob' }),
-      ).resolves.toBe(true);
+      await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-identity.json',
         JSON.stringify({ userId: 'bob' }),
@@ -145,6 +145,58 @@ describe('settingsStorage', () => {
     test('resolves false on write failure', async () => {
       RNFS.writeFile.mockRejectedValue(new Error('disk full'));
       await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(false);
+    });
+  });
+
+  describe('loadThemeMode', () => {
+    test('defaults to system when no theme file exists', async () => {
+      RNFS.exists.mockResolvedValue(false);
+      await expect(loadThemeMode()).resolves.toBe('system');
+    });
+
+    test('returns the persisted mode', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockResolvedValue(JSON.stringify({ mode: 'light' }));
+      await expect(loadThemeMode()).resolves.toBe('light');
+    });
+
+    test('ignores an unknown persisted mode', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockResolvedValue(JSON.stringify({ mode: 'sepia' }));
+      await expect(loadThemeMode()).resolves.toBe('system');
+    });
+
+    test('falls back to system on read errors', async () => {
+      RNFS.exists.mockResolvedValue(true);
+      RNFS.readFile.mockRejectedValue(new Error('read failed'));
+      await expect(loadThemeMode()).resolves.toBe('system');
+    });
+  });
+
+  describe('saveThemeMode', () => {
+    test('writes the mode and resolves true on success', async () => {
+      RNFS.writeFile.mockResolvedValue();
+      await expect(saveThemeMode('dark')).resolves.toBe(true);
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-theme.json',
+        JSON.stringify({ mode: 'dark' }),
+        'utf8',
+      );
+    });
+
+    test('normalises an unknown mode to system before writing', async () => {
+      RNFS.writeFile.mockResolvedValue();
+      await expect(saveThemeMode('sepia')).resolves.toBe(true);
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-theme.json',
+        JSON.stringify({ mode: 'system' }),
+        'utf8',
+      );
+    });
+
+    test('resolves false on write failure', async () => {
+      RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+      await expect(saveThemeMode('dark')).resolves.toBe(false);
     });
   });
 });
