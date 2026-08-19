@@ -56,8 +56,8 @@ const DISMISS_DURATION_MS = 160;
  * @param {() => void} [props.onEndCall]
  * @param {() => void} [props.onStopScreenShare]
  * @param {() => void} [props.onDismiss] - Called once the bubble has been
- *   flung off-screen; when omitted the bubble stays hidden until it is
- *   remounted, so callers that support dismissal should pass it.
+ *   flung off-screen. When omitted, fling-to-dismiss is disabled and a fling
+ *   just springs the bubble back to the nearest edge.
  */
 export default function FloatingCallBubble({
   participantLabel = null,
@@ -87,6 +87,9 @@ export default function FloatingCallBubble({
   const startX = useSharedValue(maxX);
   const startY = useSharedValue(maxY);
   const opacity = useSharedValue(1);
+  // Readable from the drag worklet, which must not dismiss the bubble when no
+  // caller is listening (it would animate away with no way to bring it back).
+  const canDismiss = useSharedValue(Boolean(onDismiss));
 
   useEffect(() => {
     boundMaxX.value = maxX;
@@ -100,7 +103,8 @@ export default function FloatingCallBubble({
   const onDismissRef = useRef(onDismiss);
   useEffect(() => {
     onDismissRef.current = onDismiss;
-  }, [onDismiss]);
+    canDismiss.value = Boolean(onDismiss);
+  }, [canDismiss, onDismiss]);
 
   const handleDismiss = useCallback(() => {
     triggerHaptic('tap');
@@ -127,7 +131,7 @@ export default function FloatingCallBubble({
     })
     .onEnd(event => {
       'worklet';
-      if (Math.abs(event.velocityX) > FLING_DISMISS_VELOCITY) {
+      if (canDismiss.value && Math.abs(event.velocityX) > FLING_DISMISS_VELOCITY) {
         const exitX = event.velocityX > 0 ? boundMaxX.value + BUBBLE_WIDTH : -BUBBLE_WIDTH;
         opacity.value = withTiming(0, { duration: DISMISS_DURATION_MS });
         translateX.value = withTiming(exitX, { duration: DISMISS_DURATION_MS }, finished => {

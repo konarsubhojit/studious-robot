@@ -273,6 +273,20 @@ describe('FloatingCallBubble', () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
+  test('a fling never dismisses the bubble when no onDismiss handler is wired up', () => {
+    const tree = render({ onDismiss: undefined });
+
+    act(() => {
+      mockPanCallbacks.onStart();
+      mockPanCallbacks.onUpdate({ translationX: -400, translationY: 0 });
+      mockPanCallbacks.onEnd({ velocityX: -2400, velocityY: 0 });
+    });
+    refresh(tree, { onDismiss: undefined });
+
+    // Springs back to an on-screen edge rather than animating away for good.
+    expect(readBubbleTranslate(tree).x).toBe(12);
+  });
+
   test('tab-switch (re-render with the same props) preserves the dragged position', () => {
     const tree = render();
 
