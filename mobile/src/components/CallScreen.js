@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import CallStage from './CallStage';
@@ -10,9 +11,11 @@ import StatusBanner from './StatusBanner';
 
 const STATUS_AUTO_HIDE_MS = 3000;
 const CONTROLS_AUTO_HIDE_MS = 3000;
+const OVERLAY_FADE_MS = 180;
 
 /**
- * Full-screen in-call screen with tap-to-toggle overlay controls.
+ * Full-screen in-call screen whose overlay chrome (top bar + control deck)
+ * auto-hides after a few seconds of inactivity and fades back in on tap.
  */
 export default function CallScreen({
   elapsedCallSeconds,
@@ -138,7 +141,11 @@ export default function CallScreen({
       />
 
       {!isCompact && showControlsOverlay ? (
-        <View style={styles.overlay} pointerEvents="box-none">
+        <Animated.View
+          entering={FadeIn.duration(OVERLAY_FADE_MS)}
+          exiting={FadeOut.duration(OVERLAY_FADE_MS)}
+          style={styles.overlay}
+          pointerEvents="box-none">
           <View style={styles.topOverlay}>
             <CallTopBar
               elapsedCallSeconds={elapsedCallSeconds}
@@ -181,7 +188,7 @@ export default function CallScreen({
               onLeave={onLeave}
             />
           </View>
-        </View>
+        </Animated.View>
       ) : null}
     </Pressable>
   );
