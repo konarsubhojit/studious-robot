@@ -1,19 +1,10 @@
 // @ts-check
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
+import { errorMessage } from './errorMessage';
 import { THEME_MODE_VALUES, THEME_MODES } from './theme';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
-
-/**
- * Describe a caught value for a log line.
- *
- * @param {unknown} error
- * @returns {string}
- */
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Merge persisted settings onto the defaults, keeping only known keys with the

@@ -1,5 +1,7 @@
+// @ts-check
 import RNFS from 'react-native-fs';
 import { logError, logWarn } from '../appLogger';
+import { errorMessage } from '../errorMessage';
 
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
 
@@ -10,6 +12,7 @@ const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-s
  *
  * `undefined` means "not loaded yet"; `null` means "nothing persisted".
  */
+/** @type {object|null|undefined} */
 let cachedState;
 
 /**
@@ -58,11 +61,13 @@ export async function loadNavigationState() {
     }
     const content = await RNFS.readFile(NAVIGATION_STATE_FILE, 'utf8');
     const parsed = JSON.parse(content);
-    cachedState = isValidNavigationState(parsed) ? parsed : null;
-    return cachedState;
+    /** @type {object|null} */
+    const restored = isValidNavigationState(parsed) ? parsed : null;
+    cachedState = restored;
+    return restored;
   } catch (error) {
     logWarn('Failed to load navigation state; starting at the default screen', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     cachedState = null;
     return null;
@@ -83,7 +88,7 @@ export async function saveNavigationState(state) {
     await RNFS.writeFile(NAVIGATION_STATE_FILE, JSON.stringify(state), 'utf8');
     return true;
   } catch (error) {
-    logError('Failed to persist navigation state', { message: error?.message });
+    logError('Failed to persist navigation state', { message: errorMessage(error) });
     return false;
   }
 }
@@ -100,6 +105,6 @@ export async function clearNavigationState() {
     const exists = await RNFS.exists(NAVIGATION_STATE_FILE);
     if (exists) await RNFS.unlink(NAVIGATION_STATE_FILE);
   } catch (error) {
-    logWarn('Failed to clear navigation state', { message: error?.message });
+    logWarn('Failed to clear navigation state', { message: errorMessage(error) });
   }
 }

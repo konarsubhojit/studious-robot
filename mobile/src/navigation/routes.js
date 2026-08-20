@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Route names for the app shell navigators.
  *
@@ -25,10 +26,22 @@ export const CHAT_SCREENS = {
 export const DEFAULT_TAB = TABS.CHATS;
 
 /**
+ * One entry of a React Navigation state's `routes`, narrowed to the fields
+ * this module reads (a nested navigator carries its own `state`).
+ *
+ * @typedef {{
+ *   name?: string,
+ *   params?: { peerId?: string },
+ *   state?: { index?: number, routes?: NavigationRoute[] },
+ * }} NavigationRoute
+ */
+
+/**
  * Extract the parts of the navigation state the composition root still needs:
  * which tab is selected and, when a conversation is open, its peer id.
  *
- * @param {object | undefined} state navigation state of the tab navigator.
+ * @param {{ index?: number, routes?: NavigationRoute[] } | undefined} state
+ *   navigation state of the tab navigator.
  * @returns {{ activeTab: string, chatPeerId: string | null }}
  */
 export function deriveShellRoute(state) {
@@ -36,7 +49,7 @@ export function deriveShellRoute(state) {
   if (!Array.isArray(routes) || routes.length === 0) {
     return { activeTab: DEFAULT_TAB, chatPeerId: null };
   }
-  const tabRoute = routes[state.index ?? 0];
+  const tabRoute = routes[state?.index ?? 0];
   if (!tabRoute?.name) {
     return { activeTab: DEFAULT_TAB, chatPeerId: null };
   }
@@ -46,7 +59,7 @@ export function deriveShellRoute(state) {
 
   const chatRoutes = tabRoute.state?.routes;
   const chatRoute = Array.isArray(chatRoutes)
-    ? chatRoutes[tabRoute.state.index ?? chatRoutes.length - 1]
+    ? chatRoutes[tabRoute.state?.index ?? chatRoutes.length - 1]
     : null;
   const peerId =
     chatRoute?.name === CHAT_SCREENS.CONVERSATION ? chatRoute?.params?.peerId : null;

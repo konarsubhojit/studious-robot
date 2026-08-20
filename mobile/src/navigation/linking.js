@@ -1,3 +1,4 @@
+// @ts-check
 import { CHAT_SCREENS, TABS } from './routes';
 
 /**

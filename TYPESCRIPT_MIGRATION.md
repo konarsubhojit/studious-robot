@@ -53,9 +53,11 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/settingsStorage.js`
 - [ ] `src/components/` (done: `AppButton`, `IconButton`, `SettingsCard`,
       `StatusBanner`, `InCallBanner`, `ReconnectBanner`)
-- [ ] `src/call/`
+- [x] `src/errorMessage.js`
+- [ ] `src/call/` (done: `callStateMachine.js`)
 - [ ] `src/chat/`
-- [ ] `src/navigation/`
+- [x] `src/navigation/` (except `AppNavigator.js`)
+- [ ] `src/storage/` (done: `recentSearches.js`)
 - [ ] `src/hooks/`
 - [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
 - [ ] `App.js`

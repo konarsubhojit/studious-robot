@@ -1,11 +1,25 @@
+// @ts-check
 import { createNavigationContainerRef } from '@react-navigation/native';
 import { CHAT_SCREENS, DEFAULT_TAB, TABS } from './routes';
+
+/**
+ * Route names accepted by the shell navigator, with the params each takes.
+ *
+ * The navigators are configured with plain string route names (see
+ * `./routes`), so the param list is keyed by string rather than by a literal
+ * union; this is enough for the container ref's `navigate` to type-check its
+ * params without duplicating the whole screen tree here.
+ *
+ * @typedef {Record<string, object|undefined>} RootParamList
+ */
 
 /**
  * Container ref for the app shell navigator.
  *
  * Lets non-component code (deep-link handling, the composition root's own
  * callbacks) drive navigation without prop-drilling a `navigation` object.
+ *
+ * @type {import('@react-navigation/native').NavigationContainerRefWithCurrent<RootParamList>}
  */
 export const navigationRef = createNavigationContainerRef();
 
@@ -16,8 +30,14 @@ export const navigationRef = createNavigationContainerRef();
  * starts the app is never dropped. Only the most recent request is kept: an
  * older pending destination is always superseded by a newer one.
  */
+/** @type {(() => void)|null} */
 let pendingNavigation = null;
 
+/**
+ * Run `action` now if the container is ready, otherwise queue it.
+ *
+ * @param {() => void} action
+ */
 function runWhenReady(action) {
   if (navigationRef.isReady()) {
     action();

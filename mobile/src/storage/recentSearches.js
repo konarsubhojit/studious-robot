@@ -1,5 +1,7 @@
+// @ts-check
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
+import { errorMessage } from '../errorMessage';
 
 /**
  * Locally persisted recent search terms, so re-opening search offers what the
@@ -27,6 +29,7 @@ let cache = null;
  */
 function sanitize(parsed) {
   if (!Array.isArray(parsed)) return [];
+  /** @type {string[]} */
   const terms = [];
   parsed.forEach(entry => {
     const term = typeof entry === 'string' ? entry.trim() : '';
@@ -47,7 +50,7 @@ export async function loadRecentSearches() {
     const exists = await RNFS.exists(RECENT_SEARCHES_FILE);
     cache = exists ? sanitize(JSON.parse(await RNFS.readFile(RECENT_SEARCHES_FILE, 'utf8'))) : [];
   } catch (error) {
-    logWarn('[RecentSearches] Failed to load recent searches', { message: error?.message });
+    logWarn('[RecentSearches] Failed to load recent searches', { message: errorMessage(error) });
     cache = [];
   }
   return [...cache];
@@ -73,7 +76,7 @@ export async function addRecentSearch(term) {
   try {
     await RNFS.writeFile(RECENT_SEARCHES_FILE, JSON.stringify(next), 'utf8');
   } catch (error) {
-    logWarn('[RecentSearches] Failed to persist recent searches', { message: error?.message });
+    logWarn('[RecentSearches] Failed to persist recent searches', { message: errorMessage(error) });
   }
   return [...next];
 }
@@ -89,7 +92,7 @@ export async function clearRecentSearches() {
     const exists = await RNFS.exists(RECENT_SEARCHES_FILE);
     if (exists) await RNFS.unlink(RECENT_SEARCHES_FILE);
   } catch (error) {
-    logWarn('[RecentSearches] Failed to clear recent searches', { message: error?.message });
+    logWarn('[RecentSearches] Failed to clear recent searches', { message: errorMessage(error) });
   }
 }
 
