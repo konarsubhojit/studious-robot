@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { randomUUID } = require('crypto');
@@ -33,6 +34,14 @@ const { randomUUID } = require('crypto');
  */
 
 /**
+ * Minimal structural view of the Drizzle handle used for audit persistence:
+ * only the fire-and-forget insert path is exercised here.
+ *
+ * @typedef {object} AuditDb
+ * @property {(table: unknown) => { values: (row: object) => Promise<unknown> }} insert
+ */
+
+/**
  * The append-only audit log returned by {@link createAuditLog}.
  *
  * @typedef {object} AuditLog
@@ -42,6 +51,16 @@ const { randomUUID } = require('crypto');
  */
 
 const MAX_AUDIT_LOG_SIZE = 1000;
+
+/**
+ * Narrow an unknown thrown value to a printable message.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function toMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 
@@ -133,7 +152,7 @@ function addBlock(blocks, blockerId, blockedId) {
   if (!blocks.has(blockerId)) {
     blocks.set(blockerId, new Set());
   }
-  blocks.get(blockerId).add(blockedId);
+  blocks.get(blockerId)?.add(blockedId);
 }
 
 /**
@@ -184,18 +203,18 @@ function listBlocks(blocks, blockerId) {
  * survives restarts and is queryable outside this process.  DB failures are
  * logged but never block the in-memory record or the request that triggered it.
  *
- * @param {{ db?: object|null }} [options]
+ * @param {{ db?: AuditDb|null }} [options]
  * @returns {AuditLog}
  */
 function createAuditLog({ db = null } = {}) {
-  /** @type {Array<{auditId: string, timestamp: string, event: string, actor: string|null, target: string|null, outcome: string, details: object}>} */
+  /** @type {AuditEntry[]} */
   const entries = [];
 
   /**
    * Best-effort durable persistence of a single audit record.  No-op when no
    * `db` is configured (tests / no DATABASE_URL).
    *
-   * @param {object} entry
+   * @param {AuditEntry} entry
    */
   function persist(entry) {
     if (!db) return;
@@ -212,10 +231,10 @@ function createAuditLog({ db = null } = {}) {
           details: entry.details ?? {},
         })
         .catch((err) => {
-          console.error('[security] failed to persist audit event to DB:', err?.message);
+          console.error('[security] failed to persist audit event to DB:', toMessage(err));
         });
     } catch (err) {
-      console.error('[security] failed to persist audit event to DB:', err?.message);
+      console.error('[security] failed to persist audit event to DB:', toMessage(err));
     }
   }
 
@@ -246,7 +265,7 @@ function createAuditLog({ db = null } = {}) {
      * Return all entries where the session user is the actor or the target.
      *
      * @param {string} userId
-     * @returns {Array}
+     * @returns {AuditEntry[]}
      */
     getForUser(userId) {
       return entries.filter((e) => e.actor === userId || e.target === userId);
@@ -255,7 +274,7 @@ function createAuditLog({ db = null } = {}) {
     /**
      * Return all entries.  Used internally and for testing.
      *
-     * @returns {Array}
+     * @returns {AuditEntry[]}
      */
     getAll() {
       return [...entries];

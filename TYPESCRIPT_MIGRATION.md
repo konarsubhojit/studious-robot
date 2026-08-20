@@ -87,9 +87,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
 - [x] `src/messageBus.js`
-- [x] `src/telemetry.js` — `Telemetry` / `MetricsSnapshot` contracts defined
-      (file itself not yet `@ts-check`ed)
-- [x] `src/security.js` — `RateLimiter` / `AuditLog` contracts defined
-      (file itself not yet `@ts-check`ed)
+- [x] `src/telemetry.js` — `@ts-check` on; `Telemetry` / `MetricsSnapshot` contracts defined
+- [x] `src/security.js` — `@ts-check` on; `RateLimiter` / `AuditLog` contracts defined
 - [ ] remaining `src/*.js` modules
 - [ ] `test/`

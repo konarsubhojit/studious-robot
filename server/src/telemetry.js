@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -38,11 +39,26 @@
  * @property {() => MetricsSnapshot} getSnapshot
  */
 
+/**
+ * Mutable accumulator behind each latency metric.
+ *
+ * @typedef {object} Histogram
+ * @property {number} count
+ * @property {number} sum
+ * @property {number} min
+ * @property {number} max
+ * @property {Record<string, number>} buckets
+ */
+
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
+/**
+ * @param {number[]} buckets  Upper bounds in ms; `Infinity` becomes the `+Inf` bucket.
+ * @returns {Histogram}
+ */
 function createHistogram(buckets) {
   return {
     count: 0,
@@ -53,6 +69,10 @@ function createHistogram(buckets) {
   };
 }
 
+/**
+ * @param {Histogram} h
+ * @param {number} valueMs
+ */
 function observeHistogram(h, valueMs) {
   h.count += 1;
   h.sum += valueMs;
@@ -66,6 +86,10 @@ function observeHistogram(h, valueMs) {
   }
 }
 
+/**
+ * @param {Histogram} h
+ * @returns {MetricsSnapshot['histograms'][string]}
+ */
 function snapshotHistogram(h) {
   return {
     count: h.count,
@@ -257,12 +281,12 @@ function createTelemetry() {
    * @returns {MetricsSnapshot}
    */
   function getSnapshot() {
-    const snap = {
+    const snap = /** @type {MetricsSnapshot} */ ({
       collectedAt: new Date().toISOString(),
       counters: { ...counters },
       histograms: {},
       derived: {},
-    };
+    });
 
     for (const [name, h] of Object.entries(histograms)) {
       snap.histograms[name] = snapshotHistogram(h);
@@ -298,6 +322,10 @@ function createTelemetry() {
 
 const TERMINAL_STATUSES = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
+/**
+ * @param {string} status
+ * @returns {boolean}
+ */
 function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(status);
 }
