@@ -2928,6 +2928,39 @@ describe('useCallFlow chat', () => {
       jest.useRealTimers();
     }
   });
+
+  test('creates the peer connection with the server-fetched ICE servers', async () => {
+    const { getIceServers, getIceServersForCall } = require('../../src/webrtcConfig');
+    const relayServers = [
+      { urls: ['stun:stun.l.google.com:19302'] },
+      {
+        urls: ['turn:turn.example.com:3478'],
+        username: '1700000000:alice',
+        credential: 'hmac-signature',
+      },
+    ];
+    getIceServersForCall.mockResolvedValueOnce(relayServers);
+
+    const { peerConnection } = await acceptCallWithPeerConnection('call-ice-servers-1');
+
+    const { RTCPeerConnection } = require('react-native-webrtc');
+    expect(RTCPeerConnection).toHaveBeenCalledWith({ iceServers: relayServers });
+    // Relay servers must not be applied after gathering may already have begun.
+    expect(peerConnection.setConfiguration).toBeUndefined();
+    expect(getIceServers).not.toHaveBeenCalled();
+  });
+
+  test('call setup succeeds when the TURN credential fetch degrades to STUN only', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    const stunOnly = [{ urls: ['stun:stun.l.google.com:19302'] }];
+    getIceServersForCall.mockResolvedValueOnce(stunOnly);
+
+    const { emits } = await acceptCallWithPeerConnection('call-ice-servers-2');
+
+    const { RTCPeerConnection } = require('react-native-webrtc');
+    expect(RTCPeerConnection).toHaveBeenCalledWith({ iceServers: stunOnly });
+    expect(emits.some(entry => entry.event === 'call.accept')).toBe(true);
+  });
 });
 
 

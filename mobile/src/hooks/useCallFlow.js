@@ -57,7 +57,7 @@ import {
   createSignalingClient,
 } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
-import { getIceServers, getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
+import { getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
 import {
   bringAppToForeground,
@@ -288,6 +288,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // the shared contract and queues fire-and-forget emits while offline.
   const signalingRef = useRef(null);
   const peerConnectionRef = useRef(null);
+  const pendingPeerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const activeCallIdRef = useRef(null);
   const isCallerRef = useRef(false);
@@ -656,6 +657,17 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const closePeerConnection = useCallback(() => {
     iceCandidateBufferRef.current = [];
     isNegotiatingRef.current = false;
+    // A connection whose creation is still in flight must not survive teardown.
+    const pending = pendingPeerConnectionRef.current;
+    pendingPeerConnectionRef.current = null;
+    if (pending) {
+      pending
+        .then(pc => {
+          if (peerConnectionRef.current === pc) peerConnectionRef.current = null;
+          pc?.close?.();
+        })
+        .catch(() => {});
+    }
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
@@ -681,11 +693,17 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     [signalingUrl, sessionIdRef],
   );
 
-  const ensurePeerConnection = useCallback(async () => {
-    if (peerConnectionRef.current) return peerConnectionRef.current;
-
+  const createPeerConnection = useCallback(async () => {
     logInfo('[CallFlow] Creating RTCPeerConnection');
-    const pc = new RTCPeerConnection({ iceServers: getIceServers() });
+    // ICE servers must be known *before* construction: gathering starts as soon
+    // as the connection is used, so applying relay servers afterwards can leave
+    // relay candidates ungathered. getIceServersForCall never throws — it
+    // degrades to build-time config and finally STUN-only.
+    const iceServers = await getIceServersForCall({
+      signalingUrl,
+      sessionId: sessionIdRef.current,
+    });
+    const pc = new RTCPeerConnection({ iceServers });
 
     if (localStreamRef.current) {
       // Guard against double-adding tracks when ensurePeerConnection is called
@@ -790,14 +808,31 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     };
 
     peerConnectionRef.current = pc;
-    return configurePeerConnection(pc);
+    return pc;
   }, [
     configurePeerConnection,
     markCallConnected,
     reportCallConnected,
     reportMediaFailure,
+    sessionIdRef,
+    signalingUrl,
     updateStatus,
   ]);
+
+  const ensurePeerConnection = useCallback(async () => {
+    if (peerConnectionRef.current) return peerConnectionRef.current;
+    // Creation is asynchronous (ICE servers are fetched first), so concurrent
+    // callers must share the same in-flight connection.
+    if (!pendingPeerConnectionRef.current) {
+      const creation = createPeerConnection().finally(() => {
+        if (pendingPeerConnectionRef.current === creation) {
+          pendingPeerConnectionRef.current = null;
+        }
+      });
+      pendingPeerConnectionRef.current = creation;
+    }
+    return pendingPeerConnectionRef.current;
+  }, [createPeerConnection]);
 
   // ─── Local media ──────────────────────────────────────────────────────────
 

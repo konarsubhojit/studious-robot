@@ -363,6 +363,13 @@ export TURN_CREDENTIAL=yourpassword
 
 See [Self-hosted TURN Server](#self-hosted-turn-server) for coturn setup instructions.
 
+**Option C — Server-minted credentials (recommended for self-hosted coturn)**
+
+No mobile-side TURN env vars at all: configure `TURN_URL` +
+`TURN_STATIC_AUTH_SECRET` (and optionally `TURN_TTL_SECONDS`) on the signaling
+server and it hands out per-user, time-limited HMAC credentials at
+`GET /turn-credentials`. See [HMAC credentials](#hmac-credentials-recommended).
+
 **Diagnostics**
 
 At app startup, `getTurnDiagnostics()` logs a `console.warn` if no TURN credentials are configured and STUN-only mode is active. This appears in Metro logs and device logs.
@@ -539,10 +546,17 @@ sudo sed -i 's/^#TURNSERVER_ENABLED=1/TURNSERVER_ENABLED=1/' /etc/default/coturn
 
 ### Minimal `/etc/turnserver.conf`
 
+The configuration below uses **`use-auth-secret`** (time-limited HMAC credentials),
+which is the recommended mode — see [HMAC credentials](#hmac-credentials-recommended).
+
 ```ini
 # Listening ports
 listening-port=3478
 tls-listening-port=5349
+
+# Relay media port range (must match the firewall rules below)
+min-port=49152
+max-port=65535
 
 # Replace with your server's public IP or FQDN
 external-ip=YOUR_PUBLIC_IP
@@ -552,9 +566,16 @@ realm=turn.example.com
 cert=/etc/letsencrypt/live/turn.example.com/fullchain.pem
 pkey=/etc/letsencrypt/live/turn.example.com/privkey.pem
 
-# Static credentials (long-term)
-lt-cred-mech
-user=youruser:yourpassword
+# Time-limited HMAC credentials (must match TURN_STATIC_AUTH_SECRET on the server)
+use-auth-secret
+static-auth-secret=YOUR_LONG_RANDOM_SECRET
+
+# Never relay to internal networks (SSRF / internal port-scan protection)
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
 
 # Logging
 log-file=/var/log/turnserver.log
@@ -564,7 +585,61 @@ log-file=/var/log/turnserver.log
 sudo systemctl restart coturn
 ```
 
-### Mobile app configuration
+Generate the secret with `openssl rand -hex 32` and keep it only on the coturn host
+and the signaling server.
+
+For long-term (static) credentials instead, replace the `use-auth-secret` /
+`static-auth-secret` lines with:
+
+```ini
+lt-cred-mech
+user=youruser:yourpassword
+```
+
+### TLS certificate renewal
+
+coturn loads its certificate at start-up, so it must be restarted after each
+certbot renewal:
+
+```bash
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/coturn.sh >/dev/null <<'EOF'
+#!/bin/sh
+systemctl restart coturn
+EOF
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/coturn.sh
+```
+
+### HMAC credentials (recommended)
+
+<a id="hmac-credentials-recommended"></a>
+
+Set these on the **signaling server** (not the mobile build) so it mints
+per-user, time-limited credentials at `GET /turn-credentials`:
+
+```bash
+export TURN_URL=turn:turn.example.com:3478,turns:turn.example.com:5349
+export TURN_STATIC_AUTH_SECRET=YOUR_LONG_RANDOM_SECRET   # same value as static-auth-secret
+export TURN_TTL_SECONDS=3600                             # optional, defaults to 3600
+```
+
+The server returns `username=<unix-expiry>:<userId>` and
+`credential=base64(HMAC-SHA1(secret, username))`, exactly what coturn's
+`use-auth-secret` mode validates, along with an
+`X-Turn-Credential-Expires-At` response header the app uses to refresh before
+expiry.
+
+Prefer this over static credentials: a static `TURN_USERNAME` / `TURN_CREDENTIAL`
+pair is compiled into the app, never expires, and can be extracted from the
+binary and abused for free relay bandwidth. HMAC credentials are scoped to one
+user and expire after `TURN_TTL_SECONDS`.
+
+Credential tier precedence on the server is **Cloudflare → HMAC → static → STUN-only**.
+If `TURN_STATIC_AUTH_SECRET` is set but `TURN_URL` is missing, the server logs a
+warning and falls back to the static tier.
+
+### Mobile app configuration (static credentials fallback)
+
+Only needed when the signaling server does not mint credentials:
 
 ```bash
 export TURN_URL=turn:turn.example.com:3478,turns:turn.example.com:5349
