@@ -1,9 +1,21 @@
+// @ts-check
 'use strict';
+
+/**
+ * @typedef {{
+ *   userId: string,
+ *   authUid: string,
+ *   email?: string|null,
+ *   authProvider?: string|null,
+ *   createdAt: string,
+ *   verifiedAt: string,
+ * }} User
+ */
 
 /**
  * Bind a verified external account to exactly one public username.
  *
- * @param {Map<string, object>} usersStore
+ * @param {Map<string, User>} usersStore
  * @param {string|null} requestedUserId
  * @param {{ authUid: string, email?: string|null, authProvider?: string|null }} identity
  */

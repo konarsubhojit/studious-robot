@@ -39,22 +39,36 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/theme.js`
 - [x] `src/socketProtocol.js`
 - [x] `src/signalingClient.js`
+- [x] `src/ThemeContext.js`
+- [x] `src/ThemeProvider.js`
+- [x] `src/pipConstants.js`
+- [x] `src/startupHealth.js`
+- [x] `src/mediaControls.js`
+- [x] `src/socketConfig.js`
+- [x] `src/accessibilityAnnouncer.js`
+- [x] `src/callStreamHelpers.js`
 - [ ] `src/components/`
 - [ ] `src/call/`
 - [ ] `src/chat/`
 - [ ] `src/navigation/`
 - [ ] `src/hooks/`
-- [ ] remaining `src/*.js` modules (logging, media, permissions, storage, …)
+- [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
 - [ ] `App.js`
 - [ ] `__tests__/`
 
 ### server/
 
 - [x] `src/signaling/ack.js`
-- [ ] `src/signaling/` (handlers)
-- [ ] `src/routes/`
+- [ ] `src/signaling/` (remaining handlers)
+- [x] `src/lib/lifecycle.js`
+- [x] `src/routes/auditLog.routes.js`
+- [x] `src/routes/health.routes.js`
+- [x] `src/routes/metrics.routes.js`
+- [ ] `src/routes/` (remaining routes)
 - [ ] `src/domain/`
 - [ ] `src/stores/`
-- [ ] `src/lib/`
+- [ ] `src/lib/` (remaining modules)
+- [x] `src/identity.js`
+- [x] `src/firebaseAuth.js`
 - [ ] remaining `src/*.js` modules
 - [ ] `test/`
