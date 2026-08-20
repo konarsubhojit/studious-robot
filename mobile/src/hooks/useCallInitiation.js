@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef } from 'react';
 import { logError } from '../appLogger';
 
@@ -29,6 +30,7 @@ export default function useCallInitiation({ isInCall, setCalleeId, placeCall, ha
    * the Chats tab's video-call header button).
    */
   const startVideoCallWith = useCallback(
+    /** @param {string} peerId */
     peerId => {
       setCalleeId(peerId);
       placeCall(peerId).catch(error => {
@@ -43,6 +45,7 @@ export default function useCallInitiation({ isInCall, setCalleeId, placeCall, ha
    * turns the local camera off once it connects (see the effect below).
    */
   const startAudioCallWith = useCallback(
+    /** @param {string} peerId */
     peerId => {
       pendingAudioOnlyCallRef.current = true;
       setCalleeId(peerId);

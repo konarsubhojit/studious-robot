@@ -6,6 +6,17 @@ import { loadDeviceId } from '../settingsStorage';
 import { API_ROUTES } from '../../../shared';
 
 /**
+ * Issue a request with the current session id, refreshing it once on a 401.
+ *
+ * `buildRequest` is called with the session id in force for that attempt, so a
+ * retry after a refresh rebuilds the URL/body with the new id rather than
+ * replaying the stale one.
+ *
+ * @typedef {(buildRequest: (sessionId: string) => { url: string, options?: object })
+ *   => Promise<Response | null>} AuthedFetch
+ */
+
+/**
  * Owns the server-side session lifecycle: creating/refreshing the
  * `sessionId` token and performing authenticated requests that transparently
  * recover from a `401` by refreshing (or re-creating) the session once and

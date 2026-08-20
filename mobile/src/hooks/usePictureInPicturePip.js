@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
@@ -17,7 +18,7 @@ import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
  * @param {() => void} params.onTap - Invoked when the PiP is tapped (swap streams).
  * @returns {{
  *   stageSize: { width: number, height: number },
- *   handleCallStageLayout: (event: object) => void,
+ *   handleCallStageLayout: (event: import('react-native').LayoutChangeEvent) => void,
  *   pipGesture: object,
  *   animatedPipStyle: object,
  * }}
@@ -71,10 +72,14 @@ export default function usePictureInPicturePip({ onTap }) {
     pipMaxY,
   ]);
 
-  const handleCallStageLayout = useCallback(event => {
-    const { width, height } = event.nativeEvent.layout;
-    setStageSize({ width, height });
-  }, []);
+  const handleCallStageLayout = useCallback(
+    /** @param {import('react-native').LayoutChangeEvent} event */
+    event => {
+      const { width, height } = event.nativeEvent.layout;
+      setStageSize({ width, height });
+    },
+    [],
+  );
 
   const animatedPipStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: pipX.value }, { translateY: pipY.value }],

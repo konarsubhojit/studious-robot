@@ -58,7 +58,11 @@ design tokens and utilities → presentational components → hooks → screens 
 - [ ] `src/chat/`
 - [x] `src/navigation/` (except `AppNavigator.js`)
 - [ ] `src/storage/` (done: `recentSearches.js`)
-- [ ] `src/hooks/`
+- [ ] `src/hooks/` (done: `useAppSettings`, `useBlocks`, `useCallHistory`,
+      `useCallInitiation`, `useCallMinimize`, `useCameraLighting`,
+      `useChatDeepLink`, `useCompactCallView`, `usePictureInPicturePip`,
+      `useRecentSearches`, `useStartupPermissions`; `useSession` exports the
+      shared `AuthedFetch` contract)
 - [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
 - [ ] `App.js`
 - [ ] `__tests__/`

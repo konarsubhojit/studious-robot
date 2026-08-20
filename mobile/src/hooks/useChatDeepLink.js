@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logInfo, logWarn } from '../appLogger';
 import { addChatLinkListener, getInitialChatLink } from '../pushNotifications';
@@ -53,16 +54,22 @@ export function resolveChatPeerId({ conversationId, userId, conversations = [] }
  * }} params
  */
 export default function useChatDeepLink({ userId, conversations = [], onOpenConversation }) {
-  const [pendingConversationId, setPendingConversationId] = useState(null);
+  const [pendingConversationId, setPendingConversationId] = useState(
+    /** @type {string|null} */ (null),
+  );
   const onOpenConversationRef = useRef(onOpenConversation);
 
   useEffect(() => {
     onOpenConversationRef.current = onOpenConversation;
   }, [onOpenConversation]);
 
-  const openConversation = useCallback(conversationId => {
-    if (conversationId) setPendingConversationId(conversationId);
-  }, []);
+  const openConversation = useCallback(
+    /** @param {string | null | undefined} conversationId */
+    conversationId => {
+      if (conversationId) setPendingConversationId(conversationId);
+    },
+    [],
+  );
 
   // 1. Cold start: the app was launched by tapping a message notification.
   useEffect(() => {

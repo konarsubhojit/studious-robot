@@ -1,5 +1,7 @@
+// @ts-check
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
+import { errorMessage } from '../errorMessage';
 import { API_ROUTES } from '../../../shared';
 
 /**
@@ -17,19 +19,23 @@ import { API_ROUTES } from '../../../shared';
  * `useCallFlow` stays free of this concern.
  *
  * @param {{
- *   authedFetchRef: { current: Function | null },
+ *   authedFetchRef: { current: import('./useSession').AuthedFetch | null },
  *   sessionIdRef: { current: string | null },
  *   signalingUrl: string,
  * }} params
  */
 export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }) {
-  /** @type {[string[], Function]} ids the authenticated user has blocked. */
-  const [blockedUsers, setBlockedUsers] = useState([]);
+  /** ids the authenticated user has blocked. */
+  const [blockedUsers, setBlockedUsers] = useState(/** @type {string[]} */ ([]));
 
   const blockedSet = useMemo(() => new Set(blockedUsers), [blockedUsers]);
 
   /** Whether `peerId` is currently blocked by the authenticated user. */
-  const isUserBlocked = useCallback(peerId => blockedSet.has((peerId ?? '').trim()), [blockedSet]);
+  const isUserBlocked = useCallback(
+    /** @param {string | null | undefined} peerId */
+    peerId => blockedSet.has((peerId ?? '').trim()),
+    [blockedSet],
+  );
 
   /**
    * Load the blocklist from the server (`GET /blocks`).  Safe to call
@@ -48,7 +54,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
       if (!Array.isArray(data.blockedUsers)) return;
       setBlockedUsers(data.blockedUsers);
     } catch (error) {
-      logWarn('[Blocks] fetchBlocks failed', { message: error?.message });
+      logWarn('[Blocks] fetchBlocks failed', { message: errorMessage(error) });
     }
   }, [authedFetchRef, sessionIdRef, signalingUrl]);
 
@@ -59,6 +65,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
    * @returns {Promise<boolean>} whether the block was applied.
    */
   const blockUser = useCallback(
+    /** @param {string} peerId */
     async peerId => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return false;
@@ -76,7 +83,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
         setBlockedUsers(prev => (prev.includes(trimmedPeerId) ? prev : [...prev, trimmedPeerId]));
         return true;
       } catch (error) {
-        logWarn('[Blocks] blockUser failed', { message: error?.message });
+        logWarn('[Blocks] blockUser failed', { message: errorMessage(error) });
         return false;
       }
     },
@@ -91,6 +98,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
    * @returns {Promise<boolean>} whether the peer ended up unblocked.
    */
   const unblockUser = useCallback(
+    /** @param {string} peerId */
     async peerId => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return false;
@@ -104,7 +112,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
         setBlockedUsers(prev => prev.filter(id => id !== trimmedPeerId));
         return true;
       } catch (error) {
-        logWarn('[Blocks] unblockUser failed', { message: error?.message });
+        logWarn('[Blocks] unblockUser failed', { message: errorMessage(error) });
         return false;
       }
     },

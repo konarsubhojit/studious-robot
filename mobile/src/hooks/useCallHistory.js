@@ -1,6 +1,26 @@
+// @ts-check
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
+import { errorMessage } from '../errorMessage';
 import { API_ROUTES } from '../../../shared';
+
+/**
+ * One row of the call log, as rendered by the Calls tab.
+ *
+ * `direction` is derived client-side by comparing the server's `callerId`
+ * against the signed-in user, and `isRead` drives the missed-call badge.
+ *
+ * @typedef {object} CallHistoryEntry
+ * @property {string} callId
+ * @property {string} callerId
+ * @property {string} calleeId
+ * @property {'incoming'|'outgoing'} direction
+ * @property {string} status
+ * @property {string|null} endReason
+ * @property {string} createdAt
+ * @property {number|null} durationSeconds
+ * @property {boolean} isRead
+ */
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
@@ -14,16 +34,16 @@ const MAX_CALL_HISTORY = 50;
  * calls `addToHistory` from its own call-teardown logic.
  *
  * @param {{
- *   authedFetchRef: { current: Function | null },
+ *   authedFetchRef: { current: import('./useSession').AuthedFetch | null },
  *   sessionIdRef: { current: string | null },
  *   signalingUrl: string,
  *   userId: string,
  * }} params
  */
 export default function useCallHistory({ authedFetchRef, sessionIdRef, signalingUrl, userId }) {
-  // Each entry: { callId, callerId, calleeId, direction, status, endReason,
-  //               createdAt, durationSeconds, isRead }
-  const [callHistory, setCallHistory] = useState([]);
+  const [callHistory, setCallHistory] = useState(
+    /** @type {CallHistoryEntry[]} */ ([]),
+  );
 
   /**
    * Number of incoming calls that ended as 'missed' and have not yet been
@@ -41,7 +61,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
   );
 
   /** Append or update a call history entry (deduplicates by callId). */
-  const addToHistory = useCallback(entry => {
+  const addToHistory = useCallback(/** @param {CallHistoryEntry} entry */ entry => {
     setCallHistory(prev => {
       const without = prev.filter(e => e.callId !== entry.callId);
       return [entry, ...without].slice(0, MAX_CALL_HISTORY);
@@ -73,21 +93,24 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         if (!response?.ok) return;
         const data = await response.json();
         if (!Array.isArray(data.calls)) return;
-        const entries = data.calls.map(call => ({
-          callId: call.callId,
-          callerId: call.callerId,
-          calleeId: call.calleeId,
-          direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
-          status: call.status,
-          endReason: call.endReason,
-          createdAt: call.createdAt,
-          durationSeconds: call.durationSeconds ?? null,
-          isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
-        }));
+        const entries = data.calls.map(
+          /** @param {any} call @returns {CallHistoryEntry} */
+          call => ({
+            callId: call.callId,
+            callerId: call.callerId,
+            calleeId: call.calleeId,
+            direction: call.callerId === trimmedUserId ? 'outgoing' : 'incoming',
+            status: call.status,
+            endReason: call.endReason,
+            createdAt: call.createdAt,
+            durationSeconds: call.durationSeconds ?? null,
+            isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
+          }),
+        );
         setCallHistory(entries);
       } catch (error) {
         logWarn('[CallHistory] fetchCallHistory failed', {
-          message: error?.message,
+          message: errorMessage(error),
         });
       }
     },
