@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const express = require('express');
 const { API_ROUTES } = require('../../../shared');
 const { getSessionFromRequest } = require('../lib/auth');
@@ -20,14 +21,18 @@ function withStunServer(iceServers) {
   return hasStun ? iceServers : [{ urls: ['stun:stun.l.google.com:19302'] }, ...iceServers];
 }
 
+function parseTurnUrls(value) {
+  return typeof value === 'string'
+    ? value.split(',').map((url) => url.trim()).filter(Boolean)
+    : [];
+}
+
 function getStaticIceServers(env) {
   if (!env.TURN_USERNAME || !env.TURN_CREDENTIAL) {
     return [{ urls: ['stun:stun.l.google.com:19302'] }];
   }
 
-  const urls = env.TURN_URL
-    ? env.TURN_URL.split(',').map((url) => url.trim()).filter(Boolean)
-    : DEFAULT_TURN_URLS;
+  const urls = env.TURN_URL ? parseTurnUrls(env.TURN_URL) : DEFAULT_TURN_URLS;
   return [
     { urls: ['stun:stun.l.google.com:19302'] },
     { urls, username: env.TURN_USERNAME, credential: env.TURN_CREDENTIAL },
@@ -37,6 +42,19 @@ function getStaticIceServers(env) {
 function getTtlSeconds(value) {
   const ttl = Number(value);
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
+}
+
+/**
+ * Mint time-limited coturn `use-auth-secret` (HMAC) credentials for a user.
+ *
+ * coturn validates `username` as `<unix-expiry>:<anything>` and `credential`
+ * as base64(HMAC-SHA1(static-auth-secret, username)).
+ */
+function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }) {
+  const expiresAt = new Date(now + ttlSeconds * 1000);
+  const username = `${Math.floor(expiresAt.getTime() / 1000)}:${userId}`;
+  const credential = crypto.createHmac('sha1', secret).update(username).digest('base64');
+  return { iceServers: withStunServer([{ urls, username, credential }]), expiresAt };
 }
 
 function normalizeIceServers(payload) {
@@ -121,6 +139,29 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
       } catch (error) {
         const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
         logger(`[turn] credential minting failed: ${error?.message || 'unknown error'}`);
+      }
+    }
+
+    // HMAC (coturn `use-auth-secret`) tier: per-user, time-limited credentials.
+    // Never cached — every request mints a fresh credential for its own user.
+    const staticAuthSecret = env.TURN_STATIC_AUTH_SECRET;
+    if (staticAuthSecret) {
+      const urls = parseTurnUrls(env.TURN_URL);
+      if (urls.length === 0) {
+        console.warn(
+          '[turn] TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing; falling back to static credentials'
+        );
+      } else {
+        const { iceServers, expiresAt } = createHmacIceServers({
+          secret: staticAuthSecret,
+          urls,
+          userId: session.userId,
+          ttlSeconds: getTtlSeconds(env.TURN_TTL_SECONDS),
+          now,
+        });
+        res.set('X-Turn-Credential-Expires-At', expiresAt.toISOString());
+        res.json(iceServers);
+        return;
       }
     }
 

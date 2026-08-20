@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHmac } = require('node:crypto');
 const { createServer } = require('../src/index.js');
 
 async function startServer(opts = {}) {
@@ -132,8 +133,109 @@ test('GET /turn-credentials falls back to static TURN or STUN only', async () =>
   }
 });
 
-test('GET /turn-credentials requires a valid session and is rate limited', async () => {
-  const server = await startServer({ turnEnv: {}, turnRateLimit: 1 });
+test('GET /turn-credentials mints HMAC credentials for coturn use-auth-secret', async () => {
+  const server = await startServer({
+    turnEnv: {
+      TURN_STATIC_AUTH_SECRET: 'super-secret',
+      TURN_URL: 'turn:turn.example.com:3478, turns:turn.example.com:5349',
+      TURN_TTL_SECONDS: '600',
+    },
+  });
+  try {
+    const sessionId = await createSession(server.url);
+    const before = Math.floor(Date.now() / 1000);
+    const { response, body } = await getCredentials(server.url, sessionId);
+    const after = Math.floor(Date.now() / 1000);
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body[0], { urls: ['stun:stun.l.google.com:19302'] });
+    assert.deepEqual(body[1].urls, ['turn:turn.example.com:3478', 'turns:turn.example.com:5349']);
+
+    const [expiry, userId] = body[1].username.split(':');
+    assert.equal(userId, 'turn-user');
+    assert.ok(Number(expiry) >= before + 600 && Number(expiry) <= after + 600);
+    assert.equal(
+      body[1].credential,
+      createHmac('sha1', 'super-secret').update(body[1].username).digest('base64'),
+    );
+
+    const expiresAtHeader = response.headers.get('x-turn-credential-expires-at');
+    assert.equal(Math.floor(Date.parse(expiresAtHeader) / 1000), Number(expiry));
+  } finally {
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials mints per-user HMAC credentials without sharing a cache', async () => {
+  const server = await startServer({
+    turnEnv: {
+      TURN_STATIC_AUTH_SECRET: 'super-secret',
+      TURN_URL: 'turn:turn.example.com:3478',
+    },
+  });
+  try {
+    const first = await getCredentials(server.url, await createSession(server.url));
+    const secondSession = await (
+      await fetch(`${server.url}/session`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: 'other-user', deviceId: 'turn-device-2' }),
+      })
+    ).json();
+    const second = await getCredentials(server.url, secondSession.sessionId);
+
+    assert.match(first.body[1].username, /:turn-user$/);
+    assert.match(second.body[1].username, /:other-user$/);
+    assert.notEqual(first.body[1].credential, second.body[1].credential);
+  } finally {
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials prefers Cloudflare over HMAC credentials', async () => {
+  const server = await startServer({
+    turnEnv: {
+      CLOUDFLARE_TURN_KEY_ID: 'key-id',
+      CLOUDFLARE_TURN_API_TOKEN: 'api-token',
+      TURN_STATIC_AUTH_SECRET: 'super-secret',
+      TURN_URL: 'turn:turn.example.com:3478',
+    },
+    turnFetch: async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ iceServers: [{ urls: ['turn:cf.example'] }] }),
+    }),
+  });
+  try {
+    const { body } = await getCredentials(server.url, await createSession(server.url));
+    assert.deepEqual(body[1], { urls: ['turn:cf.example'] });
+  } finally {
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials falls through to static credentials when TURN_URL is missing', async () => {
+  const originalWarn = console.warn;
+  const warns = [];
+  console.warn = (...args) => warns.push(args.join(' '));
+  const server = await startServer({
+    turnEnv: {
+      TURN_STATIC_AUTH_SECRET: 'super-secret',
+      TURN_USERNAME: 'static-user',
+      TURN_CREDENTIAL: 'static-password',
+    },
+  });
+  try {
+    const { body } = await getCredentials(server.url, await createSession(server.url));
+    assert.equal(body[1].username, 'static-user');
+    assert.equal(body[1].credential, 'static-password');
+    assert.ok(warns.some((line) => line.includes('TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing')));
+  } finally {
+    console.warn = originalWarn;
+    await server.teardown();
+  }
+});
+
+test('GET /turn-credentials requires a valid session and is rate limited', async () => {  const server = await startServer({ turnEnv: {}, turnRateLimit: 1 });
   try {
     const unauthenticated = await fetch(`${server.url}/turn-credentials`);
     assert.equal(unauthenticated.status, 401);
