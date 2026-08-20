@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -43,6 +44,14 @@ function createHotMaps() {
 }
 
 /**
+ * @typedef {import('./contracts').Stores & {
+ *   messageBus: import('../messageBus').MessageBus,
+ *   attachAdapter: (io: any) => void,
+ *   close: () => Promise<void>,
+ * }} RedisStores
+ */
+
+/**
  * Create a Redis-backed store bundle with a cross-instance message bus and a
  * Socket.IO Redis adapter.
  *
@@ -59,11 +68,7 @@ function createHotMaps() {
  * @param {() => any} [opts.createClient]   Client factory; defaults to `redis.createClient`.
  * @param {(pub: any, sub: any) => any} [opts.createAdapter]
  *   Socket.IO adapter factory; defaults to `@socket.io/redis-adapter.createAdapter`.
- * @returns {Promise<import('./contracts').Stores & {
- *   messageBus: import('../messageBus').MessageBus,
- *   attachAdapter: (io: any) => void,
- *   close: () => Promise<void>,
- * }>}
+ * @returns {Promise<RedisStores>}
  */
 async function createRedisPgStores(opts = {}) {
   const url = opts.redisUrl || process.env.REDIS_URL;
@@ -85,7 +90,7 @@ async function createRedisPgStores(opts = {}) {
     const client = createClient();
     // node-redis surfaces connection errors as 'error' events; log instead of
     // letting them crash the process.
-    client.on?.('error', (error) => {
+    client.on?.('error', (/** @type {{ message?: string } | undefined} */ error) => {
       console.error(`[stores:redis] client error: ${error?.message}`);
     });
     await client.connect?.();
@@ -100,7 +105,7 @@ async function createRedisPgStores(opts = {}) {
 
   const messageBus = createRedisMessageBus({ pub: busPub, sub: busSub });
 
-  const bundle = createHotMaps();
+  const bundle = /** @type {RedisStores} */ (/** @type {unknown} */ (createHotMaps()));
   bundle.messageBus = messageBus;
 
   /**
@@ -124,7 +129,7 @@ async function createRedisPgStores(opts = {}) {
     await Promise.allSettled(clients.map((client) => client.quit?.()));
   };
 
-  return /** @type {any} */ (bundle);
+  return bundle;
 }
 
 module.exports = { createRedisPgStores };

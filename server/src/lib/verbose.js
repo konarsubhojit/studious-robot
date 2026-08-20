@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { sanitizeForLog } = require('./normalize');
@@ -27,10 +28,23 @@ function isVerboseLoggingEnabled() {
   );
 }
 
+/**
+ * @param {unknown} key
+ * @returns {boolean} `true` when the key names a field that must be redacted.
+ */
 function isSensitiveKey(key) {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
 }
 
+/**
+ * Recursively copy `value`, replacing sensitive fields with `[REDACTED]` and
+ * already-visited objects with `[Circular]`.
+ *
+ * @param {unknown} value
+ * @param {string} [key]  Key `value` was found under, if any.
+ * @param {WeakSet<object>} [seen]
+ * @returns {unknown}
+ */
 function redact(value, key, seen = new WeakSet()) {
   if (isSensitiveKey(key)) return '[REDACTED]';
   if (value === null || value === undefined) return value;
@@ -42,13 +56,22 @@ function redact(value, key, seen = new WeakSet()) {
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redact(item, undefined, seen));
 
-  const output = {};
+  const output = /** @type {Record<string, unknown>} */ ({});
   for (const [childKey, childValue] of Object.entries(value)) {
     output[childKey] = redact(childValue, childKey, seen);
   }
   return output;
 }
 
+/**
+ * Log a debug line when verbose logging is enabled, redacting sensitive
+ * metadata fields and escaping control characters.
+ *
+ * @param {string} scope
+ * @param {string} message
+ * @param {unknown} [metadata]
+ * @returns {void}
+ */
 function verboseLog(scope, message, metadata) {
   if (!isVerboseLoggingEnabled()) return;
   const suffix = metadata === undefined ? '' : ` ${JSON.stringify(redact(metadata))}`;

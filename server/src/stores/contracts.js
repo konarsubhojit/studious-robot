@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -26,7 +27,17 @@
  * @typedef {Map<string, object>} UserStore
  *   userId → claimed-identity record (`{ userId, verificationHash, verificationSalt, … }`).
  *
- * @typedef {Map<string, object>} SessionStore
+ * @typedef {object} SessionRecord
+ *   A logged-in session, created by `POST /session` and looked up on every
+ *   authenticated request and socket handshake.
+ * @property {string} sessionId
+ * @property {string} userId
+ * @property {string} deviceId
+ * @property {string|null} [platform]
+ * @property {string} [createdAt]     ISO timestamp.
+ * @property {string|null} [expiresAt] ISO timestamp; `null` when the session never expires.
+ *
+ * @typedef {Map<string, SessionRecord>} SessionStore
  *   sessionId → session record.
  *
  * @typedef {Map<string, Set<string>>} UserSessionStore

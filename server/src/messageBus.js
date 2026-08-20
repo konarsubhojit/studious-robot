@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -27,6 +28,26 @@
  */
 
 const { EventEmitter } = require('events');
+
+/**
+ * The publish/subscribe contract every message bus implementation honours.
+ *
+ * @typedef {object} MessageBus
+ * @property {string} type  Implementation name (`'memory'` / `'redis'`).
+ * @property {(channel: string, message: unknown) => Promise<void>} publish
+ * @property {(channel: string, handler: (message: unknown, channel: string) => void) => Promise<() => Promise<void>>} subscribe
+ * @property {() => Promise<void>} close
+ */
+
+/**
+ * Describe a caught value for a log line.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function toMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Serialise a message for transport. Objects become JSON; strings are sent
@@ -82,11 +103,11 @@ function createMemoryMessageBus() {
     },
 
     async subscribe(channel, handler) {
-      const listener = (payload) => {
+      const listener = (/** @type {string} */ payload) => {
         try {
           handler(decode(payload), channel);
         } catch (error) {
-          console.error(`[messageBus] handler for "${channel}" threw: ${error?.message}`);
+          console.error(`[messageBus] handler for "${channel}" threw: ${toMessage(error)}`);
         }
       };
       emitter.on(channel, listener);
@@ -146,13 +167,13 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
         set = new Set();
         handlers.set(channel, set);
         // One Redis subscription per channel; fan out to local handlers.
-        await sub.subscribe(channel, (payload) => {
+        await sub.subscribe(channel, (/** @type {string} */ payload) => {
           const message = decode(payload);
           for (const fn of handlers.get(channel) ?? []) {
             try {
               fn(message, channel);
             } catch (error) {
-              console.error(`[messageBus] handler for "${channel}" threw: ${error?.message}`);
+              console.error(`[messageBus] handler for "${channel}" threw: ${toMessage(error)}`);
             }
           }
         });
@@ -169,7 +190,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
             try {
               await sub.unsubscribe(channel);
             } catch (error) {
-              console.error(`[messageBus] unsubscribe "${channel}" failed: ${error?.message}`);
+              console.error(`[messageBus] unsubscribe "${channel}" failed: ${toMessage(error)}`);
             }
           }
         }
@@ -187,7 +208,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
           try {
             await sub.unsubscribe(channel);
           } catch (error) {
-            console.error(`[messageBus] unsubscribe "${channel}" failed: ${error?.message}`);
+            console.error(`[messageBus] unsubscribe "${channel}" failed: ${toMessage(error)}`);
           }
         }
       }

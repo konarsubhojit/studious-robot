@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { PUSH_PROVIDERS } = require('../config');
