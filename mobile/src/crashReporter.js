@@ -1,7 +1,23 @@
+// @ts-check
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 
+/**
+ * The React Native global error handler registry.
+ *
+ * @typedef {object} ErrorUtilsGlobal
+ * @property {() => ((error: unknown, isFatal?: boolean) => void)|undefined} getGlobalHandler
+ * @property {(handler: (error: unknown, isFatal?: boolean) => void) => void} setGlobalHandler
+ */
+
+/**
+ * Timestamp fragment used in crash-log file names.
+ *
+ * @param {Date} [date]
+ * @returns {string}
+ */
 function formatDateForFile(date = new Date()) {
+  /** @param {number} v */
   const pad = v => String(v).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
@@ -16,21 +32,24 @@ function formatDateForFile(date = new Date()) {
  * Tries locations in priority order (Downloads → app external → app documents
  * on Android; app documents on iOS) and returns on first success.
  *
- * @param {Error|unknown} error            The caught error object.
- * @param {boolean}       isFatal          Whether the runtime considers it fatal.
+ * @param {unknown}       error            The caught error object.
+ * @param {boolean|undefined} isFatal      Whether the runtime considers it fatal.
  * @param {() => string}  getLogsCallback  Returns buffered in-memory app logs.
  * @returns {Promise<{success: boolean, path?: string, label?: string}>}
  */
 export async function saveCrashLog(error, isFatal, getLogsCallback) {
   const fileName = `wetalk-crash-${formatDateForFile()}.txt`;
+  // Thrown values are not guaranteed to be `Error` instances; read the usual
+  // fields defensively rather than assuming a shape.
+  const details = /** @type {{ name?: string, message?: string, stack?: string }} */ (error ?? {});
 
   const content = [
     'WeTalk crash report',
     `crashedAt: ${new Date().toISOString()}`,
     `isFatal: ${Boolean(isFatal)}`,
-    `error.name: ${error?.name ?? 'unknown'}`,
-    `error.message: ${error?.message ?? 'unknown'}`,
-    `error.stack:\n${error?.stack ?? 'unavailable'}`,
+    `error.name: ${details.name ?? 'unknown'}`,
+    `error.message: ${details.message ?? 'unknown'}`,
+    `error.stack:\n${details.stack ?? 'unavailable'}`,
     '',
     '--- app logs at time of crash ---',
     typeof getLogsCallback === 'function' ? getLogsCallback() : '(no log callback)',
@@ -75,18 +94,23 @@ export async function saveCrashLog(error, isFatal, getLogsCallback) {
  * @param {() => string} getLogsCallback  Returns buffered in-memory app logs.
  */
 export function installCrashHandler(getLogsCallback) {
-  if (!global.ErrorUtils) {
+  // `ErrorUtils` is a React Native runtime global with no ambient type.
+  const errorUtils = /** @type {ErrorUtilsGlobal|undefined} */ (
+    /** @type {any} */ (global).ErrorUtils
+  );
+  if (!errorUtils) {
     return;
   }
 
-  const previousHandler = ErrorUtils.getGlobalHandler();
+  const previousHandler = errorUtils.getGlobalHandler();
 
-  ErrorUtils.setGlobalHandler((error, isFatal) => {
+  errorUtils.setGlobalHandler((error, isFatal) => {
     // Always log to logcat/console immediately — this is synchronous and
     // survives even if the process is killed before the file write finishes.
+    const details = /** @type {{ message?: string, stack?: string }} */ (error ?? {});
     console.error(
-      `[CrashReporter] ${isFatal ? 'FATAL' : 'non-fatal'} error: ${error?.message ?? error}`,
-      error?.stack ?? '',
+      `[CrashReporter] ${isFatal ? 'FATAL' : 'non-fatal'} error: ${details.message ?? error}`,
+      details.stack ?? '',
     );
 
     // Best-effort async file dump for easier retrieval from the device.

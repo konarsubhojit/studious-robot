@@ -1,3 +1,4 @@
+// @ts-check
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
 import { THEME_MODE_VALUES, THEME_MODES } from './theme';
@@ -5,11 +6,21 @@ import { THEME_MODE_VALUES, THEME_MODES } from './theme';
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
 /**
+ * Describe a caught value for a log line.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Merge persisted settings onto the defaults, keeping only known keys with the
  * expected primitive type.  This guards against corrupt or out-of-date files
  * silently introducing unexpected values.
  *
- * @template T
+ * @template {Record<string, unknown>} T
  * @param {T} defaults
  * @param {unknown} loaded
  * @returns {T}
@@ -20,10 +31,11 @@ export function mergeSettings(defaults, loaded) {
   }
 
   const merged = { ...defaults };
+  const persisted = /** @type {Record<string, unknown>} */ (loaded);
   Object.keys(defaults).forEach(key => {
-    const value = loaded[key];
+    const value = persisted[key];
     if (typeof value === typeof defaults[key]) {
-      merged[key] = value;
+      /** @type {Record<string, unknown>} */ (merged)[key] = value;
     }
   });
   return merged;
@@ -33,7 +45,7 @@ export function mergeSettings(defaults, loaded) {
  * Load persisted settings, merged onto the provided defaults.  Missing or
  * unreadable files fall back to the defaults rather than throwing.
  *
- * @template T
+ * @template {Record<string, unknown>} T
  * @param {T} defaults
  * @returns {Promise<T>}
  */
@@ -47,7 +59,7 @@ export async function loadSettings(defaults) {
     return mergeSettings(defaults, JSON.parse(content));
   } catch (error) {
     logError('Failed to load settings; using defaults', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     return { ...defaults };
   }
@@ -66,7 +78,7 @@ export async function saveSettings(settings) {
     logInfo('Settings persisted');
     return true;
   } catch (error) {
-    logError('Failed to persist settings', { message: error?.message });
+    logError('Failed to persist settings', { message: errorMessage(error) });
     return false;
   }
 }
@@ -97,7 +109,7 @@ export async function loadIdentity() {
     };
   } catch (error) {
     logError('Failed to load identity; using empty default', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     return { userId: '' };
   }
@@ -123,7 +135,7 @@ export async function saveIdentity(identity) {
     });
     return true;
   } catch (error) {
-    logError('Failed to persist identity', { message: error?.message });
+    logError('Failed to persist identity', { message: errorMessage(error) });
     return false;
   }
 }
@@ -152,7 +164,7 @@ export async function loadThemeMode() {
     return THEME_MODE_VALUES.includes(parsed?.mode) ? parsed.mode : THEME_MODES.SYSTEM;
   } catch (error) {
     logError('Failed to load theme mode; using system default', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     return THEME_MODES.SYSTEM;
   }
@@ -172,7 +184,7 @@ export async function saveThemeMode(mode) {
     logInfo('Theme mode persisted', { mode: safeMode });
     return true;
   } catch (error) {
-    logError('Failed to persist theme mode', { message: error?.message });
+    logError('Failed to persist theme mode', { message: errorMessage(error) });
     return false;
   }
 }
@@ -229,7 +241,7 @@ export async function loadDeviceId() {
     }
   } catch (error) {
     logError('Failed to load device id; generating a new one', {
-      message: error?.message,
+      message: errorMessage(error),
     });
   }
 
@@ -238,7 +250,7 @@ export async function loadDeviceId() {
     await RNFS.writeFile(DEVICE_FILE, JSON.stringify({ deviceId }), 'utf8');
     logInfo('Device id generated and persisted');
   } catch (error) {
-    logError('Failed to persist device id', { message: error?.message });
+    logError('Failed to persist device id', { message: errorMessage(error) });
   }
   return deviceId;
 }

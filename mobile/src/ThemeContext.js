@@ -48,7 +48,7 @@ export function useTheme() {
  * stable references, so the memo only recomputes on an actual theme switch.
  *
  * @template T
- * @param {(colors: object) => T} factory
+ * @param {(colors: import('./theme').Palette) => T} factory
  * @returns {T}
  */
 export function useThemedStyles(factory) {

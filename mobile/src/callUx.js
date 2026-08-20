@@ -1,8 +1,25 @@
+// @ts-check
+/**
+ * Constrain `value` to the inclusive `[min, max]` range.
+ *
+ * Runs as a Reanimated worklet on the UI thread as well as on the JS thread.
+ *
+ * @param {number} value
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
 export function clamp(value, min, max) {
   'worklet';
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * Format an elapsed call duration as `mm:ss` (or `hh:mm:ss` past an hour).
+ *
+ * @param {number} totalSeconds
+ * @returns {string}
+ */
 export function formatCallDuration(totalSeconds) {
   const safeSeconds = Math.floor(Math.max(0, totalSeconds || 0));
   const hours = Math.floor(safeSeconds / 3600);
@@ -35,6 +52,12 @@ export function formatRingCountdown(totalSeconds) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+/**
+ * Derive up to two avatar initials from a user id or display name.
+ *
+ * @param {string|null|undefined} id
+ * @returns {string}
+ */
 export function deriveInitials(id) {
   if (!id) return '?';
   const parts = id
@@ -47,35 +70,52 @@ export function deriveInitials(id) {
   return id.slice(0, 2).toUpperCase();
 }
 
+/**
+ * @param {unknown} value
+ * @returns {value is number} `true` for a finite numeric sample.
+ */
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * Grade the live connection from WebRTC stats into signal bars plus a label.
+ *
+ * Missing/non-finite samples are ignored, so a partially reported stats object
+ * still yields the best grade its known metrics support.
+ *
+ * @param {{ rttMs?: number, packetLossRatio?: number, bitrateKbps?: number }} stats
+ * @returns {{ bars: 0|1|2|3, label: string }}
+ */
 export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }) {
   if (
-    !Number.isFinite(rttMs) &&
-    !Number.isFinite(packetLossRatio) &&
-    !Number.isFinite(bitrateKbps)
+    !isFiniteNumber(rttMs) &&
+    !isFiniteNumber(packetLossRatio) &&
+    !isFiniteNumber(bitrateKbps)
   ) {
     return { bars: 0, label: 'No link' };
   }
 
   if (
-    (Number.isFinite(packetLossRatio) && packetLossRatio > 0.12) ||
-    (Number.isFinite(rttMs) && rttMs > 600) ||
-    (Number.isFinite(bitrateKbps) && bitrateKbps < 120)
+    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.12) ||
+    (isFiniteNumber(rttMs) && rttMs > 600) ||
+    (isFiniteNumber(bitrateKbps) && bitrateKbps < 120)
   ) {
     return { bars: 0, label: 'Poor' };
   }
 
   if (
-    (Number.isFinite(packetLossRatio) && packetLossRatio > 0.07) ||
-    (Number.isFinite(rttMs) && rttMs > 350) ||
-    (Number.isFinite(bitrateKbps) && bitrateKbps < 250)
+    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.07) ||
+    (isFiniteNumber(rttMs) && rttMs > 350) ||
+    (isFiniteNumber(bitrateKbps) && bitrateKbps < 250)
   ) {
     return { bars: 1, label: 'Weak' };
   }
 
   if (
-    (Number.isFinite(packetLossRatio) && packetLossRatio > 0.03) ||
-    (Number.isFinite(rttMs) && rttMs > 220) ||
-    (Number.isFinite(bitrateKbps) && bitrateKbps < 500)
+    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.03) ||
+    (isFiniteNumber(rttMs) && rttMs > 220) ||
+    (isFiniteNumber(bitrateKbps) && bitrateKbps < 500)
   ) {
     return { bars: 2, label: 'Fair' };
   }

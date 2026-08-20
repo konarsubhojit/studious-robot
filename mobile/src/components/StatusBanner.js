@@ -1,15 +1,28 @@
+// @ts-check
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 
-/** Tinted background style for a severity, or `null` for plain 'info'. */
+/**
+ * Tinted background style for a severity, or `null` for plain 'info'.
+ *
+ * @param {ReturnType<typeof createStyles>} styles
+ * @param {'info'|'success'|'warning'|'error'} severity
+ */
 const severityTint = (styles, severity) =>
   ({
+    info: null,
     success: styles.containerSuccess,
     error: styles.containerError,
     warning: styles.containerWarning,
   }[severity] ?? null);
 
+/**
+ * Foreground colour matching a severity.
+ *
+ * @param {import('../theme').Palette} colors
+ * @param {'info'|'success'|'warning'|'error'} severity
+ */
 const severityColor = (colors, severity) =>
   ({
     info: colors.textMuted,
@@ -52,6 +65,7 @@ export default function StatusBanner({ status, style, textStyle }) {
   );
 }
 
+/** @param {import('../theme').Palette} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

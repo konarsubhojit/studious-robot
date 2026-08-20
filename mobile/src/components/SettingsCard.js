@@ -1,7 +1,18 @@
+// @ts-check
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 
+/**
+ * A single on/off preference row.
+ *
+ * @param {object} props
+ * @param {string} props.label
+ * @param {string} props.hint
+ * @param {boolean} props.value
+ * @param {() => void} props.onPress
+ * @param {string} [props.testID]
+ */
 function SettingsToggle({ label, hint, value, onPress, testID }) {
   const styles = useThemedStyles(createStyles);
 
@@ -55,6 +66,7 @@ export default function SettingsCard({ settings, onToggleAutoLighting, onToggleS
   );
 }
 
+/** @param {import('../theme').Palette} colors */
 const createStyles = colors =>
   StyleSheet.create({
     settingsCard: {

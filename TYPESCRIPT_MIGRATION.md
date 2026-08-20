@@ -47,7 +47,12 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/socketConfig.js`
 - [x] `src/accessibilityAnnouncer.js`
 - [x] `src/callStreamHelpers.js`
-- [ ] `src/components/`
+- [x] `src/callUx.js`
+- [x] `src/haptics.js`
+- [x] `src/crashReporter.js`
+- [x] `src/settingsStorage.js`
+- [ ] `src/components/` (done: `AppButton`, `IconButton`, `SettingsCard`,
+      `StatusBanner`, `InCallBanner`, `ReconnectBanner`)
 - [ ] `src/call/`
 - [ ] `src/chat/`
 - [ ] `src/navigation/`
@@ -61,14 +66,18 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/signaling/ack.js`
 - [ ] `src/signaling/` (remaining handlers)
 - [x] `src/lib/lifecycle.js`
+- [x] `src/lib/auth.js`
+- [x] `src/lib/normalize.js`
+- [x] `src/lib/verbose.js`
 - [x] `src/routes/auditLog.routes.js`
 - [x] `src/routes/health.routes.js`
 - [x] `src/routes/metrics.routes.js`
 - [ ] `src/routes/` (remaining routes)
 - [ ] `src/domain/`
-- [ ] `src/stores/`
+- [x] `src/stores/`
 - [ ] `src/lib/` (remaining modules)
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
+- [x] `src/messageBus.js`
 - [ ] remaining `src/*.js` modules
 - [ ] `test/`

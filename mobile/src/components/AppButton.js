@@ -1,3 +1,4 @@
+// @ts-check
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing } from '../theme';
@@ -50,6 +51,7 @@ export default function AppButton({
   );
 }
 
+/** @param {import('../theme').Palette} colors */
 const createStyles = colors =>
   StyleSheet.create({
     button: {
