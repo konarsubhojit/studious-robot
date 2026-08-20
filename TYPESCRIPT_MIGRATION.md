@@ -14,6 +14,8 @@ documented today become contracts that are checked.
 - `npm run typecheck` (in `mobile/` and in `server/`) runs the check locally;
   both CI workflows run the same command and fail on any type error.
 - `shared/` is checked from both projects, because both consume it.
+- `mobile/types/*.d.ts` holds hand-written ambient declarations for native
+  dependencies that ship no types (currently `react-native-vector-icons`).
 
 ## Migrating a file
 
@@ -51,6 +53,14 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/haptics.js`
 - [x] `src/crashReporter.js`
 - [x] `src/settingsStorage.js`
+- [x] `src/ErrorBoundary.js`
+- [x] `src/SafeRTCView.js`
+- [x] `src/authService.js`
+- [x] `src/callService.js`
+- [x] `src/cameraLighting.js`
+- [x] `src/vectorIcons.js`
+- [x] `src/voiceRecorder.js`
+- [x] `src/webrtcConfig.js`
 - [ ] `src/components/` (done: `AppButton`, `IconButton`, `SettingsCard`,
       `StatusBanner`, `InCallBanner`, `ReconnectBanner`)
 - [x] `src/errorMessage.js`
@@ -63,7 +73,8 @@ design tokens and utilities → presentational components → hooks → screens 
       `useChatDeepLink`, `useCompactCallView`, `usePictureInPicturePip`,
       `useRecentSearches`, `useStartupPermissions`; `useSession` exports the
       shared `AuthedFetch` contract)
-- [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
+- [ ] remaining `src/*.js` modules (`appLogger`, `telemetry`, permissions,
+      notifications, …)
 - [ ] `App.js`
 - [ ] `__tests__/`
 

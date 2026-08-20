@@ -1,3 +1,4 @@
+// @ts-check
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import { logError, logInfo } from './appLogger';
 

@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import { Button, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { getLogsAsText } from './appLogger';
@@ -14,23 +15,30 @@ import { saveCrashLog } from './crashReporter';
  *   <ErrorBoundary>
  *     <App />
  *   </ErrorBoundary>
+ *
+ * @typedef {{ error: Error|null, logPath: string|null, saving: boolean }} ErrorBoundaryState
+ *
+ * @extends {React.Component<{ children?: React.ReactNode }, ErrorBoundaryState>}
  */
 export default class ErrorBoundary extends React.Component {
+  /** @param {{ children?: React.ReactNode }} props */
   constructor(props) {
     super(props);
-    this.state = { error: null, logPath: null, saving: false };
+    this.state = /** @type {ErrorBoundaryState} */ ({ error: null, logPath: null, saving: false });
     this.handleRestart = this.handleRestart.bind(this);
   }
 
+  /** @param {Error} error */
   static getDerivedStateFromError(error) {
     return { error };
   }
 
+  /** @param {Error} error */
   componentDidCatch(error) {
     this.setState({ saving: true });
     saveCrashLog(error, true, getLogsAsText)
       .then(result => {
-        this.setState({ saving: false, logPath: result.success ? result.path : null });
+        this.setState({ saving: false, logPath: (result.success && result.path) || null });
       })
       .catch(() => {
         this.setState({ saving: false });

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Lazy-loaded wrapper for react-native-vector-icons/MaterialCommunityIcons.
  *
@@ -14,6 +15,7 @@
  * Icon names: https://pictogrammers.com/library/mdi/
  */
 
+/** @type {import('react-native-vector-icons/MaterialCommunityIcons').default | null | undefined} */
 let _cache;
 
 /**

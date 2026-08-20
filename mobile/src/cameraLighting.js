@@ -1,17 +1,27 @@
+// @ts-check
 import { logDebug, logError, logInfo } from './appLogger';
 
 // Some platforms (notably react-native-webrtc on Android) do not implement every
 // MediaStreamTrack introspection API and throw an "Not implemented." error when
 // called. Such errors are an expected capability gap rather than a real failure,
 // so we detect them to avoid logging them at error level.
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
 function isNotImplementedError(error) {
-  return Boolean(error) && /not implemented/i.test(error.message || '');
+  return error instanceof Error && /not implemented/i.test(error.message || '');
 }
 
 // Safely invoke an optional MediaStreamTrack reader (getSettings/getCapabilities).
 // Returns null when the reader is missing or throws. "Not implemented." errors are
 // logged at debug level because they are an expected platform limitation; any other
 // error is logged at error level.
+/**
+ * @param {any} track  A `MediaStreamTrack`-like object; the readers below are optional.
+ * @param {'getSettings'|'getCapabilities'} method
+ * @returns {Record<string, any> | null}
+ */
 function readTrackState(track, method) {
   if (!track || typeof track[method] !== 'function') {
     return null;
@@ -57,6 +67,10 @@ export const LIGHTING_PROFILES = {
   },
 };
 
+/**
+ * @param {unknown} value
+ * @returns {number|null} `null` when `value` is not a usable number.
+ */
 export function clampUnitInterval(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return null;
@@ -70,6 +84,11 @@ export function clampUnitInterval(value) {
   return value;
 }
 
+/**
+ * @param {unknown} value
+ * @param {{ min?: number, max?: number } | null | undefined} range
+ * @returns {number|null}
+ */
 export function normalizeToUnitRange(value, range) {
   if (typeof value !== 'number' || Number.isNaN(value) || !range) {
     return null;
@@ -83,6 +102,10 @@ export function normalizeToUnitRange(value, range) {
   return clampUnitInterval((value - min) / (max - min));
 }
 
+/**
+ * @param {unknown} brightness  Normalized scene brightness in `[0, 1]`.
+ * @returns {'low'|'normal'|'bright'|'unknown'}
+ */
 export function classifyLighting(brightness) {
   const normalized = clampUnitInterval(brightness);
   if (normalized === null) {
@@ -100,6 +123,11 @@ export function classifyLighting(brightness) {
 // Estimate normalized scene brightness from a video track's current settings and
 // reported capability ranges. Returns null when there is not enough information,
 // in which case callers should leave the camera untouched.
+/**
+ * @param {Record<string, any> | null | undefined} settings
+ * @param {Record<string, any> | null | undefined} capabilities
+ * @returns {number|null}
+ */
 export function estimateSceneBrightness(settings, capabilities) {
   if (!settings || !capabilities) {
     return null;
@@ -127,9 +155,13 @@ export function estimateSceneBrightness(settings, capabilities) {
   return null;
 }
 
+/**
+ * @param {unknown} brightness
+ * @returns {{ condition: 'low'|'normal'|'bright'|'unknown', constraints: object|null }}
+ */
 export function getLightingAdjustedConstraints(brightness) {
   const condition = classifyLighting(brightness);
-  const profile = LIGHTING_PROFILES[condition];
+  const profile = condition === 'unknown' ? null : LIGHTING_PROFILES[condition];
 
   if (!profile) {
     return { condition, constraints: null };
@@ -151,6 +183,10 @@ export function getLightingAdjustedConstraints(brightness) {
 // Read the current camera state, estimate scene brightness and apply lighting-
 // adjusted constraints to the given video track. Safe to call repeatedly; it is a
 // no-op when the track or required APIs are unavailable.
+/**
+ * @param {any} track  The local video `MediaStreamTrack`.
+ * @returns {Promise<{ applied: boolean, condition: string, brightness?: number|null }>}
+ */
 export async function applyLightingAdjustment(track) {
   if (!track || typeof track.applyConstraints !== 'function') {
     return { applied: false, condition: 'unknown' };
