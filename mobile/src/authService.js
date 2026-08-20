@@ -1,5 +1,6 @@
 // @ts-check
 import auth from '@react-native-firebase/auth';
+import { errorMessage } from './errorMessage';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
   'Firebase is not configured in this build. Add google-services.json (Android) or GoogleService-Info.plist (iOS).';
@@ -20,7 +21,9 @@ let cachedGoogleSignin;
  * @returns {boolean}
  */
 function isFirebaseAppUnavailableError(error) {
-  const message = error instanceof Error ? error.message : '';
+  // Firebase failures can cross the native bridge as plain objects, so the
+  // message is read through the shared helper rather than via `instanceof`.
+  const message = error ? errorMessage(error) : '';
   return (
     message.includes("No Firebase App '[DEFAULT]' has been created") ||
     message.toLowerCase().includes('default app has not been created')

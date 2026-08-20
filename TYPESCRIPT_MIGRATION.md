@@ -54,7 +54,8 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/crashReporter.js`
 - [x] `src/settingsStorage.js`
 - [x] `src/ErrorBoundary.js`
-- [x] `src/SafeRTCView.js`
+- [x] `src/SafeRTCView.js` (props still widened with `Record<string, any>` for the
+      untyped `RTCView` pass-through; tighten once `react-native-webrtc` props are typed)
 - [x] `src/authService.js`
 - [x] `src/callService.js`
 - [x] `src/cameraLighting.js`

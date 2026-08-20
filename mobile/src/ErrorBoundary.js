@@ -38,7 +38,7 @@ export default class ErrorBoundary extends React.Component {
     this.setState({ saving: true });
     saveCrashLog(error, true, getLogsAsText)
       .then(result => {
-        this.setState({ saving: false, logPath: (result.success && result.path) || null });
+        this.setState({ saving: false, logPath: result.success ? result.path ?? null : null });
       })
       .catch(() => {
         this.setState({ saving: false });

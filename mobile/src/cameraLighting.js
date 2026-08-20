@@ -1,5 +1,6 @@
 // @ts-check
 import { logDebug, logError, logInfo } from './appLogger';
+import { errorMessage } from './errorMessage';
 
 // Some platforms (notably react-native-webrtc on Android) do not implement every
 // MediaStreamTrack introspection API and throw an "Not implemented." error when
@@ -10,7 +11,9 @@ import { logDebug, logError, logInfo } from './appLogger';
  * @returns {boolean}
  */
 function isNotImplementedError(error) {
-  return error instanceof Error && /not implemented/i.test(error.message || '');
+  // Native rejections are not always `Error` instances, so read the message
+  // through the shared helper rather than narrowing with `instanceof`.
+  return Boolean(error) && /not implemented/i.test(errorMessage(error));
 }
 
 // Safely invoke an optional MediaStreamTrack reader (getSettings/getCapabilities).

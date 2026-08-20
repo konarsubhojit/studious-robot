@@ -2,6 +2,7 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
+const { toLogMessage } = require('./lib/normalize');
 
 /**
  * Security utilities for call initiation and signaling hardening.
@@ -51,16 +52,6 @@ const { randomUUID } = require('crypto');
  */
 
 const MAX_AUDIT_LOG_SIZE = 1000;
-
-/**
- * Narrow an unknown thrown value to a printable message.
- *
- * @param {unknown} error
- * @returns {string}
- */
-function toMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 
@@ -231,10 +222,10 @@ function createAuditLog({ db = null } = {}) {
           details: entry.details ?? {},
         })
         .catch((err) => {
-          console.error('[security] failed to persist audit event to DB:', toMessage(err));
+          console.error('[security] failed to persist audit event to DB:', toLogMessage(err));
         });
     } catch (err) {
-      console.error('[security] failed to persist audit event to DB:', toMessage(err));
+      console.error('[security] failed to persist audit event to DB:', toLogMessage(err));
     }
   }
 
