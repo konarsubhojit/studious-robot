@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -11,7 +12,7 @@ const { getPresenceSnapshot, hasKnownUser, listKnownUsers } = require('../lib/st
 /**
  * Presence lookup and the contact directory / discovery endpoints.
  *
- * @param {{ state: object }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState }} ctx
  * @returns {import('express').Router}
  */
 function createDirectoryRouter({ state }) {

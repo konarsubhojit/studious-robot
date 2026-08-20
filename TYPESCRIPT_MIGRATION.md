@@ -72,12 +72,18 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/routes/auditLog.routes.js`
 - [x] `src/routes/health.routes.js`
 - [x] `src/routes/metrics.routes.js`
-- [ ] `src/routes/` (remaining routes)
+- [x] `src/routes/` (all routers except `calls.routes.js` / `messages.routes.js`;
+      every router's `state` is typed by the shared `ServerState` contract in
+      `src/stores/contracts.js`)
 - [ ] `src/domain/`
 - [x] `src/stores/`
 - [ ] `src/lib/` (remaining modules)
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
 - [x] `src/messageBus.js`
+- [x] `src/telemetry.js` — `Telemetry` / `MetricsSnapshot` contracts defined
+      (file itself not yet `@ts-check`ed)
+- [x] `src/security.js` — `RateLimiter` / `AuditLog` contracts defined
+      (file itself not yet `@ts-check`ed)
 - [ ] remaining `src/*.js` modules
 - [ ] `test/`

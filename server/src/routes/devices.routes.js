@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -36,7 +37,7 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 /**
  * Device push-token registration / unregistration.
  *
- * @param {{ state: object, db: object|null }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, db: object|null }} ctx
  * @returns {import('express').Router}
  */
 function createDevicesRouter({ state, db }) {
@@ -134,7 +135,7 @@ function createDevicesRouter({ state, db }) {
       return;
     }
     const allowedStages = callId ? PUSH_RECEIPT_STAGES : MESSAGE_RECEIPT_STAGES;
-    if (!allowedStages.has(stage)) {
+    if (!stage || !allowedStages.has(stage)) {
       res.status(400).json({ error: 'invalid stage' });
       return;
     }

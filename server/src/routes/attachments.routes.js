@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -23,7 +24,7 @@ const {
  * `publicUrl` from a `message.send`, so no binary ever travels through the
  * signaling server.
  *
- * @param {{ state: object, env?: Record<string, string|undefined> }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, env?: Record<string, string|undefined> }} ctx
  * @returns {import('express').Router}
  */
 function createAttachmentsRouter({ state, env = process.env }) {
@@ -86,8 +87,10 @@ function createAttachmentsRouter({ state, env = process.env }) {
       return;
     }
 
+    // `in` (rather than a truthiness check) so the failure branch of the
+    // validator's union is narrowed away for the reads below.
     const validated = validateAttachmentRequest(req.body ?? {});
-    if (validated.error) {
+    if ('error' in validated) {
       res.status(400).json({ error: validated.error });
       return;
     }
@@ -102,7 +105,9 @@ function createAttachmentsRouter({ state, env = process.env }) {
         sizeBytes: validated.sizeBytes,
       });
     } catch (error) {
-      console.error(`[attachments] presign failed: ${error?.message}`);
+      console.error(
+        `[attachments] presign failed: ${error instanceof Error ? error.message : error}`,
+      );
       res.status(503).json({ error: 'could not presign upload' });
       return;
     }

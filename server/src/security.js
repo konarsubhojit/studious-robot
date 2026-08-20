@@ -11,6 +11,36 @@ const { randomUUID } = require('crypto');
  *  - Append-only audit log (blocked calls, rate limits, block management, session rotations)
  */
 
+/**
+ * A fixed-window rate limiter, as returned by {@link createRateLimiter}.
+ *
+ * @typedef {object} RateLimiter
+ * @property {(key: string, now?: number) => { allowed: boolean, remaining: number, resetAt: number }} check
+ * @property {(key: string) => void} reset
+ */
+
+/**
+ * A single recorded security event.
+ *
+ * @typedef {object} AuditEntry
+ * @property {string} auditId
+ * @property {string} timestamp  ISO timestamp.
+ * @property {string} event
+ * @property {string|null} actor
+ * @property {string|null} target
+ * @property {string} outcome
+ * @property {object} details
+ */
+
+/**
+ * The append-only audit log returned by {@link createAuditLog}.
+ *
+ * @typedef {object} AuditLog
+ * @property {(entry: { event: string, actor?: string|null, target?: string|null, outcome: string, details?: object }) => void} record
+ * @property {(userId: string) => AuditEntry[]} getForUser
+ * @property {() => AuditEntry[]} getAll
+ */
+
 const MAX_AUDIT_LOG_SIZE = 1000;
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────

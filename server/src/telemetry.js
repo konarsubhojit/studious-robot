@@ -15,6 +15,29 @@
  *   res.json(telemetry.getSnapshot());       // GET /metrics handler
  */
 
+/**
+ * A point-in-time snapshot of every counter, histogram and derived rate.
+ * Flat and JSON-serialisable so `GET /metrics` can return it verbatim.
+ *
+ * @typedef {object} MetricsSnapshot
+ * @property {string} collectedAt  ISO timestamp of the snapshot.
+ * @property {Record<string, number>} counters
+ * @property {Record<string, { count: number, sum: number, mean: number|null, min: number|null, max: number|null, buckets: Record<string, number> }>} histograms
+ * @property {Record<string, number|null>} derived  Rates; `null` until enough samples exist.
+ */
+
+/**
+ * The recorder returned by {@link createTelemetry}.
+ *
+ * @typedef {object} Telemetry
+ * @property {(call: { callId: string, status: string, createdAt: string }) => void} recordCallCreated
+ * @property {(call: { callId: string, status: string, endReason: string|null }, previousStatus: string) => void} recordCallTransition
+ * @property {(code?: string) => void} recordSignalingError
+ * @property {() => void} recordCacheHit
+ * @property {() => void} recordCacheMiss
+ * @property {() => MetricsSnapshot} getSnapshot
+ */
+
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
 

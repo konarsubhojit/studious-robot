@@ -13,11 +13,20 @@
  */
 
 /**
+ * The outcome of {@link resolveIdentityClaim}: a discriminated union, so a
+ * caller that has checked `ok` knows whether `user` is guaranteed present.
+ *
+ * @typedef {{ ok: true, verified: boolean, claimed?: boolean, user: User }
+ *   | { ok: false, reason: string, user?: User }} IdentityClaim
+ */
+
+/**
  * Bind a verified external account to exactly one public username.
  *
  * @param {Map<string, User>} usersStore
  * @param {string|null} requestedUserId
  * @param {{ authUid: string, email?: string|null, authProvider?: string|null }} identity
+ * @returns {IdentityClaim}
  */
 function resolveIdentityClaim(usersStore, requestedUserId, identity) {
   const accountUser = Array.from(usersStore.values()).find(

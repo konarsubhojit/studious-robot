@@ -24,8 +24,8 @@
  * @typedef {Map<string, Set<string>>} RoomStore
  *   roomId → set of socket ids currently in the room.
  *
- * @typedef {Map<string, object>} UserStore
- *   userId → claimed-identity record (`{ userId, verificationHash, verificationSalt, … }`).
+ * @typedef {Map<string, import('../identity').User>} UserStore
+ *   userId → claimed-identity record.
  *
  * @typedef {object} SessionRecord
  *   A logged-in session, created by `POST /session` and looked up on every
@@ -55,7 +55,7 @@
  * @typedef {Map<string, object>} UserPresenceStore
  *   userId → presence record (e.g. `{ lastSeen }`).
  *
- * @typedef {Map<string, object>} CallStore
+ * @typedef {Map<string, import('../domain/calls').CallRecord>} CallStore
  *   callId → call record.
  *
  * @typedef {Map<string, object[]>} CallEventStore
@@ -76,6 +76,34 @@
  * @property {CallStore} calls
  * @property {CallEventStore} callEvents
  * @property {BlockStore} blocks
+ */
+
+/**
+ * The mutable server state object built by `createServer()` and threaded
+ * through every HTTP route, socket handler and domain module.
+ *
+ * It is the {@link Stores} bundle plus the process-wide services those
+ * handlers depend on (audit log, telemetry, rate limiters, message store,
+ * cache) and a couple of lifecycle flags.  Declaring the shape once here
+ * means a handler that reads `state.<something>` is checked against what
+ * `createServer` actually provides.
+ *
+ * @typedef {Stores & {
+ *   db: object|null,
+ *   auditLog: import('../security').AuditLog,
+ *   callInitRateLimiter: import('../security').RateLimiter,
+ *   rtcRateLimiter: import('../security').RateLimiter,
+ *   turnCredentialsRateLimiter: import('../security').RateLimiter,
+ *   messageSendRateLimiter: import('../security').RateLimiter,
+ *   messageSearchRateLimiter: import('../security').RateLimiter,
+ *   telemetry: import('../telemetry').Telemetry,
+ *   messageStore: any,
+ *   cache: any,
+ *   messageStoreStatus: string,
+ *   messageBus: import('../messageBus').MessageBus|null,
+ *   draining: boolean,
+ *   incomingCallPushState?: Map<string, object>,
+ * }} ServerState
  */
 
 /**

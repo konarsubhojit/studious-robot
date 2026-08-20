@@ -33,7 +33,7 @@ const { API_ROUTES, SERVER_EVENTS } = require('../../../shared');
  * `getSessionFromRequest`, a missing/expired session is a 401, and access to
  * another user's conversation is a 403.
  *
- * @param {{ state: object, io: object }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, io: object }} ctx
  * @returns {import('express').Router}
  */
 function createMessagesRouter({ state, io }) {

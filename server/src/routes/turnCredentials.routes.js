@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -12,6 +13,24 @@ const DEFAULT_TURN_URLS = [
   'turns:global.relay.metered.ca:443?transport=tcp',
 ];
 
+/**
+ * An ICE server entry as returned to clients.
+ *
+ * @typedef {{ urls: string|string[], username?: string, credential?: string }} IceServer
+ */
+
+/**
+ * Cached Cloudflare-minted credentials, refreshed shortly before they expire.
+ *
+ * @typedef {{ iceServers: IceServer[], expiresAt: Date, refreshAt: number }} TurnCache
+ */
+
+/**
+ * Ensure a public STUN server is present alongside the TURN relays.
+ *
+ * @param {IceServer[]} iceServers
+ * @returns {IceServer[]}
+ */
 function withStunServer(iceServers) {
   const hasStun = iceServers.some((server) => {
     const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
@@ -20,6 +39,12 @@ function withStunServer(iceServers) {
   return hasStun ? iceServers : [{ urls: ['stun:stun.l.google.com:19302'] }, ...iceServers];
 }
 
+/**
+ * Build the fallback ICE server list from static env configuration.
+ *
+ * @param {Record<string, string|undefined>} env
+ * @returns {IceServer[]}
+ */
 function getStaticIceServers(env) {
   if (!env.TURN_USERNAME || !env.TURN_CREDENTIAL) {
     return [{ urls: ['stun:stun.l.google.com:19302'] }];
@@ -34,21 +59,48 @@ function getStaticIceServers(env) {
   ];
 }
 
+/**
+ * Coerce a configured credential TTL, falling back to the default.
+ *
+ * @param {unknown} value
+ * @returns {number} TTL in seconds.
+ */
 function getTtlSeconds(value) {
   const ttl = Number(value);
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
 }
 
+/**
+ * Accept the several shapes the Cloudflare API may return and normalise them
+ * to a flat ICE server list.
+ *
+ * @param {unknown} payload
+ * @returns {IceServer[]}
+ */
 function normalizeIceServers(payload) {
   if (Array.isArray(payload)) return payload;
-  const iceServers = payload?.iceServers;
+  const iceServers = /** @type {{ iceServers?: unknown }} */ (payload ?? {}).iceServers;
   if (Array.isArray(iceServers)) return iceServers;
-  if (iceServers && typeof iceServers === 'object') return [iceServers];
+  if (iceServers && typeof iceServers === 'object') {
+    return [/** @type {IceServer} */ (iceServers)];
+  }
   return [];
 }
 
+/**
+ * `GET /turn-credentials` – mint short-lived TURN credentials (Cloudflare when
+ * configured), falling back to static TURN/STUN configuration.
+ *
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   fetchImpl?: typeof fetch,
+ *   env?: Record<string, string|undefined>,
+ * }} ctx
+ * @returns {import('express').Router}
+ */
 function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.env }) {
   const router = express.Router();
+  /** @type {TurnCache|null} */
   let cache = null;
 
   router.get(API_ROUTES.TURN_CREDENTIALS, async (req, res) => {
@@ -120,7 +172,11 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         return;
       } catch (error) {
         const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
-        logger(`[turn] credential minting failed: ${error?.message || 'unknown error'}`);
+        logger(
+          `[turn] credential minting failed: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }`,
+        );
       }
     }
 

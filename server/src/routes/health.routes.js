@@ -10,11 +10,7 @@ const { API_ROUTES } = require('../../../shared');
  * While the instance is draining (rolling deploy / SIGTERM) it reports 503 so
  * load balancers stop routing new traffic here.
  *
- * @param {{ state: {
- *   draining: boolean,
- *   messageStore: { type: string },
- *   messageStoreStatus: string,
- * } }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState }} ctx
  * @returns {import('express').Router}
  */
 function createHealthRouter({ state }) {

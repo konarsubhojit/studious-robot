@@ -25,6 +25,18 @@ const {
  * `notifications` module.  This keeps the state machine independently testable.
  *
  * @typedef {object} CallRecord
+ * @property {string} callId
+ * @property {string} callerId
+ * @property {string} calleeId
+ * @property {string} status
+ * @property {string|null} endReason
+ * @property {string} createdAt          ISO timestamp.
+ * @property {string} updatedAt          ISO timestamp of the last transition.
+ * @property {number|null} durationSeconds  Connected seconds; known once terminal.
+ * @property {string|null} missedReadAt  When the callee read the missed-call entry.
+ * @property {string|null} ringTimeoutAt When ringing expires, while ringing.
+ * @property {string} [answeredAt]       When the callee accepted (in-memory only).
+ * @property {string} [lastHeartbeatAt]  Last in-call heartbeat received.
  */
 
 /**

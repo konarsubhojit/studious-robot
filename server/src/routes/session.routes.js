@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -12,7 +13,7 @@ const { persistUser, persistDevice } = require('../lib/persistence');
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
- * @param {{ state: object, db: object|null, sessionTtlMs: number, verifyIdToken?: Function }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, db: object|null, sessionTtlMs: number, verifyIdToken?: Function }} ctx
  * @returns {import('express').Router}
  */
 function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
@@ -28,7 +29,10 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }) {
       state.auditLog.record({
         event: 'session.authentication_failed',
         outcome: 'denied',
-        details: { reason: error?.code ?? 'invalid_token' },
+        details: {
+          reason:
+            /** @type {{ code?: string }} */ (error ?? {}).code ?? 'invalid_token',
+        },
       });
       res.status(401).json({ error: 'invalid authentication token', code: 'invalid_token' });
       return;

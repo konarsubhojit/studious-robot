@@ -8,7 +8,7 @@ const { getSessionFromRequest } = require('../lib/auth');
  * GET /audit-log – return the security audit entries where the authenticated
  * user is the actor or the target (oldest-first).
  *
- * @param {{ state: { sessions: import('../stores/contracts').SessionStore, auditLog: { getForUser: (userId: string) => object[] } } }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState }} ctx
  * @returns {import('express').Router}
  */
 function createAuditLogRouter({ state }) {

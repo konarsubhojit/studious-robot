@@ -10,7 +10,7 @@ const { CALL_END_REASONS } = require('../config');
  *   GET /call-end-reasons – static end-reason taxonomy for clients.
  *   GET /metrics          – point-in-time telemetry snapshot for scrapers.
  *
- * @param {{ state: { telemetry: { getSnapshot: () => object } } }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState }} ctx
  * @returns {import('express').Router}
  */
 function createMetricsRouter({ state }) {

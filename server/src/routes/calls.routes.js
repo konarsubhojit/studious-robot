@@ -36,7 +36,7 @@ function hasDebugToken(req) {
  * Needs the live Socket.IO server (`io`) for realtime notifications, so it must
  * be mounted after `io` is created.
  *
- * @param {{ state: object, io: object, ringingTimeoutMs: number }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, io: object, ringingTimeoutMs: number }} ctx
  * @returns {import('express').Router}
  */
 function createCallsRouter({ state, io, ringingTimeoutMs }) {
