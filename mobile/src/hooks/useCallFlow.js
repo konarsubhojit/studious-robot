@@ -663,10 +663,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     if (pending) {
       pending
         .then(pc => {
-          if (peerConnectionRef.current === pc) {
-            peerConnectionRef.current = null;
-            pc?.close?.();
-          }
+          if (peerConnectionRef.current === pc) peerConnectionRef.current = null;
+          pc?.close?.();
         })
         .catch(() => {});
     }
@@ -826,9 +824,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
     // Creation is asynchronous (ICE servers are fetched first), so concurrent
     // callers must share the same in-flight connection.
     if (!pendingPeerConnectionRef.current) {
-      pendingPeerConnectionRef.current = createPeerConnection().finally(() => {
-        pendingPeerConnectionRef.current = null;
+      const creation = createPeerConnection().finally(() => {
+        if (pendingPeerConnectionRef.current === creation) {
+          pendingPeerConnectionRef.current = null;
+        }
       });
+      pendingPeerConnectionRef.current = creation;
     }
     return pendingPeerConnectionRef.current;
   }, [createPeerConnection]);

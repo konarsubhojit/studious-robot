@@ -68,6 +68,7 @@ function normalizeIceServers(payload) {
 function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.env }) {
   const router = express.Router();
   let cache = null;
+  let warnedMissingTurnUrl = false;
 
   router.get(API_ROUTES.TURN_CREDENTIALS, async (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -148,9 +149,12 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
     if (staticAuthSecret) {
       const urls = parseTurnUrls(env.TURN_URL);
       if (urls.length === 0) {
-        console.warn(
-          '[turn] TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing; falling back to static credentials'
-        );
+        if (!warnedMissingTurnUrl) {
+          warnedMissingTurnUrl = true;
+          console.warn(
+            '[turn] TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing; falling back to static credentials'
+          );
+        }
       } else {
         const { iceServers, expiresAt } = createHmacIceServers({
           secret: staticAuthSecret,
