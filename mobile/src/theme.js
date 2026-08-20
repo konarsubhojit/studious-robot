@@ -104,7 +104,13 @@ const lightColors = {
  * @typedef {typeof darkColors} Palette
  */
 
-/** Both palettes, keyed by the colour scheme they implement. */
+/**
+ * Both palettes, keyed by the colour scheme they implement.  Typing this as a
+ * `Palette` per scheme makes a token missing from the light palette a type
+ * error rather than an `undefined` colour at runtime.
+ *
+ * @type {Record<'dark'|'light', Palette>}
+ */
 export const palettes = {
   dark: darkColors,
   light: lightColors,
