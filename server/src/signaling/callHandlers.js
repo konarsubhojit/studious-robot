@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } = require('../config');
@@ -20,13 +21,42 @@ const { CLIENT_EVENTS, ERROR_CODES } = require('../../../shared');
  */
 
 /**
+ * @typedef {import('../stores/contracts').ServerState} ServerState
+ * @typedef {import('../domain/calls').CallRecord} CallRecord
+ */
+
+/**
+ * Configuration for one call-state transition listener.
+ *
+ * @typedef {object} CallTransitionOptions
+ * @property {ServerState} state
+ * @property {import('socket.io').Server} io
+ * @property {string} eventName
+ * @property {string} nextStatus
+ * @property {string|null} [reason]  Termination reason recorded with the transition.
+ * @property {(call: CallRecord, userId: string) => string|null} authorize  Returns an error message, or `null` when allowed.
+ * @property {(call: CallRecord) => void} [onSuccess]
+ */
+
+/**
+ * Configuration for one RTC relay listener.
+ *
+ * @typedef {object} RtcRelayOptions
+ * @property {ServerState} state
+ * @property {import('socket.io').Server} io
+ * @property {string} eventName
+ * @property {string} dataKey  Payload key carrying the SDP/candidate to relay.
+ * @property {boolean} [recordsHeartbeat]
+ */
+
+/**
  * Handle an authenticated call-state transition requested over the socket
  * (`call.accept`, `call.decline`, `call.cancel`, `call.end`).
  *
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
- * @param {object} payload
- * @param {object} options
+ * @param {any} payload
+ * @param {CallTransitionOptions} options
  */
 function handleSocketCallTransition(socket, ack, payload, options) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
@@ -41,7 +71,7 @@ function handleSocketCallTransition(socket, ack, payload, options) {
     return;
   }
 
-  const callId = normaliseId(parsed.callId);
+  const callId = normaliseId(parsed.callId) ?? '';
   const call = options.state.calls.get(callId);
   if (!call) {
     acknowledgeError(
@@ -79,7 +109,7 @@ function handleSocketCallTransition(socket, ack, payload, options) {
       ack,
       options.eventName,
       'invalid_state',
-      result.message || result.error,
+      result.message || result.error || 'invalid state',
       options.state
     );
     return;
@@ -104,8 +134,8 @@ function handleSocketCallTransition(socket, ack, payload, options) {
  *
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
- * @param {object} payload
- * @param {object} options
+ * @param {any} payload
+ * @param {RtcRelayOptions} options
  */
 function handleRtcRelay(socket, ack, payload, options) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
@@ -142,8 +172,8 @@ function handleRtcRelay(socket, ack, payload, options) {
     return;
   }
 
-  const callId = normaliseId(parsed.callId);
-  const value = parsed[options.dataKey];
+  const callId = normaliseId(parsed.callId) ?? '';
+  const value = /** @type {Record<string, any>} */ (parsed)[options.dataKey];
 
   const call = options.state.calls.get(callId);
   if (!call) {
@@ -229,8 +259,8 @@ function handleRtcRelay(socket, ack, payload, options) {
  *
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
- * @param {object} payload
- * @param {{ state: object, io: object }} options
+ * @param {any} payload
+ * @param {{ state: ServerState, io: import('socket.io').Server }} options
  */
 function handleCallConnected(socket, ack, payload, options) {
   // Read before validation only to pick the destination status; the payload is

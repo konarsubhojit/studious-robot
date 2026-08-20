@@ -72,7 +72,7 @@ function validateSignalingVersion(socket, payload, ack, eventName) {
  * @param {string} eventName
  * @param {unknown} payload
  * @param {SignalingState} [state]
- * @returns {object | null} the parsed payload, or `null` when it was rejected.
+ * @returns {Record<string, any> | null} the parsed payload, or `null` when it was rejected.
  */
 function parseInboundPayload(socket, ack, eventName, payload, state) {
   const result = parseEventPayload(eventName, payload);

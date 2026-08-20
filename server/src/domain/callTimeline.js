@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { deriveConversationId } = require('../messageStore');
@@ -23,7 +24,7 @@ const { messageTypeOf } = require('../../../shared');
  * `cancelled` — the same distinction the call log draws — so the two views can
  * never disagree.
  *
- * @param {object} call
+ * @param {import('./calls').CallRecord} call
  * @param {string} userId - The viewer; decides the entry's direction.
  * @returns {{ type: 'call', callId: string, conversationId: string, direction: 'incoming'|'outgoing',
  *   status: string, endReason: string|null, durationSeconds: number|null, createdAt: string }}
@@ -46,13 +47,13 @@ function toCallTimelineEntry(call, userId) {
 /**
  * Every call between `userId` and `peerId`, in no particular order.
  *
- * @param {object} state
+ * @param {import('../stores/contracts').ServerState} state
  * @param {string} userId
  * @param {string} peerId
- * @returns {object[]}
+ * @returns {import('./calls').CallRecord[]}
  */
 function listCallsBetween(state, userId, peerId) {
-  const calls = [];
+  const calls = /** @type {import('./calls').CallRecord[]} */ ([]);
   for (const call of state.calls.values()) {
     const isPair =
       (call.callerId === userId && call.calleeId === peerId) ||
@@ -67,7 +68,7 @@ function listCallsBetween(state, userId, peerId) {
  * acknowledged yet — the call-side contribution to a conversation's unread
  * count.
  *
- * @param {object} call
+ * @param {import('./calls').CallRecord} call
  * @param {string} userId
  * @returns {boolean}
  */
@@ -79,7 +80,7 @@ function isUnreadMissedCall(call, userId) {
  * Acknowledge every missed call `userId` has from `peerId`, mirroring
  * `markRead` for messages: opening the conversation clears both.
  *
- * @param {object} state
+ * @param {import('../stores/contracts').ServerState} state
  * @param {string} userId
  * @param {string} peerId
  * @returns {number} How many calls were marked read.
@@ -105,18 +106,18 @@ function markMissedCallsRead(state, userId, peerId) {
  * entry's own id so the order — and therefore a `before` cursor over it — stays
  * deterministic when a message and a call share a millisecond.
  *
- * @param {object[]} messages - Newest-first message records.
- * @param {object[]} callEntries - Newest-first call timeline entries.
+ * @param {Record<string, any>[]} messages - Newest-first message records.
+ * @param {Record<string, any>[]} callEntries - Newest-first call timeline entries.
  * @param {number} limit
- * @returns {object[]}
+ * @returns {Record<string, any>[]}
  */
 function mergeTimeline(messages, callEntries, limit) {
-  const entries = [
+  const entries = /** @type {Record<string, any>[]} */ ([
     // A message keeps its own type (`image`, `voice`, …); only a legacy row
     // that carries none is defaulted, so the discriminator stays truthful.
     ...messages.map((message) => ({ ...message, type: messageTypeOf(message) })),
     ...callEntries,
-  ];
+  ]);
   entries.sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
     const aId = a.messageId ?? a.callId ?? '';
@@ -136,13 +137,13 @@ function mergeTimeline(messages, callEntries, limit) {
  * calls, so the Chats tab badge reflects them too.  A peer the user has only
  * ever called (never messaged) becomes a conversation in its own right.
  *
- * @param {object} state
+ * @param {import('../stores/contracts').ServerState} state
  * @param {string} userId
- * @param {Array<{ conversationId: string, peerId: string, lastMessage: object, unreadCount: number }>} conversations
- * @returns {object[]} Newest-activity first.
+ * @param {Array<{ conversationId: string, peerId: string, lastMessage: Record<string, any>|null, unreadCount: number }>} conversations
+ * @returns {Record<string, any>[]} Newest-activity first.
  */
 function augmentConversationsWithCalls(state, userId, conversations) {
-  /** @type {Map<string, { entry: object, unread: number }>} */
+  /** @type {Map<string, { entry: ReturnType<typeof toCallTimelineEntry>, unread: number }>} */
   const byPeer = new Map();
   for (const call of state.calls.values()) {
     if (call.callerId !== userId && call.calleeId !== userId) continue;
@@ -157,22 +158,25 @@ function augmentConversationsWithCalls(state, userId, conversations) {
     }
   }
 
-  const merged = conversations.map((conversation) => {
+  const merged = /** @type {Record<string, any>[]} */ (conversations.map((conversation) => {
     const calls = byPeer.get(conversation.peerId);
     byPeer.delete(conversation.peerId);
-    const lastMessage = conversation.lastMessage
-      ? { ...conversation.lastMessage, type: messageTypeOf(conversation.lastMessage) }
-      : null;
-    const lastActivity =
+    const lastMessage = /** @type {Record<string, any>|null} */ (
+      conversation.lastMessage
+        ? { ...conversation.lastMessage, type: messageTypeOf(conversation.lastMessage) }
+        : null
+    );
+    const lastActivity = /** @type {Record<string, any>|null} */ (
       calls && (!lastMessage || calls.entry.createdAt > lastMessage.createdAt)
         ? calls.entry
-        : lastMessage;
+        : lastMessage
+    );
     return {
       ...conversation,
       lastActivity,
       unreadCount: (conversation.unreadCount || 0) + (calls?.unread ?? 0),
     };
-  });
+  }));
 
   for (const [peerId, calls] of byPeer) {
     merged.push({

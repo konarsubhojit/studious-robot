@@ -80,8 +80,8 @@ design tokens and utilities → presentational components → hooks → screens 
 
 ### server/
 
-- [x] `src/signaling/ack.js`
-- [ ] `src/signaling/` (remaining handlers)
+- [ ] `src/signaling/` (done: `ack.js`, `callHandlers.js`; remaining:
+      `index.js`, `messageHandlers.js`)
 - [x] `src/lib/lifecycle.js`
 - [x] `src/lib/auth.js`
 - [x] `src/lib/normalize.js`
@@ -92,7 +92,8 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/routes/` (all routers except `calls.routes.js` / `messages.routes.js`;
       every router's `state` is typed by the shared `ServerState` contract in
       `src/stores/contracts.js`)
-- [ ] `src/domain/`
+- [ ] `src/domain/` (done: `callTimeline.js`; `calls.js` / `notifications.js`
+      export typed contracts but are not yet `@ts-check`ed)
 - [x] `src/stores/`
 - [ ] `src/lib/` (remaining modules)
 - [x] `src/identity.js`

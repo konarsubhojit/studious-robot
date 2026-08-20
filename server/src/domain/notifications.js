@@ -370,6 +370,15 @@ function dispatchCallCancelledPushes(state, call, reason) {
   }
 }
 
+/**
+ * Broadcast a call-state change to both participants (and dispatch the
+ * cancellation push when a ringing call ends before it is answered).
+ *
+ * @param {import('socket.io').Server} io
+ * @param {import('../stores/contracts').ServerState} state
+ * @param {import('./calls').CallRecord} call
+ * @param {{ previousStatus: string|null, actor?: string|null, reason?: string|null }} opts
+ */
 function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
   if (call.status !== 'ringing') {
     if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
