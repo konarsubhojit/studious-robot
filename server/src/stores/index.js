@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { STORE_NAMES } = require('./contracts');

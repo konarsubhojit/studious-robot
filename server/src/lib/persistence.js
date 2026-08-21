@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { addBlock } = require('../security');
@@ -13,10 +14,21 @@ const { hydrateCallsAndEventsFromDb } = require('../callPersistence');
  */
 
 /**
+ * Drizzle database handle. Typed loosely because the table objects are built
+ * dynamically in `db/schema.js`, so the generated Drizzle types add no safety
+ * here.
+ *
+ * @typedef {any} DrizzleDb
+ *
+ * @typedef {import('../stores/contracts').Stores} Stores
+ * @typedef {import('../stores/contracts').DeviceRecord} DeviceRecord
+ */
+
+/**
  * Persist a newly claimed identity so verification survives restarts.
  *
- * @param {object|null} db
- * @param {object} user
+ * @param {DrizzleDb|null} db
+ * @param {import('../identity').User} user
  * @returns {Promise<void>}
  */
 async function persistUser(db, user) {
@@ -43,7 +55,7 @@ async function persistUser(db, user) {
         },
       });
   } catch (err) {
-    console.error('[session] failed to persist user to DB:', err?.message);
+    console.error('[session] failed to persist user to DB:', (/** @type {any} */ (err))?.message);
     throw err;
   }
 }
@@ -61,8 +73,8 @@ async function persistUser(db, user) {
  *     token is acquired (or while the DB hydration failed) can never wipe a
  *     previously registered token.
  *
- * @param {object|null} db
- * @param {object} device
+ * @param {DrizzleDb|null} db
+ * @param {DeviceRecord} device
  * @param {'registration'|'unregistration'|'session'} [action]
  * @returns {Promise<void>}
  */
@@ -79,6 +91,7 @@ async function persistDevice(db, device, action = 'registration') {
     lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
     updatedAt: new Date(),
   };
+  /** @type {Record<string, unknown>} */
   const set = {
     userId: values.userId,
     platform: values.platform,
@@ -114,7 +127,7 @@ async function persistDevice(db, device, action = 'registration') {
       set,
     });
   } catch (err) {
-    console.error(`[devices] failed to persist device ${action} to DB:`, err?.message);
+    console.error(`[devices] failed to persist device ${action} to DB:`, (/** @type {any} */ (err))?.message);
   }
 }
 
@@ -126,8 +139,8 @@ async function persistDevice(db, device, action = 'registration') {
  * logs the prune explicitly so a dead token is never again indistinguishable
  * from a successful delivery in the logs. Never logs the token itself.
  *
- * @param {object|null} db
- * @param {object} state
+ * @param {DrizzleDb|null} db
+ * @param {Stores} state
  * @param {string} deviceId
  * @param {string} reason - e.g. `'UNREGISTERED'` or `'INVALID_ARGUMENT'`.
  * @returns {Promise<void>}
@@ -143,7 +156,7 @@ async function pruneDeadDevice(db, state, deviceId, reason) {
       const { devices: devicesTable } = require('../../db/schema');
       await db.delete(devicesTable).where(eq(devicesTable.deviceId, deviceId));
     } catch (err) {
-      console.error(`[push] failed to prune device ${deviceId} from DB:`, err?.message);
+      console.error(`[push] failed to prune device ${deviceId} from DB:`, (/** @type {any} */ (err))?.message);
     }
   }
 
@@ -153,7 +166,7 @@ async function pruneDeadDevice(db, state, deviceId, reason) {
 /**
  * Persist a new block relationship.
  *
- * @param {object|null} db
+ * @param {DrizzleDb|null} db
  * @param {string} blockerId
  * @param {string} blockeeId
  * @returns {Promise<void>}
@@ -171,14 +184,14 @@ async function persistBlock(db, blockerId, blockeeId) {
       })
       .onConflictDoNothing();
   } catch (error) {
-    console.error('[blocks] failed to persist block to DB:', error?.message);
+    console.error('[blocks] failed to persist block to DB:', (/** @type {any} */ (error))?.message);
   }
 }
 
 /**
  * Remove a persisted block relationship.
  *
- * @param {object|null} db
+ * @param {DrizzleDb|null} db
  * @param {string} blockerId
  * @param {string} blockeeId
  * @returns {Promise<void>}
@@ -192,7 +205,7 @@ async function deletePersistedBlock(db, blockerId, blockeeId) {
       .delete(blocksTable)
       .where(and(eq(blocksTable.blockerId, blockerId), eq(blocksTable.blockeeId, blockeeId)));
   } catch (error) {
-    console.error('[blocks] failed to persist unblock to DB:', error?.message);
+    console.error('[blocks] failed to persist unblock to DB:', (/** @type {any} */ (error))?.message);
   }
 }
 
@@ -215,6 +228,7 @@ function toIsoString(value) {
  *
  * @param {string} label singular record name used in the log lines
  * @param {() => Promise<number>} hydrate resolves to the number of rows read
+ * @param {{ required?: boolean }} [opts] when `required`, rethrow the failure
  * @returns {Promise<void>}
  */
 async function runHydrationStep(label, hydrate, { required = false } = {}) {
@@ -222,7 +236,7 @@ async function runHydrationStep(label, hydrate, { required = false } = {}) {
     const count = await hydrate();
     console.log(`[signaling] hydrated ${count} ${label} record(s) from DB`);
   } catch (err) {
-    const message = `[signaling] failed to hydrate ${label}s from DB: ${err?.message}`;
+    const message = `[signaling] failed to hydrate ${label}s from DB: ${(/** @type {any} */ (err))?.message}`;
     console.error(message);
     if (required) {
       throw new Error(message);
@@ -233,6 +247,9 @@ async function runHydrationStep(label, hydrate, { required = false } = {}) {
 /**
  * Populate `state.users` with the claimed identities.
  *
+ * @param {DrizzleDb} db
+ * @param {Stores} state
+ * @param {any} usersTable
  * @returns {Promise<number>} number of rows read
  */
 async function hydrateUsers(db, state, usersTable) {
@@ -253,6 +270,9 @@ async function hydrateUsers(db, state, usersTable) {
 /**
  * Populate `state.devices` / `state.userDevices` with the device registrations.
  *
+ * @param {DrizzleDb} db
+ * @param {Stores} state
+ * @param {any} devicesTable
  * @returns {Promise<number>} number of rows read
  */
 async function hydrateDevices(db, state, devicesTable) {
@@ -270,10 +290,12 @@ async function hydrateDevices(db, state, devicesTable) {
       lastUnregisteredAt: toIsoString(row.lastUnregisteredAt),
       updatedAt: toIsoString(row.updatedAt),
     });
-    if (!state.userDevices.has(row.userId)) {
-      state.userDevices.set(row.userId, new Set());
+    let deviceIds = state.userDevices.get(row.userId);
+    if (!deviceIds) {
+      deviceIds = new Set();
+      state.userDevices.set(row.userId, deviceIds);
     }
-    state.userDevices.get(row.userId).add(row.deviceId);
+    deviceIds.add(row.deviceId);
   }
   return rows.length;
 }
@@ -281,6 +303,9 @@ async function hydrateDevices(db, state, devicesTable) {
 /**
  * Populate `state.blocks` with the persisted block relationships.
  *
+ * @param {DrizzleDb} db
+ * @param {Stores} state
+ * @param {any} blocksTable
  * @returns {Promise<number>} number of rows read
  */
 async function hydrateBlocks(db, state, blocksTable) {
@@ -303,8 +328,8 @@ async function hydrateBlocks(db, state, blocksTable) {
  * server from starting.  When `db` is null the function is a no-op (i.e. tests
  * and deployments without `DATABASE_URL` are unaffected).
  *
- * @param {import('drizzle-orm/node-postgres').NodePgDatabase|null} db
- * @param {object} state
+ * @param {DrizzleDb|null} db
+ * @param {Stores} state
  * @returns {Promise<void>}
  */
 async function loadPersistedStateFromDb(db, state) {

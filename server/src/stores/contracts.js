@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -26,23 +27,52 @@
  * @typedef {Map<string, object>} UserStore
  *   userId → claimed-identity record (`{ userId, verificationHash, verificationSalt, … }`).
  *
- * @typedef {Map<string, object>} SessionStore
+ * @typedef {object} SessionRecord
+ * @property {string} sessionId
+ * @property {string} userId
+ * @property {string} deviceId
+ * @property {string|null} platform
+ * @property {string} createdAt
+ * @property {string|null} expiresAt  ISO expiry, or `null` when sessions never expire.
+ *
+ * @typedef {Map<string, SessionRecord>} SessionStore
  *   sessionId → session record.
  *
  * @typedef {Map<string, Set<string>>} UserSessionStore
  *   userId → set of sessionIds owned by the user.
  *
- * @typedef {Map<string, object>} DeviceStore
+ * @typedef {object} DeviceRecord
+ * @property {string} deviceId
+ * @property {string} userId
+ * @property {string|null} platform
+ * @property {string|null} sessionId
+ * @property {string|null} pushProvider
+ * @property {string|null} pushToken
+ * @property {string|null} [lastRegisteredAt]
+ * @property {string|null} [lastUnregisteredAt]
+ * @property {string|null} [updatedAt]
+ *
+ * @typedef {Map<string, DeviceRecord>} DeviceStore
  *   deviceId → device registration record.
  *
  * @typedef {Map<string, Set<string>>} UserDeviceStore
  *   userId → set of deviceIds registered to the user.
  *
- * @typedef {Map<string, Map<string, object>>} UserConnectionStore
+ * @typedef {object} ConnectionRecord
+ * @property {string} userId
+ * @property {string} socketId
+ * @property {string} deviceId
+ * @property {string|null} sessionId
+ * @property {string} [connectedAt]
+ *
+ * @typedef {Map<string, Map<string, ConnectionRecord>>} UserConnectionStore
  *   userId → (socketId → live connection record).
  *
- * @typedef {Map<string, object>} UserPresenceStore
- *   userId → presence record (e.g. `{ lastSeen }`).
+ * @typedef {object} PresenceRecord
+ * @property {string|null} lastSeen  ISO timestamp of the last disconnect, or `null` while online.
+ *
+ * @typedef {Map<string, PresenceRecord>} UserPresenceStore
+ *   userId → presence record.
  *
  * @typedef {Map<string, object>} CallStore
  *   callId → call record.

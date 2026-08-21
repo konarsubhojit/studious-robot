@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { sanitizeForLog } = require('./normalize');
@@ -15,6 +16,9 @@ const SENSITIVE_FIELDS = new Set([
   'verification_code',
 ]);
 
+/**
+ * @returns {boolean} `true` when verbose logging is enabled by env vars.
+ */
 function isVerboseLoggingEnabled() {
   const verbose = process.env.VERBOSE_LOGGING?.trim().toLowerCase();
   const logLevel = process.env.LOG_LEVEL?.trim().toLowerCase();
@@ -27,10 +31,23 @@ function isVerboseLoggingEnabled() {
   );
 }
 
+/**
+ * @param {unknown} key
+ * @returns {boolean}
+ */
 function isSensitiveKey(key) {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
 }
 
+/**
+ * Recursively copy a value, replacing sensitive fields with `[REDACTED]` and
+ * guarding against circular references.
+ *
+ * @param {unknown} value
+ * @param {string} [key]  Key the value was found under, used to detect secrets.
+ * @param {WeakSet<object>} [seen]
+ * @returns {any}
+ */
 function redact(value, key, seen = new WeakSet()) {
   if (isSensitiveKey(key)) return '[REDACTED]';
   if (value === null || value === undefined) return value;
@@ -42,6 +59,7 @@ function redact(value, key, seen = new WeakSet()) {
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redact(item, undefined, seen));
 
+  /** @type {Record<string, any>} */
   const output = {};
   for (const [childKey, childValue] of Object.entries(value)) {
     output[childKey] = redact(childValue, childKey, seen);
@@ -49,6 +67,14 @@ function redact(value, key, seen = new WeakSet()) {
   return output;
 }
 
+/**
+ * Log a redacted verbose message when verbose logging is enabled.
+ *
+ * @param {string} scope
+ * @param {string} message
+ * @param {unknown} [metadata]
+ * @returns {void}
+ */
 function verboseLog(scope, message, metadata) {
   if (!isVerboseLoggingEnabled()) return;
   const suffix = metadata === undefined ? '' : ` ${JSON.stringify(redact(metadata))}`;

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -85,7 +86,7 @@ async function createRedisPgStores(opts = {}) {
     const client = createClient();
     // node-redis surfaces connection errors as 'error' events; log instead of
     // letting them crash the process.
-    client.on?.('error', (error) => {
+    client.on?.('error', (/** @type {any} */ error) => {
       console.error(`[stores:redis] client error: ${error?.message}`);
     });
     await client.connect?.();
@@ -100,6 +101,7 @@ async function createRedisPgStores(opts = {}) {
 
   const messageBus = createRedisMessageBus({ pub: busPub, sub: busSub });
 
+  /** @type {Record<string, any>} */
   const bundle = createHotMaps();
   bundle.messageBus = messageBus;
 

@@ -61,13 +61,17 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/signaling/ack.js`
 - [ ] `src/signaling/` (remaining handlers)
 - [x] `src/lib/lifecycle.js`
+- [x] `src/lib/normalize.js`
+- [x] `src/lib/verbose.js`
+- [x] `src/lib/auth.js`
+- [x] `src/lib/state.js`
+- [x] `src/lib/persistence.js`
+- [x] `src/stores/` (contracts, memory, redis)
 - [x] `src/routes/auditLog.routes.js`
 - [x] `src/routes/health.routes.js`
 - [x] `src/routes/metrics.routes.js`
 - [ ] `src/routes/` (remaining routes)
 - [ ] `src/domain/`
-- [ ] `src/stores/`
-- [ ] `src/lib/` (remaining modules)
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
 - [ ] remaining `src/*.js` modules

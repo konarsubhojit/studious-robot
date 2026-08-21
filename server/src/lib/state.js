@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { hasOwnProp } = require('./normalize');
@@ -11,28 +12,76 @@ const { hasOwnProp } = require('./normalize');
  * so the HTTP routes and the signaling layer can share the exact same logic.
  */
 
+/**
+ * @typedef {import('../stores/contracts').Stores} Stores
+ * @typedef {import('../stores/contracts').SessionRecord} SessionRecord
+ * @typedef {import('../stores/contracts').DeviceRecord} DeviceRecord
+ * @typedef {import('../stores/contracts').ConnectionRecord} ConnectionRecord
+ * @typedef {import('../stores/contracts').PresenceRecord} PresenceRecord
+ */
+
+/**
+ * A websocket channel a user can be reached on.
+ *
+ * @typedef {object} WebsocketChannel
+ * @property {'websocket'} type
+ * @property {string} socketId
+ * @property {string} deviceId
+ * @property {string|null} sessionId
+ */
+
+/**
+ * A push channel a user can be reached on.
+ *
+ * @typedef {object} PushChannel
+ * @property {'push'} type
+ * @property {string} deviceId
+ * @property {string} provider
+ * @property {string} pushToken
+ */
+
+/** @typedef {WebsocketChannel | PushChannel} ReachableChannel */
+
 // ─── Presence ───────────────────────────────────────────────────────────────
 
+/**
+ * Ensure a presence record exists for a user and return it.
+ *
+ * @param {Stores} state
+ * @param {string} userId
+ * @returns {PresenceRecord|null} `null` when `userId` is falsy.
+ */
 function ensurePresenceRecord(state, userId) {
   if (!userId) {
     return null;
   }
 
-  if (!state.userPresence.has(userId)) {
-    state.userPresence.set(userId, { lastSeen: null });
+  let record = state.userPresence.get(userId);
+  if (!record) {
+    record = { lastSeen: null };
+    state.userPresence.set(userId, record);
   }
 
-  return state.userPresence.get(userId);
+  return record;
 }
 
 // ─── Sessions ───────────────────────────────────────────────────────────────
 
+/**
+ * Track a session id against the user that owns it.
+ *
+ * @param {Stores} state
+ * @param {SessionRecord} session
+ * @returns {void}
+ */
 function addSessionToUser(state, session) {
-  if (!state.userSessions.has(session.userId)) {
-    state.userSessions.set(session.userId, new Set());
+  let sessionIds = state.userSessions.get(session.userId);
+  if (!sessionIds) {
+    sessionIds = new Set();
+    state.userSessions.set(session.userId, sessionIds);
   }
 
-  state.userSessions.get(session.userId).add(session.sessionId);
+  sessionIds.add(session.sessionId);
 }
 
 // ─── Devices ────────────────────────────────────────────────────────────────
@@ -47,10 +96,10 @@ function addSessionToUser(state, session) {
  * stale and must give it up so it can no longer intercept that device's
  * pushes. See the matching DB-level unique index in `db/schema.js`.
  *
- * @param {object} state
+ * @param {Stores} state
  * @param {string} pushToken
  * @param {string} exceptDeviceId
- * @returns {object | null}
+ * @returns {DeviceRecord | null}
  */
 function findDeviceHoldingToken(state, pushToken, exceptDeviceId) {
   if (!pushToken) return null;
@@ -62,6 +111,14 @@ function findDeviceHoldingToken(state, pushToken, exceptDeviceId) {
   return null;
 }
 
+/**
+ * Create or update a device row, re-linking it to its owner and evicting a
+ * reused push token from whichever other row previously held it.
+ *
+ * @param {Stores} state
+ * @param {Partial<DeviceRecord> & { deviceId: string, userId: string }} nextDevice
+ * @returns {DeviceRecord}
+ */
 function upsertDevice(state, nextDevice) {
   const existing = state.devices.get(nextDevice.deviceId);
   if (existing && existing.userId !== nextDevice.userId) {
@@ -74,16 +131,16 @@ function upsertDevice(state, nextDevice) {
     platform: nextDevice.platform ?? existing?.platform ?? null,
     sessionId: nextDevice.sessionId ?? existing?.sessionId ?? null,
     pushProvider: hasOwnProp(nextDevice, 'pushProvider')
-      ? nextDevice.pushProvider
+      ? nextDevice.pushProvider ?? null
       : existing?.pushProvider ?? null,
     pushToken: hasOwnProp(nextDevice, 'pushToken')
-      ? nextDevice.pushToken
+      ? nextDevice.pushToken ?? null
       : existing?.pushToken ?? null,
     lastRegisteredAt: hasOwnProp(nextDevice, 'lastRegisteredAt')
-      ? nextDevice.lastRegisteredAt
+      ? nextDevice.lastRegisteredAt ?? null
       : existing?.lastRegisteredAt ?? null,
     lastUnregisteredAt: hasOwnProp(nextDevice, 'lastUnregisteredAt')
-      ? nextDevice.lastUnregisteredAt
+      ? nextDevice.lastUnregisteredAt ?? null
       : existing?.lastUnregisteredAt ?? null,
     updatedAt: new Date().toISOString(),
   };
@@ -101,10 +158,12 @@ function upsertDevice(state, nextDevice) {
   }
 
   state.devices.set(device.deviceId, device);
-  if (!state.userDevices.has(device.userId)) {
-    state.userDevices.set(device.userId, new Set());
+  let deviceIds = state.userDevices.get(device.userId);
+  if (!deviceIds) {
+    deviceIds = new Set();
+    state.userDevices.set(device.userId, deviceIds);
   }
-  state.userDevices.get(device.userId).add(device.deviceId);
+  deviceIds.add(device.deviceId);
   return device;
 }
 
@@ -114,7 +173,7 @@ function upsertDevice(state, nextDevice) {
  * `INVALID_ARGUMENT`), so the row stops being selected for future pushes and
  * stops masking real failures as silent no-ops.
  *
- * @param {object} state
+ * @param {Stores} state
  * @param {string} deviceId
  * @returns {boolean} `true` when a row was found and removed
  */
@@ -126,6 +185,14 @@ function removeDevice(state, deviceId) {
   return true;
 }
 
+/**
+ * Remove a device id from a user's device set, dropping the set when empty.
+ *
+ * @param {Stores} state
+ * @param {string} userId
+ * @param {string} deviceId
+ * @returns {void}
+ */
 function unlinkDeviceFromUser(state, userId, deviceId) {
   const deviceIds = state.userDevices.get(userId);
   if (!deviceIds) {
@@ -140,15 +207,33 @@ function unlinkDeviceFromUser(state, userId, deviceId) {
 
 // ─── Connections ────────────────────────────────────────────────────────────
 
+/**
+ * Track a live socket connection and mark its owner online.
+ *
+ * @param {Stores} state
+ * @param {ConnectionRecord} connection
+ * @returns {void}
+ */
 function addConnection(state, connection) {
-  if (!state.userConnections.has(connection.userId)) {
-    state.userConnections.set(connection.userId, new Map());
+  let connections = state.userConnections.get(connection.userId);
+  if (!connections) {
+    connections = new Map();
+    state.userConnections.set(connection.userId, connections);
   }
 
-  state.userConnections.get(connection.userId).set(connection.socketId, connection);
-  ensurePresenceRecord(state, connection.userId).lastSeen = null;
+  connections.set(connection.socketId, connection);
+  const presence = ensurePresenceRecord(state, connection.userId);
+  if (presence) presence.lastSeen = null;
 }
 
+/**
+ * Drop a socket connection, marking its owner offline when it was the last one.
+ *
+ * @param {Stores} state
+ * @param {string} userId
+ * @param {string} socketId
+ * @returns {void}
+ */
 function removeConnection(state, userId, socketId) {
   if (!userId) {
     return;
@@ -162,7 +247,8 @@ function removeConnection(state, userId, socketId) {
   connections.delete(socketId);
   if (connections.size === 0) {
     state.userConnections.delete(userId);
-    ensurePresenceRecord(state, userId).lastSeen = new Date().toISOString();
+    const presence = ensurePresenceRecord(state, userId);
+    if (presence) presence.lastSeen = new Date().toISOString();
   }
 }
 
@@ -172,18 +258,34 @@ function removeConnection(state, userId, socketId) {
  * shutdown so presence reflects the drain immediately rather than waiting for
  * each socket teardown.
  *
- * @param {object} state
+ * @param {Stores} state
+ * @returns {void}
  */
 function drainLocalPresence(state) {
   const now = new Date().toISOString();
   for (const userId of Array.from(state.userConnections.keys())) {
     state.userConnections.delete(userId);
-    ensurePresenceRecord(state, userId).lastSeen = now;
+    const presence = ensurePresenceRecord(state, userId);
+    if (presence) presence.lastSeen = now;
   }
 }
 
 // ─── Directory / presence snapshots ──────────────────────────────────────────
 
+/**
+ * Build the public presence payload for a user.
+ *
+ * @param {Stores} state
+ * @param {string} userId
+ * @returns {{
+ *   userId: string,
+ *   status: 'online'|'offline',
+ *   online: boolean,
+ *   lastSeen: string|null,
+ *   activeConnections: number,
+ *   devices: Array<{ deviceId: string, platform: string|null, pushRegistered: boolean, connected: boolean }>,
+ * }}
+ */
 function getPresenceSnapshot(state, userId) {
   ensurePresenceRecord(state, userId);
   const connections = state.userConnections.get(userId);
@@ -211,6 +313,11 @@ function getPresenceSnapshot(state, userId) {
   };
 }
 
+/**
+ * @param {Stores} state
+ * @param {string} userId
+ * @returns {boolean} `true` when the server has any record of the user.
+ */
 function hasKnownUser(state, userId) {
   if (
     state.userConnections.has(userId) ||
@@ -228,7 +335,7 @@ function hasKnownUser(state, userId) {
  * session, device, connection and presence collections.  Used by the contact
  * directory (`GET /users`).
  *
- * @param {object} state
+ * @param {Stores} state
  * @returns {Set<string>}
  */
 function listKnownUsers(state) {
@@ -244,11 +351,12 @@ function listKnownUsers(state) {
  * Resolve the set of channels (live WebSocket connections and registered push
  * tokens) through which a user can currently be reached.
  *
- * @param {object} state
+ * @param {Stores} state
  * @param {string} userId
- * @returns {Array<object>}
+ * @returns {ReachableChannel[]}
  */
 function resolveReachableChannels(state, userId) {
+  /** @type {ReachableChannel[]} */
   const channels = [];
   const connections = state.userConnections.get(userId);
   if (connections) {
@@ -263,6 +371,7 @@ function resolveReachableChannels(state, userId) {
   }
 
   const deviceIds = state.userDevices.get(userId);
+  /** @type {Array<PushChannel & { updatedAt: string|null }>} */
   const pushChannels = [];
   if (deviceIds) {
     for (const deviceId of deviceIds) {
@@ -309,9 +418,9 @@ function resolveReachableChannels(state, userId) {
  * ring.  Gating on "the user has zero connections" silently drops the push for
  * every other registered device.
  *
- * @param {object} state
+ * @param {Stores} state
  * @param {string} userId
- * @returns {Array<object>} Push channels for devices without a live socket.
+ * @returns {PushChannel[]} Push channels for devices without a live socket.
  */
 function resolveOfflinePushChannels(state, userId) {
   const connections = state.userConnections.get(userId);
@@ -319,8 +428,10 @@ function resolveOfflinePushChannels(state, userId) {
     Array.from(connections?.values() || [], (connection) => connection.deviceId)
   );
 
-  return resolveReachableChannels(state, userId).filter(
-    (channel) => channel.type === 'push' && !connectedDeviceIds.has(channel.deviceId)
+  return /** @type {PushChannel[]} */ (
+    resolveReachableChannels(state, userId).filter(
+      (channel) => channel.type === 'push' && !connectedDeviceIds.has(channel.deviceId)
+    )
   );
 }
 

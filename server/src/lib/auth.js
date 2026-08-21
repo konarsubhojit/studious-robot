@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { randomUUID } = require('crypto');
@@ -53,8 +54,8 @@ function parseBearerToken(header) {
  * no matching, unexpired session.
  *
  * @param {import('express').Request} req
- * @param {Map<string, object>} sessions
- * @returns {object|null}
+ * @param {import('../stores/contracts').SessionStore} sessions
+ * @returns {import('../stores/contracts').SessionRecord|null}
  */
 function getSessionFromRequest(req, sessions) {
   const sessionId =
@@ -85,7 +86,7 @@ function getSessionFromRequest(req, sessions) {
  * `call.initiate`) is later rejected.
  *
  * @param {import('socket.io').Socket} socket
- * @param {Map<string, object>} sessions
+ * @param {import('../stores/contracts').SessionStore} sessions
  * @returns {{
  *   userId: string,
  *   deviceId: string,
