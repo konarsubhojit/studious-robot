@@ -26,14 +26,14 @@ describe('attachmentDownload', () => {
 
     const result = await downloadAttachment({
       url: 'https://media.test/chatblobs/c/file.pdf',
-      name: '../secret?.pdf',
+      name: '../unsafe?.pdf',
       mimeType: 'application/pdf',
     });
 
-    expect(result).toMatchObject({ success: true, label: 'Downloads', path: '/downloads/_secret_.pdf' });
+    expect(result).toMatchObject({ success: true, label: 'Downloads', path: '/downloads/_unsafe_.pdf' });
     expect(RNFS.downloadFile).toHaveBeenCalledWith({
       fromUrl: 'https://media.test/chatblobs/c/file.pdf',
-      toFile: '/downloads/_secret_.pdf',
+      toFile: '/downloads/_unsafe_.pdf',
     });
   });
 
