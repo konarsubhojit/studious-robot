@@ -1,3 +1,4 @@
+// @ts-check
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, typography } from '../theme';
@@ -69,6 +70,7 @@ export default function ErrorState({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

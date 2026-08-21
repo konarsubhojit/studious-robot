@@ -25,8 +25,8 @@ function buildRouteList(available) {
  * automatically when the device reports them as available.
  *
  * @param {object} props
- * @param {string[]} props.available - Device names reported by the OS.
- * @param {string|null} props.selected - Currently selected device name.
+ * @param {string[]} [props.available] - Device names reported by the OS.
+ * @param {string|null} [props.selected] - Currently selected device name.
  * @param {boolean} props.isSpeakerEnabled - Fallback selection when none reported.
  * @param {(route: string) => void} props.onSelect
  * @param {boolean} [props.disabled]

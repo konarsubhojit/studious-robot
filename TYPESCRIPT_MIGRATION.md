@@ -47,7 +47,18 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/socketConfig.js`
 - [x] `src/accessibilityAnnouncer.js`
 - [x] `src/callStreamHelpers.js`
-- [ ] `src/components/`
+- [ ] `src/components/` (in progress)
+  - [x] `AppButton.js`
+  - [x] `AppTabBar.js`
+  - [x] `AttachSheet.js`
+  - [x] `CallControls.js`
+  - [x] `CallTopBar.js`
+  - [x] `ErrorState.js`
+  - [x] `IconButton.js`
+  - [x] `InCallBanner.js`
+  - [x] `ReconnectBanner.js`
+  - [x] `SettingsCard.js`
+  - [x] `StatusBanner.js`
 - [ ] `src/call/`
 - [ ] `src/chat/`
 - [ ] `src/navigation/`

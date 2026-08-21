@@ -1,8 +1,20 @@
+// @ts-check
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 
+/** @typedef {'chats'|'calls'|'settings'} TabKey */
+
+/**
+ * @type {ReadonlyArray<{
+ *   key: TabKey,
+ *   label: string,
+ *   testID: string,
+ *   icon: string,
+ *   iconActive: string,
+ * }>}
+ */
 const TABS = [
   {
     key: 'chats',
@@ -42,8 +54,8 @@ const MIN_TAB_HEIGHT = sizes.minTouchTarget;
  * being overlapped or clipped by it.
  *
  * @param {object} props
- * @param {'chats'|'calls'|'settings'} props.activeTab
- * @param {(tab: 'chats'|'calls'|'settings') => void} props.onChangeTab
+ * @param {TabKey} props.activeTab
+ * @param {(tab: TabKey) => void} props.onChangeTab
  * @param {number} [props.unreadCount]
  * @param {number} [props.bottomInset] - Safe-area inset (e.g. from
  *   `useSafeAreaInsets().bottom`) to add as extra bottom padding.
@@ -88,6 +100,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     bar: {

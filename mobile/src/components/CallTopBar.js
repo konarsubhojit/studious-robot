@@ -1,3 +1,4 @@
+// @ts-check
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
@@ -50,7 +51,7 @@ export default function CallTopBar({
                 key={barIndex}
                 style={[
                   styles.signalBar,
-                  styles[`signalBar${barIndex}`],
+                  [styles.signalBar0, styles.signalBar1, styles.signalBar2][barIndex],
                   barIndex <= connectionQuality.bars - 1 && styles.signalBarActive,
                 ]}
               />
@@ -76,6 +77,7 @@ export default function CallTopBar({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     topBar: {

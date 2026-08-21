@@ -97,6 +97,13 @@ const lightColors = {
   onOverlay: '#f6f8ff',
 };
 
+/**
+ * Palette handed to components by `ThemeProvider`; both schemes expose exactly
+ * the same token names.
+ *
+ * @typedef {typeof darkColors} ThemeColors
+ */
+
 /** Both palettes, keyed by the colour scheme they implement. */
 export const palettes = {
   dark: darkColors,
@@ -161,6 +168,15 @@ export function touchSlop(size) {
   return Math.max(0, Math.ceil((sizes.minTouchTarget - size) / 2));
 }
 
+/**
+ * Text style tokens. Typed as React Native text styles so spreading a token
+ * into a `StyleSheet.create` entry keeps its literal `fontWeight` type.
+ *
+ * @type {Record<
+ *   'title'|'sectionTitle'|'groupLabel'|'body'|'label'|'emphasis'|'hint',
+ *   import('react-native').TextStyle
+ * >}
+ */
 export const typography = {
   title: { fontSize: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 16, fontWeight: '700' },

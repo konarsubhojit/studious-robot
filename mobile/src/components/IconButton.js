@@ -1,3 +1,4 @@
+// @ts-check
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
@@ -15,7 +16,7 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * @param {string}   props.icon              - Semantic icon key from ICONS map,
  *                                            OR a raw emoji/unicode glyph string.
  * @param {string}   [props.label]           - Optional text label displayed below the circle.
- * @param {Function} props.onPress
+ * @param {() => void} props.onPress
  * @param {'default'|'danger'|'success'|'active'|'muted'} [props.variant='default']
  * @param {boolean}  [props.disabled=false]
  * @param {boolean}  [props.loading=false]   - Shows a spinner in place of the icon and
@@ -90,7 +91,12 @@ export default function IconButton({
   );
 }
 
-/** Circle background colour per variant, resolved from the active palette. */
+/**
+ * Circle background colour per variant, resolved from the active palette.
+ *
+ * @param {import('../theme').ThemeColors} colors
+ * @param {string} variant
+ */
 const variantColor = (colors, variant) =>
   ({
     default: colors.surfaceControl,
@@ -100,7 +106,12 @@ const variantColor = (colors, variant) =>
     muted: colors.surfaceBanner,
   }[variant] ?? colors.surfaceControl);
 
-/** Foreground colour for vector icon glyphs per variant. */
+/**
+ * Foreground colour for vector icon glyphs per variant.
+ *
+ * @param {import('../theme').ThemeColors} colors
+ * @param {string} variant
+ */
 const iconColor = (colors, variant) =>
   ({
     default: colors.textPrimary,
@@ -110,6 +121,7 @@ const iconColor = (colors, variant) =>
     muted: colors.textSecondary,
   }[variant] ?? colors.textPrimary);
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     wrapper: {

@@ -1,3 +1,4 @@
+// @ts-check
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
@@ -17,6 +18,7 @@ export default function AttachSheet({ visible, onClose, onSelect }) {
 
   if (!visible) return null;
 
+  /** @type {ReadonlyArray<{ kind: 'photo'|'camera'|'file', label: string, emoji: string }>} */
   const options = [
     { kind: 'photo', label: 'Photo', emoji: '🖼️' },
     { kind: 'camera', label: 'Camera', emoji: '📷' },
@@ -53,6 +55,7 @@ export default function AttachSheet({ visible, onClose, onSelect }) {
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     backdrop: {

@@ -1,3 +1,4 @@
+// @ts-check
 import { StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
@@ -10,6 +11,24 @@ import IconButton from './IconButton';
  *
  * All action buttons use icon-only circular IconButton components for a clean,
  * professional look.  The leave button is visually distinct (danger variant).
+ *
+ * @param {object} props
+ * @param {boolean} props.isMuted
+ * @param {boolean} props.isVideoEnabled
+ * @param {boolean} props.hasLocalStream
+ * @param {{ available?: string[], selected?: string|null }} [props.audioDevices]
+ * @param {boolean} props.isSpeakerEnabled
+ * @param {boolean} [props.isScreenSharing]
+ * @param {boolean} [props.isScreenAudioEnabled]
+ * @param {boolean} [props.isScreenAudioShared]
+ * @param {boolean} [props.isScreenShareSupported]
+ * @param {() => void} props.onMuteToggle
+ * @param {() => void} props.onVideoToggle
+ * @param {(deviceId: string) => void} props.onChooseAudioOutput
+ * @param {() => void} props.onCameraSwitch
+ * @param {() => void} [props.onScreenShareToggle]
+ * @param {() => void} [props.onScreenAudioToggle]
+ * @param {() => void} props.onLeave
  */
 export default function CallControls({
   isMuted,
@@ -119,6 +138,7 @@ export default function CallControls({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     controls: {

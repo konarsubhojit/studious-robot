@@ -1,3 +1,4 @@
+// @ts-check
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
@@ -41,6 +42,7 @@ export default function InCallBanner({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     banner: {
