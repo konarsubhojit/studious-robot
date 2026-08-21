@@ -74,7 +74,23 @@
  * @typedef {Map<string, PresenceRecord>} UserPresenceStore
  *   userId → presence record.
  *
- * @typedef {Map<string, object>} CallStore
+ * Call record as read by the timeline/history layers. Extra fields written by
+ * the call state machine are tolerated via the index signature until
+ * `src/domain/calls.js` is migrated.
+ *
+ * @typedef {{
+ *   callId: string,
+ *   callerId: string,
+ *   calleeId: string,
+ *   status: string,
+ *   endReason?: string|null,
+ *   durationSeconds?: number|null,
+ *   createdAt: string,
+ *   missedReadAt?: string|null,
+ *   [key: string]: any,
+ * }} CallRecord
+ *
+ * @typedef {Map<string, CallRecord>} CallStore
  *   callId → call record.
  *
  * @typedef {Map<string, object[]>} CallEventStore
@@ -95,6 +111,44 @@
  * @property {CallStore} calls
  * @property {CallEventStore} callEvents
  * @property {BlockStore} blocks
+ *
+ * @typedef {object} AuditLog
+ * @property {(entry: {
+ *   event: string,
+ *   actor?: string|null,
+ *   target?: string|null,
+ *   outcome?: string,
+ *   details?: object,
+ * }) => object} record
+ * @property {(userId: string) => object[]} getForUser
+ *
+ * @typedef {object} RateLimiter
+ * @property {(key: string, now?: number) => {
+ *   allowed: boolean,
+ *   remaining: number,
+ *   resetAt: number,
+ * }} check
+ *
+ * The mutable server state assembled by `createServer`: every store from the
+ * bundle plus the shared services the handlers read.  Services that own a
+ * module of their own are typed as that module migrates; the rest stay `any`
+ * so a partially migrated handler is still checked against the store shapes.
+ *
+ * @typedef {Stores & {
+ *   db: any,
+ *   auditLog: AuditLog,
+ *   callInitRateLimiter: RateLimiter,
+ *   rtcRateLimiter: RateLimiter,
+ *   turnCredentialsRateLimiter: RateLimiter,
+ *   messageSendRateLimiter: RateLimiter,
+ *   messageSearchRateLimiter: RateLimiter,
+ *   telemetry: any,
+ *   messageStore: any,
+ *   cache: any,
+ *   messageStoreStatus: string,
+ *   messageBus: any,
+ *   draining: boolean,
+ * }} ServerState
  */
 
 /**

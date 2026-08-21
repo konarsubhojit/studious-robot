@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -10,7 +11,7 @@ const { API_ROUTES } = require('../../../shared');
 /**
  * Block management: block / unblock / list.
  *
- * @param {{ state: object, db: object|null }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, db: any }} ctx
  * @returns {import('express').Router}
  */
 function createBlocksRouter({ state, db }) {

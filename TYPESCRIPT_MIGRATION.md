@@ -83,10 +83,12 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/lib/persistence.js`
 - [x] `src/stores/` (contracts, memory, redis)
 - [x] `src/routes/auditLog.routes.js`
+- [x] `src/routes/blocks.routes.js`
 - [x] `src/routes/health.routes.js`
 - [x] `src/routes/metrics.routes.js`
 - [ ] `src/routes/` (remaining routes)
-- [ ] `src/domain/`
+- [ ] `src/domain/` (in progress)
+  - [x] `callTimeline.js`
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
 - [ ] remaining `src/*.js` modules
