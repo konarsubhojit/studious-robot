@@ -110,5 +110,7 @@ export function resetNavigation() {
 
 /** Pop the open conversation back to the chat list, if one is open. */
 export function closeChatConversation() {
-  goBack();
+  if (navigationRef.isReady()) {
+    navigationRef.navigate(TABS.CHATS, { screen: CHAT_SCREENS.LIST });
+  }
 }

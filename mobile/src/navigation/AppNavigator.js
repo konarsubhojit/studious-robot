@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { BackHandler, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { DefaultTheme, DarkTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AppTabBar from '../components/AppTabBar';
 import { useTheme } from '../ThemeContext';
 import linking from './linking';
-import { flushPendingNavigation, navigationRef } from './navigationRef';
+import { closeChatConversation, flushPendingNavigation, navigationRef } from './navigationRef';
 import {
   getCachedNavigationState,
   loadNavigationState,
@@ -192,6 +193,18 @@ export default function AppNavigator({
     ),
     [bottomInset, onTabPress, unreadCount],
   );
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!navigationRef.isReady()) return false;
+      const state = navigationRef.getRootState();
+      if (!deriveShellRoute(state).chatPeerId) return false;
+      closeChatConversation();
+      return true;
+    });
+    return () => subscription.remove();
+  }, []);
 
   if (isRestoring) return null;
 

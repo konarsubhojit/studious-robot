@@ -13,7 +13,7 @@ jest.mock('../../src/appLogger', () => ({
 
 import React from 'react';
 import RNFS from 'react-native-fs';
-import { Text } from 'react-native';
+import { BackHandler, Platform, Text } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import AppNavigator from '../../src/navigation/AppNavigator';
 import { openChatConversation } from '../../src/navigation/navigationRef';
@@ -24,6 +24,7 @@ function findByTestID(tree, testID) {
 }
 
 let currentTree = null;
+const originalPlatformOS = Platform.OS;
 
 async function renderNavigator(overrides = {}) {
   const props = {
@@ -54,6 +55,8 @@ describe('AppNavigator', () => {
     currentTree = null;
     jest.clearAllTimers();
     jest.useRealTimers();
+    jest.restoreAllMocks();
+    Platform.OS = originalPlatformOS;
   });
 
   test('starts on the chat list with the shared tab bar', async () => {
@@ -105,5 +108,27 @@ describe('AppNavigator', () => {
       activeTab: TABS.CHATS,
       chatPeerId: 'user-bob',
     });
+  });
+
+  test('Android hardware back pops an open conversation to the chat list', async () => {
+    Platform.OS = 'android';
+    const handlers = [];
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((event, handler) => {
+      if (event === 'hardwareBackPress') handlers.push(handler);
+      return { remove: jest.fn() };
+    });
+
+    const tree = await renderNavigator();
+    await act(async () => {
+      openChatConversation('user-bob');
+    });
+
+    let handled;
+    await act(async () => {
+      handled = handlers.some(handler => handler());
+    });
+
+    expect(handled).toBe(true);
+    expect(findByTestID(tree, 'screen-chat-list')).toBeDefined();
   });
 });
