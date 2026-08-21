@@ -1,6 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
+import { describeAttachmentDownloadResult, downloadAttachment } from '../attachmentDownload';
 import { useCall } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
@@ -58,6 +59,17 @@ export default function TabShell() {
       onReactToMessage={(message, emoji, action) =>
         chat.reactToMessage(peerId, message.messageId, emoji, action)
       }
+      onDownloadAttachment={async message => {
+        const result = await downloadAttachment({
+          url: message?.attachment?.url,
+          name: message?.attachment?.name,
+          mimeType: message?.attachment?.mimeType,
+        });
+        callFlow.updateStatus(
+          describeAttachmentDownloadResult(result),
+          result.success ? 'success' : 'error',
+        );
+      }}
       isOffline={chat.isChatOffline}
       onLoadOlder={chat.handleLoadOlderMessages}
       onBack={closeChatConversation}

@@ -1243,4 +1243,36 @@ describe('ChatConversationScreen attachments', () => {
     const text = notice.findAll(n => typeof n.props?.children === 'string')[0];
     expect(text.props.children).toContain('42%');
   });
+
+  test('shows a download action for sent file attachments', () => {
+    const onDownloadAttachment = jest.fn();
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    const download = findByTestId(tree, 'chat-attachment-download');
+    expect(download).not.toBeNull();
+
+    act(() => {
+      download.props.onPress();
+    });
+
+    expect(onDownloadAttachment).toHaveBeenCalledWith(fileMessage);
+  });
 });
