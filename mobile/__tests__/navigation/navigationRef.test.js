@@ -125,14 +125,11 @@ describe('navigationRef', () => {
     expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
-  test('closeChatConversation pops the stack only when there is something to pop', () => {
+  test('closeChatConversation navigates to the chat list when ready', () => {
     navigationRef.isReady.mockReturnValue(true);
-    navigationRef.canGoBack.mockReturnValue(false);
     closeChatConversation();
-    expect(navigationRef.goBack).not.toHaveBeenCalled();
-
-    navigationRef.canGoBack.mockReturnValue(true);
-    closeChatConversation();
-    expect(navigationRef.goBack).toHaveBeenCalledTimes(1);
+    expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
+      screen: CHAT_SCREENS.LIST,
+    });
   });
 });
