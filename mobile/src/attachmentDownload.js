@@ -47,8 +47,9 @@ function filenameFromUrl(url) {
  */
 export function attachmentDownloadFileName({ name, url, mimeType, now = new Date() } = {}) {
   const raw = (typeof name === 'string' && name.trim()) || filenameFromUrl(url) || '';
-  const safe = raw
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+  const safe = Array.from(raw)
+    .map(character => (character.charCodeAt(0) < 32 || /[\\/:*?"<>|]/.test(character) ? '_' : character))
+    .join('')
     .replace(/^\.+/, '')
     .trim();
   if (safe) return safe.slice(0, 120);
