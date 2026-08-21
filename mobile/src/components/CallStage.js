@@ -1,3 +1,4 @@
+// @ts-check
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';
@@ -15,7 +16,7 @@ import DraggablePip from './DraggablePip';
  * @param {boolean} props.hasPipStream
  * @param {boolean} props.mirrorPip
  * @param {boolean} [props.mirrorMain] - Mirror the main stream (true when local front camera is primary).
- * @param {object} props.pipGesture
+ * @param {import('react-native-gesture-handler').ComposedGesture} props.pipGesture
  * @param {object} props.animatedPipStyle
  * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
  * @param {boolean} [props.isVideoEnabled] - Local camera on/off state (forwarded to PiP overlay).
@@ -96,6 +97,7 @@ export default function CallStage({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     callStage: {

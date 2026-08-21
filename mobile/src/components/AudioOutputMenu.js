@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
@@ -9,6 +10,12 @@ import IconButton from './IconButton';
 // merged in only when the OS reports them as available.
 const BASE_ROUTES = [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE];
 
+/**
+ * Merge the OS-reported routes into the always-available base routes.
+ *
+ * @param {string[]} [available]
+ * @returns {string[]}
+ */
 function buildRouteList(available) {
   const routes = [...BASE_ROUTES];
   (available || []).forEach(route => {
@@ -48,6 +55,7 @@ export default function AudioOutputMenu({
   const currentLabel = getAudioRouteLabel(effectiveSelected);
   const currentIcon = effectiveSelected === AUDIO_ROUTES.SPEAKER_PHONE ? 'speaker' : 'speakerOff';
 
+  /** @param {string} route */
   const handleSelect = route => {
     setIsOpen(false);
     onSelect(route);
@@ -112,6 +120,7 @@ export default function AudioOutputMenu({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     trigger: {

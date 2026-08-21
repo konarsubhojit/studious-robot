@@ -51,14 +51,18 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `AppButton.js`
   - [x] `AppTabBar.js`
   - [x] `AttachSheet.js`
+  - [x] `AudioOutputMenu.js`
   - [x] `CallControls.js`
+  - [x] `CallStage.js`
   - [x] `CallTopBar.js`
+  - [x] `DraggablePip.js`
   - [x] `ErrorState.js`
   - [x] `IconButton.js`
   - [x] `InCallBanner.js`
   - [x] `ReconnectBanner.js`
   - [x] `SettingsCard.js`
   - [x] `StatusBanner.js`
+  - [x] `SwipeableRow.js`
 - [ ] `src/call/`
 - [ ] `src/chat/`
 - [ ] `src/navigation/`

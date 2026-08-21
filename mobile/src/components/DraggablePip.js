@@ -1,3 +1,4 @@
+// @ts-check
 import { StyleSheet, Text, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
@@ -14,7 +15,8 @@ import { radius, spacing, typography } from '../theme';
  * shown to communicate muted and camera-off states at a glance.
  *
  * @param {object} props
- * @param {object} props.gesture - Composed gesture from the PiP hook.
+ * @param {import('react-native-gesture-handler').ComposedGesture} props.gesture
+ *   Composed gesture from the PiP hook.
  * @param {object} props.animatedStyle - Animated transform style.
  * @param {string|null} props.streamURL
  * @param {boolean} props.mirror - True when this tile shows the local stream.
@@ -65,6 +67,7 @@ export default function DraggablePip({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     localPip: {
@@ -83,7 +86,7 @@ const createStyles = colors =>
       flex: 1,
     },
     videoOffOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.72)',
       alignItems: 'center',
       justifyContent: 'center',

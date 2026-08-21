@@ -1,3 +1,4 @@
+// @ts-check
 import { useMemo, useRef } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { triggerHaptic } from '../haptics';
@@ -31,6 +32,7 @@ export default function SwipeableRow({ actions = [], children }) {
   const trayWidth = actions.length * ACTION_WIDTH;
 
   const panResponder = useMemo(() => {
+    /** @param {number} toValue */
     const settle = toValue => {
       // A short tick when the tray latches open, so the row confirms itself
       // without the user having to look away from the list.
@@ -110,6 +112,7 @@ export default function SwipeableRow({ actions = [], children }) {
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {
@@ -117,7 +120,7 @@ const createStyles = colors =>
       overflow: 'hidden',
     },
     actions: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       flexDirection: 'row',
       justifyContent: 'flex-end',
     },

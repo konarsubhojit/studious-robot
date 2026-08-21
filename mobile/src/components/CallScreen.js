@@ -231,7 +231,7 @@ const createStyles = colors =>
       paddingBottom: 0,
     },
     overlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       // Pinned above the video stage (and any PiP window) so the control deck
       // can never end up interleaved with the layers it floats over.
       zIndex: 2,
