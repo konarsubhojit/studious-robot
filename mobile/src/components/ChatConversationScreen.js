@@ -233,11 +233,26 @@ function buildListItems(orderedEntries) {
  * The placeholder is the compatibility contract: a message written by a newer
  * client must never blank out or crash an older one.
  *
- * @param {{ message: object, isOwn: boolean, styles: object }} props
+ * @param {{ message: object, isOwn: boolean, styles: object,
+ *   onDownloadAttachment?: (message: object) => void }} props
  */
-function MessageContent({ message, isOwn, styles }) {
+function MessageContent({ message, isOwn, styles, onDownloadAttachment }) {
   const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
   const type = messageTypeOf(message);
+  const attachmentUrl = message.attachment?.url;
+  const downloadButton =
+    attachmentUrl && onDownloadAttachment ? (
+      <Pressable
+        onPress={() => onDownloadAttachment(message)}
+        accessibilityRole="button"
+        accessibilityLabel="Download attachment"
+        accessibilityHint="Saves this attachment to your device"
+        hitSlop={touchSlop(12)}
+        style={styles.attachmentDownloadButton}
+        testID="chat-attachment-download">
+        <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
+      </Pressable>
+    ) : null;
 
   if (message.deletedAt) {
     return (
@@ -266,6 +281,7 @@ function MessageContent({ message, isOwn, styles }) {
           testID="chat-message-image"
         />
         {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+        {downloadButton}
       </View>
     );
   }
@@ -277,6 +293,7 @@ function MessageContent({ message, isOwn, styles }) {
           {describeMessagePreview(message)}
         </Text>
         {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+        {downloadButton}
       </View>
     );
   }
@@ -361,6 +378,7 @@ const MessageRow = memo(function MessageRow({
   onReply,
   onReact,
   onQuotePress,
+  onDownloadAttachment,
 }) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
@@ -428,7 +446,12 @@ const MessageRow = memo(function MessageRow({
             styles={styles}
           />
         ) : null}
-        <MessageContent message={message} isOwn={isOwn} styles={styles} />
+        <MessageContent
+          message={message}
+          isOwn={isOwn}
+          styles={styles}
+          onDownloadAttachment={onDownloadAttachment}
+        />
       </Pressable>
       {isReactionBarOpen ? (
         <View style={styles.reactionBar} testID="chat-message-reaction-bar">
@@ -527,6 +550,7 @@ function MessageSkeleton() {
  * @param {(message: object, emoji: string, action: 'add'|'remove') => void} [props.onReactToMessage]
  *   Adds or removes one of the user's emoji reactions, from the long-press reaction bar or
  *   by tapping an existing chip.
+ * @param {(message: object) => void} [props.onDownloadAttachment] Saves a message attachment.
  * @param {() => void} [props.onLoadOlder]
  * @param {() => void} props.onBack
  * @param {string} props.currentUserId
@@ -575,6 +599,7 @@ export default function ChatConversationScreen({
   onRetryMessage,
   onDeleteMessage,
   onReactToMessage,
+  onDownloadAttachment,
   onLoadOlder,
   onBack,
   currentUserId,
@@ -790,6 +815,13 @@ export default function ChatConversationScreen({
     if (messageId) setQuotedHighlightId(messageId);
   }, []);
 
+  const handleDownloadAttachment = useCallback(
+    message => {
+      onDownloadAttachment?.(message);
+    },
+    [onDownloadAttachment],
+  );
+
   const handleRetry = useCallback(
     message => {
       if (onRetryMessage) {
@@ -890,6 +922,7 @@ export default function ChatConversationScreen({
           onReply={handleReply}
           onReact={onReactToMessage ? handleReact : undefined}
           onQuotePress={handleQuotePress}
+          onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
         />
       );
     },
@@ -899,11 +932,13 @@ export default function ChatConversationScreen({
       handleDelete,
       handleQuotePress,
       handleReact,
+      handleDownloadAttachment,
       handleReply,
       handleRetry,
       messagesById,
       onCallBack,
       onDeleteMessage,
+      onDownloadAttachment,
       onReactToMessage,
       onVideoCallBack,
       peerId,
@@ -1323,6 +1358,15 @@ const createStyles = colors =>
       height: ATTACHMENT_IMAGE_HEIGHT,
       borderRadius: radius.md,
       marginBottom: spacing.xs,
+    },
+    attachmentDownloadButton: {
+      marginTop: spacing.xs,
+      alignSelf: 'flex-start',
+      paddingVertical: 2,
+    },
+    attachmentDownloadText: {
+      fontWeight: '700',
+      textDecorationLine: 'underline',
     },
     quote: {
       borderLeftWidth: 3,
