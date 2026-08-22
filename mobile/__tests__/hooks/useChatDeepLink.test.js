@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useChatDeepLink, { resolveChatPeerId } from '../../src/hooks/useChatDeepLink';
@@ -13,7 +14,7 @@ jest.mock('../../src/pushNotifications', () => ({
   getInitialChatLink: jest.fn(async () => null),
 }));
 
-function TestHook({ params }) {
+function TestHook(/** @type {any} */ { params }) {
   useChatDeepLink(params);
   return null;
 }
@@ -25,6 +26,7 @@ async function setup(overrides = {}) {
     onOpenConversation: jest.fn(),
     ...overrides,
   };
+  /** @type {any} */
   let tree;
   await act(async () => {
     tree = renderer.create(<TestHook params={params} />);
@@ -35,8 +37,8 @@ async function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  getInitialChatLink.mockResolvedValue(null);
-  addChatLinkListener.mockReturnValue(jest.fn());
+  /** @type {jest.Mock} */ (getInitialChatLink).mockResolvedValue(null);
+  /** @type {jest.Mock} */ (addChatLinkListener).mockReturnValue(jest.fn());
 });
 
 describe('resolveChatPeerId', () => {
@@ -64,7 +66,7 @@ describe('resolveChatPeerId', () => {
 
 describe('useChatDeepLink', () => {
   test('opens the conversation the app was cold-started from', async () => {
-    getInitialChatLink.mockResolvedValue({ conversationId: 'alice:bob' });
+    /** @type {jest.Mock} */ (getInitialChatLink).mockResolvedValue({ conversationId: 'alice:bob' });
     const { params } = await setup();
     await act(async () => {
       await Promise.resolve();
@@ -73,8 +75,9 @@ describe('useChatDeepLink', () => {
   });
 
   test('opens the conversation for a link received while running', async () => {
+    /** @type {any} */
     let emit;
-    addChatLinkListener.mockImplementation(callback => {
+    /** @type {jest.Mock} */ (addChatLinkListener).mockImplementation(/** @type {any} */ callback => {
       emit = callback;
       return jest.fn();
     });
@@ -88,7 +91,7 @@ describe('useChatDeepLink', () => {
   });
 
   test('holds the link until the peer can be resolved', async () => {
-    getInitialChatLink.mockResolvedValue({ conversationId: 'conv-1' });
+    /** @type {jest.Mock} */ (getInitialChatLink).mockResolvedValue({ conversationId: 'conv-1' });
     const { params, tree } = await setup({ userId: '', conversations: [] });
     await act(async () => {
       await Promise.resolve();
@@ -107,7 +110,7 @@ describe('useChatDeepLink', () => {
   });
 
   test('routes each link once', async () => {
-    getInitialChatLink.mockResolvedValue({ conversationId: 'alice:bob' });
+    /** @type {jest.Mock} */ (getInitialChatLink).mockResolvedValue({ conversationId: 'alice:bob' });
     const { params, tree } = await setup();
     await act(async () => {
       await Promise.resolve();
@@ -119,7 +122,7 @@ describe('useChatDeepLink', () => {
 
   test('unsubscribes the listener on unmount', async () => {
     const unsubscribe = jest.fn();
-    addChatLinkListener.mockReturnValue(unsubscribe);
+    /** @type {jest.Mock} */ (addChatLinkListener).mockReturnValue(unsubscribe);
     const { tree } = await setup();
     await act(async () => {
       tree.unmount();

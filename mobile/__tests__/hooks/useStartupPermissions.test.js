@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useStartupPermissions from '../../src/hooks/useStartupPermissions';
@@ -10,7 +11,7 @@ jest.mock('../../src/permissions', () => ({
 const { logWarn } = require('../../src/appLogger');
 const { ensureCallPermissions } = require('../../src/permissions');
 
-function TestHook({ userId }) {
+function TestHook(/** @type {any} */ { userId }) {
   useStartupPermissions(userId);
   return null;
 }
@@ -37,6 +38,7 @@ describe('useStartupPermissions', () => {
   });
 
   test('does not re-request on re-render for the same identity', async () => {
+    /** @type {any} */
     let tree;
     await act(async () => {
       tree = renderer.create(<TestHook userId="alice" />);
@@ -51,7 +53,7 @@ describe('useStartupPermissions', () => {
   });
 
   test('logs a warning when the permission result carries a warning message', async () => {
-    ensureCallPermissions.mockResolvedValueOnce({ ok: true, warningMessage: 'uh oh' });
+    /** @type {jest.Mock} */ (ensureCallPermissions).mockResolvedValueOnce({ ok: true, warningMessage: 'uh oh' });
 
     await act(async () => {
       renderer.create(<TestHook userId="alice" />);
@@ -63,7 +65,7 @@ describe('useStartupPermissions', () => {
   });
 
   test('logs a warning instead of throwing when the request rejects', async () => {
-    ensureCallPermissions.mockRejectedValueOnce(new Error('boom'));
+    /** @type {jest.Mock} */ (ensureCallPermissions).mockRejectedValueOnce(new Error('boom'));
 
     await act(async () => {
       renderer.create(<TestHook userId="alice" />);

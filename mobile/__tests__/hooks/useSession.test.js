@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useSession from '../../src/hooks/useSession';
@@ -20,7 +21,7 @@ jest.mock('../../src/authService', () => ({
 
 const { loadDeviceId } = require('../../src/settingsStorage');
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = useSession(params);
   return null;
 }
@@ -32,6 +33,7 @@ function setup(overrides = {}) {
     updateStatus: jest.fn(),
     ...overrides,
   };
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -41,13 +43,13 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  loadDeviceId.mockResolvedValue('device-test-1');
-  global.fetch = jest.fn();
+  /** @type {jest.Mock} */ (loadDeviceId).mockResolvedValue('device-test-1');
+  global.fetch = /** @type {any} */ (jest.fn());
 });
 
 describe('useSession', () => {
   test('createOrGetSession posts to /session and stores the returned sessionId', async () => {
-    global.fetch.mockResolvedValue({
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
       ok: true,
       json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
     });
@@ -64,7 +66,7 @@ describe('useSession', () => {
       'https://signal.example.com/session',
       expect.objectContaining({ method: 'POST' }),
     );
-    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const body = JSON.parse(/** @type {jest.Mock} */ (global.fetch).mock.calls[0][1].body);
     expect(body).toEqual({
       userId: 'alice',
       deviceId: 'device-test-1',
@@ -74,7 +76,7 @@ describe('useSession', () => {
   });
 
   test('createOrGetSession returns the cached sessionId without refetching', async () => {
-    global.fetch.mockResolvedValue({
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
       ok: true,
       json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
     });
@@ -83,7 +85,7 @@ describe('useSession', () => {
     await act(async () => {
       await resultRef.current.createOrGetSession();
     });
-    global.fetch.mockClear();
+    /** @type {jest.Mock} */ (global.fetch).mockClear();
 
     let sessionId;
     await act(async () => {
@@ -95,13 +97,14 @@ describe('useSession', () => {
   });
 
   test('createOrGetSession surfaces an identity_conflict as a friendly status message', async () => {
-    global.fetch.mockResolvedValue({
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
       ok: false,
       status: 409,
       json: async () => ({ code: 'identity_claimed' }),
     });
     const { resultRef, params } = setup();
 
+    /** @type {any} */
     let caughtError;
     await act(async () => {
       try {
@@ -120,7 +123,7 @@ describe('useSession', () => {
   });
 
   test('refreshSession rotates the sessionId on success', async () => {
-    global.fetch
+    /** @type {jest.Mock} */ (global.fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-2' }) });
     const { resultRef } = setup();
@@ -139,7 +142,7 @@ describe('useSession', () => {
   });
 
   test('refreshSession clears the sessionId and returns null on failure', async () => {
-    global.fetch
+    /** @type {jest.Mock} */ (global.fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) })
       .mockResolvedValueOnce({ ok: false, status: 410 });
     const { resultRef } = setup();
@@ -170,7 +173,7 @@ describe('useSession', () => {
   });
 
   test('authedFetch retries once after a 401 by refreshing the session', async () => {
-    global.fetch
+    /** @type {jest.Mock} */ (global.fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) }) // createOrGetSession
       .mockResolvedValueOnce({ status: 401, ok: false }) // first authed call
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-2' }) }) // refreshSession
@@ -181,9 +184,10 @@ describe('useSession', () => {
       await resultRef.current.createOrGetSession();
     });
 
+    /** @type {any} */
     let response;
     await act(async () => {
-      response = await resultRef.current.authedFetch(sessionId => ({
+      response = await resultRef.current.authedFetch((/** @type {any} */ sessionId) => ({
         url: `https://signal.example.com/thing?sessionId=${sessionId}`,
       }));
     });
@@ -196,12 +200,13 @@ describe('useSession', () => {
   });
 
   test('authedFetch returns null when no session can be established', async () => {
-    global.fetch.mockResolvedValue({ ok: false, status: 500 });
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({ ok: false, status: 500 });
     const { resultRef } = setup();
 
+    /** @type {any} */
     let response;
     await act(async () => {
-      response = await resultRef.current.authedFetch(sessionId => ({
+      response = await resultRef.current.authedFetch((/** @type {any} */ sessionId) => ({
         url: `https://signal.example.com/thing?sessionId=${sessionId}`,
       }));
     });

@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallHistory from '../../src/hooks/useCallHistory';
@@ -9,7 +10,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = useCallHistory(params);
   return null;
 }
@@ -22,6 +23,7 @@ function setup(overrides = {}) {
     userId: 'alice',
     ...overrides,
   };
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);

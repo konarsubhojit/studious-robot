@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import usePresenceSearch from '../../src/hooks/usePresenceSearch';
@@ -9,7 +10,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = usePresenceSearch(params);
   return null;
 }
@@ -21,6 +22,7 @@ function setup(overrides = {}) {
       return global.fetch(request.url, request.options);
     }),
   };
+  /** @type {any} */
   const params = {
     signalingUrl: 'https://signal.example.com',
     authedFetchRef,
@@ -28,7 +30,9 @@ function setup(overrides = {}) {
     calleeId: '',
     ...overrides,
   };
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -38,12 +42,12 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  global.fetch = jest.fn();
+  global.fetch = /** @type {any} */ (jest.fn());
 });
 
 describe('usePresenceSearch', () => {
   test('checkPresence returns online/offline snapshot on success', async () => {
-    global.fetch.mockResolvedValue({
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'online', online: true }),
     });
@@ -62,7 +66,7 @@ describe('usePresenceSearch', () => {
   });
 
   test('checkPresence returns unknown:true for a 404', async () => {
-    global.fetch.mockResolvedValue({ status: 404, ok: false });
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({ status: 404, ok: false });
     const { resultRef } = setup();
 
     let presence;
@@ -83,7 +87,7 @@ describe('usePresenceSearch', () => {
     expect(presence).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
 
-    global.fetch.mockRejectedValue(new Error('network down'));
+    /** @type {jest.Mock} */ (global.fetch).mockRejectedValue(new Error('network down'));
     await act(async () => {
       presence = await resultRef.current.checkPresence('bob');
     });
@@ -140,7 +144,7 @@ describe('usePresenceSearch', () => {
 
   test('debounced calleeId presence effect ignores stale responses for older calleeIds', async () => {
     jest.useFakeTimers();
-    global.fetch.mockImplementation(url => {
+    /** @type {jest.Mock} */ (global.fetch).mockImplementation(/** @type {any} */ url => {
       if (url.endsWith('/presence/first')) {
         return new Promise(resolve => {
           setTimeout(
@@ -186,7 +190,7 @@ describe('usePresenceSearch', () => {
 
   test('clears calleePresence immediately when calleeId is emptied', async () => {
     jest.useFakeTimers();
-    global.fetch.mockResolvedValue({
+    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'online', online: true }),
     });

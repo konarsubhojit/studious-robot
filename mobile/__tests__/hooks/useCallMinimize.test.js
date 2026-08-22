@@ -1,14 +1,16 @@
+// @ts-check
 import React from 'react';
 import { BackHandler, Platform } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import useCallMinimize from '../../src/hooks/useCallMinimize';
 
-function TestHook({ resultRef, isCallConnected }) {
+function TestHook(/** @type {any} */ { resultRef, isCallConnected }) {
   resultRef.current = useCallMinimize(isCallConnected);
   return null;
 }
 
-function setup(isCallConnected) {
+function setup(/** @type {any} */ isCallConnected) {
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
   let tree;
   act(() => {
@@ -47,6 +49,7 @@ describe('useCallMinimize', () => {
 
   test('pressing back minimizes a connected call on Android', () => {
     Platform.OS = 'android';
+    /** @type {any} */
     let handler;
     jest.spyOn(BackHandler, 'addEventListener').mockImplementation((event, cb) => {
       handler = cb;

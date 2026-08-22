@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useAttachments from '../../src/hooks/useAttachments';
@@ -25,12 +26,13 @@ jest.mock('../../src/attachmentUpload', () => ({
   uploadAttachment: jest.fn(),
 }));
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = useAttachments(params);
   return null;
 }
 
 function setup(overrides = {}) {
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
   const params = {
     authedFetchRef: { current: jest.fn() },
@@ -47,14 +49,14 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  ensureAttachmentPermission.mockResolvedValue({ ok: true, granted: true, message: null });
+  /** @type {jest.Mock} */ (ensureAttachmentPermission).mockResolvedValue({ ok: true, granted: true, message: null });
   _resetAttachmentAvailabilityCache();
 });
 
 describe('useAttachments', () => {
   test('pickAndSend(photo): uploads the picked photo and sends it', async () => {
-    pickPhoto.mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
-    uploadAttachment.mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -72,8 +74,8 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend(file): sends as a FILE message', async () => {
-    pickDocument.mockResolvedValue({ uri: 'file:///a.pdf', mimeType: 'application/pdf', sizeBytes: 100 });
-    uploadAttachment.mockResolvedValue({ url: 'https://cdn/a.pdf' });
+    /** @type {jest.Mock} */ (pickDocument).mockResolvedValue({ uri: 'file:///a.pdf', mimeType: 'application/pdf', sizeBytes: 100 });
+    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/a.pdf' });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -88,7 +90,7 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend does nothing when the permission is denied', async () => {
-    ensureAttachmentPermission.mockResolvedValue({ ok: false, message: 'Camera permission is required' });
+    /** @type {jest.Mock} */ (ensureAttachmentPermission).mockResolvedValue({ ok: false, message: 'Camera permission is required' });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -100,7 +102,7 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend does nothing when the user cancels the picker', async () => {
-    pickPhoto.mockResolvedValue(null);
+    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue(null);
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -112,8 +114,8 @@ describe('useAttachments', () => {
   });
 
   test('marks attachmentsAvailable false and surfaces the message on a 503', async () => {
-    pickPhoto.mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
-    uploadAttachment.mockRejectedValue({
+    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    /** @type {jest.Mock} */ (uploadAttachment).mockRejectedValue({
       status: 503,
       message: "Attachments aren't available on this server",
     });
@@ -133,14 +135,14 @@ describe('useAttachments', () => {
   });
 
   test('records and sends a voice note', async () => {
-    startVoiceRecording.mockResolvedValue(true);
-    stopVoiceRecording.mockResolvedValue({
+    /** @type {jest.Mock} */ (startVoiceRecording).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (stopVoiceRecording).mockResolvedValue({
       uri: 'file:///v.m4a',
       mimeType: 'audio/aac',
       durationMs: 2000,
       sizeBytes: 4096,
     });
-    uploadAttachment.mockResolvedValue({ url: 'https://cdn/v.m4a' });
+    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/v.m4a' });
     const { resultRef, params } = setup();
 
     await act(async () => {

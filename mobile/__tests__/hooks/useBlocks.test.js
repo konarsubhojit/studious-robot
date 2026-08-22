@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useBlocks from '../../src/hooks/useBlocks';
@@ -9,7 +10,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = useBlocks(params);
   return null;
 }
@@ -21,11 +22,13 @@ function setup() {
       return global.fetch(request.url, request.options);
     }),
   };
+  /** @type {any} */
   const params = {
     signalingUrl: 'https://signal.example.com',
     authedFetchRef,
     sessionIdRef: { current: 'sess-1' },
   };
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -34,18 +37,18 @@ function setup() {
 }
 
 /** A minimal `fetch` response double. */
-function respond(body, { ok = true, status = 200 } = {}) {
+function respond(/** @type {any} */ body, { ok = true, status = 200 } = {}) {
   return Promise.resolve({ ok, status, json: () => Promise.resolve(body) });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  global.fetch = jest.fn(() => respond({ blockedUsers: [] }));
+  global.fetch = /** @type {any} */ (jest.fn(() => respond({ blockedUsers: [] })));
 });
 
 describe('useBlocks', () => {
   test('loads the blocklist from the server', async () => {
-    global.fetch.mockImplementation(() => respond({ blockedUsers: ['user-bob'] }));
+    /** @type {jest.Mock} */ (global.fetch).mockImplementation(() => respond({ blockedUsers: ['user-bob'] }));
     const { resultRef } = setup();
 
     await act(async () => {
@@ -78,14 +81,14 @@ describe('useBlocks', () => {
 
     expect(applied).toBe(true);
     expect(resultRef.current.isUserBlocked('user-bob')).toBe(true);
-    const [url, options] = global.fetch.mock.calls[0];
+    const [url, options] = /** @type {jest.Mock} */ (global.fetch).mock.calls[0];
     expect(url).toBe('https://signal.example.com/blocks');
     expect(options.method).toBe('POST');
     expect(JSON.parse(options.body)).toEqual({ sessionId: 'sess-1', blockeeId: 'user-bob' });
   });
 
   test('keeps the peer unblocked when the server rejects the block', async () => {
-    global.fetch.mockImplementation(() => respond({}, { ok: false, status: 500 }));
+    /** @type {jest.Mock} */ (global.fetch).mockImplementation(() => respond({}, { ok: false, status: 500 }));
     const { resultRef } = setup();
 
     let applied;
@@ -103,7 +106,7 @@ describe('useBlocks', () => {
       await resultRef.current.blockUser('user-bob');
     });
 
-    global.fetch.mockImplementation(() => respond({}, { ok: false, status: 404 }));
+    /** @type {jest.Mock} */ (global.fetch).mockImplementation(() => respond({}, { ok: false, status: 404 }));
     let removed;
     await act(async () => {
       removed = await resultRef.current.unblockUser('user-bob');
@@ -111,7 +114,7 @@ describe('useBlocks', () => {
 
     expect(removed).toBe(true);
     expect(resultRef.current.isUserBlocked('user-bob')).toBe(false);
-    const [url, options] = global.fetch.mock.calls[1];
+    const [url, options] = /** @type {jest.Mock} */ (global.fetch).mock.calls[1];
     expect(url).toBe('https://signal.example.com/blocks/user-bob?sessionId=sess-1');
     expect(options.method).toBe('DELETE');
   });
@@ -128,7 +131,7 @@ describe('useBlocks', () => {
   });
 
   test('survives a network failure', async () => {
-    global.fetch.mockImplementation(() => Promise.reject(new Error('offline')));
+    /** @type {jest.Mock} */ (global.fetch).mockImplementation(() => Promise.reject(new Error('offline')));
     const { resultRef } = setup();
 
     await act(async () => {

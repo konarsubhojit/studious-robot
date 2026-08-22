@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallInitiation from '../../src/hooks/useCallInitiation';
@@ -11,7 +12,7 @@ jest.mock('../../src/appLogger', () => ({
 
 const { logError } = require('../../src/appLogger');
 
-function TestHook({ resultRef, params }) {
+function TestHook(/** @type {any} */ { resultRef, params }) {
   resultRef.current = useCallInitiation(params);
   return null;
 }
@@ -24,7 +25,9 @@ function setup(overrides = {}) {
     handleVideoToggle: jest.fn(),
     ...overrides,
   };
+  /** @type {{ current: any }} */
   const resultRef = { current: null };
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
