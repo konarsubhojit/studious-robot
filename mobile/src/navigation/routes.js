@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Route names for the app shell navigators.
  *
@@ -28,7 +29,8 @@ export const DEFAULT_TAB = TABS.CHATS;
  * Extract the parts of the navigation state the composition root still needs:
  * which tab is selected and, when a conversation is open, its peer id.
  *
- * @param {object | undefined} state navigation state of the tab navigator.
+ * @param {{ index?: number, routes?: any[] } | undefined} state navigation state
+ *   of the tab navigator.
  * @returns {{ activeTab: string, chatPeerId: string | null }}
  */
 export function deriveShellRoute(state) {
@@ -36,7 +38,7 @@ export function deriveShellRoute(state) {
   if (!Array.isArray(routes) || routes.length === 0) {
     return { activeTab: DEFAULT_TAB, chatPeerId: null };
   }
-  const tabRoute = routes[state.index ?? 0];
+  const tabRoute = routes[state?.index ?? 0];
   if (!tabRoute?.name) {
     return { activeTab: DEFAULT_TAB, chatPeerId: null };
   }

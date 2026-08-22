@@ -1,3 +1,4 @@
+// @ts-check
 import { createNavigationContainerRef } from '@react-navigation/native';
 import { CHAT_SCREENS, DEFAULT_TAB, TABS } from './routes';
 
@@ -10,14 +11,28 @@ import { CHAT_SCREENS, DEFAULT_TAB, TABS } from './routes';
 export const navigationRef = createNavigationContainerRef();
 
 /**
+ * The app shell does not declare a static param list, so React Navigation types
+ * `navigate`/`reset` arguments as `never`. This structurally-typed view keeps
+ * the call sites below checkable without inventing a param-list declaration.
+ *
+ * @type {{
+ *   navigate: (screen: string, params?: object) => void,
+ *   reset: (state: { index: number, routes: { name: string }[] }) => void,
+ * }}
+ */
+const nav = /** @type {any} */ (navigationRef);
+
+/**
  * Navigation requested before the container was ready (or while a full-screen
  * call has temporarily unmounted it). Replayed by `flushPendingNavigation`,
  * which `NavigationContainer.onReady` calls, so a notification tap that cold-
  * starts the app is never dropped. Only the most recent request is kept: an
  * older pending destination is always superseded by a newer one.
  */
+/** @type {(() => void) | null} */
 let pendingNavigation = null;
 
+/** @param {() => void} action */
 function runWhenReady(action) {
   if (navigationRef.isReady()) {
     action();
@@ -50,7 +65,7 @@ export function resetPendingNavigation() {
 export function openChatConversation(peerId, { messageId } = {}) {
   if (!peerId) return;
   runWhenReady(() =>
-    navigationRef.navigate(TABS.CHATS, {
+    nav.navigate(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
       params: { peerId, messageId: messageId ?? null },
     }),
@@ -62,7 +77,7 @@ export function openChatConversation(peerId, { messageId } = {}) {
  * opening it from the Calls tab switches tabs first — search spans both.
  */
 export function openSearch() {
-  runWhenReady(() => navigationRef.navigate(TABS.CHATS, { screen: CHAT_SCREENS.SEARCH }));
+  runWhenReady(() => nav.navigate(TABS.CHATS, { screen: CHAT_SCREENS.SEARCH }));
 }
 
 /**
@@ -73,7 +88,7 @@ export function openSearch() {
 export function openPeerProfile(peerId) {
   if (!peerId) return;
   runWhenReady(() =>
-    navigationRef.navigate(TABS.CHATS, {
+    nav.navigate(TABS.CHATS, {
       screen: CHAT_SCREENS.PROFILE,
       params: { peerId },
     }),
@@ -93,7 +108,7 @@ export function goBack() {
  * @param {'chats'|'calls'|'settings'} tab
  */
 export function openTab(tab) {
-  runWhenReady(() => navigationRef.navigate(tab));
+  runWhenReady(() => nav.navigate(tab));
 }
 
 /**
@@ -104,13 +119,13 @@ export function openTab(tab) {
 export function resetNavigation() {
   resetPendingNavigation();
   if (navigationRef.isReady()) {
-    navigationRef.reset({ index: 0, routes: [{ name: DEFAULT_TAB }] });
+    nav.reset({ index: 0, routes: [{ name: DEFAULT_TAB }] });
   }
 }
 
 /** Pop the open conversation back to the chat list, if one is open. */
 export function closeChatConversation() {
   if (navigationRef.isReady()) {
-    navigationRef.navigate(TABS.CHATS, { screen: CHAT_SCREENS.LIST });
+    nav.navigate(TABS.CHATS, { screen: CHAT_SCREENS.LIST });
   }
 }

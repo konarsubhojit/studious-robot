@@ -74,9 +74,15 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `SettingsCard.js`
   - [x] `StatusBanner.js`
   - [x] `SwipeableRow.js`
-- [ ] `src/call/`
+- [ ] `src/call/` (in progress)
+  - [x] `callStateMachine.js`
 - [ ] `src/chat/`
-- [ ] `src/navigation/`
+- [ ] `src/navigation/` (in progress)
+  - [x] `routes.js`
+  - [x] `linking.js`
+  - [x] `navigationRef.js`
+  - [x] `navigationState.js`
+  - [ ] `AppNavigator.js`
 - [ ] `src/hooks/`
 - [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
 - [ ] `App.js`
