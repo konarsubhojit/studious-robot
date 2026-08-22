@@ -1,3 +1,4 @@
+// @ts-check
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -22,8 +23,18 @@ import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from './routes';
  * renderers through context (rather than as `component` props) keeps the screen
  * components stable across renders — inline components would remount, and with
  * them lose scroll position and local state, on every state update.
+ *
+ * @typedef {object} ScreenRenderers
+ * @property {() => import('react').ReactNode} [renderChatList]
+ * @property {(peerId: string | null, options: { messageId: string | null }) => import('react').ReactNode} [renderChatConversation]
+ * @property {() => import('react').ReactNode} [renderSearch]
+ * @property {(peerId: string | null) => import('react').ReactNode} [renderPeerProfile]
+ * @property {() => import('react').ReactNode} [renderCalls]
+ * @property {() => import('react').ReactNode} [renderSettings]
  */
-const ScreenRenderersContext = createContext({});
+
+/** @type {import('react').Context<ScreenRenderers>} */
+const ScreenRenderersContext = createContext(/** @type {ScreenRenderers} */ ({}));
 
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
@@ -33,7 +44,7 @@ const ChatStack = createNativeStackNavigator();
  * flash a card in the opposite scheme.
  *
  * @param {'light'|'dark'} scheme
- * @param {object} colors
+ * @param {import('../theme').ThemeColors} colors
  */
 function buildNavigationTheme(scheme, colors) {
   const base = scheme === 'light' ? DefaultTheme : DarkTheme;
@@ -55,6 +66,9 @@ function ChatListRoute() {
   return renderChatList?.() ?? null;
 }
 
+/**
+ * @param {{ route: { params?: { peerId?: string | null, messageId?: string | null } } }} props
+ */
 function ChatConversationRoute({ route }) {
   const { renderChatConversation } = useContext(ScreenRenderersContext);
   return (
@@ -69,6 +83,9 @@ function SearchRoute() {
   return renderSearch?.() ?? null;
 }
 
+/**
+ * @param {{ route: { params?: { peerId?: string | null } } }} props
+ */
 function PeerProfileRoute({ route }) {
   const { renderPeerProfile } = useContext(ScreenRenderersContext);
   return renderPeerProfile?.(route.params?.peerId ?? null) ?? null;
@@ -172,6 +189,7 @@ export default function AppNavigator({
   }, [onRouteChange]);
 
   const handleStateChange = useCallback(
+    /** @param {import('@react-navigation/native').NavigationState | undefined} state */
     state => {
       onRouteChange?.(deriveShellRoute(state));
       saveNavigationState(state);
@@ -180,9 +198,16 @@ export default function AppNavigator({
   );
 
   const renderTabBar = useCallback(
+    /** @param {import('@react-navigation/bottom-tabs').BottomTabBarProps} props */
     ({ state, navigation }) => (
       <AppTabBar
-        activeTab={state.routes[state.index]?.name ?? DEFAULT_TAB}
+        activeTab={
+          // The tab navigator only registers the three `TABS` route names, so
+          // the active route name is always a tab bar key.
+          /** @type {import('../components/AppTabBar').TabKey} */ (
+            state.routes[state.index]?.name ?? DEFAULT_TAB
+          )
+        }
         onChangeTab={tab => {
           onTabPress?.(tab);
           navigation.navigate(tab);

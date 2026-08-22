@@ -79,12 +79,12 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `CallProvider.js`
 - [ ] `src/chat/` (in progress)
   - [x] `ChatProvider.js`
-- [ ] `src/navigation/` (in progress)
+- [x] `src/navigation/`
   - [x] `routes.js`
   - [x] `linking.js`
   - [x] `navigationRef.js`
   - [x] `navigationState.js`
-  - [ ] `AppNavigator.js`
+  - [x] `AppNavigator.js`
 - [ ] `src/hooks/` (in progress)
   - [x] `useRecentSearches.js`
   - [x] `useStartupPermissions.js`

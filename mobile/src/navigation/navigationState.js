@@ -2,6 +2,13 @@
 import RNFS from 'react-native-fs';
 import { logError, logWarn } from '../appLogger';
 
+/**
+ * Persisted React Navigation state, in the partial shape the container accepts
+ * as `initialState`.
+ *
+ * @typedef {import('@react-navigation/native').InitialState} PersistedNavigationState
+ */
+
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
 
 /**
@@ -19,7 +26,7 @@ function errorMessage(error) {
  *
  * `undefined` means "not loaded yet"; `null` means "nothing persisted".
  *
- * @type {object | null | undefined}
+ * @type {PersistedNavigationState | null | undefined}
  */
 let cachedState;
 
@@ -45,7 +52,7 @@ export function isValidNavigationState(state) {
  * Synchronously read the in-memory navigation state, so a remount (e.g. a
  * full-screen call ending) can restore without a blank frame.
  *
- * @returns {object | null | undefined} `undefined` when nothing has been
+ * @returns {PersistedNavigationState | null | undefined} `undefined` when nothing has been
  *   loaded or saved yet in this process.
  */
 export function getCachedNavigationState() {
@@ -57,7 +64,7 @@ export function getCachedNavigationState() {
  * after a cold start. Missing/corrupt state resolves to `null` (start fresh)
  * rather than throwing.
  *
- * @returns {Promise<object | null>}
+ * @returns {Promise<PersistedNavigationState | null>}
  */
 export async function loadNavigationState() {
   if (cachedState !== undefined) return cachedState;
@@ -69,7 +76,7 @@ export async function loadNavigationState() {
     }
     const content = await RNFS.readFile(NAVIGATION_STATE_FILE, 'utf8');
     const parsed = JSON.parse(content);
-    /** @type {object | null} */
+    /** @type {PersistedNavigationState | null} */
     const loaded = isValidNavigationState(parsed) ? parsed : null;
     cachedState = loaded;
     return loaded;
@@ -86,7 +93,7 @@ export async function loadNavigationState() {
  * Persist the current navigation state. Write failures are logged but never
  * thrown: losing state restoration must not break navigation itself.
  *
- * @param {object | undefined} state
+ * @param {PersistedNavigationState | undefined} state
  * @returns {Promise<boolean>} whether the write succeeded
  */
 export async function saveNavigationState(state) {
