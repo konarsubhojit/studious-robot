@@ -85,7 +85,9 @@ design tokens and utilities → presentational components → hooks → screens 
 ### server/
 
 - [x] `src/signaling/ack.js`
-- [ ] `src/signaling/` (remaining handlers)
+- [x] `src/signaling/index.js`
+- [x] `src/signaling/callHandlers.js`
+- [ ] `src/signaling/messageHandlers.js`
 - [x] `src/lib/lifecycle.js`
 - [x] `src/lib/normalize.js`
 - [x] `src/lib/verbose.js`

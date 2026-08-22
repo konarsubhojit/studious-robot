@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } = require('../config');
@@ -77,7 +78,7 @@ function leaveRoom(socket, roomId, rooms) {
  * participants busy.
  *
  * @param {import('socket.io').Server} io
- * @param {object} state
+ * @param {import('../stores/contracts').ServerState} state
  * @param {string|undefined} userId
  * @param {number} graceMs
  */
@@ -115,7 +116,11 @@ function logCallCorrelation(socket, callId, eventName) {
  * Wire up all Socket.IO connection and event handlers.
  *
  * @param {import('socket.io').Server} io
- * @param {{ state: object, ringingTimeoutMs: number, participantDisconnectGraceMs?: number }} ctx
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   ringingTimeoutMs: number,
+ *   participantDisconnectGraceMs?: number,
+ * }} ctx
  */
 function registerSocketHandlers(
   io,
@@ -186,16 +191,18 @@ function registerSocketHandlers(
       });
     });
     // Track which room this socket is currently in (one room per socket).
+    /** @type {string|null} */
     let currentRoom = null;
 
     socket.on(CLIENT_EVENTS.JOIN_ROOM, (roomId) => {
       if (!socket.data.identity.sessionId) return;
       if (typeof roomId !== 'string' || roomId.length === 0) return;
 
-      if (!state.rooms.has(roomId)) {
-        state.rooms.set(roomId, new Set());
+      let room = state.rooms.get(roomId);
+      if (!room) {
+        room = new Set();
+        state.rooms.set(roomId, room);
       }
-      const room = state.rooms.get(roomId);
 
       if (room.size >= MAX_ROOM_SIZE) {
         console.log(
@@ -272,7 +279,9 @@ function registerSocketHandlers(
       );
       if (!parsed) return;
 
-      const calleeId = normaliseId(parsed.calleeId);
+      // `call.initiate` is schema-validated above, so `calleeId` is a
+      // non-empty id by the time it reaches here.
+      const calleeId = /** @type {string} */ (normaliseId(parsed.calleeId));
       if (calleeId === socket.data.identity.userId) {
         acknowledgeError(
           socket,
@@ -487,7 +496,9 @@ function registerSocketHandlers(
       const reported = Array.isArray(parsed.activeCallIds)
         ? parsed.activeCallIds
         : [parsed.callId];
-      const activeCallIds = reported.map((value) => normaliseId(value)).filter(Boolean);
+      const activeCallIds = /** @type {string[]} */ (
+        reported.map((/** @type {unknown} */ value) => normaliseId(value)).filter(Boolean)
+      );
       const cleared = reconcileClientCallState(state, userId, activeCallIds, {
         onTransition: (call, previousStatus, reason) =>
           notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),

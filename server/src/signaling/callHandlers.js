@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } = require('../config');
@@ -26,7 +27,18 @@ const { CLIENT_EVENTS, ERROR_CODES } = require('../../../shared');
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
  * @param {object} payload
- * @param {object} options
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   io: any,
+ *   eventName: string,
+ *   nextStatus: string,
+ *   reason?: string|null,
+ *   authorize: (
+ *     call: import('../stores/contracts').CallRecord,
+ *     userId: string,
+ *   ) => string|null,
+ *   onSuccess?: (call: import('../stores/contracts').CallRecord) => void,
+ * }} options
  */
 function handleSocketCallTransition(socket, ack, payload, options) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
@@ -41,7 +53,8 @@ function handleSocketCallTransition(socket, ack, payload, options) {
     return;
   }
 
-  const callId = normaliseId(parsed.callId);
+  // The payload is schema-validated above, so `callId` is a non-empty id.
+  const callId = /** @type {string} */ (normaliseId(parsed.callId));
   const call = options.state.calls.get(callId);
   if (!call) {
     acknowledgeError(
@@ -105,7 +118,13 @@ function handleSocketCallTransition(socket, ack, payload, options) {
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
  * @param {object} payload
- * @param {object} options
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   io: any,
+ *   eventName: string,
+ *   dataKey: string,
+ *   recordsHeartbeat?: boolean,
+ * }} options
  */
 function handleRtcRelay(socket, ack, payload, options) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
@@ -142,7 +161,8 @@ function handleRtcRelay(socket, ack, payload, options) {
     return;
   }
 
-  const callId = normaliseId(parsed.callId);
+  // The payload is schema-validated above, so `callId` is a non-empty id.
+  const callId = /** @type {string} */ (normaliseId(parsed.callId));
   const value = parsed[options.dataKey];
 
   const call = options.state.calls.get(callId);
@@ -230,13 +250,14 @@ function handleRtcRelay(socket, ack, payload, options) {
  * @param {import('socket.io').Socket} socket
  * @param {Function|undefined} ack
  * @param {object} payload
- * @param {{ state: object, io: object }} options
+ * @param {{ state: import('../stores/contracts').ServerState, io: any }} options
  */
 function handleCallConnected(socket, ack, payload, options) {
   // Read before validation only to pick the destination status; the payload is
   // still validated (and rejected) by `handleSocketCallTransition` below, and a
   // non-string never reaches the transition.
-  const iceState = typeof payload?.iceState === 'string' ? payload.iceState : 'connected';
+  const rawIceState = /** @type {Record<string, unknown>} */ (payload ?? {}).iceState;
+  const iceState = typeof rawIceState === 'string' ? rawIceState : 'connected';
   const isFailure = iceState === 'disconnected' || iceState === 'failed';
 
   handleSocketCallTransition(socket, ack, payload, {
