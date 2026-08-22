@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -61,6 +62,14 @@
  */
 
 const { randomUUID } = require('crypto');
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 // Maximum accepted message body length, in characters: part of the wire
 // contract, so it is owned by the shared package and enforced identically by
 // the client and the `message.send` handler.
@@ -73,6 +82,54 @@ const {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Default page size for {@link listMessages}. */
+/**
+ * @typedef {import('./stores/contracts').MessageRecord} MessageRecord
+ *
+ * A message as written by this store: every field the store owns is
+ * materialised, unlike a legacy row read back from an older schema.
+ *
+ * @typedef {MessageRecord & {
+ *   type: string,
+ *   attachment: object|null,
+ *   replyTo: string|null,
+ *   reactions: Record<string, string[]>,
+ *   deletedAt: string|null,
+ *   deliveredTo: string[],
+ *   readAt: string|null,
+ * }} StoredMessage
+ *
+ * @typedef {{
+ *   conversationId: string,
+ *   peerId: string,
+ *   lastMessage: StoredMessage,
+ *   unreadCount: number,
+ * }} ConversationSummary
+ *
+ * @typedef {object} MessageStore
+ * @property {'memory'|'mongo'} type
+ * @property {(message: Partial<MessageRecord> & {
+ *   senderId: string, recipientId: string, body: string,
+ * }) => Promise<StoredMessage>} saveMessage
+ * @property {(opts?: { conversationId?: string, limit?: unknown, before?: string })
+ *   => Promise<StoredMessage[]>} listMessages
+ * @property {(opts?: { userId?: string, query?: unknown, limit?: unknown, before?: string })
+ *   => Promise<StoredMessage[]>} searchMessages
+ * @property {(messageId: string, userId: string) => Promise<StoredMessage|null>} markDelivered
+ * @property {(userId: string) => Promise<ConversationSummary[]>} listConversations
+ * @property {(conversationId: string, userId: string) => Promise<number>} markRead
+ * @property {(conversationId: string, messageId: string, userId: string)
+ *   => Promise<StoredMessage|null>} deleteMessage
+ * @property {(opts?: {
+ *   conversationId?: string,
+ *   messageId?: string,
+ *   userId?: string,
+ *   emoji?: string,
+ *   action?: 'add'|'remove',
+ * }) => Promise<StoredMessage|null>} reactToMessage
+ * @property {() => Promise<void>} [close]
+ * @property {() => Promise<unknown>} [ready]
+ */
+
 const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for {@link listMessages}. */
 const MAX_MESSAGE_LIMIT = 100;
@@ -155,10 +212,9 @@ function normaliseReactions(value) {
  * every newly written row has one shape; readers still default a *legacy* row
  * with no `type` to `"text"`.
  *
- * @param {{ conversationId?: string, senderId: string, recipientId: string, body: string,
- *   type?: string, attachment?: object|null, replyTo?: string|null,
- *   reactions?: Record<string, string[]>, deletedAt?: string|null }} message
- * @returns {object}
+ * @param {Partial<MessageRecord> & { senderId: string, recipientId: string, body: string }}
+ *   message
+ * @returns {StoredMessage}
  */
 function createMessageRecord(message) {
   return {
@@ -170,7 +226,9 @@ function createMessageRecord(message) {
     body: message.body,
     // An unknown type is never persisted: the store owns what it can describe,
     // and a client sending one is rejected long before this point.
-    type: isSupportedMessageType(message.type) ? message.type : DEFAULT_MESSAGE_TYPE,
+    type: isSupportedMessageType(message.type)
+      ? /** @type {string} */ (message.type)
+      : DEFAULT_MESSAGE_TYPE,
     attachment: message.attachment ?? null,
     replyTo: message.replyTo ?? null,
     reactions: normaliseReactions(message.reactions),
@@ -186,9 +244,9 @@ function createMessageRecord(message) {
  * participants, but the row survives so a reply that quotes it still resolves
  * (and renders "Message deleted" instead of a dangling reference).
  *
- * @param {object} message
+ * @param {StoredMessage} message
  * @param {string} deletedAt
- * @returns {object} the same object, mutated.
+ * @returns {StoredMessage} the same object, mutated.
  */
 function applyTombstone(message, deletedAt) {
   message.body = '';
@@ -227,7 +285,7 @@ function applyReaction(reactions, emoji, userId, action) {
 /**
  * Resolve the "other" participant of a message relative to `userId`.
  *
- * @param {object} message
+ * @param {StoredMessage} message
  * @param {string} userId
  * @returns {string} `senderId` when `userId` is the recipient, otherwise `recipientId`.
  */
@@ -238,6 +296,10 @@ function peerIdOf(message, userId) {
 /**
  * Newest-first comparator used by the in-memory store.  `messageId` breaks ties
  * so the ordering stays deterministic even for caller-supplied timestamps.
+ *
+ * @param {StoredMessage} a
+ * @param {StoredMessage} b
+ * @returns {number}
  */
 function byNewestFirst(a, b) {
   if (a.createdAt !== b.createdAt) {
@@ -292,10 +354,10 @@ function bodyMatches(message, term) {
  * survive a restart, which matches the pre-existing behaviour of the rest of
  * the in-memory state.
  *
- * @returns {object}
+ * @returns {MessageStore}
  */
 function createMemoryMessageStore() {
-  /** @type {object[]} */
+  /** @type {StoredMessage[]} */
   const messages = [];
 
   return {
@@ -352,7 +414,7 @@ function createMemoryMessageStore() {
     },
 
     async listConversations(userId) {
-      /** @type {Map<string, { conversationId: string, peerId: string, lastMessage: object, unreadCount: number }>} */
+      /** @type {Map<string, ConversationSummary>} */
       const byConversation = new Map();
 
       for (const message of messages) {
@@ -421,7 +483,12 @@ function createMemoryMessageStore() {
           !candidate.deletedAt
       );
       if (!message) return null;
-      message.reactions = applyReaction(message.reactions, emoji, userId, action);
+      message.reactions = applyReaction(
+        message.reactions,
+        /** @type {string} */ (emoji),
+        /** @type {string} */ (userId),
+        /** @type {'add'|'remove'} */ (action)
+      );
       return { ...message };
     },
 
@@ -442,7 +509,7 @@ function createMemoryMessageStore() {
  * the corresponding guarantee (sort support, uniqueness) degraded. Each index
  * is attempted independently so one rejection doesn't skip the rest.
  *
- * @param {object} messages - The Mongo collection.
+ * @param {any} messages - The Mongo collection.
  * @param {object} spec - Index key spec, e.g. `{ conversationId: 1 }`.
  * @param {object} [options] - Index options, e.g. `{ unique: true }`.
  * @returns {Promise<void>}
@@ -454,7 +521,7 @@ async function createIndexOrWarn(messages, spec, options) {
     console.error(
       `[messages] DEGRADED: index creation skipped for ${JSON.stringify(spec)}` +
         `${options ? ` ${JSON.stringify(options)}` : ''} — sorted queries and/or ` +
-        `uniqueness guarantees may be affected: ${error?.message}`
+        `uniqueness guarantees may be affected: ${errorMessage(error)}`
     );
   }
 }
@@ -463,7 +530,7 @@ async function createIndexOrWarn(messages, spec, options) {
  * Best-effort extraction of the Mongo host(s) for startup logging, without
  * ever logging credentials embedded in the connection string.
  *
- * @param {object} mongoClient
+ * @param {any} mongoClient
  * @param {string} [uri]
  * @returns {string}
  */
@@ -472,7 +539,11 @@ function safeMongoHost(mongoClient, uri) {
     const options = mongoClient?.options ?? mongoClient?.s?.options;
     const hosts = options?.hosts;
     if (Array.isArray(hosts) && hosts.length) {
-      return hosts.map((h) => (h?.host ? `${h.host}${h.port ? `:${h.port}` : ''}` : String(h))).join(',');
+      return hosts
+        .map((/** @type {any} */ h) =>
+          h?.host ? `${h.host}${h.port ? `:${h.port}` : ''}` : String(h)
+        )
+        .join(',');
     }
   } catch {
     // Fall through to URI parsing below.
@@ -496,8 +567,8 @@ function safeMongoHost(mongoClient, uri) {
  * the store never blocks server start-up, and a failure to create indexes is
  * logged rather than fatal (Cosmos DB throttles index builds under load).
  *
- * @param {{ uri: string, dbName?: string, collectionName?: string, client?: object }} opts
- * @returns {object}
+ * @param {{ uri?: string, dbName?: string, collectionName?: string, client?: any }} [opts]
+ * @returns {MessageStore}
  */
 function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
   if (!uri && !client) {
@@ -507,20 +578,21 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
   const database = dbName || DEFAULT_DB_NAME;
   const collection = collectionName || DEFAULT_COLLECTION_NAME;
 
+  /** @type {Promise<any>|null} */
   let clientPromise = null;
   let closed = false;
 
   /**
    * Connect (once) and ensure the supporting indexes exist.
    *
-   * @returns {Promise<object>} The messages collection.
+   * @returns {Promise<any>} The messages collection.
    */
   function connect() {
     if (!clientPromise) {
       clientPromise = (async () => {
         const mongoClient =
           client ??
-          new (require('mongodb').MongoClient)(uri, {
+          new (require('mongodb').MongoClient)(/** @type {string} */ (uri), {
             serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
           });
         if (typeof mongoClient.connect === 'function') {
@@ -625,6 +697,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
     async listMessages({ conversationId, limit, before } = {}) {
       const cap = clampLimit(limit);
       const { messages } = await connect();
+      /** @type {Record<string, unknown>} */
       const query = { conversationId };
       if (before) {
         query.createdAt = { $lt: before };
@@ -635,7 +708,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         .limit(cap)
         .toArray();
       // Strip the driver-managed `_id` so the wire shape matches the memory store.
-      return found.map(({ _id, ...rest }) => rest);
+      return found.map((/** @type {any} */ { _id, ...rest }) => rest);
     },
 
     async searchMessages({ userId, query, limit, before } = {}) {
@@ -643,6 +716,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       if (!term || !userId) return [];
       const cap = clampLimit(limit);
       const { messages } = await connect();
+      /** @type {Record<string, unknown>} */
       const filter = {
         $or: [{ senderId: userId }, { recipientId: userId }],
         // Literal, case-insensitive substring match: the term is escaped so a
@@ -661,7 +735,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       // `listConversations` does, and the page is cut afterwards.
       const found = await messages.find(filter).toArray();
       return found
-        .map(({ _id, ...rest }) => rest)
+        .map((/** @type {any} */ { _id, ...rest }) => rest)
         .sort(byNewestFirst)
         .slice(0, cap);
     },
@@ -694,7 +768,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         .find({ $or: [{ senderId: userId }, { recipientId: userId }] })
         .toArray();
 
-      /** @type {Map<string, { conversationId: string, peerId: string, lastMessage: object, unreadCount: number }>} */
+      /** @type {Map<string, ConversationSummary>} */
       const byConversation = new Map();
 
       for (const doc of found) {
@@ -763,7 +837,12 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
       const existing = await messages.findOne({ conversationId, messageId });
       if (!existing?.messageId || existing.deletedAt) return null;
       const { _id, ...rest } = existing;
-      rest.reactions = applyReaction(rest.reactions, emoji, userId, action);
+      rest.reactions = applyReaction(
+        rest.reactions,
+        /** @type {string} */ (emoji),
+        /** @type {string} */ (userId),
+        /** @type {'add'|'remove'} */ (action)
+      );
       await messages.updateOne(
         { conversationId, messageId },
         { $set: { reactions: rest.reactions } }
@@ -778,7 +857,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
         const { mongoClient } = await clientPromise;
         await mongoClient.close();
       } catch (error) {
-        console.warn(`[messages] error while closing Mongo client: ${error?.message}`);
+        console.warn(`[messages] error while closing Mongo client: ${errorMessage(error)}`);
       }
     },
   };
@@ -824,7 +903,7 @@ function createMessageStore(opts = {}) {
       client,
     });
   } catch (error) {
-    throw new Error(`Invalid MONGODB_URI: ${error?.message}`);
+    throw new Error(`Invalid MONGODB_URI: ${errorMessage(error)}`);
   }
 }
 
