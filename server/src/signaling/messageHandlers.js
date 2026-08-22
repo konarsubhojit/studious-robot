@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { SIGNALING_VERSION } = require('../config');
@@ -49,12 +50,21 @@ const {
  */
 
 /**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Validate a message body, returning the trimmed text or an error code.
  *
  * @param {unknown} value
  * @param {{ allowEmpty?: boolean }} [options] - An attachment message may carry
  *   an empty body: the caption is optional, the attachment is the content.
- * @returns {{ body: string } | { error: string, message: string }}
+ * @returns {{ body: string, error?: undefined, message?: undefined }
+ *   | { body?: undefined, error: string, message: string }}
  */
 function validateBody(value, { allowEmpty = false } = {}) {
   if (typeof value !== 'string') {
@@ -84,13 +94,15 @@ function validateBody(value, { allowEmpty = false } = {}) {
  * every recipient fetch a host of the sender's choosing.
  *
  * @param {string} type
- * @param {unknown} attachment
- * @returns {{ attachment: object } | { error: string, message: string }}
+ * @param {unknown} rawAttachment
+ * @returns {{ attachment: Record<string, any>, error?: undefined, message?: undefined }
+ *   | { attachment?: undefined, error: string, message: string }}
  */
-function validateAttachment(type, attachment) {
-  if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) {
+function validateAttachment(type, rawAttachment) {
+  if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) {
     return { error: 'bad_request', message: `${type} messages require an attachment` };
   }
+  const attachment = /** @type {Record<string, any>} */ (rawAttachment);
 
   const config = loadR2Config();
   if (!config) {
@@ -107,7 +119,7 @@ function validateAttachment(type, attachment) {
     // check below stays a check rather than a formality.
     sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : 1,
   });
-  if (validated.error) {
+  if ('error' in validated) {
     return { error: 'bad_request', message: `attachment: ${validated.error}` };
   }
 
@@ -145,7 +157,8 @@ function validateAttachment(type, attachment) {
  * matter — readers render those as a neutral placeholder).
  *
  * @param {unknown} value
- * @returns {{ type: string } | { error: string, message: string }}
+ * @returns {{ type: string, error?: undefined, message?: undefined }
+ *   | { type?: undefined, error: string, message: string }}
  */
 function validateMessageType(value) {
   if (value === undefined || value === null) return { type: DEFAULT_MESSAGE_TYPE };
@@ -160,8 +173,8 @@ function validateMessageType(value) {
  * push to every registered device that has no socket of its own.
  *
  * @param {import('socket.io').Server} io
- * @param {object} state
- * @param {object} message
+ * @param {import('../stores/contracts').ServerState} state
+ * @param {import('../stores/contracts').MessageRecord} message
  */
 function deliverMessage(io, state, message) {
   const envelope = {
@@ -190,7 +203,7 @@ function deliverMessage(io, state, message) {
       })
       .catch((error) => {
         console.error(
-          `[messages] Unhandled push error for device ${channel.deviceId}: ${error?.message}`
+          `[messages] Unhandled push error for device ${channel.deviceId}: ${errorMessage(error)}`
         );
       });
   }
@@ -239,8 +252,15 @@ function validateReactionEmoji(value) {
     : null;
 }
 
+/**
+ * Register the text-chat socket handlers on a connected socket.
+ *
+ * @param {import('socket.io').Socket} socket
+ * @param {{ io: import('socket.io').Server,
+ *   state: import('../stores/contracts').ServerState }} ctx
+ */
 function registerMessageHandlers(socket, { io, state }) {
-  socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, ack) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, /** @type {Function|undefined} */ ack) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
       return;
     }
@@ -267,7 +287,9 @@ function registerMessageHandlers(socket, { io, state }) {
     const parsed = parseInboundPayload(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, payload, state);
     if (!parsed) return;
 
-    const recipientId = normaliseId(parsed.recipientId);
+    // The payload is schema-validated above, so `recipientId` is a
+    // non-empty id.
+    const recipientId = /** @type {string} */ (normaliseId(parsed.recipientId));
     if (recipientId === senderId) {
       acknowledgeError(
         socket,
@@ -285,7 +307,9 @@ function registerMessageHandlers(socket, { io, state }) {
       acknowledgeError(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, typed.error, typed.message, state);
       return;
     }
-    const carriesAttachment = isAttachmentMessageType(typed.type);
+    // `typed.error` was handled above, so the type is present here.
+    const messageType = /** @type {string} */ (typed.type);
+    const carriesAttachment = isAttachmentMessageType(messageType);
 
     const validated = validateBody(parsed.body, { allowEmpty: carriesAttachment });
     if (validated.error) {
@@ -302,7 +326,7 @@ function registerMessageHandlers(socket, { io, state }) {
 
     let attachment = null;
     if (carriesAttachment) {
-      const validatedAttachment = validateAttachment(typed.type, parsed.attachment);
+      const validatedAttachment = validateAttachment(messageType, parsed.attachment);
       if (validatedAttachment.error) {
         acknowledgeError(
           socket,
@@ -321,7 +345,7 @@ function registerMessageHandlers(socket, { io, state }) {
         ack,
         CLIENT_EVENTS.MESSAGE_SEND,
         ERROR_CODES.BAD_REQUEST,
-        `${typed.type} messages cannot carry an attachment`,
+        `${messageType} messages cannot carry an attachment`,
         state
       );
       return;
@@ -391,7 +415,7 @@ function registerMessageHandlers(socket, { io, state }) {
         senderId,
         recipientId,
         body: validated.body,
-        type: typed.type,
+        type: messageType,
         attachment,
         // The quoted message is *not* required to still exist: a reply
         // outlives the deletion of its parent, which the client renders as
@@ -403,7 +427,7 @@ function registerMessageHandlers(socket, { io, state }) {
         messageId: clientMessageId,
       });
     } catch (error) {
-      console.error(`[messages] failed to persist message: ${error?.message}`);
+      console.error(`[messages] failed to persist message: ${errorMessage(error)}`);
       acknowledgeError(
         socket,
         ack,
@@ -459,7 +483,7 @@ function registerMessageHandlers(socket, { io, state }) {
         // page for this conversation is now stale.
         await invalidateCache(state, messagesCachePrefix(message.conversationId));
       } catch (error) {
-        console.error(`[messages] failed to mark message delivered: ${error?.message}`);
+        console.error(`[messages] failed to mark message delivered: ${errorMessage(error)}`);
       }
     }
 
@@ -480,7 +504,7 @@ function registerMessageHandlers(socket, { io, state }) {
    * a request for a message the caller did not write matches nothing and is
    * reported as `not_found` rather than silently succeeding.
    */
-  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, ack) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, /** @type {Function|undefined} */ ack) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
       return;
     }
@@ -526,7 +550,7 @@ function registerMessageHandlers(socket, { io, state }) {
     try {
       deleted = await state.messageStore.deleteMessage(conversationId, messageId, requesterId);
     } catch (error) {
-      console.error(`[messages] failed to delete message: ${error?.message}`);
+      console.error(`[messages] failed to delete message: ${errorMessage(error)}`);
       acknowledgeError(
         socket,
         ack,
@@ -593,7 +617,7 @@ function registerMessageHandlers(socket, { io, state }) {
    * they never left) is a no-op that still acknowledges successfully, so a
    * retry after a flaky connection cannot toggle the reaction off.
    */
-  socket.on(CLIENT_EVENTS.MESSAGE_REACT, async (payload = {}, ack) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_REACT, async (payload = {}, /** @type {Function|undefined} */ ack) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_REACT)) {
       return;
     }
@@ -659,7 +683,7 @@ function registerMessageHandlers(socket, { io, state }) {
         action: parsed.action,
       });
     } catch (error) {
-      console.error(`[messages] failed to persist reaction: ${error?.message}`);
+      console.error(`[messages] failed to persist reaction: ${errorMessage(error)}`);
       acknowledgeError(
         socket,
         ack,
@@ -714,7 +738,9 @@ function registerMessageHandlers(socket, { io, state }) {
    */
   socket.on(CLIENT_EVENTS.MESSAGE_TYPING, (payload = {}) => {
     if (!socket.data.identity?.sessionId) return;
-    if (payload?.version !== SIGNALING_VERSION) return;
+    if (/** @type {Record<string, unknown>} */ (payload ?? {}).version !== SIGNALING_VERSION) {
+      return;
+    }
 
     // Fire-and-forget: a malformed indicator is logged and dropped rather than
     // acknowledged, since the sender is not waiting on a reply.
