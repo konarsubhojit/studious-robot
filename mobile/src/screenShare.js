@@ -1,3 +1,4 @@
+// @ts-check
 import { Platform } from 'react-native';
 import { mediaDevices } from 'react-native-webrtc';
 import { logError, logInfo, logWarn } from './appLogger';
@@ -35,6 +36,15 @@ const FRAME_CHECK_TIMEOUT_MS = 3000;
 /** How often to poll `getStats()` while waiting for the first frame. */
 const FRAME_CHECK_INTERVAL_MS = 500;
 
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
+/** @param {any} error */
 function isPermissionDeniedError(error) {
   const name = error?.name;
   const message = String(error?.message || '').toLowerCase();
@@ -70,7 +80,7 @@ export function getScreenShareErrorMessage(error) {
   if (Platform.OS === 'ios') {
     return 'Screen sharing is unavailable on this device';
   }
-  return `Unable to start screen sharing: ${error?.message || 'Unknown error'}`;
+  return `Unable to start screen sharing: ${errorMessage(error) || 'Unknown error'}`;
 }
 
 /**
@@ -94,16 +104,21 @@ export async function startScreenCapture({ withAudio = false } = {}) {
 
   let stream;
   try {
-    stream = await mediaDevices.getDisplayMedia({ video: true, audio: Boolean(withAudio) });
+    // `getDisplayMedia` accepts constraints at runtime; react-native-webrtc's
+    // typings declare it without parameters.
+    stream = await /** @type {any} */ (mediaDevices).getDisplayMedia({
+      video: true,
+      audio: Boolean(withAudio),
+    });
   } catch (error) {
     if (withAudio) {
       // Some platforms reject the whole request when screen audio is asked for
       // but unavailable; retry video-only before giving up.
       logWarn('Screen capture with audio failed; retrying video only', {
-        message: error?.message,
+        message: errorMessage(error),
       });
       try {
-        stream = await mediaDevices.getDisplayMedia({ video: true });
+        stream = await /** @type {any} */ (mediaDevices).getDisplayMedia({ video: true });
       } catch (retryError) {
         logError('Screen capture failed; MediaProjection did not start', retryError);
         return {
@@ -151,12 +166,17 @@ export async function startScreenCapture({ withAudio = false } = {}) {
   };
 }
 
+/** @param {number} ms */
 function sleep(ms) {
   return new Promise(resolve => {
     setTimeout(resolve, ms);
   });
 }
 
+/**
+ * @param {any} report
+ * @param {(entry: any) => void} visit
+ */
 function forEachStatsEntry(report, visit) {
   if (!report) return;
   if (typeof report.forEach === 'function') {
@@ -180,7 +200,7 @@ function forEachStatsEntry(report, visit) {
  */
 function countOutboundVideoFrames(report) {
   let frames = 0;
-  forEachStatsEntry(report, entry => {
+  forEachStatsEntry(report, (/** @type {any} */ entry) => {
     if (!entry || entry.type !== 'outbound-rtp') return;
     const kind = entry.kind ?? entry.mediaType;
     if (kind && kind !== 'video') return;
@@ -198,7 +218,7 @@ function countOutboundVideoFrames(report) {
  * `startForeground`), which is indistinguishable from success locally. Polling
  * the outbound RTP stats is the only reliable way to tell the difference.
  *
- * @param {object | null | undefined} peerConnection
+ * @param {any} peerConnection an `RTCPeerConnection`, or anything falsy.
  * @param {{ timeoutMs?: number, intervalMs?: number }} [options]
  * @returns {Promise<
  *   | { ok: true, frames: number | null, verified: boolean }
@@ -221,7 +241,7 @@ export async function verifyScreenShareFrames(peerConnection, options = {}) {
     try {
       frames = countOutboundVideoFrames(await peerConnection.getStats());
     } catch (error) {
-      logWarn('Unable to read screen share stats', { message: error?.message });
+      logWarn('Unable to read screen share stats', { message: errorMessage(error) });
       return { ok: true, frames: null, verified: false };
     }
 
@@ -246,11 +266,11 @@ export async function verifyScreenShareFrames(peerConnection, options = {}) {
 /**
  * Stop every track of a captured display stream. Safe to call with `null`.
  *
- * @param {object | null | undefined} stream
+ * @param {any} stream a `MediaStream`, or anything falsy.
  */
 export function stopScreenCapture(stream) {
   if (!stream?.getTracks) return;
-  stream.getTracks().forEach(track => {
+  stream.getTracks().forEach((/** @type {any} */ track) => {
     try {
       track.stop();
     } catch {

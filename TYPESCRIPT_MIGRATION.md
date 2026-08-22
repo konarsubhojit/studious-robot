@@ -90,6 +90,10 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/cameraLighting.js`
 - [x] `src/messageNotification.js`
 - [x] `src/ringtone.js`
+- [x] `src/incomingCallNotification.js`
+- [x] `src/screenShare.js`
+- [x] `src/voiceRecorder.js`
+- [x] `src/attachmentDownload.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`

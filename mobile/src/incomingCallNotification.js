@@ -1,3 +1,4 @@
+// @ts-check
 import { NativeModules, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 import { startIncomingRingtone } from './ringtone';
@@ -26,6 +27,14 @@ const IMPORTANCE_HIGH = 4;
  * `callService.js`).
  */
 
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
 function getNativeModule() {
   if (Platform.OS !== 'android') return null;
   return NativeModules?.IncomingCallNotification || null;
@@ -51,7 +60,7 @@ export function isIncomingCallNotificationAvailable() {
  * vibration still ring the device, so a resolved `true` here always means the
  * user was audibly alerted even if the full-screen UI could not be drawn.
  *
- * @param {{ callId: string, callerId?: string | null, hasVideo?: boolean }} opts
+ * @param {{ callId?: string, callerId?: string | null, hasVideo?: boolean }} [opts]
  * @returns {Promise<boolean>} `true` when a notification was posted
  */
 export async function showIncomingCallNotification({ callId, callerId, hasVideo = true } = {}) {
@@ -60,7 +69,8 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
   if (!module || typeof module.show !== 'function') return false;
 
   try {
-    const result = (await module.show(callId, callerId || 'Incoming call', Boolean(hasVideo))) ?? {};
+    const result =
+      (await module.show(callId, callerId || 'Incoming call', Boolean(hasVideo))) ?? {};
     logInfo('[IncomingCallNotification] Shown', {
       callId,
       callerId: callerId ?? null,
@@ -75,10 +85,7 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
     // when either says it will not ring, ring from JS instead of assuming.
     const importance = result.channelImportance;
     const hasSound = result.channelHasSound;
-    if (
-      (typeof importance === 'number' && importance < IMPORTANCE_HIGH) ||
-      hasSound === false
-    ) {
+    if ((typeof importance === 'number' && importance < IMPORTANCE_HIGH) || hasSound === false) {
       logWarn('[IncomingCallNotification] Channel will not ring; starting ringtone fallback', {
         callId,
         channelImportance: importance ?? null,
@@ -115,7 +122,7 @@ export async function consumePendingCallAction() {
     return pending;
   } catch (error) {
     logWarn('[IncomingCallNotification] consumePendingCallAction failed', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     return null;
   }
@@ -138,7 +145,7 @@ export async function isCallConnectionLive(callId) {
     return Boolean(await module.isCallConnectionLive(callId));
   } catch (error) {
     logWarn('[IncomingCallNotification] isCallConnectionLive failed', {
-      message: error?.message,
+      message: errorMessage(error),
     });
     return null;
   }
@@ -161,7 +168,7 @@ export function dismissIncomingCallNotification(callId) {
     module.dismiss(callId);
     return true;
   } catch (error) {
-    logWarn('[IncomingCallNotification] dismiss failed', { message: error?.message });
+    logWarn('[IncomingCallNotification] dismiss failed', { message: errorMessage(error) });
     return false;
   }
 }

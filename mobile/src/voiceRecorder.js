@@ -1,3 +1,4 @@
+// @ts-check
 import RNFS from 'react-native-fs';
 import { MAX_VOICE_DURATION_MS } from '../../shared';
 
@@ -8,6 +9,7 @@ import { MAX_VOICE_DURATION_MS } from '../../shared';
  * `attachmentPicker.js`.
  */
 
+/** @type {typeof import('react-native-nitro-sound').default | null | undefined} */
 let _recorderCache;
 
 /** @returns {typeof import('react-native-nitro-sound').default | null} */
@@ -77,6 +79,7 @@ export async function stopVoiceRecording() {
  * the presign request, which needs an exact `Content-Length`) has something
  * to work with — the recorder itself reports elapsed time, not bytes.
  *
+ * @param {string} uri
  * @returns {Promise<number>} `0` when the file cannot be statted.
  */
 async function statSizeBytes(uri) {

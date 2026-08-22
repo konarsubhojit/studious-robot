@@ -1,3 +1,4 @@
+// @ts-check
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 
@@ -19,7 +20,12 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
   'video/mp4': 'mp4',
 });
 
+/**
+ * @param {Date} [date]
+ * @returns {string} `YYYYMMDD-HHmmss`, safe to embed in a file name.
+ */
 function formatDateForFile(date = new Date()) {
+  /** @param {number} value */
   const pad = value => String(value).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
@@ -27,14 +33,24 @@ function formatDateForFile(date = new Date()) {
   );
 }
 
+/**
+ * @param {string | null | undefined} mimeType
+ * @returns {string} a file extension, defaulting to `bin`.
+ */
 function extensionForMimeType(mimeType) {
   const normalised = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
-  return EXTENSION_BY_MIME_TYPE[normalised] ?? 'bin';
+  return (
+    /** @type {Record<string, string|undefined>} */ (EXTENSION_BY_MIME_TYPE)[normalised] ?? 'bin'
+  );
 }
 
+/**
+ * @param {string | null | undefined} url
+ * @returns {string} the last path segment, or '' when `url` is unparseable.
+ */
 function filenameFromUrl(url) {
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(/** @type {string} */ (url));
     return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? '');
   } catch {
     return '';
@@ -44,11 +60,21 @@ function filenameFromUrl(url) {
 /**
  * Build a local filename for a downloaded attachment without trusting sender
  * controlled path separators or device-specific reserved characters.
+ *
+ * @param {{
+ *   name?: string | null,
+ *   url?: string | null,
+ *   mimeType?: string | null,
+ *   now?: Date,
+ * }} [attachment]
+ * @returns {string}
  */
 export function attachmentDownloadFileName({ name, url, mimeType, now = new Date() } = {}) {
   const raw = (typeof name === 'string' && name.trim()) || filenameFromUrl(url) || '';
   const safe = Array.from(raw)
-    .map(character => (character.charCodeAt(0) < 32 || /[\\/:*?"<>|]/.test(character) ? '_' : character))
+    .map(character =>
+      character.charCodeAt(0) < 32 || /[\\/:*?"<>|]/.test(character) ? '_' : character,
+    )
     .join('')
     .replace(/^\.+/, '')
     .trim();
@@ -69,6 +95,20 @@ function downloadTargets() {
 /**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
+ *
+ * @param {{
+ *   url?: string | null,
+ *   name?: string | null,
+ *   mimeType?: string | null,
+ *   now?: Date,
+ * }} [attachment]
+ * @returns {Promise<{
+ *   success: boolean,
+ *   path?: string,
+ *   label?: string,
+ *   usedFallback?: boolean,
+ *   error?: unknown,
+ * }>}
  */
 export async function downloadAttachment({ url, name, mimeType, now = new Date() } = {}) {
   if (!url || typeof url !== 'string') {
@@ -96,6 +136,10 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
   return { success: false, error: firstError };
 }
 
+/**
+ * @param {{ success?: boolean, label?: string } | null | undefined} result
+ * @returns {string} a user-facing summary of the download outcome.
+ */
 export function describeAttachmentDownloadResult(result) {
   if (result?.success) return `Saved attachment to ${result.label}`;
   return 'Could not download attachment';
