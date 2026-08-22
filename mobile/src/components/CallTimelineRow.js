@@ -12,7 +12,7 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * @property {string} [callId]
  * @property {string} [direction]
  * @property {string} [status]
- * @property {string} [endReason]
+ * @property {string | null} [endReason]
  * @property {number | null} [durationSeconds]
  * @property {string} [createdAt]
  */
