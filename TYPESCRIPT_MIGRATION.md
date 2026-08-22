@@ -55,6 +55,9 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/settingsStorage.js`
 - [x] `src/SafeRTCView.js`
 - [x] `src/ErrorBoundary.js`
+- [x] `src/appLogger.js`
+- [x] `src/observability.js`
+- [x] `src/telemetry.js`
 - [ ] `src/components/` (in progress)
   - [x] `AppButton.js`
   - [x] `AppTabBar.js`

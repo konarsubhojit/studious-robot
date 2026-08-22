@@ -115,8 +115,15 @@ let activeCallActionHandlers = null;
  */
 let pendingAnswerCallId = null;
 
+/**
+ * Build the unsubscribe function returned by every `register*` helper, tagged
+ * with whether the listener was actually registered.
+ *
+ * @param {boolean} registered
+ * @returns {(() => void) & { registered: boolean }}
+ */
 function registrationResult(registered) {
-  const unsubscribe = () => {};
+  const unsubscribe = /** @type {(() => void) & { registered: boolean }} */ (() => {});
   unsubscribe.registered = registered;
   return unsubscribe;
 }
@@ -458,7 +465,8 @@ export function endAllCalls() {
  * tests); ordinary consumers should use `setCallActionHandlers` instead of
  * calling this more than once.
  *
- * @returns {() => void} unsubscribe function
+ * @returns {(() => void) & { registered: boolean }} unsubscribe function, tagged
+ *   with whether the native listener was registered
  */
 export function registerCallActionListeners() {
   const callKeep = loadCallKeep();
@@ -543,7 +551,8 @@ export function registerCallActionListeners() {
  *
  * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
  *
- * @returns {() => void} unsubscribe function
+ * @returns {(() => void) & { registered: boolean }} unsubscribe function, tagged
+ *   with whether the native listener was registered
  */
 export function registerShowIncomingCallUiListener() {
   const callKeep = loadCallKeep();

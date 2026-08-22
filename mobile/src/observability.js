@@ -1,3 +1,4 @@
+// @ts-check
 import { getLogsAsText, logDebug, logError, logInfo, logWarn, persistLogLine } from './appLogger';
 import { getStartupIssues, recordStartupIssue } from './startupHealth';
 
@@ -20,6 +21,7 @@ import { getStartupIssues, recordStartupIssue } from './startupHealth';
  *   emitMetric('call.ice_failed', 1, { callId });
  */
 
+/** @type {Record<string, (message: unknown, metadata?: unknown) => string|undefined>} */
 const LEVEL_LOGGERS = {
   debug: logDebug,
   info: logInfo,
@@ -27,11 +29,28 @@ const LEVEL_LOGGERS = {
   error: logError,
 };
 
-/** Sinks that receive every structured event. */
+/**
+ * @typedef {{ level: string, name: string, [key: string]: any }} ObservabilityEvent
+ *
+ * @typedef {{
+ *   correlationId: string,
+ *   backgroundPushRegistered: boolean,
+ *   callActionsRegistered: boolean,
+ *   incomingCallUiRegistered: boolean,
+ * }} ObservabilityInitResult
+ */
+
+/**
+ * Sinks that receive every structured event.
+ *
+ * @type {Set<(event: ObservabilityEvent) => void>}
+ */
 const sinks = new Set();
 
+/** @type {string|null} */
 let correlationId = null;
 let initialized = false;
+/** @type {ObservabilityInitResult|null} */
 let lastInitResult = null;
 
 function randomId() {
@@ -68,7 +87,7 @@ export function resetCorrelationId() {
 /**
  * Register an additional sink (Crashlytics, server upload, test spy, …).
  *
- * @param {(event: object) => void} sink
+ * @param {(event: ObservabilityEvent) => void} sink
  * @returns {() => void} unsubscribe
  */
 export function addSink(sink) {
@@ -88,6 +107,10 @@ export function clearSinks() {
  * The default sink: levelled write into the in-memory app log buffer, with
  * warnings and errors also persisted so they survive the process being killed
  * while backgrounded.
+ */
+/**
+ * @param {ObservabilityEvent} event
+ * @returns {void}
  */
 function appLogSink(event) {
   const { level, name, ...rest } = event;
@@ -172,15 +195,10 @@ export function getDegradations() {
  *
  * Idempotent: repeated calls return the first result.
  *
- * @returns {{
- *   correlationId: string,
- *   backgroundPushRegistered: boolean,
- *   callActionsRegistered: boolean,
- *   incomingCallUiRegistered: boolean,
- * }}
+ * @returns {ObservabilityInitResult}
  */
 export function initObservability() {
-  if (initialized) {
+  if (initialized && lastInitResult) {
     return lastInitResult;
   }
   initialized = true;

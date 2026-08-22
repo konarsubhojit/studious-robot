@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Client-side QoS telemetry.
  *
@@ -45,16 +46,32 @@ const MAX_ENTRIES = 100;
  * @property {number|null}  durationMs            - call start → call end
  * @property {number}       reconnectCount        - number of socket reconnects mid-call
  * @property {number}       iceRestartCount       - number of ICE restarts mid-call
+ *
+ * @typedef {Object} CallTelemetryEntry
+ * @property {string}      callId
+ * @property {string|null} sessionId
+ * @property {number|null} startedAtMs
+ * @property {number|null} signalingConnectedAtMs
+ * @property {number|null} connectedAtMs
+ * @property {number|null} firstRemoteFrameAtMs
+ * @property {number|null} endedAtMs
+ * @property {number}      reconnectCount
+ * @property {number}      iceRestartCount
  */
 
-/** @type {Map<string, object>} */
+/** @type {Map<string, CallTelemetryEntry>} */
 const entries = new Map();
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
+/**
+ * @param {string} callId
+ * @returns {CallTelemetryEntry}
+ */
 function getOrCreate(callId) {
-  if (!entries.has(callId)) {
-    entries.set(callId, {
+  let entry = entries.get(callId);
+  if (!entry) {
+    entry = {
       callId,
       sessionId: null,
       startedAtMs: null,
@@ -64,16 +81,22 @@ function getOrCreate(callId) {
       endedAtMs: null,
       reconnectCount: 0,
       iceRestartCount: 0,
-    });
+    };
+    entries.set(callId, entry);
     pruneOldEntries();
   }
-  return entries.get(callId);
+  return entry;
 }
 
+/**
+ * Drop the oldest entry once the map grows past {@link MAX_ENTRIES}.
+ *
+ * @returns {void}
+ */
 function pruneOldEntries() {
   if (entries.size > MAX_ENTRIES) {
     const oldest = entries.keys().next().value;
-    entries.delete(oldest);
+    if (oldest !== undefined) entries.delete(oldest);
   }
 }
 
@@ -182,6 +205,10 @@ export function clearCallTelemetry(callId) {
 
 // ─── Private builder ──────────────────────────────────────────────────────────
 
+/**
+ * @param {CallTelemetryEntry} entry
+ * @returns {CallQoSSummary}
+ */
 function buildSummary(entry) {
   const { startedAtMs, signalingConnectedAtMs, connectedAtMs, firstRemoteFrameAtMs, endedAtMs } =
     entry;

@@ -1,4 +1,7 @@
+// @ts-check
+/** @type {string[]} */
 const LOG_ENTRIES = [];
+/** @type {Promise<boolean|void>} */
 let durableLogQueue = Promise.resolve();
 
 const REDACTED_TEXT = '[REDACTED]';
@@ -20,6 +23,10 @@ const SENSITIVE_FIELDS = new Set([
   'recovery_code',
 ]);
 
+/**
+ * @param {unknown} key
+ * @returns {boolean}
+ */
 function isSensitiveKey(key) {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
 }
@@ -36,11 +43,17 @@ function isVerboseLoggingEnabled() {
   );
 }
 
+/**
+ * @param {any} err
+ * @param {WeakSet<object>} seen already-visited objects, for cycle detection.
+ * @returns {unknown} a plain, serialisable view of the error.
+ */
 function toSafeError(err, seen) {
   if (!err || typeof err !== 'object') {
     return err;
   }
 
+  /** @type {{ name: unknown, message: unknown, stack?: unknown, cause?: unknown }} */
   const safeError = {
     name: err.name,
     message: err.message,
@@ -57,6 +70,12 @@ function toSafeError(err, seen) {
   return safeError;
 }
 
+/**
+ * @param {any} value
+ * @param {string|undefined} [key] the property name `value` was read from.
+ * @param {WeakSet<object>} [seen] already-visited objects, for cycle detection.
+ * @returns {any} `value` with sensitive fields redacted and cycles broken.
+ */
 function toSafeValue(value, key, seen = new WeakSet()) {
   if (isSensitiveKey(key)) {
     return REDACTED_TEXT;
@@ -87,18 +106,24 @@ function toSafeValue(value, key, seen = new WeakSet()) {
     return value.map(item => toSafeValue(item, undefined, seen));
   }
 
+  /** @type {Record<string, any>} */
   const output = {};
   Object.keys(value).forEach(childKey => {
     try {
       output[childKey] = toSafeValue(value[childKey], childKey, seen);
     } catch (err) {
-      output[childKey] = `[Unserializable: ${err?.message || 'unknown'}]`;
+      const message = err instanceof Error ? err.message : '';
+      output[childKey] = `[Unserializable: ${message || 'unknown'}]`;
     }
   });
 
   return output;
 }
 
+/**
+ * @param {unknown} metadata
+ * @returns {string|undefined} JSON for the redacted metadata, if any.
+ */
 function safeSerialize(metadata) {
   if (metadata === undefined) {
     return undefined;
@@ -108,11 +133,18 @@ function safeSerialize(metadata) {
     return JSON.stringify(toSafeValue(metadata));
   } catch (err) {
     return JSON.stringify({
-      serializationError: err?.message || 'Unknown serialization error',
+      serializationError:
+        (err instanceof Error ? err.message : '') || 'Unknown serialization error',
     });
   }
 }
 
+/**
+ * @param {string} level
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 function addLog(level, message, metadata) {
   const timestamp = new Date().toISOString();
   const safeMessage = typeof message === 'string' ? message : String(message);
@@ -134,21 +166,32 @@ function addLog(level, message, metadata) {
   return line;
 }
 
+/**
+ * @returns {any} the `react-native-fs` module, or `null` when unavailable.
+ */
 function loadRNFS() {
   try {
-    const mod = require('react-native-fs');
+    const mod = /** @type {any} */ (require('react-native-fs'));
     return mod?.default ?? mod ?? null;
   } catch {
     return null;
   }
 }
 
+/**
+ * @returns {string|null} path of the durable background log, when storage is
+ *   available.
+ */
 export function getDurableLogFilePath() {
   const RNFS = loadRNFS();
   const directory = RNFS?.DocumentDirectoryPath;
   return directory ? `${directory}/wetalk-background.log` : null;
 }
 
+/**
+ * @param {unknown} line
+ * @returns {Promise<boolean|void>} resolves when the append completes.
+ */
 export function persistLogLine(line) {
   const safeLine = typeof line === 'string' ? line : String(line ?? '');
   durableLogQueue = durableLogQueue
@@ -174,6 +217,9 @@ export function persistLogLine(line) {
   return durableLogQueue;
 }
 
+/**
+ * @returns {Promise<boolean|void>} resolves once queued writes settle.
+ */
 export function flushDurableLogs() {
   return durableLogQueue.catch(() => false);
 }
@@ -193,55 +239,125 @@ export async function getPersistedLogsAsText() {
   }
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {Promise<boolean|void>} resolves once the line is queued for
+ *   durable storage.
+ */
 export function logBackgroundInfo(message, metadata) {
   return persistLogLine(info(message, metadata));
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {Promise<boolean|void>} resolves once the line is queued for
+ *   durable storage.
+ */
 export function logBackgroundWarn(message, metadata) {
   return persistLogLine(warn(message, metadata));
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {Promise<boolean|void>} resolves once the line is queued for
+ *   durable storage.
+ */
 export function logBackgroundError(message, metadata) {
   return persistLogLine(error(message, metadata));
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function debug(message, metadata) {
   return addLog('debug', message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function info(message, metadata) {
   return addLog('info', message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function warn(message, metadata) {
   return addLog('warn', message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function error(message, metadata) {
   return addLog('error', message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function logDebug(message, metadata) {
   return debug(message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string|undefined} the buffered line, or `undefined` when verbose
+ *   logging is disabled.
+ */
 export function verbose(message, metadata) {
   if (!isVerboseLoggingEnabled()) return undefined;
   return addLog('verbose', message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string|undefined} the buffered line, or `undefined` when verbose
+ *   logging is disabled.
+ */
 export function logVerbose(message, metadata) {
   return verbose(message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function logInfo(message, metadata) {
   return info(message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function logWarn(message, metadata) {
   return warn(message, metadata);
 }
 
+/**
+ * @param {unknown} message
+ * @param {unknown} [metadata]
+ * @returns {string} the formatted line that was buffered.
+ */
 export function logError(message, metadata) {
   return error(message, metadata);
 }
