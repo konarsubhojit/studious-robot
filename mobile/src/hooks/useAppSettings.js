@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useState } from 'react';
 import { loadSettings, saveSettings } from '../settingsStorage';
 
@@ -33,7 +34,7 @@ export default function useAppSettings({ onStatus } = {}) {
   }, []);
 
   const persistSetting = useCallback(
-    (key, value, message) => {
+    (/** @type {string} */ key, /** @type {unknown} */ value, /** @type {string} */ message) => {
       setSettings(previous => {
         const next = { ...previous, [key]: value };
         void saveSettings(next);

@@ -1,6 +1,15 @@
+// @ts-check
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 /**
  * Owns the authenticated user's blocklist: the ids they have blocked, and the
@@ -24,12 +33,15 @@ import { API_ROUTES } from '../../../shared';
  */
 export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }) {
   /** @type {[string[], Function]} ids the authenticated user has blocked. */
-  const [blockedUsers, setBlockedUsers] = useState([]);
+  const [blockedUsers, setBlockedUsers] = useState(/** @type {string[]} */ ([]));
 
   const blockedSet = useMemo(() => new Set(blockedUsers), [blockedUsers]);
 
   /** Whether `peerId` is currently blocked by the authenticated user. */
-  const isUserBlocked = useCallback(peerId => blockedSet.has((peerId ?? '').trim()), [blockedSet]);
+  const isUserBlocked = useCallback(
+    (/** @type {string} */ peerId) => blockedSet.has((peerId ?? '').trim()),
+    [blockedSet],
+  );
 
   /**
    * Load the blocklist from the server (`GET /blocks`).  Safe to call
@@ -40,7 +52,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
     if (!sessionId) return;
     try {
       const trimmedUrl = signalingUrl.trim();
-      const response = await authedFetchRef.current?.(sid => ({
+      const response = await authedFetchRef.current?.((/** @type {string} */ sid) => ({
         url: `${trimmedUrl}${API_ROUTES.BLOCKS}?sessionId=${encodeURIComponent(sid)}`,
       }));
       if (!response?.ok) return;
@@ -48,7 +60,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
       if (!Array.isArray(data.blockedUsers)) return;
       setBlockedUsers(data.blockedUsers);
     } catch (error) {
-      logWarn('[Blocks] fetchBlocks failed', { message: error?.message });
+      logWarn('[Blocks] fetchBlocks failed', { message: errorMessage(error) });
     }
   }, [authedFetchRef, sessionIdRef, signalingUrl]);
 
@@ -59,12 +71,12 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
    * @returns {Promise<boolean>} whether the block was applied.
    */
   const blockUser = useCallback(
-    async peerId => {
+    async (/** @type {string} */ peerId) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return false;
       try {
         const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.(sid => ({
+        const response = await authedFetchRef.current?.((/** @type {string} */ sid) => ({
           url: `${trimmedUrl}${API_ROUTES.BLOCKS}`,
           options: {
             method: 'POST',
@@ -73,10 +85,12 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
           },
         }));
         if (!response?.ok) return false;
-        setBlockedUsers(prev => (prev.includes(trimmedPeerId) ? prev : [...prev, trimmedPeerId]));
+        setBlockedUsers((/** @type {string[]} */ prev) =>
+          prev.includes(trimmedPeerId) ? prev : [...prev, trimmedPeerId],
+        );
         return true;
       } catch (error) {
-        logWarn('[Blocks] blockUser failed', { message: error?.message });
+        logWarn('[Blocks] blockUser failed', { message: errorMessage(error) });
         return false;
       }
     },
@@ -91,20 +105,24 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
    * @returns {Promise<boolean>} whether the peer ended up unblocked.
    */
   const unblockUser = useCallback(
-    async peerId => {
+    async (/** @type {string} */ peerId) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return false;
       try {
         const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}${API_ROUTES.BLOCKS}/${encodeURIComponent(trimmedPeerId)}?sessionId=${encodeURIComponent(sid)}`,
+        const response = await authedFetchRef.current?.((/** @type {string} */ sid) => ({
+          url: `${trimmedUrl}${API_ROUTES.BLOCKS}/${encodeURIComponent(
+            trimmedPeerId,
+          )}?sessionId=${encodeURIComponent(sid)}`,
           options: { method: 'DELETE' },
         }));
         if (!response || (!response.ok && response.status !== 404)) return false;
-        setBlockedUsers(prev => prev.filter(id => id !== trimmedPeerId));
+        setBlockedUsers((/** @type {string[]} */ prev) =>
+          prev.filter((/** @type {string} */ id) => id !== trimmedPeerId),
+        );
         return true;
       } catch (error) {
-        logWarn('[Blocks] unblockUser failed', { message: error?.message });
+        logWarn('[Blocks] unblockUser failed', { message: errorMessage(error) });
         return false;
       }
     },

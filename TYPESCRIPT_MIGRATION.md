@@ -83,7 +83,18 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `navigationRef.js`
   - [x] `navigationState.js`
   - [ ] `AppNavigator.js`
-- [ ] `src/hooks/`
+- [ ] `src/hooks/` (in progress)
+  - [x] `useRecentSearches.js`
+  - [x] `useStartupPermissions.js`
+  - [x] `useCameraLighting.js`
+  - [x] `useCallMinimize.js`
+  - [x] `useCallInitiation.js`
+  - [x] `useAppSettings.js`
+  - [x] `useCompactCallView.js`
+  - [x] `useChatDeepLink.js`
+  - [x] `useCallHistory.js`
+  - [x] `useBlocks.js`
+  - [x] `usePictureInPicturePip.js`
 - [x] `src/storage/` (chatDb, recentSearches)
 - [x] `src/diagnostics.js`
 - [x] `src/audioRouting.js`

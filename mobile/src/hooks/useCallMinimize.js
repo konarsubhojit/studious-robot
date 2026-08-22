@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 

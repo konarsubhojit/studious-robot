@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
@@ -12,7 +13,31 @@ const MAX_CALL_HISTORY = 50;
  * Extracted out of `useCallFlow` so this concern stays isolated from that
  * hook's call-lifecycle/session/WebRTC responsibilities; `useCallFlow` still
  * calls `addToHistory` from its own call-teardown logic.
- *
+ */
+
+/**
+ * @typedef {{
+ *   callId: string,
+ *   callerId: string,
+ *   calleeId: string,
+ *   direction: 'incoming'|'outgoing',
+ *   status?: string,
+ *   endReason?: string|null,
+ *   createdAt?: string,
+ *   durationSeconds?: number|null,
+ *   isRead?: boolean,
+ * }} CallHistoryEntry
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
+/**
  * @param {{
  *   authedFetchRef: { current: Function | null },
  *   sessionIdRef: { current: string | null },
@@ -23,7 +48,7 @@ const MAX_CALL_HISTORY = 50;
 export default function useCallHistory({ authedFetchRef, sessionIdRef, signalingUrl, userId }) {
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
-  const [callHistory, setCallHistory] = useState([]);
+  const [callHistory, setCallHistory] = useState(/** @type {CallHistoryEntry[]} */ ([]));
 
   /**
    * Number of incoming calls that ended as 'missed' and have not yet been
@@ -41,7 +66,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
   );
 
   /** Append or update a call history entry (deduplicates by callId). */
-  const addToHistory = useCallback(entry => {
+  const addToHistory = useCallback((/** @type {CallHistoryEntry} */ entry) => {
     setCallHistory(prev => {
       const without = prev.filter(e => e.callId !== entry.callId);
       return [entry, ...without].slice(0, MAX_CALL_HISTORY);
@@ -67,13 +92,15 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
       try {
         const trimmedUrl = signalingUrl.trim();
         const trimmedUserId = userId.trim();
-        const response = await authedFetchRef.current?.(sid => ({
-          url: `${trimmedUrl}${API_ROUTES.CALLS}?sessionId=${encodeURIComponent(sid)}&limit=${limit}`,
+        const response = await authedFetchRef.current?.((/** @type {string} */ sid) => ({
+          url: `${trimmedUrl}${API_ROUTES.CALLS}?sessionId=${encodeURIComponent(
+            sid,
+          )}&limit=${limit}`,
         }));
         if (!response?.ok) return;
         const data = await response.json();
         if (!Array.isArray(data.calls)) return;
-        const entries = data.calls.map(call => ({
+        const entries = data.calls.map((/** @type {any} */ call) => ({
           callId: call.callId,
           callerId: call.callerId,
           calleeId: call.calleeId,
@@ -87,7 +114,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         setCallHistory(entries);
       } catch (error) {
         logWarn('[CallHistory] fetchCallHistory failed', {
-          message: error?.message,
+          message: errorMessage(error),
         });
       }
     },

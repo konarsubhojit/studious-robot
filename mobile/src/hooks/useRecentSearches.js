@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useState } from 'react';
 import {
   addRecentSearch,
@@ -17,7 +18,7 @@ import {
  *   clearSearches: () => void }}
  */
 export default function useRecentSearches() {
-  const [recentSearches, setRecentSearches] = useState([]);
+  const [recentSearches, setRecentSearches] = useState(/** @type {string[]} */ ([]));
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +30,7 @@ export default function useRecentSearches() {
     };
   }, []);
 
-  const recordSearch = useCallback(term => {
+  const recordSearch = useCallback((/** @type {string} */ term) => {
     addRecentSearch(term).then(setRecentSearches);
   }, []);
 

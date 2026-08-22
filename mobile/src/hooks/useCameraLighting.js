@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef } from 'react';
 import { logError, logInfo } from '../appLogger';
 import { applyLightingAdjustment } from '../cameraLighting';
@@ -14,7 +15,8 @@ const LIGHTING_ADJUST_INTERVAL_MS = 8000;
  * Extracted from the retired room-join hook (`useWebRTCCall`) so the shared
  * media helper survives it as an isolated, testable concern.
  *
- * @param {{ localStream?: object | null, enabled?: boolean }} params
+ * @param {{ localStream?: any, enabled?: boolean }} params `localStream` is a
+ *   `MediaStream`, or anything falsy.
  */
 export default function useCameraLighting({ localStream = null, enabled = false }) {
   const localStreamRef = useRef(localStream);

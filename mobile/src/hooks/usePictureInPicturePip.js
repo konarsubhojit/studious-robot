@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
@@ -71,7 +72,7 @@ export default function usePictureInPicturePip({ onTap }) {
     pipMaxY,
   ]);
 
-  const handleCallStageLayout = useCallback(event => {
+  const handleCallStageLayout = useCallback((/** @type {any} */ event) => {
     const { width, height } = event.nativeEvent.layout;
     setStageSize({ width, height });
   }, []);
