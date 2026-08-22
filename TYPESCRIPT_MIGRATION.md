@@ -116,6 +116,8 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/pushNotifications.js`
 - [x] `src/callKeep.js`
 - [x] `src/permissions.js`
+- [x] `src/vectorIcons.js`
+- [x] `src/webrtcConfig.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`

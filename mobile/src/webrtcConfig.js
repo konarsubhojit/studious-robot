@@ -1,3 +1,4 @@
+// @ts-check
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
 
 /** Default video sender max bitrate in bits/second (1.5 Mbps). */
@@ -7,10 +8,23 @@ const AUDIO_MAX_BITRATE_BPS = 64_000;
 const CACHE_REFRESH_MARGIN_MS = 60_000;
 const DEFAULT_CREDENTIAL_TTL_MS = 55 * 60 * 1000;
 
+/**
+ * @typedef {object} IceServer
+ * @property {string[]} urls
+ * @property {string} [username]
+ * @property {string} [credential]
+ */
+
+/** @type {IceServer[] | null} */
 let cachedServerIceServers = null;
 let cachedServerIceServersExpiresAt = 0;
+/** @type {Promise<IceServer[]> | null} */
 let pendingServerIceServers = null;
 
+/**
+ * @param {string} name
+ * @returns {string | undefined}
+ */
 function readEnv(name) {
   const env = globalThis?.process?.env;
   return env?.[name];
@@ -35,6 +49,7 @@ export function getIceServers() {
   const turnUsername = readEnv('TURN_USERNAME');
   const turnCredential = readEnv('TURN_CREDENTIAL');
   const turnUrl = readEnv('TURN_URL');
+  /** @type {IceServer[]} */
   const iceServers = [{ urls: [GOOGLE_STUN_URL] }];
 
   if (turnUsername && turnCredential) {
@@ -65,6 +80,10 @@ export function getIceServers() {
  * Fetch short-lived ICE servers for an authenticated call. A network failure
  * intentionally falls through to a still-valid cache, build-time fallback,
  * and finally STUN-only so call setup is never blocked by TURN availability.
+ */
+/**
+ * @param {{ signalingUrl?: string, sessionId?: string, fetchImpl?: typeof fetch }} [options]
+ * @returns {Promise<IceServer[]>}
  */
 export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch } = {}) {
   const now = Date.now();
@@ -170,7 +189,7 @@ export async function applyBitrateConstraints(pc, opts = {}) {
         const params = sender.getParameters?.();
         if (!params) return;
         if (!Array.isArray(params.encodings) || params.encodings.length === 0) {
-          params.encodings = [{}];
+          params.encodings = [/** @type {(typeof params.encodings)[number]} */ ({})];
         }
         const maxBitrate = sender.track?.kind === 'audio' ? audioMaxBps : videoMaxBps;
         params.encodings[0] = { ...params.encodings[0], maxBitrate };

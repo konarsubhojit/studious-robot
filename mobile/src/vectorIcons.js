@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Lazy-loaded wrapper for react-native-vector-icons/MaterialCommunityIcons.
  *
@@ -14,13 +15,18 @@
  * Icon names: https://pictogrammers.com/library/mdi/
  */
 
+/**
+ * @typedef {import('react-native-vector-icons/MaterialCommunityIcons').default} MaterialCommunityIcons
+ */
+
+/** @type {MaterialCommunityIcons | null | undefined} */
 let _cache;
 
 /**
  * Return the MaterialCommunityIcons component, or `null` when the native
  * module / fonts are not yet installed.
  *
- * @returns {import('react-native-vector-icons/MaterialCommunityIcons').default | null}
+ * @returns {MaterialCommunityIcons | null}
  */
 export function loadVectorIcons() {
   if (_cache !== undefined) return _cache;
