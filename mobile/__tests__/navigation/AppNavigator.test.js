@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn().mockResolvedValue(false),
@@ -19,17 +20,20 @@ import AppNavigator from '../../src/navigation/AppNavigator';
 import { openChatConversation } from '../../src/navigation/navigationRef';
 import { TABS } from '../../src/navigation/routes';
 
-function findByTestID(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID)[0];
+function findByTestID(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID)[0];
 }
 
+/** @type {any} */
 let currentTree = null;
 const originalPlatformOS = Platform.OS;
 
 async function renderNavigator(overrides = {}) {
   const props = {
     renderChatList: () => <Text testID="screen-chat-list">Chats</Text>,
-    renderChatConversation: peerId => <Text testID="screen-chat-conversation">{peerId}</Text>,
+    renderChatConversation: (/** @type {any} */ peerId) => (
+      <Text testID="screen-chat-conversation">{peerId}</Text>
+    ),
     renderCalls: () => <Text testID="screen-calls">Calls</Text>,
     renderSettings: () => <Text testID="screen-settings">Settings</Text>,
     ...overrides,
@@ -89,7 +93,7 @@ describe('AppNavigator', () => {
       findByTestID(tree, 'app-tab-settings').props.onPress();
     });
 
-    const [path, contents] = RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+    const [path, contents] = /** @type {jest.Mock} */ (RNFS.writeFile).mock.calls[/** @type {jest.Mock} */ (RNFS.writeFile).mock.calls.length - 1];
     expect(path).toBe('/docs/wetalk-navigation-state.json');
     const saved = JSON.parse(contents);
     expect(saved.routes[saved.index].name).toBe(TABS.SETTINGS);
@@ -112,6 +116,7 @@ describe('AppNavigator', () => {
 
   test('Android hardware back pops an open conversation to the chat list', async () => {
     Platform.OS = 'android';
+    /** @type {any} */
     const handlers = [];
     jest.spyOn(BackHandler, 'addEventListener').mockImplementation((event, handler) => {
       if (event === 'hardwareBackPress') handlers.push(handler);
@@ -125,7 +130,7 @@ describe('AppNavigator', () => {
 
     let handled;
     await act(async () => {
-      handled = handlers.some(handler => handler());
+      handled = handlers.some((/** @type {any} */ handler) => handler());
     });
 
     expect(handled).toBe(true);

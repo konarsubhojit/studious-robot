@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn(),
@@ -24,9 +25,9 @@ describe('recentSearches', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetRecentSearchesCache();
-    RNFS.exists.mockResolvedValue(false);
-    RNFS.writeFile.mockResolvedValue(undefined);
-    RNFS.unlink.mockResolvedValue(undefined);
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(false);
+    /** @type {jest.Mock} */ (RNFS.writeFile).mockResolvedValue(undefined);
+    /** @type {jest.Mock} */ (RNFS.unlink).mockResolvedValue(undefined);
   });
 
   test('returns an empty list when nothing has been persisted', async () => {
@@ -34,15 +35,15 @@ describe('recentSearches', () => {
   });
 
   test('reads the persisted terms, dropping malformed entries', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue(JSON.stringify(['bob', 42, '  ', 'carol', 'bob']));
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(JSON.stringify(['bob', 42, '  ', 'carol', 'bob']));
 
     await expect(loadRecentSearches()).resolves.toEqual(['bob', 'carol']);
   });
 
   test('degrades to an empty list when the file is corrupt', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue('not json');
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue('not json');
 
     await expect(loadRecentSearches()).resolves.toEqual([]);
   });
@@ -74,7 +75,7 @@ describe('recentSearches', () => {
 
   test('clearing removes the file and empties the list', async () => {
     await addRecentSearch('bob');
-    RNFS.exists.mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
 
     await clearRecentSearches();
 

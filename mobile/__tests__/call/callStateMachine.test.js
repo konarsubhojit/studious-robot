@@ -1,3 +1,4 @@
+// @ts-check
 import {
   CALL_EVENTS,
   CALL_STATES,
@@ -78,12 +79,15 @@ describe('callStateReducer', () => {
 
   test('ignores unknown events and unknown states', () => {
     expect(callStateReducer(CALL_STATES.IN_CALL, 'nonsense')).toBe(CALL_STATES.IN_CALL);
-    expect(callStateReducer(CALL_STATES.IN_CALL, undefined)).toBe(CALL_STATES.IN_CALL);
+    expect(callStateReducer(CALL_STATES.IN_CALL, /** @type {any} */ (undefined))).toBe(
+      CALL_STATES.IN_CALL
+    );
     expect(callStateReducer('nonsense', CALL_EVENTS.PLACE)).toBe('nonsense');
   });
 
   test('runs a full outgoing call lifecycle', () => {
     const events = [CALL_EVENTS.PLACE, CALL_EVENTS.CONNECT, CALL_EVENTS.END, CALL_EVENTS.RESET];
+    /** @type {any} */
     const states = [];
     events.reduce((state, event) => {
       const next = callStateReducer(state, event);

@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('@react-navigation/native', () => ({
   createNavigationContainerRef: () => ({
     isReady: jest.fn(),
@@ -28,7 +29,7 @@ describe('navigationRef', () => {
   });
 
   test('openChatConversation navigates into the Chats stack when ready', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openChatConversation('user-bob');
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
@@ -37,7 +38,7 @@ describe('navigationRef', () => {
   });
 
   test('openChatConversation carries the message to deep-link to', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openChatConversation('user-bob', { messageId: 'msg-1' });
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
@@ -46,7 +47,7 @@ describe('navigationRef', () => {
   });
 
   test('openSearch navigates to the search screen in the Chats stack', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openSearch();
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.SEARCH,
@@ -54,30 +55,30 @@ describe('navigationRef', () => {
   });
 
   test('openPeerProfile navigates to the profile screen, ignoring an empty id', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openPeerProfile('user-bob');
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.PROFILE,
       params: { peerId: 'user-bob' },
     });
 
-    navigationRef.navigate.mockClear();
+    /** @type {jest.Mock} */ (navigationRef.navigate).mockClear();
     openPeerProfile('');
     expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
   test('ignores an empty peer id', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openChatConversation(null);
     expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
   test('queues navigation requested before the container is ready and replays it', () => {
-    navigationRef.isReady.mockReturnValue(false);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(false);
     openChatConversation('user-bob');
     expect(navigationRef.navigate).not.toHaveBeenCalled();
 
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     flushPendingNavigation();
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.CONVERSATION,
@@ -90,24 +91,24 @@ describe('navigationRef', () => {
   });
 
   test('keeps only the most recent queued destination', () => {
-    navigationRef.isReady.mockReturnValue(false);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(false);
     openChatConversation('user-bob');
     openTab(TABS.SETTINGS);
 
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     flushPendingNavigation();
     expect(navigationRef.navigate).toHaveBeenCalledTimes(1);
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.SETTINGS);
   });
 
   test('openTab navigates to the tab', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     openTab(TABS.CALLS);
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CALLS);
   });
 
   test('resetNavigation drops every route back to the default tab', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     resetNavigation();
     expect(navigationRef.reset).toHaveBeenCalledWith({
       index: 0,
@@ -116,17 +117,17 @@ describe('navigationRef', () => {
   });
 
   test('resetNavigation discards a queued destination', () => {
-    navigationRef.isReady.mockReturnValue(false);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(false);
     openChatConversation('user-bob');
     resetNavigation();
 
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     flushPendingNavigation();
     expect(navigationRef.navigate).not.toHaveBeenCalled();
   });
 
   test('closeChatConversation navigates to the chat list when ready', () => {
-    navigationRef.isReady.mockReturnValue(true);
+    /** @type {jest.Mock} */ (navigationRef.isReady).mockReturnValue(true);
     closeChatConversation();
     expect(navigationRef.navigate).toHaveBeenCalledWith(TABS.CHATS, {
       screen: CHAT_SCREENS.LIST,

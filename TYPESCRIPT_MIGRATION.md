@@ -148,6 +148,9 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `socketConfig.test.js`
   - [x] `theme.test.js`
   - [x] `webrtcConfig.test.js`
+  - [x] `call/`
+  - [x] `navigation/`
+  - [x] `storage/`
 
 ### server/
 

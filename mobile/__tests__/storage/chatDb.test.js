@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn(),
@@ -23,8 +24,13 @@ import {
 } from '../../src/storage/chatDb';
 
 /** `count` messages, newest first, one minute apart. */
+/**
+ * @param {number} count
+ * @param {Partial<import('../../src/hooks/useMessaging').ChatMessage>} [overrides]
+ * @returns {import('../../src/hooks/useMessaging').ChatMessage[]}
+ */
 function makeMessages(count, overrides = {}) {
-  return Array.from({ length: count }, (_unused, index) => ({
+  return Array.from({ length: count }, (_unused, index) => /** @type {any} */ ({
     messageId: `m${index}`,
     body: `message ${index}`,
     createdAt: new Date(Date.UTC(2024, 0, 1) + (count - index) * 60_000).toISOString(),
@@ -37,9 +43,9 @@ describe('chatDb', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetChatDbCache();
-    RNFS.exists.mockResolvedValue(false);
-    RNFS.writeFile.mockResolvedValue(undefined);
-    RNFS.unlink.mockResolvedValue(undefined);
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(false);
+    /** @type {jest.Mock} */ (RNFS.writeFile).mockResolvedValue(undefined);
+    /** @type {jest.Mock} */ (RNFS.unlink).mockResolvedValue(undefined);
   });
 
   test('loads an empty snapshot when nothing has been persisted', async () => {
@@ -49,8 +55,8 @@ describe('chatDb', () => {
   });
 
   test('loads previously persisted conversations, history and outbox', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue(
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(
       JSON.stringify({
         conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 1 }],
         messagesByPeer: { bob: [{ messageId: 'm1', body: 'hi', createdAt: '2024-01-01' }] },
@@ -66,8 +72,8 @@ describe('chatDb', () => {
   });
 
   test('degrades to an empty snapshot when the file is corrupt', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue('{not json');
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue('{not json');
 
     expect(await loadChatSnapshot()).toEqual({
       conversations: [],
@@ -77,8 +83,8 @@ describe('chatDb', () => {
   });
 
   test('drops malformed rows rather than surfacing them to the UI', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue(
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(
       JSON.stringify({
         conversations: [{ peerId: 'bob' }, { conversationId: 'no-peer' }, null],
         messagesByPeer: { bob: [{ messageId: 'm1' }, { body: 'no id' }] },
@@ -96,12 +102,12 @@ describe('chatDb', () => {
   test('bounds retained history per conversation but keeps unsent messages', () => {
     const overflowing = [
       ...makeMessages(MAX_MESSAGES_PER_CONVERSATION + 5),
-      {
+      ...makeMessages(1, {
         messageId: 'old-pending',
         body: 'never sent',
         createdAt: '2000-01-01T00:00:00.000Z',
         syncState: 'pending',
-      },
+      }),
     ];
 
     const pruned = pruneMessages(overflowing);
@@ -121,7 +127,7 @@ describe('chatDb', () => {
     await flushChatDb();
 
     expect(RNFS.writeFile).toHaveBeenCalledTimes(1);
-    const [path, contents] = RNFS.writeFile.mock.calls[0];
+    const [path, contents] = /** @type {jest.Mock} */ (RNFS.writeFile).mock.calls[0];
     expect(path).toBe(CHAT_DB_FILE_PATH);
     const written = JSON.parse(contents);
     expect(written.messagesByPeer.bob).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
@@ -131,7 +137,7 @@ describe('chatDb', () => {
 
   test('a write failure is swallowed so it cannot break the chat UI', async () => {
     await loadChatSnapshot();
-    RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+    /** @type {jest.Mock} */ (RNFS.writeFile).mockRejectedValue(new Error('disk full'));
 
     saveChatSnapshot({ conversations: [{ peerId: 'bob' }] });
 
@@ -139,8 +145,8 @@ describe('chatDb', () => {
   });
 
   test('clearing removes the file and empties the snapshot', async () => {
-    RNFS.exists.mockResolvedValue(true);
-    RNFS.readFile.mockResolvedValue(JSON.stringify({ conversations: [{ peerId: 'bob' }] }));
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(JSON.stringify({ conversations: [{ peerId: 'bob' }] }));
     await loadChatSnapshot();
 
     await clearChatDb();

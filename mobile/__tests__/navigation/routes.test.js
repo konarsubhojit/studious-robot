@@ -1,3 +1,4 @@
+// @ts-check
 import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from '../../src/navigation/routes';
 
 describe('deriveShellRoute', () => {

@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn(),
@@ -14,7 +15,9 @@ jest.mock('../../src/appLogger', () => ({
 const STATE = { index: 0, routes: [{ name: 'chats' }] };
 
 describe('navigationState', () => {
+  /** @type {any} */
   let navigationState;
+  /** @type {any} */
   let RNFS;
 
   beforeEach(() => {
