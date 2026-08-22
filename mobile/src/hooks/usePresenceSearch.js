@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
@@ -36,7 +37,9 @@ export default function usePresenceSearch({
 }) {
   // Presence of the user currently entered in `calleeId`, or `null` while
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
-  const [calleePresence, setCalleePresence] = useState(null);
+  const [calleePresence, setCalleePresence] = useState(
+    /** @type {{ status: string, online: boolean, unknown?: boolean } | null} */ (null),
+  );
 
   /**
    * `true` when repeated socket connect errors suggest the signaling server is
@@ -59,13 +62,15 @@ export default function usePresenceSearch({
    * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
    */
   const checkPresence = useCallback(
-    async targetUserId => {
+    async (/** @type {string} */ targetUserId) => {
       const trimmedId = (targetUserId ?? '').trim();
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!trimmedId || !trimmedUrl) return null;
       try {
-        const response = await authedFetchRef.current?.(sessionId => ({
-          url: `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}?sessionId=${encodeURIComponent(sessionId)}`,
+        const response = await authedFetchRef.current?.((/** @type {string} */ sessionId) => ({
+          url: `${trimmedUrl}/presence/${encodeURIComponent(
+            trimmedId,
+          )}?sessionId=${encodeURIComponent(sessionId)}`,
         }));
         if (!response) return null;
         if (response.status === 404) return { status: 'offline', online: false, unknown: true };
@@ -73,7 +78,9 @@ export default function usePresenceSearch({
         const data = await response.json();
         return { status: data.status, online: Boolean(data.online) };
       } catch (error) {
-        logWarn('[PresenceSearch] checkPresence failed', { message: error?.message });
+        logWarn('[PresenceSearch] checkPresence failed', {
+          message: error instanceof Error ? error.message : undefined,
+        });
         return null;
       }
     },
@@ -94,13 +101,17 @@ export default function usePresenceSearch({
    * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
    */
   const searchUsers = useCallback(
+    /**
+     * @param {string} [query]
+     * @param {{ limit?: number, signal?: AbortSignal }} [options]
+     */
     async (query = '', { limit = 20, signal } = {}) => {
       const sessionId = sessionIdRef.current;
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!sessionId || !trimmedUrl) return [];
       try {
         const trimmedQuery = (query ?? '').trim();
-        const response = await authedFetchRef.current?.(sid => {
+        const response = await authedFetchRef.current?.((/** @type {string} */ sid) => {
           const params = new URLSearchParams({
             sessionId: sid,
             limit: String(limit),
@@ -116,8 +127,10 @@ export default function usePresenceSearch({
         return Array.isArray(data.users) ? data.users : [];
       } catch (error) {
         // An aborted request is the expected outcome of a newer keystroke.
-        if (error?.name !== 'AbortError') {
-          logWarn('[PresenceSearch] searchUsers failed', { message: error?.message });
+        if (!(error instanceof Error) || error.name !== 'AbortError') {
+          logWarn('[PresenceSearch] searchUsers failed', {
+            message: error instanceof Error ? error.message : undefined,
+          });
         }
         return [];
       }

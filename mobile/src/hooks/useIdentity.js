@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logInfo } from '../appLogger';
 import {
@@ -12,6 +13,10 @@ import {
 } from '../authService';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 
+/**
+ * @param {any} error
+ * @returns {string} the user-facing text for a failed sign-in / registration.
+ */
 function getAuthenticationErrorMessage(error) {
   const code = error?.code;
   if (code === 'auth/email-already-in-use') {
@@ -47,7 +52,9 @@ export default function useIdentity(updateStatus) {
   const [userId, setUserId] = useState('');
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [authUser, setAuthUser] = useState(null);
+  const [authUser, setAuthUser] = useState(
+    /** @type {import('@react-native-firebase/auth').FirebaseAuthTypes.User | null} */ (null),
+  );
 
   const committedIdentityRef = useRef({ userId: '' });
 
@@ -55,7 +62,7 @@ export default function useIdentity(updateStatus) {
   const canUseGoogleSignIn = isGoogleSignInConfigured();
   const canUseMicrosoftSignIn = isMicrosoftSignInConfigured();
 
-  const commitIdentity = useCallback(async nextUserId => {
+  const commitIdentity = useCallback(async (/** @type {string} */ nextUserId) => {
     const identity = { userId: (nextUserId ?? '').trim() };
     committedIdentityRef.current = identity;
     setUserId(identity.userId);
@@ -63,7 +70,7 @@ export default function useIdentity(updateStatus) {
     return identity;
   }, []);
 
-  const editUserId = useCallback(nextUserId => {
+  const editUserId = useCallback((/** @type {string} */ nextUserId) => {
     const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
     const trimmedUserId = rawUserId.trim();
     const committedIdentity = committedIdentityRef.current;
@@ -120,15 +127,24 @@ export default function useIdentity(updateStatus) {
    * @param {{ userId: string, method: string, email?: string, password?: string }} registration
    */
   const registerUser = useCallback(
+    /**
+     * @param {{ userId: string, method: string, email?: string, password?: string }} registration
+     */
     async registration => {
       const trimmed = (registration?.userId ?? '').trim();
       if (!trimmed) return;
       setIsAuthenticating(true);
       try {
         if (registration.method === 'email-register') {
-          await registerWithEmail(registration.email, registration.password);
+          await registerWithEmail(
+            /** @type {string} */ (registration.email),
+            /** @type {string} */ (registration.password),
+          );
         } else if (registration.method === 'email-sign-in') {
-          await signInWithEmail(registration.email, registration.password);
+          await signInWithEmail(
+            /** @type {string} */ (registration.email),
+            /** @type {string} */ (registration.password),
+          );
         } else if (registration.method === 'google') {
           await signInWithGoogle();
         } else if (registration.method === 'microsoft') {
@@ -159,7 +175,7 @@ export default function useIdentity(updateStatus) {
    * @param {string} newUserId
    */
   const updateUserId = useCallback(
-    async newUserId => {
+    async (/** @type {string} */ newUserId) => {
       const trimmed = (newUserId ?? '').trim();
       if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
 
