@@ -166,6 +166,11 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `voiceRecorder.test.js`
   - [x] `crashReporter.test.js`
   - [x] `callService.test.js`
+  - [x] `cameraLighting.test.js`
+  - [x] `messageNotification.test.js`
+  - [x] `signalingClient.test.js`
+  - [x] `incomingCallNotification.test.js`
+  - [x] `settingsStorage.test.js`
 
 ### server/
 

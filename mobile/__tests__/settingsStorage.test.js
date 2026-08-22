@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn(),
@@ -20,6 +21,10 @@ import {
   saveSettings,
   saveThemeMode,
 } from '../src/settingsStorage';
+
+const existsMock = /** @type {jest.Mock} */ (RNFS.exists);
+const readFileMock = /** @type {jest.Mock} */ (RNFS.readFile);
+const writeFileMock = /** @type {jest.Mock} */ (RNFS.writeFile);
 
 const DEFAULTS = { autoCameraLightingEnabled: false, speakerEnabledByDefault: true };
 
@@ -54,14 +59,14 @@ describe('settingsStorage', () => {
 
   describe('loadSettings', () => {
     test('returns defaults when no file exists', async () => {
-      RNFS.exists.mockResolvedValue(false);
+      existsMock.mockResolvedValue(false);
       await expect(loadSettings(DEFAULTS)).resolves.toEqual(DEFAULTS);
       expect(RNFS.readFile).not.toHaveBeenCalled();
     });
 
     test('merges persisted values onto defaults', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(JSON.stringify({ autoCameraLightingEnabled: true }));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ autoCameraLightingEnabled: true }));
       await expect(loadSettings(DEFAULTS)).resolves.toEqual({
         autoCameraLightingEnabled: true,
         speakerEnabledByDefault: true,
@@ -69,15 +74,15 @@ describe('settingsStorage', () => {
     });
 
     test('falls back to defaults on read/parse errors', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue('not-json');
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue('not-json');
       await expect(loadSettings(DEFAULTS)).resolves.toEqual(DEFAULTS);
     });
   });
 
   describe('saveSettings', () => {
     test('writes JSON and resolves true on success', async () => {
-      RNFS.writeFile.mockResolvedValue();
+      writeFileMock.mockResolvedValue(undefined);
       await expect(saveSettings(DEFAULTS)).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-settings.json',
@@ -87,20 +92,20 @@ describe('settingsStorage', () => {
     });
 
     test('resolves false on write failure', async () => {
-      RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+      writeFileMock.mockRejectedValue(new Error('disk full'));
       await expect(saveSettings(DEFAULTS)).resolves.toBe(false);
     });
   });
 
   describe('loadIdentity', () => {
     test('returns empty identity when no identity file exists', async () => {
-      RNFS.exists.mockResolvedValue(false);
+      existsMock.mockResolvedValue(false);
       await expect(loadIdentity()).resolves.toEqual({ userId: '' });
     });
 
     test('returns stored identity when file exists', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(
         JSON.stringify({
           userId: 'alice',
         }),
@@ -109,20 +114,20 @@ describe('settingsStorage', () => {
     });
 
     test('loads legacy identity files without retaining recovery codes', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(JSON.stringify({ userId: 'alice' }));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ userId: 'alice' }));
       await expect(loadIdentity()).resolves.toEqual({ userId: 'alice' });
     });
 
     test('falls back to empty identity on read errors', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockRejectedValue(new Error('read failed'));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockRejectedValue(new Error('read failed'));
       await expect(loadIdentity()).resolves.toEqual({ userId: '' });
     });
 
     test('ignores non-string identity values', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(
         JSON.stringify({
           userId: 42,
         }),
@@ -133,7 +138,7 @@ describe('settingsStorage', () => {
 
   describe('saveIdentity', () => {
     test('writes JSON and resolves true on success', async () => {
-      RNFS.writeFile.mockResolvedValue();
+      writeFileMock.mockResolvedValue(undefined);
       await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-identity.json',
@@ -143,39 +148,39 @@ describe('settingsStorage', () => {
     });
 
     test('resolves false on write failure', async () => {
-      RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+      writeFileMock.mockRejectedValue(new Error('disk full'));
       await expect(saveIdentity({ userId: 'bob' })).resolves.toBe(false);
     });
   });
 
   describe('loadThemeMode', () => {
     test('defaults to system when no theme file exists', async () => {
-      RNFS.exists.mockResolvedValue(false);
+      existsMock.mockResolvedValue(false);
       await expect(loadThemeMode()).resolves.toBe('system');
     });
 
     test('returns the persisted mode', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(JSON.stringify({ mode: 'light' }));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ mode: 'light' }));
       await expect(loadThemeMode()).resolves.toBe('light');
     });
 
     test('ignores an unknown persisted mode', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockResolvedValue(JSON.stringify({ mode: 'sepia' }));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ mode: 'sepia' }));
       await expect(loadThemeMode()).resolves.toBe('system');
     });
 
     test('falls back to system on read errors', async () => {
-      RNFS.exists.mockResolvedValue(true);
-      RNFS.readFile.mockRejectedValue(new Error('read failed'));
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockRejectedValue(new Error('read failed'));
       await expect(loadThemeMode()).resolves.toBe('system');
     });
   });
 
   describe('saveThemeMode', () => {
     test('writes the mode and resolves true on success', async () => {
-      RNFS.writeFile.mockResolvedValue();
+      writeFileMock.mockResolvedValue(undefined);
       await expect(saveThemeMode('dark')).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-theme.json',
@@ -185,7 +190,7 @@ describe('settingsStorage', () => {
     });
 
     test('normalises an unknown mode to system before writing', async () => {
-      RNFS.writeFile.mockResolvedValue();
+      writeFileMock.mockResolvedValue(undefined);
       await expect(saveThemeMode('sepia')).resolves.toBe(true);
       expect(RNFS.writeFile).toHaveBeenCalledWith(
         '/docs/wetalk-theme.json',
@@ -195,7 +200,7 @@ describe('settingsStorage', () => {
     });
 
     test('resolves false on write failure', async () => {
-      RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+      writeFileMock.mockRejectedValue(new Error('disk full'));
       await expect(saveThemeMode('dark')).resolves.toBe(false);
     });
   });

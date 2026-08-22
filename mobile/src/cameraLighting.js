@@ -156,8 +156,15 @@ export function estimateSceneBrightness(settings, capabilities) {
 }
 
 /**
+ * @typedef {{
+ *   frameRate: object,
+ *   advanced: Array<Record<string, unknown>>,
+ * }} LightingConstraints
+ */
+
+/**
  * @param {number | null | undefined} brightness normalized to [0, 1].
- * @returns {{ condition: string, constraints: object | null }}
+ * @returns {{ condition: string, constraints: LightingConstraints | null }}
  */
 export function getLightingAdjustedConstraints(brightness) {
   const condition = classifyLighting(brightness);

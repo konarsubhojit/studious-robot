@@ -1,3 +1,4 @@
+// @ts-check
 import { NativeModules, Platform } from 'react-native';
 import {
   dismissMessageNotification,

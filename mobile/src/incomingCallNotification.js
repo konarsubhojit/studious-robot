@@ -156,7 +156,7 @@ export async function isCallConnectionLive(callId) {
  * (e.g. once CallKeep reports the call answered, ended or declined
  * elsewhere). Safe to call even when nothing was ever shown.
  *
- * @param {string} callId
+ * @param {string} [callId]
  * @returns {boolean} `true` when a dismiss request was sent
  */
 export function dismissIncomingCallNotification(callId) {

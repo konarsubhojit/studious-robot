@@ -1,3 +1,4 @@
+// @ts-check
 import { NativeModules, Platform } from 'react-native';
 import {
   consumePendingCallAction,
@@ -14,7 +15,7 @@ jest.mock('../src/ringtone', () => ({
 
 const originalPlatform = Platform.OS;
 
-function setNativeModule(module) {
+function setNativeModule(/** @type {any} */ module) {
   if (module === null) {
     delete NativeModules.IncomingCallNotification;
   } else {

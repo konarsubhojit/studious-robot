@@ -1,3 +1,4 @@
+// @ts-check
 import {
   applyLightingAdjustment,
   classifyLighting,
@@ -52,9 +53,10 @@ describe('cameraLighting', () => {
   test('getLightingAdjustedConstraints lowers frame rate in low light', () => {
     const { condition, constraints } = getLightingAdjustedConstraints(0.1);
     expect(condition).toBe('low');
-    expect(constraints.frameRate).toEqual({ ideal: 24, max: 30 });
-    expect(constraints.advanced).toContainEqual({ exposureCompensation: 1.5 });
-    expect(constraints.advanced).not.toEqual(
+    expect(constraints).not.toBeNull();
+    expect(constraints?.frameRate).toEqual({ ideal: 24, max: 30 });
+    expect(constraints?.advanced).toContainEqual({ exposureCompensation: 1.5 });
+    expect(constraints?.advanced).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ aperture: expect.anything() })]),
     );
   });
@@ -62,7 +64,7 @@ describe('cameraLighting', () => {
   test('getLightingAdjustedConstraints adjusts exposure in bright light', () => {
     const { condition, constraints } = getLightingAdjustedConstraints(0.95);
     expect(condition).toBe('bright');
-    expect(constraints.advanced).toContainEqual({ exposureCompensation: -0.5 });
+    expect(constraints?.advanced).toContainEqual({ exposureCompensation: -0.5 });
   });
 
   test('getLightingAdjustedConstraints returns no constraints when lighting is unknown', () => {
