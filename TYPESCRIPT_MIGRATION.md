@@ -95,6 +95,9 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `useCallHistory.js`
   - [x] `useBlocks.js`
   - [x] `usePictureInPicturePip.js`
+  - [x] `useChatSync.js`
+  - [x] `useAttachments.js`
+  - [x] `useSession.js`
 - [x] `src/storage/` (chatDb, recentSearches)
 - [x] `src/diagnostics.js`
 - [x] `src/audioRouting.js`

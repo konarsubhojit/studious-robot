@@ -1,9 +1,7 @@
+// @ts-check
 import { useCallback, useState } from 'react';
 import { MESSAGE_TYPES } from '../../../shared';
-import {
-  isAttachmentUploadKnownUnavailable,
-  uploadAttachment,
-} from '../attachmentUpload';
+import { isAttachmentUploadKnownUnavailable, uploadAttachment } from '../attachmentUpload';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
 import { ensureAttachmentPermission } from '../permissions';
 import {
@@ -30,7 +28,12 @@ import {
  *   updateStatus: (message: string, severity?: string) => void,
  * }} params
  */
-export default function useAttachments({ authedFetchRef, signalingUrl, sendMessage, updateStatus }) {
+export default function useAttachments({
+  authedFetchRef,
+  signalingUrl,
+  sendMessage,
+  updateStatus,
+}) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);
@@ -39,11 +42,17 @@ export default function useAttachments({ authedFetchRef, signalingUrl, sendMessa
   );
 
   const authedFetch = useCallback(
-    build => authedFetchRef.current?.(build) ?? Promise.resolve(null),
+    (/** @type {(sessionId: string) => { url: string, options?: object }} */ build) =>
+      authedFetchRef.current?.(build) ?? Promise.resolve(null),
     [authedFetchRef],
   );
 
   const sendPicked = useCallback(
+    /**
+     * @param {string} peerId
+     * @param {string} type
+     * @param {any} picked
+     */
     async (peerId, type, picked) => {
       if (!picked) return;
       setIsUploading(true);
@@ -65,8 +74,9 @@ export default function useAttachments({ authedFetchRef, signalingUrl, sendMessa
         });
         await sendMessage(peerId, '', { type, attachment });
       } catch (error) {
-        if (error?.status === 503) setAttachmentsAvailable(false);
-        updateStatus?.(error?.message ?? 'Could not send attachment', 'error');
+        const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+        if (failure.status === 503) setAttachmentsAvailable(false);
+        updateStatus?.(failure.message ?? 'Could not send attachment', 'error');
       } finally {
         setIsUploading(false);
       }
@@ -82,6 +92,10 @@ export default function useAttachments({ authedFetchRef, signalingUrl, sendMessa
    * @param {'photo'|'camera'|'file'} kind
    */
   const pickAndSend = useCallback(
+    /**
+     * @param {string} peerId
+     * @param {'photo'|'camera'|'file'} kind
+     */
     async (peerId, kind) => {
       const permission = await ensureAttachmentPermission(kind);
       if (!permission.ok) {
@@ -114,7 +128,7 @@ export default function useAttachments({ authedFetchRef, signalingUrl, sendMessa
 
   /** Stop recording and send the resulting voice note to `peerId`. */
   const stopRecordingVoiceNoteAndSend = useCallback(
-    async peerId => {
+    async (/** @type {string} */ peerId) => {
       setIsRecordingVoiceNote(false);
       const recorded = await stopVoiceRecording();
       if (!recorded) return;

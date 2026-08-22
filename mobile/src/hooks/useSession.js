@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
@@ -24,13 +25,17 @@ import { API_ROUTES } from '../../../shared';
  * }} params
  */
 export default function useSession({ signalingUrl, userId, updateStatus }) {
-  const sessionIdRef = useRef(null);
+  const sessionIdRef = useRef(/** @type {string | null} */ (null));
   // Stable per-install device id, lazily loaded from disk on first session.
-  const deviceIdRef = useRef(null);
+  const deviceIdRef = useRef(/** @type {string | null} */ (null));
   // Holds the latest authedFetch implementation so callers that only have a
   // ref (e.g. helpers declared before authedFetch exists) can issue
   // 401-recovering requests without a circular dependency.
-  const authedFetchRef = useRef(null);
+  const authedFetchRef = useRef(
+    /** @type {((buildRequest: (sessionId: string) => { url: string, options?: object }) => Promise<Response | null>) | null} */ (
+      null
+    ),
+  );
 
   const createOrGetSession = useCallback(async () => {
     if (sessionIdRef.current) return sessionIdRef.current;
@@ -46,8 +51,9 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
     try {
       idToken = await getIdToken();
     } catch (error) {
-      if (error?.code === 'auth/app-not-configured') {
-        updateStatus(error.message, 'error');
+      const failure = /** @type {{ code?: string, message?: string }} */ (error ?? {});
+      if (failure.code === 'auth/app-not-configured') {
+        updateStatus(failure.message ?? 'Firebase auth is not configured', 'error');
       }
       throw error;
     }
@@ -116,7 +122,9 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
       logInfo('[Session] Session refreshed', { sessionId: data.sessionId });
       return data.sessionId;
     } catch (error) {
-      logWarn('[Session] session refresh threw', { message: error?.message });
+      logWarn('[Session] session refresh threw', {
+        message: error instanceof Error ? error.message : undefined,
+      });
       return null;
     }
   }, [signalingUrl]);
@@ -133,6 +141,10 @@ export default function useSession({ signalingUrl, userId, updateStatus }) {
    * @returns {Promise<Response | null>}
    */
   const authedFetch = useCallback(
+    /**
+     * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
+     * @returns {Promise<Response | null>}
+     */
     async buildRequest => {
       let sessionId = sessionIdRef.current;
       if (!sessionId) {

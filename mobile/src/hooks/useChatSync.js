@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useState } from 'react';
 
 /**
@@ -32,7 +33,7 @@ export default function useChatSync({
   checkPresence,
 }) {
   // Presence snapshot for the currently open conversation's peer.
-  const [peerPresence, setPeerPresence] = useState(null);
+  const [peerPresence, setPeerPresence] = useState(/** @type {unknown} */ (null));
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
   // True while the very first conversation-list / message-history fetch is in
   // flight, so the screens can show skeleton placeholders instead of an
