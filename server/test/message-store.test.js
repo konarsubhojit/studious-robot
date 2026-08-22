@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -28,8 +29,15 @@ test('conversation id differs between different pairs', () => {
 
 // ─── Memory store ─────────────────────────────────────────────────────────────
 
-/** Save `count` messages with strictly increasing timestamps. */
+/**
+ * Save `count` messages with strictly increasing timestamps.
+ *
+ * @param {any} store
+ * @param {string} conversationId
+ * @param {number} count
+ */
 async function seed(store, conversationId, count) {
+  /** @type {any[]} */
   const saved = [];
   for (let i = 0; i < count; i++) {
     saved.push(
@@ -85,7 +93,7 @@ test('saveMessage is idempotent for a repeated client messageId', async () => {
     body: 'retried send',
   });
 
-  assert.equal(replay.messageId, first.messageId);
+  assert.equal(replay.messageId, first?.messageId);
   assert.equal(replay.body, 'first send', 'the stored message is returned, not the replay');
   const messages = await store.listMessages({ conversationId });
   assert.equal(messages.length, 1, 'the replay must not create a second message');
@@ -236,13 +244,13 @@ test('markDelivered is idempotent', async () => {
   });
 
   const first = await store.markDelivered(message.messageId, 'bob');
-  assert.deepEqual(first.deliveredTo, ['bob']);
+  assert.deepEqual(first?.deliveredTo, ['bob']);
 
   const second = await store.markDelivered(message.messageId, 'bob');
-  assert.deepEqual(second.deliveredTo, ['bob'], 'no duplicate entry');
+  assert.deepEqual(second?.deliveredTo, ['bob'], 'no duplicate entry');
 
   const third = await store.markDelivered(message.messageId, 'carol');
-  assert.deepEqual(third.deliveredTo, ['bob', 'carol']);
+  assert.deepEqual(third?.deliveredTo, ['bob', 'carol']);
 });
 
 test('markDelivered returns null for an unknown message', async () => {
@@ -287,8 +295,8 @@ test('deleteMessage tombstones only the author own message', async () => {
   const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
   // "Delete for everyone" leaves a tombstone: the content is gone, the row
   // stays so a reply quoting it still resolves.
-  assert.equal(deleted.body, '');
-  assert.ok(deleted.deletedAt);
+  assert.equal(deleted?.body, '');
+  assert.ok(deleted?.deletedAt);
   // Idempotent: a repeated delete finds an already-tombstoned row.
   assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'alice'), null);
 
@@ -353,7 +361,7 @@ test('listConversations counts only unread messages addressed to the requesting 
   const [alicesView] = await store.listConversations('alice');
   assert.equal(alicesView.unreadCount, 1, 'only the bob→alice reply is unread for alice');
 
-  await store.markDelivered(first.messageId, 'bob');
+  await store.markDelivered(first?.messageId, 'bob');
   const [afterDelivery] = await store.listConversations('bob');
   assert.equal(afterDelivery.unreadCount, 2, 'delivery does not affect the unread count');
 });
@@ -477,25 +485,27 @@ test('createMongoMessageStore requires a uri', () => {
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
-function matchesFilter(doc, filter) {
+function matchesFilter(/** @type {any} */ doc, /** @type {any} */ filter) {
   return Object.entries(filter).every(([field, value]) => doc[field] === value);
 }
 
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
 function createFakeMongoClient() {
+  /** @type {any[]} */
   const docs = [];
+  /** @type {any[]} */
   const createdIndexes = [];
   let closed = false;
 
   const collection = {
-    async createIndex(spec, options) {
+    async createIndex(/** @type {any} */ spec, /** @type {any} */ options) {
       createdIndexes.push({ spec, options });
     },
-    async insertOne(doc) {
+    async insertOne(/** @type {any} */ doc) {
       docs.push(doc);
       return { insertedId: doc.messageId };
     },
-    async updateOne(filter, update, options) {
+    async updateOne(/** @type {any} */ filter, /** @type {any} */ update, /** @type {any} */ options) {
       const existing = docs.find(
         (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
       );
@@ -515,17 +525,17 @@ function createFakeMongoClient() {
       }
       return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
     },
-    async findOne(filter) {
+    async findOne(/** @type {any} */ filter) {
       const found = docs.find((d) => matchesFilter(d, filter));
       return found ? { _id: 'oid', ...found } : null;
     },
-    async deleteOne(filter) {
+    async deleteOne(/** @type {any} */ filter) {
       const index = docs.findIndex((d) => matchesFilter(d, filter));
       if (index === -1) return { deletedCount: 0 };
       docs.splice(index, 1);
       return { deletedCount: 1 };
     },
-    find(query) {
+    find(/** @type {any} */ query) {
       let results = docs;
       if (query?.conversationId !== undefined) {
         results = results.filter((d) => d.conversationId === query.conversationId);
@@ -535,7 +545,7 @@ function createFakeMongoClient() {
       }
       if (query?.$or) {
         results = results.filter((doc) =>
-          query.$or.some((clause) => {
+          query.$or.some((/** @type {any} */ clause) => {
             const [field, value] = Object.entries(clause)[0];
             return doc[field] === value;
           })
@@ -550,7 +560,7 @@ function createFakeMongoClient() {
           results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
           return this;
         },
-        limit(n) {
+        limit(/** @type {number} */ n) {
           results = results.slice(0, n);
           return this;
         },
@@ -559,14 +569,14 @@ function createFakeMongoClient() {
         },
       };
     },
-    async findOneAndUpdate(filter, update) {
+    async findOneAndUpdate(/** @type {any} */ filter, /** @type {any} */ update) {
       const doc = docs.find((d) => d.messageId === filter.messageId);
       if (!doc) return null;
       const userId = update.$addToSet.deliveredTo;
       if (!doc.deliveredTo.includes(userId)) doc.deliveredTo.push(userId);
       return { value: { _id: 'oid', ...doc } };
     },
-    async updateMany(filter, update) {
+    async updateMany(/** @type {any} */ filter, /** @type {any} */ update) {
       let modifiedCount = 0;
       for (const doc of docs) {
         if (
@@ -622,7 +632,7 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
     ),
     'every index key is a plain ascending/descending direction'
   );
-  await store.close();
+  await store.close?.();
   assert.equal(fake.isClosed(), true);
 });
 
@@ -630,7 +640,7 @@ test('mongo store readiness check connects before the first message operation', 
   const fake = createFakeMongoClient();
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
 
-  await store.ready();
+  await store.ready?.();
 
   assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
     { conversationId: 1, createdAt: -1 },
@@ -639,7 +649,7 @@ test('mongo store readiness check connects before the first message operation', 
     { conversationId: 1, createdAt: -1, messageId: -1 },
     { conversationId: 1, body: 1 },
   ]);
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store round-trips messages and strips the driver _id', async () => {
@@ -654,14 +664,14 @@ test('mongo store round-trips messages and strips the driver _id', async () => {
     messages.map((m) => m.body),
     ['message 2', 'message 1']
   );
-  assert.equal(messages[0]._id, undefined, 'driver _id is not leaked');
+  assert.equal(/** @type {any} */ (messages[0])._id, undefined, 'driver _id is not leaked');
 
   const delivered = await store.markDelivered(messages[0].messageId, 'bob');
-  assert.deepEqual(delivered.deliveredTo, ['bob']);
-  assert.equal(delivered._id, undefined);
+  assert.deepEqual(delivered?.deliveredTo, ['bob']);
+  assert.equal(/** @type {any} */ (delivered)._id, undefined);
   assert.equal(await store.markDelivered('missing', 'bob'), null);
 
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store searchMessages matches literally and sorts in application code', async () => {
@@ -692,17 +702,17 @@ test('mongo store searchMessages matches literally and sorts in application code
     results.map((m) => m.body),
     ['Lunch sounds good', 'lunch at noon']
   );
-  assert.equal(results[0]._id, undefined, 'driver _id is not leaked');
+  assert.equal(/** @type {any} */ (results[0])._id, undefined, 'driver _id is not leaked');
 
   // A term containing regex metacharacters is matched literally.
   assert.deepEqual(await store.searchMessages({ userId: 'alice', query: '.*' }), []);
 
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store survives index-creation failure', async () => {
   const fake = createFakeMongoClient();
-  fake.client.db = () => ({
+  fake.client.db = /** @type {any} */ (() => ({
     collection: () => ({
       async createIndex() {
         throw new Error('cosmos throttled the index build');
@@ -711,12 +721,12 @@ test('mongo store survives index-creation failure', async () => {
         return { upsertedCount: 1 };
       },
     }),
-  });
+  }));
 
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
   // Must not reject: the server has to keep running without the indexes.
   await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store saveMessage is idempotent for a repeated messageId', async () => {
@@ -744,7 +754,7 @@ test('mongo store saveMessage is idempotent for a repeated messageId', async () 
   assert.equal(messages.length, 1, 'the duplicate write must not create a second document');
   assert.equal(messages[0].body, 'first send', 'the original document is preserved');
 
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store deleteMessage only tombstones the author own message', async () => {
@@ -761,15 +771,15 @@ test('mongo store deleteMessage only tombstones the author own message', async (
 
   assert.equal(await store.deleteMessage(conversationId, mine.messageId, 'bob'), null);
   const deleted = await store.deleteMessage(conversationId, mine.messageId, 'alice');
-  assert.equal(deleted.body, '');
-  assert.ok(deleted.deletedAt);
-  assert.equal(deleted._id, undefined);
+  assert.equal(deleted?.body, '');
+  assert.ok(deleted?.deletedAt);
+  assert.equal(/** @type {any} */ (deleted)._id, undefined);
   const remaining = await store.listMessages({ conversationId });
   assert.equal(remaining.length, 1);
   assert.equal(remaining[0].body, '');
   assert.ok(remaining[0].deletedAt);
 
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store listConversations groups and sorts by conversation, newest first', async () => {
@@ -799,7 +809,11 @@ test('mongo store listConversations groups and sorts by conversation, newest fir
   assert.equal(conversations.length, 2);
   assert.equal(conversations[0].peerId, 'bob');
   assert.equal(conversations[0].lastMessage.body, 'hi alice');
-  assert.equal(conversations[0].lastMessage._id, undefined, 'driver _id is not leaked');
+  assert.equal(
+    /** @type {any} */ (conversations[0].lastMessage)._id,
+    undefined,
+    'driver _id is not leaked'
+  );
   assert.equal(conversations[0].unreadCount, 1);
   assert.equal(conversations[1].peerId, 'carol');
   assert.equal(
@@ -808,7 +822,7 @@ test('mongo store listConversations groups and sorts by conversation, newest fir
     'alice sent this message, so it is not unread for her'
   );
 
-  await store.close();
+  await store.close?.();
 });
 
 test('mongo store markRead updates only the matching, still-unread messages', async () => {
@@ -834,5 +848,5 @@ test('mongo store markRead updates only the matching, still-unread messages', as
     'bob→alice reply still unread'
   );
 
-  await store.close();
+  await store.close?.();
 });

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -41,22 +42,24 @@ const CALL = { callId: 'call-abc', callerId: 'alice' };
 /**
  * Install a fake `https.request` driven by a per-call handler.
  *
- * @param {(opts: object, body: Buffer) => { statusCode: number, body: string, headers?: object }} handler
+ * @param {(opts: any, body: Buffer) => { statusCode: number, body: string, headers?: object }} handler
  */
 function mockHttps(handler) {
   const original = https.request;
+  /** @type {Array<{ opts: any, body: string }>} */
   const requests = [];
 
-  https.request = (opts, callback) => {
+  https.request = /** @type {any} */ ((/** @type {any} */ opts, /** @type {any} */ callback) => {
+    /** @type {any[]} */
     const chunks = [];
-    const req = new EventEmitter();
-    req.end = (data) => {
+    const req = /** @type {any} */ (new EventEmitter());
+    req.end = (/** @type {any} */ data) => {
       if (data) chunks.push(data);
       const body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
       requests.push({ opts, body: body.toString('utf8') });
 
       const { statusCode, body: resBody, headers = {} } = handler(opts, body);
-      const res = new EventEmitter();
+      const res = /** @type {any} */ (new EventEmitter());
       res.statusCode = statusCode;
       res.headers = headers;
       setImmediate(() => {
@@ -66,7 +69,7 @@ function mockHttps(handler) {
       });
     };
     return req;
-  };
+  });
 
   return {
     requests,
@@ -77,7 +80,12 @@ function mockHttps(handler) {
 }
 
 /** Run `fn` with the given push-related env vars applied, restoring them after. */
+/**
+ * @param {Record<string, string|undefined>} overrides
+ * @param {() => unknown} fn
+ */
 function withEnv(overrides, fn) {
+  /** @type {Record<string, string|undefined>} */
   const previous = {};
   for (const [key, value] of Object.entries(overrides)) {
     previous[key] = process.env[key];
@@ -107,6 +115,7 @@ const HUB_ENV = {
 test('parses a DefaultFullSharedAccessSignature connection string', async () => {
   await withEnv(HUB_ENV, () => {
     const config = push._loadNotificationHubConfig();
+    assert.ok(config, 'the hub connection string parses');
     assert.equal(config.endpoint, `https://${HUB_NAMESPACE}/`);
     assert.equal(config.keyName, 'DefaultFullSharedAccessSignature');
     assert.equal(config.key, 'c2hhcmVkLWFjY2Vzcy1rZXk=');
@@ -117,7 +126,7 @@ test('parses a DefaultFullSharedAccessSignature connection string', async () => 
 
 test('honours an explicit api-version override', async () => {
   await withEnv({ ...HUB_ENV, AZURE_NOTIFICATION_HUB_API_VERSION: '2020-06' }, () => {
-    assert.equal(push._loadNotificationHubConfig().apiVersion, '2020-06');
+    assert.equal(push._loadNotificationHubConfig()?.apiVersion, '2020-06');
   });
 });
 
@@ -151,6 +160,7 @@ test('returns null when the connection string is malformed', async () => {
 test('builds a SharedAccessSignature token with the required fields', async () => {
   await withEnv(HUB_ENV, () => {
     const config = push._loadNotificationHubConfig();
+    assert.ok(config, 'the hub connection string parses');
     const uri = `https://${HUB_NAMESPACE}/storeman`;
     const token = push._buildNotificationHubSasToken(config, uri);
 
@@ -158,7 +168,7 @@ test('builds a SharedAccessSignature token with the required fields', async () =
     const params = new URLSearchParams(token.slice('SharedAccessSignature '.length));
     assert.equal(params.get('sr'), uri);
     assert.equal(params.get('skn'), 'DefaultFullSharedAccessSignature');
-    assert.ok(params.get('sig').length > 0, 'signature present');
+    assert.ok((params.get('sig') ?? '').length > 0, 'signature present');
     assert.ok(Number(params.get('se')) > Math.floor(Date.now() / 1000), 'expiry is in the future');
   });
 });
@@ -166,6 +176,7 @@ test('builds a SharedAccessSignature token with the required fields', async () =
 test('caches the SAS token and refreshes it once expired', async () => {
   await withEnv(HUB_ENV, () => {
     const config = push._loadNotificationHubConfig();
+    assert.ok(config, 'the hub connection string parses');
     const uri = `https://${HUB_NAMESPACE}/storeman`;
 
     const first = push._buildNotificationHubSasToken(config, uri);
@@ -186,8 +197,9 @@ test('caches the SAS token and refreshes it once expired', async () => {
 
 test('android hub payload is FCM v1 native format, data-only, and carries the call fields', () => {
   const payload = push._buildNotificationHubAndroidPayload(CALL);
-  assert.equal(payload.message.notification, undefined, 'no top-level notification block');
-  assert.equal(payload.message.android.notification, undefined, 'no android notification block');
+  const message = /** @type {any} */ (payload.message);
+  assert.equal(message.notification, undefined, 'no top-level notification block');
+  assert.equal(message.android.notification, undefined, 'no android notification block');
   assert.equal(payload.message.android.priority, 'HIGH');
   assert.equal(payload.message.android.ttl, '120s');
   assert.deepEqual(payload.message.android.data, {

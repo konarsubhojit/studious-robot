@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -17,6 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { captureConsoleLog } = require('./helpers');
+const { listenOnRandomPort, postJson } = require('./helpers');
 
 // Resolve the push module's path so we can swap its exports.
 const pushModulePath = require.resolve('../src/push.js');
@@ -34,8 +36,9 @@ const pushModulePath = require.resolve('../src/push.js');
 function spyOnPush() {
   const mod = require(pushModulePath);
   const original = mod.sendIncomingCallPush;
+  /** @type {{ channel: any, callData: any }[]} */
   const calls = [];
-  mod.sendIncomingCallPush = async (channel, callData) => {
+  mod.sendIncomingCallPush = async (/** @type {any} */ channel, /** @type {any} */ callData) => {
     calls.push({ channel, callData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -54,8 +57,9 @@ function spyOnPush() {
 function spyOnCancelPush() {
   const mod = require(pushModulePath);
   const original = mod.sendCallCancelledPush;
+  /** @type {{ channel: any, callData: any }[]} */
   const calls = [];
-  mod.sendCallCancelledPush = async (channel, callData) => {
+  mod.sendCallCancelledPush = async (/** @type {any} */ channel, /** @type {any} */ callData) => {
     calls.push({ channel, callData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -67,32 +71,36 @@ function spyOnCancelPush() {
   };
 }
 
+/** @param {import('../src/createServer').CreateServerOptions} [opts] */
 async function startServer(opts = {}) {
   // Require *after* the spy is installed so `createServer` picks up the mock.
   const { createServer } = require('../src/index.js');
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -124,7 +132,7 @@ test('push fallback: no push sent when callee is online via WebSocket', async (t
 
   // Connect callee via WebSocket (callee is now "online")
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
-  await new Promise((resolve) => callee.once('connect', resolve));
+  await new Promise((resolve) => callee.once('connect', () => resolve(undefined)));
 
   try {
     const res = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
@@ -285,7 +293,7 @@ test('push fallback: offline devices still get a push while another device is on
   );
 
   const phone = ioClient(url, { auth: { sessionId: phoneSession } });
-  await new Promise((resolve) => phone.once('connect', resolve));
+  await new Promise((resolve) => phone.once('connect', () => resolve(undefined)));
 
   try {
     const res = await postJson(url, '/calls', { calleeId: 'user-judy' }, callerSession);
@@ -323,7 +331,7 @@ test('push fallback: disconnected ringing device gets a push before timeout', as
   );
 
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
-  await new Promise((resolve) => callee.once('connect', resolve));
+  await new Promise((resolve) => callee.once('connect', () => resolve(undefined)));
 
   const res = await postJson(url, '/calls', { calleeId: 'user-louis' }, callerSession);
   assert.equal(res.status, 201);
@@ -363,7 +371,7 @@ test('push fallback: connected device with no call.incoming ack receives push on
   );
 
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
-  await new Promise((resolve) => callee.once('connect', resolve));
+  await new Promise((resolve) => callee.once('connect', () => resolve(undefined)));
 
   try {
     const res = await postJson(url, '/calls', { calleeId: 'user-ack-b' }, callerSession);
@@ -401,7 +409,7 @@ test('push fallback: call.incoming ack suppresses ack-timeout push', async (t) =
   );
 
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
-  await new Promise((resolve) => callee.once('connect', resolve));
+  await new Promise((resolve) => callee.once('connect', () => resolve(undefined)));
   callee.on('call.incoming', ({ call }) => {
     callee.emit(
       'call.incoming.ack',
@@ -443,7 +451,7 @@ test('push fallback: no duplicate push after socket_disconnected when ack-timeou
   );
 
   const callee = ioClient(url, { auth: { sessionId: calleeSession } });
-  await new Promise((resolve) => callee.once('connect', resolve));
+  await new Promise((resolve) => callee.once('connect', () => resolve(undefined)));
 
   try {
     const res = await postJson(url, '/calls', { calleeId: 'user-ack-f' }, callerSession);

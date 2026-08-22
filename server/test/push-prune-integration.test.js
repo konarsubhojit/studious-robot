@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -13,30 +14,24 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
 const push = require('../src/push.js');
+const { listenOnRandomPort, postJson } = require('./helpers');
 
+/** @param {import('../src/createServer').CreateServerOptions} [opts] */
 async function startServer(opts) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
 function buildMockDb() {
+  /** @type {any[]} */
   const deletes = [];
   return {
     deletes,
@@ -48,7 +43,7 @@ function buildMockDb() {
         values: () => ({
           onConflictDoUpdate: () => Promise.resolve(),
           onConflictDoNothing: () => Promise.resolve(),
-          then: (resolve) => Promise.resolve().then(resolve),
+          then: (/** @type {any} */ resolve) => Promise.resolve().then(resolve),
           catch: () => Promise.resolve(),
         }),
       };
@@ -56,9 +51,9 @@ function buildMockDb() {
     update() {
       return { set: () => ({ where: () => Promise.resolve() }) };
     },
-    delete(table) {
+    delete(/** @type {any} */ table) {
       return {
-        where(condition) {
+        where(/** @type {any} */ condition) {
           deletes.push({ table, condition });
           return Promise.resolve();
         },

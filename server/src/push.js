@@ -714,7 +714,7 @@ function buildFcmEnvelopePayload(
  * the message using the `ServiceBusNotification-DeviceHandle` header instead.
  *
  * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
+ * @returns {{ message: { android: { data: Record<string, string>, priority: string, ttl?: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData) {
   const envelope = buildCallEnvelope(callData);
@@ -725,7 +725,7 @@ function buildNotificationHubAndroidPayload(callData) {
 
 /**
  * @param {PushEnvelope} envelope
- * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
+ * @returns {{ message: { android: { data: Record<string, string>, priority: string, ttl?: string } } }}
  */
 function buildNotificationHubAndroidEnvelopePayload(
   envelope,
@@ -1275,6 +1275,7 @@ function logDeliveryOutcome(outcome, description) {
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
  *   reason?: string,
+ *   trackingId?: string|null,
  *   deadToken: boolean
  * }>}
  */
@@ -1308,6 +1309,7 @@ async function sendIncomingCallPush(channel, callData) {
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
  *   reason?: string,
+ *   trackingId?: string|null,
  *   deadToken: boolean
  * }>}
  */
@@ -1324,6 +1326,7 @@ async function sendIncomingCallPush(channel, callData) {
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
  *   reason?: string,
+ *   trackingId?: string|null,
  *   deadToken: boolean
  * }>} delivery outcome, see {@link sendIncomingCallPush}
  */
@@ -1360,6 +1363,7 @@ async function sendCallCancelledPush(channel, callData) {
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
  *   reason?: string,
+ *   trackingId?: string|null,
  *   deadToken: boolean
  * }>}
  */

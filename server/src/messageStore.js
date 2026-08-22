@@ -872,8 +872,8 @@ function createMongoMessageStore({ uri, dbName, collectionName, client } = {}) {
  * unless Mongo is configured or ALLOW_IN_MEMORY_MESSAGE_STORE=true is set.
  *
  * @param {object} [opts]
- * @param {object} [opts.messageStore] - Pre-built store (tests / injection).
- * @returns {object}
+ * @param {MessageStore} [opts.messageStore] - Pre-built store (tests / injection).
+ * @returns {MessageStore}
  */
 function createMessageStore(opts = {}) {
   if (opts.messageStore) return opts.messageStore;

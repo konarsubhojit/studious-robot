@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -32,24 +33,26 @@ const SERVICE_ACCOUNT = {
 /**
  * Install a fake `https.request` driven by a per-call handler.
  *
- * @param {(opts: object, body: Buffer) => { statusCode: number, body: string }} handler
- * @returns {{ requests: Array<{opts: object, body: string}>, restore: () => void }}
+ * @param {(opts: any, body: Buffer) => { statusCode: number, body: string }} handler
+ * @returns {{ requests: Array<{opts: any, body: string}>, restore: () => void }}
  */
 function mockHttps(handler) {
   const original = https.request;
+  /** @type {Array<{ opts: any, body: string }>} */
   const requests = [];
 
-  https.request = (opts, callback) => {
+  https.request = /** @type {any} */ ((/** @type {any} */ opts, /** @type {any} */ callback) => {
+    /** @type {any[]} */
     const chunks = [];
-    const req = new EventEmitter();
-    req.end = (data) => {
+    const req = /** @type {any} */ (new EventEmitter());
+    req.end = (/** @type {any} */ data) => {
       if (data) chunks.push(data);
       const body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
       const record = { opts, body: body.toString('utf8') };
       requests.push(record);
 
       const { statusCode, body: resBody } = handler(opts, body);
-      const res = new EventEmitter();
+      const res = /** @type {any} */ (new EventEmitter());
       res.statusCode = statusCode;
       // Deliver asynchronously to mimic real I/O ordering.
       setImmediate(() => {
@@ -59,7 +62,7 @@ function mockHttps(handler) {
       });
     };
     return req;
-  };
+  });
 
   return {
     requests,
@@ -69,6 +72,10 @@ function mockHttps(handler) {
   };
 }
 
+/**
+ * @param {string|undefined} value - `FCM_SERVICE_ACCOUNT_JSON`, or `undefined` to unset it.
+ * @param {() => unknown} fn
+ */
 function withFcmEnv(value, fn) {
   const prev = process.env.FCM_SERVICE_ACCOUNT_JSON;
   if (value === undefined) {
@@ -371,7 +378,9 @@ test('_isDeadTokenResult recognizes dead-token codes/reasons and rejects others'
     'unrelated 404 reasons are not dead tokens'
   );
   assert.equal(
-    push._isDeadTokenResult({ ok: false, statusCode: null, reason: 'network error' }),
+    push._isDeadTokenResult(
+      /** @type {any} */ ({ ok: false, statusCode: null, reason: 'network error' })
+    ),
     false
   );
 });

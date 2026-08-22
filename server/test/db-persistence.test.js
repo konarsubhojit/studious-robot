@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -17,38 +18,34 @@ const { upsertDevice } = require('../src/lib/state');
 const { createStores } = require('../src/stores');
 const { createMemoryCache } = require('../src/cache');
 const schema = require('../db/schema');
+const { listenOnRandomPort, postJson } = require('./helpers');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** @param {import('../src/createServer').CreateServerOptions} [opts] */
 async function startServer(opts) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
   return { ...server, url, teardown };
-}
-
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
 }
 
 /**
  * Build a minimal mock Drizzle db that records every `.insert()` call.
  * The `.select().from()` chain returns the given `selectRows`.
  */
-function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
+function buildMockDb({ selectRows = /** @type {any[]} */ ([]), selectRowsByTable = new Map() } = {}) {
+  /** @type {any[]} */
   const inserts = [];
+  /** @type {any[]} */
   const deletes = [];
+  /** @type {any[]} */
   const updates = [];
 
   const db = {
@@ -58,7 +55,7 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
 
     select() {
       return {
-        from(table) {
+        from(/** @type {any} */ table) {
           if (selectRowsByTable.has(table)) {
             return Promise.resolve(selectRowsByTable.get(table));
           }
@@ -67,20 +64,21 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
       };
     },
 
-    insert(_table) {
+    insert(/** @type {any} */ _table) {
+      /** @type {{ table: any, values: any, conflictSet: any }} */
       const entry = { table: _table, values: null, conflictSet: null };
       inserts.push(entry);
       return {
-        values(v) {
+        values(/** @type {any} */ v) {
           entry.values = v;
           return {
-            then(resolve, reject) {
+            then(/** @type {any} */ resolve, /** @type {any} */ reject) {
               return Promise.resolve().then(resolve, reject);
             },
-            catch(reject) {
+            catch(/** @type {any} */ reject) {
               return Promise.resolve().catch(reject);
             },
-            onConflictDoUpdate({ set }) {
+            onConflictDoUpdate(/** @type {{ set: any }} */ { set }) {
               entry.conflictSet = set;
               return Promise.resolve();
             },
@@ -92,23 +90,24 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
       };
     },
 
-    delete(table) {
+    delete(/** @type {any} */ table) {
       return {
-        where(condition) {
+        where(/** @type {any} */ condition) {
           deletes.push({ table, condition });
           return Promise.resolve();
         },
       };
     },
 
-    update(table) {
+    update(/** @type {any} */ table) {
+      /** @type {{ table: any, set: any, condition: any }} */
       const entry = { table, set: null, condition: null };
       updates.push(entry);
       return {
-        set(values) {
+        set(/** @type {any} */ values) {
           entry.set = values;
           return {
-            where(condition) {
+            where(/** @type {any} */ condition) {
               entry.condition = condition;
               return Promise.resolve();
             },
@@ -123,11 +122,12 @@ function buildMockDb({ selectRows = [], selectRowsByTable = new Map() } = {}) {
 
 function buildCallEventOrderingDb() {
   let callPersisted = false;
+  /** @type {any[]} */
   const operations = [];
 
   return {
     operations,
-    insert(table) {
+    insert(/** @type {any} */ table) {
       return {
         values() {
           if (table === schema.calls) {
@@ -138,7 +138,7 @@ function buildCallEventOrderingDb() {
                   setImmediate(() => {
                     callPersisted = true;
                     operations.push('call-finish');
-                    resolve();
+                    resolve(undefined);
                   });
                 });
               },
@@ -146,7 +146,7 @@ function buildCallEventOrderingDb() {
           }
           if (table === schema.callEvents) {
             return {
-              catch(reject) {
+              catch(/** @type {any} */ reject) {
                 operations.push(callPersisted ? 'event-after-call' : 'event-before-call');
                 return Promise.resolve().catch(reject);
               },
@@ -163,8 +163,12 @@ function buildCallEventOrderingDb() {
   };
 }
 
+/**
+ * @param {any} db
+ * @returns {import('../src/stores/contracts').ServerState}
+ */
 function buildCallState(db) {
-  return {
+  return /** @type {any} */ ({
     calls: new Map(),
     callEvents: new Map(),
     cache: createMemoryCache(),
@@ -174,7 +178,7 @@ function buildCallState(db) {
     userPresence: new Map(),
     devices: new Map(),
     db,
-  };
+  });
 }
 
 // ─── POST /session – claimed identity persisted to DB ─────────────────────────
@@ -395,8 +399,12 @@ test('registering a token already held by another device_id evicts the prior hol
 
 // ─── Dead-token pruning ────────────────────────────────────────────────────────
 
+/**
+ * @param {any} db
+ * @returns {import('../src/stores/contracts').ServerState}
+ */
 function buildMinimalState(db) {
-  return { ...createStores(), db };
+  return /** @type {any} */ ({ ...createStores(), db });
 }
 
 test('pruneDeadDevice deletes the device row from the DB and in-memory state', async () => {
@@ -480,7 +488,9 @@ test('appendCallEvent persists absent actor and reason as null', async () => {
   appendCallEvent(state, callId, 'created', '', '');
   await new Promise((resolve) => setImmediate(resolve));
 
-  const event = state.callEvents.get(callId)[0];
+  const events = state.callEvents.get(callId);
+  assert.ok(events, 'the call has a recorded event list');
+  const event = events[0];
   const insert = db.inserts.find((entry) => entry.table === schema.callEvents);
   assert.equal(event.actor, null);
   assert.equal(event.reason, null);
@@ -525,8 +535,7 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
   await server.loadPersistedState();
 
   // Verify the hydrated identity is protected from a different authenticated account.
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   try {
@@ -539,7 +548,9 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
     assert.equal(impostor.body.code, 'identity_claimed');
   } finally {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 });
 
@@ -568,13 +579,13 @@ test('loadPersistedState() hydrates calls and call events from DB rows', async (
   ];
   const blockRows = [{ blockerId: 'user-calls-hydrate-a', blockeeId: 'user-calls-hydrate-b' }];
   const db = buildMockDb({
-    selectRowsByTable: new Map([
+    selectRowsByTable: new Map(/** @type {[any, any[]][]} */ ([
       [schema.users, []],
       [schema.devices, []],
       [schema.calls, callRows],
       [schema.callEvents, eventRows],
       [schema.blocks, blockRows],
-    ]),
+    ])),
   });
   const server = createServer({ db });
 
@@ -634,7 +645,7 @@ test('loadPersistedState() fails loudly when users hydration fails', async () =>
   const db = {
     select() {
       return {
-        from(table) {
+        from(/** @type {any} */ table) {
           if (table === schema.users) {
             return Promise.reject(new Error('users column missing'));
           }

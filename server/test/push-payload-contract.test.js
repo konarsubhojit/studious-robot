@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -111,7 +112,7 @@ test('neither transport adds a notification block', () => {
   // skips the app's background handler, so CallKeep never rings the call
   // (AZURE_SETUP.md §1.7).
   const direct = JSON.parse(push._buildFcmPayload('device-token-123', CALL)).message;
-  const hub = push._buildNotificationHubAndroidPayload(CALL).message;
+  const hub = /** @type {any} */ (push._buildNotificationHubAndroidPayload(CALL).message);
   assert.equal(direct.notification, undefined);
   assert.equal(direct.android?.notification, undefined);
   assert.equal(hub.notification, undefined);
@@ -191,7 +192,9 @@ test('a message push stays data-only and unexpired', () => {
   assert.equal(direct.notification, undefined);
   assert.equal(direct.android?.notification, undefined);
   assert.equal(direct.android.ttl, undefined);
-  const hub = push._buildNotificationHubAndroidMessagePayload(MESSAGE).message;
+  const hub = /** @type {any} */ (
+    push._buildNotificationHubAndroidMessagePayload(MESSAGE).message
+  );
   assert.equal(hub.notification, undefined);
   assert.equal(hub.android.notification, undefined);
   assert.equal(hub.android.ttl, undefined);
@@ -249,6 +252,6 @@ test('a call-cancelled push is data-only and identifies the call it dismisses', 
   assert.equal(envelope.data.callId, 'call-abc');
   assert.equal(envelope.data.reason, 'cancelled');
   assert.equal(envelope.deepLink, 'wetalk://call/call-abc');
-  assert.ok(envelope.ttlSeconds > 0);
+  assert.ok((envelope.ttlSeconds ?? 0) > 0);
   assert.equal(push._buildCallCancelledEnvelope({ callId: 'call-abc' }).data.reason, 'ended');
 });
