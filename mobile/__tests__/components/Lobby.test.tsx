@@ -25,8 +25,6 @@ jest.mock('../../src/hooks/useCallFlow', () => ({
 
 // ─── Default props ────────────────────────────────────────────────────────────
 
-
-
 const baseProps: any = {
   userId: 'user-alice',
   onChangeUserId: jest.fn(),

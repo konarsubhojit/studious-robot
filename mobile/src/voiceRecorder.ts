@@ -11,7 +11,6 @@ import type NitroSound from 'react-native-nitro-sound';
 
 let _recorderCache: typeof NitroSound | null | undefined;
 
-
 function loadRecorderModule(): typeof NitroSound | null {
   if (_recorderCache !== undefined) return _recorderCache;
   try {

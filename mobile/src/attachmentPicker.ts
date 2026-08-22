@@ -19,7 +19,6 @@ function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
-
 function loadImagePicker(): typeof import('react-native-image-picker') | null {
   if (_imagePickerCache !== undefined) return _imagePickerCache;
   try {
@@ -29,7 +28,6 @@ function loadImagePicker(): typeof import('react-native-image-picker') | null {
   }
   return _imagePickerCache ?? null;
 }
-
 
 function loadDocumentPicker(): typeof import('@react-native-documents/picker') | null {
   if (_documentPickerCache !== undefined) return _documentPickerCache;

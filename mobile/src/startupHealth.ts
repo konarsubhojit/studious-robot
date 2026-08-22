@@ -7,7 +7,6 @@ export function recordStartupIssue(source: string, message?: string) {
   startupIssues.push({ source, message: message || source });
 }
 
-
 export function getStartupIssues(): StartupIssue[] {
   return startupIssues.slice();
 }

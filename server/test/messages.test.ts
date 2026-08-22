@@ -12,7 +12,6 @@ import { getJson, listenOnRandomPort, postJson } from './helpers.ts';
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
 
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Replace `sendMessagePush` with a spy; mirrors `push-fallback.test.js`. */

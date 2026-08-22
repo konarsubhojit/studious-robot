@@ -23,7 +23,6 @@ import path from 'node:path';
 
 import * as push from '../src/push.ts';
 
-
 const CALL = { callId: 'call-abc', callerId: 'alice' };
 const MESSAGE = {
   messageId: 'message-abc',

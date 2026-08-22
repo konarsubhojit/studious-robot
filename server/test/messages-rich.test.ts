@@ -15,7 +15,6 @@ import { MESSAGE_TYPES, describeMessagePreview, messageTypeOf, parseEventPayload
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
 
-
 const R2_ENV = {
   R2_ACCOUNT_ID: 'test-account',
   R2_BUCKET: 'wetalk-media',

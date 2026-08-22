@@ -2963,7 +2963,6 @@ describe('useCallFlow chat', () => {
   });
 });
 
-
 // ─── Answer-path hardening ────────────────────────────────────────────────────
 //
 // Every failure on the answer path used to be a silent `return`: a call could

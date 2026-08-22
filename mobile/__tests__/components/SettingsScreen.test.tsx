@@ -8,8 +8,6 @@ jest.mock(
   () => (props: any) => require('react').createElement('AppButton', props),
 );
 
-
-
 const baseProps: any = {
   userId: 'alice',
   onSaveUserId: jest.fn(),

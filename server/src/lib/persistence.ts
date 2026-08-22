@@ -285,7 +285,6 @@ async function hydrateBlocks(db: DrizzleDb, state: Stores, blocksTable: any): Pr
 async function loadPersistedStateFromDb(db: DrizzleDb | null, state: Stores): Promise<void> {
   if (!db) return;
 
-
   await runHydrationStep('user', () => hydrateUsers(db, state, usersTable), { required: true });
   await runHydrationStep('device', () => hydrateDevices(db, state, devicesTable));
   await hydrateCallsAndEventsFromDb(db, state);
