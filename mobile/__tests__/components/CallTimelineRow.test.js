@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert } from 'react-native';
@@ -20,7 +21,8 @@ function makeCall(overrides = {}) {
   };
 }
 
-function render(props) {
+function render(/** @type {any} */ props) {
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(<CallTimelineRow {...props} />);
@@ -28,9 +30,9 @@ function render(props) {
   return tree;
 }
 
-function findAllByTestIdPrefix(tree, prefix) {
+function findAllByTestIdPrefix(/** @type {any} */ tree, /** @type {any} */ prefix) {
   return tree.root.findAll(
-    node =>
+    (/** @type {any} */ node) =>
       typeof node.type === 'string' &&
       typeof node.props?.testID === 'string' &&
       node.props.testID.startsWith(prefix),
@@ -70,7 +72,7 @@ describe('CallTimelineRow', () => {
 
   test('renders a single call with its label', () => {
     const tree = render({ entries: [makeCall()], peerId: 'user-bob' });
-    const row = tree.root.findAll(node => node.props?.testID === 'chat-call-entry')[0];
+    const row = tree.root.findAll((/** @type {any} */ node) => node.props?.testID === 'chat-call-entry')[0];
     expect(row.props.accessibilityLabel).toBe('Outgoing call · 2:08');
   });
 
@@ -82,7 +84,7 @@ describe('CallTimelineRow', () => {
     ];
     const tree = render({ entries, peerId: 'user-bob' });
 
-    const collapsed = tree.root.findAll(node => node.props?.testID === 'chat-call-entry')[0];
+    const collapsed = tree.root.findAll((/** @type {any} */ node) => node.props?.testID === 'chat-call-entry')[0];
     expect(collapsed.props.accessibilityLabel).toBe('3 missed calls');
 
     act(() => {
@@ -99,11 +101,11 @@ describe('CallTimelineRow', () => {
 
     const tree = render({ entries: [makeCall()], peerId: 'user-bob', onCallBack, onVideoCallBack });
     act(() => {
-      tree.root.findAll(node => node.props?.testID === 'chat-call-entry')[0].props.onPress();
+      tree.root.findAll((/** @type {any} */ node) => node.props?.testID === 'chat-call-entry')[0].props.onPress();
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    const buttons = alertSpy.mock.calls[0][2];
+    const buttons = /** @type {any[]} */ (alertSpy.mock.calls[0][2]);
     expect(buttons.map(button => button.text)).toEqual([
       'Call back',
       'Video call back',
@@ -120,7 +122,7 @@ describe('CallTimelineRow', () => {
     const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const tree = render({ entries: [makeCall()], peerId: 'user-bob' });
     act(() => {
-      tree.root.findAll(node => node.props?.testID === 'chat-call-entry')[0].props.onPress();
+      tree.root.findAll((/** @type {any} */ node) => node.props?.testID === 'chat-call-entry')[0].props.onPress();
     });
     expect(alertSpy).not.toHaveBeenCalled();
   });

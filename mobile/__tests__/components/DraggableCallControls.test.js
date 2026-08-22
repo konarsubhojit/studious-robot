@@ -1,21 +1,24 @@
+// @ts-check
 import React from 'react';
 import * as ReactNative from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import DraggableCallControls from '../../src/components/DraggableCallControls';
 
+/** @type {{ onStart?: any, onUpdate?: any, onEnd?: any }} */
 const mockPanCallbacks = {};
+/** @type {any} */
 const mockSharedValues = [];
 
 jest.mock('react-native-gesture-handler', () => ({
   __esModule: true,
-  GestureDetector: ({ children }) => children,
+  GestureDetector: (/** @type {any} */ { children }) => children,
   Gesture: {
     Pan: () => ({
-      onStart: function (callback) {
+      onStart: function (/** @type {any} */ callback) {
         mockPanCallbacks.onStart = callback;
         return this;
       },
-      onUpdate: function (callback) {
+      onUpdate: function (/** @type {any} */ callback) {
         mockPanCallbacks.onUpdate = callback;
         return this;
       },
@@ -28,19 +31,19 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View },
-    useSharedValue: init => {
+    useSharedValue: (/** @type {any} */ init) => {
       const sharedValue = { value: init };
       mockSharedValues.push(sharedValue);
       return sharedValue;
     },
-    useAnimatedStyle: fn => fn(),
-    runOnJS: fn => fn,
+    useAnimatedStyle: (/** @type {any} */ fn) => fn(),
+    runOnJS: (/** @type {any} */ fn) => fn,
   };
 });
 
 jest.mock(
   '../../src/components/CallControls',
-  () => props => require('react').createElement('CallControls', props),
+  () => (/** @type {any} */ props) => require('react').createElement('CallControls', props),
 );
 
 function createProps(overrides = {}) {
@@ -64,7 +67,9 @@ describe('DraggableCallControls', () => {
     mockSharedValues.length = 0;
     mockPanCallbacks.onStart = null;
     mockPanCallbacks.onUpdate = null;
-    jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 400, height: 800 });
+    jest
+      .spyOn(ReactNative, 'useWindowDimensions')
+      .mockReturnValue(/** @type {any} */ ({ width: 400, height: 800 }));
   });
 
   afterEach(() => {
@@ -72,6 +77,7 @@ describe('DraggableCallControls', () => {
   });
 
   test('renders with the draggable-call-controls testID', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -87,6 +93,7 @@ describe('DraggableCallControls', () => {
   test('forwards all control props to CallControls', () => {
     const onMuteToggle = jest.fn();
     const onLeave = jest.fn();
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -103,6 +110,7 @@ describe('DraggableCallControls', () => {
   });
 
   test('renders a drag handle indicator', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -111,13 +119,14 @@ describe('DraggableCallControls', () => {
     const { View } = require('react-native');
     const views = tree.root.findAllByType(View);
     const handleViews = views.filter(
-      v =>
+      (/** @type {any} */ v) =>
         v.props.accessibilityElementsHidden === true && v.props.importantForAccessibility === 'no',
     );
     expect(handleViews).toHaveLength(1);
   });
 
   test('floating panel uses position absolute', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -139,13 +148,13 @@ describe('DraggableCallControls', () => {
     expect(typeof mockPanCallbacks.onUpdate).toBe('function');
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -1000, translationY: -1000 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -1000, translationY: -1000 });
     });
 
-    const numericValues = mockSharedValues.map(sharedValue => sharedValue.value);
+    const numericValues = mockSharedValues.map((/** @type {any} */ sharedValue) => sharedValue.value);
     expect(numericValues.every(Number.isFinite)).toBe(true);
-    expect(numericValues.some(value => value === 0)).toBe(true);
-    expect(numericValues.every(value => value >= 0)).toBe(true);
+    expect(numericValues.some((/** @type {any} */ value) => value === 0)).toBe(true);
+    expect(numericValues.every((/** @type {any} */ value) => value >= 0)).toBe(true);
   });
 });

@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import { Text } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
@@ -7,7 +8,8 @@ jest.mock('../../src/haptics', () => ({
   triggerHaptic: jest.fn(),
 }));
 
-function render(actions) {
+function render(/** @type {any} */ actions) {
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(
@@ -20,14 +22,14 @@ function render(actions) {
 }
 
 /** The animated row is the only node carrying accessibility actions. */
-function findActionableRow(tree) {
-  return tree.root.findAll(node => Array.isArray(node.props?.accessibilityActions))[0];
+function findActionableRow(/** @type {any} */ tree) {
+  return tree.root.findAll((/** @type {any} */ node) => Array.isArray(node.props?.accessibilityActions))[0];
 }
 
 describe('SwipeableRow', () => {
   test('renders its child untouched when there is nothing to swipe for', () => {
     const tree = render([]);
-    expect(tree.root.findAll(node => Array.isArray(node.props?.accessibilityActions))).toHaveLength(
+    expect(tree.root.findAll((/** @type {any} */ node) => Array.isArray(node.props?.accessibilityActions))).toHaveLength(
       0,
     );
   });

@@ -152,6 +152,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `navigation/`
   - [x] `storage/`
   - [x] `hooks/`
+  - [x] `components/`
 
 ### server/
 

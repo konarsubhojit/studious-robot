@@ -1,28 +1,30 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import FloatingCallBubble from '../../src/components/FloatingCallBubble';
 import { triggerHaptic } from '../../src/haptics';
 
 /** Pan-gesture callbacks captured from the mocked gesture builder. */
+/** @type {{ onStart?: any, onUpdate?: any, onEnd?: any }} */
 const mockPanCallbacks = {};
 
 jest.mock('react-native-gesture-handler', () => ({
   __esModule: true,
-  GestureDetector: ({ children }) => children,
+  GestureDetector: (/** @type {any} */ { children }) => children,
   Gesture: {
     Pan: () => ({
       minDistance: function () {
         return this;
       },
-      onStart: function (callback) {
+      onStart: function (/** @type {any} */ callback) {
         mockPanCallbacks.onStart = callback;
         return this;
       },
-      onUpdate: function (callback) {
+      onUpdate: function (/** @type {any} */ callback) {
         mockPanCallbacks.onUpdate = callback;
         return this;
       },
-      onEnd: function (callback) {
+      onEnd: function (/** @type {any} */ callback) {
         mockPanCallbacks.onEnd = callback;
         return this;
       },
@@ -36,22 +38,22 @@ jest.mock('react-native-reanimated', () => {
     __esModule: true,
     default: { View },
     // Backed by a ref so values survive re-renders, like real shared values.
-    useSharedValue: init => {
-      const ref = require('react').useRef(null);
+    useSharedValue: (/** @type {any} */ init) => {
+      const ref = require('react').useRef(/** @type {any} */ (null));
       if (ref.current === null) {
         ref.current = { value: init };
       }
       return ref.current;
     },
-    useAnimatedStyle: fn => fn(),
+    useAnimatedStyle: (/** @type {any} */ fn) => fn(),
     // Animations resolve instantly so assertions can read the settled value;
     // completion callbacks are invoked as if the animation finished.
-    withSpring: toValue => toValue,
-    withTiming: (toValue, _config, callback) => {
+    withSpring: (/** @type {any} */ toValue) => toValue,
+    withTiming: (/** @type {any} */ toValue, /** @type {any} */ _config, /** @type {any} */ callback) => {
       callback?.(true);
       return toValue;
     },
-    runOnJS: fn => fn,
+    runOnJS: (/** @type {any} */ fn) => fn,
     ZoomIn: { springify: () => 'zoom-in' },
     ZoomOut: 'zoom-out',
   };
@@ -64,21 +66,21 @@ jest.mock('../../src/haptics', () => ({
 
 jest.mock(
   '../../src/components/IconButton',
-  () => props => require('react').createElement('IconButton', props),
+  () => (/** @type {any} */ props) => require('react').createElement('IconButton', props),
 );
 
-function findByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
+function findByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID)[0] ?? null;
 }
 
 /** Reads the current (x, y) translation applied to the bubble's Animated.View. */
-function readBubbleTranslate(tree) {
+function readBubbleTranslate(/** @type {any} */ tree) {
   const bubble = findByTestId(tree, 'floating-call-bubble');
-  const transform = bubble.props.style.find(s => s && s.transform)?.transform;
+  const transform = bubble.props.style.find((/** @type {any} */ s) => s && s.transform)?.transform;
   return { x: transform[0].translateX, y: transform[1].translateY };
 }
 
-function bubbleElement(props) {
+function bubbleElement(/** @type {any} */ props) {
   return (
     <FloatingCallBubble
       participantLabel="Call with user-bob"
@@ -94,7 +96,12 @@ function bubbleElement(props) {
   );
 }
 
+/**
+ * @param {any} [props]
+ * @returns {any}
+ */
 function render(props) {
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(bubbleElement(props));
@@ -106,6 +113,10 @@ function render(props) {
  * Re-renders so the mocked `useAnimatedStyle` recomputes from the shared
  * values the gesture worklets just mutated.
  */
+/**
+ * @param {any} tree
+ * @param {any} [props]
+ */
 function refresh(tree, props) {
   act(() => {
     tree.update(bubbleElement(props));
@@ -114,7 +125,7 @@ function refresh(tree, props) {
 
 describe('FloatingCallBubble', () => {
   beforeEach(() => {
-    triggerHaptic.mockClear();
+    /** @type {jest.Mock} */ (triggerHaptic).mockClear();
     mockPanCallbacks.onStart = null;
     mockPanCallbacks.onUpdate = null;
     mockPanCallbacks.onEnd = null;
@@ -122,15 +133,15 @@ describe('FloatingCallBubble', () => {
 
   test('renders the participant label and formatted duration', () => {
     const tree = render();
-    const text = tree.root.findAll(n => n.props?.children === '01:05');
+    const text = tree.root.findAll((/** @type {any} */ n) => n.props?.children === '01:05');
     expect(text.length).toBeGreaterThan(0);
-    const label = tree.root.findAll(n => n.props?.children === 'Call with user-bob');
+    const label = tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Call with user-bob');
     expect(label.length).toBeGreaterThan(0);
   });
 
   test('falls back to a generic label when participantLabel is null', () => {
     const tree = render({ participantLabel: null });
-    const label = tree.root.findAll(n => n.props?.children === 'Call in progress');
+    const label = tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Call in progress');
     expect(label.length).toBeGreaterThan(0);
   });
 
@@ -189,8 +200,8 @@ describe('FloatingCallBubble', () => {
     const tree = render();
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -40, translationY: -30 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -40, translationY: -30 });
     });
     refresh(tree);
 
@@ -202,16 +213,16 @@ describe('FloatingCallBubble', () => {
     const tree = render();
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -10000, translationY: -10000 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -10000, translationY: -10000 });
     });
     refresh(tree);
 
     expect(readBubbleTranslate(tree)).toEqual({ x: 12, y: 12 }); // BUBBLE_MARGIN
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: 10000, translationY: 10000 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: 10000, translationY: 10000 });
     });
     refresh(tree);
 
@@ -222,9 +233,9 @@ describe('FloatingCallBubble', () => {
     const tree = render();
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -450, translationY: -600 });
-      mockPanCallbacks.onEnd({ velocityX: 0, velocityY: 0 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -450, translationY: -600 });
+      mockPanCallbacks.onEnd?.({ velocityX: 0, velocityY: 0 });
     });
     refresh(tree);
 
@@ -237,9 +248,9 @@ describe('FloatingCallBubble', () => {
     const tree = render();
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -100, translationY: -600 });
-      mockPanCallbacks.onEnd({ velocityX: 0, velocityY: 0 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -100, translationY: -600 });
+      mockPanCallbacks.onEnd?.({ velocityX: 0, velocityY: 0 });
     });
     refresh(tree);
 
@@ -251,9 +262,9 @@ describe('FloatingCallBubble', () => {
     render({ onDismiss });
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: 20, translationY: 0 });
-      mockPanCallbacks.onEnd({ velocityX: 2400, velocityY: 0 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: 20, translationY: 0 });
+      mockPanCallbacks.onEnd?.({ velocityX: 2400, velocityY: 0 });
     });
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
@@ -265,9 +276,9 @@ describe('FloatingCallBubble', () => {
     render({ onDismiss });
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -200, translationY: 0 });
-      mockPanCallbacks.onEnd({ velocityX: -200, velocityY: 0 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -200, translationY: 0 });
+      mockPanCallbacks.onEnd?.({ velocityX: -200, velocityY: 0 });
     });
 
     expect(onDismiss).not.toHaveBeenCalled();
@@ -277,9 +288,9 @@ describe('FloatingCallBubble', () => {
     const tree = render({ onDismiss: undefined });
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -400, translationY: 0 });
-      mockPanCallbacks.onEnd({ velocityX: -2400, velocityY: 0 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -400, translationY: 0 });
+      mockPanCallbacks.onEnd?.({ velocityX: -2400, velocityY: 0 });
     });
     refresh(tree, { onDismiss: undefined });
 
@@ -291,8 +302,8 @@ describe('FloatingCallBubble', () => {
     const tree = render();
 
     act(() => {
-      mockPanCallbacks.onStart();
-      mockPanCallbacks.onUpdate({ translationX: -100, translationY: -50 });
+      mockPanCallbacks.onStart?.();
+      mockPanCallbacks.onUpdate?.({ translationX: -100, translationY: -50 });
     });
     refresh(tree);
     const afterDrag = readBubbleTranslate(tree);

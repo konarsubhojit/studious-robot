@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-incall-manager', () => ({
   start: jest.fn(),
   stop: jest.fn(),
@@ -14,6 +15,7 @@ import { AUDIO_ROUTES } from '../../src/audioRouting';
 
 describe('AudioOutputMenu', () => {
   test('always offers speaker and earpiece, and merges reported devices', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -42,6 +44,7 @@ describe('AudioOutputMenu', () => {
 
   test('invokes onSelect with the chosen route', () => {
     const onSelect = jest.fn();
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -60,6 +63,7 @@ describe('AudioOutputMenu', () => {
   });
   test('unmounts the menu layer entirely once a route is chosen', () => {
     const { Modal } = require('react-native');
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -86,6 +90,7 @@ describe('AudioOutputMenu', () => {
 
   test('closes an open menu when the control is disabled by a call-state change', () => {
     const { Modal } = require('react-native');
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(

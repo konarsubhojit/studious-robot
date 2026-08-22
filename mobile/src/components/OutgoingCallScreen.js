@@ -27,7 +27,7 @@ function secondsRemaining(ringTimeoutAt) {
  * Purely presentational – all behaviour is supplied via props.
  *
  * @param {object} props
- * @param {string} props.calleeId - The ID / name of the callee.
+ * @param {string} [props.calleeId] - The ID / name of the callee; falls back to "Unknown".
  * @param {import('../../../shared/signaling/schemas').CallRecord | null} [props.activeCall]
  *   Live call record (may include ringTimeoutAt).
  * @param {import('./StatusBanner').CallStatus} props.status - Current status.

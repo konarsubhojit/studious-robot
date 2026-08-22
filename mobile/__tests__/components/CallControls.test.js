@@ -1,10 +1,11 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallControls from '../../src/components/CallControls';
 
 jest.mock(
   '../../src/components/AudioOutputMenu',
-  () => props => require('react').createElement('AudioOutputMenu', props),
+  () => (/** @type {any} */ props) => require('react').createElement('AudioOutputMenu', props),
 );
 
 function createProps(overrides = {}) {
@@ -23,7 +24,8 @@ function createProps(overrides = {}) {
   };
 }
 
-function render(props) {
+function render(/** @type {any} */ props) {
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(<CallControls {...props} />);
@@ -31,8 +33,8 @@ function render(props) {
   return tree;
 }
 
-function findByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
+function findByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID)[0] ?? null;
 }
 
 describe('CallControls screen sharing', () => {
@@ -93,15 +95,15 @@ describe('CallControls primary action labels', () => {
   test('shows visible text labels for mute, video, and leave, reflecting current state', () => {
     const tree = render(createProps({ isMuted: false, isVideoEnabled: true }));
 
-    expect(tree.root.findAll(n => n.props?.children === 'Mute').length).toBeGreaterThan(0);
-    expect(tree.root.findAll(n => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
-    expect(tree.root.findAll(n => n.props?.children === 'Leave').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Mute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Leave').length).toBeGreaterThan(0);
   });
 
   test('flips mute/video labels when muted and video is off', () => {
     const tree = render(createProps({ isMuted: true, isVideoEnabled: false }));
 
-    expect(tree.root.findAll(n => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
-    expect(tree.root.findAll(n => n.props?.children === 'Start video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props?.children === 'Start video').length).toBeGreaterThan(0);
   });
 });

@@ -1,18 +1,26 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import OutgoingCallScreen from '../../src/components/OutgoingCallScreen';
 
 jest.mock(
   '../../src/components/IconButton',
-  () => props => require('react').createElement('IconButton', props),
+  () => (/** @type {any} */ props) => require('react').createElement('IconButton', props),
 );
 jest.mock(
   '../../src/components/StatusBanner',
-  () => props => require('react').createElement('StatusBanner', props),
+  () => (/** @type {any} */ props) => require('react').createElement('StatusBanner', props),
 );
 
+/** @type {any} */
 const DEFAULT_STATUS = { message: 'Ringing…', severity: 'info' };
 
+/**
+ * Test props are deliberately partial; the component under test is exercised
+ * through the rendered output rather than its prop types.
+ *
+ * @returns {any}
+ */
 function makeCall(overrides = {}) {
   return {
     callId: 'call-1',
@@ -30,6 +38,7 @@ describe('OutgoingCallScreen', () => {
   });
 
   test('renders without throwing', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -45,6 +54,7 @@ describe('OutgoingCallScreen', () => {
   });
 
   test('displays the callee ID', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -56,12 +66,13 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll(n => n.props.testID === 'outgoing-callee-id');
+    const nodes = tree.root.findAll((/** @type {any} */ n) => n.props.testID === 'outgoing-callee-id');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
     expect(nodes[0].props.children).toBe('charlie');
   });
 
   test('derives avatar initials from multi-part callee IDs', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -73,12 +84,13 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    expect(tree.root.findAll(node => node.props.children === 'CB').length).toBeGreaterThanOrEqual(
+    expect(tree.root.findAll((/** @type {any} */ node) => node.props.children === 'CB').length).toBeGreaterThanOrEqual(
       1,
     );
   });
 
   test('renders Cancel icon button', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -96,6 +108,7 @@ describe('OutgoingCallScreen', () => {
 
   test('calls onCancel when Cancel button is pressed', () => {
     const onCancel = jest.fn();
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -114,6 +127,7 @@ describe('OutgoingCallScreen', () => {
   });
 
   test('shows countdown when ringTimeoutAt is provided', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -125,11 +139,12 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll(n => n.props.testID === 'outgoing-countdown');
+    const nodes = tree.root.findAll((/** @type {any} */ n) => n.props.testID === 'outgoing-countdown');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
   });
 
   test('renders a two-minute ring window as m:ss', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -140,11 +155,12 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    const [node] = tree.root.findAll(n => n.props.testID === 'outgoing-countdown');
+    const [node] = tree.root.findAll((/** @type {any} */ n) => n.props.testID === 'outgoing-countdown');
     expect(String(node.props.children)).toMatch(/^1:5\d$/);
   });
 
   test('hides countdown when ringTimeoutAt is absent', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -156,10 +172,11 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    expect(tree.root.findAll(n => n.props.testID === 'outgoing-countdown')).toHaveLength(0);
+    expect(tree.root.findAll((/** @type {any} */ n) => n.props.testID === 'outgoing-countdown')).toHaveLength(0);
   });
 
   test('falls back to "Unknown" when calleeId is empty', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -171,7 +188,7 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
-    const nodes = tree.root.findAll(n => n.props.testID === 'outgoing-callee-id');
+    const nodes = tree.root.findAll((/** @type {any} */ n) => n.props.testID === 'outgoing-callee-id');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
     expect(nodes[0].props.children).toBe('Unknown');
   });

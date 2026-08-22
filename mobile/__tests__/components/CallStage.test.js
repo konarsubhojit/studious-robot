@@ -1,16 +1,23 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallStage from '../../src/components/CallStage';
 
 jest.mock(
   '../../src/SafeRTCView',
-  () => props => require('react').createElement('SafeRTCView', props),
+  () => (/** @type {any} */ props) => require('react').createElement('SafeRTCView', props),
 );
 jest.mock(
   '../../src/components/DraggablePip',
-  () => props => require('react').createElement('DraggablePip', props),
+  () => (/** @type {any} */ props) => require('react').createElement('DraggablePip', props),
 );
 
+/**
+ * Test props are deliberately partial; the component under test is exercised
+ * through the rendered output rather than its prop types.
+ *
+ * @returns {any}
+ */
 function createProps(overrides = {}) {
   return {
     onLayout: () => {},
@@ -31,6 +38,7 @@ function createProps(overrides = {}) {
 
 describe('CallStage', () => {
   test('renders main stream and DraggablePip in normal mode', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps()} />);
@@ -41,6 +49,7 @@ describe('CallStage', () => {
   });
 
   test('renders main stream but hides DraggablePip in compact PiP mode', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps({ isCompact: true })} />);
@@ -51,6 +60,7 @@ describe('CallStage', () => {
   });
 
   test('does not render DraggablePip when hasPipStream is false', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps({ hasPipStream: false })} />);
@@ -60,6 +70,7 @@ describe('CallStage', () => {
   });
 
   test('renders waiting placeholder when hasMainStream is false', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps({ hasMainStream: false })} />);
@@ -68,10 +79,11 @@ describe('CallStage', () => {
     expect(tree.root.findAllByType('SafeRTCView')).toHaveLength(0);
     const { Text } = require('react-native');
     const texts = tree.root.findAllByType(Text);
-    expect(texts.some(t => t.props.children === 'Waiting for someone to join…')).toBe(true);
+    expect(texts.some((/** @type {any} */ t) => t.props.children === 'Waiting for someone to join…')).toBe(true);
   });
 
   test('forwards isMuted and isVideoEnabled to DraggablePip', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -88,6 +100,7 @@ describe('CallStage', () => {
     const props = createProps();
     delete props.isMuted;
     delete props.isVideoEnabled;
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...props} />);
@@ -99,6 +112,7 @@ describe('CallStage', () => {
   });
 
   test('passes mirrorMain to the main SafeRTCView', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps({ mirrorMain: true })} />);
@@ -109,6 +123,7 @@ describe('CallStage', () => {
   });
 
   test('main SafeRTCView is not mirrored by default', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<CallStage {...createProps()} />);

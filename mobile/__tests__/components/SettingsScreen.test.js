@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SettingsScreen from '../../src/components/SettingsScreen';
@@ -5,8 +6,10 @@ import ThemeContext, { buildTheme } from '../../src/ThemeContext';
 
 jest.mock(
   '../../src/components/AppButton',
-  () => props => require('react').createElement('AppButton', props),
+  () => (/** @type {any} */ props) => require('react').createElement('AppButton', props),
 );
+
+/** @type {any} */
 
 const baseProps = {
   userId: 'alice',
@@ -18,14 +21,15 @@ const baseProps = {
   status: { message: '', severity: 'info' },
 };
 
-function findByTestID(tree, id) {
-  return tree.root.findAll(n => n.props.testID === id);
+function findByTestID(/** @type {any} */ tree, /** @type {any} */ id) {
+  return tree.root.findAll((/** @type {any} */ n) => n.props.testID === id);
 }
 
 describe('SettingsScreen', () => {
   afterEach(() => jest.clearAllMocks());
 
   test('renders the username and signaling inputs seeded from props', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
@@ -37,13 +41,14 @@ describe('SettingsScreen', () => {
   });
 
   test('Save username is disabled until the value changes', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
     const saveBtn = tree.root
       .findAllByType('AppButton')
-      .find(b => b.props.testID === 'settings-save-username');
+      .find((/** @type {any} */ b) => b.props.testID === 'settings-save-username');
     expect(saveBtn.props.disabled).toBe(true);
 
     act(() => {
@@ -51,11 +56,12 @@ describe('SettingsScreen', () => {
     });
     const saveBtnAfter = tree.root
       .findAllByType('AppButton')
-      .find(b => b.props.testID === 'settings-save-username');
+      .find((/** @type {any} */ b) => b.props.testID === 'settings-save-username');
     expect(saveBtnAfter.props.disabled).toBe(false);
   });
 
   test('saving a new username calls onSaveUserId with the trimmed value', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
@@ -66,24 +72,26 @@ describe('SettingsScreen', () => {
     act(() => {
       tree.root
         .findAllByType('AppButton')
-        .find(b => b.props.testID === 'settings-save-username')
+        .find((/** @type {any} */ b) => b.props.testID === 'settings-save-username')
         .props.onPress();
     });
     expect(baseProps.onSaveUserId).toHaveBeenCalledWith('bob');
   });
 
   test('Save server is disabled until the URL changes', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
     const saveBtn = tree.root
       .findAllByType('AppButton')
-      .find(b => b.props.testID === 'settings-save-signaling');
+      .find((/** @type {any} */ b) => b.props.testID === 'settings-save-signaling');
     expect(saveBtn.props.disabled).toBe(true);
   });
 
   test('sign out and back buttons invoke their handlers', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
@@ -105,6 +113,7 @@ describe('SettingsScreen', () => {
     });
     expect(findByTestID(withoutTree, 'settings-export-logs')).toHaveLength(0);
 
+    /** @type {any} */
     let withTree;
     const onExportLogs = jest.fn();
     act(() => {
@@ -113,7 +122,7 @@ describe('SettingsScreen', () => {
     act(() => {
       withTree.root
         .findAllByType('AppButton')
-        .find(b => b.props.testID === 'settings-export-logs')
+        .find((/** @type {any} */ b) => b.props.testID === 'settings-export-logs')
         .props.onPress();
     });
     expect(onExportLogs).toHaveBeenCalled();
@@ -146,6 +155,7 @@ describe('SettingsScreen', () => {
   });
 
   test('developer-mode toggle reflects the enabled state', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -157,6 +167,7 @@ describe('SettingsScreen', () => {
   });
 
   test('renders section labels with the expected text for each visible section', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(
@@ -170,13 +181,13 @@ describe('SettingsScreen', () => {
     });
 
     ['Username', 'Signaling server', 'Appearance', 'Developer', 'Account'].forEach(label => {
-      const match = tree.root.findAll(n => n.type === 'Text' && n.props.children === label);
+      const match = tree.root.findAll((/** @type {any} */ n) => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
     });
   });
 
   describe('appearance', () => {
-    function renderWithTheme(mode, setMode) {
+    function renderWithTheme(/** @type {any} */ mode, /** @type {any} */ setMode) {
       let tree;
       act(() => {
         tree = renderer.create(

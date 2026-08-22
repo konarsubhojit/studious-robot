@@ -1,25 +1,27 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import PeerProfileScreen from '../../src/components/PeerProfileScreen';
 
-function findByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string')[0] ?? null;
+function findByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID && typeof node.type === 'string')[0] ?? null;
 }
 
-function findAllByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
-function press(tree, testID) {
+function press(/** @type {any} */ tree, /** @type {any} */ testID) {
   const pressable = tree.root.findAll(
-    node => node.props?.testID === testID && typeof node.props?.onPress === 'function',
+    (/** @type {any} */ node) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
   )[0];
   act(() => {
     pressable.props.onPress();
   });
 }
 
-function render(props) {
+function render(/** @type {any} */ props) {
+  /** @type {any} */
   let tree;
   act(() => {
     tree = renderer.create(<PeerProfileScreen peerId="user-bob" {...props} />);

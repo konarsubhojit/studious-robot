@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import AppButton from '../../src/components/AppButton';
@@ -5,13 +6,14 @@ import AppButton from '../../src/components/AppButton';
 describe('AppButton', () => {
   test('renders with button a11y role and fires onPress', () => {
     const onPress = jest.fn();
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<AppButton title="Join Room" onPress={onPress} testID="join" />);
     });
 
     const pressable = tree.root.find(
-      n =>
+      (/** @type {any} */ n) =>
         n.props.testID &&
         n.props.accessibilityRole === 'button' &&
         (n.type.displayName || n.type.name) === 'Pressable',
@@ -27,13 +29,14 @@ describe('AppButton', () => {
   });
 
   test('marks itself disabled in props and a11y state', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<AppButton title="Mute" onPress={() => {}} disabled testID="mute" />);
     });
 
     const pressable = tree.root.find(
-      n =>
+      (/** @type {any} */ n) =>
         n.props.testID &&
         n.props.accessibilityRole === 'button' &&
         (n.type.displayName || n.type.name) === 'Pressable',
@@ -43,13 +46,14 @@ describe('AppButton', () => {
   });
 
   test('reflects the active (selected) accessibility state', () => {
+    /** @type {any} */
     let tree;
     act(() => {
       tree = renderer.create(<AppButton title="Muted" onPress={() => {}} active testID="active" />);
     });
 
     const pressable = tree.root.find(
-      n =>
+      (/** @type {any} */ n) =>
         n.props.testID &&
         n.props.accessibilityRole === 'button' &&
         (n.type.displayName || n.type.name) === 'Pressable',

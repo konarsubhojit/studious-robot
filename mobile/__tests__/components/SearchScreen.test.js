@@ -1,25 +1,26 @@
+// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';
 
-function findByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID)[0] ?? null;
+function findByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID)[0] ?? null;
 }
 
-function findAllByTestId(tree, testID) {
-  return tree.root.findAll(node => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(/** @type {any} */ tree, /** @type {any} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
-function pressByTestId(tree, testID, index = 0) {
+function pressByTestId(/** @type {any} */ tree, /** @type {any} */ testID, index = 0) {
   const pressable = tree.root.findAll(
-    node => node.props?.testID === testID && typeof node.props?.onPress === 'function',
+    (/** @type {any} */ node) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
   )[index];
   act(() => {
     pressable.props.onPress();
   });
 }
 
-function render(props) {
+function render(/** @type {any} */ props) {
   let tree;
   act(() => {
     tree = renderer.create(<SearchScreen {...props} />);
@@ -27,7 +28,7 @@ function render(props) {
   return tree;
 }
 
-function type(tree, value) {
+function type(/** @type {any} */ tree, /** @type {any} */ value) {
   act(() => {
     findByTestId(tree, 'search-input').props.onChangeText(value);
   });
@@ -75,6 +76,7 @@ describe('SearchScreen', () => {
   });
 
   test('aborts the in-flight request when the query changes', async () => {
+    /** @type {any} */
     const signals = [];
     const onSearchContacts = jest.fn((query, { signal }) => {
       signals.push(signal);

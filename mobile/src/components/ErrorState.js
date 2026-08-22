@@ -14,7 +14,7 @@ import { radius, sizes, spacing, typography } from '../theme';
  * that always clears `sizes.minTouchTarget`.
  *
  * @param {object} props
- * @param {string} props.title - Short summary, e.g. "Can't reach the server".
+ * @param {string} [props.title] - Short summary, e.g. "Can't reach the server"; nothing renders without it.
  * @param {string} [props.description] - Why it happened / what the user can do.
  * @param {string} [props.actionLabel] - Visible label of the recovery button.
  * @param {() => void} [props.onAction] - Recovery handler; the button is hidden without it.
