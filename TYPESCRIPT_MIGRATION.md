@@ -76,9 +76,11 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `InCallBanner.js`
   - [x] `IncomingCallScreen.js`
   - [x] `OutgoingCallScreen.js`
+  - [x] `PeerProfileScreen.js`
   - [x] `ReconnectBanner.js`
   - [x] `RegistrationScreen.js`
   - [x] `SettingsCard.js`
+  - [x] `SettingsScreen.js`
   - [x] `StatusBanner.js`
   - [x] `SwipeableRow.js`
 - [ ] `src/call/` (in progress)

@@ -1,3 +1,4 @@
+// @ts-check
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -42,6 +43,12 @@ function SectionLabel({ icon, children }) {
   );
 }
 
+const APPEARANCE_OPTIONS = [
+  { mode: THEME_MODES.SYSTEM, label: 'System', testID: 'settings-theme-system' },
+  { mode: THEME_MODES.LIGHT, label: 'Light', testID: 'settings-theme-light' },
+  { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
+];
+
 /**
  * Account & connection settings.
  *
@@ -53,24 +60,20 @@ function SectionLabel({ icon, children }) {
  * state is committed only when the user presses the matching "Save" button so
  * an in-progress edit never mutates the live identity.
  *
- * @param {object}   props
- * @param {string}   props.userId               - Current username.
- * @param {Function} props.onSaveUserId          - `(userId: string) => void` persist a new username.
- * @param {string}   props.signalingUrl          - Current signaling server URL.
- * @param {Function} props.onSaveSignalingUrl    - `(url: string) => void` persist a new URL.
- * @param {Function} props.onSignOut             - Clear the identity and return to registration.
- * @param {Function} props.onClose               - Dismiss the screen (back to Lobby).
- * @param {Function} [props.onExportLogs]        - Optional: export diagnostic logs.
- * @param {boolean}  [props.developerModeEnabled] - Whether the legacy room-join developer tools are shown in the Lobby.
- * @param {Function} [props.onToggleDeveloperMode] - Toggle developer mode on/off.
- * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
+ * @param {object} props
+ * @param {string} props.userId - Current username.
+ * @param {(userId: string) => void} props.onSaveUserId - Persist a new username.
+ * @param {string} props.signalingUrl - Current signaling server URL.
+ * @param {(url: string) => void} props.onSaveSignalingUrl - Persist a new URL.
+ * @param {() => void} props.onSignOut - Clear the identity and return to registration.
+ * @param {() => void} props.onClose - Dismiss the screen (back to Lobby).
+ * @param {() => void} [props.onExportLogs] - Optional: export diagnostic logs.
+ * @param {boolean} [props.developerModeEnabled] - Whether the legacy room-join
+ *   developer tools are shown in the Lobby.
+ * @param {() => void} [props.onToggleDeveloperMode] - Toggle developer mode
+ *   on/off.
+ * @param {import('./StatusBanner').CallStatus} [props.status]
  */
-const APPEARANCE_OPTIONS = [
-  { mode: THEME_MODES.SYSTEM, label: 'System', testID: 'settings-theme-system' },
-  { mode: THEME_MODES.LIGHT, label: 'Light', testID: 'settings-theme-light' },
-  { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
-];
-
 export default function SettingsScreen({
   userId,
   onSaveUserId,
@@ -246,6 +249,7 @@ export default function SettingsScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     flex: {

@@ -1,31 +1,45 @@
+// @ts-check
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import AppButton from './AppButton';
 
+/** @typedef {import('../hooks/useCallHistory').CallHistoryEntry} CallHistoryEntry */
+
 /** How many recent calls with this peer are listed. */
 const MAX_RECENT_CALLS = 5;
 
-/** Up to two uppercase initials derived from a userId, for the avatar circle. */
+/**
+ * Up to two uppercase initials derived from a userId, for the avatar circle.
+ *
+ * @param {string | null | undefined} id
+ */
 function getInitials(id) {
   const trimmed = (id ?? '').trim();
   if (!trimmed) return '?';
   return trimmed.slice(0, 2).toUpperCase();
 }
 
-/** Peer of a call-history entry, relative to the signed-in user. */
+/**
+ * Peer of a call-history entry, relative to the signed-in user.
+ *
+ * @param {CallHistoryEntry} entry
+ * @param {string | null | undefined} currentUserId
+ */
 function callPeerOf(entry, currentUserId) {
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
   if (entry?.direction === 'incoming') return entry?.callerId ?? '';
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');
 }
 
+/** @param {CallHistoryEntry} entry */
 function describeCall(entry) {
   if (entry?.status === 'missed' && entry?.direction === 'incoming') return 'Missed call';
   return entry?.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
 }
 
+/** @param {string | null | undefined} isoString */
 function formatTimestamp(isoString) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -51,7 +65,7 @@ function formatTimestamp(isoString) {
  * @param {{ online?: boolean, status?: string } | null} [props.presence]
  * @param {boolean} [props.isBlocked]
  * @param {boolean} [props.isMuted]
- * @param {Array<object>} [props.callHistory] - Full history; filtered to this peer here.
+ * @param {CallHistoryEntry[]} [props.callHistory] - Full history; filtered to this peer here.
  * @param {string | null} [props.currentUserId]
  * @param {() => void} [props.onBack]
  * @param {(peerId: string) => void} [props.onMessage]
@@ -232,6 +246,7 @@ export default function PeerProfileScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     root: {
