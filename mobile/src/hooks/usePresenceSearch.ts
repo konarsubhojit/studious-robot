@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
+import type { PeerPresence } from '../types/directory';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
@@ -39,7 +40,7 @@ export default function usePresenceSearch({
   // Presence of the user currently entered in `calleeId`, or `null` while
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
   const [calleePresence, setCalleePresence] = useState(
-    (null as { status: string, online: boolean, unknown?: boolean } | null),
+    (null as PeerPresence | null),
   );
 
   /**

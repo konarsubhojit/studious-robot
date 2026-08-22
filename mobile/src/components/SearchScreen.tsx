@@ -11,8 +11,8 @@ import {
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
-import type { ConversationSummary } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
+import type { ContactRow, ConversationRow } from '../types/directory';
 
 /**
  * How long the input must be idle before a server request is issued. Long
@@ -26,20 +26,15 @@ const MAX_ROWS_PER_SECTION = 8;
 /** Contacts, conversations, messages and calls. */
 const SECTION_COUNT = 4;
 
-/**
- * Contact returned by the server-side user search.
- */
-export type ContactResult = { userId: string; online?: boolean; };
+/** Contact returned by the server-side user search. */
+export type ContactResult = ContactRow;
 
 /**
  * Message returned by the server-side message search.
  */
 export type MessageResult = { messageId: string; peerId: string; body?: string; createdAt?: string; };
 
-/**
- * Conversation row, as held by the chat provider.
- */
-export type ConversationRow = ConversationSummary & { online?: boolean; };
+export type { ConversationRow };
 
 export type CallRow = CallHistoryEntry;
 

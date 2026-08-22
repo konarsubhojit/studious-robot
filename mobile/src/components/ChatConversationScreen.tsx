@@ -30,6 +30,7 @@ import SwipeableRow from './SwipeableRow';
 
 import type { CallActivity, ChatMessage } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
+import type { PeerPresence } from '../types/directory';
 
 export type { CallActivity, ChatMessage };
 /** A conversation timeline holds messages and (merged) call records alike. */
@@ -46,8 +47,7 @@ export type ReactionAction = (
   emoji: string,
   action: ReactionChange,
 ) => void;
-/** The peer's presence as shown in the header; `null` while unknown. */
-export type PeerPresence = { online: boolean; status?: string } | null;
+export type { PeerPresence };
 /** The kinds of attachment the attach sheet can start picking. */
 export type AttachmentKind = 'photo' | 'camera' | 'file';
 
@@ -593,7 +593,7 @@ export type ChatConversationScreenProps = {
   onLoadOlder?: () => void;
   onBack: () => void;
   currentUserId: string;
-  peerPresence?: PeerPresence;
+  peerPresence?: PeerPresence | null;
   onStartAudioCall?: () => void;
   onStartVideoCall?: () => void;
   /** Audio call back from a call row. */

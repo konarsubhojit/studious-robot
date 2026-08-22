@@ -13,21 +13,14 @@ import { describeMessagePreview } from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import SwipeableRow from './SwipeableRow';
-import type { CallActivity, ConversationActivity, ConversationSummary } from '../hooks/useMessaging';
+import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
+import type { ContactRow, ConversationRow } from '../types/directory';
 
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
 
-/**
- * Conversation row, as held by the chat provider.
- */
-export type ConversationRow = ConversationSummary & { online?: boolean; };
-
-/**
- * Contact returned by the server-side user search.
- */
-export type ContactRow = { userId: string; online?: boolean; };
+export type { ContactRow, ConversationRow };
 
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }: { value: string; onChangeText: (value: string) => void; placeholder?: string; accessibilityLabel: string; testID: string; }) {
   const { colors } = useTheme();

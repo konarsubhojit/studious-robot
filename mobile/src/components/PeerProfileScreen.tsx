@@ -5,6 +5,7 @@ import { radius, spacing, touchSlop, typography } from '../theme';
 import AppButton from './AppButton';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
 import type { ThemeColors } from '../theme';
+import type { PeerPresence } from '../types/directory';
 
 export type { CallHistoryEntry };
 
@@ -48,7 +49,7 @@ function formatTimestamp(isoString: string | null | undefined) {
 
 export type PeerProfileScreenProps = {
   peerId: string;
-  presence?: { online?: boolean; status?: string; } | null;
+  presence?: PeerPresence | null;
   isBlocked?: boolean;
   isMuted?: boolean;
   /** Full history; filtered to this peer here. */

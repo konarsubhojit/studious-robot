@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { PeerPresence } from '../types/directory';
 
-/**
- * Online/offline snapshot for the peer whose conversation is open.
- */
-export type PeerPresence = { status?: string; online: boolean; unknown?: boolean; };
+export type { PeerPresence };
 
 /**
  * Owns text-chat wiring for the AppShell's Chats tab: fetching the

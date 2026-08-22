@@ -22,8 +22,9 @@ import StatusBanner from './StatusBanner';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
 import type { CallStatus } from './StatusBanner';
 import type { ThemeColors } from '../theme';
+import type { ContactRow, PeerPresence } from '../types/directory';
 
-export type ContactRow = { userId: string; online?: boolean; };
+export type { ContactRow };
 
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }: { value: string; onChangeText: (value: string) => void; placeholder?: string; accessibilityLabel: string; testID: string; }) {
   const { colors } = useTheme();
@@ -162,7 +163,7 @@ export type LobbyProps = {
   calleeId: string;
   onChangeCalleeId: (value: string) => void;
   onCall: () => void;
-  calleePresence?: { status: string; online: boolean; unknown?: boolean; } | null;
+  calleePresence?: PeerPresence | null;
   onOpenSettings?: () => void;
   isServerUnreachable?: boolean;
   onRetryConnect?: () => void;

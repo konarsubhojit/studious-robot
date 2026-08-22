@@ -44,3 +44,19 @@ It happened in two steps:
 3. Run `npm run typecheck` in the owning project. Prefer describing the real
    shape over `any`; use `value as T` casts only where a third-party type is
    wrong.
+
+## Conventions
+
+- **One source of truth per contract.** Types live in TypeScript syntax only:
+  JSDoc keeps the prose (`@param name what it means`) but never repeats a type
+  in braces, because the annotation next to it is what `tsc` actually checks.
+- **Named prop/param types.** A component takes `XProps` and a hook takes
+  `UseXParams`, both exported next to the function, instead of an inline
+  object type in the parameter list. Callers and tests can then refer to the
+  contract by name.
+- **Real imports for types.** Use `import type { X } from 'mod'` at the top of
+  the file rather than an inline `import('mod').X` reference.
+- **Reuse before redeclaring.** Cross-screen shapes live in one module —
+  presence and directory rows in `mobile/src/types/directory.ts`, wire
+  contracts in `shared/` — and are re-exported (`export type { X };`) from the
+  modules that used to declare their own copy.
