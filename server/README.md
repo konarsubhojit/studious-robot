@@ -76,7 +76,7 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 #### Text chat contract
 
 Text chat reuses the same versioned envelope and ack conventions as the call
-contract. Messages are persisted through `src/messageStore.js` (in-memory by
+contract. Messages are persisted through `src/messageStore.ts` (in-memory by
 default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
 
 ##### Client → Server
@@ -103,7 +103,7 @@ Rows written before rich messaging carry none of `type`, `attachment`,
 treat the rest as absent. A `type` a client does not know about must render as
 a neutral "Unsupported message" placeholder rather than crash it — that rule is
 what makes the schema safe to extend, and it is covered by
-`test/messages-rich.test.js`.
+`test/messages-rich.test.ts`.
 `conversationId` is derived deterministically from the two user ids (sorted and
 joined), so both participants resolve the same conversation. `createdAt` is a
 monotonic ISO timestamp, which keeps the newest-first ordering and the `before`
@@ -180,12 +180,12 @@ referencing the returned `publicUrl`.
 
 - Every object lives under one shared prefix — `<R2_PUBLIC_BASE_URL>/chatblobs/<conversationId>/<uuid>.<ext>` — so a deployment only points a single bucket/CDN hostname at chat media, and `message.send` can reject any URL outside it.
 - The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
-- `content-length` and `content-type` are part of the signature: an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.js`) are re-checked on `message.send`.
+- `content-length` and `content-type` are part of the signature: an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
 - When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
 
 ## Push notifications
 
-`src/push.js` delivers data-only pushes to **devices** with no live WebSocket
+`src/push.ts` delivers data-only pushes to **devices** with no live WebSocket
 connection — both incoming calls (`sendIncomingCallPush`) and text messages
 (`sendMessagePush`). Gating is per **device**, not per user: a user who is online
 on their phone still receives a push on their offline tablet.
@@ -270,7 +270,7 @@ and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
 
 ## Text-message persistence
 
-`src/messageStore.js` provides a transport-agnostic store with two
+`src/messageStore.ts` provides a transport-agnostic store with two
 implementations, selected by environment:
 
 - `createMemoryMessageStore()` — array-backed, used when `MONGODB_URI` is unset
@@ -280,7 +280,7 @@ implementations, selected by environment:
 
 Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
 (newest-first, `limit` clamped to 1–100, default 50), `markDelivered`, and
-`close()`. The store is created by the composition root (`src/createServer.js`),
+`close()`. The store is created by the composition root (`src/createServer.ts`),
 hung off the shared `state` object next to `messageBus`/`telemetry`, and closed
 during the graceful-shutdown drain.
 
@@ -294,12 +294,12 @@ See [`AZURE_SETUP.md`](../AZURE_SETUP.md) for provisioning the Cosmos DB account
 ## Database (Drizzle ORM)
 
 Durable persistence uses [Drizzle ORM](https://orm.drizzle.team/) over Postgres
-(Neon). The schema is defined in code at `db/schema.js`; versioned SQL
+(Neon). The schema is defined in code at `db/schema.ts`; versioned SQL
 migrations are generated from it into `db/migrations/` by `drizzle-kit` — do not
 hand-edit the generated SQL.
 
 ```bash
-# After editing db/schema.js, regenerate the migration (commit the result):
+# After editing db/schema.ts, regenerate the migration (commit the result):
 npm run db:generate
 
 # …or give the migration a meaningful name (commit the result):
@@ -319,7 +319,7 @@ npm run db:migrate
   (Neon's PgBouncer transaction-mode pooler can't run migration advisory locks
   / some DDL).
 
-The database-backed tests in `test/db-drizzle.test.js` are **skipped** unless
+The database-backed tests in `test/db-drizzle.test.ts` are **skipped** unless
 `DATABASE_URL` is set, so the rest of the suite runs offline. To run them
 locally, point `DATABASE_URL` at a disposable Postgres and run `npm test`.
 
@@ -328,11 +328,11 @@ locally, point `DATABASE_URL` at a disposable Postgres and run `npm test`.
 Running more than one server instance behind a load balancer requires two pieces
 of cross-instance coordination, both backed by Redis:
 
-- **Message bus** (`src/messageBus.js`) — Redis Pub/Sub used to broadcast
+- **Message bus** (`src/messageBus.ts`) — Redis Pub/Sub used to broadcast
   call-state transitions (channel `signaling:call.transitions`) and cache
   invalidations (channel `signaling:cache.invalidate`) to other instances /
   observers.
-- **Read cache** (`src/cache.js`) — a shared cache in front of the hottest
+- **Read cache** (`src/cache.ts`) — a shared cache in front of the hottest
   reads: `GET /conversations` (`conv::<userId>`), the first page of
   `GET /messages` (`msg::<conversationId>::<limit>`, excluding the
   `include=calls` timeline, which mixes in live call state) and `GET /calls`
@@ -367,5 +367,5 @@ bus rather than by sharing those maps.
 
 When `REDIS_URL` is unset the default in-memory stores and a no-op (single
 instance) bus are used, so local development and the test suite run without
-Redis. The message-bus / Redis-store tests in `test/message-bus.test.js` use an
+Redis. The message-bus / Redis-store tests in `test/message-bus.test.ts` use an
 in-memory Redis fake and need no live server.

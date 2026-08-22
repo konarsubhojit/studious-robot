@@ -1,4 +1,3 @@
-// @ts-check
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   enterPictureInPicture,

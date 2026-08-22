@@ -1,4 +1,3 @@
-// @ts-check
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { deriveInitials, formatRingCountdown } from '../callUx';

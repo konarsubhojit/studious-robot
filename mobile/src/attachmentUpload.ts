@@ -1,4 +1,3 @@
-// @ts-check
 import { logInfo, logWarn } from './appLogger';
 import {
   API_ROUTES,

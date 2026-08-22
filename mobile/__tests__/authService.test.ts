@@ -1,4 +1,3 @@
-// @ts-check
 describe('authService optional-provider loading', () => {
   const originalGoogleClientId = process.env.GOOGLE_WEB_CLIENT_ID;
 

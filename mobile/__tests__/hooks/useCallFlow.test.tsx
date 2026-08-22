@@ -1,4 +1,3 @@
-// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';

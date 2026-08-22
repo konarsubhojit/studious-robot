@@ -1,4 +1,3 @@
-// @ts-check
 jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));

@@ -1,4 +1,3 @@
-// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallStage from '../../src/components/CallStage';

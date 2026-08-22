@@ -1,4 +1,3 @@
-// @ts-check
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 import {

@@ -1,4 +1,3 @@
-// @ts-check
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';

@@ -1,4 +1,3 @@
-// @ts-check
 import { PermissionsAndroid, Platform } from 'react-native';
 
 export type Permission = import('react-native').Permission;

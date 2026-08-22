@@ -1,4 +1,3 @@
-// @ts-check
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';

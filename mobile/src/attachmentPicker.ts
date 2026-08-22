@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Lazy-loaded wrappers around the native attachment pickers.
  *

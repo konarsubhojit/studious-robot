@@ -1,4 +1,3 @@
-// @ts-check
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,

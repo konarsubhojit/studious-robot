@@ -1,4 +1,3 @@
-// @ts-check
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';

@@ -1,4 +1,3 @@
-// @ts-check
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useCall } from '../call/CallProvider';
 import useChatDeepLink from '../hooks/useChatDeepLink';

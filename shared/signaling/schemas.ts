@@ -329,11 +329,11 @@ const ACK_SCHEMA = s.object(
  *
  * @param {string} eventName
  * @param {'client'|'server'} [direction] - Which side *sends* the payload.
- * @returns {import('../schema').Schema | null} the schema, or `null` when the
+ * @returns {import('../schema.ts').Schema | null} the schema, or `null` when the
  *   event carries no contract (e.g. transport events).
  */
-function getEventSchema(eventName: string, direction: 'client' | 'server' = 'client'): import('../schema').Schema | null {
-  const table = ((direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS) as Record<string, import('../schema').Schema>);
+function getEventSchema(eventName: string, direction: 'client' | 'server' = 'client'): import('../schema.ts').Schema | null {
+  const table = ((direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS) as Record<string, import('../schema.ts').Schema>);
   return table[eventName] ?? null;
 }
 

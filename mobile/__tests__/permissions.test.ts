@@ -1,4 +1,3 @@
-// @ts-check
 const mockCheck = jest.fn();
 const mockRequestMultiple = jest.fn();
 

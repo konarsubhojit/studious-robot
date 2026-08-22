@@ -1,17 +1,15 @@
 {
   // TypeScript migration complete - see TYPESCRIPT_MIGRATION.md.
   //
-  // Every `.js` file in this project is annotated, so `checkJs` is on and new
-  // files are strict-checked by default. Run `npm run typecheck` (also enforced
-  // in CI) after adding or changing a file.
+  // Every source file is TypeScript (`.ts`/`.tsx`), so the whole project is
+  // strict-checked by default. Run `npm run typecheck` (also enforced in CI)
+  // after adding or changing a file.
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "allowJs": true,
     "allowImportingTsExtensions": true,
-    "checkJs": true,
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,

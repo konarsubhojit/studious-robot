@@ -1,4 +1,3 @@
-// @ts-check
 const DEFAULT_TRANSPORTS = ['websocket', 'polling'];
 
 export const RECONNECTION_OPTIONS = {

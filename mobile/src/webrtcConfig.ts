@@ -1,4 +1,3 @@
-// @ts-check
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
 
 /** Default video sender max bitrate in bits/second (1.5 Mbps). */

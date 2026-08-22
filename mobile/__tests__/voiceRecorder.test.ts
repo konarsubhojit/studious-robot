@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Tests the optional-native-module (try/catch require) pattern in
  * `voiceRecorder.js`, mirroring `attachmentPicker.test.js`.

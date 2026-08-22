@@ -1,4 +1,3 @@
-// @ts-check
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { BackHandler, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';

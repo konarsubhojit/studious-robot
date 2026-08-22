@@ -1,229 +1,46 @@
 # TypeScript migration
 
-The codebase is JavaScript with JSDoc. Rather than a big-bang rewrite, type
-checking is enabled **file by file** and enforced in CI, so contracts that are
-documented today become contracts that are checked.
+The migration is **complete**: every source and test file in `mobile/`,
+`server/` and `shared/` is real TypeScript (`.ts`, or `.tsx` where the file
+contains JSX). There is no JavaScript left apart from the mobile tooling
+configs (`metro.config.js`, `babel.config.js`, `jest.config.js`,
+`.eslintrc.js`, `.prettierrc.js`).
+
+It happened in two steps:
+
+1. Every `.js` file was annotated with JSDoc types and checked by `tsc` in
+   `allowJs`/`checkJs` mode, one file at a time, with CI enforcing the result.
+2. Once every file was typed, the files were renamed to `.ts`/`.tsx` and the
+   JSDoc annotations were converted to TypeScript syntax (issue #121).
 
 ## How it works
 
-- `mobile/tsconfig.json` and `server/tsconfig.json` run TypeScript in `allowJs`
-  mode with `strict: true` and `noEmit: true`. Nothing is compiled: `tsc` is a
-  linter here, and Metro/Node keep running the `.js` files unchanged.
-- Every file is now migrated, so `checkJs` is **on**: new and changed `.js`
-  files are strict-checked by default and CI fails on any type error. The
-  `// @ts-check` comments that files carry from the migration are now redundant
-  but harmless.
+- `mobile/tsconfig.json` and `server/tsconfig.json` run with `strict: true` and
+  `noEmit: true`. There is still **no build step**: `tsc` is a type checker
+  only.
+- `mobile/` is bundled by Metro, which resolves `.ts`/`.tsx` natively. The
+  entry point is `index.tsx`; because the React Native Gradle plugin and
+  `react-native-xcode.sh` both default to `index.js`, the entry file is set
+  explicitly in `android/app/build.gradle` (`entryFile`) and in the Xcode
+  "Bundle React Native code and images" phase (`ENTRY_FILE`).
+- `server/` runs its `.ts` sources directly on Node's built-in type stripping
+  (Node >= 22.18), so `npm start` is `node src/index.ts` and the tests run with
+  `node --test "test/**/*.test.ts"`. Type stripping cannot execute TypeScript
+  that emits code, so the server is plain ESM: no `enum`, no parameter
+  properties, no `import x = require(...)`.
+- Because Node runs the sources as ESM, **relative imports carry the real file
+  extension** (`import { x } from './lib/state.ts'`), which is why both
+  tsconfigs set `allowImportingTsExtensions`.
+- `shared/` is an ESM TypeScript package (`"type": "module"`) consumed by both
+  projects and type-checked from both.
 - `npm run typecheck` (in `mobile/` and in `server/`) runs the check locally;
   both CI workflows run the same command and fail on any type error.
-- `shared/` is checked from both projects, because both consume it.
-- Test suites (`mobile/__tests__/`, `server/test/`) are part of the same
-  projects, so they opt in the same way.
 
 ## Adding a file
 
-1. Run `npm run typecheck` in the owning project; the new file is checked
-   automatically.
-2. Fix the reported errors by adding JSDoc types (`@param`, `@returns`,
-   `@typedef`). Prefer describing the real shape over `any`; use
-   `/** @type {...} */ (value)` casts only where a third-party type is wrong.
-
-Why JSDoc-on-`.js` rather than renaming files to `.ts`/`.tsx`: `tsc` runs with
-`noEmit`, so there is no build step to add — the server still runs
-`node src/index.js` and Metro still bundles the same files. Renaming would also
-force each file to be fixed in a single all-or-nothing commit. Converting to
-real `.ts`/`.tsx` sources is a possible follow-up now that every file is typed;
-it needs a decision on the server runtime (a build step vs. Node's type
-stripping) and is tracked separately.
-
-## Progress
-
-### shared/
-
-- [x] `shared/` (schema, signaling contracts, API routes)
-
-### mobile/
-
-- [x] `src/theme.js`
-- [x] `src/socketProtocol.js`
-- [x] `src/signalingClient.js`
-- [x] `src/ThemeContext.js`
-- [x] `src/ThemeProvider.js`
-- [x] `src/pipConstants.js`
-- [x] `src/startupHealth.js`
-- [x] `src/mediaControls.js`
-- [x] `src/socketConfig.js`
-- [x] `src/accessibilityAnnouncer.js`
-- [x] `src/callStreamHelpers.js`
-- [x] `src/callUx.js`
-- [x] `src/haptics.js`
-- [x] `src/crashReporter.js`
-- [x] `src/callService.js`
-- [x] `src/authService.js`
-- [x] `src/settingsStorage.js`
-- [x] `src/SafeRTCView.js`
-- [x] `src/ErrorBoundary.js`
-- [x] `src/appLogger.js`
-- [x] `src/observability.js`
-- [x] `src/telemetry.js`
-- [x] `src/components/`
-  - [x] `AppButton.js`
-  - [x] `AppTabBar.js`
-  - [x] `AttachSheet.js`
-  - [x] `AudioOutputMenu.js`
-  - [x] `CallControls.js`
-  - [x] `CallScreen.js`
-  - [x] `CallStage.js`
-  - [x] `CallTimelineRow.js`
-  - [x] `CallTopBar.js`
-  - [x] `ChatConversationScreen.js`
-  - [x] `ChatListScreen.js`
-  - [x] `DraggableCallControls.js`
-  - [x] `DraggablePip.js`
-  - [x] `ErrorState.js`
-  - [x] `FloatingCallBubble.js`
-  - [x] `IconButton.js`
-  - [x] `InCallBanner.js`
-  - [x] `IncomingCallScreen.js`
-  - [x] `Lobby.js`
-  - [x] `OutgoingCallScreen.js`
-  - [x] `PeerProfileScreen.js`
-  - [x] `ReconnectBanner.js`
-  - [x] `RegistrationScreen.js`
-  - [x] `SearchScreen.js`
-  - [x] `SettingsCard.js`
-  - [x] `SettingsScreen.js`
-  - [x] `StatusBanner.js`
-  - [x] `SwipeableRow.js`
-  - [x] `TabShell.js`
-- [x] `src/call/`
-  - [x] `callStateMachine.js`
-  - [x] `CallProvider.js`
-- [x] `src/chat/`
-  - [x] `ChatProvider.js`
-- [x] `src/navigation/`
-  - [x] `routes.js`
-  - [x] `linking.js`
-  - [x] `navigationRef.js`
-  - [x] `navigationState.js`
-  - [x] `AppNavigator.js`
-- [x] `src/hooks/`
-  - [x] `useRecentSearches.js`
-  - [x] `useStartupPermissions.js`
-  - [x] `useCameraLighting.js`
-  - [x] `useCallMinimize.js`
-  - [x] `useCallInitiation.js`
-  - [x] `useAppSettings.js`
-  - [x] `useCompactCallView.js`
-  - [x] `useChatDeepLink.js`
-  - [x] `useCallHistory.js`
-  - [x] `useBlocks.js`
-  - [x] `usePictureInPicturePip.js`
-  - [x] `useChatSync.js`
-  - [x] `useAttachments.js`
-  - [x] `useSession.js`
-  - [x] `usePresenceSearch.js`
-  - [x] `useIdentity.js`
-  - [x] `useScreenShare.js`
-  - [x] `useMessaging.js`
-  - [x] `useCallFlow.js`
-- [x] `src/storage/` (chatDb, recentSearches)
-- [x] `src/diagnostics.js`
-- [x] `src/audioRouting.js`
-- [x] `src/cameraLighting.js`
-- [x] `src/messageNotification.js`
-- [x] `src/ringtone.js`
-- [x] `src/incomingCallNotification.js`
-- [x] `src/screenShare.js`
-- [x] `src/voiceRecorder.js`
-- [x] `src/attachmentDownload.js`
-- [x] `src/attachmentUpload.js`
-- [x] `src/attachmentPicker.js`
-- [x] `src/pushNotifications.js`
-- [x] `src/callKeep.js`
-- [x] `src/permissions.js`
-- [x] `src/vectorIcons.js`
-- [x] `src/webrtcConfig.js`
-- [x] `src/AppShell.js`
-- [x] remaining `src/*.js` modules (logging, permissions, …)
-- [x] `App.js`
-- [x] `__tests__/`
-  - [x] `accessibilityAnnouncer.test.js`
-  - [x] `appLogger.test.js`
-  - [x] `haptics.test.js`
-  - [x] `socketConfig.test.js`
-  - [x] `theme.test.js`
-  - [x] `webrtcConfig.test.js`
-  - [x] `call/`
-  - [x] `navigation/`
-  - [x] `storage/`
-  - [x] `hooks/`
-  - [x] `components/`
-  - [x] `SafeRTCView.test.js`
-  - [x] `ThemeProvider.test.js`
-  - [x] `attachmentPicker.test.js`
-  - [x] `callUx.test.js`
-  - [x] `mediaControls.test.js`
-  - [x] `attachmentDownload.test.js`
-  - [x] `authService.test.js`
-  - [x] `indexStartup.test.js`
-  - [x] `observability.test.js`
-  - [x] `callStreamHelpers.test.js`
-  - [x] `voiceRecorder.test.js`
-  - [x] `crashReporter.test.js`
-  - [x] `callService.test.js`
-  - [x] `cameraLighting.test.js`
-  - [x] `messageNotification.test.js`
-  - [x] `signalingClient.test.js`
-  - [x] `incomingCallNotification.test.js`
-  - [x] `settingsStorage.test.js`
-  - [x] `permissions.test.js`
-  - [x] `audioRouting.test.js`
-  - [x] `attachmentUpload.test.js`
-  - [x] `screenShare.test.js`
-  - [x] `AppShell.test.js`
-  - [x] `pushNotifications.test.js`
-  - [x] `callKeep.test.js`
-
-### server/
-
-- [x] `src/signaling/ack.js`
-- [x] `src/signaling/index.js`
-- [x] `src/signaling/callHandlers.js`
-- [x] `src/signaling/messageHandlers.js`
-- [x] `src/config.js`
-- [x] `src/security.js`
-- [x] `src/telemetry.js`
-- [x] `src/callPersistence.js`
-- [x] `src/attachments.js`
-- [x] `src/messageBus.js`
-- [x] `src/index.js`
-- [x] `src/cache.js`
-- [x] `src/createServer.js`
-- [x] `src/messageStore.js`
-- [x] `src/lib/lifecycle.js`
-- [x] `src/lib/normalize.js`
-- [x] `src/lib/verbose.js`
-- [x] `src/lib/auth.js`
-- [x] `src/lib/state.js`
-- [x] `src/lib/persistence.js`
-- [x] `src/stores/` (contracts, memory, redis)
-- [x] `src/routes/auditLog.routes.js`
-- [x] `src/routes/blocks.routes.js`
-- [x] `src/routes/health.routes.js`
-- [x] `src/routes/metrics.routes.js`
-- [x] `src/routes/directory.routes.js`
-- [x] `src/routes/turnCredentials.routes.js`
-- [x] `src/routes/session.routes.js`
-- [x] `src/routes/devices.routes.js`
-- [x] `src/routes/attachments.routes.js`
-- [x] `src/routes/index.js`
-- [x] `src/routes/calls.routes.js`
-- [x] `src/routes/messages.routes.js`
-- [x] `src/routes/` (all routes)
-- [x] `src/domain/` (callTimeline, calls, notifications)
-- [x] `src/identity.js`
-- [x] `src/firebaseAuth.js`
-- [x] `src/push.js`
-- [x] remaining `src/*.js` modules
-- [x] `test/` (all suites)
-- [x] `db/` (client, schema)
+1. Create it as `.ts`, or `.tsx` if it contains JSX.
+2. Import it with its extension from other server/shared modules
+   (`./thing.ts`); mobile files may rely on Metro's resolution.
+3. Run `npm run typecheck` in the owning project. Prefer describing the real
+   shape over `any`; use `value as T` casts only where a third-party type is
+   wrong.

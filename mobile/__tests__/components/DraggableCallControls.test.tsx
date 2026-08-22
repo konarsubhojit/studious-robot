@@ -1,4 +1,3 @@
-// @ts-check
 import React from 'react';
 import * as ReactNative from 'react-native';
 import renderer, { act } from 'react-test-renderer';

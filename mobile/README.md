@@ -88,7 +88,7 @@ selection is remembered for the rest of the call and is never overridden by an
 automatic re-evaluation. When `BLUETOOTH_CONNECT` is denied the denial is
 logged and the next device in the list is used instead.
 
-The app uses `react-native-incall-manager` (`src/audioRouting.js`) to:
+The app uses `react-native-incall-manager` (`src/audioRouting.ts`) to:
 
 - **Activate the in-call audio focus** so that media volume controls and audio
   interruption behaviour work correctly.
@@ -107,8 +107,8 @@ regardless of which output route is active.
 
 ## Screen sharing
 
-The in-call control deck has a **screen share** button (`src/screenShare.js` +
-`src/hooks/useScreenShare.js`). Tapping it requests the OS screen-capture
+The in-call control deck has a **screen share** button (`src/screenShare.ts` +
+`src/hooks/useScreenShare.ts`). Tapping it requests the OS screen-capture
 consent dialog through `getDisplayMedia` and, once granted:
 
 - replaces the outgoing camera track with the screen track using
@@ -266,9 +266,9 @@ are ignored rather than interrupting the camera.
 
 ## Theming (light & dark)
 
-The design tokens in `src/theme.js` ship two palettes — `palettes.light` and
+The design tokens in `src/theme.ts` ship two palettes — `palettes.light` and
 `palettes.dark` — that expose exactly the same token names. `ThemeProvider`
-(`src/ThemeProvider.js`, mounted in `App.js`) picks the palette from the OS
+(`src/ThemeProvider.tsx`, mounted in `App.tsx`) picks the palette from the OS
 colour scheme via `useColorScheme()`, so flipping the device theme re-themes the
 app immediately without a restart, and **Settings → Appearance** offers a
 manual **System / Light / Dark** override that is persisted to
@@ -293,7 +293,7 @@ const createStyles = colors =>
 ```
 
 Every text/background pairing in both palettes meets WCAG AA (4.5:1), and
-control borders clear the 3:1 non-text ratio; `__tests__/theme.test.js` asserts
+control borders clear the 3:1 non-text ratio; `__tests__/theme.test.ts` asserts
 this. The video stage stays dark in both schemes so camera frames are never
 letterboxed in white.
 
@@ -317,8 +317,8 @@ values, and other secrets are redacted or intentionally not logged.
 
 ## Observability
 
-`src/observability.js` is the single entry point for client observability.
-`initObservability()` — the only startup call in `index.js` — installs the
+`src/observability.ts` is the single entry point for client observability.
+`initObservability()` — the only startup call in `index.tsx` — installs the
 global crash handler, registers the background-push and CallKeep listeners, and
 reports any registration failure as a startup degradation.
 

@@ -1,4 +1,3 @@
-// @ts-check
 /** @type {string[]} */
 const LOG_ENTRIES: string[] = [];
 /** @type {Promise<boolean|void>} */

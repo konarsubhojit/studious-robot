@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Tests the optional-native-module (try/catch require) pattern in
  * `attachmentPicker.js` for both branches: the picker libraries linked, and

@@ -1,4 +1,3 @@
-// @ts-check
 jest.mock('@react-navigation/native', () => ({
   createNavigationContainerRef: () => ({
     isReady: jest.fn(),

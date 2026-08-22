@@ -1,4 +1,3 @@
-// @ts-check
 describe('index startup registration diagnostics', () => {
   beforeEach(() => {
     jest.resetModules();

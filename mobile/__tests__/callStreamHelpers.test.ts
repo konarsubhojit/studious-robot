@@ -1,4 +1,3 @@
-// @ts-check
 import { deriveCallStreams } from '../src/callStreamHelpers';
 
 jest.mock('../src/appLogger', () => ({

@@ -1,4 +1,3 @@
-// @ts-check
 import { createNavigationContainerRef } from '@react-navigation/native';
 import { CHAT_SCREENS, DEFAULT_TAB, TABS } from './routes';
 

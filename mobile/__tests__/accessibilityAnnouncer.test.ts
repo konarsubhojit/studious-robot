@@ -1,4 +1,3 @@
-// @ts-check
 import { AccessibilityInfo } from 'react-native';
 import { announceForAccessibility, describeCallState } from '../src/accessibilityAnnouncer';
 import { CALL_STATES } from '../src/call/callStateMachine';

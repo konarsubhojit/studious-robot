@@ -1,4 +1,3 @@
-// @ts-check
 import { createContext, useContext, useMemo } from 'react';
 import { palettes, radius, sizes, spacing, THEME_MODES, typography } from './theme';
 

@@ -1,4 +1,3 @@
-// @ts-check
 import { logDebug, logError, logInfo } from './appLogger';
 
 // Some platforms (notably react-native-webrtc on Android) do not implement every

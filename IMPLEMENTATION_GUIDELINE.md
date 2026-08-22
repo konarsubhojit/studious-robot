@@ -15,13 +15,13 @@ so a new session can continue without re-deriving the analysis.
 These gaps are complete and covered by tests (`cd mobile && npm test`):
 
 1. **Push-token wiring (JS side)** — `getPushToken()` /
-   `registerForPushNotifications()` in `mobile/src/pushNotifications.js`, wired
-   into the presence-connect effect in `mobile/src/hooks/useCallFlow.js` and
+   `registerForPushNotifications()` in `mobile/src/pushNotifications.ts`, wired
+   into the presence-connect effect in `mobile/src/hooks/useCallFlow.ts` and
    unregistered on sign-out. Degrades to a graceful no-op when the native
    messaging library is absent (mirrors the server's env-gated push delivery).
-2. **Settings screen** — `mobile/src/components/SettingsScreen.js` (change
+2. **Settings screen** — `mobile/src/components/SettingsScreen.tsx` (change
    username, change signaling URL, sign out), wired up in
-   `mobile/src/components/TabShell.js` and reachable
+   `mobile/src/components/TabShell.tsx` and reachable
    via the ⚙️ gear in the Lobby title bar. The RegistrationScreen "change your
    username in Settings" hint is now truthful.
 3. **Presence indicator** — `checkPresence()` + `calleePresence` in
@@ -38,14 +38,14 @@ These gaps are complete and covered by tests (`cd mobile && npm test`):
 ✅ **Implemented.** The full background-push path is now wired:
 
 - `@react-native-firebase/app` + `@react-native-firebase/messaging` are declared
-  in `mobile/package.json`; `loadMessaging()` in `mobile/src/pushNotifications.js`
+  in `mobile/package.json`; `loadMessaging()` in `mobile/src/pushNotifications.ts`
   picks them up automatically and degrades to a no-op when absent.
 - The Android Gradle `com.google.gms.google-services` plugin is applied in
   `mobile/android/build.gradle` + `app/build.gradle` (conditional on a
   `google-services.json` being present).
 - `installBackgroundMessageHandler()` is registered at startup in
-  `mobile/index.js`; the `data`-only payload keys (`callId`, `callerId`,
-  `deepLink`) match what `server/src/push.js` sends, and a `tcalling://call/{callId}`
+  `mobile/index.tsx`; the `data`-only payload keys (`callId`, `callerId`,
+  `deepLink`) match what `server/src/push.ts` sends, and a `tcalling://call/{callId}`
   deep-link `<intent-filter>` is declared in `AndroidManifest.xml` so taps route
   into the app.
 
@@ -56,9 +56,9 @@ These gaps are complete and covered by tests (`cd mobile && npm test`):
 ✅ **Implemented.** `react-native-callkeep` is integrated as an *optional* native
 module (mirrors the Firebase pattern — graceful no-op when absent):
 
-- `mobile/src/callKeep.js` wraps setup, `displayIncomingCall`, connected/end
+- `mobile/src/callKeep.ts` wraps setup, `displayIncomingCall`, connected/end
   reporting, and answer/end event bridging; covered by
-  `mobile/__tests__/callKeep.test.js`.
+  `mobile/__tests__/callKeep.test.ts`.
 - A background push now calls `displayIncomingCall(...)` from
   `handleBackgroundPushMessage`, so the OS rings full-screen even on cold start.
 - `useCallFlow` configures CallKeep on mount, bridges the OS answer/end buttons
@@ -76,14 +76,14 @@ native module, plus real-device QA (iOS additionally needs a CallKit entitlement
 verified Firebase account:
 
 - A `users` table (Drizzle, unique `user_id` primary key) was added in
-  `server/db/schema.js` (migration `db/migrations/0001_*.sql`), plus a matching
+  `server/db/schema.ts` (migration `db/migrations/0001_*.sql`), plus a matching
   in-memory `users` store in the store contract.
-- `server/src/identity.js` claims a `userId` the first time a session request
+- `server/src/identity.ts` claims a `userId` the first time a session request
   supplies a valid Firebase ID token, storing the provider UID and metadata.
 - A later `POST /session` for a claimed `userId` must present an ID token for
   the same provider UID. Another account receives **409** (`identity_claimed`)
   and a `session.identity_conflict` audit entry. Each provider UID can bind to
-  only one public username. Covered by `test/identity.test.js`.
+  only one public username. Covered by `test/identity.test.ts`.
 
 **Remaining (optional follow-up)**
 - Add an administrator-assisted migration flow for legacy usernames that
@@ -98,16 +98,16 @@ verified Firebase account:
 | 4 | **Contact list / discovery** | ✅ Server `GET /users` contact-directory endpoint (auth, `?search=` substring, `?limit=`, presence per user, block-aware) + `searchUsers()` in `useCallFlow` + a **Contacts** search section in the Lobby (debounced lookup, presence-aware rows, tap-to-select callee). Remaining: add QR-pair. |
 | 5 | **Lobby is a dev panel** | ✅ The legacy Join-Room / Signaling-URL fields are now hidden behind a "Developer mode" toggle in Settings (persisted; off by default). |
 | 7 | **Presence before calling** | ✅ basic indicator added; optionally subscribe to live presence over the socket instead of one-shot fetch. |
-| 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.js`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown). The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
-| 9 | **Push provider lock-in / duplicated credentials** | ✅ Azure Notification Hubs is now the **preferred** transport in `server/src/push.js` (SAS-signed REST direct-send, zero new dependencies), with automatic fallback to direct APNs/FCM when unconfigured or on send failure. Outcomes carry `transport: 'notification_hub' \| 'direct'`. Env-gated via `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` / `AZURE_NOTIFICATION_HUB_NAME`; setup documented in `AZURE_SETUP.md`. |
-| 10 | **No text chat / no message persistence** | ✅ `server/src/messageStore.js` (memory + Azure Cosmos DB for MongoDB, indexed on `{ conversationId, createdAt }`), `message.send` / `message.received` / `message.delivered` socket events, `GET /messages` history with cursor pagination, and a data-only push fallback for offline recipients. Env-gated via `MONGODB_URI`. Remaining: a mobile chat UI. |
+| 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.ts`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown). The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
+| 9 | **Push provider lock-in / duplicated credentials** | ✅ Azure Notification Hubs is now the **preferred** transport in `server/src/push.ts` (SAS-signed REST direct-send, zero new dependencies), with automatic fallback to direct APNs/FCM when unconfigured or on send failure. Outcomes carry `transport: 'notification_hub' \| 'direct'`. Env-gated via `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` / `AZURE_NOTIFICATION_HUB_NAME`; setup documented in `AZURE_SETUP.md`. |
+| 10 | **No text chat / no message persistence** | ✅ `server/src/messageStore.ts` (memory + Azure Cosmos DB for MongoDB, indexed on `{ conversationId, createdAt }`), `message.send` / `message.received` / `message.delivered` socket events, `GET /messages` history with cursor pagination, and a data-only push fallback for offline recipients. Env-gated via `MONGODB_URI`. Remaining: a mobile chat UI. |
 | 11 | **Incoming calls never reached the callee** | ✅ Fixed. Offline-push gating was per **user** rather than per **device**, so a user online on one device got no push on any other; `resolveOfflinePushChannels()` now resolves push targets per device. Engine.IO's default 25s/20s heartbeat also let a suspended phone look connected for up to 45s — longer than the ringing timeout (30s at the time; now 120s) — so `SOCKET_PING_INTERVAL_MS` / `SOCKET_PING_TIMEOUT_MS` now default to 10s each. On mobile, a foreground `onMessage` handler was added (`setBackgroundMessageHandler` alone drops pushes that arrive while the app is open) and `displayIncomingCall()` deduplicates by `callId`. |
 
 ---
 
 ## 🟡 P2 — UX / reliability
 
-- **TURN fallback** (`mobile/src/webrtcConfig.js`): self-hosted TURN option +
+- **TURN fallback** (`mobile/src/webrtcConfig.ts`): self-hosted TURN option +
   "TURN unavailable" diagnostics; document setup.
 - **Lobby network-error recovery**: retry button + persistent offline banner.
 - **iOS support**: CallKit, APNs token collection, an iOS CI workflow.
@@ -134,7 +134,7 @@ account deletion/data export (GDPR), app icon & splash, i18n
 
 - Redis for sessions/presence + multi-instance rate limiting (per-process today).
 - `CORS_ORIGIN` defaults to `*` in `deploy/robot-signal.service` — lock down.
-- Error tracking (Sentry/Bugsnag) — `crashReporter.js` only writes local files.
+- Error tracking (Sentry/Bugsnag) — `crashReporter.ts` only writes local files.
 - Automate Drizzle migrations in the Oracle VM deploy step (`db:migrate` — already done in `backend-ci.yml`).
 - Prometheus scrape + alerting on the existing `/metrics` endpoint.
 

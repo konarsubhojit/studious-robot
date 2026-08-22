@@ -1,4 +1,3 @@
-// @ts-check
 jest.mock('../src/settingsStorage', () => ({
   loadThemeMode: jest.fn(),
   saveThemeMode: jest.fn(),

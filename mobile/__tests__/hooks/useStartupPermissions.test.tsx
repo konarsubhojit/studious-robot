@@ -1,4 +1,3 @@
-// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useStartupPermissions from '../../src/hooks/useStartupPermissions';

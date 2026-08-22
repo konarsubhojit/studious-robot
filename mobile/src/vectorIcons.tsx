@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Lazy-loaded wrapper for react-native-vector-icons/MaterialCommunityIcons.
  *

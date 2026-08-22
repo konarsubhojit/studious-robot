@@ -1,4 +1,3 @@
-// @ts-check
 jest.mock('react-native-incall-manager', () => ({
   start: jest.fn(),
   stop: jest.fn(),

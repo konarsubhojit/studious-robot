@@ -1,4 +1,3 @@
-// @ts-check
 import auth from '@react-native-firebase/auth';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =

@@ -1,4 +1,3 @@
-// @ts-check
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { deriveCallStreams } from '../callStreamHelpers';
 import { exportDiagnosticLogs } from '../diagnostics';

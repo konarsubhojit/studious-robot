@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useState } from 'react';
 import { MESSAGE_TYPES } from '../../../shared';
 import { isAttachmentUploadKnownUnavailable, uploadAttachment } from '../attachmentUpload';

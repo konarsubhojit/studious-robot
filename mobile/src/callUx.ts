@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * @param {number} value
  * @param {number} min

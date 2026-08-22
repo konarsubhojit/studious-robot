@@ -1,4 +1,3 @@
-// @ts-check
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
 import { THEME_MODE_VALUES, THEME_MODES } from './theme';

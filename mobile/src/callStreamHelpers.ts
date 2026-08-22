@@ -1,4 +1,3 @@
-// @ts-check
 import { getStreamUrl } from './diagnostics';
 
 /**

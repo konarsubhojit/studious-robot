@@ -1,4 +1,3 @@
-// @ts-check
 import { useEffect, useRef } from 'react';
 import { logWarn } from '../appLogger';
 import { ensureCallPermissions } from '../permissions';

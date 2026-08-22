@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';

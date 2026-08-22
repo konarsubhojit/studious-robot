@@ -1,4 +1,3 @@
-// @ts-check
 import RNFS from 'react-native-fs';
 import { MAX_VOICE_DURATION_MS } from '../../shared';
 

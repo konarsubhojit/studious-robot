@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * The single call state machine.
  *

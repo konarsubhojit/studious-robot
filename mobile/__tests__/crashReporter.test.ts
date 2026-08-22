@@ -1,4 +1,3 @@
-// @ts-check
 jest.mock('react-native-fs', () => ({
   DownloadDirectoryPath: '/storage/emulated/0/Download',
   ExternalDirectoryPath: '/storage/emulated/0/Android/data/com.app/files',

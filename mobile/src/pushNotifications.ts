@@ -1,4 +1,3 @@
-// @ts-check
 import { Linking, Platform } from 'react-native';
 import { API_ROUTES } from '../../shared';
 import { getApp } from '@react-native-firebase/app';

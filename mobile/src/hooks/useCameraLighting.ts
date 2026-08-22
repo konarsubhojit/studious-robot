@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useEffect, useRef } from 'react';
 import { logError, logInfo } from '../appLogger';
 import { applyLightingAdjustment } from '../cameraLighting';

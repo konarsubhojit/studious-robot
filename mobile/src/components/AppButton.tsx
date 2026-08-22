@@ -1,4 +1,3 @@
-// @ts-check
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing } from '../theme';

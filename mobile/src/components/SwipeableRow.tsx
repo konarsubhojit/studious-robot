@@ -1,4 +1,3 @@
-// @ts-check
 import { useMemo, useRef } from 'react';
 import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { triggerHaptic } from '../haptics';

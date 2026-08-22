@@ -1,4 +1,3 @@
-// @ts-check
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';

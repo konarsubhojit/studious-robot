@@ -1,5 +1,3 @@
-// @ts-check
-
 export type MediaStreamTrackLike = { kind: string; enabled: boolean; };
 export type MediaStreamLike = { getTracks: () => MediaStreamTrackLike[]; };
 

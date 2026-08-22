@@ -1,4 +1,3 @@
-// @ts-check
 import { Platform } from 'react-native';
 import { mediaDevices } from 'react-native-webrtc';
 import { logError, logInfo, logWarn } from './appLogger';

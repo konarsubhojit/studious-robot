@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logInfo, logWarn } from '../appLogger';
 import { addChatLinkListener, getInitialChatLink } from '../pushNotifications';

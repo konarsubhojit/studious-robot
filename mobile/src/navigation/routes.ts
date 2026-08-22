@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Route names for the app shell navigators.
  *

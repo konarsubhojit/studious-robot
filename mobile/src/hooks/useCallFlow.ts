@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {

@@ -1,4 +1,3 @@
-// @ts-check
 import { getStateFromPath } from '@react-navigation/native';
 import linking, { PREFIXES } from '../../src/navigation/linking';
 import { CHAT_SCREENS, TABS } from '../../src/navigation/routes';

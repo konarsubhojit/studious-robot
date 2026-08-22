@@ -1,4 +1,3 @@
-// @ts-check
 import {
   CALL_EVENTS,
   CALL_STATES,

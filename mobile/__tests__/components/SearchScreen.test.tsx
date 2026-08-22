@@ -1,4 +1,3 @@
-// @ts-check
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';

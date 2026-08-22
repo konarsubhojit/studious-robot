@@ -1,4 +1,3 @@
-// @ts-check
 import { SIGNALING_VERSION as SHARED_SIGNALING_VERSION } from '../../shared';
 
 /**

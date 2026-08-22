@@ -1,5 +1,3 @@
-// @ts-check
-
 export type StartupIssue = { source: string; message: string; };
 
 /** @type {StartupIssue[]} */

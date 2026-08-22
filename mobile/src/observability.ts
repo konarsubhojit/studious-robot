@@ -1,4 +1,3 @@
-// @ts-check
 import { getLogsAsText, logDebug, logError, logInfo, logWarn, persistLogLine } from './appLogger';
 import { getStartupIssues, recordStartupIssue } from './startupHealth';
 

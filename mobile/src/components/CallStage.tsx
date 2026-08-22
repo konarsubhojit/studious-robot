@@ -1,4 +1,3 @@
-// @ts-check
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';

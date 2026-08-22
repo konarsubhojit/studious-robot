@@ -207,7 +207,7 @@ it provides:
 - a **Pub/Sub message bus** for cross-instance call-state events and cache
   invalidations,
 - a **shared read cache** for conversation lists, first-page chat history and
-  call history (see `server/src/cache.js`), and
+  call history (see `server/src/cache.ts`), and
 - the **Socket.IO Redis adapter** so a user's WebSocket events are delivered
   regardless of which instance holds their socket.
 
@@ -419,7 +419,7 @@ The job **fails** (and you get a GitHub notification) if the service does not be
 
 ## 13. Message store (MongoDB / Cosmos DB) — provider notes
 
-Chat message history and conversation lists are persisted via `server/src/messageStore.js` when `MONGODB_URI` is set (Postgres/Neon remains the store for users/devices/calls/events; this is a separate, optional store). Two Azure-hosted Mongo-compatible providers are supported and behave differently:
+Chat message history and conversation lists are persisted via `server/src/messageStore.ts` when `MONGODB_URI` is set (Postgres/Neon remains the store for users/devices/calls/events; this is a separate, optional store). Two Azure-hosted Mongo-compatible providers are supported and behave differently:
 
 | Concern | DocumentDB (vCore) | Cosmos DB for MongoDB (RU) |
 |---|---|---|
@@ -428,7 +428,7 @@ Chat message history and conversation lists are persisted via `server/src/messag
 | Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 `BadRequest` |
 | Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
 
-The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.js` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
+The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.ts` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
 
 > **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
 

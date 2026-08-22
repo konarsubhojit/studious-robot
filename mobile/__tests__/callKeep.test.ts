@@ -1,4 +1,3 @@
-// @ts-check
 import { _resetCallKeepCache } from '../src/callKeep';
 
 jest.mock('../src/appLogger', () => ({

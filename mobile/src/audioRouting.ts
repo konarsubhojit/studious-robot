@@ -1,4 +1,3 @@
-// @ts-check
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 import { logInfo, logWarn } from './appLogger';

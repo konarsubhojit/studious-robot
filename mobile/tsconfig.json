@@ -1,9 +1,9 @@
 {
   // TypeScript migration complete - see TYPESCRIPT_MIGRATION.md.
   //
-  // Every `.js` file in this project is annotated, so `checkJs` is on and new
-  // files are strict-checked by default. Run `npm run typecheck` (also enforced
-  // in CI) after adding or changing a file.
+  // Every source file is TypeScript (`.ts`/`.tsx`), so the whole project is
+  // strict-checked by default. Run `npm run typecheck` (also enforced in CI)
+  // after adding or changing a file.
   "compilerOptions": {
     "target": "esnext",
     "lib": ["esnext", "dom"],
@@ -24,7 +24,7 @@
   },
   "include": [
     "App.tsx",
-    "index.ts",
+    "index.tsx",
     "*.config.js",
     "src/**/*.ts", "src/**/*.tsx",
     "src/**/*.d.ts",

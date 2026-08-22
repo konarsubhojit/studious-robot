@@ -1,4 +1,3 @@
-// @ts-check
 import { createSignalingClient, MAX_QUEUED_EVENTS } from '../src/signalingClient';
 import { CLIENT_EVENTS, SERVER_EVENTS } from '../../shared';
 import { logWarn } from '../src/appLogger';

@@ -107,24 +107,24 @@ any failure.  Run them before opening a pull request.
 
 | Package  | File                                  | What it covers                                               |
 | -------- | ------------------------------------- | ------------------------------------------------------------ |
-| `server` | `test/calls.test.js`                  | Call lifecycle HTTP endpoints (create, accept, decline, cancel, end, history, timeouts) |
-| `server` | `test/signaling-contract.test.js`     | Versioned WebSocket call/RTC signaling contract              |
-| `server` | `test/reconnect.test.js`              | Socket reconnect, network handoff, offline callee, ICE restart |
-| `server` | `test/push-fallback.test.js`          | Push-notification fallback for offline callees               |
-| `server` | `test/identity.test.js`               | Session, device registration, and presence APIs              |
-| `server` | `test/directory.test.js`              | Contact directory (`GET /users`) search, paging, block filtering |
-| `server` | `test/telemetry.test.js`              | Metrics counters and derived rates                           |
-| `server` | `test/security.test.js`               | Rate limiting and blocklist                                  |
-| `server` | `test/signaling.test.js`              | Legacy join-room signaling                                   |
-| `server` | `test/health.test.js`                 | Health endpoint                                              |
-| `mobile` | `__tests__/hooks/useCallFlow.test.js` | Call phases, push rehydration (all terminal + ringing states), camera switch |
-| `mobile` | `__tests__/call/callStateMachine.test.js` | Call state machine transitions (idle → ringing → connected → ended) |
-| `mobile` | `__tests__/AppShell.test.js`          | Screen routing for each call state, minimize/restore          |
-| `mobile` | `__tests__/hooks/useCompactCallView.test.js` | PiP compact-view logic                               |
-| `mobile` | `__tests__/hooks/useScreenShare.test.js` | Screen sharing start/stop, optional screen audio + renegotiation |
-| `mobile` | `__tests__/screenShare.test.js`       | `getDisplayMedia` capture, audio fallback, cancellation      |
-| `mobile` | `__tests__/components/SettingsScreen.test.js` | Settings screen (username/server edit, sign out) |
-| `mobile` | `__tests__/pushNotifications.test.js`  | Deep links + push-token acquisition/registration            |
+| `server` | `test/calls.test.ts`                  | Call lifecycle HTTP endpoints (create, accept, decline, cancel, end, history, timeouts) |
+| `server` | `test/signaling-contract.test.ts`     | Versioned WebSocket call/RTC signaling contract              |
+| `server` | `test/reconnect.test.ts`              | Socket reconnect, network handoff, offline callee, ICE restart |
+| `server` | `test/push-fallback.test.ts`          | Push-notification fallback for offline callees               |
+| `server` | `test/identity.test.ts`               | Session, device registration, and presence APIs              |
+| `server` | `test/directory.test.ts`              | Contact directory (`GET /users`) search, paging, block filtering |
+| `server` | `test/telemetry.test.ts`              | Metrics counters and derived rates                           |
+| `server` | `test/security.test.ts`               | Rate limiting and blocklist                                  |
+| `server` | `test/signaling.test.ts`              | Legacy join-room signaling                                   |
+| `server` | `test/health.test.ts`                 | Health endpoint                                              |
+| `mobile` | `__tests__/hooks/useCallFlow.test.tsx` | Call phases, push rehydration (all terminal + ringing states), camera switch |
+| `mobile` | `__tests__/call/callStateMachine.test.ts` | Call state machine transitions (idle → ringing → connected → ended) |
+| `mobile` | `__tests__/AppShell.test.tsx`          | Screen routing for each call state, minimize/restore          |
+| `mobile` | `__tests__/hooks/useCompactCallView.test.tsx` | PiP compact-view logic                               |
+| `mobile` | `__tests__/hooks/useScreenShare.test.tsx` | Screen sharing start/stop, optional screen audio + renegotiation |
+| `mobile` | `__tests__/screenShare.test.ts`       | `getDisplayMedia` capture, audio fallback, cancellation      |
+| `mobile` | `__tests__/components/SettingsScreen.test.tsx` | Settings screen (username/server edit, sign out) |
+| `mobile` | `__tests__/pushNotifications.test.ts`  | Deep links + push-token acquisition/registration            |
 | `mobile` | `__tests__/components/`               | Incoming/outgoing/in-call UI components                      |
 
 ### CI workflows and merge gates
@@ -148,21 +148,21 @@ The following critical call paths have repeatable automated test coverage:
 
 | Scenario                              | Test file(s)                                          |
 | ------------------------------------- | ----------------------------------------------------- |
-| Ringing → accepted → in-call → ended  | `calls.test.js`, `signaling-contract.test.js`         |
-| Caller cancels before acceptance      | `calls.test.js`                                       |
-| Callee declines                       | `calls.test.js`                                       |
-| Ringing timeout (missed)              | `calls.test.js`, `telemetry.test.js`                  |
-| Callee busy (second incoming call)    | `calls.test.js`, `telemetry.test.js`                  |
-| Callee unreachable (unknown user)     | `calls.test.js`                                       |
-| Offline callee → push notification    | `push-fallback.test.js`                               |
-| Socket disconnect preserves call      | `reconnect.test.js`                                   |
-| Network handoff (ICE restart)         | `reconnect.test.js`                                   |
-| Reconnected participant receives events | `reconnect.test.js`                                 |
-| Multiple sockets per user             | `reconnect.test.js`                                   |
-| Push rehydration (ringing/missed/ended) | `useCallFlow.test.js`                               |
-| Push rehydration (active/terminal states) | `useCallFlow.test.js`                             |
-| Incoming/outgoing call UI             | `IncomingCallScreen.test.js`, `OutgoingCallScreen.test.js` |
-| PiP / compact in-call view            | `CallScreen.test.js`, `useCompactCallView.test.js`    |
+| Ringing → accepted → in-call → ended  | `calls.test.ts`, `signaling-contract.test.ts`         |
+| Caller cancels before acceptance      | `calls.test.ts`                                       |
+| Callee declines                       | `calls.test.ts`                                       |
+| Ringing timeout (missed)              | `calls.test.ts`, `telemetry.test.ts`                  |
+| Callee busy (second incoming call)    | `calls.test.ts`, `telemetry.test.ts`                  |
+| Callee unreachable (unknown user)     | `calls.test.ts`                                       |
+| Offline callee → push notification    | `push-fallback.test.ts`                               |
+| Socket disconnect preserves call      | `reconnect.test.ts`                                   |
+| Network handoff (ICE restart)         | `reconnect.test.ts`                                   |
+| Reconnected participant receives events | `reconnect.test.ts`                                 |
+| Multiple sockets per user             | `reconnect.test.ts`                                   |
+| Push rehydration (ringing/missed/ended) | `useCallFlow.test.tsx`                               |
+| Push rehydration (active/terminal states) | `useCallFlow.test.tsx`                             |
+| Incoming/outgoing call UI             | `IncomingCallScreen.test.tsx`, `OutgoingCallScreen.test.tsx` |
+| PiP / compact in-call view            | `CallScreen.test.tsx`, `useCompactCallView.test.tsx`    |
 
 ---
 

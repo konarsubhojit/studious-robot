@@ -1,4 +1,3 @@
-// @ts-check
 import { useCallback, useEffect, useState } from 'react';
 import { loadSettings, saveSettings } from '../settingsStorage';
 
