@@ -29,7 +29,7 @@ const { createTurnCredentialsRouter } = require('./turnCredentials.routes');
  *   ringingTimeoutMs: number,
  *   turnFetch?: typeof fetch,
  *   turnEnv?: NodeJS.ProcessEnv,
- *   verifyIdToken?: (idToken: unknown) => Promise<{
+ *   verifyIdToken?: (idToken: string) => Promise<{
  *     authUid: string,
  *     email?: string|null,
  *     authProvider?: string|null,

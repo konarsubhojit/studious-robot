@@ -139,6 +139,12 @@
  * @property {CallStore} calls
  * @property {CallEventStore} callEvents
  * @property {BlockStore} blocks
+ * @property {import('../messageBus').MessageBus|null} [messageBus]
+ *   Cross-instance bus, present on the Redis-backed bundle only.
+ * @property {(io: any) => void} [attachAdapter]
+ *   Attaches the Socket.IO Redis adapter, present on the Redis bundle only.
+ * @property {() => Promise<void>} [close]
+ *   Releases backend connections, present on backends that hold any.
  *
  * Per-call bookkeeping for incoming-call push fan-out: which devices were
  * pushed, which acknowledged, and the pending ack-timeout timers.

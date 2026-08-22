@@ -20,7 +20,7 @@ function createMemoryStores() {
   for (const name of STORE_NAMES) {
     stores[name] = new Map();
   }
-  return /** @type {import('./contracts').Stores} */ (stores);
+  return /** @type {import('./contracts').Stores} */ (/** @type {unknown} */ (stores));
 }
 
 module.exports = { createMemoryStores };

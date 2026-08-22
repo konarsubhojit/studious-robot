@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const http = require('http');
@@ -34,6 +35,43 @@ const { registerSocketHandlers } = require('./signaling');
 const { verboseLog } = require('./lib/verbose');
 
 /**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @typedef {object} CreateServerOptions
+ * @property {(idToken: string) => Promise<{
+ *   authUid: string,
+ *   email?: string|null,
+ *   authProvider?: string|null,
+ * }>} [verifyIdToken]
+ * @property {any} [stores]
+ * @property {any} [db]
+ * @property {any} [messageStore]
+ * @property {import('./cache').Cache} [cache]
+ * @property {import('./messageBus').MessageBus|null} [messageBus]
+ * @property {number} [sessionTtlMs]
+ * @property {number} [participantDisconnectGraceMs]
+ * @property {number} [callRateLimit]
+ * @property {number} [callRateWindowMs]
+ * @property {number} [rtcRateLimit]
+ * @property {number} [rtcRateWindowMs]
+ * @property {number} [turnRateLimit]
+ * @property {number} [turnRateWindowMs]
+ * @property {number} [messageRateLimit]
+ * @property {number} [messageRateWindowMs]
+ * @property {number} [messageSearchRateLimit]
+ * @property {number} [messageSearchRateWindowMs]
+ * @property {number} [shutdownDrainMs]
+ * @property {typeof fetch} [turnFetch]
+ * @property {NodeJS.ProcessEnv} [turnEnv]
+ */
+
+/**
  * Build the Express app and HTTP/Socket.IO server.
  *
  * Exported as a factory so tests can spin up an isolated instance on an
@@ -42,6 +80,8 @@ const { verboseLog } = require('./lib/verbose');
  * This is the composition root: it constructs shared state, wires the HTTP
  * routers (see `routes/`), the realtime signaling handlers (see `signaling/`),
  * the background ringing-timeout worker, and the graceful-shutdown lifecycle.
+ *
+ * @param {CreateServerOptions} [opts]
  */
 function createServer(opts = {}) {
   if (!opts.verifyIdToken && !process.env.NODE_TEST_CONTEXT) {
@@ -132,16 +172,19 @@ function createServer(opts = {}) {
 
   // Durable store for text-chat messages.  Defaults to an in-process store, so
   // the server runs unchanged when MONGODB_URI is not configured.
-  const messageStore = createMessageStore({ messageStore: opts.messageStore });
+  const messageStore = /** @type {any} */ (
+    createMessageStore({ messageStore: opts.messageStore })
+  );
 
   // Shared read cache for hot queries (conversation lists, first-page message
   // history, call history).  Defaults to the in-process backend; `index.js`
   // injects a Redis-backed cache when REDIS_URL is configured.
   const cache = opts.cache ?? createMemoryCache();
 
+  /** @type {import('./stores/contracts').ServerState} */
   const state = {
     rooms: stores.rooms,
-    /** @type {Map<string, object>} userId → claimed-identity record */
+    /** userId → claimed-identity record */
     users: stores.users,
     sessions: stores.sessions,
     userSessions: stores.userSessions,
@@ -149,9 +192,9 @@ function createServer(opts = {}) {
     userDevices: stores.userDevices,
     userConnections: stores.userConnections,
     userPresence: stores.userPresence,
-    /** @type {Map<string, CallRecord>} callId → call record */
+    /** callId → call record */
     calls: stores.calls,
-    /** @type {Map<string, CallEvent[]>} callId → ordered event list */
+    /** callId → ordered event list */
     callEvents: stores.callEvents,
     /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
     blocks: stores.blocks,
@@ -195,8 +238,8 @@ function createServer(opts = {}) {
     draining: false,
   };
   // Drop locally cached entries when another instance reports a write.
-  subscribeToCacheInvalidations(state).catch((error) => {
-    console.error(`[cache] failed to subscribe to invalidations: ${error?.message}`);
+  subscribeToCacheInvalidations(state).catch((/** @type {unknown} */ error) => {
+    console.error(`[cache] failed to subscribe to invalidations: ${errorMessage(error)}`);
   });
 
   if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
@@ -204,19 +247,24 @@ function createServer(opts = {}) {
       .then(() => {
         state.messageStoreStatus = 'ready';
       })
-      .catch((error) => {
+      .catch((/** @type {unknown} */ error) => {
         state.messageStoreStatus = 'unavailable';
-        console.error(`[messages] Mongo message store health check failed: ${error?.message}`);
+        console.error(
+          `[messages] Mongo message store health check failed: ${errorMessage(error)}`
+        );
       });
   }
   verboseLog('server', 'state.initialized', {
-    storeNames: Object.keys(stores).filter((key) => stores[key] instanceof Map),
+    storeNames: Object.entries(stores)
+      .filter(([, value]) => value instanceof Map)
+      .map(([key]) => key),
     hasDb: Boolean(db),
     hasMessageBus: Boolean(opts.messageBus ?? stores.messageBus ?? null),
   });
 
   const httpServer = http.createServer(app);
   const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
+  /** @type {string|string[]} */
   let corsOrigin = '*';
   if (rawCorsOrigin) {
     corsOrigin =
@@ -286,7 +334,11 @@ function createServer(opts = {}) {
   const shutdownDrainMs =
     opts.shutdownDrainMs ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
 
-  /** Resolves once shutdown has fully completed; shared for idempotency. */
+  /**
+   * Resolves once shutdown has fully completed; shared for idempotency.
+   *
+   * @type {Promise<void>|null}
+   */
   let shutdownPromise = null;
 
   /**
@@ -324,8 +376,12 @@ function createServer(opts = {}) {
       // Force-disconnect any remaining sockets, then close the servers.
       io.disconnectSockets(true);
       httpServer.closeAllConnections?.();
-      await new Promise((resolve) => io.close(() => resolve()));
-      await new Promise((resolve) => httpServer.close(() => resolve()));
+      await new Promise((/** @type {(value?: undefined) => void} */ resolve) =>
+        io.close(() => resolve())
+      );
+      await new Promise((/** @type {(value?: undefined) => void} */ resolve) =>
+        httpServer.close(() => resolve())
+      );
 
       // Close durable stores (Redis/Postgres) if they support it.
       if (typeof stores.close === 'function') {
@@ -352,10 +408,11 @@ function createServer(opts = {}) {
     io,
     shutdown,
     messageBus: state.messageBus,
-    getPresence: (userId) => getPresenceSnapshot(state, userId),
-    resolveReachableChannels: (userId) => resolveReachableChannels(state, userId),
-    getCall: (callId) => state.calls.get(callId) || null,
-    getCallEvents: (callId) => state.callEvents.get(callId) || [],
+    getPresence: (/** @type {string} */ userId) => getPresenceSnapshot(state, userId),
+    resolveReachableChannels: (/** @type {string} */ userId) =>
+      resolveReachableChannels(state, userId),
+    getCall: (/** @type {string} */ callId) => state.calls.get(callId) || null,
+    getCallEvents: (/** @type {string} */ callId) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
     /**
      * Advance all stale `ringing` calls to `missed`.  Exposed for

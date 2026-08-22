@@ -17,7 +17,7 @@ const { persistUser, persistDevice } = require('../lib/persistence');
  *   state: import('../stores/contracts').ServerState,
  *   db: any,
  *   sessionTtlMs: number,
- *   verifyIdToken?: (idToken: unknown) => Promise<{
+ *   verifyIdToken?: (idToken: string) => Promise<{
  *     authUid: string,
  *     email?: string|null,
  *     authProvider?: string|null,
