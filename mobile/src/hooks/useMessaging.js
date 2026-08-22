@@ -145,7 +145,7 @@ export default function useMessaging({
   const [messagesByPeer, setMessagesByPeer] = useState({});
   // peerId of the conversation currently open in the UI, or null. Drives
   // auto-mark-read for incoming messages from that peer.
-  const [activeChatPeerId, setActiveChatPeerId] = useState(null);
+  const [activeChatPeerId, setActiveChatPeerId] = useState(/** @type {string | null} */ (null));
   // Keyed by peerId → boolean. True while that peer is actively typing in the
   // open conversation (relayed via the ephemeral `message.typing` socket
   // event). Cleared on receipt of isTyping:false or after a short timeout, in
@@ -155,7 +155,7 @@ export default function useMessaging({
   const typingSentAtRef = useRef({});
   // Mirrors activeChatPeerId so the message.received socket handler never
   // reads a stale value through a captured closure.
-  const activeChatPeerIdRef = useRef(null);
+  const activeChatPeerIdRef = useRef(/** @type {string | null} */ (null));
 
   // ─── Offline-first state ─────────────────────────────────────────────────
   // Durable queue of sends awaiting an ack, mirrored into the local store on

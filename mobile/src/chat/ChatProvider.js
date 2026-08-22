@@ -1,10 +1,55 @@
+// @ts-check
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useCall } from '../call/CallProvider';
 import useChatDeepLink from '../hooks/useChatDeepLink';
 import useChatSync from '../hooks/useChatSync';
 import { openChatConversation } from '../navigation/navigationRef';
 
-const ChatContext = createContext(null);
+/** @typedef {ReturnType<typeof import('../call/CallProvider').useCall>['callFlow']} CallFlow */
+/** @typedef {ReturnType<typeof useChatSync>} ChatSync */
+/** @typedef {ReturnType<typeof import('../navigation/routes').deriveShellRoute>} ShellRoute */
+
+/**
+ * The value published to the chat screens through {@link useChat}.
+ *
+ * @typedef {object} ChatContextValue
+ * @property {string | null} chatPeerId
+ * @property {(route: ShellRoute) => void} handleRouteChange
+ * @property {ChatSync['peerPresence']} peerPresence
+ * @property {boolean} isLoadingConversations
+ * @property {boolean} isLoadingMessages
+ * @property {boolean} isRefreshingConversations
+ * @property {ChatSync['handleRefreshConversations']} handleRefreshConversations
+ * @property {ChatSync['handleLoadOlderMessages']} handleLoadOlderMessages
+ * @property {CallFlow['conversations']} conversations
+ * @property {CallFlow['messagesByPeer']} messagesByPeer
+ * @property {CallFlow['typingByPeer']} typingByPeer
+ * @property {CallFlow['unreadTotal']} unreadTotal
+ * @property {CallFlow['userId']} currentUserId
+ * @property {CallFlow['sendMessage']} sendMessage
+ * @property {CallFlow['retryMessage']} retryMessage
+ * @property {CallFlow['deleteMessage']} deleteMessage
+ * @property {CallFlow['reactToMessage']} reactToMessage
+ * @property {CallFlow['isChatOffline']} isChatOffline
+ * @property {CallFlow['markConversationRead']} markConversationRead
+ * @property {CallFlow['sendTypingIndicator']} sendTypingIndicator
+ * @property {CallFlow['searchUsers']} searchUsers
+ * @property {CallFlow['searchMessages']} searchMessages
+ * @property {CallFlow['isUserBlocked']} isUserBlocked
+ * @property {CallFlow['blockPeer']} blockPeer
+ * @property {CallFlow['unblockPeer']} unblockPeer
+ * @property {CallFlow['pickAndSendAttachment']} pickAndSendAttachment
+ * @property {CallFlow['startRecordingVoiceNote']} startRecordingVoiceNote
+ * @property {CallFlow['stopRecordingVoiceNoteAndSend']} stopRecordingVoiceNoteAndSend
+ * @property {CallFlow['cancelRecordingVoiceNote']} cancelRecordingVoiceNote
+ * @property {CallFlow['isUploadingAttachment']} isUploadingAttachment
+ * @property {CallFlow['attachmentUploadProgress']} attachmentUploadProgress
+ * @property {CallFlow['isRecordingVoiceNote']} isRecordingVoiceNote
+ * @property {CallFlow['attachmentsAvailable']} attachmentsAvailable
+ * @property {CallFlow['isVoiceNoteSupported']} isVoiceNoteSupported
+ */
+
+const ChatContext = createContext(/** @type {ChatContextValue | null} */ (null));
 
 /**
  * Owns the chat side of the app: which conversation the Chats tab currently
@@ -14,11 +59,14 @@ const ChatContext = createContext(null);
  * React Navigation owns the routing; the `chatPeerId` mirror here is only the
  * part of it the chat-sync hook has to react to, and it lives in this provider
  * rather than in `AppShell` so the shell stays a purely presentational router.
+ *
+ * @param {{ children: import('react').ReactNode }} props
  */
 export function ChatProvider({ children }) {
   const { callFlow } = useCall();
-  const [chatPeerId, setChatPeerId] = useState(null);
+  const [chatPeerId, setChatPeerId] = useState(/** @type {string | null} */ (null));
 
+  /** @type {(route: ShellRoute) => void} */
   const handleRouteChange = useCallback(route => {
     setChatPeerId(route.chatPeerId);
   }, []);
@@ -132,7 +180,7 @@ export function ChatProvider({ children }) {
 /**
  * Access the chat context.
  *
- * @returns {object} the value published by {@link ChatProvider}
+ * @returns {ChatContextValue} the value published by {@link ChatProvider}
  */
 export function useChat() {
   const context = useContext(ChatContext);

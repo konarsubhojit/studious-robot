@@ -78,6 +78,8 @@ import {
   stopOutgoingRingback,
 } from '../ringtone';
 
+/** @typedef {import('../../../shared/signaling/schemas').CallRecord} CallRecord */
+
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
@@ -234,8 +236,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // transitions (a late `rtc.answer` after hang-up, a second incoming call
   // while already connected, …) are ignored instead of corrupting the UI.
   const [callPhase, dispatchCallEvent] = useReducer(callStateReducer, INITIAL_CALL_STATE);
-  const [activeCall, setActiveCall] = useState(null);
-  const [incomingCall, setIncomingCall] = useState(null);
+  /** @type {[CallRecord | null, (call: CallRecord | null) => void]} */
+  const [activeCall, setActiveCall] = useState(/** @type {CallRecord | null} */ (null));
+  /** @type {[CallRecord | null, (call: CallRecord | null) => void]} */
+  const [incomingCall, setIncomingCall] = useState(/** @type {CallRecord | null} */ (null));
 
   // callId received from a push-notification deep link before the user identity
   // is fully established.  Cleared once rehydration is attempted.

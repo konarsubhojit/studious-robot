@@ -1,3 +1,4 @@
+// @ts-check
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { deriveCallStreams } from '../callStreamHelpers';
 import { exportDiagnosticLogs } from '../diagnostics';
@@ -9,7 +10,44 @@ import useCameraLighting from '../hooks/useCameraLighting';
 import usePictureInPicturePip from '../hooks/usePictureInPicturePip';
 import { CALL_STATES, isCallActiveState } from './callStateMachine';
 
-const CallContext = createContext(null);
+/** @typedef {ReturnType<typeof useCallFlow>} CallFlow */
+/** @typedef {ReturnType<typeof useAppSettings>} AppSettings */
+/** @typedef {ReturnType<typeof usePictureInPicturePip>} PipView */
+/** @typedef {ReturnType<typeof useCallInitiation>} CallInitiation */
+
+/**
+ * The value published to every screen through {@link useCall}.
+ *
+ * @typedef {object} CallContextValue
+ * @property {CallFlow} callFlow
+ * @property {AppSettings['settings']} settings
+ * @property {AppSettings['isSettingsVisible']} isSettingsPanelVisible
+ * @property {AppSettings['setIsSettingsVisible']} setIsSettingsPanelVisible
+ * @property {AppSettings['handleAutoLightingToggle']} handleAutoLightingToggle
+ * @property {AppSettings['handleSpeakerDefaultToggle']} handleSpeakerDefaultToggle
+ * @property {AppSettings['handleDeveloperModeToggle']} handleDeveloperModeToggle
+ * @property {CallFlow['callPhase']} callState
+ * @property {boolean} isCallActive
+ * @property {boolean} isCallConnected
+ * @property {CallFlow['isCompactView']} isCompact
+ * @property {string | null} participantLabel
+ * @property {ReturnType<typeof deriveCallStreams>} streams
+ * @property {boolean} isCallMinimized
+ * @property {boolean} isBubbleDismissed
+ * @property {() => void} dismissBubble
+ * @property {() => void} minimizeCall
+ * @property {() => void} expandCall
+ * @property {() => void} minimizeCallOnNavigate
+ * @property {PipView['handleCallStageLayout']} handleCallStageLayout
+ * @property {PipView['pipGesture']} pipGesture
+ * @property {PipView['animatedPipStyle']} animatedPipStyle
+ * @property {CallInitiation['startVideoCallWith']} startVideoCallWith
+ * @property {CallInitiation['startAudioCallWith']} startAudioCallWith
+ * @property {() => void} endCall
+ * @property {() => Promise<void>} handleExportLogs
+ */
+
+const CallContext = createContext(/** @type {CallContextValue | null} */ (null));
 
 /**
  * The app's single source of truth for calls.
@@ -20,12 +58,16 @@ const CallContext = createContext(null);
  * picture-in-picture self-view, call initiation and the derived stream pair —
  * and publishes them as one context so screens never have to pick between
  * competing call sources (the legacy room-join flow has been retired).
+ *
+ * @param {{ children: import('react').ReactNode }} props
  */
 export function CallProvider({ children }) {
   // Settings are loaded before the call flow because they influence call setup
   // (speaker-on-join). Status messages they raise are forwarded to the call
   // flow's status banner through a ref, since it is created below.
+  /** @type {import('react').MutableRefObject<CallFlow['updateStatus'] | null>} */
   const updateStatusRef = useRef(null);
+  /** @type {(message: string, severity?: string) => void} */
   const notifyStatus = useCallback((message, severity) => {
     updateStatusRef.current?.(message, severity);
   }, []);
@@ -188,7 +230,7 @@ export function CallProvider({ children }) {
 /**
  * Access the single call context.
  *
- * @returns {object} the value published by {@link CallProvider}
+ * @returns {CallContextValue} the value published by {@link CallProvider}
  */
 export function useCall() {
   const context = useContext(CallContext);
