@@ -74,9 +74,8 @@
  * @typedef {Map<string, PresenceRecord>} UserPresenceStore
  *   userId → presence record.
  *
- * Call record as read by the timeline/history layers. Extra fields written by
- * the call state machine are tolerated via the index signature until
- * `src/domain/calls.js` is migrated.
+ * Call record as written by the call state machine (`src/domain/calls.js`) and
+ * read by the timeline/history layers.
  *
  * @typedef {{
  *   callId: string,
@@ -86,8 +85,11 @@
  *   endReason?: string|null,
  *   durationSeconds?: number|null,
  *   createdAt: string,
+ *   updatedAt?: string|null,
  *   missedReadAt?: string|null,
- *   [key: string]: any,
+ *   ringTimeoutAt?: string|null,
+ *   answeredAt?: string|null,
+ *   lastHeartbeatAt?: string|null,
  * }} CallRecord
  *
  * @typedef {Map<string, CallRecord>} CallStore
@@ -111,6 +113,14 @@
  * @property {CallStore} calls
  * @property {CallEventStore} callEvents
  * @property {BlockStore} blocks
+ *
+ * Per-call bookkeeping for incoming-call push fan-out: which devices were
+ * pushed, which acknowledged, and the pending ack-timeout timers.
+ *
+ * @typedef {object} IncomingCallPushEntry
+ * @property {Set<string>} acknowledgedDeviceIds
+ * @property {Set<string>} pushedDeviceIds
+ * @property {Map<string, NodeJS.Timeout>} ackTimeouts
  *
  * @typedef {object} AuditLog
  * @property {(entry: {
@@ -148,6 +158,7 @@
  *   messageStoreStatus: string,
  *   messageBus: any,
  *   draining: boolean,
+ *   incomingCallPushState?: Map<string, IncomingCallPushEntry>,
  * }} ServerState
  */
 

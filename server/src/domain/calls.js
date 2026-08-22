@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { randomUUID } = require('crypto');
@@ -24,7 +25,8 @@ const {
  * shared `state` and persist to the DB, but leave client notification to the
  * `notifications` module.  This keeps the state machine independently testable.
  *
- * @typedef {object} CallRecord
+ * @typedef {import('../stores/contracts').CallRecord} CallRecord
+ * @typedef {import('../stores/contracts').ServerState} ServerState
  */
 
 /**
@@ -34,7 +36,7 @@ const {
  * (non-terminal) call, or to `unreachable` when the callee has no reachable
  * channels at all; otherwise starts in `ringing`.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {{ callerId: string, calleeId: string, ringingTimeoutMs: number }} opts
  * @returns {CallRecord}
  */
@@ -136,7 +138,7 @@ function computeDurationSeconds(call, previousStatus, endedAtMs) {
  * Terminal states are immutable: any other transition out of a terminal state
  * returns `{ ok: false, status: 409 }`.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} callId
  * @param {string} toStatus
  * @param {{ actor?: string|null, reason?: string|null }} [opts]
@@ -200,7 +202,7 @@ function transitionCall(state, callId, toStatus, { actor = null, reason = null }
 /**
  * Append an event entry to a call's event log.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} callId
  * @param {string} event
  * @param {string|null} actor
@@ -234,7 +236,7 @@ function appendCallEvent(state, callId, event, actor, reason, afterPersist) {
 /**
  * Return all non-terminal calls where `userId` is either the caller or callee.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} userId
  * @returns {CallRecord[]}
  */
@@ -259,7 +261,7 @@ function getActiveCallsForUser(state, userId) {
  * here: they may come online or register a push token before the ringing
  * timeout fires.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} calleeId
  * @returns {boolean}
  */
@@ -267,6 +269,10 @@ function isCalleeUnreachable(state, calleeId) {
   return resolveReachableChannels(state, calleeId).length === 0 && !hasKnownUser(state, calleeId);
 }
 
+/**
+ * @param {ServerState} state
+ * @returns {boolean} true when no cross-instance message bus is configured.
+ */
 function isSingleInstanceMode(state) {
   return !state.messageBus;
 }
@@ -279,7 +285,7 @@ function isSingleInstanceMode(state) {
  * from a long healthy one.  Best-effort and in-memory only: it is a liveness
  * signal, not part of the persisted call record.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} callId
  * @param {number} [now]
  * @returns {boolean} Whether a live call was found and stamped.
@@ -302,7 +308,7 @@ function recordCallHeartbeat(state, callId, now = Date.now()) {
  * permanently marks both participants busy.  Every state now has a finite
  * lifetime.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {number} now - Unix timestamp in ms.
  * @param {(call: CallRecord, previousStatus: string, reason: string) => void} [onTransition]
  * @param {{ ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number, heartbeatTimeoutMs?: number }} [options]
@@ -330,7 +336,7 @@ function tickRingingTimeouts(state, now, onTransition, options = {}) {
  * `ringing` calls are left alone: they are delivered by push to a callee who
  * is expected to be offline, and the ring timeout already bounds them.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} userId
  * @param {{ reason?: string, onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void }} [opts]
  * @returns {number} Number of calls transitioned.
@@ -366,7 +372,7 @@ function endCallsForDisconnectedParticipant(
  * is rebuilt from the `calls` table, so a stranded row would otherwise keep
  * both participants permanently busy across every future restart.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {{ now?: number, ringingTimeoutMs?: number, mediaConnectTimeoutMs?: number, maxCallDurationMs?: number, heartbeatTimeoutMs?: number }} [options]
  * @returns {number} Number of calls closed out.
  */
@@ -395,7 +401,7 @@ function sanitizeHydratedCalls(state, { now = Date.now(), ...timeouts } = {}) {
  * not initiate are left alone so a genuine concurrent incoming ring survives
  * (the ring timeout bounds it anyway).
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} userId
  * @param {Iterable<string>} activeCallIds - Call ids the client still considers live.
  * @param {{ onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void }} [opts]
@@ -426,10 +432,18 @@ function reconcileClientCallState(state, userId, activeCallIds, { onTransition }
  * Describe the calls that make `userId` busy, for log lines and the
  * `/debug/active-calls/:userId` endpoint.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {string} userId
  * @param {number} [now]
- * @returns {{ callId: string, status: string, callerId: string, calleeId: string, ageMs: number, updatedAt: string }[]}
+ * @returns {{
+ *   callId: string,
+ *   status: string,
+ *   callerId: string,
+ *   calleeId: string,
+ *   createdAt: string,
+ *   updatedAt: string|null|undefined,
+ *   ageMs: number,
+ * }[]}
  */
 function describeActiveCallsForUser(state, userId, now = Date.now()) {
   return getActiveCallsForUser(state, userId).map((call) => ({
@@ -443,10 +457,20 @@ function describeActiveCallsForUser(state, userId, now = Date.now()) {
   }));
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} userId
+ * @returns {boolean}
+ */
 function hasLiveSockets(state, userId) {
   return (state.userConnections?.get(userId)?.size ?? 0) > 0;
 }
 
+/**
+ * @param {string|null|undefined} value ISO timestamp, if any.
+ * @param {number} fallback used when `value` is missing or unparseable.
+ * @returns {number} epoch milliseconds
+ */
 function toTimestamp(value, fallback) {
   const parsed = value ? new Date(value).getTime() : Number.NaN;
   return Number.isNaN(parsed) ? fallback : parsed;
@@ -515,7 +539,7 @@ function getCallExpiry(
  * Move a call into a terminal state without the transition-table checks, for
  * server-initiated cleanups (timeouts, disconnects, hydration sanitation).
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {CallRecord} call
  * @param {string} status
  * @param {string} reason

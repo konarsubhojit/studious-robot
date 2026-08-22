@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const push = require('../push');
@@ -17,6 +18,11 @@ const DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS = 2000;
  * user rooms), push fallbacks, telemetry, and cross-instance message-bus
  * broadcasts.  Kept separate from the `calls` state machine so the machine has
  * no Socket.IO dependency.
+ *
+ * @typedef {import('../stores/contracts').ServerState} ServerState
+ * @typedef {import('../stores/contracts').CallRecord} CallRecord
+ * @typedef {import('../stores/contracts').IncomingCallPushEntry} IncomingCallPushEntry
+ * @typedef {{ type: 'push', deviceId: string, provider: string, pushToken: string }} PushChannel
  */
 
 /**
@@ -24,7 +30,7 @@ const DEFAULT_INCOMING_CALL_ACK_TIMEOUT_MS = 2000;
  * Never throws — a failure to prune must not affect the caller's own
  * success/failure handling for the push it just attempted.
  *
- * @param {object} state
+ * @param {ServerState} state
  * @param {{ deviceId: string, deadToken?: boolean, reason?: string }} outcome
  * @returns {Promise<void>}
  */
@@ -33,10 +39,21 @@ async function handleDeadTokenOutcome(state, outcome) {
   try {
     await pruneDeadDevice(state.db, state, outcome.deviceId, outcome.reason ?? 'unknown');
   } catch (err) {
-    console.error(`[push] failed to prune dead device ${outcome.deviceId}:`, err?.message);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[push] failed to prune dead device ${outcome.deviceId}:`, message);
   }
 }
 
+/**
+ * Emit an event to every socket of a user, on this instance and (with the
+ * Redis adapter attached) on every other instance.
+ *
+ * @param {any} io Socket.IO server.
+ * @param {string} userId
+ * @param {string} eventName
+ * @param {object} payload
+ * @returns {void}
+ */
 function emitToUserSockets(io, userId, eventName, payload) {
   // Emit to the user's room: locally this reaches every tracked socket, and
   // with the Redis adapter attached it also reaches the user's sockets on other
@@ -44,6 +61,10 @@ function emitToUserSockets(io, userId, eventName, payload) {
   io.to(userRoom(userId)).emit(eventName, payload);
 }
 
+/**
+ * @param {CallRecord} call
+ * @returns {{ version: number, callId: string, call: CallRecord }}
+ */
 function createCallEnvelope(call) {
   return {
     version: SIGNALING_VERSION,
@@ -52,6 +73,11 @@ function createCallEnvelope(call) {
   };
 }
 
+/**
+ * @param {string} status
+ * @param {string|null} reason
+ * @returns {string|null} the client event for this transition, if any.
+ */
 function getCallTransitionEventName(status, reason) {
   if (status === 'accepted') {
     return CLIENT_EVENTS.CALL_ACCEPT;
@@ -65,6 +91,13 @@ function getCallTransitionEventName(status, reason) {
   return null;
 }
 
+/**
+ * @param {CallRecord} call
+ * @param {string} reason
+ * @param {string|null} [deviceId]
+ * @param {string} [details]
+ * @returns {void}
+ */
 function logIncomingCallPushSkip(call, reason, deviceId = null, details = '') {
   console.log(
     `[push] Skipped call.incoming callId=${call.callId} user=${call.calleeId}` +
@@ -74,6 +107,11 @@ function logIncomingCallPushSkip(call, reason, deviceId = null, details = '') {
   );
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} userId
+ * @returns {'no_device_row'|'no_push_token'}
+ */
 function getNoPushChannelReason(state, userId) {
   const deviceIds = state.userDevices.get(userId);
   if (!deviceIds || deviceIds.size === 0) {
@@ -82,6 +120,10 @@ function getNoPushChannelReason(state, userId) {
   return 'no_push_token';
 }
 
+/**
+ * @param {ServerState} state
+ * @returns {Map<string, IncomingCallPushEntry>}
+ */
 function getIncomingCallPushState(state) {
   if (!state.incomingCallPushState) {
     state.incomingCallPushState = new Map();
@@ -89,18 +131,30 @@ function getIncomingCallPushState(state) {
   return state.incomingCallPushState;
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} callId
+ * @returns {IncomingCallPushEntry}
+ */
 function getIncomingCallPushStateForCall(state, callId) {
   const store = getIncomingCallPushState(state);
-  if (!store.has(callId)) {
-    store.set(callId, {
+  let entry = store.get(callId);
+  if (!entry) {
+    entry = {
       acknowledgedDeviceIds: new Set(),
       pushedDeviceIds: new Set(),
       ackTimeouts: new Map(),
-    });
+    };
+    store.set(callId, entry);
   }
-  return store.get(callId);
+  return entry;
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} callId
+ * @returns {void}
+ */
 function clearIncomingCallPushState(state, callId) {
   const store = getIncomingCallPushState(state);
   const entry = store.get(callId);
@@ -111,21 +165,45 @@ function clearIncomingCallPushState(state, callId) {
   store.delete(callId);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} callId
+ * @param {string} deviceId
+ * @returns {boolean}
+ */
 function hasIncomingCallPushBeenDispatched(state, callId, deviceId) {
   const entry = getIncomingCallPushStateForCall(state, callId);
   return entry.pushedDeviceIds.has(deviceId);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} callId
+ * @param {string} deviceId
+ * @returns {void}
+ */
 function markIncomingCallPushDispatched(state, callId, deviceId) {
   const entry = getIncomingCallPushStateForCall(state, callId);
   entry.pushedDeviceIds.add(deviceId);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} callId
+ * @param {string} deviceId
+ * @returns {boolean}
+ */
 function hasIncomingCallBeenAcknowledged(state, callId, deviceId) {
   const entry = getIncomingCallPushStateForCall(state, callId);
   return entry.acknowledgedDeviceIds.has(deviceId);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string|null|undefined} callId
+ * @param {string|null|undefined} deviceId
+ * @returns {boolean} whether the acknowledgement was recorded.
+ */
 function markIncomingCallAcknowledged(state, callId, deviceId) {
   if (!callId || !deviceId) return false;
   const entry = getIncomingCallPushStateForCall(state, callId);
@@ -138,6 +216,13 @@ function markIncomingCallAcknowledged(state, callId, deviceId) {
   return true;
 }
 
+/**
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @param {PushChannel} channel
+ * @param {string|null} [trigger] what prompted this (re)push, for the logs.
+ * @returns {void}
+ */
 function attemptIncomingCallPush(state, call, channel, trigger = null) {
   if (hasIncomingCallPushBeenDispatched(state, call.callId, channel.deviceId)) {
     logIncomingCallPushSkip(call, 'already_pushed', channel.deviceId, trigger ? ` trigger=${trigger}` : '');
@@ -164,6 +249,12 @@ function attemptIncomingCallPush(state, call, channel, trigger = null) {
     });
 }
 
+/**
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @param {string} deviceId
+ * @returns {void}
+ */
 function scheduleIncomingCallAckTimeout(state, call, deviceId) {
   const entry = getIncomingCallPushStateForCall(state, call.callId);
   if (entry.ackTimeouts.has(deviceId)) return;
@@ -184,6 +275,11 @@ function scheduleIncomingCallAckTimeout(state, call, deviceId) {
   entry.ackTimeouts.set(deviceId, timeoutId);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @returns {void}
+ */
 function dispatchIncomingCallPushes(state, call) {
   const connections = state.userConnections.get(call.calleeId);
   const connectedDeviceIds = new Set(
@@ -220,6 +316,12 @@ function dispatchIncomingCallPushes(state, call) {
   }
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} userId
+ * @param {string} deviceId
+ * @returns {PushChannel|null}
+ */
 function findPushChannelForDevice(state, userId, deviceId) {
   const device = state.devices.get(deviceId);
   if (!device || device.userId !== userId || !device.pushProvider || !device.pushToken) {
@@ -233,6 +335,12 @@ function findPushChannelForDevice(state, userId, deviceId) {
   };
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string} userId
+ * @param {string} deviceId
+ * @returns {boolean}
+ */
 function hasLiveConnectionForDevice(state, userId, deviceId) {
   const connections = state.userConnections.get(userId);
   if (!connections) return false;
@@ -244,6 +352,14 @@ function hasLiveConnectionForDevice(state, userId, deviceId) {
   return false;
 }
 
+/**
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @param {string} deviceId
+ * @param {string} trigger
+ * @param {{ allowConnectedDevicePush?: boolean }} [opts]
+ * @returns {void}
+ */
 function dispatchIncomingCallPushToDevice(
   state,
   call,
@@ -279,6 +395,12 @@ function dispatchIncomingCallPushToDevice(
   attemptIncomingCallPush(state, call, channel, trigger);
 }
 
+/**
+ * @param {ServerState} state
+ * @param {string|null|undefined} userId
+ * @param {string|null|undefined} deviceId
+ * @returns {void}
+ */
 function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
   if (!userId || !deviceId) return;
   for (const call of state.calls.values()) {
@@ -291,8 +413,8 @@ function notifyRingingCallsForDisconnectedDevice(state, userId, deviceId) {
  * Render the calls that are keeping the callee busy, so a `busy` rejection log
  * names the blocking call instead of only its own callId.
  *
- * @param {object} state
- * @param {object} call
+ * @param {ServerState} state
+ * @param {CallRecord} call
  * @returns {string}
  */
 function describeBusyBlockers(state, call) {
@@ -303,6 +425,12 @@ function describeBusyBlockers(state, call) {
   return blockers.length > 0 ? ` blockedBy=${blockers.join(',')}` : '';
 }
 
+/**
+ * @param {any} io Socket.IO server.
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @returns {void}
+ */
 function notifyCallCreated(io, state, call) {
   state.telemetry.recordCallCreated(call);
   console.log(
@@ -344,9 +472,10 @@ function notifyCallCreated(io, state, call) {
  * `call.state_changed`) can dismiss the notification instead of leaving a
  * tappable ghost on screen.
  *
- * @param {object} state
- * @param {object} call
+ * @param {ServerState} state
+ * @param {CallRecord} call
  * @param {string|null} reason
+ * @returns {void}
  */
 function dispatchCallCancelledPushes(state, call, reason) {
   const entry = getIncomingCallPushState(state).get(call.callId);
@@ -370,6 +499,13 @@ function dispatchCallCancelledPushes(state, call, reason) {
   }
 }
 
+/**
+ * @param {any} io Socket.IO server.
+ * @param {ServerState} state
+ * @param {CallRecord} call
+ * @param {{ previousStatus: string|null, actor?: string|null, reason?: string|null }} transition
+ * @returns {void}
+ */
 function notifyCallTransition(io, state, call, { previousStatus, actor = null, reason = null }) {
   if (call.status !== 'ringing') {
     if (previousStatus === 'ringing' && TERMINAL_CALL_STATES.has(call.status)) {
@@ -418,8 +554,9 @@ function notifyCallTransition(io, state, call, { previousStatus, actor = null, r
         actor,
         reason: statePayload.reason,
       })
-      .catch((error) => {
-        console.error(`[signaling] message bus publish failed: ${error?.message}`);
+      .catch((/** @type {unknown} */ error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[signaling] message bus publish failed: ${message}`);
       });
   }
 

@@ -604,7 +604,7 @@ function buildApnsEnvelopePayload(envelope) {
 /**
  * Build the APNs payload for an incoming call.
  *
- * @param {{ callId: string, callerId: string }} callData
+ * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
  * @returns {string}
  */
 function buildApnsPayload(callData) {
@@ -644,7 +644,7 @@ function buildDataBlock(envelope) {
  * a heads-up notification if it chooses.
  *
  * @param {string} pushToken
- * @param {{ callId: string, callerId: string }} callData
+ * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
  * @returns {string}
  */
 function buildFcmPayload(pushToken, callData) {
@@ -693,7 +693,7 @@ function buildFcmEnvelopePayload(pushToken, envelope, { ttlSeconds = null } = {}
  * required by a standalone FCM v1 call is omitted — Notification Hubs routes
  * the message using the `ServiceBusNotification-DeviceHandle` header instead.
  *
- * @param {{ callId: string, callerId: string }} callData
+ * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
  * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData) {
@@ -1096,7 +1096,7 @@ async function tryNotificationHub(channel, envelope, label) {
  * → skip.  Never throws; unconfigured providers resolve with a
  * `*_not_configured` reason.
  *
- * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
  * @param {PushEnvelope} envelope
  * @returns {Promise<{
  *   ok: boolean,
@@ -1219,8 +1219,8 @@ function logDeliveryOutcome(outcome, description) {
  * - Logs every delivery outcome (success or failure).
  * - Never throws.
  *
- * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
- * @param {{ callId: string, callerId: string }} callData
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
+ * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
  * @returns {Promise<{
  *   ok: boolean,
  *   provider: string,
@@ -1247,7 +1247,7 @@ async function sendIncomingCallPush(channel, callData) {
  * anything — the client reports that separately through
  * `POST /devices/push-receipt` keyed by `messageId`.
  *
- * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
  * @param {{
  *   messageId: string,
  *   conversationId: string,
@@ -1268,9 +1268,17 @@ async function sendIncomingCallPush(channel, callData) {
  * Tell a device that a call stopped ringing so it can dismiss the stale
  * incoming-call notification even with no socket connected.  Never throws.
  *
- * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
  * @param {{ callId: string, reason?: string|null }} callData
- * @returns {Promise<object>} delivery outcome, see {@link sendIncomingCallPush}
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   provider: string,
+ *   deviceId: string,
+ *   transport: 'notification_hub'|'direct',
+ *   statusCode?: number,
+ *   reason?: string,
+ *   deadToken: boolean
+ * }>} delivery outcome, see {@link sendIncomingCallPush}
  */
 async function sendCallCancelledPush(channel, callData) {
   const outcome = await deliverPush(channel, buildCallCancelledEnvelope(callData));
@@ -1291,7 +1299,7 @@ async function sendCallCancelledPush(channel, callData) {
  * anything — the client reports that separately through
  * `POST /devices/push-receipt` keyed by `messageId`.
  *
- * @param {{ provider: 'apns'|'fcm', pushToken: string, deviceId: string }} channel
+ * @param {{ provider: string, pushToken: string, deviceId: string }} channel
  * @param {{
  *   messageId: string,
  *   conversationId: string,
