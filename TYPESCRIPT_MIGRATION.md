@@ -153,6 +153,9 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `storage/`
   - [x] `hooks/`
   - [x] `components/`
+  - [x] `SafeRTCView.test.js`
+  - [x] `ThemeProvider.test.js`
+  - [x] `attachmentPicker.test.js`
 
 ### server/
 
