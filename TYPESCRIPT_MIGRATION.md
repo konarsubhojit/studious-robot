@@ -100,6 +100,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `useSession.js`
   - [x] `usePresenceSearch.js`
   - [x] `useIdentity.js`
+  - [x] `useScreenShare.js`
 - [x] `src/storage/` (chatDb, recentSearches)
 - [x] `src/diagnostics.js`
 - [x] `src/audioRouting.js`

@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logError, logInfo, logWarn } from '../appLogger';
 import {
@@ -22,9 +23,9 @@ import {
  * The microphone track is left untouched so mute keeps working independently.
  *
  * @param {object}   params
- * @param {{ current: object | null }} params.peerConnectionRef
- * @param {{ current: object | null }} params.localStreamRef
- * @param {(stream: object | null) => void} params.setLocalStream
+ * @param {{ current: any }} params.peerConnectionRef - holds an `RTCPeerConnection`.
+ * @param {{ current: any }} params.localStreamRef - holds a `MediaStream`.
+ * @param {(stream: any) => void} params.setLocalStream
  * @param {(message: string, severity?: string) => void} params.setStatus
  * @param {() => Promise<void>} [params.renegotiate] - sends a fresh offer.
  */
@@ -40,10 +41,10 @@ export default function useScreenShare({
   // User preference: include screen (system) audio with the next share.
   const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(false);
 
-  const screenStreamRef = useRef(null);
-  const screenVideoTrackRef = useRef(null);
-  const screenAudioSenderRef = useRef(null);
-  const cameraTrackRef = useRef(null);
+  const screenStreamRef = useRef(/** @type {any} */ (null));
+  const screenVideoTrackRef = useRef(/** @type {any} */ (null));
+  const screenAudioSenderRef = useRef(/** @type {any} */ (null));
+  const cameraTrackRef = useRef(/** @type {any} */ (null));
   const isTogglingRef = useRef(false);
 
   const renegotiateRef = useRef(renegotiate);
@@ -83,20 +84,24 @@ export default function useScreenShare({
           await audioSender.replaceTrack?.(null);
           pc.removeTrack?.(audioSender);
         } catch (error) {
-          logWarn('Failed to remove screen audio sender', { message: error?.message });
+          logWarn('Failed to remove screen audio sender', {
+            message: error instanceof Error ? error.message : undefined,
+          });
         }
       }
 
       if (cameraTrack) {
         cameraTrack.enabled = true;
         try {
-          const sender = pc?.getSenders?.().find(s => s.track?.kind === 'video');
+          const sender = pc
+            ?.getSenders?.()
+            .find((/** @type {any} */ s) => s.track?.kind === 'video');
           if (sender) {
             await sender.replaceTrack(cameraTrack);
           }
         } catch (error) {
           logWarn('Failed to restore camera track after screen share', {
-            message: error?.message,
+            message: error instanceof Error ? error.message : undefined,
           });
         }
       }
@@ -122,7 +127,7 @@ export default function useScreenShare({
           await renegotiateRef.current?.();
         } catch (error) {
           logWarn('Renegotiation after screen share stop failed', {
-            message: error?.message,
+            message: error instanceof Error ? error.message : undefined,
           });
         }
         setStatus('Screen sharing stopped');
@@ -156,10 +161,12 @@ export default function useScreenShare({
       return;
     }
 
-    const { stream, videoTrack, audioTrack, audioShared } = capture;
+    const { stream, videoTrack, audioTrack, audioShared } = /** @type {any} */ (capture);
 
     try {
-      const videoSender = pc.getSenders?.().find(s => s.track?.kind === 'video');
+      const videoSender = pc
+        .getSenders?.()
+        .find((/** @type {any} */ s) => s.track?.kind === 'video');
       const cameraTrack = videoSender?.track ?? null;
       if (videoSender) {
         await videoSender.replaceTrack(videoTrack);
@@ -177,8 +184,9 @@ export default function useScreenShare({
         direction:
           pc
             .getTransceivers?.()
-            ?.find(transceiver => transceiver.sender?.track?.id === videoTrack?.id)?.direction ??
-          null,
+            ?.find(
+              (/** @type {any} */ transceiver) => transceiver.sender?.track?.id === videoTrack?.id,
+            )?.direction ?? null,
       });
 
       // Keep the camera track alive (but paused) so it can be restored without
@@ -225,7 +233,7 @@ export default function useScreenShare({
         });
       } catch (error) {
         logWarn('Renegotiation after screen share start failed', {
-          message: error?.message,
+          message: error instanceof Error ? error.message : undefined,
         });
       }
 
@@ -304,7 +312,9 @@ export default function useScreenShare({
   /** Release capture resources without touching signaling (call teardown). */
   const resetScreenShare = useCallback(() => {
     stopScreenShare({ silent: true }).catch(error => {
-      logWarn('Silent screen share stop failed', { message: error?.message });
+      logWarn('Silent screen share stop failed', {
+        message: error instanceof Error ? error.message : undefined,
+      });
     });
   }, [stopScreenShare]);
 
