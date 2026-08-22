@@ -54,4 +54,45 @@ function readJson(response) {
   return response.json();
 }
 
-module.exports = { captureConsoleLog, listenOnRandomPort, readJson };
+/**
+ * POST a JSON body, optionally injecting a session id into it.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {Record<string, unknown>} body
+ * @param {string} [sessionId] - Merged into the body when present.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
+async function postJson(url, path, body, sessionId) {
+  const payload = sessionId ? { ...body, sessionId } : body;
+  const response = await fetch(`${url}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return { status: response.status, body: await readJson(response) };
+}
+
+/**
+ * GET a JSON body, optionally appending the session id as a query parameter.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {string} [sessionId] - Appended as `?sessionId=` when present.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
+async function getJson(url, path, sessionId) {
+  const pathname = sessionId
+    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
+    : path;
+  const response = await fetch(`${url}${pathname}`);
+  return { status: response.status, body: await readJson(response) };
+}
+
+module.exports = {
+  captureConsoleLog,
+  getJson,
+  listenOnRandomPort,
+  postJson,
+  readJson,
+};

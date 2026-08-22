@@ -1,43 +1,33 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function startServer() {
   const server = createServer();
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId) {
   const res = await postJson(url, '/session', { userId, deviceId: `device-${userId}` });
   assert.equal(res.status, 201);
@@ -65,7 +55,7 @@ test('GET /users lists other known users and excludes self', async () => {
 
     const res = await getJson(url, '/users', aliceSession);
     assert.equal(res.status, 200);
-    const ids = res.body.users.map((u) => u.userId);
+    const ids = res.body.users.map((/** @type {{ userId: string }} */ u) => u.userId);
     assert.deepEqual(ids, ['bob', 'carol']);
     assert.equal(res.body.total, 2);
     // Each entry carries a lightweight presence snapshot.
@@ -90,7 +80,7 @@ test('GET /users filters by case-insensitive search substring', async () => {
     const res = await getJson(url, '/users?search=BOB', aliceSession);
     assert.equal(res.status, 200);
     assert.deepEqual(
-      res.body.users.map((u) => u.userId),
+      res.body.users.map((/** @type {{ userId: string }} */ u) => u.userId),
       ['bob', 'bobby']
     );
   } finally {
@@ -110,7 +100,7 @@ test('GET /users honours limit and caps total separately', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.users.length, 2);
     assert.deepEqual(
-      res.body.users.map((u) => u.userId),
+      res.body.users.map((/** @type {{ userId: string }} */ u) => u.userId),
       ['bob', 'carol']
     );
     // total reflects the full match count, not the paginated slice.
@@ -138,7 +128,7 @@ test('GET /users hides users in either direction of a block', async () => {
     const res = await getJson(url, '/users', aliceSession);
     assert.equal(res.status, 200);
     assert.deepEqual(
-      res.body.users.map((u) => u.userId),
+      res.body.users.map((/** @type {{ userId: string }} */ u) => u.userId),
       []
     );
   } finally {

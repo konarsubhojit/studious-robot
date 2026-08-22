@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -13,6 +14,7 @@ const assert = require('node:assert/strict');
 const { createMemoryMessageBus, createRedisMessageBus } = require('../src/messageBus');
 const { createRedisPgStores } = require('../src/stores');
 const { STORE_NAMES } = require('../src/stores/contracts');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
 /** Resolve after pending `setImmediate`/microtasks so async delivery lands. */
 function tick() {
@@ -24,10 +26,17 @@ function tick() {
  * `duplicate()` returns a new client bound to the same broker.
  */
 function createFakeRedis() {
+  /**
+   * @type {{
+   *   subs: Map<string, Set<(message: string, channel: string) => void>>,
+   *   published: { channel: string, message: string }[],
+   * }}
+   */
   const broker = { subs: new Map(), published: [] };
 
   function makeClient() {
     return {
+      connected: false,
       quit_called: false,
       on() {
         /* no-op error listener hook */
@@ -41,16 +50,25 @@ function createFakeRedis() {
       duplicate() {
         return makeClient();
       },
+      /**
+       * @param {string} channel
+       * @param {string} message
+       */
       async publish(channel, message) {
         broker.published.push({ channel, message });
         const set = broker.subs.get(channel);
         if (set) for (const listener of [...set]) listener(message, channel);
         return set ? set.size : 0;
       },
+      /**
+       * @param {string} channel
+       * @param {(message: string, channel: string) => void} listener
+       */
       async subscribe(channel, listener) {
         if (!broker.subs.has(channel)) broker.subs.set(channel, new Set());
-        broker.subs.get(channel).add(listener);
+        broker.subs.get(channel)?.add(listener);
       },
+      /** @param {string} channel */
       async unsubscribe(channel) {
         broker.subs.delete(channel);
       },
@@ -64,8 +82,11 @@ function createFakeRedis() {
 
 test('memory bus delivers published JSON messages to subscribers', async () => {
   const bus = createMemoryMessageBus();
+  /** @type {{ msg: any, channel: string }[]} */
   const received = [];
-  await bus.subscribe('chan', (msg, channel) => received.push({ msg, channel }));
+  await bus.subscribe('chan', (msg, channel) => {
+    received.push({ msg, channel });
+  });
 
   await bus.publish('chan', { hello: 'world' });
   await tick();
@@ -78,10 +99,16 @@ test('memory bus delivers published JSON messages to subscribers', async () => {
 
 test('memory bus fans out to multiple subscribers and supports unsubscribe', async () => {
   const bus = createMemoryMessageBus();
+  /** @type {any[]} */
   const a = [];
+  /** @type {any[]} */
   const b = [];
-  const unsubA = await bus.subscribe('c', (m) => a.push(m));
-  await bus.subscribe('c', (m) => b.push(m));
+  const unsubA = await bus.subscribe('c', (m) => {
+    a.push(m);
+  });
+  await bus.subscribe('c', (m) => {
+    b.push(m);
+  });
 
   await bus.publish('c', { n: 1 });
   await tick();
@@ -98,8 +125,11 @@ test('memory bus fans out to multiple subscribers and supports unsubscribe', asy
 
 test('memory bus does not deliver after close', async () => {
   const bus = createMemoryMessageBus();
+  /** @type {any[]} */
   const received = [];
-  await bus.subscribe('c', (m) => received.push(m));
+  await bus.subscribe('c', (m) => {
+    received.push(m);
+  });
   await bus.close();
   await bus.publish('c', { n: 1 });
   await tick();
@@ -116,13 +146,19 @@ test('redis bus publishes via pub and fans out one subscription per channel', as
   const { makeClient, broker } = createFakeRedis();
   const bus = createRedisMessageBus({ pub: makeClient(), sub: makeClient() });
 
+  /** @type {any[]} */
   const a = [];
+  /** @type {any[]} */
   const b = [];
-  await bus.subscribe('c', (m) => a.push(m));
-  await bus.subscribe('c', (m) => b.push(m));
+  await bus.subscribe('c', (m) => {
+    a.push(m);
+  });
+  await bus.subscribe('c', (m) => {
+    b.push(m);
+  });
 
   // Only one underlying Redis subscription despite two local handlers.
-  assert.equal(broker.subs.get('c').size, 1);
+  assert.equal(broker.subs.get('c')?.size, 1);
 
   await bus.publish('c', { v: 42 });
   assert.deepEqual(a[0], { v: 42 });
@@ -152,11 +188,12 @@ test('redis bus unsubscribes from Redis only when the last handler is removed', 
 
 test('createRedisPgStores returns a complete store bundle plus bus/adapter/close', async () => {
   const { makeClient } = createFakeRedis();
-  let adapterArgs = null;
+  /** @type {{ value: { pub: unknown, sub: unknown }|null }} */
+  const adapterArgs = { value: null };
   const stores = await createRedisPgStores({
     createClient: makeClient,
     createAdapter: (pub, sub) => {
-      adapterArgs = { pub, sub };
+      adapterArgs.value = { pub, sub };
       return { kind: 'fake-adapter' };
     },
   });
@@ -173,17 +210,24 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
   // attachAdapter wires the Socket.IO adapter onto the io server.
   let attached = null;
   const fakeIo = {
+    /** @param {unknown} a */
     adapter: (a) => {
       attached = a;
     },
   };
   stores.attachAdapter(fakeIo);
   assert.deepEqual(attached, { kind: 'fake-adapter' });
-  assert.ok(adapterArgs.pub && adapterArgs.sub, 'adapter built from its own client pair');
+  assert.ok(
+    adapterArgs.value?.pub && adapterArgs.value?.sub,
+    'adapter built from its own client pair'
+  );
 
   // The bundled bus works end-to-end.
+  /** @type {any[]} */
   const received = [];
-  await stores.messageBus.subscribe('c', (m) => received.push(m));
+  await stores.messageBus.subscribe('c', (m) => {
+    received.push(m);
+  });
   await stores.messageBus.publish('c', { ok: true });
   assert.deepEqual(received[0], { ok: true });
 
@@ -218,23 +262,30 @@ test('createRedisPgStores can be injected as opts.stores into the in-memory cont
 test('createServer publishes call-state transitions on the injected message bus', async () => {
   const { createServer, CALL_TRANSITION_CHANNEL } = require('../src/index.js');
   const bus = createMemoryMessageBus();
+  /** @type {any[]} */
   const transitions = [];
-  await bus.subscribe(CALL_TRANSITION_CHANNEL, (msg) => transitions.push(msg));
+  await bus.subscribe(CALL_TRANSITION_CHANNEL, (msg) => {
+    transitions.push(msg);
+  });
 
   const server = createServer({ messageBus: bus });
   assert.equal(server.messageBus, bus, 'bus exposed on the server');
 
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /**
+   * @param {string} path
+   * @param {Record<string, unknown>} body
+   * @returns {Promise<{ status: number, body: any }>}
+   */
   async function post(path, body) {
     const res = await fetch(`${url}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    return { status: res.status, body: await res.json() };
+    return { status: res.status, body: await readJson(res) };
   }
 
   try {
@@ -255,7 +306,9 @@ test('createServer publishes call-state transitions on the injected message bus'
     assert.equal(accepted.previousStatus, 'ringing');
   } finally {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
     await bus.close();
   }
 });

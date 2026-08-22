@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
@@ -13,6 +14,7 @@ const {
   parseEventPayload,
   s,
 } = require('../../shared');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
 /**
  * Contract tests for `@wetalk/shared`: the schema helper itself, and the
@@ -22,19 +24,26 @@ const {
 
 async function startServer() {
   const server = createServer();
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /** @param {...import('socket.io-client').Socket} clients */
   async function teardown(...clients) {
     clients.forEach((client) => client.disconnect());
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
+/**
+ * @param {string} url
+ * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url, auth) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, { auth, forceNew: true, transports: ['websocket'] });
@@ -43,19 +52,30 @@ function connect(url, auth) {
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => {
     socket.emit(event, payload, resolve);
   });
 }
 
+/**
+ * @param {string} url
+ * @param {string} userId
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId) {
   const response = await fetch(`${url}${API_ROUTES.SESSION}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ userId, deviceId: `device-${userId}` }),
   });
-  const body = await response.json();
+  const body = await readJson(response);
   assert.equal(response.status, 201);
   const parsed = SESSION_RESPONSE.safeParse(body);
   assert.equal(parsed.success, true);
@@ -123,6 +143,7 @@ test('malformed signaling payloads are rejected with bad_request, not crashes', 
   const socket = await connect(url, { sessionId: session });
   t.after(() => teardown(socket));
 
+  /** @type {[string, Record<string, unknown>][]} */
   const cases = [
     [CLIENT_EVENTS.CALL_INITIATE, { version: 1 }],
     [CLIENT_EVENTS.CALL_INITIATE, { version: 1, calleeId: 42 }],

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
@@ -5,19 +6,26 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
+const { listenOnRandomPort } = require('./helpers');
 
 /**
  * Start a server on an ephemeral port and return its URL plus the full server
  * handle (so tests can call `shutdown()` directly).
+ *
+ * @param {import('../src/createServer').CreateServerOptions} [opts]
  */
 async function startServer(opts = {}) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   return { ...server, url: `http://127.0.0.1:${port}`, port };
 }
 
-/** Connect a Socket.IO client and resolve once connected. */
+/**
+ * Connect a Socket.IO client and resolve once connected.
+ *
+ * @param {string} url
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, { forceNew: true, transports: ['websocket'] });
@@ -26,7 +34,14 @@ function connect(url) {
   });
 }
 
-/** Wait for a named event on a socket, with a timeout. */
+/**
+ * Wait for a named event on a socket, with a timeout.
+ *
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
+ */
 function waitFor(socket, event, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -37,7 +52,12 @@ function waitFor(socket, event, timeoutMs = 1000) {
   });
 }
 
-/** Simple GET helper returning { status, body }. */
+/**
+ * Simple GET helper returning `{ status, body }`.
+ *
+ * @param {string} url
+ * @returns {Promise<{ status: number|undefined, body: any }>}
+ */
 function getJson(url) {
   return new Promise((resolve, reject) => {
     http
@@ -80,6 +100,7 @@ test('shutdown() removes local connections from presence', async () => {
   const client = await connect(server.url);
   // Give the server a tick to register the connection.
   await waitFor(client, 'connect-ack', 200).catch(() => {});
+  assert.ok(client.id, 'the client reports a socket id once connected');
   const userId = server.io.sockets.sockets.get(client.id)?.data?.identity?.userId;
   assert.ok(userId, 'server tracked a userId for the connection');
 

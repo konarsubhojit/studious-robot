@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -47,6 +48,7 @@ function createFakeRedisClient() {
     async quit() {
       this.quitCalled = true;
     },
+    /** @param {string} key */
     async get(key) {
       const entry = store.get(key);
       if (!entry) return null;
@@ -56,19 +58,28 @@ function createFakeRedisClient() {
       }
       return entry.value;
     },
+    /**
+     * @param {string} key
+     * @param {string} value
+     * @param {{ PX?: number }} [options]
+     */
     async set(key, value, options) {
       store.set(key, { value, expiresAtMs: Date.now() + Number(options?.PX ?? 0) });
     },
+    /** @param {string|string[]} keys */
     async del(keys) {
       for (const key of Array.isArray(keys) ? keys : [keys]) store.delete(key);
     },
+    /** @param {{ MATCH: string }} options */
     async *scanIterator({ MATCH }) {
       // Translate the (escaped) glob into a RegExp the same way Redis would.
       const source = MATCH.replace(/\\(.)/g, '\u0000$1')
         .replace(/[.+^${}()|]/g, '\\$&')
         .replace(/\*/g, '.*')
         .replace(/\?/g, '.')
-        .replace(/\u0000(.)/g, (_m, ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        .replace(/\u0000(.)/g, (/** @type {string} */ _m, /** @type {string} */ ch) =>
+          ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        );
       const pattern = new RegExp(`^${source}$`);
       for (const key of [...store.keys()]) {
         if (pattern.test(key)) yield key;
@@ -193,7 +204,7 @@ test('redis cache delByPrefix scans and deletes only matching keys', async () =>
 
 test('redis cache never issues KEYS and closes an owned client', async () => {
   const client = createFakeRedisClient();
-  assert.equal(typeof client.keys, 'undefined');
+  assert.equal(typeof (/** @type {Record<string, unknown>} */ (client).keys), 'undefined');
   const cache = createRedisCache({ client, ownsClient: true });
   await cache.set('conv::alice', 'value', 1_000);
   await cache.delByPrefix('conv::');
@@ -216,8 +227,11 @@ test('createCache falls back to the memory backend when Redis cannot be opened',
 
 test('invalidateCache evicts locally and publishes the prefixes on the bus', async () => {
   const bus = createMemoryMessageBus();
+  /** @type {any[]} */
   const received = [];
-  await bus.subscribe(CACHE_INVALIDATE_CHANNEL, (message) => received.push(message));
+  await bus.subscribe(CACHE_INVALIDATE_CHANNEL, (message) => {
+    received.push(message);
+  });
 
   const state = { cache: createMemoryCache(), messageBus: bus };
   await state.cache.set(conversationsCacheKey('alice'), 'stale', 10_000);
@@ -257,14 +271,17 @@ test('a write on one instance invalidates the cache of another instance', async 
 test('invalidateCache is a no-op without a cache and never throws on backend errors', async () => {
   await invalidateCache({}, 'conv::alice');
 
-  const failing = {
-    cache: {
-      async delByPrefix() {
-        throw new Error('redis down');
+  // A backend that only implements the failing call under test.
+  const failing = /** @type {import('../src/cache').CacheableState} */ (
+    /** @type {unknown} */ ({
+      cache: {
+        async delByPrefix() {
+          throw new Error('redis down');
+        },
       },
-    },
-    messageBus: null,
-  };
+      messageBus: null,
+    })
+  );
   await invalidateCache(failing, 'conv::alice');
 });
 

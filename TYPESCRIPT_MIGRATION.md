@@ -191,3 +191,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `health.test.js`
   - [x] `stores.test.js`
   - [x] `verbose-logger.test.js`
+  - [x] `cache.test.js`
+  - [x] `directory.test.js`
+  - [x] `message-bus.test.js`
+  - [x] `shared-contract.test.js`
+  - [x] `shutdown.test.js`
