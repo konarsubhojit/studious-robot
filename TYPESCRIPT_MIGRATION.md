@@ -100,7 +100,9 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/routes/devices.routes.js`
 - [x] `src/routes/attachments.routes.js`
 - [x] `src/routes/index.js`
-- [ ] `src/routes/` (remaining routes: calls, messages)
+- [x] `src/routes/calls.routes.js`
+- [x] `src/routes/messages.routes.js`
+- [x] `src/routes/` (all routes)
 - [x] `src/domain/` (callTimeline, calls, notifications)
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -36,7 +37,7 @@ function hasDebugToken(req) {
  * Needs the live Socket.IO server (`io`) for realtime notifications, so it must
  * be mounted after `io` is created.
  *
- * @param {{ state: object, io: object, ringingTimeoutMs: number }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, io: any, ringingTimeoutMs: number }} ctx
  * @returns {import('express').Router}
  */
 function createCallsRouter({ state, io, ringingTimeoutMs }) {
@@ -171,7 +172,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
       return;
     }
 
-    const limitParam = parseInt(req.query.limit, 10);
+    const limitParam = parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 100) : 20;
     const statusFilter = normaliseId(req.query.status) ?? null;
 
@@ -190,7 +191,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }) {
       userCalls.push(call);
     }
 
-    userCalls.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    userCalls.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const payload = {
       calls: userCalls.slice(0, limit),

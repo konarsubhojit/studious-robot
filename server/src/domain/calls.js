@@ -142,7 +142,8 @@ function computeDurationSeconds(call, previousStatus, endedAtMs) {
  * @param {string} callId
  * @param {string} toStatus
  * @param {{ actor?: string|null, reason?: string|null }} [opts]
- * @returns {{ ok: boolean, call?: CallRecord, status?: number, error?: string, message?: string }}
+ * @returns {{ ok: true, call: CallRecord }
+ *   | { ok: false, status: number, error: string, message?: string }}
  */
 function transitionCall(state, callId, toStatus, { actor = null, reason = null } = {}) {
   const call = state.calls.get(callId);

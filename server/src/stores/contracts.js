@@ -98,6 +98,23 @@
  * @typedef {Map<string, object[]>} CallEventStore
  *   callId → ordered list of call events.
  *
+ * A persisted chat message document, as written by `src/messageStore.js`.
+ *
+ * @typedef {object} MessageRecord
+ * @property {string} messageId
+ * @property {string} conversationId
+ * @property {string} senderId
+ * @property {string} recipientId
+ * @property {string} body
+ * @property {string} [type]
+ * @property {object|null} [attachment]
+ * @property {string|null} [replyTo]
+ * @property {Record<string, string[]>} [reactions]
+ * @property {string|null} [deletedAt]
+ * @property {string} createdAt
+ * @property {string[]} [deliveredTo]
+ * @property {string|null} [readAt]
+ *
  * @typedef {Map<string, Set<string>>} BlockStore
  *   blockerId → set of blocked userIds.
  *

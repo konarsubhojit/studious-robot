@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const express = require('express');
@@ -27,13 +28,29 @@ const { SIGNALING_VERSION } = require('../config');
 const { API_ROUTES, SERVER_EVENTS } = require('../../../shared');
 
 /**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Text-chat history endpoints.
+ *
+ * @typedef {import('../stores/contracts').MessageRecord} MessageRecord
+ * @typedef {{
+ *   conversationId: string,
+ *   peerId: string,
+ *   lastMessage: Record<string, any>|null,
+ *   unreadCount: number,
+ * }} ConversationSummary
  *
  * Follows the conventions of `calls.routes.js`: the session comes from
  * `getSessionFromRequest`, a missing/expired session is a 401, and access to
  * another user's conversation is a 403.
  *
- * @param {{ state: object, io: object }} ctx
+ * @param {{ state: import('../stores/contracts').ServerState, io: any }} ctx
  * @returns {import('express').Router}
  */
 function createMessagesRouter({ state, io }) {
@@ -85,16 +102,19 @@ function createMessagesRouter({ state, io }) {
     const limit = clampMessageLimit(req.query?.limit);
     const cacheKey = before || includeCalls ? null : messagesCacheKey(conversationId, limit);
 
+    /** @type {MessageRecord[]|undefined} */
     let messages = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {
       try {
-        messages = await state.messageStore.listMessages({
-          conversationId,
-          limit,
-          before: before ?? undefined,
-        });
+        messages = /** @type {MessageRecord[]} */ (
+          await state.messageStore.listMessages({
+            conversationId,
+            limit,
+            before: before ?? undefined,
+          })
+        );
       } catch (error) {
-        console.error(`[messages] history lookup failed: ${error?.message}`);
+        console.error(`[messages] history lookup failed: ${errorMessage(error)}`);
         res.status(503).json({ error: 'message store unavailable' });
         return;
       }
@@ -193,6 +213,7 @@ function createMessagesRouter({ state, io }) {
     const limit = clampMessageLimit(req.query?.limit);
     const before = normaliseOptionalString(req.query?.before);
 
+    /** @type {Array<MessageRecord>} */
     let matches;
     try {
       matches = await state.messageStore.searchMessages({
@@ -202,7 +223,7 @@ function createMessagesRouter({ state, io }) {
         before: before ?? undefined,
       });
     } catch (error) {
-      console.error(`[messages] search failed: ${error?.message}`);
+      console.error(`[messages] search failed: ${errorMessage(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
     }
@@ -260,12 +281,15 @@ function createMessagesRouter({ state, io }) {
     // The cached value is the raw store result: the blocklist filter and the
     // presence flag below are evaluated per request so neither can go stale.
     const cacheKey = conversationsCacheKey(session.userId);
+    /** @type {ConversationSummary[]|undefined} */
     let conversations = await readCached(state, cacheKey);
     if (conversations === undefined) {
       try {
-        conversations = await state.messageStore.listConversations(session.userId);
+        conversations = /** @type {ConversationSummary[]} */ (
+          await state.messageStore.listConversations(session.userId)
+        );
       } catch (error) {
-        console.error(`[messages] conversation summary lookup failed: ${error?.message}`);
+        console.error(`[messages] conversation summary lookup failed: ${errorMessage(error)}`);
         res.status(503).json({ error: 'message store unavailable' });
         return;
       }
@@ -328,7 +352,7 @@ function createMessagesRouter({ state, io }) {
     try {
       updated = await state.messageStore.markRead(conversationId, session.userId);
     } catch (error) {
-      console.error(`[messages] markRead failed: ${error?.message}`);
+      console.error(`[messages] markRead failed: ${errorMessage(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
     }
