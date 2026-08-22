@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -15,11 +16,53 @@
  *   res.json(telemetry.getSnapshot());       // GET /metrics handler
  */
 
+/**
+ * @typedef {object} Histogram
+ * @property {number} count
+ * @property {number} sum
+ * @property {number} min
+ * @property {number} max
+ * @property {Record<string, number>} buckets
+ */
+
+/**
+ * @typedef {object} HistogramSnapshot
+ * @property {number} count
+ * @property {number} sum
+ * @property {number|null} mean
+ * @property {number|null} min
+ * @property {number|null} max
+ * @property {Record<string, number>} buckets
+ */
+
+/**
+ * @typedef {object} MetricsSnapshot
+ * @property {string} collectedAt
+ * @property {Record<string, number>} counters
+ * @property {Record<string, HistogramSnapshot>} histograms
+ * @property {Record<string, number|null>} derived
+ */
+
+/**
+ * @typedef {object} Telemetry
+ * @property {(call: { callId: string, status: string, createdAt: string }) => void} recordCallCreated
+ * @property {(call: { callId: string, status: string, endReason?: string|null },
+ *   previousStatus: string) => void} recordCallTransition
+ * @property {(code?: string) => void} recordSignalingError
+ * @property {() => void} recordCacheHit
+ * @property {() => void} recordCacheMiss
+ * @property {() => MetricsSnapshot} getSnapshot
+ */
+
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
+/**
+ * @param {number[]} buckets
+ * @returns {Histogram}
+ */
 function createHistogram(buckets) {
   return {
     count: 0,
@@ -30,6 +73,10 @@ function createHistogram(buckets) {
   };
 }
 
+/**
+ * @param {Histogram} h
+ * @param {number} valueMs
+ */
 function observeHistogram(h, valueMs) {
   h.count += 1;
   h.sum += valueMs;
@@ -43,6 +90,10 @@ function observeHistogram(h, valueMs) {
   }
 }
 
+/**
+ * @param {Histogram} h
+ * @returns {HistogramSnapshot}
+ */
 function snapshotHistogram(h) {
   return {
     count: h.count,
@@ -130,7 +181,7 @@ function createTelemetry() {
   /**
    * Record a call state transition.
    *
-   * @param {{ callId: string, status: string, endReason: string|null }} call
+   * @param {{ callId: string, status: string, endReason?: string|null }} call
    * @param {string} previousStatus
    */
   function recordCallTransition(call, previousStatus) {
@@ -234,12 +285,12 @@ function createTelemetry() {
    * @returns {MetricsSnapshot}
    */
   function getSnapshot() {
-    const snap = {
+    const snap = /** @type {MetricsSnapshot} */ ({
       collectedAt: new Date().toISOString(),
       counters: { ...counters },
       histograms: {},
       derived: {},
-    };
+    });
 
     for (const [name, h] of Object.entries(histograms)) {
       snap.histograms[name] = snapshotHistogram(h);
@@ -275,6 +326,10 @@ function createTelemetry() {
 
 const TERMINAL_STATUSES = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
+/**
+ * @param {string} status
+ * @returns {boolean} whether the status is terminal.
+ */
 function isTerminalStatus(status) {
   return TERMINAL_STATUSES.has(status);
 }

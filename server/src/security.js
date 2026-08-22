@@ -1,6 +1,15 @@
+// @ts-check
 'use strict';
 
 const { randomUUID } = require('crypto');
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Security utilities for call initiation and signaling hardening.
@@ -12,6 +21,17 @@ const { randomUUID } = require('crypto');
  */
 
 const MAX_AUDIT_LOG_SIZE = 1000;
+
+/**
+ * @typedef {object} AuditEntry
+ * @property {string} auditId
+ * @property {string} timestamp
+ * @property {string} event
+ * @property {string|null} actor
+ * @property {string|null} target
+ * @property {string} outcome
+ * @property {object} details
+ */
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 
@@ -26,7 +46,8 @@ const MAX_AUDIT_LOG_SIZE = 1000;
  * clock for deterministic unit tests.
  *
  * @param {{ maxRequests: number, windowMs: number }} opts
- * @returns {RateLimiter}
+ * @returns {import('./stores/contracts').RateLimiter
+ *   & { reset: (key?: string) => void }}
  */
 function createRateLimiter({ maxRequests, windowMs }) {
   /** @type {Map<string, { windowStart: number, count: number }>} */
@@ -100,10 +121,12 @@ function isBlocked(blocks, blockerId, targetId) {
  * @param {string} blockedId
  */
 function addBlock(blocks, blockerId, blockedId) {
-  if (!blocks.has(blockerId)) {
-    blocks.set(blockerId, new Set());
+  let blocked = blocks.get(blockerId);
+  if (!blocked) {
+    blocked = new Set();
+    blocks.set(blockerId, blocked);
   }
-  blocks.get(blockerId).add(blockedId);
+  blocked.add(blockedId);
 }
 
 /**
@@ -155,23 +178,26 @@ function listBlocks(blocks, blockerId) {
  * logged but never block the in-memory record or the request that triggered it.
  *
  * @param {{ db?: object|null }} [options]
- * @returns {AuditLog}
+ * @returns {import('./stores/contracts').AuditLog & {
+ *   getAll: () => AuditEntry[],
+ * }}
  */
 function createAuditLog({ db = null } = {}) {
-  /** @type {Array<{auditId: string, timestamp: string, event: string, actor: string|null, target: string|null, outcome: string, details: object}>} */
+  /** @type {AuditEntry[]} */
   const entries = [];
 
   /**
    * Best-effort durable persistence of a single audit record.  No-op when no
    * `db` is configured (tests / no DATABASE_URL).
    *
-   * @param {object} entry
+   * @param {AuditEntry} entry
    */
   function persist(entry) {
     if (!db) return;
     try {
       const { auditLog: auditLogTable } = require('../db/schema');
-      db.insert(auditLogTable)
+      /** @type {any} */ (db)
+        .insert(auditLogTable)
         .values({
           auditId: entry.auditId,
           ts: new Date(entry.timestamp),
@@ -181,11 +207,11 @@ function createAuditLog({ db = null } = {}) {
           outcome: entry.outcome,
           details: entry.details ?? {},
         })
-        .catch((err) => {
-          console.error('[security] failed to persist audit event to DB:', err?.message);
+        .catch((/** @type {unknown} */ err) => {
+          console.error('[security] failed to persist audit event to DB:', errorMessage(err));
         });
     } catch (err) {
-      console.error('[security] failed to persist audit event to DB:', err?.message);
+      console.error('[security] failed to persist audit event to DB:', errorMessage(err));
     }
   }
 
@@ -216,7 +242,7 @@ function createAuditLog({ db = null } = {}) {
      * Return all entries where the session user is the actor or the target.
      *
      * @param {string} userId
-     * @returns {Array}
+     * @returns {AuditEntry[]}
      */
     getForUser(userId) {
       return entries.filter((e) => e.actor === userId || e.target === userId);
@@ -225,7 +251,7 @@ function createAuditLog({ db = null } = {}) {
     /**
      * Return all entries.  Used internally and for testing.
      *
-     * @returns {Array}
+     * @returns {AuditEntry[]}
      */
     getAll() {
       return [...entries];

@@ -1,6 +1,24 @@
+// @ts-check
 'use strict';
 
 const { invalidateCache, callHistoryCachePrefix } = require('./cache');
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string} the driver error code, when the error carries one.
+ */
+function errorCode(error) {
+  const code = /** @type {Record<string, unknown>} */ (error ?? {}).code;
+  return typeof code === 'string' ? code : 'unknown';
+}
 
 /**
  * Evict the cached `GET /calls` pages of every listed participant, on this and
@@ -11,7 +29,7 @@ const { invalidateCache, callHistoryCachePrefix } = require('./cache');
  * local entries synchronously, so a read issued on this instance after the
  * write can never observe the stale page.
  *
- * @param {object} state
+ * @param {import('./stores/contracts').ServerState} state
  * @param {...string} userIds
  * @returns {void}
  */
@@ -19,18 +37,28 @@ function invalidateCallHistoryCache(state, ...userIds) {
   if (!state?.cache || userIds.length === 0) return;
   const prefixes = userIds.filter(Boolean).map((userId) => callHistoryCachePrefix(userId));
   if (prefixes.length === 0) return;
-  invalidateCache(state, ...prefixes).catch((error) => {
-    console.error(`[calls] call history cache invalidation failed: ${error?.message}`);
+  invalidateCache(state, ...prefixes).catch((/** @type {unknown} */ error) => {
+    console.error(`[calls] call history cache invalidation failed: ${errorMessage(error)}`);
   });
 }
 
+/**
+ * @param {unknown} value
+ * @returns {Date|null} the parsed date, or `null` when it is missing/invalid.
+ */
 function toDateOrNull(value) {
   if (!value) return null;
   if (value instanceof Date) return value;
-  const parsed = new Date(value);
+  const parsed = new Date(/** @type {string|number} */ (value));
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/**
+ * Persist (upsert) a call record, fire-and-forget.
+ *
+ * @param {any} db
+ * @param {import('./stores/contracts').CallRecord} call
+ */
 function persistCallRecord(db, call) {
   if (!db || !call?.callId) return;
   const { calls: callsTable } = require('../db/schema');
@@ -61,18 +89,25 @@ function persistCallRecord(db, call) {
         ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
       },
     })
-    .catch((error) => {
+    .catch((/** @type {unknown} */ error) => {
       // Non-fatal: the in-memory call record already reflects reality and the
       // caller doesn't await this promise. `code` is the Postgres error code
       // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
       // it alongside the message makes a recurrence diagnosable without
       // reproducing it, instead of the bare message alone.
       console.error(
-        `[calls] failed to persist call to DB: callId=${call.callId} code=${error?.code} ${error?.message}`
+        `[calls] failed to persist call to DB: callId=${call.callId}` +
+          ` code=${errorCode(error)} ${errorMessage(error)}`
       );
     });
 }
 
+/**
+ * Persist a call event, fire-and-forget.
+ *
+ * @param {any} db
+ * @param {import('./stores/contracts').CallEvent} event
+ */
 function persistCallEvent(db, event) {
   if (!db || !event?.eventId) return;
   const { callEvents: callEventsTable } = require('../db/schema');
@@ -87,18 +122,26 @@ function persistCallEvent(db, event) {
       reason: event.reason,
       createdAt: toDateOrNull(event.timestamp) ?? new Date(),
     })
-    .catch((error) => {
+    .catch((/** @type {unknown} */ error) => {
       // Non-fatal by design (an audit-log write failure must never block the
       // call itself), but this is still a silent audit-trail gap: log the
       // Postgres error `code` plus the ids involved so a recurrence can be
       // traced to its exact cause (e.g. a FK violation because the parent call
       // row hadn't committed yet) rather than only ever seeing the message.
       console.error(
-        `[calls] failed to persist call event to DB: eventId=${event.eventId} callId=${event.callId} event=${event.event} code=${error?.code} ${error?.message}`
+        `[calls] failed to persist call event to DB: eventId=${event.eventId}` +
+          ` callId=${event.callId} event=${event.event}` +
+          ` code=${errorCode(error)} ${errorMessage(error)}`
       );
     });
 }
 
+/**
+ * Load persisted calls and call events into the in-memory stores at boot.
+ *
+ * @param {any} db
+ * @param {import('./stores/contracts').Stores} state
+ */
 async function hydrateCallsAndEventsFromDb(db, state) {
   if (!db) return;
   const { calls: callsTable, callEvents: callEventsTable } = require('../db/schema');
@@ -131,7 +174,7 @@ async function hydrateCallsAndEventsFromDb(db, state) {
     }
     console.log(`[signaling] hydrated ${rows.length} call record(s) from DB`);
   } catch (err) {
-    console.error('[signaling] failed to hydrate calls from DB:', err?.message);
+    console.error('[signaling] failed to hydrate calls from DB:', errorMessage(err));
   }
 
   try {
@@ -141,7 +184,8 @@ async function hydrateCallsAndEventsFromDb(db, state) {
       if (!state.callEvents.has(row.callId)) {
         state.callEvents.set(row.callId, []);
       }
-      state.callEvents.get(row.callId).push({
+      const events = state.callEvents.get(row.callId) ?? [];
+      events.push({
         eventId: row.eventId,
         callId: row.callId,
         event: row.event,
@@ -151,11 +195,13 @@ async function hydrateCallsAndEventsFromDb(db, state) {
       });
     }
     for (const events of state.callEvents.values()) {
-      events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      events.sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
     }
     console.log(`[signaling] hydrated ${rows.length} call event(s) from DB`);
   } catch (err) {
-    console.error('[signaling] failed to hydrate call events from DB:', err?.message);
+    console.error('[signaling] failed to hydrate call events from DB:', errorMessage(err));
   }
 }
 

@@ -95,7 +95,16 @@
  * @typedef {Map<string, CallRecord>} CallStore
  *   callId → call record.
  *
- * @typedef {Map<string, object[]>} CallEventStore
+ * @typedef {{
+ *   eventId: string,
+ *   callId: string,
+ *   event: string,
+ *   actor?: string|null,
+ *   reason?: string|null,
+ *   timestamp: string,
+ * }} CallEvent
+ *
+ * @typedef {Map<string, CallEvent[]>} CallEventStore
  *   callId → ordered list of call events.
  *
  * A persisted chat message document, as written by `src/messageStore.js`.
@@ -144,9 +153,9 @@
  *   event: string,
  *   actor?: string|null,
  *   target?: string|null,
- *   outcome?: string,
+ *   outcome: string,
  *   details?: object,
- * }) => object} record
+ * }) => void} record
  * @property {(userId: string) => object[]} getForUser
  *
  * @typedef {object} RateLimiter
@@ -169,7 +178,7 @@
  *   turnCredentialsRateLimiter: RateLimiter,
  *   messageSendRateLimiter: RateLimiter,
  *   messageSearchRateLimiter: RateLimiter,
- *   telemetry: any,
+ *   telemetry: import('../telemetry').Telemetry,
  *   messageStore: any,
  *   cache: any,
  *   messageStoreStatus: string,
