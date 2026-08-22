@@ -24,7 +24,7 @@
  * @typedef {Map<string, Set<string>>} RoomStore
  *   roomId → set of socket ids currently in the room.
  *
- * @typedef {Map<string, object>} UserStore
+ * @typedef {Map<string, import('../identity').User>} UserStore
  *   userId → claimed-identity record (`{ userId, verificationHash, verificationSalt, … }`).
  *
  * @typedef {object} SessionRecord

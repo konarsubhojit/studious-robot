@@ -88,7 +88,11 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/routes/metrics.routes.js`
 - [x] `src/routes/directory.routes.js`
 - [x] `src/routes/turnCredentials.routes.js`
-- [ ] `src/routes/` (remaining routes)
+- [x] `src/routes/session.routes.js`
+- [x] `src/routes/devices.routes.js`
+- [x] `src/routes/attachments.routes.js`
+- [x] `src/routes/index.js`
+- [ ] `src/routes/` (remaining routes: calls, messages)
 - [ ] `src/domain/` (in progress)
   - [x] `callTimeline.js`
 - [x] `src/identity.js`

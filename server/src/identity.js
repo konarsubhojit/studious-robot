@@ -7,9 +7,21 @@
  *   authUid: string,
  *   email?: string|null,
  *   authProvider?: string|null,
- *   createdAt: string,
- *   verifiedAt: string,
+ *   createdAt: string|null,
+ *   verifiedAt: string|null,
  * }} User
+ *   Timestamps are `null` only for rows hydrated from a DB that stored none.
+ *
+ * @typedef {{ ok: true, verified: true, claimed?: true, user: User }} IdentityClaimGranted
+ *   The caller owns `user.userId`; `claimed` marks a username claimed just now.
+ *
+ * @typedef {{
+ *   ok: false,
+ *   reason: 'account_already_bound'|'username_required'|'identity_claimed',
+ *   user?: User,
+ * }} IdentityClaimDenied
+ *
+ * @typedef {IdentityClaimGranted|IdentityClaimDenied} IdentityClaim
  */
 
 /**
@@ -18,6 +30,7 @@
  * @param {Map<string, User>} usersStore
  * @param {string|null} requestedUserId
  * @param {{ authUid: string, email?: string|null, authProvider?: string|null }} identity
+ * @returns {IdentityClaim}
  */
 function resolveIdentityClaim(usersStore, requestedUserId, identity) {
   const accountUser = Array.from(usersStore.values()).find(

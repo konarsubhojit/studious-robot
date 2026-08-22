@@ -42,7 +42,7 @@ async function persistUser(db, user) {
         authUid: user.authUid,
         email: user.email,
         authProvider: user.authProvider,
-        createdAt: new Date(user.createdAt),
+        createdAt: user.createdAt ? new Date(user.createdAt) : new Date(),
         verifiedAt: user.verifiedAt ? new Date(user.verifiedAt) : null,
       })
       .onConflictDoUpdate({

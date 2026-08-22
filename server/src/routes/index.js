@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { createHealthRouter } = require('./health.routes');
@@ -20,7 +21,20 @@ const { createTurnCredentialsRouter } = require('./turnCredentials.routes');
  * public HTTP contract exactly.
  *
  * @param {import('express').Express} app
- * @param {{ state: object, db: object|null, io: object, sessionTtlMs: number, ringingTimeoutMs: number }} ctx
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   db: any,
+ *   io: any,
+ *   sessionTtlMs: number,
+ *   ringingTimeoutMs: number,
+ *   turnFetch?: typeof fetch,
+ *   turnEnv?: NodeJS.ProcessEnv,
+ *   verifyIdToken?: (idToken: unknown) => Promise<{
+ *     authUid: string,
+ *     email?: string|null,
+ *     authProvider?: string|null,
+ *   }>,
+ * }} ctx
  */
 function mountRoutes(app, ctx) {
   const {
