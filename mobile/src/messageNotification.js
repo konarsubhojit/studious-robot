@@ -1,3 +1,4 @@
+// @ts-check
 import { NativeModules, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 
@@ -31,11 +32,25 @@ const SEEN_MESSAGE_LIMIT = 200;
  * Message ids already delivered to the user through the socket (or already
  * notified about), newest last. Bounded so a long-lived process cannot grow
  * this without limit.
+ *
+ * @type {string[]}
  */
 const seenMessageIds = [];
 
-/** The conversation currently open on screen, or `null`. */
+/**
+ * The conversation currently open on screen, or `null`.
+ *
+ * @type {{ peerId: string | null, conversationId: string | null } | null}
+ */
 let activeConversation = null;
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 function getNativeModule() {
   if (Platform.OS !== 'android') return null;
@@ -88,7 +103,7 @@ export function isConversationOnScreen({ senderId = null, conversationId = null 
  * same message (a message can arrive over both the socket and push) does not
  * post a second notification for it.
  *
- * @param {string} messageId
+ * @param {string | null | undefined} messageId
  */
 export function markMessageSeen(messageId) {
   const trimmed = (messageId ?? '').trim();
@@ -102,7 +117,7 @@ export function markMessageSeen(messageId) {
 /**
  * Whether `messageId` was already delivered to the user.
  *
- * @param {string} messageId
+ * @param {string | null | undefined} messageId
  * @returns {boolean}
  */
 export function hasSeenMessage(messageId) {
@@ -125,8 +140,8 @@ export function resetMessageNotificationState() {
  * nothing must not look like a success.
  *
  * @param {{
- *   messageId: string,
- *   conversationId: string,
+ *   messageId?: string,
+ *   conversationId?: string,
  *   senderId?: string | null,
  *   title?: string | null,
  *   body?: string | null,
@@ -188,7 +203,7 @@ export function dismissMessageNotification(conversationId) {
     module.dismiss(trimmed);
     return true;
   } catch (error) {
-    logWarn('[MessageNotification] dismiss failed', { message: error?.message });
+    logWarn('[MessageNotification] dismiss failed', { message: errorMessage(error) });
     return false;
   }
 }

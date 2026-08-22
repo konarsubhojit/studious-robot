@@ -1,3 +1,4 @@
+// @ts-check
 import { NativeModules, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import appConfig from '../app.json';
@@ -9,7 +10,20 @@ import { getLogsForExport, logError, logInfo } from './appLogger';
  * candidate summaries, and the "Export Logs" feature.
  */
 
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
+/**
+ * @param {Date} [date]
+ * @returns {string} `YYYYMMDD-HHmmss`, safe to embed in a file name.
+ */
 export function formatDateForFile(date = new Date()) {
+  /** @param {number} value */
   const pad = value => String(value).padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
     date.getHours(),
@@ -36,10 +50,18 @@ export function getApplicationId() {
   return maybeBundleId || 'unknown';
 }
 
+/**
+ * @param {any} socket socket.io client, or anything falsy.
+ * @returns {string}
+ */
 export function getSocketTransportName(socket) {
   return socket?.io?.engine?.transport?.name || 'unknown';
 }
 
+/**
+ * @param {string | null | undefined} urlValue
+ * @returns {string} the URL without query/fragment, or the input when unparseable.
+ */
 export function sanitizeUrlForLog(urlValue) {
   if (!urlValue) {
     return '';
@@ -53,6 +75,10 @@ export function sanitizeUrlForLog(urlValue) {
   }
 }
 
+/**
+ * @param {{ candidate?: string, sdpMid?: string|null, sdpMLineIndex?: number|null } | null | undefined} candidate
+ * @returns {{ hasCandidate: boolean, protocol?: string, candidateType?: string, sdpMid?: string|null, sdpMLineIndex?: number|null }}
+ */
 export function summarizeIceCandidate(candidate) {
   if (!candidate) {
     return { hasCandidate: false };
@@ -72,6 +98,11 @@ export function summarizeIceCandidate(candidate) {
   };
 }
 
+/**
+ * @param {any} stream a media stream exposing `toURL()`, or anything falsy.
+ * @param {string} [context] label used when the conversion fails.
+ * @returns {string | null}
+ */
 export function getStreamUrl(stream, context) {
   if (!stream || typeof stream.toURL !== 'function') {
     return null;
@@ -82,13 +113,17 @@ export function getStreamUrl(stream, context) {
   } catch (error) {
     logError('Failed to build stream URL', {
       context,
-      message: error?.message,
-      stack: error?.stack,
+      message: errorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return null;
   }
 }
 
+/**
+ * @param {{ name?: string, message?: string } | null | undefined} error
+ * @returns {string} a user-facing explanation of a getUserMedia failure.
+ */
 export function getMediaAccessStatus(error) {
   const name = `${error?.name || ''}`.toLowerCase();
   const message = `${error?.message || ''}`.toLowerCase();
@@ -125,6 +160,18 @@ export function getMediaAccessStatus(error) {
   return 'Failed to access camera/microphone';
 }
 
+/**
+ * @param {{
+ *   signalingUrl?: string,
+ *   callId?: string | null,
+ *   status?: string,
+ *   localStream?: object | null,
+ *   remoteStream?: object | null,
+ *   isInCall?: boolean,
+ *   socket?: any,
+ * }} context
+ * @returns {string}
+ */
 export function buildExportHeader({
   signalingUrl,
   callId,
@@ -158,6 +205,10 @@ export function buildExportHeader({
   return lines.join('\n');
 }
 
+/**
+ * @param {string} content
+ * @returns {Promise<{ success: boolean, path?: string, label?: string, usedFallback?: boolean, error?: unknown }>}
+ */
 export async function writeLogsFile(content) {
   const fileName = `wetalk-logs-${formatDateForFile()}.txt`;
   const targets =
@@ -224,7 +275,7 @@ export async function exportDiagnosticLogs(context = {}) {
       logError('Failed to export logs', result.error);
       return {
         ok: false,
-        message: `Failed to export logs: ${result.error?.message || 'Unknown error'}`,
+        message: `Failed to export logs: ${errorMessage(result.error) || 'Unknown error'}`,
       };
     }
 
@@ -241,6 +292,9 @@ export async function exportDiagnosticLogs(context = {}) {
     };
   } catch (error) {
     logError('Unexpected export logs failure', error);
-    return { ok: false, message: `Failed to export logs: ${error?.message || 'Unknown error'}` };
+    return {
+      ok: false,
+      message: `Failed to export logs: ${errorMessage(error) || 'Unknown error'}`,
+    };
   }
 }

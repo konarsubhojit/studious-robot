@@ -1,3 +1,4 @@
+// @ts-check
 import { logInfo, logWarn } from './appLogger';
 
 /**
@@ -19,7 +20,23 @@ import { logInfo, logWarn } from './appLogger';
  *   so the JS bundle still builds and runs without the native dependency.
  */
 
-/** Cached result of the optional native InCallManager module lookup. */
+/**
+ * The subset of the optional `react-native-incall-manager` surface this module
+ * uses. Every member is optional because older versions of the package (and the
+ * test doubles) expose only part of it, which the call sites already probe for.
+ *
+ * @typedef {{
+ *   start?: (options: { media: boolean, ringback?: string }) => void,
+ *   stop?: () => void,
+ *   stopRingback?: () => void,
+ * }} InCallManager
+ */
+
+/**
+ * Cached result of the optional native InCallManager module lookup.
+ *
+ * @type {InCallManager | null | undefined}
+ */
 let cachedInCallManager;
 let hasLoggedMissingInCallManager = false;
 
@@ -28,13 +45,15 @@ let hasLoggedMissingInCallManager = false;
  * Returns the InCallManager singleton, or `null` when the package is not
  * installed.  The lookup is memoised so a missing module is only logged once.
  *
- * @returns {object | null}
+ * @returns {InCallManager | null}
  */
 function loadInCallManager() {
   if (cachedInCallManager !== undefined) return cachedInCallManager;
   try {
     const mod = require('react-native-incall-manager');
-    cachedInCallManager = mod?.default ?? mod ?? null;
+    cachedInCallManager = /** @type {InCallManager | null} */ (
+      /** @type {unknown} */ (mod?.default ?? mod ?? null)
+    );
   } catch {
     cachedInCallManager = null;
     if (!hasLoggedMissingInCallManager) {
@@ -45,6 +64,14 @@ function loadInCallManager() {
     }
   }
   return cachedInCallManager;
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
 }
 
 /** Reset cached module state (test hook). */
@@ -81,7 +108,7 @@ export function startIncomingRingtone() {
       logInfo('[Ringtone] Fallback ringtone started');
     }
   } catch (error) {
-    logWarn('[Ringtone] startIncomingRingtone failed', { message: error?.message });
+    logWarn('[Ringtone] startIncomingRingtone failed', { message: errorMessage(error) });
   }
 }
 
@@ -102,7 +129,7 @@ export function stopIncomingRingtone() {
       logInfo('[Ringtone] Fallback ringtone stopped');
     }
   } catch (error) {
-    logWarn('[Ringtone] stopIncomingRingtone failed', { message: error?.message });
+    logWarn('[Ringtone] stopIncomingRingtone failed', { message: errorMessage(error) });
   }
 }
 
@@ -129,7 +156,7 @@ export function startOutgoingRingback() {
     _isRingbackPlaying = true;
     logInfo('[Ringtone] Outgoing ringback started');
   } catch (error) {
-    logWarn('[Ringtone] startOutgoingRingback failed', { message: error?.message });
+    logWarn('[Ringtone] startOutgoingRingback failed', { message: errorMessage(error) });
   }
 }
 
@@ -151,6 +178,6 @@ export function stopOutgoingRingback() {
       logWarn('[Ringtone] stopOutgoingRingback unavailable; native module has no stopRingback');
     }
   } catch (error) {
-    logWarn('[Ringtone] stopOutgoingRingback failed', { message: error?.message });
+    logWarn('[Ringtone] stopOutgoingRingback failed', { message: errorMessage(error) });
   }
 }

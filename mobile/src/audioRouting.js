@@ -1,7 +1,16 @@
+// @ts-check
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 import { logInfo, logWarn } from './appLogger';
 import { ensureBluetoothPermission } from './permissions';
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 /**
  * Canonical audio output routes understood by react-native-incall-manager's
@@ -96,6 +105,7 @@ export function stopAudioSession() {
  *
  * @param {boolean} speakerEnabled - `true` to route through the loudspeaker;
  *   `false` to route through the earpiece (or Bluetooth if available).
+ * @returns {{ ok: boolean, selected: string|null, error?: unknown, message?: string }}
  */
 export function setAudioRoute(speakerEnabled) {
   try {
@@ -111,7 +121,9 @@ export function setAudioRoute(speakerEnabled) {
         InCallManager.setForceSpeakerphoneOn(true);
         InCallManager.setSpeakerphoneOn(true);
       } catch (fallbackError) {
-        logWarn('Audio route fallback to speaker failed', { message: fallbackError?.message });
+        logWarn('Audio route fallback to speaker failed', {
+          message: errorMessage(fallbackError),
+        });
       }
       return {
         ok: false,
@@ -134,7 +146,7 @@ export function setAudioRoute(speakerEnabled) {
  * string ('' when none is selected).  This helper tolerates already-parsed
  * arrays, malformed JSON, and missing fields.
  *
- * @param {object} [payload]
+ * @param {{ availableAudioDeviceList?: unknown, selectedAudioDevice?: unknown } | null} [payload]
  * @returns {{ available: string[], selected: string|null }}
  */
 export function parseAudioDeviceStatus(payload) {
@@ -142,6 +154,7 @@ export function parseAudioDeviceStatus(payload) {
     return { available: [], selected: null };
   }
 
+  /** @type {unknown[]} */
   let available = [];
   const rawList = payload.availableAudioDeviceList;
   if (Array.isArray(rawList)) {
@@ -159,6 +172,7 @@ export function parseAudioDeviceStatus(payload) {
 
   // Keep only recognised, de-duplicated device names so the UI never renders
   // empty or "NONE" entries.
+  /** @type {Set<string>} */
   const seen = new Set();
   available = available.filter(device => {
     if (typeof device !== 'string') {
@@ -176,7 +190,7 @@ export function parseAudioDeviceStatus(payload) {
       ? payload.selectedAudioDevice
       : null;
 
-  return { available, selected };
+  return { available: /** @type {string[]} */ (available), selected };
 }
 
 /**
@@ -187,7 +201,14 @@ export function parseAudioDeviceStatus(payload) {
  * @param {{ fallbackToSpeaker?: boolean }} [options] - when false, a failed
  *   Bluetooth selection is reported without forcing the loudspeaker, so the
  *   caller can try the next device in its own preference order.
- * @returns {Promise<{ available: string[], selected: string|null }>}
+ * @returns {Promise<{
+ *   available: string[],
+ *   selected: string|null,
+ *   ok?: boolean,
+ *   reason?: string,
+ *   error?: unknown,
+ *   message?: string,
+ * }>}
  */
 export async function chooseAudioRoute(route, { fallbackToSpeaker = true } = {}) {
   if (route === AUDIO_ROUTES.BLUETOOTH) {
@@ -244,10 +265,7 @@ export async function chooseAudioRoute(route, { fallbackToSpeaker = true } = {})
  */
 export function selectPreferredAudioRoute(available = []) {
   const devices = new Set(Array.isArray(available) ? available : []);
-  return (
-    AUDIO_ROUTE_PRIORITY.find(route => devices.has(route)) ??
-    AUDIO_ROUTES.EARPIECE
-  );
+  return AUDIO_ROUTE_PRIORITY.find(route => devices.has(route)) ?? AUDIO_ROUTES.EARPIECE;
 }
 
 /**

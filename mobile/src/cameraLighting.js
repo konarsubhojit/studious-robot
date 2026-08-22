@@ -1,9 +1,11 @@
+// @ts-check
 import { logDebug, logError, logInfo } from './appLogger';
 
 // Some platforms (notably react-native-webrtc on Android) do not implement every
 // MediaStreamTrack introspection API and throw an "Not implemented." error when
 // called. Such errors are an expected capability gap rather than a real failure,
 // so we detect them to avoid logging them at error level.
+/** @param {any} error */
 function isNotImplementedError(error) {
   return Boolean(error) && /not implemented/i.test(error.message || '');
 }
@@ -12,6 +14,11 @@ function isNotImplementedError(error) {
 // Returns null when the reader is missing or throws. "Not implemented." errors are
 // logged at debug level because they are an expected platform limitation; any other
 // error is logged at error level.
+/**
+ * @param {any} track
+ * @param {'getSettings'|'getCapabilities'} method
+ * @returns {any}
+ */
 function readTrackState(track, method) {
   if (!track || typeof track[method] !== 'function') {
     return null;
@@ -57,6 +64,10 @@ export const LIGHTING_PROFILES = {
   },
 };
 
+/**
+ * @param {unknown} value
+ * @returns {number | null} `value` clamped to [0, 1], or `null` when it is not a number.
+ */
 export function clampUnitInterval(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return null;
@@ -70,6 +81,11 @@ export function clampUnitInterval(value) {
   return value;
 }
 
+/**
+ * @param {number | null | undefined} value
+ * @param {{ min?: number, max?: number } | null | undefined} range
+ * @returns {number | null}
+ */
 export function normalizeToUnitRange(value, range) {
   if (typeof value !== 'number' || Number.isNaN(value) || !range) {
     return null;
@@ -83,6 +99,10 @@ export function normalizeToUnitRange(value, range) {
   return clampUnitInterval((value - min) / (max - min));
 }
 
+/**
+ * @param {number | null | undefined} brightness normalized to [0, 1].
+ * @returns {'unknown'|'low'|'normal'|'bright'}
+ */
 export function classifyLighting(brightness) {
   const normalized = clampUnitInterval(brightness);
   if (normalized === null) {
@@ -100,6 +120,14 @@ export function classifyLighting(brightness) {
 // Estimate normalized scene brightness from a video track's current settings and
 // reported capability ranges. Returns null when there is not enough information,
 // in which case callers should leave the camera untouched.
+/**
+ * @param {{ brightness?: number, exposureCompensation?: number } | null | undefined} settings
+ * @param {{
+ *   brightness?: { min?: number, max?: number },
+ *   exposureCompensation?: { min?: number, max?: number },
+ * } | null | undefined} capabilities
+ * @returns {number | null}
+ */
 export function estimateSceneBrightness(settings, capabilities) {
   if (!settings || !capabilities) {
     return null;
@@ -127,9 +155,16 @@ export function estimateSceneBrightness(settings, capabilities) {
   return null;
 }
 
+/**
+ * @param {number | null | undefined} brightness normalized to [0, 1].
+ * @returns {{ condition: string, constraints: object | null }}
+ */
 export function getLightingAdjustedConstraints(brightness) {
   const condition = classifyLighting(brightness);
-  const profile = LIGHTING_PROFILES[condition];
+  const profile =
+    /** @type {Record<string, { frameRate: object, exposureCompensation: number, brightness: number } | undefined>} */ (
+      LIGHTING_PROFILES
+    )[condition];
 
   if (!profile) {
     return { condition, constraints: null };
@@ -151,6 +186,10 @@ export function getLightingAdjustedConstraints(brightness) {
 // Read the current camera state, estimate scene brightness and apply lighting-
 // adjusted constraints to the given video track. Safe to call repeatedly; it is a
 // no-op when the track or required APIs are unavailable.
+/**
+ * @param {{ applyConstraints?: (constraints: object) => Promise<void> } | null | undefined} track
+ * @returns {Promise<{ applied: boolean, condition: string, brightness?: number | null }>}
+ */
 export async function applyLightingAdjustment(track) {
   if (!track || typeof track.applyConstraints !== 'function') {
     return { applied: false, condition: 'unknown' };
