@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,6 +21,20 @@ import ErrorState from './ErrorState';
 import SettingsCard from './SettingsCard';
 import StatusBanner from './StatusBanner';
 
+/**
+ * @typedef {object} ContactRow
+ * @property {string} userId
+ * @property {boolean} [online]
+ */
+
+/**
+ * @param {object} props
+ * @param {string} props.value
+ * @param {(value: string) => void} props.onChangeText
+ * @param {string} [props.placeholder]
+ * @param {string} props.accessibilityLabel
+ * @param {string} props.testID
+ */
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -57,24 +72,29 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  * endpoint (via `onSearchUsers`).  Tapping a result selects that user as the
  * callee (`onSelectContact`).  The section is hidden entirely when no
  * `onSearchUsers` handler is provided (i.e. when contact search is disabled).
+ *
+ * @param {object} props
+ * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
+ * @param {(peerId: string) => void} [props.onSelectContact]
  */
 function ContactDirectory({ onSearchUsers, onSelectContact }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState(/** @type {ContactRow[]} */ ([]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
+    /** @param {string} term */
     async term => {
       if (typeof onSearchUsers !== 'function') return;
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
-      let users = [];
+      let /** @type {ContactRow[]} */ users = [];
       try {
         users = await onSearchUsers(term);
       } catch (_error) {
@@ -158,6 +178,34 @@ function ContactDirectory({ onSearchUsers, onSelectContact }) {
  * `calleeId`; the server manages call state and drives the outgoing/incoming
  * screens.  The developer tools (diagnostic log export and the media settings
  * panel) are shown only when `developerMode` is enabled in Settings.
+ *
+ * @param {object} props
+ * @param {string} props.userId
+ * @param {(value: string) => void} props.onChangeUserId
+ * @param {string} props.calleeId
+ * @param {(value: string) => void} props.onChangeCalleeId
+ * @param {() => void} props.onCall
+ * @param {{ status: string, online: boolean, unknown?: boolean } | null} [props.calleePresence]
+ * @param {() => void} [props.onOpenSettings]
+ * @param {boolean} [props.isServerUnreachable]
+ * @param {() => void} [props.onRetryConnect]
+ * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
+ * @param {(peerId: string) => void} [props.onSelectContact]
+ * @param {() => void} [props.onOpenSearch]
+ * @param {boolean} [props.developerMode]
+ * @param {boolean} [props.isSettingsVisible]
+ * @param {() => void} [props.onToggleSettings]
+ * @param {() => void} [props.onExportLogs]
+ * @param {Parameters<typeof SettingsCard>[0]['settings']} props.settings
+ * @param {() => void} props.onToggleAutoLighting
+ * @param {() => void} props.onToggleSpeakerDefault
+ * @param {import('./StatusBanner').CallStatus} [props.status]
+ * @param {{ durationSeconds: number | null, quality: string } | null} [props.callSummary]
+ * @param {() => void} [props.onDismissSummary]
+ * @param {import('../hooks/useCallHistory').CallHistoryEntry[]} [props.callHistory]
+ * @param {number} [props.missedCallCount]
+ * @param {() => void} [props.onMarkMissedRead]
+ * @param {(peerId: string) => void} [props.onRedial]
  */
 export default function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
@@ -188,7 +236,7 @@ export default function Lobby({
   onDismissSummary,
   // ── Call history ──────────────────────────────────────────────────────────
   callHistory,
-  missedCallCount,
+  missedCallCount = 0,
   onMarkMissedRead,
   onRedial,
 }) {
@@ -295,8 +343,8 @@ export default function Lobby({
                 ICONS[entry.direction === 'outgoing' ? 'callOutgoing' : 'callIncoming'];
               const directionColor = isMissed ? colors.danger : colors.textSecondary;
               const label =
-                CALL_END_REASON_LABELS[entry.endReason] ??
-                CALL_END_REASON_LABELS[entry.status] ??
+                (entry.endReason ? CALL_END_REASON_LABELS[entry.endReason] : undefined) ??
+                (entry.status ? CALL_END_REASON_LABELS[entry.status] : undefined) ??
                 'Call';
               const peer = entry.direction === 'outgoing' ? entry.calleeId : entry.callerId;
               return (
@@ -432,6 +480,7 @@ export default function Lobby({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     flex: {

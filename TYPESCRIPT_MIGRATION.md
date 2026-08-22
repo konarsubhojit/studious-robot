@@ -58,7 +58,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/appLogger.js`
 - [x] `src/observability.js`
 - [x] `src/telemetry.js`
-- [ ] `src/components/` (in progress)
+- [x] `src/components/`
   - [x] `AppButton.js`
   - [x] `AppTabBar.js`
   - [x] `AttachSheet.js`
@@ -77,6 +77,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `IconButton.js`
   - [x] `InCallBanner.js`
   - [x] `IncomingCallScreen.js`
+  - [x] `Lobby.js`
   - [x] `OutgoingCallScreen.js`
   - [x] `PeerProfileScreen.js`
   - [x] `ReconnectBanner.js`

@@ -11,7 +11,7 @@ export function clamp(value, min, max) {
 }
 
 /**
- * @param {number} totalSeconds
+ * @param {number | null | undefined} totalSeconds
  * @returns {string} `mm:ss`, or `hh:mm:ss` past an hour.
  */
 export function formatCallDuration(totalSeconds) {

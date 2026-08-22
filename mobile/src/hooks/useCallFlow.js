@@ -258,7 +258,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const [status, setStatus] = useState(
     /** @type {CallStatus} */ ({ message: '', severity: 'info' }),
   );
-  const [callSummary, setCallSummary] = useState(null);
+  // Summary of the last connected call, shown once in the Lobby.
+  const [callSummary, setCallSummary] = useState(
+    /** @type {{ durationSeconds: number | null, quality: string } | null} */ (null),
+  );
 
   // True while the remote participant is screen-sharing (relayed via the
   // `call.media-state` socket event).

@@ -10,7 +10,7 @@ import { radius, sizes, spacing } from '../theme';
  *
  * @param {object} props
  * @param {string} props.title - Visible button label (also the default a11y label).
- * @param {() => void} props.onPress
+ * @param {() => void} [props.onPress]
  * @param {boolean} [props.active] - Highlights the button (e.g. muted / video-off).
  * @param {boolean} [props.disabled]
  * @param {object} [props.style] - Extra container style(s).
