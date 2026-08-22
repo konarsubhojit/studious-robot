@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -15,6 +16,7 @@ const assert = require('node:assert/strict');
 const { createServer } = require('../src/index.js');
 const { createMemoryMessageStore } = require('../src/messageStore');
 const { createMemoryMessageBus } = require('../src/messageBus');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -30,11 +32,11 @@ function createCountingMessageStore() {
     counts,
     store: {
       ...inner,
-      async listMessages(query) {
+      async listMessages(/** @type {any} */ query) {
         counts.listMessages += 1;
         return inner.listMessages(query);
       },
-      async listConversations(userId) {
+      async listConversations(/** @type {any} */ userId) {
         counts.listConversations += 1;
         return inner.listConversations(userId);
       },
@@ -44,49 +46,44 @@ function createCountingMessageStore() {
 
 async function startServer(opts = {}) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
-async function connectSocket(url, sessionId) {
+async function connectSocket(/** @type {any} */ url, /** @type {any} */ sessionId) {
   const { io: ioClient } = require('socket.io-client');
   const socket = ioClient(url, { auth: { sessionId } });
-  await new Promise((resolve) => socket.once('connect', resolve));
+  await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -9,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 const pushModulePath = require.resolve('../src/push.js');
 
@@ -18,8 +20,9 @@ const pushModulePath = require.resolve('../src/push.js');
 function spyOnMessagePush() {
   const mod = require(pushModulePath);
   const original = mod.sendMessagePush;
+  /** @type {{ channel: any, messageData: any }[]} */
   const calls = [];
-  mod.sendMessagePush = async (channel, messageData) => {
+  mod.sendMessagePush = async (/** @type {any} */ channel, /** @type {any} */ messageData) => {
     calls.push({ channel, messageData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -34,51 +37,53 @@ function spyOnMessagePush() {
 async function startServer(opts = {}) {
   const { createServer } = require('../src/index.js');
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
-/** Connect a socket.io client and wait for the connection to establish. */
+/**
+ * Connect a socket.io client and wait for the connection to establish.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} [sessionId] - Omitted for an unauthenticated guest socket.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 async function connectSocket(url, sessionId) {
   const { io: ioClient } = require('socket.io-client');
   const socket = ioClient(url, { auth: { sessionId } });
-  await new Promise((resolve) => socket.once('connect', resolve));
+  await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
-/** Emit an event and resolve with its acknowledgement. */
+/**
+ * Emit an event and resolve with its acknowledgement.
+ *
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
@@ -349,7 +354,7 @@ test('message.delete rejects an unknown message and an unauthenticated caller', 
   const aliceSession = await createSession(url, 'msg-alice');
   await createSession(url, 'msg-bob');
   const alice = await connectSocket(url, aliceSession);
-  const guest = await connectSocket(url, undefined);
+  const guest = await connectSocket(url);
   t.after(() => {
     alice.disconnect();
     guest.disconnect();
@@ -377,7 +382,7 @@ test('message.send rejects an unauthenticated sender', async (t) => {
   t.after(teardown);
 
   // No sessionId in the handshake → guest identity with no session.
-  const guest = await connectSocket(url, undefined);
+  const guest = await connectSocket(url);
   t.after(() => guest.disconnect());
 
   const ack = await emitWithAck(guest, 'message.send', {
@@ -619,7 +624,7 @@ test('GET /messages returns the conversation newest-first with pagination', asyn
   assert.equal(first.status, 200);
   assert.equal(first.body.messages.length, 2);
   assert.deepEqual(
-    first.body.messages.map((m) => m.body),
+    first.body.messages.map((/** @type {any} */ m) => m.body),
     ['msg-4', 'msg-3']
   );
 
@@ -631,7 +636,7 @@ test('GET /messages returns the conversation newest-first with pagination', asyn
   );
   assert.equal(second.status, 200);
   assert.deepEqual(
-    second.body.messages.map((m) => m.body),
+    second.body.messages.map((/** @type {any} */ m) => m.body),
     ['msg-2', 'msg-1']
   );
 
@@ -754,7 +759,7 @@ test("GET /conversations reports each peer's live online status", async (t) => {
 
   const res = await getJson(url, '/conversations', aliceSession);
   assert.equal(res.status, 200);
-  const byPeer = Object.fromEntries(res.body.conversations.map((c) => [c.peerId, c]));
+  const byPeer = Object.fromEntries(res.body.conversations.map((/** @type {any} */ c) => [c.peerId, c]));
   assert.equal(byPeer['convonline-bob'].online, true, 'bob has a live socket');
   assert.equal(byPeer['convonline-carol'].online, false, 'carol never connected a socket');
 });
@@ -942,7 +947,7 @@ test('message.typing is ignored for an unauthenticated socket, an unsupported ve
   const alice = await connectSocket(url, aliceSession);
   t.after(() => alice.disconnect());
 
-  const guest = await connectSocket(url, undefined);
+  const guest = await connectSocket(url);
   t.after(() => guest.disconnect());
 
   let received = false;

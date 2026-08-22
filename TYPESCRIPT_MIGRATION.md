@@ -205,3 +205,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `reconnect.test.js`
   - [x] `signaling-contract.test.js`
   - [x] `stale-calls.test.js`
+  - [x] `cache-integration.test.js`
+  - [x] `messages.test.js`
+  - [x] `messages-rich.test.js`
+  - [x] `messages-search.test.js`
+  - [x] `messages-timeline.test.js`

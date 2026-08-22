@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -12,6 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 const VERSION = 1;
 
@@ -20,53 +22,55 @@ const VERSION = 1;
 async function startServer(opts = {}) {
   const { createServer } = require('../src/index.js');
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
-async function connectSocket(url, sessionId) {
+async function connectSocket(/** @type {any} */ url, /** @type {any} */ sessionId) {
   const socket = ioClient(url, { auth: { sessionId } });
-  await new Promise((resolve) => socket.once('connect', resolve));
+  await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
 
-/** Send `body` from `socket` to `recipientId`, returning the stored message. */
+/**
+ * Send `body` from `socket` to `recipientId`, returning the stored message.
+ *
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} recipientId
+ * @param {string} body
+ * @returns {Promise<any>} the stored message
+ */
 async function sendMessage(socket, recipientId, body) {
   const ack = await emitWithAck(socket, 'message.send', {
     version: VERSION,
@@ -77,7 +81,14 @@ async function sendMessage(socket, recipientId, body) {
   return ack.message;
 }
 
-/** Place a call and return its record. */
+/**
+ * Place a call and return its record.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} callerSession
+ * @param {string} calleeId
+ * @returns {Promise<any>} the created call record
+ */
 async function placeCall(url, callerSession, calleeId) {
   const res = await postJson(url, '/calls', { calleeId }, callerSession);
   assert.equal(res.status, 201);
@@ -125,7 +136,7 @@ test('GET /messages?include=calls interleaves calls and messages newest-first', 
   const res = await getJson(url, '/messages?peerId=tl-mix-bob&include=calls', aliceSession);
   assert.equal(res.status, 200);
   assert.deepEqual(
-    res.body.messages.map((entry) => entry.type),
+    res.body.messages.map((/** @type {any} */ entry) => entry.type),
     ['text', 'call', 'text']
   );
 
@@ -138,7 +149,7 @@ test('GET /messages?include=calls interleaves calls and messages newest-first', 
 
   // Both participants see the same call, from their own point of view.
   const fromBob = await getJson(url, '/messages?peerId=tl-mix-alice&include=calls', bobSession);
-  const bobCall = fromBob.body.messages.find((entry) => entry.type === 'call');
+  const bobCall = fromBob.body.messages.find((/** @type {any} */ entry) => entry.type === 'call');
   assert.equal(bobCall.callId, declined.callId);
   assert.equal(bobCall.direction, 'incoming');
   assert.equal(bobCall.status, 'declined');
@@ -209,7 +220,7 @@ test('GET /messages?include=calls hides a blocked peer\'s calls', async (t) => {
   const res = await getJson(url, '/messages?peerId=tl-block-bob&include=calls', aliceSession);
   assert.equal(res.status, 200);
   assert.deepEqual(
-    res.body.messages.map((entry) => entry.type),
+    res.body.messages.map((/** @type {any} */ entry) => entry.type),
     ['text']
   );
 });
@@ -250,16 +261,16 @@ test('durationSeconds is 0 for calls that never connected', async (t) => {
 
   const declined = await placeCall(url, aliceSession, 'tl-dur-bob');
   await postJson(url, `/calls/${declined.callId}/decline`, {}, bobSession);
-  assert.equal(getCall(declined.callId).durationSeconds, 0);
+  assert.equal(getCall(declined.callId)?.durationSeconds, 0);
 
   const cancelled = await placeCall(url, aliceSession, 'tl-dur-bob');
   await postJson(url, `/calls/${cancelled.callId}/cancel`, {}, aliceSession);
-  assert.equal(getCall(cancelled.callId).durationSeconds, 0);
+  assert.equal(getCall(cancelled.callId)?.durationSeconds, 0);
 
   const missed = await placeCall(url, aliceSession, 'tl-dur-bob');
   tickRingingTimeouts(Date.now() + 10 * 60 * 1000);
-  assert.equal(getCall(missed.callId).status, 'missed');
-  assert.equal(getCall(missed.callId).durationSeconds, 0);
+  assert.equal(getCall(missed.callId)?.status, 'missed');
+  assert.equal(getCall(missed.callId)?.durationSeconds, 0);
 });
 
 test('durationSeconds measures the connected time of an answered call', async (t) => {
@@ -274,17 +285,18 @@ test('durationSeconds measures the connected time of an answered call', async (t
 
   // Backdate the answer so the elapsed time is deterministic.
   const record = getCall(call.callId);
+  assert.ok(record, 'the answered call is tracked in memory');
   record.answeredAt = new Date(Date.now() - 128_000).toISOString();
 
   await postJson(url, `/calls/${call.callId}/end`, {}, aliceSession);
-  assert.equal(getCall(call.callId).durationSeconds, 128);
+  assert.equal(getCall(call.callId)?.durationSeconds, 128);
 
   const res = await getJson(
     url,
     '/messages?peerId=tl-answered-bob&include=calls',
     aliceSession
   );
-  const entry = res.body.messages.find((item) => item.type === 'call');
+  const entry = res.body.messages.find((/** @type {any} */ item) => item.type === 'call');
   assert.equal(entry.status, 'ended');
   assert.equal(entry.durationSeconds, 128);
 });
@@ -303,7 +315,7 @@ test('a missed call raises the conversation unread count and clears when read', 
 
   const before = await getJson(url, '/conversations', bobSession);
   assert.equal(before.status, 200);
-  const conversation = before.body.conversations.find((c) => c.peerId === 'tl-unread-alice');
+  const conversation = before.body.conversations.find((/** @type {any} */ c) => c.peerId === 'tl-unread-alice');
   assert.equal(conversation.unreadCount, 1);
   assert.equal(conversation.lastActivity.type, 'call');
   assert.equal(conversation.lastActivity.status, 'missed');
@@ -313,7 +325,7 @@ test('a missed call raises the conversation unread count and clears when read', 
   assert.equal(read.body.missedCallsRead, 1);
 
   const after = await getJson(url, '/conversations', bobSession);
-  const cleared = after.body.conversations.find((c) => c.peerId === 'tl-unread-alice');
+  const cleared = after.body.conversations.find((/** @type {any} */ c) => c.peerId === 'tl-unread-alice');
   assert.equal(cleared.unreadCount, 0);
 
   // Idempotent: nothing left to acknowledge on a replay.
@@ -323,7 +335,7 @@ test('a missed call raises the conversation unread count and clears when read', 
   // The caller's own outgoing call never counts as unread for them.
   const callerView = await getJson(url, '/conversations', aliceSession);
   const callerConversation = callerView.body.conversations.find(
-    (c) => c.peerId === 'tl-unread-bob'
+    (/** @type {any} */ c) => c.peerId === 'tl-unread-bob'
   );
   assert.equal(callerConversation.unreadCount, 0);
 });
@@ -342,13 +354,13 @@ test('lastActivity prefers the newest of the last message and the last call', as
   await postJson(url, `/calls/${call.callId}/decline`, {}, bobSession);
 
   const withCall = await getJson(url, '/conversations', aliceSession);
-  const conversation = withCall.body.conversations.find((c) => c.peerId === 'tl-last-bob');
+  const conversation = withCall.body.conversations.find((/** @type {any} */ c) => c.peerId === 'tl-last-bob');
   assert.equal(conversation.lastActivity.type, 'call');
   assert.equal(conversation.lastMessage.body, 'older message');
 
   await sendMessage(alice, 'tl-last-bob', 'newer message');
   const withMessage = await getJson(url, '/conversations', aliceSession);
-  const updated = withMessage.body.conversations.find((c) => c.peerId === 'tl-last-bob');
+  const updated = withMessage.body.conversations.find((/** @type {any} */ c) => c.peerId === 'tl-last-bob');
   assert.equal(updated.lastActivity.type, 'text');
   assert.equal(updated.lastActivity.body, 'newer message');
 });
@@ -364,11 +376,11 @@ test('a blocked peer\'s call-only conversation stays out of the chat list', asyn
   await postJson(url, `/calls/${call.callId}/decline`, {}, bobSession);
 
   const visible = await getJson(url, '/conversations', aliceSession);
-  assert.ok(visible.body.conversations.some((c) => c.peerId === 'tl-cblock-bob'));
+  assert.ok(visible.body.conversations.some((/** @type {any} */ c) => c.peerId === 'tl-cblock-bob'));
 
   const blocked = await postJson(url, '/blocks', { blockeeId: 'tl-cblock-alice' }, bobSession);
   assert.equal(blocked.status, 200);
 
   const hidden = await getJson(url, '/conversations', aliceSession);
-  assert.ok(!hidden.body.conversations.some((c) => c.peerId === 'tl-cblock-bob'));
+  assert.ok(!hidden.body.conversations.some((/** @type {any} */ c) => c.peerId === 'tl-cblock-bob'));
 });

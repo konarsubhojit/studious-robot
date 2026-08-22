@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -13,6 +14,7 @@ const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 
 const { API_ROUTES } = require('../../shared');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 const VERSION = 1;
 
@@ -21,53 +23,48 @@ const VERSION = 1;
 async function startServer(opts = {}) {
   const { createServer } = require('../src/index.js');
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
-async function connectSocket(url, sessionId) {
+async function connectSocket(/** @type {any} */ url, /** @type {any} */ sessionId) {
   const socket = ioClient(url, { auth: { sessionId } });
-  await new Promise((resolve) => socket.once('connect', resolve));
+  await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
 
-async function sendMessage(socket, recipientId, body) {
+async function sendMessage(/** @type {any} */ socket, /** @type {any} */ recipientId, /** @type {any} */ body) {
   const ack = await emitWithAck(socket, 'message.send', {
     version: VERSION,
     recipientId,
@@ -77,7 +74,7 @@ async function sendMessage(socket, recipientId, body) {
   return ack.message;
 }
 
-function searchPath(term, extra = '') {
+function searchPath(/** @type {any} */ term, extra = '') {
   return `${API_ROUTES.MESSAGES_SEARCH}?q=${encodeURIComponent(term)}${extra}`;
 }
 
@@ -121,7 +118,7 @@ test('GET /messages/search returns the caller matches newest-first with a peer i
   assert.equal(res.status, 200);
   assert.equal(res.body.query, 'lunch');
   assert.deepEqual(
-    res.body.results.map((m) => m.body),
+    res.body.results.map((/** @type {any} */ m) => m.body),
     ['Lunch tomorrow?', 'lunch at noon']
   );
   // Enough context to deep-link into the conversation at that message.
@@ -169,7 +166,7 @@ test('GET /messages/search paginates with a before cursor', async (t) => {
 
   const first = await getJson(url, searchPath('note', '&limit=2'), aliceSession);
   assert.deepEqual(
-    first.body.results.map((m) => m.body),
+    first.body.results.map((/** @type {any} */ m) => m.body),
     ['note 3', 'note 2']
   );
 
@@ -180,7 +177,7 @@ test('GET /messages/search paginates with a before cursor', async (t) => {
     aliceSession
   );
   assert.deepEqual(
-    second.body.results.map((m) => m.body),
+    second.body.results.map((/** @type {any} */ m) => m.body),
     ['note 1', 'note 0']
   );
 });
@@ -246,7 +243,7 @@ test('GET /messages/search reports an unavailable store', async (t) => {
   const failingStore = {
     type: 'memory',
     async ready() {},
-    async saveMessage(message) {
+    async saveMessage(/** @type {any} */ message) {
       return message;
     },
     async listMessages() {
@@ -283,13 +280,13 @@ test('GET /messages/search drops a result the caller did not take part in', asyn
   const leakyStore = {
     type: 'memory',
     async ready() {},
-    async saveMessage(message) {
+    async saveMessage(/** @type {any} */ message) {
       return message;
     },
     async listMessages() {
       return [];
     },
-    async searchMessages({ userId }) {
+    async searchMessages(/** @type {{ userId: string }} */ { userId }) {
       return [
         {
           messageId: 'm-own',
@@ -330,7 +327,7 @@ test('GET /messages/search drops a result the caller did not take part in', asyn
   const res = await getJson(url, searchPath('note'), session);
   assert.equal(res.status, 200);
   assert.deepEqual(
-    res.body.results.map((message) => message.messageId),
+    res.body.results.map((/** @type {any} */ message) => message.messageId),
     ['m-own']
   );
 });

@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -10,6 +11,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 const {
   MESSAGE_TYPES,
@@ -29,8 +31,13 @@ const R2_ENV = {
   R2_PUBLIC_BASE_URL: 'https://media.example.test',
 };
 
-/** Apply the R2 configuration for the duration of one test. */
+/**
+ * Apply the R2 configuration for the duration of one test.
+ *
+ * @param {import('node:test').TestContext} t
+ */
 function withR2Env(t) {
+  /** @type {Record<string, string|undefined>} */
   const previous = {};
   for (const [key, value] of Object.entries(R2_ENV)) {
     previous[key] = process.env[key];
@@ -48,8 +55,9 @@ function withR2Env(t) {
 function spyOnMessagePush() {
   const mod = require(pushModulePath);
   const original = mod.sendMessagePush;
+  /** @type {{ channel: any, messageData: any }[]} */
   const calls = [];
-  mod.sendMessagePush = async (channel, messageData) => {
+  mod.sendMessagePush = async (/** @type {any} */ channel, /** @type {any} */ messageData) => {
     calls.push({ channel, messageData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -64,49 +72,44 @@ function spyOnMessagePush() {
 async function startServer(opts = {}) {
   const { createServer } = require('../src/index.js');
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
-async function connectSocket(url, sessionId) {
+async function connectSocket(/** @type {any} */ url, /** @type {any} */ sessionId) {
   const { io: ioClient } = require('socket.io-client');
   const socket = ioClient(url, { auth: { sessionId } });
-  await new Promise((resolve) => socket.once('connect', resolve));
+  await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
 }
@@ -404,7 +407,7 @@ test('a reply survives the deletion of the message it quotes', async (t) => {
   assert.equal(deleted.ok, true);
 
   const history = await getJson(url, '/messages?peerId=rich-bob', aliceSession);
-  const byId = new Map(history.body.messages.map((message) => [message.messageId, message]));
+  const byId = new Map(history.body.messages.map((/** @type {any} */ message) => [message.messageId, message]));
   // The quoted message is still addressable — as a tombstone, so the reply
   // renders "Message deleted" instead of a dangling reference.
   const quoted = byId.get(original.message.messageId);
@@ -539,7 +542,7 @@ test('a message with an unknown type stays renderable by an older client', () =>
   assert.equal(describeMessagePreview(parsed.data.message), 'Unsupported message');
 
   // A row written before rich messaging carries no type at all: it is text.
-  assert.equal(messageTypeOf({ body: 'legacy' }), 'text');
-  assert.equal(describeMessagePreview({ body: 'legacy' }), 'legacy');
+  assert.equal(messageTypeOf(/** @type {any} */ ({ body: 'legacy' })), 'text');
+  assert.equal(describeMessagePreview(/** @type {any} */ ({ body: 'legacy' })), 'legacy');
   assert.equal(describeMessagePreview({ type: 'voice' }), '🎤 Voice message');
 });
