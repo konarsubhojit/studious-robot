@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -26,7 +27,14 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
 const schema = require('../db/schema');
 
 test('schema module exports all tables', () => {
-  for (const name of ['users', 'calls', 'callEvents', 'devices', 'auditLog', 'blocks']) {
+  for (const name of /** @type {const} */ ([
+    'users',
+    'calls',
+    'callEvents',
+    'devices',
+    'auditLog',
+    'blocks',
+  ])) {
     assert.ok(schema[name], `schema.${name} should be defined`);
   }
 });
@@ -51,10 +59,11 @@ test('migrations apply and the Drizzle client round-trips', { skip: !HAS_DB }, a
   // Isolate this test run in a throwaway database so it never clobbers app data
   // and so the migrations' `public`-qualified foreign keys resolve correctly.
   const tmpDb = `drizzle_test_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
-  const admin = new Pool({ connectionString: process.env.DATABASE_URL });
+  const databaseUrl = /** @type {string} */ (process.env.DATABASE_URL);
+  const admin = new Pool({ connectionString: databaseUrl });
   await admin.query(`CREATE DATABASE "${tmpDb}"`);
 
-  const tmpUrl = new URL(process.env.DATABASE_URL);
+  const tmpUrl = new URL(databaseUrl);
   tmpUrl.pathname = `/${tmpDb}`;
   const pool = new Pool({ connectionString: tmpUrl.toString() });
 

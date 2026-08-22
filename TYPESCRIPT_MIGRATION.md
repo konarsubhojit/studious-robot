@@ -14,6 +14,8 @@ documented today become contracts that are checked.
 - `npm run typecheck` (in `mobile/` and in `server/`) runs the check locally;
   both CI workflows run the same command and fail on any type error.
 - `shared/` is checked from both projects, because both consume it.
+- Test suites (`mobile/__tests__/`, `server/test/`) are part of the same
+  projects, so they opt in the same way.
 
 ## Migrating a file
 
@@ -88,10 +90,10 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `StatusBanner.js`
   - [x] `SwipeableRow.js`
   - [x] `TabShell.js`
-- [ ] `src/call/` (in progress)
+- [x] `src/call/`
   - [x] `callStateMachine.js`
   - [x] `CallProvider.js`
-- [ ] `src/chat/` (in progress)
+- [x] `src/chat/`
   - [x] `ChatProvider.js`
 - [x] `src/navigation/`
   - [x] `routes.js`
@@ -137,7 +139,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/vectorIcons.js`
 - [x] `src/webrtcConfig.js`
 - [x] `src/AppShell.js`
-- [ ] remaining `src/*.js` modules (logging, permissions, …)
+- [x] remaining `src/*.js` modules (logging, permissions, …)
 - [x] `App.js`
 - [ ] `__tests__/`
 
@@ -182,4 +184,10 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/firebaseAuth.js`
 - [x] `src/push.js`
 - [x] remaining `src/*.js` modules
-- [ ] `test/`
+- [ ] `test/` (in progress)
+  - [x] `helpers.js`
+  - [x] `correlation.test.js`
+  - [x] `db-drizzle.test.js`
+  - [x] `health.test.js`
+  - [x] `stores.test.js`
+  - [x] `verbose-logger.test.js`

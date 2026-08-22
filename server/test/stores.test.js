@@ -1,26 +1,39 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, createStores } = require('../src/index.js');
 const { createMemoryStores, STORE_NAMES } = require('../src/stores');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * @param {import('../src/createServer').CreateServerOptions} [opts]
+ */
 async function startServer(opts) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {Record<string, unknown>} body
+ * @param {string} [sessionId] - Merged into the body when present.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function postJson(url, path, body, sessionId) {
   const payload = sessionId ? { ...body, sessionId } : body;
   const response = await fetch(`${url}${path}`, {
@@ -28,9 +41,15 @@ async function postJson(url, path, body, sessionId) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await readJson(response) };
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -62,9 +81,17 @@ test('createStores returns an injected bundle that satisfies the contract', () =
 });
 
 test('createStores rejects a bundle missing a store', () => {
-  const incomplete = createMemoryStores();
+  const incomplete = /** @type {Partial<import('../src/stores/contracts').Stores>} */ (
+    createMemoryStores()
+  );
   delete incomplete.calls;
-  assert.throws(() => createStores({ stores: incomplete }), /missing store "calls"/);
+  assert.throws(
+    () =>
+      createStores({
+        stores: /** @type {import('../src/stores/contracts').Stores} */ (incomplete),
+      }),
+    /missing store "calls"/
+  );
 });
 
 // ─── createServer uses injected stores ────────────────────────────────────────
@@ -82,7 +109,7 @@ test('createServer persists state into injected stores', async () => {
 
     // The call lives in the injected store, proving the server reads/writes it.
     assert.ok(stores.calls.has(callId));
-    assert.equal(stores.calls.get(callId).status, 'ringing');
+    assert.equal(stores.calls.get(callId)?.status, 'ringing');
     assert.ok(stores.callEvents.has(callId));
     assert.ok(stores.sessions.size >= 2);
   } finally {

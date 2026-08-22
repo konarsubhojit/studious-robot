@@ -1,10 +1,20 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { isVerboseLoggingEnabled, verboseLog } = require('../src/lib/verbose');
 
+/**
+ * Run `fn` with `process.env` temporarily patched, restoring it afterwards.
+ *
+ * @template T
+ * @param {Record<string, string|undefined>} overrides
+ * @param {() => T} fn
+ * @returns {T}
+ */
 function withEnv(overrides, fn) {
+  /** @type {Record<string, string|undefined>} */
   const previous = {};
   for (const [key, value] of Object.entries(overrides)) {
     previous[key] = process.env[key];
@@ -35,8 +45,11 @@ test('verbose logging is disabled by default and enabled by env', () => {
 
 test('verboseLog redacts sensitive metadata', () => {
   const original = console.log;
+  /** @type {string[]} */
   const lines = [];
-  console.log = (...args) => lines.push(args.join(' '));
+  console.log = (...args) => {
+    lines.push(args.join(' '));
+  };
   try {
     withEnv({ VERBOSE_LOGGING: 'true' }, () => {
       verboseLog('test', 'redaction', {

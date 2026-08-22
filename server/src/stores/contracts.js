@@ -198,7 +198,7 @@
  * Names of every store in a {@link Stores} bundle.  Implementations must
  * provide a value for each of these keys.
  *
- * @type {readonly string[]}
+ * @type {readonly (keyof Stores)[]}
  */
 const STORE_NAMES = Object.freeze([
   'rooms',

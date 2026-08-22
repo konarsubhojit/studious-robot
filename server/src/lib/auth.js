@@ -85,7 +85,9 @@ function getSessionFromRequest(req, sessions) {
  * client only finding out indirectly when an authenticated action (like
  * `call.initiate`) is later rejected.
  *
- * @param {import('socket.io').Socket} socket
+ * @param {{ handshake: { auth?: Record<string, any> } }} socket
+ *   Any Socket.IO socket; only the handshake `auth` payload is read, so tests
+ *   may pass a minimal stand-in.
  * @param {import('../stores/contracts').SessionStore} sessions
  * @returns {{
  *   userId: string,
@@ -98,7 +100,7 @@ function getSessionFromRequest(req, sessions) {
  * }}
  */
 function resolveSocketIdentity(socket, sessions) {
-  const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth : {};
+  const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth ?? {} : {};
   const sessionId = normaliseId(auth.sessionId);
   const session = sessionId ? sessions.get(sessionId) : null;
   const expiresAtMs = session?.expiresAt ? new Date(session.expiresAt).getTime() : null;

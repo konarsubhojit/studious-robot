@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
@@ -6,12 +7,12 @@ const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
 const { normaliseCorrelationId, resolveSocketIdentity } = require('../src/lib/auth');
 const { SIGNALING_VERSION } = require('../src/config');
-const { captureConsoleLog } = require('./helpers');
+const { captureConsoleLog, listenOnRandomPort, readJson } = require('./helpers');
 
 test('correlation ids are normalised to log-safe, bounded strings', () => {
   assert.equal(normaliseCorrelationId('  wt-abc123  '), 'wt-abc123');
   assert.equal(normaliseCorrelationId('wt-a\nb c'), 'wt-abc');
-  assert.equal(normaliseCorrelationId('x'.repeat(200)).length, 64);
+  assert.equal(normaliseCorrelationId('x'.repeat(200))?.length, 64);
   assert.equal(normaliseCorrelationId(''), null);
   assert.equal(normaliseCorrelationId('   '), null);
   assert.equal(normaliseCorrelationId(42), null);
@@ -19,8 +20,19 @@ test('correlation ids are normalised to log-safe, bounded strings', () => {
 });
 
 test('socket identity carries the handshake correlation id for sessions and guests', () => {
+  /** @type {import('../src/stores/contracts').SessionStore} */
   const sessions = new Map([
-    ['session-1', { sessionId: 'session-1', userId: 'user-1', deviceId: 'device-1', platform: 'android' }],
+    [
+      'session-1',
+      {
+        sessionId: 'session-1',
+        userId: 'user-1',
+        deviceId: 'device-1',
+        platform: 'android',
+        createdAt: new Date().toISOString(),
+        expiresAt: null,
+      },
+    ],
   ]);
 
   const authenticated = resolveSocketIdentity(
@@ -49,26 +61,36 @@ test('a call initiated over the socket is logged with the client correlation id'
       authProvider: 'password',
     }),
   });
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /**
+   * @param {string} userId
+   * @returns {Promise<any>} the created session document
+   */
   async function createSession(userId) {
     const response = await fetch(`${url}/session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ userId, deviceId: `${userId}-device`, idToken: `account-${userId}` }),
     });
-    return response.json();
+    return readJson(response);
   }
 
   const logs = captureConsoleLog();
+  /** @type {import('socket.io-client').Socket|undefined} */
   let caller;
+  /** @type {import('socket.io-client').Socket|undefined} */
   let callee;
   try {
     const callerSession = await createSession('user-caller');
     const calleeSession = await createSession('user-callee');
 
+    /**
+     * @param {string} sessionId
+     * @param {string} correlationId
+     * @returns {Promise<import('socket.io-client').Socket>}
+     */
     const connect = (sessionId, correlationId) =>
       new Promise((resolve, reject) => {
         const socket = ioClient(url, {
@@ -83,13 +105,15 @@ test('a call initiated over the socket is logged with the client correlation id'
     caller = await connect(callerSession.sessionId, 'wt-caller-trace');
     callee = await connect(calleeSession.sessionId, 'wt-callee-trace');
 
-    const ack = await new Promise((resolve) => {
-      caller.emit(
-        'call.initiate',
-        { version: SIGNALING_VERSION, calleeId: 'user-callee' },
-        resolve
-      );
-    });
+    const ack = await /** @type {Promise<any>} */ (
+      new Promise((resolve) => {
+        caller?.emit(
+          'call.initiate',
+          { version: SIGNALING_VERSION, calleeId: 'user-callee' },
+          resolve
+        );
+      })
+    );
     assert.equal(ack.ok, true);
     const { callId } = ack.call;
 
