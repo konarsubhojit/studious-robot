@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   appendFile: jest.fn(),
@@ -32,6 +33,7 @@ describe('appLogger', () => {
   });
 
   test('serializes metadata safely with circular objects', () => {
+    /** @type {Record<string, unknown>} */
     const metadata = { name: 'device' };
     metadata.self = metadata;
 
@@ -40,7 +42,7 @@ describe('appLogger', () => {
   });
 
   test('redacts sensitive fields in metadata and errors', () => {
-    const err = new Error('socket failed');
+    const err = /** @type {Error & { context?: unknown }} */ (new Error('socket failed'));
     err.context = {
       TURN_USERNAME: 'demo-user',
       token: 'secret-token',
@@ -87,9 +89,9 @@ describe('appLogger', () => {
   });
 
   test('background logs are persisted and included in export text', async () => {
-    RNFS.appendFile.mockResolvedValueOnce(undefined);
-    RNFS.exists.mockResolvedValueOnce(true);
-    RNFS.readFile.mockResolvedValueOnce('persisted background line\n');
+    /** @type {jest.Mock} */ (RNFS.appendFile).mockResolvedValueOnce(undefined);
+    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValueOnce(true);
+    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValueOnce('persisted background line\n');
 
     await logBackgroundInfo('background receipt', { callId: 'call-1' });
     const exported = await getLogsForExport();

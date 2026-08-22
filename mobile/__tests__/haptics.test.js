@@ -1,3 +1,4 @@
+// @ts-check
 import { AccessibilityInfo, Vibration } from 'react-native';
 import {
   areHapticsSuppressed,
@@ -8,6 +9,7 @@ import {
 } from '../src/haptics';
 
 describe('haptics', () => {
+  /** @type {jest.SpyInstance} */
   let vibrateSpy;
 
   beforeEach(() => {
@@ -27,7 +29,7 @@ describe('haptics', () => {
   });
 
   test('ignores unknown patterns', () => {
-    expect(triggerHaptic('nope')).toBe(false);
+    expect(triggerHaptic(/** @type {any} */ ('nope'))).toBe(false);
     expect(vibrateSpy).not.toHaveBeenCalled();
   });
 
@@ -40,7 +42,9 @@ describe('haptics', () => {
 
   test('suppresses haptics while the OS asks for reduced motion', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
-    jest.spyOn(AccessibilityInfo, 'addEventListener').mockReturnValue({ remove: () => {} });
+    jest
+      .spyOn(AccessibilityInfo, 'addEventListener')
+      .mockReturnValue(/** @type {any} */ ({ remove: () => {} }));
 
     const unsubscribe = initHaptics();
     await Promise.resolve();
@@ -53,12 +57,15 @@ describe('haptics', () => {
   });
 
   test('reacts to later reduce-motion changes', async () => {
+    /** @type {any} */
     let listener = null;
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
-    jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation((event, handler) => {
-      if (event === 'reduceMotionChanged') listener = handler;
-      return { remove: () => {} };
-    });
+    jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation(
+      /** @type {any} */ ((/** @type {string} */ event, /** @type {any} */ handler) => {
+        if (event === 'reduceMotionChanged') listener = handler;
+        return { remove: () => {} };
+      })
+    );
 
     const unsubscribe = initHaptics();
     await Promise.resolve();
@@ -77,7 +84,9 @@ describe('haptics', () => {
   test('unsubscribing removes the accessibility listener', () => {
     const remove = jest.fn();
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
-    jest.spyOn(AccessibilityInfo, 'addEventListener').mockReturnValue({ remove });
+    jest
+      .spyOn(AccessibilityInfo, 'addEventListener')
+      .mockReturnValue(/** @type {any} */ ({ remove }));
 
     initHaptics()();
 

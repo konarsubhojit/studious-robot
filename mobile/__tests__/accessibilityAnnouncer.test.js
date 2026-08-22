@@ -1,3 +1,4 @@
+// @ts-check
 import { AccessibilityInfo } from 'react-native';
 import { announceForAccessibility, describeCallState } from '../src/accessibilityAnnouncer';
 import { CALL_STATES } from '../src/call/callStateMachine';
@@ -32,6 +33,7 @@ describe('describeCallState', () => {
 });
 
 describe('announceForAccessibility', () => {
+  /** @type {jest.SpyInstance} */
   let spy;
 
   beforeEach(() => {

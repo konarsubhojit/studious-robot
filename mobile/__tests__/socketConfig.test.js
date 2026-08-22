@@ -1,3 +1,4 @@
+// @ts-check
 import {
   RECONNECTION_OPTIONS,
   getSocketOptions,
@@ -19,7 +20,7 @@ describe('socketConfig', () => {
     const options = getSocketOptions({ reconnectionAttempts: 2, extra: true });
 
     expect(options.reconnectionAttempts).toBe(2);
-    expect(options.extra).toBe(true);
+    expect(/** @type {any} */ (options).extra).toBe(true);
     expect(options.reconnection).toBe(true);
   });
 

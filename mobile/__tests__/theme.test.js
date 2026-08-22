@@ -1,3 +1,4 @@
+// @ts-check
 import {
   palettes,
   resolveScheme,
@@ -8,13 +9,13 @@ import {
 } from '../src/theme';
 
 /** Relative luminance of a #rrggbb colour, per WCAG 2.1. */
-function luminance(hex) {
+function luminance(/** @type {string} */ hex) {
   const channels = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
   const [r, g, b] = channels.map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-function contrast(a, b) {
+function contrast(/** @type {string} */ a, /** @type {string} */ b) {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -37,22 +38,23 @@ describe('theme palettes', () => {
   });
 
   test.each(['light', 'dark'])('%s text colours meet WCAG AA on every surface', scheme => {
-    const colors = palettes[scheme];
+    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
     FOREGROUNDS.forEach(fg => {
       SURFACES.forEach(bg => {
-        expect(contrast(colors[fg], colors[bg])).toBeGreaterThanOrEqual(4.5);
+        const scale = /** @type {Record<string, string>} */ (colors);
+        expect(contrast(scale[fg], scale[bg])).toBeGreaterThanOrEqual(4.5);
       });
     });
   });
 
   test.each(['light', 'dark'])('%s accent buttons meet WCAG AA for their label', scheme => {
-    const colors = palettes[scheme];
+    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
     expect(contrast(colors.textOnAccent, colors.accentButton)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(colors.textOnAccent, colors.danger)).toBeGreaterThanOrEqual(4.5);
   });
 
   test.each(['light', 'dark'])('%s control borders meet the 3:1 non-text ratio', scheme => {
-    const colors = palettes[scheme];
+    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
     expect(contrast(colors.border, colors.surface)).toBeGreaterThanOrEqual(3);
     expect(contrast(colors.border, colors.background)).toBeGreaterThanOrEqual(3);
   });

@@ -21,6 +21,11 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["jest", "node"]
   },
-  "include": ["src/**/*.js", "src/**/*.d.ts", "../shared/**/*.js"],
+  "include": [
+    "src/**/*.js",
+    "src/**/*.d.ts",
+    "__tests__/**/*.js",
+    "../shared/**/*.js"
+  ],
   "exclude": ["node_modules", "../shared/node_modules"]
 }

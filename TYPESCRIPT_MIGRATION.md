@@ -141,7 +141,13 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/AppShell.js`
 - [x] remaining `src/*.js` modules (logging, permissions, …)
 - [x] `App.js`
-- [ ] `__tests__/`
+- [ ] `__tests__/` (in progress)
+  - [x] `accessibilityAnnouncer.test.js`
+  - [x] `appLogger.test.js`
+  - [x] `haptics.test.js`
+  - [x] `socketConfig.test.js`
+  - [x] `theme.test.js`
+  - [x] `webrtcConfig.test.js`
 
 ### server/
 
