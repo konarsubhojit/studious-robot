@@ -47,6 +47,11 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/socketConfig.js`
 - [x] `src/accessibilityAnnouncer.js`
 - [x] `src/callStreamHelpers.js`
+- [x] `src/callUx.js`
+- [x] `src/haptics.js`
+- [x] `src/crashReporter.js`
+- [x] `src/callService.js`
+- [x] `src/authService.js`
 - [ ] `src/components/` (in progress)
   - [x] `AppButton.js`
   - [x] `AppTabBar.js`

@@ -1,3 +1,4 @@
+// @ts-check
 import auth from '@react-native-firebase/auth';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
@@ -6,19 +7,37 @@ const GOOGLE_SIGN_IN_UNAVAILABLE_MESSAGE = 'Google Sign-In is not available in t
 const MICROSOFT_SIGN_IN_UNAVAILABLE_MESSAGE = 'Microsoft Sign-In is not available in this build';
 
 let googleConfigured = false;
+/**
+ * The lazily `require`d Google Sign-In module: `undefined` before the first
+ * load attempt, `null` when the native module is absent from this build.
+ *
+ * @type {any}
+ */
 let cachedGoogleSignin;
 
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
 function isFirebaseAppUnavailableError(error) {
-  const message = error?.message || '';
+  const message = error instanceof Error ? error.message : '';
   return (
     message.includes("No Firebase App '[DEFAULT]' has been created") ||
     message.toLowerCase().includes('default app has not been created')
   );
 }
 
+/**
+ * Translate a missing-Firebase-app failure into an actionable error.
+ *
+ * @param {unknown} error
+ * @returns {unknown} the original error, or a coded replacement.
+ */
 function toAuthError(error) {
   if (isFirebaseAppUnavailableError(error)) {
-    const nextError = new Error(FIREBASE_APP_UNAVAILABLE_MESSAGE);
+    const nextError = /** @type {Error & { code?: string }} */ (
+      new Error(FIREBASE_APP_UNAVAILABLE_MESSAGE)
+    );
     nextError.code = 'auth/app-not-configured';
     return nextError;
   }
@@ -37,7 +56,8 @@ function loadGoogleSignin() {
   if (cachedGoogleSignin !== undefined) return cachedGoogleSignin;
   try {
     const mod = require('@react-native-google-signin/google-signin');
-    cachedGoogleSignin = mod?.GoogleSignin ?? mod?.default ?? mod;
+    const anyMod = /** @type {any} */ (mod);
+    cachedGoogleSignin = anyMod?.GoogleSignin ?? anyMod?.default ?? anyMod;
   } catch {
     cachedGoogleSignin = null;
   }
@@ -73,14 +93,26 @@ function configureGoogle() {
   googleConfigured = true;
 }
 
+/**
+ * @param {(user: import('@react-native-firebase/auth').FirebaseAuthTypes.User|null) => void} listener
+ * @returns {() => void} unsubscribe
+ */
 export function observeAuthState(listener) {
   return getAuth().onAuthStateChanged(listener);
 }
 
+/**
+ * @param {string} email
+ * @param {string} password
+ */
 export async function registerWithEmail(email, password) {
   return getAuth().createUserWithEmailAndPassword(email.trim(), password);
 }
 
+/**
+ * @param {string} email
+ * @param {string} password
+ */
 export async function signInWithEmail(email, password) {
   return getAuth().signInWithEmailAndPassword(email.trim(), password);
 }

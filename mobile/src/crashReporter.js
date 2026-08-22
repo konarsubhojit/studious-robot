@@ -1,8 +1,13 @@
+// @ts-check
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 
+/**
+ * @param {Date} [date]
+ * @returns {string} `YYYYMMDD-HHMMSS`, safe for use in a file name.
+ */
 function formatDateForFile(date = new Date()) {
-  const pad = v => String(v).padStart(2, '0');
+  const pad = (/** @type {number} */ v) => String(v).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
@@ -22,15 +27,16 @@ function formatDateForFile(date = new Date()) {
  * @returns {Promise<{success: boolean, path?: string, label?: string}>}
  */
 export async function saveCrashLog(error, isFatal, getLogsCallback) {
+  const details = error instanceof Error ? error : null;
   const fileName = `wetalk-crash-${formatDateForFile()}.txt`;
 
   const content = [
     'WeTalk crash report',
     `crashedAt: ${new Date().toISOString()}`,
     `isFatal: ${Boolean(isFatal)}`,
-    `error.name: ${error?.name ?? 'unknown'}`,
-    `error.message: ${error?.message ?? 'unknown'}`,
-    `error.stack:\n${error?.stack ?? 'unavailable'}`,
+    `error.name: ${details?.name ?? 'unknown'}`,
+    `error.message: ${details?.message ?? String(error ?? 'unknown')}`,
+    `error.stack:\n${details?.stack ?? 'unavailable'}`,
     '',
     '--- app logs at time of crash ---',
     typeof getLogsCallback === 'function' ? getLogsCallback() : '(no log callback)',
@@ -75,7 +81,7 @@ export async function saveCrashLog(error, isFatal, getLogsCallback) {
  * @param {() => string} getLogsCallback  Returns buffered in-memory app logs.
  */
 export function installCrashHandler(getLogsCallback) {
-  if (!global.ErrorUtils) {
+  if (!(/** @type {any} */ (global).ErrorUtils)) {
     return;
   }
 
@@ -92,7 +98,7 @@ export function installCrashHandler(getLogsCallback) {
     // Best-effort async file dump for easier retrieval from the device.
     // The write may not complete if the process is killed immediately after
     // a fatal crash, but for non-fatal errors it will always finish.
-    saveCrashLog(error, isFatal, getLogsCallback).catch(() => {
+    saveCrashLog(error, Boolean(isFatal), getLogsCallback).catch(() => {
       // Swallow write errors to prevent recursive crash handling.
     });
 

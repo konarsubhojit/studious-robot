@@ -1,3 +1,4 @@
+// @ts-check
 import { AccessibilityInfo, Vibration } from 'react-native';
 
 /**
