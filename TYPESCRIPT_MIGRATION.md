@@ -9,26 +9,31 @@ documented today become contracts that are checked.
 - `mobile/tsconfig.json` and `server/tsconfig.json` run TypeScript in `allowJs`
   mode with `strict: true` and `noEmit: true`. Nothing is compiled: `tsc` is a
   linter here, and Metro/Node keep running the `.js` files unchanged.
-- `checkJs` is **off**, so unmigrated files never fail the build. A file opts in
-  by starting with a `// @ts-check` comment.
+- Every file is now migrated, so `checkJs` is **on**: new and changed `.js`
+  files are strict-checked by default and CI fails on any type error. The
+  `// @ts-check` comments that files carry from the migration are now redundant
+  but harmless.
 - `npm run typecheck` (in `mobile/` and in `server/`) runs the check locally;
   both CI workflows run the same command and fail on any type error.
 - `shared/` is checked from both projects, because both consume it.
 - Test suites (`mobile/__tests__/`, `server/test/`) are part of the same
   projects, so they opt in the same way.
 
-## Migrating a file
+## Adding a file
 
-1. Add `// @ts-check` as the first line (before `'use strict';` if present).
-2. Run `npm run typecheck` in the owning project.
-3. Fix the reported errors by adding JSDoc types (`@param`, `@returns`,
+1. Run `npm run typecheck` in the owning project; the new file is checked
+   automatically.
+2. Fix the reported errors by adding JSDoc types (`@param`, `@returns`,
    `@typedef`). Prefer describing the real shape over `any`; use
    `/** @type {...} */ (value)` casts only where a third-party type is wrong.
-4. Tick the file's directory below once every file in it is annotated.
 
-Migration order (cheapest and most-depended-upon first): shared contracts →
-design tokens and utilities → presentational components → hooks → screens and
-`App.js` → server handlers.
+Why JSDoc-on-`.js` rather than renaming files to `.ts`/`.tsx`: `tsc` runs with
+`noEmit`, so there is no build step to add — the server still runs
+`node src/index.js` and Metro still bundles the same files. Renaming would also
+force each file to be fixed in a single all-or-nothing commit. Converting to
+real `.ts`/`.tsx` sources is a possible follow-up now that every file is typed;
+it needs a decision on the server runtime (a build step vs. Node's type
+stripping) and is tracked separately.
 
 ## Progress
 
@@ -141,7 +146,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/AppShell.js`
 - [x] remaining `src/*.js` modules (logging, permissions, …)
 - [x] `App.js`
-- [ ] `__tests__/` (in progress)
+- [x] `__tests__/`
   - [x] `accessibilityAnnouncer.test.js`
   - [x] `appLogger.test.js`
   - [x] `haptics.test.js`
@@ -176,6 +181,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `attachmentUpload.test.js`
   - [x] `screenShare.test.js`
   - [x] `AppShell.test.js`
+  - [x] `pushNotifications.test.js`
+  - [x] `callKeep.test.js`
 
 ### server/
 
@@ -219,3 +226,4 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/push.js`
 - [x] remaining `src/*.js` modules
 - [x] `test/` (all suites)
+- [x] `db/` (client, schema)

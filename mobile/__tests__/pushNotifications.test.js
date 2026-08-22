@@ -1,3 +1,4 @@
+// @ts-check
 import { Linking } from 'react-native';
 import {
   _extractIncomingCallFromMessage,
@@ -34,6 +35,13 @@ import {
   setActiveConversation,
   showMessageNotification,
 } from '../src/messageNotification';
+
+const globalAny = /** @type {any} */ (/** @type {unknown} */ (global));
+const getInitialURLMock = /** @type {jest.Mock} */ (Linking.getInitialURL);
+const addEventListenerMock = /** @type {jest.Mock} */ (Linking.addEventListener);
+const showMessageNotificationMock = /** @type {jest.Mock} */ (
+  /** @type {unknown} */ (showMessageNotification)
+);
 
 jest.mock('../src/messageNotification', () => {
   const actual = jest.requireActual('../src/messageNotification');
@@ -100,7 +108,7 @@ describe('parseCallDeepLink', () => {
   });
 
   test('returns null for non-string input', () => {
-    expect(parseCallDeepLink(42)).toBeNull();
+    expect(parseCallDeepLink(/** @type {any} */ (42))).toBeNull();
     expect(parseCallDeepLink(undefined)).toBeNull();
   });
 
@@ -115,25 +123,25 @@ describe('getInitialCallLink', () => {
   afterEach(() => jest.clearAllMocks());
 
   test('returns descriptor when app launched from call deep link', async () => {
-    Linking.getInitialURL.mockResolvedValue('wetalk://call/call-id-99');
+    getInitialURLMock.mockResolvedValue('wetalk://call/call-id-99');
     const result = await getInitialCallLink();
     expect(result).toEqual({ callId: 'call-id-99' });
   });
 
   test('returns null when app was launched normally', async () => {
-    Linking.getInitialURL.mockResolvedValue(null);
+    getInitialURLMock.mockResolvedValue(null);
     const result = await getInitialCallLink();
     expect(result).toBeNull();
   });
 
   test('returns null when the initial URL is unrelated', async () => {
-    Linking.getInitialURL.mockResolvedValue('https://example.com/');
+    getInitialURLMock.mockResolvedValue('https://example.com/');
     const result = await getInitialCallLink();
     expect(result).toBeNull();
   });
 
   test('returns null and does not throw when getInitialURL rejects', async () => {
-    Linking.getInitialURL.mockRejectedValue(new Error('linking unavailable'));
+    getInitialURLMock.mockRejectedValue(new Error('linking unavailable'));
     await expect(getInitialCallLink()).resolves.toBeNull();
   });
 });
@@ -145,8 +153,9 @@ describe('addCallLinkListener', () => {
 
   test('invokes callback for matching deep links', () => {
     const callback = jest.fn();
+    /** @type {any} */
     let capturedListener;
-    Linking.addEventListener.mockImplementation((event, listener) => {
+    addEventListenerMock.mockImplementation((/** @type {string} */ event, /** @type {any} */ listener) => {
       capturedListener = listener;
       return { remove: jest.fn() };
     });
@@ -159,8 +168,9 @@ describe('addCallLinkListener', () => {
 
   test('does not invoke callback for non-call URLs', () => {
     const callback = jest.fn();
+    /** @type {any} */
     let capturedListener;
-    Linking.addEventListener.mockImplementation((event, listener) => {
+    addEventListenerMock.mockImplementation((/** @type {string} */ event, /** @type {any} */ listener) => {
       capturedListener = listener;
       return { remove: jest.fn() };
     });
@@ -173,7 +183,7 @@ describe('addCallLinkListener', () => {
 
   test('returns an unsubscribe function that removes the listener', () => {
     const remove = jest.fn();
-    Linking.addEventListener.mockReturnValue({ remove });
+    addEventListenerMock.mockReturnValue({ remove });
     const unlisten = addCallLinkListener(jest.fn());
     unlisten();
     expect(remove).toHaveBeenCalled();
@@ -184,16 +194,16 @@ describe('addCallLinkListener', () => {
 
 describe('registerPushToken', () => {
   beforeEach(() => {
-    global.fetch = jest.fn();
+    globalAny.fetch = jest.fn();
   });
 
   afterEach(() => {
-    delete global.fetch;
+    delete globalAny.fetch;
     jest.clearAllMocks();
   });
 
   test('returns true and logs on success', async () => {
-    global.fetch.mockResolvedValue({
+    globalAny.fetch.mockResolvedValue({
       ok: true,
       json: async () => ({ deviceId: 'device-1', provider: 'fcm' }),
     });
@@ -206,14 +216,14 @@ describe('registerPushToken', () => {
     });
 
     expect(result).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/register',
       expect.objectContaining({ method: 'POST' }),
     );
   });
 
   test('returns false on HTTP error response', async () => {
-    global.fetch.mockResolvedValue({
+    globalAny.fetch.mockResolvedValue({
       ok: false,
       status: 401,
       json: async () => ({ error: 'invalid session' }),
@@ -230,7 +240,7 @@ describe('registerPushToken', () => {
   });
 
   test('returns false when fetch throws (network error)', async () => {
-    global.fetch.mockRejectedValue(new Error('network error'));
+    globalAny.fetch.mockRejectedValue(new Error('network error'));
 
     const result = await registerPushToken({
       sessionId: 'sess-2',
@@ -247,16 +257,16 @@ describe('registerPushToken', () => {
 
 describe('unregisterPushToken', () => {
   beforeEach(() => {
-    global.fetch = jest.fn();
+    globalAny.fetch = jest.fn();
   });
 
   afterEach(() => {
-    delete global.fetch;
+    delete globalAny.fetch;
     jest.clearAllMocks();
   });
 
   test('returns true on success', async () => {
-    global.fetch.mockResolvedValue({
+    globalAny.fetch.mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'unregistered' }),
     });
@@ -270,7 +280,7 @@ describe('unregisterPushToken', () => {
   });
 
   test('returns false on HTTP error', async () => {
-    global.fetch.mockResolvedValue({
+    globalAny.fetch.mockResolvedValue({
       ok: false,
       status: 400,
       json: async () => ({ error: 'bad request' }),
@@ -327,14 +337,15 @@ describe('getPushToken / registerForPushNotifications (native module absent)', (
   });
 
   test('registerForPushNotifications resolves false for missing args', async () => {
-    await expect(registerForPushNotifications({})).resolves.toBe(false);
+    await expect(registerForPushNotifications(/** @type {any} */ ({}))).resolves.toBe(false);
   });
 });
 
 describe('getPushToken (native module present)', () => {
   const AUTH = { AUTHORIZED: 1, PROVISIONAL: 2, DENIED: 0 };
 
-  function withMessaging(instance, run) {
+  function withMessaging(/** @type {any} */ instance, /** @type {any} */ run) {
+    /** @type {any} */
     let mod;
     jest.isolateModules(() => {
       // Real @react-native-firebase/messaging's modular API exposes free
@@ -344,11 +355,13 @@ describe('getPushToken (native module present)', () => {
       // modular call sites instead of masking them.
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: inst => inst.requestPermission(),
-        getToken: inst => inst.getToken(),
-        registerDeviceForRemoteMessages: inst => inst.registerDeviceForRemoteMessages?.(),
-        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
-        onMessage: (inst, handler) => inst.onMessage(handler),
+        requestPermission: (/** @type {any} */ inst) => inst.requestPermission(),
+        getToken: (/** @type {any} */ inst) => inst.getToken(),
+        registerDeviceForRemoteMessages: (/** @type {any} */ inst) =>
+          inst.registerDeviceForRemoteMessages?.(),
+        setBackgroundMessageHandler: (/** @type {any} */ inst, /** @type {any} */ handler) =>
+          inst.setBackgroundMessageHandler(handler),
+        onMessage: (/** @type {any} */ inst, /** @type {any} */ handler) => inst.onMessage(handler),
         AuthorizationStatus: AUTH,
       };
       jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
@@ -367,7 +380,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue('fcm-token-123'),
     };
-    await withMessaging(instance, async mod => {
+    await withMessaging(instance, async (/** @type {any} */ mod) => {
       await expect(mod.getPushToken()).resolves.toEqual({
         provider: 'fcm',
         pushToken: 'fcm-token-123',
@@ -380,7 +393,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.DENIED),
       getToken: jest.fn(),
     };
-    await withMessaging(instance, async mod => {
+    await withMessaging(instance, async (/** @type {any} */ mod) => {
       await expect(mod.getPushToken()).resolves.toBeNull();
       expect(instance.getToken).not.toHaveBeenCalled();
     });
@@ -391,7 +404,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue(''),
     };
-    await withMessaging(instance, async mod => {
+    await withMessaging(instance, async (/** @type {any} */ mod) => {
       await expect(mod.getPushToken()).resolves.toBeNull();
     });
   });
@@ -401,23 +414,23 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue('fcm-token-xyz'),
     };
-    global.fetch = jest.fn().mockResolvedValue({
+    globalAny.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ deviceId: 'd-1' }),
     });
-    await withMessaging(instance, async mod => {
+    await withMessaging(instance, async (/** @type {any} */ mod) => {
       await expect(
         mod.registerForPushNotifications({
           sessionId: 'sess-9',
           signalingUrl: 'http://localhost:4173',
         }),
       ).resolves.toBe(true);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalAny.fetch).toHaveBeenCalledWith(
         'http://localhost:4173/devices/register',
         expect.objectContaining({ method: 'POST' }),
       );
     });
-    delete global.fetch;
+    delete globalAny.fetch;
   });
 });
 
@@ -426,12 +439,12 @@ describe('background push handler', () => {
 
   beforeEach(() => {
     _resetMessagingCache();
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    globalAny.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
   });
 
   afterEach(() => {
-    delete global.fetch;
+    delete globalAny.fetch;
     jest.restoreAllMocks();
   });
 
@@ -515,7 +528,7 @@ describe('background push handler', () => {
       data: { callId: 'call-receipt', callerId: 'alice' },
     });
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         method: 'POST',
@@ -526,7 +539,7 @@ describe('background push handler', () => {
         }),
       }),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         method: 'POST',
@@ -565,7 +578,7 @@ describe('background push handler', () => {
       }),
     ).resolves.toBe(true);
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'https://signal.example/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -582,15 +595,16 @@ describe('background push handler', () => {
    * memoised native lookup while the mock is active (see the identical helper
    * in the `getPushToken` block).
    */
-  function withMockedMessaging(instance, run) {
+  function withMockedMessaging(/** @type {any} */ instance, /** @type {any} */ run) {
+    /** @type {any} */
     let mod;
     jest.isolateModules(() => {
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: inst => inst.requestPermission?.(),
-        getToken: inst => inst.getToken?.(),
-        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler?.(handler),
-        onMessage: (inst, handler) =>
+        requestPermission: (/** @type {any} */ inst) => inst.requestPermission?.(),
+        getToken: (/** @type {any} */ inst) => inst.getToken?.(),
+        setBackgroundMessageHandler: (/** @type {any} */ inst, /** @type {any} */ handler) => inst.setBackgroundMessageHandler?.(handler),
+        onMessage: (/** @type {any} */ inst, /** @type {any} */ handler) =>
           typeof inst.onMessage === 'function' ? inst.onMessage(handler) : undefined,
         AuthorizationStatus: AUTH,
       };
@@ -604,7 +618,7 @@ describe('background push handler', () => {
 
   test('installForegroundMessageHandler rings pushes that arrive while open', async () => {
     const onMessage = jest.fn().mockReturnValue(jest.fn());
-    await withMockedMessaging({ onMessage }, async mod => {
+    await withMockedMessaging({ onMessage }, async (/** @type {any} */ mod) => {
       const unsubscribe = mod.installForegroundMessageHandler();
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(typeof unsubscribe).toBe('function');
@@ -619,7 +633,7 @@ describe('background push handler', () => {
   });
 
   test('installForegroundMessageHandler is a no-op when onMessage is unavailable', async () => {
-    await withMockedMessaging({}, mod => {
+    await withMockedMessaging({}, (/** @type {any} */ mod) => {
       expect(() => mod.installForegroundMessageHandler()()).not.toThrow();
     });
   });
@@ -630,6 +644,7 @@ describe('background push handler', () => {
 
   test('installBackgroundMessageHandler wires native background callback', async () => {
     const setBackgroundMessageHandler = jest.fn();
+    /** @type {any} */
     let mod;
     jest.isolateModules(() => {
       const instance = {
@@ -639,9 +654,10 @@ describe('background push handler', () => {
       };
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: inst => inst.requestPermission(),
-        getToken: inst => inst.getToken(),
-        setBackgroundMessageHandler: (inst, handler) => inst.setBackgroundMessageHandler(handler),
+        requestPermission: (/** @type {any} */ inst) => inst.requestPermission(),
+        getToken: (/** @type {any} */ inst) => inst.getToken(),
+        setBackgroundMessageHandler: (/** @type {any} */ inst, /** @type {any} */ handler) =>
+          inst.setBackgroundMessageHandler(handler),
         AuthorizationStatus: AUTH,
       };
       jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
@@ -689,19 +705,20 @@ describe('getInitialChatLink / addChatLinkListener', () => {
   afterEach(() => jest.clearAllMocks());
 
   test('returns the conversation the app was launched from', async () => {
-    Linking.getInitialURL.mockResolvedValue('wetalk://chat/alice:bob');
+    getInitialURLMock.mockResolvedValue('wetalk://chat/alice:bob');
     await expect(getInitialChatLink()).resolves.toEqual({ conversationId: 'alice:bob' });
   });
 
   test('returns null when the app was launched from a call link', async () => {
-    Linking.getInitialURL.mockResolvedValue('wetalk://call/call-1');
+    getInitialURLMock.mockResolvedValue('wetalk://call/call-1');
     await expect(getInitialChatLink()).resolves.toBeNull();
   });
 
   test('forwards only chat links to the listener', () => {
     const remove = jest.fn();
+    /** @type {any} */
     let emit;
-    Linking.addEventListener.mockImplementation((_event, handler) => {
+    addEventListenerMock.mockImplementation((/** @type {string} */ _event, /** @type {any} */ handler) => {
       emit = handler;
       return { remove };
     });
@@ -738,13 +755,13 @@ describe('message push handling', () => {
   beforeEach(() => {
     _resetMessagingCache();
     resetMessageNotificationState();
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    globalAny.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
-    showMessageNotification.mockImplementation(async () => ({ shown: true }));
+    showMessageNotificationMock.mockImplementation(async () => ({ shown: true }));
   });
 
   afterEach(() => {
-    delete global.fetch;
+    delete globalAny.fetch;
     jest.restoreAllMocks();
   });
 
@@ -813,7 +830,7 @@ describe('message push handling', () => {
   test('reports message receipt stages keyed by messageId', async () => {
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -823,7 +840,7 @@ describe('message push handling', () => {
         }),
       }),
     );
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -836,11 +853,11 @@ describe('message push handling', () => {
   });
 
   test('reports notification_failed when nothing could be displayed', async () => {
-    showMessageNotification.mockResolvedValue({ shown: false, reason: 'module_unavailable' });
+    showMessageNotificationMock.mockResolvedValue({ shown: false, reason: 'module_unavailable' });
 
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -859,7 +876,7 @@ describe('message push handling', () => {
     await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
 
     expect(showMessageNotification).not.toHaveBeenCalled();
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -879,7 +896,7 @@ describe('message push handling', () => {
 
     expect(showMessageNotification).not.toHaveBeenCalled();
     expect(hasSeenMessage('message-1')).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalAny.fetch).toHaveBeenCalledWith(
       'http://localhost:4173/devices/push-receipt',
       expect.objectContaining({
         body: JSON.stringify({
@@ -926,12 +943,12 @@ describe('message push handling', () => {
 
 describe('call-cancelled push handling', () => {
   beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
+    globalAny.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
   });
 
   afterEach(() => {
-    delete global.fetch;
+    delete globalAny.fetch;
     jest.restoreAllMocks();
   });
 

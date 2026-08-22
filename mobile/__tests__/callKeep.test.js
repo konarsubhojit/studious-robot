@@ -1,3 +1,4 @@
+// @ts-check
 import { _resetCallKeepCache } from '../src/callKeep';
 
 jest.mock('../src/appLogger', () => ({
@@ -13,17 +14,18 @@ jest.mock('react-native', () => ({
 const mockShowIncomingCallNotification = jest.fn().mockResolvedValue(true);
 const mockDismissIncomingCallNotification = jest.fn();
 jest.mock('../src/incomingCallNotification', () => ({
-  showIncomingCallNotification: (...args) => mockShowIncomingCallNotification(...args),
-  dismissIncomingCallNotification: (...args) => mockDismissIncomingCallNotification(...args),
+  showIncomingCallNotification: (/** @type {any[]} */ ...args) => mockShowIncomingCallNotification(...args),
+  dismissIncomingCallNotification: (/** @type {any[]} */ ...args) => mockDismissIncomingCallNotification(...args),
 }));
 
 const mockStartIncomingRingtone = jest.fn();
 const mockStopIncomingRingtone = jest.fn();
 jest.mock('../src/ringtone', () => ({
-  startIncomingRingtone: (...args) => mockStartIncomingRingtone(...args),
-  stopIncomingRingtone: (...args) => mockStopIncomingRingtone(...args),
+  startIncomingRingtone: (/** @type {any[]} */ ...args) => mockStartIncomingRingtone(...args),
+  stopIncomingRingtone: (/** @type {any[]} */ ...args) => mockStopIncomingRingtone(...args),
 }));
 
+/** @type {Record<string, any>} */
 const mockCallKeep = {
   setup: jest.fn().mockResolvedValue(undefined),
   setAvailable: jest.fn(),
@@ -78,6 +80,7 @@ describe('callKeep with the native module absent', () => {
 });
 
 describe('callKeep with the native module present', () => {
+  /** @type {any} */
   let mod;
 
   beforeEach(() => {
@@ -260,7 +263,7 @@ describe('callKeep with the native module present', () => {
 
   test('answerCall received with no call flow attached is queued, not dropped', () => {
     mod.registerCallActionListeners();
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'answerCall')[1];
 
     // Simulates the OS Answer button being tapped during a push cold start,
     // before `useCallFlow` has mounted and called `setCallActionHandlers`.
@@ -279,8 +282,8 @@ describe('callKeep with the native module present', () => {
     const onEnd = jest.fn();
     mod.setCallActionHandlers({ onAnswer, onEnd });
 
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
-    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'answerCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'endCall')[1];
     answerCb({ callUUID: 'call-2' });
     endCb({ callUUID: 'call-2' });
 
@@ -302,7 +305,7 @@ describe('callKeep with the native module present', () => {
 
     // A later event with nothing attached is queued again, exactly like the
     // original push-cold-start race.
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'answerCall')[1];
     const onAnswer = jest.fn();
     answerCb({ callUUID: 'call-3' });
     mod.setCallActionHandlers({ onAnswer, onEnd: jest.fn() });
@@ -325,7 +328,7 @@ describe('callKeep with the native module present', () => {
     // replaced by the new mount's own setCallActionHandlers call.
     detachFirst();
 
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'answerCall')[1];
     answerCb({ callUUID: 'call-4' });
 
     expect(secondOnAnswer).toHaveBeenCalledWith('call-4');
@@ -336,7 +339,7 @@ describe('callKeep with the native module present', () => {
     mod.registerCallActionListeners();
     await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
 
-    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'endCall')[1];
     endCb({ callUUID: 'end-headless' });
 
     await mod.displayIncomingCall({ callId: 'end-headless', callerId: 'alice' });
@@ -348,7 +351,7 @@ describe('callKeep with the native module present', () => {
     const onEnd = jest.fn();
     mod.setCallActionHandlers({ onAnswer: jest.fn(), onEnd });
 
-    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'endCall')[1];
     endCb({ callUUID: 'call-5' });
 
     expect(onEnd).toHaveBeenCalledWith('call-5');
@@ -366,7 +369,7 @@ describe('callKeep with the native module present', () => {
   test('showIncomingCallUi shows the branded notification with the caller identity', async () => {
     mod.registerShowIncomingCallUiListener();
     const handler = mockCallKeep.addEventListener.mock.calls.find(
-      c => c[0] === 'showIncomingCallUi',
+      (/** @type {any[]} */ c) => c[0] === 'showIncomingCallUi',
     )[1];
 
     await handler({ callUUID: 'call-6', handle: 'alice', name: 'Alice' });
@@ -382,7 +385,7 @@ describe('callKeep with the native module present', () => {
     mockShowIncomingCallNotification.mockResolvedValueOnce(false);
     mod.registerShowIncomingCallUiListener();
     const handler = mockCallKeep.addEventListener.mock.calls.find(
-      c => c[0] === 'showIncomingCallUi',
+      (/** @type {any[]} */ c) => c[0] === 'showIncomingCallUi',
     )[1];
 
     await handler({ callUUID: 'call-7', name: 'Bob' });
@@ -394,7 +397,7 @@ describe('callKeep with the native module present', () => {
     mockShowIncomingCallNotification.mockRejectedValueOnce(new Error('boom'));
     mod.registerShowIncomingCallUiListener();
     const handler = mockCallKeep.addEventListener.mock.calls.find(
-      c => c[0] === 'showIncomingCallUi',
+      (/** @type {any[]} */ c) => c[0] === 'showIncomingCallUi',
     )[1];
 
     await handler({ callUUID: 'call-8', name: 'Carol' });
@@ -404,7 +407,7 @@ describe('callKeep with the native module present', () => {
 
   test('answerCall dismisses the branded notification and stops the fallback ringtone', () => {
     mod.registerCallActionListeners();
-    const answerCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'answerCall')[1];
+    const answerCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'answerCall')[1];
 
     answerCb({ callUUID: 'call-9' });
 
@@ -414,7 +417,7 @@ describe('callKeep with the native module present', () => {
 
   test('endCall dismisses the branded notification and stops the fallback ringtone', () => {
     mod.registerCallActionListeners();
-    const endCb = mockCallKeep.addEventListener.mock.calls.find(c => c[0] === 'endCall')[1];
+    const endCb = mockCallKeep.addEventListener.mock.calls.find((/** @type {any[]} */ c) => c[0] === 'endCall')[1];
 
     endCb({ callUUID: 'call-10' });
 
@@ -430,6 +433,7 @@ describe('callKeep with the native module present', () => {
 // There is now exactly one, with explicit enqueue / drain / drop logging.
 
 describe('callKeep pending-answer queue', () => {
+  /** @type {any} */
   let mod;
 
   beforeEach(() => {

@@ -31,7 +31,6 @@ import {
 
 const startMock = /** @type {jest.Mock} */ (InCallManager.start);
 const stopMock = /** @type {jest.Mock} */ (InCallManager.stop);
-const setSpeakerphoneOnMock = /** @type {jest.Mock} */ (InCallManager.setSpeakerphoneOn);
 const setForceSpeakerphoneOnMock = /** @type {jest.Mock} */ (InCallManager.setForceSpeakerphoneOn);
 const chooseAudioRouteMock = /** @type {jest.Mock} */ (InCallManager.chooseAudioRoute);
 
