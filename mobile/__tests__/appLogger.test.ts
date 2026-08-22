@@ -32,7 +32,6 @@ describe('appLogger', () => {
   });
 
   test('serializes metadata safely with circular objects', () => {
-    /** @type {Record<string, unknown>} */
     const metadata: Record<string, unknown> = { name: 'device' };
     metadata.self = metadata;
 

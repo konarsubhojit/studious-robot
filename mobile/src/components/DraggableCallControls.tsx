@@ -31,7 +31,7 @@ const PANEL_BOTTOM_GAP = spacing.lg * 2;
  * All in-call actions (mute, camera, audio output, camera swap, leave) are
  * forwarded to the inner {@link CallControls} component unchanged.
  *
- * @param {Parameters<typeof CallControls>[0]} props - Same props as
+ * @param props - Same props as
  *   {@link CallControls}.
  */
 export default function DraggableCallControls({
@@ -128,7 +128,7 @@ export default function DraggableCallControls({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     panel: {

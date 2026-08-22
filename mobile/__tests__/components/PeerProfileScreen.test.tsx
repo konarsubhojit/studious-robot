@@ -2,25 +2,24 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import PeerProfileScreen from '../../src/components/PeerProfileScreen';
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.type === 'string')[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string')[0] ?? null;
 }
 
-function findAllByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
-function press(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
+function press(tree: any, testID: any) {
   const pressable = tree.root.findAll(
-    (/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
+    (node: any) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
   )[0];
   act(() => {
     pressable.props.onPress();
   });
 }
 
-function render(/** @type {any} */ props: any) {
-  /** @type {any} */
+function render(props: any) {
   let tree: any;
   act(() => {
     tree = renderer.create(<PeerProfileScreen peerId="user-bob" {...props} />);

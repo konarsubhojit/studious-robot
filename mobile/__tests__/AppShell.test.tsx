@@ -87,8 +87,8 @@ import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
 import { getDegradations } from '../src/observability';
 
-const useCallFlowMock = (/** @type {unknown} */ (useCallFlow) as jest.Mock);
-const getDegradationsMock = (/** @type {unknown} */ (getDegradations) as jest.Mock);
+const useCallFlowMock = ((useCallFlow) as jest.Mock);
+const getDegradationsMock = ((getDegradations) as jest.Mock);
 
 function makeCallFlow(overrides = {}) {
   return {
@@ -120,7 +120,6 @@ function makeCallFlow(overrides = {}) {
   };
 }
 
-/** @type {{ current: any }} */
 const callRef: { current: any; } = { current: null };
 
 function CallProbe() {
@@ -129,7 +128,6 @@ function CallProbe() {
 }
 
 async function renderShell() {
-  /** @type {any} */
   let tree: any;
   // Async act so the persisted-settings load resolves before assertions.
   await act(async () => {
@@ -153,8 +151,8 @@ async function renderShell() {
 
 // Only host elements are counted, so a testID that appears on both a mocked
 // component and the host element it renders is not double counted.
-function findByTestID(/** @type {any} */ tree: any, /** @type {string} */ testID: string) {
-  return tree.root.findAll((/** @type {any} */ node: any) => typeof node.type === 'string' && node.props?.testID === testID);
+function findByTestID(tree: any, testID: string) {
+  return tree.root.findAll((node: any) => typeof node.type === 'string' && node.props?.testID === testID);
 }
 
 describe('AppShell screen routing', () => {
@@ -300,7 +298,6 @@ describe('CallProvider', () => {
 });
 
 describe('AppShell accessibility and error states', () => {
-  /** @type {jest.SpyInstance} */
   let announce: jest.SpyInstance;
 
   beforeEach(() => {
@@ -354,7 +351,7 @@ describe('AppShell accessibility and error states', () => {
     expect(banner.props.accessibilityRole).toBe('alert');
 
     const action = tree.root.find(
-      (/** @type {any} */ node: any) =>
+      (node: any) =>
         node.props?.testID === 'startup-degraded-banner-action' &&
         typeof node.props.onPress === 'function',
     );

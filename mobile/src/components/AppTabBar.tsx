@@ -6,15 +6,6 @@ import type { ThemeColors } from '../theme';
 
 export type TabKey = 'chats' | 'calls' | 'settings';
 
-/**
- * @type {ReadonlyArray<{
- *   key: TabKey,
- *   label: string,
- *   testID: string,
- *   icon: string,
- *   iconActive: string,
- * }>}
- */
 const TABS: ReadonlyArray<{
     key: TabKey;
     label: string;
@@ -59,11 +50,7 @@ const MIN_TAB_HEIGHT = sizes.minTouchTarget;
  * while the labels/icons stay clear of the system navigation bar, rather than
  * being overlapped or clipped by it.
  *
- * @param {object} props
- * @param {TabKey} props.activeTab
- * @param {(tab: TabKey) => void} props.onChangeTab
- * @param {number} [props.unreadCount]
- * @param {number} [props.bottomInset] - Safe-area inset (e.g. from
+ * @param props.bottomInset - Safe-area inset (e.g. from
  *   `useSafeAreaInsets().bottom`) to add as extra bottom padding.
  */
 export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bottomInset = 0 }: { activeTab: TabKey; onChangeTab: (tab: TabKey) => void; unreadCount?: number; bottomInset?: number; }) {
@@ -106,7 +93,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     bar: {

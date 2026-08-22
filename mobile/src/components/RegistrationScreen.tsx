@@ -19,13 +19,8 @@ import type { ThemeColors } from '../theme';
  *
  * @typedef {'email-register'|'email-sign-in'|'google'|'microsoft'} AuthMethod
  *
- * @param {object} props
- * @param {(registration: { userId: string, method: AuthMethod, email?: string, password?: string }) => void} props.onRegister
  *   Called with the chosen authentication method and profile fields.
- * @param {boolean} [props.isLoading] - Shows a loading state while the server is being reached.
- * @param {import('./StatusBanner').CallStatus} [props.status]
- * @param {boolean} [props.isGoogleSignInAvailable]
- * @param {boolean} [props.isMicrosoftSignInAvailable]
+ * @param props.isLoading - Shows a loading state while the server is being reached.
  */
 export type AuthMethod = 'email-register' | 'email-sign-in' | 'google' | 'microsoft';
 export type RegistrationScreenProps = {
@@ -53,7 +48,7 @@ export default function RegistrationScreen({
   // without the user having to work out which button they pressed.
   const [lastMethod, setLastMethod] = useState((null as AuthMethod | null));
 
-  /** @param {AuthMethod} method */
+  /** @param method */
   const submit = (method: AuthMethod) => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -189,7 +184,7 @@ export default function RegistrationScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

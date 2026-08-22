@@ -21,13 +21,8 @@ test('conversation id differs between different pairs', () => {
 
 /**
  * Save `count` messages with strictly increasing timestamps.
- *
- * @param {any} store
- * @param {string} conversationId
- * @param {number} count
  */
 async function seed(store: any, conversationId: string, count: number) {
-  /** @type {any[]} */
   const saved: any[] = [];
   for (let i = 0; i < count; i++) {
     saved.push(
@@ -475,27 +470,25 @@ test('createMongoMessageStore requires a uri', () => {
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
-function matchesFilter(/** @type {any} */ doc: any, /** @type {any} */ filter: any) {
+function matchesFilter(doc: any, filter: any) {
   return Object.entries(filter).every(([field, value]) => doc[field] === value);
 }
 
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
 function createFakeMongoClient() {
-  /** @type {any[]} */
   const docs: any[] = [];
-  /** @type {any[]} */
   const createdIndexes: any[] = [];
   let closed = false;
 
   const collection = {
-    async createIndex(/** @type {any} */ spec: any, /** @type {any} */ options: any) {
+    async createIndex(spec: any, options: any) {
       createdIndexes.push({ spec, options });
     },
-    async insertOne(/** @type {any} */ doc: any) {
+    async insertOne(doc: any) {
       docs.push(doc);
       return { insertedId: doc.messageId };
     },
-    async updateOne(/** @type {any} */ filter: any, /** @type {any} */ update: any, /** @type {any} */ options: any) {
+    async updateOne(filter: any, update: any, options: any) {
       const existing = docs.find(
         (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
       );
@@ -515,17 +508,17 @@ function createFakeMongoClient() {
       }
       return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
     },
-    async findOne(/** @type {any} */ filter: any) {
+    async findOne(filter: any) {
       const found = docs.find((d) => matchesFilter(d, filter));
       return found ? { _id: 'oid', ...found } : null;
     },
-    async deleteOne(/** @type {any} */ filter: any) {
+    async deleteOne(filter: any) {
       const index = docs.findIndex((d) => matchesFilter(d, filter));
       if (index === -1) return { deletedCount: 0 };
       docs.splice(index, 1);
       return { deletedCount: 1 };
     },
-    find(/** @type {any} */ query: any) {
+    find(query: any) {
       let results = docs;
       if (query?.conversationId !== undefined) {
         results = results.filter((d) => d.conversationId === query.conversationId);
@@ -535,7 +528,7 @@ function createFakeMongoClient() {
       }
       if (query?.$or) {
         results = results.filter((doc) =>
-          query.$or.some((/** @type {any} */ clause: any) => {
+          query.$or.some((clause: any) => {
             const [field, value] = Object.entries(clause)[0];
             return doc[field] === value;
           })
@@ -550,7 +543,7 @@ function createFakeMongoClient() {
           results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
           return this;
         },
-        limit(/** @type {number} */ n: number) {
+        limit(n: number) {
           results = results.slice(0, n);
           return this;
         },
@@ -559,14 +552,14 @@ function createFakeMongoClient() {
         },
       };
     },
-    async findOneAndUpdate(/** @type {any} */ filter: any, /** @type {any} */ update: any) {
+    async findOneAndUpdate(filter: any, update: any) {
       const doc = docs.find((d) => d.messageId === filter.messageId);
       if (!doc) return null;
       const userId = update.$addToSet.deliveredTo;
       if (!doc.deliveredTo.includes(userId)) doc.deliveredTo.push(userId);
       return { value: { _id: 'oid', ...doc } };
     },
-    async updateMany(/** @type {any} */ filter: any, /** @type {any} */ update: any) {
+    async updateMany(filter: any, update: any) {
       let modifiedCount = 0;
       for (const doc of docs) {
         if (

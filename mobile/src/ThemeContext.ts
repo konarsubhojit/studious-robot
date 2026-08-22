@@ -5,9 +5,8 @@ import type { ThemeColors } from './theme';
 /**
  * Build the theme object handed to consumers for a given mode/scheme pair.
  *
- * @param {string} mode - Selected appearance mode (see THEME_MODES).
- * @param {'light'|'dark'} scheme - Palette actually being rendered.
- * @param {(mode: string) => void} setMode
+ * @param mode - Selected appearance mode (see THEME_MODES).
+ * @param scheme - Palette actually being rendered.
  */
 export function buildTheme(mode: string, scheme: 'light' | 'dark', setMode: (mode: string) => void) {
   return {
@@ -48,8 +47,6 @@ export function useTheme() {
  * stable references, so the memo only recomputes on an actual theme switch.
  *
  * @template T
- * @param {(colors: import('./theme').ThemeColors) => T} factory
- * @returns {T}
  */
 export function useThemedStyles<T>(factory: (colors: ThemeColors) => T): T {
   const { colors } = useTheme();

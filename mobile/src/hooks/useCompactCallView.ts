@@ -20,14 +20,12 @@ import {
  * Extracted from the call hook so that PiP / display concerns stay isolated
  * from call-lifecycle logic.
  *
- * @param {React.MutableRefObject<boolean>} isInRoomRef - Ref that is `true`
+ * @param isInRoomRef - Ref that is `true`
  *   while a call is active.  Read inside the AppState listener so the handler
  *   always sees the current value without needing a re-registration.
- * @param {{ onPictureInPictureClosed?: () => void }} [options] -
+ * @param options -
  *   `onPictureInPictureClosed` is invoked when the user closes the PiP window,
  *   so the call can be ended instead of continuing invisibly.
- * @returns {{ isCompactView: boolean, setIsCompactView: (value: boolean) => void,
- *   exitCompactView: () => Promise<boolean> }}
  */
 export default function useCompactCallView(isInRoomRef: React.MutableRefObject<boolean>, { onPictureInPictureClosed }: { onPictureInPictureClosed?: () => void; } = {}): {
     isCompactView: boolean; setIsCompactView: (value: boolean) => void;

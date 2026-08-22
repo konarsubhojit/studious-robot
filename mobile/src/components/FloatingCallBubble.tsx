@@ -218,7 +218,7 @@ export default function FloatingCallBubble({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     bubble: {

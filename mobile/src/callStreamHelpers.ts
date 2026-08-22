@@ -9,22 +9,7 @@ import { getStreamUrl } from './diagnostics';
  * (`localStream`, `remoteStream`, `isLocalPrimary`, `isFrontCamera`) has a
  * single, testable home; `CallProvider` publishes its result.
  *
- * @param {{
- *   isLocalPrimary: boolean,
- *   localStream: unknown,
- *   remoteStream: unknown,
- *   isFrontCamera: boolean,
- *   mainLabel: string,
- *   pipLabel: string,
- * }} params
- * @returns {{
- *   mainStream: unknown,
- *   pipStream: unknown,
- *   mainStreamUrl: string | null,
- *   pipStreamUrl: string | null,
- *   mirrorPip: boolean,
- *   mirrorMain: boolean,
- * }}
+ * @param params
  */
 export function deriveCallStreams({
   isLocalPrimary,

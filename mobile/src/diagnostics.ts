@@ -10,19 +10,17 @@ import { getLogsForExport, logError, logInfo } from './appLogger';
  */
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
 /**
- * @param {Date} [date]
- * @returns {string} `YYYYMMDD-HHmmss`, safe to embed in a file name.
+ * @returns `YYYYMMDD-HHmmss`, safe to embed in a file name.
  */
 export function formatDateForFile(date: Date = new Date()): string {
-  /** @param {number} value */
+  /** @param value */
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
     date.getHours(),
@@ -50,16 +48,14 @@ export function getApplicationId() {
 }
 
 /**
- * @param {any} socket socket.io client, or anything falsy.
- * @returns {string}
+ * @param socket socket.io client, or anything falsy.
  */
 export function getSocketTransportName(socket: any): string {
   return socket?.io?.engine?.transport?.name || 'unknown';
 }
 
 /**
- * @param {string | null | undefined} urlValue
- * @returns {string} the URL without query/fragment, or the input when unparseable.
+ * @returns the URL without query/fragment, or the input when unparseable.
  */
 export function sanitizeUrlForLog(urlValue: string | null | undefined): string {
   if (!urlValue) {
@@ -74,10 +70,6 @@ export function sanitizeUrlForLog(urlValue: string | null | undefined): string {
   }
 }
 
-/**
- * @param {{ candidate?: string, sdpMid?: string|null, sdpMLineIndex?: number|null } | null | undefined} candidate
- * @returns {{ hasCandidate: boolean, protocol?: string, candidateType?: string, sdpMid?: string|null, sdpMLineIndex?: number|null }}
- */
 export function summarizeIceCandidate(candidate: { candidate?: string; sdpMid?: string | null; sdpMLineIndex?: number | null; } | null | undefined): { hasCandidate: boolean; protocol?: string; candidateType?: string; sdpMid?: string | null; sdpMLineIndex?: number | null; } {
   if (!candidate) {
     return { hasCandidate: false };
@@ -98,9 +90,8 @@ export function summarizeIceCandidate(candidate: { candidate?: string; sdpMid?: 
 }
 
 /**
- * @param {any} stream a media stream exposing `toURL()`, or anything falsy.
- * @param {string} [context] label used when the conversion fails.
- * @returns {string | null}
+ * @param stream a media stream exposing `toURL()`, or anything falsy.
+ * @param context label used when the conversion fails.
  */
 export function getStreamUrl(stream: any, context?: string): string | null {
   if (!stream || typeof stream.toURL !== 'function') {
@@ -120,8 +111,7 @@ export function getStreamUrl(stream: any, context?: string): string | null {
 }
 
 /**
- * @param {unknown} error
- * @returns {string} a user-facing explanation of a getUserMedia failure.
+ * @returns a user-facing explanation of a getUserMedia failure.
  */
 export function getMediaAccessStatus(error: unknown): string {
   const failure = (error as { name?: string, message?: string } | null | undefined);
@@ -161,16 +151,7 @@ export function getMediaAccessStatus(error: unknown): string {
 }
 
 /**
- * @param {{
- *   signalingUrl?: string,
- *   callId?: string | null,
- *   status?: string,
- *   localStream?: object | null,
- *   remoteStream?: object | null,
- *   isInCall?: boolean,
- *   socket?: any,
- * }} context
- * @returns {string}
+ * @param context
  */
 export function buildExportHeader({
   signalingUrl,
@@ -213,10 +194,6 @@ export function buildExportHeader({
   return lines.join('\n');
 }
 
-/**
- * @param {string} content
- * @returns {Promise<{ success: boolean, path?: string, label?: string, usedFallback?: boolean, error?: unknown }>}
- */
 export async function writeLogsFile(content: string): Promise<{ success: boolean; path?: string; label?: string; usedFallback?: boolean; error?: unknown; }> {
   const fileName = `wetalk-logs-${formatDateForFile()}.txt`;
   const targets =
@@ -259,16 +236,7 @@ export async function writeLogsFile(content: string): Promise<{ success: boolean
  * to disk.  Shared by every "Export logs" affordance; the caller only has to
  * surface the returned message to the user.
  *
- * @param {{
- *   signalingUrl?: string,
- *   callId?: string | null,
- *   status?: string,
- *   localStream?: object | null,
- *   remoteStream?: object | null,
- *   isInCall?: boolean,
- *   socket?: object | null,
- * }} [context]
- * @returns {Promise<{ ok: boolean, message: string }>}
+ * @param [context]
  */
 export async function exportDiagnosticLogs(context: {
     signalingUrl?: string;

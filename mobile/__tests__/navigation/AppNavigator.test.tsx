@@ -19,18 +19,17 @@ import AppNavigator from '../../src/navigation/AppNavigator';
 import { openChatConversation } from '../../src/navigation/navigationRef';
 import { TABS } from '../../src/navigation/routes';
 
-function findByTestID(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0];
+function findByTestID(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0];
 }
 
-/** @type {any} */
 let currentTree: any = null;
 const originalPlatformOS = Platform.OS;
 
 async function renderNavigator(overrides = {}) {
   const props = {
     renderChatList: () => <Text testID="screen-chat-list">Chats</Text>,
-    renderChatConversation: (/** @type {any} */ peerId: any) => (
+    renderChatConversation: (peerId: any) => (
       <Text testID="screen-chat-conversation">{peerId}</Text>
     ),
     renderCalls: () => <Text testID="screen-calls">Calls</Text>,
@@ -115,7 +114,6 @@ describe('AppNavigator', () => {
 
   test('Android hardware back pops an open conversation to the chat list', async () => {
     Platform.OS = 'android';
-    /** @type {any} */
     const handlers: any = [];
     jest.spyOn(BackHandler, 'addEventListener').mockImplementation((event, handler) => {
       if (event === 'hardwareBackPress') handlers.push(handler);
@@ -129,7 +127,7 @@ describe('AppNavigator', () => {
 
     let handled;
     await act(async () => {
-      handled = handlers.some((/** @type {any} */ handler: any) => handler());
+      handled = handlers.some((handler: any) => handler());
     });
 
     expect(handled).toBe(true);

@@ -18,8 +18,7 @@ import { registerSocketHandlers } from './signaling/index.ts';
 import { verboseLog } from './lib/verbose.ts';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -36,8 +35,6 @@ export type CreateServerOptions = { verifyIdToken?: (idToken: string) => Promise
  * This is the composition root: it constructs shared state, wires the HTTP
  * routers (see `routes/`), the realtime signaling handlers (see `signaling/`),
  * the background ringing-timeout worker, and the graceful-shutdown lifecycle.
- *
- * @param {CreateServerOptions} [opts]
  */
 function createServer(opts: CreateServerOptions = {}) {
   if (!opts.verifyIdToken && !process.env.NODE_TEST_CONTEXT) {
@@ -135,7 +132,6 @@ function createServer(opts: CreateServerOptions = {}) {
   // injects a Redis-backed cache when REDIS_URL is configured.
   const cache = opts.cache ?? createMemoryCache();
 
-  /** @type {import('./stores/contracts.ts').ServerState} */
   const state: import('./stores/contracts.ts').ServerState = {
     rooms: stores.rooms,
     /** userId → claimed-identity record */
@@ -150,7 +146,7 @@ function createServer(opts: CreateServerOptions = {}) {
     calls: stores.calls,
     /** callId → ordered event list */
     callEvents: stores.callEvents,
-    /** @type {Map<string, Set<string>>} blockerId → Set<blockedId> */
+    /** @type blockerId → Set<blockedId> */
     blocks: stores.blocks,
     /** Optional Drizzle DB handle for durable persistence. */
     db,
@@ -192,7 +188,7 @@ function createServer(opts: CreateServerOptions = {}) {
     draining: false,
   };
   // Drop locally cached entries when another instance reports a write.
-  subscribeToCacheInvalidations(state).catch((/** @type {unknown} */ error: unknown) => {
+  subscribeToCacheInvalidations(state).catch((error: unknown) => {
     console.error(`[cache] failed to subscribe to invalidations: ${errorMessage(error)}`);
   });
 
@@ -201,7 +197,7 @@ function createServer(opts: CreateServerOptions = {}) {
       .then(() => {
         state.messageStoreStatus = 'ready';
       })
-      .catch((/** @type {unknown} */ error: unknown) => {
+      .catch((error: unknown) => {
         state.messageStoreStatus = 'unavailable';
         console.error(
           `[messages] Mongo message store health check failed: ${errorMessage(error)}`
@@ -218,7 +214,6 @@ function createServer(opts: CreateServerOptions = {}) {
 
   const httpServer = http.createServer(app);
   const rawCorsOrigin = process.env.CORS_ORIGIN?.trim();
-  /** @type {string|string[]} */
   let corsOrigin: string | string[] = '*';
   if (rawCorsOrigin) {
     corsOrigin =
@@ -290,8 +285,6 @@ function createServer(opts: CreateServerOptions = {}) {
 
   /**
    * Resolves once shutdown has fully completed; shared for idempotency.
-   *
-   * @type {Promise<void>|null}
    */
   let shutdownPromise: Promise<void> | null = null;
 
@@ -300,10 +293,8 @@ function createServer(opts: CreateServerOptions = {}) {
    *
    * Idempotent: repeated calls return the same in-flight promise.
    *
-   * @param {object} [shutdownOpts]
-   * @param {number} [shutdownOpts.drainTimeoutMs] - Max ms to wait for drain.
-   * @param {string} [shutdownOpts.reason] - Reason advertised to clients.
-   * @returns {Promise<void>}
+   * @param shutdownOpts.drainTimeoutMs - Max ms to wait for drain.
+   * @param shutdownOpts.reason - Reason advertised to clients.
    */
   function shutdown({ drainTimeoutMs = shutdownDrainMs, reason = 'shutdown' }: { drainTimeoutMs?: number; reason?: string; } = {}): Promise<void> {
     if (shutdownPromise) return shutdownPromise;
@@ -330,10 +321,10 @@ function createServer(opts: CreateServerOptions = {}) {
       // Force-disconnect any remaining sockets, then close the servers.
       io.disconnectSockets(true);
       httpServer.closeAllConnections?.();
-      await new Promise((/** @type {(value?: undefined) => void} */ resolve: (value?: undefined) => void) =>
+      await new Promise((resolve: (value?: undefined) => void) =>
         io.close(() => resolve())
       );
-      await new Promise((/** @type {(value?: undefined) => void} */ resolve: (value?: undefined) => void) =>
+      await new Promise((resolve: (value?: undefined) => void) =>
         httpServer.close(() => resolve())
       );
 
@@ -362,18 +353,18 @@ function createServer(opts: CreateServerOptions = {}) {
     io,
     shutdown,
     messageBus: state.messageBus,
-    getPresence: (/** @type {string} */ userId: string) => getPresenceSnapshot(state, userId),
-    resolveReachableChannels: (/** @type {string} */ userId: string) =>
+    getPresence: (userId: string) => getPresenceSnapshot(state, userId),
+    resolveReachableChannels: (userId: string) =>
       resolveReachableChannels(state, userId),
-    getCall: (/** @type {string} */ callId: string) => state.calls.get(callId) || null,
-    getCallEvents: (/** @type {string} */ callId: string) => state.callEvents.get(callId) || [],
+    getCall: (callId: string) => state.calls.get(callId) || null,
+    getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
     /**
      * Advance all stale `ringing` calls to `missed`.  Exposed for
      * deterministic testing; the production server also calls this on a timer.
      *
-     * @param {number} [now] - Unix timestamp in ms (defaults to Date.now()).
-     * @returns {number} Number of calls transitioned.
+     * @param now - Unix timestamp in ms (defaults to Date.now()).
+     * @returns Number of calls transitioned.
      */
     tickRingingTimeouts: (now: number = Date.now()): number =>
       tickRingingTimeouts(state, now, undefined, callTimeouts),
@@ -384,8 +375,6 @@ function createServer(opts: CreateServerOptions = {}) {
      * into in-memory caches so identity, push delivery, call history/timelines,
      * and block rules survive restarts.
      * A no-op when no `db` was passed to `createServer`.
-     *
-     * @returns {Promise<void>}
      */
     loadPersistedState: async (): Promise<void> => {
       await loadPersistedStateFromDb(db, state);

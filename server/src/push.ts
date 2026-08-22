@@ -35,8 +35,7 @@ import https from 'https';
 import { createSign, createHmac } from 'crypto';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -96,15 +95,11 @@ const CANCELLED_CALL_TTL_SECONDS = 60;
 
 // ─── APNs JWT cache ───────────────────────────────────────────────────────────
 
-/** @type {string|null} */
 let _apnsJwt: string | null = null;
 let _apnsJwtExpiresAt = 0;
 
 /**
  * Build (or return cached) an ES256 JWT for APNs provider authentication.
- *
- * @param {{ keyId: string, teamId: string, key: string }} config
- * @returns {string}
  */
 function buildApnsJwt(config: { keyId: string; teamId: string; key: string; }): string {
   const nowSecs = Math.floor(Date.now() / 1000);
@@ -133,10 +128,8 @@ function buildApnsJwt(config: { keyId: string; teamId: string; key: string; }): 
 
 // ─── FCM OAuth2 access-token cache ─────────────────────────────────────────────
 
-/** @type {string|null} */
 let _fcmAccessToken: string | null = null;
 let _fcmAccessTokenExpiresAt = 0;
-/** @type {string|null} */
 let _fcmAccessTokenEmail: string | null = null;
 
 /**
@@ -152,9 +145,6 @@ function _resetFcmTokenCache() {
 /**
  * Build a signed RS256 JWT asserting the service-account identity, used to
  * exchange for an OAuth2 access token at the service account's `token_uri`.
- *
- * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
- * @returns {string}
  */
 function buildFcmAssertion(config: { clientEmail: string; privateKey: string; tokenUri: string; }): string {
   const nowSecs = Math.floor(Date.now() / 1000);
@@ -178,9 +168,6 @@ function buildFcmAssertion(config: { clientEmail: string; privateKey: string; to
 
 /**
  * Exchange a signed assertion for an OAuth2 access token via the token endpoint.
- *
- * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
- * @returns {Promise<{ ok: boolean, accessToken?: string, statusCode?: number, reason?: string }>}
  */
 function requestFcmAccessToken(config: { clientEmail: string; privateKey: string; tokenUri: string; }): Promise<{ ok: boolean; accessToken?: string; statusCode?: number; reason?: string; }> {
   const assertion = buildFcmAssertion(config);
@@ -239,9 +226,6 @@ function requestFcmAccessToken(config: { clientEmail: string; privateKey: string
 /**
  * Return a cached OAuth2 access token, refreshing it when expired or when the
  * service-account identity changes.
- *
- * @param {{ clientEmail: string, privateKey: string, tokenUri: string }} config
- * @returns {Promise<{ ok: boolean, accessToken?: string, statusCode?: number, reason?: string }>}
  */
 async function getFcmAccessToken(config: { clientEmail: string; privateKey: string; tokenUri: string; }): Promise<{ ok: boolean; accessToken?: string; statusCode?: number; reason?: string; }> {
   const nowSecs = Math.floor(Date.now() / 1000);
@@ -288,8 +272,6 @@ function loadApnsConfig() {
  * account key, or a filesystem path to that JSON file.  Returns `null` (so the
  * caller can skip gracefully) when the variable is absent or cannot be parsed
  * into a usable credential.
- *
- * @returns {{ projectId: string, clientEmail: string, privateKey: string, tokenUri: string } | null}
  */
 function loadFcmConfig(): { projectId: string; clientEmail: string; privateKey: string; tokenUri: string; } | null {
   const raw = process.env.FCM_SERVICE_ACCOUNT_JSON?.trim();
@@ -337,9 +319,6 @@ function loadFcmConfig(): { projectId: string; clientEmail: string; privateKey: 
  *
  * Expected shape:
  *   `Endpoint=sb://ns.servicebus.windows.net/;SharedAccessKeyName=…;SharedAccessKey=…`
- *
- * @param {string} connectionString
- * @returns {{ endpoint: string, keyName: string, key: string } | null}
  */
 function parseNotificationHubConnectionString(connectionString: string): { endpoint: string; keyName: string; key: string; } | null {
   if (typeof connectionString !== 'string' || connectionString.trim().length === 0) {
@@ -381,8 +360,6 @@ function parseNotificationHubConnectionString(connectionString: string): { endpo
  *
  * Returns `null` (so callers can fall back to the direct providers) when the
  * connection string / hub name are absent or unparseable.
- *
- * @returns {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string } | null}
  */
 function loadNotificationHubConfig(): { endpoint: string; keyName: string; key: string; hubName: string; apiVersion: string; } | null {
   const connectionString = process.env.AZURE_NOTIFICATION_HUB_CONNECTION_STRING?.trim();
@@ -407,10 +384,8 @@ function loadNotificationHubConfig(): { endpoint: string; keyName: string; key: 
   };
 }
 
-/** @type {string|null} */
 let _notificationHubToken: string | null = null;
 let _notificationHubTokenExpiresAt = 0;
-/** @type {string|null} */
 let _notificationHubTokenUri: string | null = null;
 
 /**
@@ -429,9 +404,7 @@ function _resetNotificationHubTokenCache() {
  *
  * Format: `SharedAccessSignature sr={uri}&sig={sig}&se={expiry}&skn={keyName}`
  *
- * @param {{ keyName: string, key: string }} config
- * @param {string} uri - Resource URI the token grants access to.
- * @returns {string}
+ * @param uri - Resource URI the token grants access to.
  */
 function buildNotificationHubSasToken(config: { keyName: string; key: string; }, uri: string): string {
   const nowSecs = Math.floor(Date.now() / 1000);
@@ -486,8 +459,8 @@ export type PushEnvelope = { type: string; title: string; body: string; deepLink
  * exactly when the call does.  Falls back to
  * {@link INCOMING_CALL_TTL_SECONDS} when the caller supplied no timeout.
  *
- * @param {string|null|undefined} ringTimeoutAt - ISO 8601 ring deadline.
- * @returns {number} TTL in seconds (at least 1).
+ * @param ringTimeoutAt - ISO 8601 ring deadline.
+ * @returns TTL in seconds (at least 1).
  */
 function resolveCallTtlSeconds(ringTimeoutAt: string | null | undefined): number {
   if (!ringTimeoutAt) return INCOMING_CALL_TTL_SECONDS;
@@ -498,9 +471,6 @@ function resolveCallTtlSeconds(ringTimeoutAt: string | null | undefined): number
 
 /**
  * Describe an incoming call as a transport-neutral push envelope.
- *
- * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {PushEnvelope}
  */
 function buildCallEnvelope(callData: { callId: string; callerId: string; ringTimeoutAt?: string | null; }): PushEnvelope {
   return {
@@ -530,13 +500,7 @@ const MESSAGE_PREVIEW_MAX_LENGTH = 120;
  * the client renders this notification itself: message pushes are data-only
  * (see {@link buildDataBlock}), so whatever is not in `data` cannot be shown.
  *
- * @param {{
- *   messageId: string,
- *   conversationId: string,
- *   senderId: string,
- *   preview?: string | null,
- * }} messageData
- * @returns {PushEnvelope}
+ * @param messageData
  */
 function buildMessageEnvelope(messageData: {
         messageId: string;
@@ -569,9 +533,6 @@ function buildMessageEnvelope(messageData: {
  * Sent so a killed app — which has no socket and therefore never sees
  * `call.state_changed` — can dismiss the incoming-call notification it is
  * still showing for a call nobody can answer any more.
- *
- * @param {{ callId: string, reason?: string|null }} callData
- * @returns {PushEnvelope}
  */
 function buildCallCancelledEnvelope(callData: { callId: string; reason?: string | null; }): PushEnvelope {
   return {
@@ -589,9 +550,6 @@ function buildCallCancelledEnvelope(callData: { callId: string; reason?: string 
 
 /**
  * Build an APNs payload body for a push envelope.
- *
- * @param {PushEnvelope} envelope
- * @returns {string}
  */
 function buildApnsEnvelopePayload(envelope: PushEnvelope): string {
   return JSON.stringify({
@@ -612,9 +570,6 @@ function buildApnsEnvelopePayload(envelope: PushEnvelope): string {
 
 /**
  * Build the APNs payload for an incoming call.
- *
- * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {string}
  */
 function buildApnsPayload(callData: { callId: string; callerId: string; ringTimeoutAt?: string | null; }): string {
   return buildApnsEnvelopePayload(buildCallEnvelope(callData));
@@ -623,12 +578,8 @@ function buildApnsPayload(callData: { callId: string; callerId: string; ringTime
 /**
  * Flatten an envelope into the string-valued `data` map shared by the direct
  * FCM v1 and Notification Hubs (`FcmV1`) wire formats.
- *
- * @param {PushEnvelope} envelope
- * @returns {Record<string, string>}
  */
 function buildDataBlock(envelope: PushEnvelope): Record<string, string> {
-  /** @type {Record<string, string>} */
   const data: Record<string, string> = {};
   for (const [key, value] of Object.entries(envelope.data)) {
     data[key] = String(value);
@@ -652,10 +603,6 @@ function buildDataBlock(envelope: PushEnvelope): Record<string, string> {
  * call via CallKeep.  The human-readable title/body are carried inside `data`
  * (v1 requires all `data` values to be strings) so the client can still render
  * a heads-up notification if it chooses.
- *
- * @param {string} pushToken
- * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {string}
  */
 function buildFcmPayload(pushToken: string, callData: { callId: string; callerId: string; ringTimeoutAt?: string | null; }): string {
   const envelope = buildCallEnvelope(callData);
@@ -664,17 +611,12 @@ function buildFcmPayload(pushToken: string, callData: { callId: string; callerId
 
 /**
  * Build an FCM HTTP v1 `messages:send` request body from a push envelope.
- *
- * @param {string} pushToken
- * @param {PushEnvelope} envelope
- * @returns {string}
  */
 function buildFcmEnvelopePayload(
   pushToken: string,
   envelope: PushEnvelope,
-  /** @type {{ ttlSeconds?: number|null }} */ { ttlSeconds = null }: { ttlSeconds?: number | null; } = {}
+  { ttlSeconds = null }: { ttlSeconds?: number | null; } = {}
 ): string {
-  /** @type {Record<string, string>} */
   const apnsHeaders: Record<string, string> = { 'apns-priority': '10' };
   if (ttlSeconds && Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
     apnsHeaders['apns-expiration'] = String(Math.floor(Date.now() / 1000) + ttlSeconds);
@@ -707,9 +649,6 @@ function buildFcmEnvelopePayload(
  * full-screen incoming-call UI. The `token`/`topic`/`condition` target field
  * required by a standalone FCM v1 call is omitted — Notification Hubs routes
  * the message using the `ServiceBusNotification-DeviceHandle` header instead.
- *
- * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {{ message: { android: { data: Record<string, string>, priority: string, ttl?: string } } }}
  */
 function buildNotificationHubAndroidPayload(callData: { callId: string; callerId: string; ringTimeoutAt?: string | null; }): { message: { android: { data: Record<string, string>; priority: string; ttl?: string; }; }; } {
   const envelope = buildCallEnvelope(callData);
@@ -718,13 +657,9 @@ function buildNotificationHubAndroidPayload(callData: { callId: string; callerId
   });
 }
 
-/**
- * @param {PushEnvelope} envelope
- * @returns {{ message: { android: { data: Record<string, string>, priority: string, ttl?: string } } }}
- */
 function buildNotificationHubAndroidEnvelopePayload(
   envelope: PushEnvelope,
-  /** @type {{ ttlSeconds?: number|null }} */ { ttlSeconds = null }: { ttlSeconds?: number | null; } = {}
+  { ttlSeconds = null }: { ttlSeconds?: number | null; } = {}
 ): { message: { android: { data: Record<string, string>; priority: string; ttl?: string; }; }; } {
   return {
     message: {
@@ -744,11 +679,7 @@ function buildNotificationHubAndroidEnvelopePayload(
 /**
  * Perform one APNs HTTP/2 delivery attempt.
  *
- * @param {{ production?: boolean, bundleId: string, keyId: string, teamId: string, key: string }}
  *   config
- * @param {string} pushToken
- * @param {PushEnvelope} envelope
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
 function sendApnsOnce(config: { production?: boolean; bundleId: string; keyId: string; teamId: string; key: string; }, pushToken: string, envelope: PushEnvelope): Promise<{ ok: boolean; statusCode?: number; reason?: string; }> {
   const host = config.production ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX;
@@ -774,7 +705,6 @@ function sendApnsOnce(config: { production?: boolean; bundleId: string; keyId: s
     });
 
     let body = '';
-    /** @type {number|undefined} */
     let statusCode: number | undefined;
 
     req.on('response', (headers) => {
@@ -809,11 +739,7 @@ function sendApnsOnce(config: { production?: boolean; bundleId: string; keyId: s
  * credentials, then POSTs the v1 message to
  * `/v1/projects/{projectId}/messages:send`.
  *
- * @param {{ projectId: string, clientEmail: string, privateKey: string, tokenUri: string }}
  *   config
- * @param {string} pushToken
- * @param {PushEnvelope} envelope
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
 async function sendFcmOnce(config: { projectId: string; clientEmail: string; privateKey: string; tokenUri: string; }, pushToken: string, envelope: PushEnvelope): Promise<{ ok: boolean; statusCode?: number; reason?: string; }> {
   const token = await getFcmAccessToken(config);
@@ -881,11 +807,6 @@ async function sendFcmOnce(config: { projectId: string; clientEmail: string; pri
  * FCM v1 payload according to the `ServiceBusNotification-Format` header
  * (`apple` or `FcmV1` — the legacy `gcm` format targets FCM credentials Google
  * retired in June 2024 and is no longer accepted).
- *
- * @param {{ endpoint: string, keyName: string, key: string, hubName: string, apiVersion: string }} config
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {PushEnvelope} envelope
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string, headers?: Record<string, string>, trackingId?: string|null }>}
  */
 function sendNotificationHubOnce(config: { endpoint: string; keyName: string; key: string; hubName: string; apiVersion: string; }, channel: { provider: string; pushToken: string; deviceId: string; }, envelope: PushEnvelope): Promise<{ ok: boolean; statusCode?: number; reason?: string; headers?: Record<string, string>; trackingId?: string | null; }> {
   const isApple = channel.provider === 'apns';
@@ -908,7 +829,6 @@ function sendNotificationHubOnce(config: { endpoint: string; keyName: string; ke
     new URL(config.hubName, config.endpoint).toString()
   );
   const payloadLen = Buffer.byteLength(payload);
-  /** @type {Record<string, string|number>} */
   const headers: Record<string, string | number> = {
     Authorization: sasToken,
     'Content-Type': 'application/json;charset=utf-8',
@@ -970,11 +890,9 @@ function sendNotificationHubOnce(config: { endpoint: string; keyName: string; ke
 }
 
 /**
- * @param {Record<string, string|string[]|undefined>} [headers]
- * @returns {Record<string, string>} the `x-ms-*` headers, lower-cased.
+ * @returns the `x-ms-*` headers, lower-cased.
  */
 function extractNotificationHubCorrelationHeaders(headers: Record<string, string | string[] | undefined> = {}): Record<string, string> {
-  /** @type {Record<string, string>} */
   const output: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
     const lower = key.toLowerCase();
@@ -988,8 +906,6 @@ function extractNotificationHubCorrelationHeaders(headers: Record<string, string
 
 /**
  * Returns true when a failed result is likely transient and worth retrying.
- *
- * @param {{ statusCode?: number } | null | undefined} result
  */
 function isRetryable(result: { statusCode?: number; } | null | undefined) {
   const sc = result?.statusCode;
@@ -1020,9 +936,6 @@ const DEAD_TOKEN_REASON_PATTERN =
  * a transient failure. Dead-token results must never be retried and must
  * cause the offending device row to be pruned so it stops silently
  * swallowing future pushes.
- *
- * @param {{ ok: boolean, statusCode?: number, reason?: string } | null | undefined} result
- * @returns {boolean}
  */
 function isDeadTokenResult(result: { ok: boolean; statusCode?: number; reason?: string; } | null | undefined): boolean {
   if (!result || result.ok) return false;
@@ -1035,12 +948,9 @@ function isDeadTokenResult(result: { ok: boolean; statusCode?: number; reason?: 
  * Call `fn` up to MAX_ATTEMPTS times, backing off exponentially on transient
  * failures.
  *
- * @param {() => Promise<{ ok: boolean, statusCode?: number, reason?: string }>} fn
- * @param {string} label - Used in log messages.
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
+ * @param label - Used in log messages.
  */
 async function withRetry(fn: () => Promise<{ ok: boolean; statusCode?: number; reason?: string; }>, label: string): Promise<{ ok: boolean; statusCode?: number; reason?: string; }> {
-  /** @type {{ ok: boolean, statusCode?: number, reason?: string }|undefined} */
   let last: { ok: boolean; statusCode?: number; reason?: string; } | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -1100,11 +1010,6 @@ function logNotificationHubStartupStatus() {
  * Returns `{ ok: false, reason: 'notification_hub_not_configured' }` without any
  * network traffic (and without log spam) when ANH is not configured, so callers
  * can fall straight through to the direct provider path.
- *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {PushEnvelope} envelope
- * @param {string} label
- * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
 async function tryNotificationHub(channel: { provider: string; pushToken: string; deviceId: string; }, envelope: PushEnvelope, label: string): Promise<{ ok: boolean; statusCode?: number; reason?: string; }> {
   const config = loadNotificationHubConfig();
@@ -1126,19 +1031,6 @@ async function tryNotificationHub(channel: { provider: string; pushToken: string
  * Provider chain: Azure Notification Hubs (when configured) → direct APNs / FCM
  * → skip.  Never throws; unconfigured providers resolve with a
  * `*_not_configured` reason.
- *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {PushEnvelope} envelope
- * @returns {Promise<{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: 'notification_hub'|'direct',
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken: boolean
- * }>}
  */
 async function deliverPush(channel: { provider: string; pushToken: string; deviceId: string; }, envelope: PushEnvelope): Promise<{
     ok: boolean;
@@ -1222,17 +1114,8 @@ async function deliverPush(channel: { provider: string; pushToken: string; devic
 /**
  * Log the outcome of a delivery attempt for operational visibility.
  *
- * @param {{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: string,
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken?: boolean,
- * }} outcome
- * @param {string} description - Event description, e.g. `call.incoming callId=…`.
+ * @param outcome
+ * @param description - Event description, e.g. `call.incoming callId=…`.
  */
 function logDeliveryOutcome(outcome: {
         ok: boolean;
@@ -1278,19 +1161,6 @@ function logDeliveryOutcome(outcome: {
  * - Retries up to MAX_ATTEMPTS times on transient network / server errors.
  * - Logs every delivery outcome (success or failure).
  * - Never throws.
- *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {{ callId: string, callerId: string, ringTimeoutAt?: string|null }} callData
- * @returns {Promise<{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: 'notification_hub'|'direct',
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken: boolean
- * }>}
  */
 async function sendIncomingCallPush(channel: { provider: string; pushToken: string; deviceId: string; }, callData: { callId: string; callerId: string; ringTimeoutAt?: string | null; }): Promise<{
     ok: boolean;
@@ -1317,40 +1187,13 @@ async function sendIncomingCallPush(channel: { provider: string; pushToken: stri
  * anything — the client reports that separately through
  * `POST /devices/push-receipt` keyed by `messageId`.
  *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {{
- *   messageId: string,
- *   conversationId: string,
- *   senderId: string,
- *   preview?: string | null,
- * }} messageData
- * @returns {Promise<{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: 'notification_hub'|'direct',
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken: boolean
- * }>}
+ * @param messageData
  */
 /**
  * Tell a device that a call stopped ringing so it can dismiss the stale
  * incoming-call notification even with no socket connected.  Never throws.
  *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {{ callId: string, reason?: string|null }} callData
- * @returns {Promise<{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: 'notification_hub'|'direct',
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken: boolean
- * }>} delivery outcome, see {@link sendIncomingCallPush}
+ * @returns delivery outcome, see {@link sendIncomingCallPush}
  */
 async function sendCallCancelledPush(channel: { provider: string; pushToken: string; deviceId: string; }, callData: { callId: string; reason?: string | null; }): Promise<{
     ok: boolean;
@@ -1380,23 +1223,7 @@ async function sendCallCancelledPush(channel: { provider: string; pushToken: str
  * anything — the client reports that separately through
  * `POST /devices/push-receipt` keyed by `messageId`.
  *
- * @param {{ provider: string, pushToken: string, deviceId: string }} channel
- * @param {{
- *   messageId: string,
- *   conversationId: string,
- *   senderId: string,
- *   preview?: string | null,
- * }} messageData
- * @returns {Promise<{
- *   ok: boolean,
- *   provider: string,
- *   deviceId: string,
- *   transport: 'notification_hub'|'direct',
- *   statusCode?: number,
- *   reason?: string,
- *   trackingId?: string|null,
- *   deadToken: boolean
- * }>}
+ * @param messageData
  */
 async function sendMessagePush(channel: { provider: string; pushToken: string; deviceId: string; }, messageData: {
         messageId: string;

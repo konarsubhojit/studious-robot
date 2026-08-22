@@ -21,16 +21,7 @@ const OVERLAY_FADE_MS = 180;
  * Full-screen in-call screen whose overlay chrome (top bar + control deck)
  * auto-hides after a few seconds of inactivity and fades back in on tap.
  *
- * @param {Omit<Parameters<typeof CallStage>[0], 'onLayout'>
- *   & Parameters<typeof CallControls>[0]
- *   & Parameters<typeof CallTopBar>[0]
- *   & {
- *       onRetry: () => void,
- *       onLeave: () => void,
- *       status?: import('./StatusBanner').CallStatus,
- *       onStageLayout: Parameters<typeof CallStage>[0]['onLayout'],
- *       isReconnecting?: boolean,
- *     }} props
+ * @param props
  */
 export default function CallScreen({
   elapsedCallSeconds,
@@ -82,7 +73,6 @@ export default function CallScreen({
     (null as CallStatus | null),
   );
   const [showControlsOverlay, setShowControlsOverlay] = useState(true);
-  /** @type {import('react').MutableRefObject<ReturnType<typeof setTimeout> | null>} */
   const controlsAutoHideTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null> = useRef(null);
 
   const clearControlsAutoHide = useCallback(() => {

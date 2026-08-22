@@ -88,9 +88,7 @@ const ATTACHMENT_IMAGE_HEIGHT = 180;
  * - `delivered` handed to at least one of the recipient's connected devices
  * - `read`      the recipient opened the conversation
  *
- * @param {{ pending?: boolean, failed?: boolean, readAt?: string | null,
- *   deliveredTo?: string[], recipientId?: string }} message
- * @returns {'sending'|'failed'|'sent'|'delivered'|'read'}
+ * @param message
  */
 function getMessageStatus(message: {
         pending?: boolean; failed?: boolean; readAt?: string | null;
@@ -112,9 +110,6 @@ function getMessageStatus(message: {
  * The server only tags entries with a `type` when the client opts into the
  * merged timeline (`include=calls`), and optimistic local sends carry no type
  * at all, so anything untagged is a message.
- *
- * @param {TimelineEntry} entry
- * @returns {entry is CallActivity}
  */
 function isCallEntry(entry: TimelineEntry): entry is CallActivity {
   return entry?.type === 'call';
@@ -122,9 +117,6 @@ function isCallEntry(entry: TimelineEntry): entry is CallActivity {
 
 /**
  * Stable list key for either kind of timeline entry.
- *
- * @param {TimelineEntry} entry
- * @returns {string}
  */
 function entryKey(entry: TimelineEntry): string {
   return isCallEntry(entry) ? entry.callId : entry.messageId;
@@ -133,17 +125,12 @@ function entryKey(entry: TimelineEntry): string {
 /** Only items at least this visible count for the pinned date pill. */
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 10 };
 
-/** @type {Record<string, string>} */
 const STATUS_LABELS: Record<string, string> = {
   sent: 'Sent',
   delivered: 'Delivered',
   read: 'Read',
 };
 
-/**
- * @param {string | null | undefined} isoString
- * @returns {string}
- */
 function formatMessageTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -151,11 +138,6 @@ function formatMessageTimestamp(isoString: string | null | undefined): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-/**
- * @param {Date} a
- * @param {Date} b
- * @returns {boolean}
- */
 function isSameCalendarDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -166,9 +148,6 @@ function isSameCalendarDay(a: Date, b: Date): boolean {
 
 /**
  * "Today" / "Yesterday" / a locale date string, for the date separator.
- *
- * @param {Date} date
- * @returns {string}
  */
 function formatDateSeparator(date: Date): string {
   const now = new Date();
@@ -181,10 +160,6 @@ function formatDateSeparator(date: Date): string {
 
 /**
  * True when two consecutive call entries belong in the same collapsed row.
- *
- * @param {CallActivity} previous
- * @param {CallActivity} entry
- * @returns {boolean}
  */
 function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
   if (previous.direction !== entry.direction || previous.status !== entry.status) return false;
@@ -208,8 +183,7 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
  * pinned (sticky) date pill can be derived from whichever item is currently at
  * the top of the viewport without re-scanning the list.
  *
- * @param {TimelineEntry[]} orderedEntries oldest-first
- * @returns {ListItem[]}
+ * @param orderedEntries oldest-first
  */
 function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
   const items = ([] as ListItem[]);
@@ -283,8 +257,7 @@ function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
  * The placeholder is the compatibility contract: a message written by a newer
  * client must never blank out or crash an older one.
  *
- * @param {{ message: ChatMessage, isOwn: boolean, styles: ChatStyles,
- *   onDownloadAttachment?: (message: ChatMessage) => void }} props
+ * @param props
  */
 function MessageContent({ message, isOwn, styles, onDownloadAttachment }: {
         message: ChatMessage; isOwn: boolean; styles: ChatStyles;
@@ -361,8 +334,7 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment }: {
  * renders — as "Message deleted" — so a reply never leaves a dangling
  * reference behind.
  *
- * @param {{ quotedMessage: ChatMessage | null, isOwn: boolean, onPress?: () => void,
- *   styles: ChatStyles }} props
+ * @param props
  */
 function QuotedMessage({ quotedMessage, isOwn, onPress, styles }: {
         quotedMessage: ChatMessage | null; isOwn: boolean; onPress?: () => void;
@@ -388,8 +360,7 @@ function QuotedMessage({ quotedMessage, isOwn, onPress, styles }: {
 /**
  * The reaction chips under a bubble, one per emoji with its count.
  *
- * @param {{ reactions?: Record<string, string[]>, currentUserId: string,
- *   onToggle?: (emoji: string, action: 'add'|'remove') => void, styles: ChatStyles }} props
+ * @param props
  */
 function ReactionChips({ reactions, currentUserId, onToggle, styles }: {
         reactions?: Record<string, string[]>; currentUserId: string;
@@ -893,23 +864,18 @@ export default function ChatConversationScreen({
     onCancelVoiceNote?.();
   }, [onCancelVoiceNote]);
 
-  const handleReply = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage) => {
+  const handleReply = useCallback(/** @param message */ (message: ChatMessage) => {
     setReplyTarget(message);
   }, []);
 
   const handleReact = useCallback(
-    /**
-     * @param {ChatMessage} message
-     * @param {string} emoji
-     * @param {'add'|'remove'} action
-     */
     (message: ChatMessage, emoji: string, action: 'add' | 'remove') => {
       onReactToMessage?.(message, emoji, action);
     },
     [onReactToMessage],
   );
 
-  const handleQuotePress = useCallback(/** @param {string} messageId */ (messageId: string) => {
+  const handleQuotePress = useCallback(/** @param messageId */ (messageId: string) => {
     if (messageId) setQuotedHighlightId(messageId);
   }, []);
 
@@ -978,7 +944,6 @@ export default function ChatConversationScreen({
   // items in render order, so the first message item in that list is the one
   // at the top of the viewport.
   const handleViewableItemsChanged = useCallback(
-    /** @param {{ viewableItems: Array<{ item?: ListItem }> }} info */
     ({ viewableItems }: { viewableItems: Array<{ item?: ListItem; }>; }) => {
       const topItem = viewableItems.find(
         entry => entry.item?.type === 'message' || entry.item?.type === 'call',
@@ -990,7 +955,7 @@ export default function ChatConversationScreen({
   );
 
   const renderItem = useCallback(
-    /** @param {{ item: ListItem }} info */
+    /** @param info */
     ({ item }: { item: ListItem; }) => {
       if (item.type === 'date') {
         return (
@@ -1050,7 +1015,7 @@ export default function ChatConversationScreen({
     ],
   );
 
-  const handleScrollToIndexFailed = useCallback(/** @param {{ index: number }} info */ (info: { index: number; }) => {
+  const handleScrollToIndexFailed = useCallback(/** @param info */ (info: { index: number; }) => {
     setTimeout(() => {
       listRef.current?.scrollToIndex?.({
         index: info.index,
@@ -1316,7 +1281,7 @@ export default function ChatConversationScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {

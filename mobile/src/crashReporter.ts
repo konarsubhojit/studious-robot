@@ -2,11 +2,10 @@ import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 
 /**
- * @param {Date} [date]
- * @returns {string} `YYYYMMDD-HHMMSS`, safe for use in a file name.
+ * @returns `YYYYMMDD-HHMMSS`, safe for use in a file name.
  */
 function formatDateForFile(date: Date = new Date()): string {
-  const pad = (/** @type {number} */ v: number) => String(v).padStart(2, '0');
+  const pad = (v: number) => String(v).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
@@ -20,10 +19,9 @@ function formatDateForFile(date: Date = new Date()): string {
  * Tries locations in priority order (Downloads → app external → app documents
  * on Android; app documents on iOS) and returns on first success.
  *
- * @param {Error|unknown} error            The caught error object.
- * @param {boolean}       isFatal          Whether the runtime considers it fatal.
- * @param {() => string} [getLogsCallback]  Returns buffered in-memory app logs.
- * @returns {Promise<{success: boolean, path?: string, label?: string}>}
+ * @param error            The caught error object.
+ * @param isFatal          Whether the runtime considers it fatal.
+ * @param getLogsCallback  Returns buffered in-memory app logs.
  */
 export async function saveCrashLog(error: Error | unknown, isFatal: boolean, getLogsCallback?: () => string): Promise<{ success: boolean; path?: string; label?: string; }> {
   const details = error instanceof Error ? error : null;
@@ -77,7 +75,7 @@ export async function saveCrashLog(error: Error | unknown, isFatal: boolean, get
  * Call once, as early as possible in the app lifecycle (e.g. at the top of
  * index.js before AppRegistry.registerComponent).
  *
- * @param {() => string} getLogsCallback  Returns buffered in-memory app logs.
+ * @param getLogsCallback  Returns buffered in-memory app logs.
  */
 export function installCrashHandler(getLogsCallback: () => string) {
   if (!((global as any).ErrorUtils)) {

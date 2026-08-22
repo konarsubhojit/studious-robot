@@ -26,11 +26,8 @@ const R2_ENV = {
 
 /**
  * Apply the R2 configuration for the duration of one test.
- *
- * @param {import('node:test').TestContext} t
  */
 function withR2Env(t: import('node:test').TestContext) {
-  /** @type {Record<string, string|undefined>} */
   const previous: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(R2_ENV)) {
     previous[key] = process.env[key];
@@ -48,9 +45,8 @@ function withR2Env(t: import('node:test').TestContext) {
 function spyOnMessagePush() {
   const mod = pushSenders;
   const original = mod.sendMessagePush;
-  /** @type {{ channel: any, messageData: any }[]} */
   const calls: { channel: any; messageData: any; }[] = [];
-  mod.sendMessagePush = async (/** @type {any} */ channel: any, /** @type {any} */ messageData: any) => {
+  mod.sendMessagePush = async (channel: any, messageData: any) => {
     calls.push({ channel, messageData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -78,10 +74,8 @@ async function startServer(opts = {}) {
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });
@@ -89,17 +83,14 @@ async function createSession(url: string, userId: string, deviceId: string = `de
   return res.body.sessionId;
 }
 
-async function connectSocket(/** @type {any} */ url: any, /** @type {any} */ sessionId: any) {
+async function connectSocket(url: any, sessionId: any) {
   const socket = ioClient(url, { auth: { sessionId } });
   await new Promise((resolve) => socket.once('connect', () => resolve(undefined)));
   return socket;
 }
 
 /**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
@@ -398,7 +389,7 @@ test('a reply survives the deletion of the message it quotes', async (t) => {
   assert.equal(deleted.ok, true);
 
   const history = await getJson(url, '/messages?peerId=rich-bob', aliceSession);
-  const byId = new Map<string, any>(history.body.messages.map((/** @type {any} */ message: any) => [message.messageId, message]));
+  const byId = new Map<string, any>(history.body.messages.map((message: any) => [message.messageId, message]));
   // The quoted message is still addressable — as a tombstone, so the reply
   // renders "Message deleted" instead of a dangling reference.
   const quoted = byId.get(original.message.messageId);

@@ -22,23 +22,17 @@ import { captureConsoleLog, listenOnRandomPort, postJson, readJson } from './hel
 /**
  * Build the minimal call shape the timeout helpers read, typed as a full
  * record so the guard tests can exercise them without a live call.
- *
- * @param {{ status: string, createdAt: string, updatedAt: string }} fields
- * @returns {import('../src/stores/contracts.ts').CallRecord}
  */
 function callFixture(fields: { status: string; createdAt: string; updatedAt: string; }): import('../src/stores/contracts.ts').CallRecord {
   return (fields as any);
 }
 
-/**
- * @param {import('../src/createServer.ts').CreateServerOptions} [opts]
- */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
   const server = createServer(opts);
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
+  /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((client) => client?.disconnect());
     server.httpServer.closeAllConnections?.();
@@ -51,11 +45,9 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} path - Request path, including the leading slash.
- * @param {string} [sessionId] - Appended as `?sessionId=` when present.
- * @param {Record<string, string>} [headers]
- * @returns {Promise<{ status: number, body: any }>}
+ * @param url - Base URL of the server under test.
+ * @param path - Request path, including the leading slash.
+ * @param sessionId - Appended as `?sessionId=` when present.
  */
 async function getJson(url: string, path: string, sessionId?: string, headers: Record<string, string> = {}): Promise<{ status: number; body: any; }> {
   const pathname = sessionId
@@ -66,10 +58,8 @@ async function getJson(url: string, path: string, sessionId?: string, headers: R
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });
@@ -78,9 +68,7 @@ async function createSession(url: string, userId: string, deviceId: string = `de
 }
 
 /**
- * @param {string} url
- * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param auth - Socket.IO handshake auth payload.
  */
 function connect(url: string, auth?: Record<string, unknown>): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -91,27 +79,18 @@ function connect(url: string, auth?: Record<string, unknown>): Promise<import('s
 }
 
 /**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for ack of "${event}"`)), 1500);
-    socket.emit(event, payload, (/** @type {any} */ ack: any) => {
+    socket.emit(event, payload, (ack: any) => {
       clearTimeout(timer);
       resolve(ack);
     });
   });
 }
 
-/**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
- */
 function waitFor(socket: import('socket.io-client').Socket, event: string, timeoutMs: number = 2000): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -122,16 +101,11 @@ function waitFor(socket: import('socket.io-client').Socket, event: string, timeo
   });
 }
 
-/** @param {number} ms */
+/** @param ms */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Resolve on the first `call.state_changed` carrying `status`.
- *
- * @param {import('socket.io-client').Socket} socket
- * @param {string} status
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
  */
 function waitForStatus(socket: import('socket.io-client').Socket, status: string, timeoutMs: number = 2000): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -139,7 +113,7 @@ function waitForStatus(socket: import('socket.io-client').Socket, status: string
       () => reject(new Error(`Timeout waiting for status "${status}"`)),
       timeoutMs
     );
-    socket.on('call.state_changed', (/** @type {any} */ payload: any) => {
+    socket.on('call.state_changed', (payload: any) => {
       if (payload?.status !== status) return;
       clearTimeout(timer);
       resolve(payload);
@@ -150,10 +124,8 @@ function waitForStatus(socket: import('socket.io-client').Socket, status: string
 /**
  * Drive a call through to `connecting_media` over HTTP + sockets.
  *
- * @param {string} url - Base URL of the server under test.
- * @param {string} callerSession
- * @param {string} calleeSession
- * @returns {Promise<string>} the created call id
+ * @param url - Base URL of the server under test.
+ * @returns the created call id
  */
 async function startConnectingMediaCall(url: string, callerSession: string, calleeSession: string): Promise<string> {
   const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
@@ -272,7 +244,7 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
   const db = {
     select() {
       return {
-        /** @param {unknown} table */
+        /** @param table */
         from(table: unknown) {
           return Promise.resolve(table === schema.calls ? callRows : []);
         },
@@ -282,12 +254,8 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
       return {
         values() {
           return {
-            /**
-             * @param {(value: unknown) => unknown} resolve
-             * @param {(reason: unknown) => unknown} reject
-             */
             then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve().then(resolve, reject),
-            /** @param {(reason: unknown) => unknown} reject */
+            /** @param reject */
             catch: (reject: (reason: unknown) => unknown) => Promise.resolve().catch(reject),
             onConflictDoUpdate: () => Promise.resolve(),
             onConflictDoNothing: () => Promise.resolve(),

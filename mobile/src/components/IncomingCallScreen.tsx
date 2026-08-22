@@ -13,8 +13,7 @@ import type { ThemeColors } from '../theme';
 /**
  * Derives the number of seconds until ringTimeoutAt (clamped to ≥ 0).
  *
- * @param {string|null|undefined} ringTimeoutAt – ISO 8601 timestamp from the call record.
- * @returns {number}
+ * @param ringTimeoutAt – ISO 8601 timestamp from the call record.
  */
 function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
   if (!ringTimeoutAt) return 0;
@@ -29,12 +28,10 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object} props
- * @param {import('../../../shared/signaling/schemas').CallRecord | null} [props.incomingCall]
  *   Call record from the server (callerId, ringTimeoutAt).
- * @param {import('./StatusBanner').CallStatus} props.status - Current status.
- * @param {() => void} props.onAccept - Called when the user presses Accept.
- * @param {() => void} props.onDecline - Called when the user presses Decline.
+ * @param props.status - Current status.
+ * @param props.onAccept - Called when the user presses Accept.
+ * @param props.onDecline - Called when the user presses Decline.
  */
 export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; }) {
   const styles = useThemedStyles(createStyles);
@@ -44,7 +41,6 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
   const initials = deriveInitials(callerId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
-  /** @type {import('react').MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
 
   // ── Pulse animation ───────────────────────────────────────────────────────
@@ -170,7 +166,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

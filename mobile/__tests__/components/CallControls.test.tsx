@@ -4,7 +4,7 @@ import CallControls from '../../src/components/CallControls';
 
 jest.mock(
   '../../src/components/AudioOutputMenu',
-  () => (/** @type {any} */ props: any) => require('react').createElement('AudioOutputMenu', props),
+  () => (props: any) => require('react').createElement('AudioOutputMenu', props),
 );
 
 function createProps(overrides = {}) {
@@ -23,8 +23,7 @@ function createProps(overrides = {}) {
   };
 }
 
-function render(/** @type {any} */ props: any) {
-  /** @type {any} */
+function render(props: any) {
   let tree: any;
   act(() => {
     tree = renderer.create(<CallControls {...props} />);
@@ -32,8 +31,8 @@ function render(/** @type {any} */ props: any) {
   return tree;
 }
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
 describe('CallControls screen sharing', () => {
@@ -94,15 +93,15 @@ describe('CallControls primary action labels', () => {
   test('shows visible text labels for mute, video, and leave, reflecting current state', () => {
     const tree = render(createProps({ isMuted: false, isVideoEnabled: true }));
 
-    expect(tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Mute').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Leave').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n: any) => n.props?.children === 'Mute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n: any) => n.props?.children === 'Stop video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n: any) => n.props?.children === 'Leave').length).toBeGreaterThan(0);
   });
 
   test('flips mute/video labels when muted and video is off', () => {
     const tree = render(createProps({ isMuted: true, isVideoEnabled: false }));
 
-    expect(tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
-    expect(tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Start video').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n: any) => n.props?.children === 'Unmute').length).toBeGreaterThan(0);
+    expect(tree.root.findAll((n: any) => n.props?.children === 'Start video').length).toBeGreaterThan(0);
   });
 });

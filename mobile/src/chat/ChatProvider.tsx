@@ -22,14 +22,11 @@ const ChatContext = createContext((null as ChatContextValue | null));
  * React Navigation owns the routing; the `chatPeerId` mirror here is only the
  * part of it the chat-sync hook has to react to, and it lives in this provider
  * rather than in `AppShell` so the shell stays a purely presentational router.
- *
- * @param {{ children: import('react').ReactNode }} props
  */
 export function ChatProvider({ children }: { children: ReactNode; }) {
   const { callFlow } = useCall();
   const [chatPeerId, setChatPeerId] = useState((null as string | null));
 
-  /** @type {(route: ShellRoute) => void} */
   const handleRouteChange: (route: ShellRoute) => void = useCallback(route => {
     setChatPeerId(route.chatPeerId);
   }, []);
@@ -143,7 +140,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
 /**
  * Access the chat context.
  *
- * @returns {ChatContextValue} the value published by {@link ChatProvider}
+ * @returns the value published by {@link ChatProvider}
  */
 export function useChat(): ChatContextValue {
   const context = useContext(ChatContext);

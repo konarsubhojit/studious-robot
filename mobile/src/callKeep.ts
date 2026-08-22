@@ -58,8 +58,7 @@ const CALLKEEP_SETUP_OPTIONS = {
 };
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -74,8 +73,6 @@ export type CallKeep = { setup?: (options: object) => Promise<unknown>; setAvail
 
 /**
  * Cached result of the optional native CallKeep module lookup.
- *
- * @type {CallKeep | null | undefined}
  */
 let cachedCallKeep: CallKeep | null | undefined;
 let hasLoggedMissingCallKeep = false;
@@ -107,8 +104,6 @@ const displayedCallerIds = new Map<string, string>();
  * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
  * `endCall` events, or `null` when nothing is attached.
  *
- * @type {{ onAnswer?: (callId: string) => void, onEnd?: (callId: string) => void } | null}
- *
  * `registerCallActionListeners` wires the *native* event subscription exactly
  * once, at module scope (see `mobile/index.js`), so it exists even in the
  * headless JS context a background push cold-starts — before any component,
@@ -133,17 +128,12 @@ let activeCallActionHandlers: { onAnswer?: (callId: string) => void; onEnd?: (ca
  * There is deliberately exactly one queue: a second queue inside the call flow
  * would mean an answer could be lost in the hand-off between the two. Every
  * enqueue, drain and drop is logged so a swallowed tap is always traceable.
- *
- * @type {string | null}
  */
 let pendingAnswerCallId: string | null = null;
 
 /**
  * Build the unsubscribe function returned by every `register*` helper, tagged
  * with whether the listener was actually registered.
- *
- * @param {boolean} registered
- * @returns {(() => void) & { registered: boolean }}
  */
 function registrationResult(registered: boolean): (() => void) & { registered: boolean; } {
   const unsubscribe = ((() => {}) as (() => void) & { registered: boolean });
@@ -155,14 +145,12 @@ function registrationResult(registered: boolean): (() => void) & { registered: b
  * Lazily resolve the optional `react-native-callkeep` default export. Returns
  * the RNCallKeep singleton, or `null` when the package is not installed. The
  * lookup is memoised so a missing module is only logged once.
- *
- * @returns {CallKeep | null}
  */
 export function loadCallKeep(): CallKeep | null {
   if (cachedCallKeep !== undefined) return cachedCallKeep;
   try {
     const mod = require('react-native-callkeep');
-    cachedCallKeep = (/** @type {unknown} */ (mod?.default ?? mod ?? null) as CallKeep | null);
+    cachedCallKeep = ((mod?.default ?? mod ?? null) as CallKeep | null);
   } catch {
     cachedCallKeep = null;
     if (!hasLoggedMissingCallKeep) {
@@ -187,8 +175,6 @@ export function _resetCallKeepCache() {
 /**
  * Forget that a call was displayed, so a future call reusing the id (or a
  * retried ring after the call ended) can be surfaced again.
- *
- * @param {string} callId
  */
 export function clearDisplayedCall(callId: string) {
   displayedCallIds.delete(callId);
@@ -200,9 +186,8 @@ export function clearDisplayedCall(callId: string) {
  * instead of swallowed. Supersedes any previously queued call (only one call
  * can ring at a time), logging the drop.
  *
- * @param {string} callUUID
- * @param {string} [source] - where the answer came from, for log correlation
- * @returns {boolean} `true` when the call was queued
+ * @param source - where the answer came from, for log correlation
+ * @returns `true` when the call was queued
  */
 export function recordPendingAnswer(callUUID: string, source: string = 'unknown'): boolean {
   if (!callUUID) {
@@ -223,8 +208,6 @@ export function recordPendingAnswer(callUUID: string, source: string = 'unknown'
 
 /**
  * The currently queued answered callId, or `null`.
- *
- * @returns {string | null}
  */
 export function peekPendingAnswer(): string | null {
   return pendingAnswerCallId;
@@ -233,8 +216,8 @@ export function peekPendingAnswer(): string | null {
 /**
  * Remove and return the queued answered callId.
  *
- * @param {string} [callUUID] - when given, only drains a matching queue entry
- * @returns {string | null} the drained callId, or `null` when nothing matched
+ * @param callUUID - when given, only drains a matching queue entry
+ * @returns the drained callId, or `null` when nothing matched
  */
 export function consumePendingAnswer(callUUID?: string): string | null {
   if (!pendingAnswerCallId) return null;
@@ -249,9 +232,8 @@ export function consumePendingAnswer(callUUID?: string): string | null {
  * Discard the queued answered callId (the call ended, was declined, or is no
  * longer answerable).
  *
- * @param {string} [callUUID] - when given, only drops a matching queue entry
- * @param {string} [reason]
- * @returns {boolean} `true` when an entry was dropped
+ * @param callUUID - when given, only drops a matching queue entry
+ * @returns `true` when an entry was dropped
  */
 export function clearPendingAnswer(callUUID?: string, reason: string = 'unspecified'): boolean {
   if (!pendingAnswerCallId) return false;
@@ -265,9 +247,6 @@ export function clearPendingAnswer(callUUID?: string, reason: string = 'unspecif
  * Whether a CallKeep setup rejection is the benign "no foreground Activity"
  * failure raised when setup runs from a background/headless context (the
  * killed-app push path) rather than a real configuration error.
- *
- * @param {{ code?: string, message?: string } | null | undefined} error
- * @returns {boolean}
  */
 function isMissingActivityError(error: { code?: string; message?: string; } | null | undefined): boolean {
   const code = typeof error?.code === 'string' ? error.code : '';
@@ -280,7 +259,7 @@ function isMissingActivityError(error: { code?: string; message?: string; } | nu
  * once setup has succeeded. Returns `false` (never throws) when the native
  * module is unavailable or setup fails.
  *
- * @returns {Promise<boolean>} `true` when CallKeep is configured and ready
+ * @returns `true` when CallKeep is configured and ready
  */
 export async function setupCallKeep(): Promise<boolean> {
   if (isConfigured) return true;
@@ -316,8 +295,7 @@ export async function setupCallKeep(): Promise<boolean> {
  * same caller, so a redial replaces the stale ring instead of stacking on top
  * of it (and so a tap can only ever reach the call that is actually ringing).
  *
- * @param {string} callId   - the call about to be displayed
- * @param {string|null|undefined} callerId
+ * @param callId   - the call about to be displayed
  */
 function dismissStaleCallsFromCaller(callId: string, callerId: string | null | undefined) {
   if (!callerId) return;
@@ -339,9 +317,6 @@ function dismissStaleCallsFromCaller(callId: string, callerId: string | null | u
  *
  * Duplicate calls for the same `callId` are ignored, so it is safe to invoke
  * this from the socket, foreground-push and background-push paths at once.
- *
- * @param {{ callId?: string, callerId?: string | null, hasVideo?: boolean }} [opts]
- * @returns {Promise<{ shown: true } | { shown: false, reason: string, message?: string }>}
  */
 export async function displayIncomingCall({ callId, callerId, hasVideo = true }: { callId?: string; callerId?: string | null; hasVideo?: boolean; } = {}): Promise<{ shown: true; } | { shown: false; reason: string; message?: string; }> {
   if (!callId) return { shown: false, reason: 'missing_call_id' };
@@ -393,8 +368,7 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true }:
  * Inform the OS that a call became connected/active so the system UI shows the
  * in-call controls instead of the ringing state.
  *
- * @param {string} callId
- * @returns {boolean} `true` when the update was sent
+ * @returns `true` when the update was sent
  */
 export function reportCallConnected(callId: string): boolean {
   if (!callId) return false;
@@ -416,7 +390,7 @@ export function reportCallConnected(callId: string): boolean {
  * runtime permission prompt cannot be displayed; raising the app first gives
  * the prompt (and the in-call screen) somewhere to appear.
  *
- * @returns {boolean} `true` when the request was sent
+ * @returns `true` when the request was sent
  */
 export function bringAppToForeground(): boolean {
   const callKeep = loadCallKeep();
@@ -434,8 +408,7 @@ export function bringAppToForeground(): boolean {
 /**
  * Dismiss the OS call UI for a single call.
  *
- * @param {string} callId
- * @returns {boolean} `true` when the end was sent
+ * @returns `true` when the end was sent
  */
 export function endCall(callId: string): boolean {
   if (!callId) return false;
@@ -489,7 +462,7 @@ export function endAllCalls() {
  * tests); ordinary consumers should use `setCallActionHandlers` instead of
  * calling this more than once.
  *
- * @returns {(() => void) & { registered: boolean }} unsubscribe function, tagged
+ * @returns unsubscribe function, tagged
  *   with whether the native listener was registered
  */
 export function registerCallActionListeners(): (() => void) & { registered: boolean; } {
@@ -499,7 +472,7 @@ export function registerCallActionListeners(): (() => void) & { registered: bool
     return registrationResult(false);
   }
 
-  const answerHandler = (/** @type {any} */ { callUUID }: any = {}) => {
+  const answerHandler = ({ callUUID }: any = {}) => {
     logInfo('[CallKeep] answerCall', {
       callUUID,
       hasActiveHandler: Boolean(activeCallActionHandlers),
@@ -515,7 +488,7 @@ export function registerCallActionListeners(): (() => void) & { registered: bool
     });
     recordPendingAnswer(callUUID, 'native_no_handler');
   };
-  const endHandler = (/** @type {any} */ { callUUID }: any = {}) => {
+  const endHandler = ({ callUUID }: any = {}) => {
     logInfo('[CallKeep] endCall', {
       callUUID,
       hasActiveHandler: Boolean(activeCallActionHandlers),
@@ -575,7 +548,7 @@ export function registerCallActionListeners(): (() => void) & { registered: bool
  *
  * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
  *
- * @returns {(() => void) & { registered: boolean }} unsubscribe function, tagged
+ * @returns unsubscribe function, tagged
  *   with whether the native listener was registered
  */
 export function registerShowIncomingCallUiListener(): (() => void) & { registered: boolean; } {
@@ -585,7 +558,7 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
     return registrationResult(false);
   }
 
-  const handler = async (/** @type {any} */ { callUUID, handle, name }: any = {}) => {
+  const handler = async ({ callUUID, handle, name }: any = {}) => {
     logInfo('[CallKeep] showIncomingCallUi', { callUUID });
     const shown = await showIncomingCallNotification({
       callId: callUUID,
@@ -631,11 +604,8 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
  * cold-start race — see `registerCallActionListeners`), it is replayed
  * synchronously to `onAnswer` here rather than lost.
  *
- * @param {{
- *   onAnswer?: (callId: string) => void,
- *   onEnd?: (callId: string) => void,
- * }} handlers
- * @returns {() => void} detach function; only clears this call's handlers if
+ * @param handlers
+ * @returns detach function; only clears this call's handlers if
  *   they are still the active ones (a later `setCallActionHandlers` call
  *   already having taken over is left untouched).
  */

@@ -11,8 +11,7 @@ export type PersistedNavigationState = InitialState;
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -24,8 +23,6 @@ function errorMessage(error: unknown): string | undefined {
  * — restores the screen the user was on without waiting for a disk read.
  *
  * `undefined` means "not loaded yet"; `null` means "nothing persisted".
- *
- * @type {PersistedNavigationState | null | undefined}
  */
 let cachedState: PersistedNavigationState | null | undefined;
 
@@ -33,9 +30,6 @@ let cachedState: PersistedNavigationState | null | undefined;
  * Minimal structural check on a persisted navigation state: React Navigation
  * throws on a malformed `initialState`, so a truncated or out-of-date file must
  * be treated as "no saved state" rather than crashing the app on launch.
- *
- * @param {unknown} state
- * @returns {boolean}
  */
 export function isValidNavigationState(state: unknown): boolean {
   if (!state || typeof state !== 'object') return false;
@@ -51,7 +45,7 @@ export function isValidNavigationState(state: unknown): boolean {
  * Synchronously read the in-memory navigation state, so a remount (e.g. a
  * full-screen call ending) can restore without a blank frame.
  *
- * @returns {PersistedNavigationState | null | undefined} `undefined` when nothing has been
+ * @returns `undefined` when nothing has been
  *   loaded or saved yet in this process.
  */
 export function getCachedNavigationState(): PersistedNavigationState | null | undefined {
@@ -62,8 +56,6 @@ export function getCachedNavigationState(): PersistedNavigationState | null | un
  * Load the persisted navigation state so the app can restore the last screen
  * after a cold start. Missing/corrupt state resolves to `null` (start fresh)
  * rather than throwing.
- *
- * @returns {Promise<PersistedNavigationState | null>}
  */
 export async function loadNavigationState(): Promise<PersistedNavigationState | null> {
   if (cachedState !== undefined) return cachedState;
@@ -75,7 +67,6 @@ export async function loadNavigationState(): Promise<PersistedNavigationState | 
     }
     const content = await RNFS.readFile(NAVIGATION_STATE_FILE, 'utf8');
     const parsed = JSON.parse(content);
-    /** @type {PersistedNavigationState | null} */
     const loaded: PersistedNavigationState | null = isValidNavigationState(parsed) ? parsed : null;
     cachedState = loaded;
     return loaded;
@@ -92,8 +83,7 @@ export async function loadNavigationState(): Promise<PersistedNavigationState | 
  * Persist the current navigation state. Write failures are logged but never
  * thrown: losing state restoration must not break navigation itself.
  *
- * @param {PersistedNavigationState | undefined} state
- * @returns {Promise<boolean>} whether the write succeeded
+ * @returns whether the write succeeded
  */
 export async function saveNavigationState(state: PersistedNavigationState | undefined): Promise<boolean> {
   if (!isValidNavigationState(state)) return false;
@@ -110,8 +100,6 @@ export async function saveNavigationState(state: PersistedNavigationState | unde
 /**
  * Forget the persisted navigation state, e.g. on sign-out so the next user
  * does not land inside the previous one's conversation.
- *
- * @returns {Promise<void>}
  */
 export async function clearNavigationState(): Promise<void> {
   cachedState = null;

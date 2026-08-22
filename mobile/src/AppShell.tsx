@@ -142,10 +142,6 @@ export default function AppShell() {
 /**
  * Announce every call state transition to screen readers, so an incoming call
  * or a connected/ended call is spoken rather than only shown.
- *
- * @param {string} callState
- * @param {string|null|undefined} callerId
- * @param {string|null|undefined} calleeId
  */
 function useCallStateAnnouncements(callState: string, callerId: string | null | undefined, calleeId: string | null | undefined) {
   const previousStateRef = useRef((null as string | null));
@@ -254,7 +250,7 @@ function MinimizedCallBubble() {
   );
 }
 
-/** @param {import('./theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

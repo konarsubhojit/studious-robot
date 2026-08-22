@@ -15,12 +15,10 @@ const RECENT_SEARCHES_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-recent-search
 /** How many terms are kept; older ones fall off the end. */
 export const MAX_RECENT_SEARCHES = 8;
 
-/** @type {string[] | null} */
 let cache: string[] | null = null;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -29,13 +27,9 @@ function errorMessage(error: unknown): string | undefined {
 /**
  * Coerce a parsed file into a list of usable terms, dropping anything
  * malformed so a corrupt file degrades to "no recent searches".
- *
- * @param {unknown} parsed
- * @returns {string[]}
  */
 function sanitize(parsed: unknown): string[] {
   if (!Array.isArray(parsed)) return [];
-  /** @type {string[]} */
   const terms: string[] = [];
   parsed.forEach(entry => {
     const term = typeof entry === 'string' ? entry.trim() : '';
@@ -47,8 +41,6 @@ function sanitize(parsed: unknown): string[] {
 /**
  * Read the persisted recent searches, newest first.  Never rejects: an
  * unreadable file yields an empty list.
- *
- * @returns {Promise<string[]>}
  */
 export async function loadRecentSearches(): Promise<string[]> {
   if (cache) return [...cache];
@@ -66,8 +58,7 @@ export async function loadRecentSearches(): Promise<string[]> {
  * Record `term` as the newest recent search (de-duplicated, capped) and
  * persist the list.  Failures are logged, never thrown.
  *
- * @param {string} term
- * @returns {Promise<string[]>} the updated list, newest first.
+ * @returns the updated list, newest first.
  */
 export async function addRecentSearch(term: string): Promise<string[]> {
   const trimmed = (term ?? '').trim();
@@ -89,8 +80,6 @@ export async function addRecentSearch(term: string): Promise<string[]> {
 
 /**
  * Forget every recent search (the "Clear" affordance, and sign-out).
- *
- * @returns {Promise<void>}
  */
 export async function clearRecentSearches(): Promise<void> {
   cache = [];

@@ -20,7 +20,7 @@ jest.mock('../../src/authService', () => ({
 
 const { loadDeviceId } = require('../../src/settingsStorage');
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useSession(params);
   return null;
 }
@@ -32,7 +32,6 @@ function setup(overrides = {}) {
     updateStatus: jest.fn(),
     ...overrides,
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -103,7 +102,6 @@ describe('useSession', () => {
     });
     const { resultRef, params } = setup();
 
-    /** @type {any} */
     let caughtError: any;
     await act(async () => {
       try {
@@ -183,10 +181,9 @@ describe('useSession', () => {
       await resultRef.current.createOrGetSession();
     });
 
-    /** @type {any} */
     let response: any;
     await act(async () => {
-      response = await resultRef.current.authedFetch((/** @type {any} */ sessionId: any) => ({
+      response = await resultRef.current.authedFetch((sessionId: any) => ({
         url: `https://signal.example.com/thing?sessionId=${sessionId}`,
       }));
     });
@@ -202,10 +199,9 @@ describe('useSession', () => {
     (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 500 });
     const { resultRef } = setup();
 
-    /** @type {any} */
     let response: any;
     await act(async () => {
-      response = await resultRef.current.authedFetch((/** @type {any} */ sessionId: any) => ({
+      response = await resultRef.current.authedFetch((sessionId: any) => ({
         url: `https://signal.example.com/thing?sessionId=${sessionId}`,
       }));
     });

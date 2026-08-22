@@ -21,7 +21,6 @@ function tick() {
 
 /** A `node-redis`-shaped client backed by a plain Map, with PX expiry. */
 function createFakeRedisClient() {
-  /** @type {Map<string, { value: string, expiresAtMs: number }>} */
   const store: Map<string, { value: string; expiresAtMs: number; }> = new Map();
   return {
     store,
@@ -33,7 +32,7 @@ function createFakeRedisClient() {
     async quit() {
       this.quitCalled = true;
     },
-    /** @param {string} key */
+    /** @param key */
     async get(key: string) {
       const entry = store.get(key);
       if (!entry) return null;
@@ -43,26 +42,21 @@ function createFakeRedisClient() {
       }
       return entry.value;
     },
-    /**
-     * @param {string} key
-     * @param {string} value
-     * @param {{ PX?: number }} [options]
-     */
     async set(key: string, value: string, options?: { PX?: number; }) {
       store.set(key, { value, expiresAtMs: Date.now() + Number(options?.PX ?? 0) });
     },
-    /** @param {string|string[]} keys */
+    /** @param keys */
     async del(keys: string | string[]) {
       for (const key of Array.isArray(keys) ? keys : [keys]) store.delete(key);
     },
-    /** @param {{ MATCH: string }} options */
+    /** @param options */
     async *scanIterator({ MATCH }: { MATCH: string; }) {
       // Translate the (escaped) glob into a RegExp the same way Redis would.
       const source = MATCH.replace(/\\(.)/g, '\u0000$1')
         .replace(/[.+^${}()|]/g, '\\$&')
         .replace(/\*/g, '.*')
         .replace(/\?/g, '.')
-        .replace(/\u0000(.)/g, (/** @type {string} */ _m: string, /** @type {string} */ ch: string) =>
+        .replace(/\u0000(.)/g, (_m: string, ch: string) =>
           ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         );
       const pattern = new RegExp(`^${source}$`);
@@ -212,7 +206,6 @@ test('createCache falls back to the memory backend when Redis cannot be opened',
 
 test('invalidateCache evicts locally and publishes the prefixes on the bus', async () => {
   const bus = createMemoryMessageBus();
-  /** @type {any[]} */
   const received: any[] = [];
   await bus.subscribe(CACHE_INVALIDATE_CHANNEL, (message) => {
     received.push(message);

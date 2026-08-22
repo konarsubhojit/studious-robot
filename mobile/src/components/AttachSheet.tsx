@@ -7,18 +7,12 @@ import type { ThemeColors } from '../theme';
  * Bottom sheet offering the composer's attachment choices (photo / camera /
  * file). Modelled on {@link ../components/AudioOutputMenu}'s modal/backdrop
  * pattern.
- *
- * @param {object} props
- * @param {boolean} props.visible
- * @param {() => void} props.onClose
- * @param {(kind: 'photo'|'camera'|'file') => void} props.onSelect
  */
 export default function AttachSheet({ visible, onClose, onSelect }: { visible: boolean; onClose: () => void; onSelect: (kind: 'photo' | 'camera' | 'file') => void; }) {
   const styles = useThemedStyles(createStyles);
 
   if (!visible) return null;
 
-  /** @type {ReadonlyArray<{ kind: 'photo'|'camera'|'file', label: string, emoji: string }>} */
   const options: ReadonlyArray<{ kind: 'photo' | 'camera' | 'file'; label: string; emoji: string; }> = [
     { kind: 'photo', label: 'Photo', emoji: '🖼️' },
     { kind: 'camera', label: 'Camera', emoji: '📷' },
@@ -55,7 +49,7 @@ export default function AttachSheet({ visible, onClose, onSelect }: { visible: b
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     backdrop: {

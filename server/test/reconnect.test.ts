@@ -29,7 +29,7 @@ async function startServer() {
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
+  /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((c) => c?.disconnect());
     server.httpServer.closeAllConnections?.();
@@ -42,9 +42,7 @@ async function startServer() {
 }
 
 /**
- * @param {string} url
- * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param auth - Socket.IO handshake auth payload.
  */
 function connect(url: string, auth?: Record<string, unknown>): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -58,12 +56,6 @@ function connect(url: string, auth?: Record<string, unknown>): Promise<import('s
   });
 }
 
-/**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
- */
 function waitFor(socket: import('socket.io-client').Socket, event: string, timeoutMs: number = 1500): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -75,10 +67,7 @@ function waitFor(socket: import('socket.io-client').Socket, event: string, timeo
 }
 
 /**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve) => {
@@ -87,10 +76,8 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });

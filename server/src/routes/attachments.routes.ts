@@ -16,11 +16,7 @@ import { createAttachmentKey, loadR2Config, presignAttachmentUpload, validateAtt
  * `publicUrl` from a `message.send`, so no binary ever travels through the
  * signaling server.
  *
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   env?: Record<string, string|undefined>,
- * }} ctx
- * @returns {import('express').Router}
+ * @param ctx
  */
 function createAttachmentsRouter({ state, env = process.env }: {
         state: import('../stores/contracts.ts').ServerState;

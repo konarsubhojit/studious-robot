@@ -27,8 +27,7 @@ const IMPORTANCE_HIGH = 4;
  */
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -59,8 +58,7 @@ export function isIncomingCallNotificationAvailable() {
  * vibration still ring the device, so a resolved `true` here always means the
  * user was audibly alerted even if the full-screen UI could not be drawn.
  *
- * @param {{ callId?: string, callerId?: string | null, hasVideo?: boolean }} [opts]
- * @returns {Promise<boolean>} `true` when a notification was posted
+ * @returns `true` when a notification was posted
  */
 export async function showIncomingCallNotification({ callId, callerId, hasVideo = true }: { callId?: string; callerId?: string | null; hasVideo?: boolean; } = {}): Promise<boolean> {
   if (!callId) return false;
@@ -103,13 +101,6 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
  * Remove and return the Accept / Decline the user tapped on the branded
  * notification while the JS context was not running (cold start), so the call
  * flow can replay it. Resolves `null` when nothing is pending.
- *
- * @returns {Promise<{
- *   callId: string,
- *   action: 'accept' | 'decline',
- *   ageMs: number,
- *   connectionLive: boolean,
- * } | null>}
  */
 export async function consumePendingCallAction(): Promise<{
     callId: string;
@@ -139,8 +130,7 @@ export async function consumePendingCallAction(): Promise<{
  * created a connection, so this is reported alongside the ring so the server
  * records whether the call was answerable through the OS call UI.
  *
- * @param {string} callId
- * @returns {Promise<boolean | null>} `null` when the native module is absent
+ * @returns `null` when the native module is absent
  */
 export async function isCallConnectionLive(callId: string): Promise<boolean | null> {
   const module = getNativeModule();
@@ -160,8 +150,7 @@ export async function isCallConnectionLive(callId: string): Promise<boolean | nu
  * (e.g. once CallKeep reports the call answered, ended or declined
  * elsewhere). Safe to call even when nothing was ever shown.
  *
- * @param {string} [callId]
- * @returns {boolean} `true` when a dismiss request was sent
+ * @returns `true` when a dismiss request was sent
  */
 export function dismissIncomingCallNotification(callId?: string): boolean {
   if (!callId) return false;

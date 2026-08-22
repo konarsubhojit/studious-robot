@@ -47,10 +47,6 @@ export default function TabShell() {
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
 
-  /**
-   * @param {string | null} peerId
-   * @param {{ messageId?: string | null }} [options]
-   */
   const renderChatConversation = (peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
     // nothing to render (and every handler below would target no peer).
@@ -137,7 +133,7 @@ export default function TabShell() {
     />
   );
 
-  /** @param {string | null} peerId */
+  /** @param peerId */
   const renderPeerProfile = (peerId: string | null) => {
     if (!peerId) return null;
     return (

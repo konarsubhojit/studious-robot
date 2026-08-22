@@ -73,7 +73,7 @@ export default function DraggablePip({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     localPip: {

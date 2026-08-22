@@ -3,8 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import ErrorState from '../../src/components/ErrorState';
 import { sizes } from '../../src/theme';
 
-function render(/** @type {any} */ element: any) {
-  /** @type {any} */
+function render(element: any) {
   let tree: any;
   act(() => {
     tree = renderer.create(element);
@@ -24,12 +23,12 @@ describe('ErrorState', () => {
     );
 
     const container = tree.root.find(
-      (/** @type {any} */ node: any) => typeof node.type === 'string' && node.props.testID === 'error-state',
+      (node: any) => typeof node.type === 'string' && node.props.testID === 'error-state',
     );
     expect(container.props.accessibilityRole).toBe('alert');
     expect(container.props.accessibilityLiveRegion).toBe('assertive');
 
-    const texts = tree.root.findAll((/** @type {any} */ node: any) => node.type === 'Text').map((/** @type {any} */ node: any) => node.props.children);
+    const texts = tree.root.findAll((node: any) => node.type === 'Text').map((node: any) => node.props.children);
     expect(texts).toContain('Server unreachable');
     expect(texts).toContain('Check your connection');
   });
@@ -46,11 +45,11 @@ describe('ErrorState', () => {
       />,
     );
 
-    const action = tree.root.find((/** @type {any} */ node: any) => node.props.testID === 'error-state-action');
+    const action = tree.root.find((node: any) => node.props.testID === 'error-state-action');
     expect(action.props.accessibilityRole).toBe('button');
     expect(action.props.accessibilityLabel).toBe('Retry');
     expect(action.props.accessibilityHint).toBe('Tries again');
-    const style = action.props.style({ pressed: false }).find((/** @type {any} */ entry: any) => entry?.minHeight);
+    const style = action.props.style({ pressed: false }).find((entry: any) => entry?.minHeight);
     expect(style.minHeight).toBe(sizes.minTouchTarget);
 
     act(() => {
@@ -61,7 +60,7 @@ describe('ErrorState', () => {
 
   test('hides the action when no handler is supplied', () => {
     const tree = render(<ErrorState title="Server unreachable" testID="error-state" />);
-    expect(tree.root.findAll((/** @type {any} */ node: any) => node.props.testID === 'error-state-action')).toHaveLength(0);
+    expect(tree.root.findAll((node: any) => node.props.testID === 'error-state-action')).toHaveLength(0);
   });
 
   test('renders nothing without a title', () => {

@@ -1,12 +1,6 @@
 export type MediaStreamTrackLike = { kind: string; enabled: boolean; };
 export type MediaStreamLike = { getTracks: () => MediaStreamTrackLike[]; };
 
-/**
- * @param {MediaStreamLike | null | undefined} stream
- * @param {string} kind
- * @param {boolean} enabled
- * @returns {boolean}
- */
 export function setTrackEnabled(stream: MediaStreamLike | null | undefined, kind: string, enabled: boolean): boolean {
   if (!stream?.getTracks) {
     return false;
@@ -20,11 +14,6 @@ export function setTrackEnabled(stream: MediaStreamLike | null | undefined, kind
   return tracks.length > 0;
 }
 
-/**
- * @param {MediaStreamLike | null | undefined} stream
- * @param {string} kind
- * @returns {boolean}
- */
 export function isTrackEnabled(stream: MediaStreamLike | null | undefined, kind: string): boolean {
   if (!stream?.getTracks) {
     return false;

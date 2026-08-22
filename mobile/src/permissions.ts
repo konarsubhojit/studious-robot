@@ -46,10 +46,6 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   return permissions;
 }
 
-/**
- * @param {Permission[]} permissions
- * @returns {string}
- */
 function getRuntimePermissionDeniedMessage(permissions: Permission[]): string {
   const denied = new Set(permissions);
   const deniedCamera = denied.has(CAMERA_PERMISSION);
@@ -75,12 +71,7 @@ function getRuntimePermissionDeniedMessage(permissions: Permission[]): string {
   return 'Required Android permissions are missing';
 }
 
-/**
- * @param {Permission[]} permissions
- * @returns {Promise<Permission[]>}
- */
 async function getMissingPermissions(permissions: Permission[]): Promise<Permission[]> {
-  /** @type {Permission[]} */
   const missing: Permission[] = [];
 
   for (const permission of permissions) {
@@ -106,12 +97,7 @@ async function getMissingPermissions(permissions: Permission[]): Promise<Permiss
  * missing permission in logs and in the user-visible status instead of failing
  * silently inside `getUserMedia`.
  *
- * @returns {Promise<{
- *   camera: boolean,
- *   microphone: boolean,
- *   missing: string[],
- *   message: string | null,
- * }>} `missing` is empty when nothing is required or everything is granted.
+ * @returns `missing` is empty when nothing is required or everything is granted.
  */
 export async function getMissingCallPermissions(): Promise<{
     camera: boolean;
@@ -135,10 +121,7 @@ export async function getMissingCallPermissions(): Promise<{
 /**
  * Request the runtime permissions a call needs.
  *
- * @returns {Promise<
- *   | { ok: true, warningMessage: string|null, deniedPermissions: string[] }
- *   | { ok: false, message: string, warningMessage: null, deniedPermissions: string[] }
- * >} a denial always carries a user-facing message.
+ * @returns a denial always carries a user-facing message.
  */
 export async function ensureCallPermissions(): Promise<{ ok: true; warningMessage: string | null; deniedPermissions: string[]; } |
 { ok: false; message: string; warningMessage: null; deniedPermissions: string[]; }> {
@@ -196,11 +179,7 @@ export async function ensureCallPermissions(): Promise<{ ok: true; warningMessag
  * Check — and optionally request — the runtime permission Bluetooth call audio
  * needs on Android 12+.
  *
- * @param {{ requestIfNeeded?: boolean }} [options]
- * @returns {Promise<
- *   | { ok: true, granted: true, requested: boolean }
- *   | { ok: false, granted: false, requested: boolean, message: string }
- * >} a denial always carries a user-facing message.
+ * @returns a denial always carries a user-facing message.
  */
 export async function ensureBluetoothPermission({ requestIfNeeded = false }: { requestIfNeeded?: boolean; } = {}): Promise<{ ok: true; granted: true; requested: boolean; } |
 { ok: false; granted: false; requested: boolean; message: string; }> {
@@ -250,8 +229,7 @@ const READ_EXTERNAL_STORAGE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_E
  * name (and scope) in Android 13 (API 33): `READ_MEDIA_IMAGES` replaced the
  * broader `READ_EXTERNAL_STORAGE` for image access.
  *
- * @param {number|string} [androidApiLevel]
- * @returns {Permission | undefined} `undefined` on iOS (handled by Info.plist,
+ * @returns `undefined` on iOS (handled by Info.plist,
  *   not `PermissionsAndroid`) or when neither permission constant exists.
  */
 export function getPhotoLibraryPermission(androidApiLevel: number | string = Platform.Version): Permission | undefined {
@@ -261,9 +239,6 @@ export function getPhotoLibraryPermission(androidApiLevel: number | string = Pla
 
 /**
  * User-facing text for a denied attachment permission.
- *
- * @param {string} kind
- * @returns {string}
  */
 function getAttachmentPermissionDeniedMessage(kind: string): string {
   if (kind === 'photo') return 'Photo library permission is required to attach a photo';
@@ -275,10 +250,6 @@ function getAttachmentPermissionDeniedMessage(kind: string): string {
 /**
  * The Android runtime permission constant `ensureAttachmentPermission` needs to
  * check/request for `kind`.
- *
- * @param {string} kind
- * @param {number|string} [androidApiLevel]
- * @returns {Permission | undefined}
  */
 function attachmentPermissionFor(kind: string, androidApiLevel?: number | string): Permission | undefined {
   if (kind === 'photo') return getPhotoLibraryPermission(androidApiLevel);
@@ -294,10 +265,6 @@ function attachmentPermissionFor(kind: string, androidApiLevel?: number | string
  * The file picker (`kind: 'file'`) needs no runtime grant on Android — it
  * goes through the Storage Access Framework, which is scoped per pick — so
  * it always resolves `ok: true` without prompting.
- *
- * @param {'photo'|'camera'|'voice'|'file'} kind
- * @param {{ androidApiLevel?: number|string }} [options]
- * @returns {Promise<{ ok: boolean, granted: boolean, message?: string | null }>}
  */
 export async function ensureAttachmentPermission(
   kind: 'photo' | 'camera' | 'voice' | 'file',

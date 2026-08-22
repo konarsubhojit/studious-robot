@@ -31,21 +31,16 @@ const SEEN_MESSAGE_LIMIT = 200;
  * Message ids already delivered to the user through the socket (or already
  * notified about), newest last. Bounded so a long-lived process cannot grow
  * this without limit.
- *
- * @type {string[]}
  */
 const seenMessageIds: string[] = [];
 
 /**
  * The conversation currently open on screen, or `null`.
- *
- * @type {{ peerId: string | null, conversationId: string | null } | null}
  */
 let activeConversation: { peerId: string | null; conversationId: string | null; } | null = null;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -65,8 +60,6 @@ export function isMessageNotificationAvailable() {
  * Record which conversation is currently open on screen, so a push for that
  * same conversation is not also announced by the OS while the user is looking
  * at it. Pass `null` when no conversation is open.
- *
- * @param {{ peerId?: string | null, conversationId?: string | null } | null} conversation
  */
 export function setActiveConversation(conversation: { peerId?: string | null; conversationId?: string | null; } | null) {
   const peerId = (conversation?.peerId ?? '').trim?.() || null;
@@ -81,9 +74,6 @@ export function getActiveConversation() {
 
 /**
  * Whether the conversation a message belongs to is the one on screen.
- *
- * @param {{ senderId?: string | null, conversationId?: string | null }} message
- * @returns {boolean}
  */
 export function isConversationOnScreen({ senderId = null, conversationId = null }: { senderId?: string | null; conversationId?: string | null; } = {}): boolean {
   if (!activeConversation) return false;
@@ -101,8 +91,6 @@ export function isConversationOnScreen({ senderId = null, conversationId = null 
  * Remember that `messageId` already reached the user, so a push carrying the
  * same message (a message can arrive over both the socket and push) does not
  * post a second notification for it.
- *
- * @param {string | null | undefined} messageId
  */
 export function markMessageSeen(messageId: string | null | undefined) {
   const trimmed = (messageId ?? '').trim();
@@ -115,9 +103,6 @@ export function markMessageSeen(messageId: string | null | undefined) {
 
 /**
  * Whether `messageId` was already delivered to the user.
- *
- * @param {string | null | undefined} messageId
- * @returns {boolean}
  */
 export function hasSeenMessage(messageId: string | null | undefined): boolean {
   const trimmed = (messageId ?? '').trim();
@@ -138,15 +123,7 @@ export function resetMessageNotificationState() {
  * call path reports `ui_failed` — a message push that arrives but renders
  * nothing must not look like a success.
  *
- * @param {{
- *   messageId?: string,
- *   conversationId?: string,
- *   senderId?: string | null,
- *   title?: string | null,
- *   body?: string | null,
- *   deepLink?: string | null,
- * }} message
- * @returns {Promise<{ shown: boolean, reason?: string }>}
+ * @param message
  */
 export async function showMessageNotification({
   messageId,
@@ -196,8 +173,7 @@ export async function showMessageNotification({
  * Dismiss the chat notification for one conversation, e.g. once its messages
  * have been read in-app.
  *
- * @param {string} conversationId
- * @returns {boolean} `true` when a dismiss request was sent
+ * @returns `true` when a dismiss request was sent
  */
 export function dismissMessageNotification(conversationId: string): boolean {
   const trimmed = (conversationId ?? '').trim();

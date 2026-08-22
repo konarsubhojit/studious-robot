@@ -7,12 +7,7 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * While the instance is draining (rolling deploy / SIGTERM) it reports 503 so
  * load balancers stop routing new traffic here.
  *
- * @param {{ state: {
- *   draining: boolean,
- *   messageStore: { type: string },
- *   messageStoreStatus: string,
- * } }} ctx
- * @returns {import('express').Router}
+ * @param ctx
  */
 function createHealthRouter({ state }: {
         state: {

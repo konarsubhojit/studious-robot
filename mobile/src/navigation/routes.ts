@@ -4,8 +4,6 @@
  * The tab route names deliberately match the keys `AppTabBar` already uses
  * (`chats` / `calls` / `settings`) so the existing tab bar can be plugged into
  * the bottom-tab navigator as a custom `tabBar` without any name mapping.
- *
- * @type {{ CHATS: 'chats', CALLS: 'calls', SETTINGS: 'settings' }}
  */
 export const TABS: { CHATS: 'chats'; CALLS: 'calls'; SETTINGS: 'settings'; } = {
   CHATS: 'chats',
@@ -30,9 +28,8 @@ export const DEFAULT_TAB = TABS.CHATS;
  * Extract the parts of the navigation state the composition root still needs:
  * which tab is selected and, when a conversation is open, its peer id.
  *
- * @param {{ index?: number, routes?: any[] } | undefined} state navigation state
+ * @param state navigation state
  *   of the tab navigator.
- * @returns {{ activeTab: string, chatPeerId: string | null }}
  */
 export function deriveShellRoute(state: { index?: number; routes?: any[]; } | undefined): { activeTab: string; chatPeerId: string | null; } {
   const routes = state?.routes;

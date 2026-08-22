@@ -11,7 +11,7 @@ jest.mock('../../src/appLogger', () => ({
 
 const { logError } = require('../../src/appLogger');
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useCallInitiation(params);
   return null;
 }
@@ -24,9 +24,7 @@ function setup(overrides = {}) {
     handleVideoToggle: jest.fn(),
     ...overrides,
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);

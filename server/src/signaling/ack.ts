@@ -12,12 +12,6 @@ import { ERROR_CODES, SERVER_EVENTS, parseEventPayload } from '../../../shared/i
 
 export type SignalingState = { telemetry: { recordSignalingError: (code: string) => void; }; };
 
-/**
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {string} eventName
- * @returns {boolean}
- */
 function requireSocketSession(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string): boolean {
   if (socket.data.identity?.sessionId) {
     return true;
@@ -33,13 +27,6 @@ function requireSocketSession(socket: import('socket.io').Socket, ack: Function 
   return false;
 }
 
-/**
- * @param {import('socket.io').Socket} socket
- * @param {any} payload
- * @param {Function|undefined} ack
- * @param {string} eventName
- * @returns {boolean}
- */
 function validateSignalingVersion(socket: import('socket.io').Socket, payload: any, ack: Function | undefined, eventName: string): boolean {
   if (payload?.version === SIGNALING_VERSION) {
     return true;
@@ -62,12 +49,7 @@ function validateSignalingVersion(socket: import('socket.io').Socket, payload: a
  * acknowledgement and logged, so a malformed (or hostile) event can never take
  * a handler down by dereferencing a missing field.
  *
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {string} eventName
- * @param {unknown} payload
- * @param {SignalingState} [state]
- * @returns {Record<string, any> | null} the parsed payload, or `null` when it
+ * @returns the parsed payload, or `null` when it
  *   was rejected.
  */
 function parseInboundPayload(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, payload: unknown, state?: SignalingState): Record<string, any> | null {
@@ -92,12 +74,6 @@ function parseInboundPayload(socket: import('socket.io').Socket, ack: Function |
   return null;
 }
 
-/**
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {string} eventName
- * @param {object} [data]
- */
 function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, data?: object) {
   const payload = {
     ok: true,
@@ -119,12 +95,7 @@ function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | 
  * call-scoped state object.  All call/RTC handlers that do have state pass it
  * so the error is counted in the telemetry metrics.
  *
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {string} eventName
- * @param {string} code
- * @param {string} message
- * @param {SignalingState} [state]  - Optional server state (provides telemetry recorder).
+ * @param state  - Optional server state (provides telemetry recorder).
  */
 function acknowledgeError(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, code: string, message: string, state?: SignalingState) {
   if (state) {

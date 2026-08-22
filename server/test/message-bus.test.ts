@@ -25,12 +25,6 @@ function tick() {
  * `duplicate()` returns a new client bound to the same broker.
  */
 function createFakeRedis() {
-  /**
-   * @type {{
-   *   subs: Map<string, Set<(message: string, channel: string) => void>>,
-   *   published: { channel: string, message: string }[],
-   * }}
-   */
   const broker: {
       subs: Map<string, Set<(message: string, channel: string) => void>>;
       published: { channel: string; message: string; }[];
@@ -52,25 +46,17 @@ function createFakeRedis() {
       duplicate() {
         return makeClient();
       },
-      /**
-       * @param {string} channel
-       * @param {string} message
-       */
       async publish(channel: string, message: string) {
         broker.published.push({ channel, message });
         const set = broker.subs.get(channel);
         if (set) for (const listener of [...set]) listener(message, channel);
         return set ? set.size : 0;
       },
-      /**
-       * @param {string} channel
-       * @param {(message: string, channel: string) => void} listener
-       */
       async subscribe(channel: string, listener: (message: string, channel: string) => void) {
         if (!broker.subs.has(channel)) broker.subs.set(channel, new Set());
         broker.subs.get(channel)?.add(listener);
       },
-      /** @param {string} channel */
+      /** @param channel */
       async unsubscribe(channel: string) {
         broker.subs.delete(channel);
       },
@@ -84,7 +70,6 @@ function createFakeRedis() {
 
 test('memory bus delivers published JSON messages to subscribers', async () => {
   const bus = createMemoryMessageBus();
-  /** @type {{ msg: any, channel: string }[]} */
   const received: { msg: any; channel: string; }[] = [];
   await bus.subscribe('chan', (msg, channel) => {
     received.push({ msg, channel });
@@ -101,9 +86,7 @@ test('memory bus delivers published JSON messages to subscribers', async () => {
 
 test('memory bus fans out to multiple subscribers and supports unsubscribe', async () => {
   const bus = createMemoryMessageBus();
-  /** @type {any[]} */
   const a: any[] = [];
-  /** @type {any[]} */
   const b: any[] = [];
   const unsubA = await bus.subscribe('c', (m) => {
     a.push(m);
@@ -127,7 +110,6 @@ test('memory bus fans out to multiple subscribers and supports unsubscribe', asy
 
 test('memory bus does not deliver after close', async () => {
   const bus = createMemoryMessageBus();
-  /** @type {any[]} */
   const received: any[] = [];
   await bus.subscribe('c', (m) => {
     received.push(m);
@@ -148,9 +130,7 @@ test('redis bus publishes via pub and fans out one subscription per channel', as
   const { makeClient, broker } = createFakeRedis();
   const bus = createRedisMessageBus({ pub: makeClient(), sub: makeClient() });
 
-  /** @type {any[]} */
   const a: any[] = [];
-  /** @type {any[]} */
   const b: any[] = [];
   await bus.subscribe('c', (m) => {
     a.push(m);
@@ -190,7 +170,6 @@ test('redis bus unsubscribes from Redis only when the last handler is removed', 
 
 test('createRedisPgStores returns a complete store bundle plus bus/adapter/close', async () => {
   const { makeClient } = createFakeRedis();
-  /** @type {{ value: { pub: unknown, sub: unknown }|null }} */
   const adapterArgs: { value: { pub: unknown; sub: unknown; } | null; } = { value: null };
   const stores = await createRedisPgStores({
     createClient: makeClient,
@@ -215,7 +194,7 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
   // attachAdapter wires the Socket.IO adapter onto the io server.
   let attached = null;
   const fakeIo = {
-    /** @param {unknown} a */
+    /** @param a */
     adapter: (a: unknown) => {
       attached = a;
     },
@@ -228,7 +207,6 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
   );
 
   // The bundled bus works end-to-end.
-  /** @type {any[]} */
   const received: any[] = [];
   await stores.messageBus.subscribe('c', (m) => {
     received.push(m);
@@ -266,7 +244,6 @@ test('createRedisPgStores can be injected as opts.stores into the in-memory cont
 
 test('createServer publishes call-state transitions on the injected message bus', async () => {
   const bus = createMemoryMessageBus();
-  /** @type {any[]} */
   const transitions: any[] = [];
   await bus.subscribe(CALL_TRANSITION_CHANNEL, (msg) => {
     transitions.push(msg);
@@ -278,11 +255,6 @@ test('createServer publishes call-state transitions on the injected message bus'
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /**
-   * @param {string} path
-   * @param {Record<string, unknown>} body
-   * @returns {Promise<{ status: number, body: any }>}
-   */
   async function post(path: string, body: Record<string, unknown>): Promise<{ status: number; body: any; }> {
     const res = await fetch(`${url}${path}`, {
       method: 'POST',

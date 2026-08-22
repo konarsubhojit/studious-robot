@@ -96,9 +96,6 @@ export default function IconButton({
 
 /**
  * Circle background colour per variant, resolved from the active palette.
- *
- * @param {import('../theme').ThemeColors} colors
- * @param {string} variant
  */
 const variantColor = (colors: ThemeColors, variant: string) =>
   ({
@@ -111,9 +108,6 @@ const variantColor = (colors: ThemeColors, variant: string) =>
 
 /**
  * Foreground colour for vector icon glyphs per variant.
- *
- * @param {import('../theme').ThemeColors} colors
- * @param {string} variant
  */
 const iconColor = (colors: ThemeColors, variant: string) =>
   ({
@@ -124,7 +118,7 @@ const iconColor = (colors: ThemeColors, variant: string) =>
     muted: colors.textSecondary,
   }[variant] ?? colors.textPrimary);
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     wrapper: {

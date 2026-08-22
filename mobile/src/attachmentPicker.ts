@@ -9,20 +9,17 @@
 
 import { logWarn } from './appLogger';
 
-/** @type {typeof import('react-native-image-picker') | null | undefined} */
 let _imagePickerCache: typeof import('react-native-image-picker') | null | undefined;
-/** @type {typeof import('@react-native-documents/picker') | null | undefined} */
 let _documentPickerCache: typeof import('@react-native-documents/picker') | null | undefined;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
-/** @returns {typeof import('react-native-image-picker') | null} */
+
 function loadImagePicker(): typeof import('react-native-image-picker') | null {
   if (_imagePickerCache !== undefined) return _imagePickerCache;
   try {
@@ -33,7 +30,7 @@ function loadImagePicker(): typeof import('react-native-image-picker') | null {
   return _imagePickerCache ?? null;
 }
 
-/** @returns {typeof import('@react-native-documents/picker') | null} */
+
 function loadDocumentPicker(): typeof import('@react-native-documents/picker') | null {
   if (_documentPickerCache !== undefined) return _documentPickerCache;
   try {
@@ -64,10 +61,6 @@ export function isDocumentPickerAvailable() {
  * Normalise a `react-native-image-picker` asset into the shape
  * `attachmentUpload.js` expects.
  */
-/**
- * @param {any} asset
- * @returns {{ uri: string, mimeType: string, sizeBytes: number, name?: string, width?: number, height?: number } | null}
- */
 function normaliseImageAsset(asset: any): { uri: string; mimeType: string; sizeBytes: number; name?: string; width?: number; height?: number; } | null {
   if (!asset?.uri) return null;
   return {
@@ -83,8 +76,7 @@ function normaliseImageAsset(asset: any): { uri: string; mimeType: string; sizeB
 /**
  * Launch the photo library picker.
  *
- * @returns {Promise<{ uri: string, mimeType: string, sizeBytes: number,
- *   name?: string, width?: number, height?: number } | null>} `null` when the
+ * @returns `null` when the
  *   module isn't linked, the user cancelled, or the picker errored.
  */
 export async function pickPhoto(): Promise<{
@@ -100,9 +92,6 @@ export async function pickPhoto(): Promise<{
 
 /**
  * Launch the camera.
- *
- * @returns {Promise<{ uri: string, mimeType: string, sizeBytes: number,
- *   name?: string, width?: number, height?: number } | null>}
  */
 export async function pickCameraPhoto(): Promise<{
     uri: string; mimeType: string; sizeBytes: number;
@@ -121,9 +110,6 @@ export async function pickCameraPhoto(): Promise<{
 
 /**
  * Launch the document (file) picker.
- *
- * @returns {Promise<{ uri: string, mimeType: string, sizeBytes: number,
- *   name?: string } | null>}
  */
 export async function pickDocument(): Promise<{
     uri: string; mimeType: string; sizeBytes: number;

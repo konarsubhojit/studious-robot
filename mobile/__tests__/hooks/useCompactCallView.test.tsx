@@ -23,18 +23,15 @@ const originalPlatformOS = Platform.OS;
  * `resultRef.current`.  Using a plain object ref avoids React overhead while
  * still giving access to the last render's result after each `act()` block.
  */
-function TestHook(/** @type {any} */ { isInRoomRef, resultRef, options }: any) {
+function TestHook({ isInRoomRef, resultRef, options }: any) {
   const result = useCompactCallView(isInRoomRef, options);
   resultRef.current = result;
   return null;
 }
 
 describe('useCompactCallView', () => {
-  /** @type {any} */
   let capturedListener: any;
-  /** @type {any} */
   let capturedPipListener: any;
-  /** @type {any} */
   let mockRemove: any;
 
   beforeEach(() => {
@@ -46,7 +43,7 @@ describe('useCompactCallView', () => {
       return { remove: mockRemove };
     });
     jest.clearAllMocks();
-    (subscribePictureInPictureMode as jest.Mock).mockImplementation(/** @type {any} */ listener => {
+    (subscribePictureInPictureMode as jest.Mock).mockImplementation(listener => {
       capturedPipListener = listener;
       return jest.fn();
     });
@@ -61,7 +58,6 @@ describe('useCompactCallView', () => {
   test('does not register an AppState listener on non-Android platforms', () => {
     Platform.OS = 'ios';
     const isInRoomRef = { current: false };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -76,10 +72,8 @@ describe('useCompactCallView', () => {
   test('registers and removes the AppState listener on Android', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: false };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
-    /** @type {any} */
     let instance: any;
     act(() => {
       instance = renderer.create(<TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} />);
@@ -97,7 +91,6 @@ describe('useCompactCallView', () => {
   test('sets compact view true when backgrounded while in room', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -115,7 +108,6 @@ describe('useCompactCallView', () => {
   test('sets compact view true when inactive while in room', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -133,7 +125,6 @@ describe('useCompactCallView', () => {
   test('does not set compact view when backgrounded while not in room', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: false };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -151,7 +142,6 @@ describe('useCompactCallView', () => {
   test('returns to non-compact view when app becomes active again', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -172,7 +162,6 @@ describe('useCompactCallView', () => {
   test('exposes setIsCompactView to allow external reset (e.g. on leaveRoom)', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -193,7 +182,6 @@ describe('useCompactCallView', () => {
   test('mirrors the native Picture-in-Picture state instead of guessing from AppState', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {
@@ -214,7 +202,6 @@ describe('useCompactCallView', () => {
   test('ends the call when the user closes the Picture-in-Picture window', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
     const onPictureInPictureClosed = jest.fn();
 
@@ -239,7 +226,6 @@ describe('useCompactCallView', () => {
   test('does not end a call that is not running when the window is closed', () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: false };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
     const onPictureInPictureClosed = jest.fn();
 
@@ -263,7 +249,6 @@ describe('useCompactCallView', () => {
   test('exitCompactView leaves native PiP and drops the compact flag', async () => {
     Platform.OS = 'android';
     const isInRoomRef = { current: true };
-    /** @type {{ current: any }} */
     const resultRef: { current: any; } = { current: null };
 
     act(() => {

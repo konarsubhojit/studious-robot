@@ -30,7 +30,6 @@ import type { ThemeColors } from '../theme';
  */
 export type ScreenRenderers = { renderChatList?: () => ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => ReactNode; renderSearch?: () => ReactNode; renderPeerProfile?: (peerId: string | null) => ReactNode; renderCalls?: () => ReactNode; renderSettings?: () => ReactNode; };
 
-/** @type {import('react').Context<ScreenRenderers>} */
 const ScreenRenderersContext: Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
 
 const Tab = createBottomTabNavigator();
@@ -39,9 +38,6 @@ const ChatStack = createNativeStackNavigator();
 /**
  * Navigation theme mirroring the app palette, so native transitions never
  * flash a card in the opposite scheme.
- *
- * @param {'light'|'dark'} scheme
- * @param {import('../theme').ThemeColors} colors
  */
 function buildNavigationTheme(scheme: 'light' | 'dark', colors: ThemeColors) {
   const base = scheme === 'light' ? DefaultTheme : DarkTheme;
@@ -63,9 +59,6 @@ function ChatListRoute() {
   return renderChatList?.() ?? null;
 }
 
-/**
- * @param {{ route: { params?: { peerId?: string | null, messageId?: string | null } } }} props
- */
 function ChatConversationRoute({ route }: { route: { params?: { peerId?: string | null; messageId?: string | null; }; }; }) {
   const { renderChatConversation } = useContext(ScreenRenderersContext);
   return (
@@ -80,9 +73,6 @@ function SearchRoute() {
   return renderSearch?.() ?? null;
 }
 
-/**
- * @param {{ route: { params?: { peerId?: string | null } } }} props
- */
 function PeerProfileRoute({ route }: { route: { params?: { peerId?: string | null; }; }; }) {
   const { renderPeerProfile } = useContext(ScreenRenderersContext);
   return renderPeerProfile?.(route.params?.peerId ?? null) ?? null;
@@ -196,7 +186,7 @@ export default function AppNavigator({
   );
 
   const renderTabBar = useCallback(
-    /** @param {import('@react-navigation/bottom-tabs').BottomTabBarProps} props */
+    /** @param props */
     ({ state, navigation }: BottomTabBarProps) => (
       <AppTabBar
         activeTab={

@@ -41,7 +41,6 @@ describe('authService optional-provider loading', () => {
       throw new Error('missing module');
     });
 
-    /** @type {any} */
     let authService: any;
     jest.isolateModules(() => {
       authService = require('../src/authService');
@@ -67,7 +66,6 @@ describe('authService optional-provider loading', () => {
       throw new Error('missing module');
     });
 
-    /** @type {any} */
     let authService: any;
     jest.isolateModules(() => {
       authService = require('../src/authService');

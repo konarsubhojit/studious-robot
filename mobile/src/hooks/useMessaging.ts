@@ -54,8 +54,7 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -64,9 +63,6 @@ function errorMessage(error: unknown): string | undefined {
 /**
  * Identity of a timeline entry: a message id, or a call id for the call
  * records the unified timeline interleaves with the messages.
- *
- * @param {{ messageId?: string, callId?: string }} entry
- * @returns {string | undefined}
  */
 function timelineEntryId(entry: { messageId?: string; callId?: string; }): string | undefined {
   return entry?.messageId ?? entry?.callId;
@@ -84,9 +80,8 @@ const OUTBOX_MAX_RETRY_MS = 60_000;
  * The tombstone a deleted message becomes: the content is gone, the row stays
  * so a reply quoting it still resolves and renders "Message deleted".
  *
- * @param {ChatMessage} message - the local copy being replaced.
- * @param {Partial<ChatMessage>} [serverTombstone] - the server's version, when it sent one.
- * @returns {Partial<ChatMessage>}
+ * @param message - the local copy being replaced.
+ * @param serverTombstone - the server's version, when it sent one.
  */
 function tombstoneOf(message: ChatMessage, serverTombstone?: Partial<ChatMessage>): Partial<ChatMessage> {
   return {
@@ -100,9 +95,6 @@ function tombstoneOf(message: ChatMessage, serverTombstone?: Partial<ChatMessage
 
 /**
  * True while a queued message may still be sent automatically.
- *
- * @param {OutboxItem} item
- * @returns {boolean}
  */
 function isRetryable(item: OutboxItem): boolean {
   return (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
@@ -110,10 +102,6 @@ function isRetryable(item: OutboxItem): boolean {
 
 /**
  * Newest-first ordering, matching the server's message ordering.
- *
- * @param {{ createdAt?: string }} a
- * @param {{ createdAt?: string }} b
- * @returns {number}
  */
 function byNewestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): number {
   return Date.parse(b?.createdAt ?? '') - Date.parse(a?.createdAt ?? '');
@@ -121,10 +109,6 @@ function byNewestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): 
 
 /**
  * Oldest-first ordering, so queued sends are flushed in composition order.
- *
- * @param {{ createdAt?: string }} a
- * @param {{ createdAt?: string }} b
- * @returns {number}
  */
 function byOldestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): number {
   return Date.parse(a?.createdAt ?? '') - Date.parse(b?.createdAt ?? '');
@@ -137,13 +121,11 @@ function byOldestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): 
  *
  * Not a security token — it only has to be unique — so a `Math.random()`
  * fallback is fine where the runtime has no `crypto.randomUUID`.
- *
- * @returns {string}
  */
 function createMessageId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
   if (uuid) return uuid;
-  const randomHex = (/** @type {number} */ length: number) =>
+  const randomHex = (length: number) =>
     Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join('');
   const variant = '89ab'[Math.floor(Math.random() * 4)];
   return (
@@ -171,15 +153,7 @@ function createMessageId(): string {
  * stays isolated from that hook's call-lifecycle/session/WebRTC
  * responsibilities.
  *
- * @param {{
- *   authedFetchRef: { current: Function | null },
- *   sessionIdRef: { current: string | null },
- *   signalingUrl: string,
- *   signalingRef: { current: import('../signalingClient').SignalingClient | null },
- *   socketRef: { current: import('socket.io-client').Socket | null },
- *   userId: string,
- *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
- * }} params
+ * @param params
  */
 export type UseMessagingParams = {
   authedFetchRef: { current: Function | null; };
@@ -320,7 +294,7 @@ export default function useMessaging({
     if (!sessionId) return;
     try {
       const trimmedUrl = signalingUrl.trim();
-      const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => ({
+      const response = await authedFetchRef.current?.((sid: string) => ({
         url: `${trimmedUrl}${API_ROUTES.CONVERSATIONS}?sessionId=${encodeURIComponent(sid)}`,
       }));
       if (!response?.ok) return;
@@ -344,22 +318,16 @@ export default function useMessaging({
    * text messages (`type: 'text'`) with call records (`type: 'call'`) and a
    * conversation shows that the two people also called each other.
    *
-   * @param {string} peerId
-   * @param {{ before?: string }} [options]
-   * @returns {Promise<ChatMessage[]>} the fetched page (empty on failure)
+   * @returns the fetched page (empty on failure)
    */
   const fetchMessagesForPeer = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {{ before?: string }} [options]
-     */
     async (peerId: string, { before }: { before?: string; } = {}) => {
       const trimmedPeerId = (peerId ?? '').trim();
       const sessionId = sessionIdRef.current;
       if (!sessionId || !trimmedPeerId) return [];
       try {
         const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => {
+        const response = await authedFetchRef.current?.((sid: string) => {
           const params = new URLSearchParams({
             sessionId: sid,
             peerId: trimmedPeerId,
@@ -393,7 +361,7 @@ export default function useMessaging({
           const merged = [
             ...existing,
             ...messages.filter(
-              (/** @type {ChatMessage} */ entry: ChatMessage) => !existingIds.has(timelineEntryId(entry)),
+              (entry: ChatMessage) => !existingIds.has(timelineEntryId(entry)),
             ),
           ];
           return { ...prev, [trimmedPeerId]: merged };
@@ -413,17 +381,15 @@ export default function useMessaging({
    * Mark every message from `peerId` as read (`POST /messages/read`) and
    * locally zero out that conversation's unread badge without waiting for a
    * refetch.
-   *
-   * @param {string} peerId
    */
   const markConversationRead = useCallback(
-    /** @param {string} peerId */
+    /** @param peerId */
     async (peerId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
       try {
         const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => ({
+        const response = await authedFetchRef.current?.((sid: string) => ({
           url: `${trimmedUrl}${API_ROUTES.MESSAGES_READ}`,
           options: {
             method: 'POST',
@@ -451,23 +417,15 @@ export default function useMessaging({
    * can deep-link into that conversation.  Returns an empty array when the
    * request fails, so an unreachable server degrades to local-only results
    * rather than an error.
-   *
-   * @param {string} query
-   * @param {{ limit?: number, signal?: AbortSignal }} [options]
-   * @returns {Promise<Array<object>>}
    */
   const searchMessages = useCallback(
-    /**
-     * @param {string} query
-     * @param {{ limit?: number, signal?: AbortSignal }} [options]
-     */
     async (query: string, { limit = 20, signal }: { limit?: number; signal?: AbortSignal; } = {}) => {
       const term = (query ?? '').trim();
       const sessionId = sessionIdRef.current;
       if (!term || !sessionId) return [];
       try {
         const trimmedUrl = signalingUrl.trim();
-        const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => {
+        const response = await authedFetchRef.current?.((sid: string) => {
           const params = new URLSearchParams({
             sessionId: sid,
             q: term,
@@ -495,17 +453,8 @@ export default function useMessaging({
 
   /**
    * Update one local message in `peerId`'s history, by id.
-   *
-   * @param {string} peerId
-   * @param {string} messageId
-   * @param {(message: ChatMessage) => ChatMessage} update
    */
   const patchMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     * @param {(message: ChatMessage) => ChatMessage} update
-     */
     (peerId: string, messageId: string, update: (message: ChatMessage) => ChatMessage) => {
     setMessagesByPeer(prev => {
       const existing = prev[peerId];
@@ -523,10 +472,8 @@ export default function useMessaging({
   /**
    * Replace the outbox and mirror it into the local store, so a queued send
    * outlives the process that composed it.
-   *
-   * @param {OutboxItem[]} next
    */
-  const persistOutbox = useCallback(/** @param {OutboxItem[]} next */ (next: OutboxItem[]) => {
+  const persistOutbox = useCallback(/** @param next */ (next: OutboxItem[]) => {
     outboxRef.current = next;
     setPendingSendCount(next.length);
     saveChatSnapshot({ outbox: next });
@@ -551,11 +498,10 @@ export default function useMessaging({
    * Attempt one queued send.  Resolves to whether the message is now the
    * server's problem rather than ours.
    *
-   * @param {OutboxItem} item outbox row
-   * @returns {Promise<boolean>}
+   * @param item outbox row
    */
   const sendOutboxItem = useCallback(
-    /** @param {OutboxItem} item */
+    /** @param item */
     async (item: OutboxItem) => {
       const signaling = signalingRef?.current;
       if (!signaling || !socketRef.current?.connected) return false;
@@ -620,8 +566,6 @@ export default function useMessaging({
    * Flush the durable outbox, oldest first.  A no-op while offline (the queue
    * is simply left for the next connect) and re-armed with backoff whenever a
    * send does not get through.
-   *
-   * @returns {Promise<void>}
    */
   const drainOutbox = useCallback(async () => {
     if (isDrainingRef.current) return;
@@ -685,9 +629,6 @@ export default function useMessaging({
    * socket or a killed process: whatever is still queued is replayed on the
    * next connect, foreground, or launch.
    *
-   * @param {string} peerId
-   * @param {string} body
-   * @param {{ type?: string, attachment?: object|null, replyTo?: string|null }} [options]
    *   Rich-message fields. An attachment message (`image`/`file`/`voice`) may
    *   have an empty body: the caption is optional, the attachment is the
    *   content. `attachment.url` must be an already-uploaded `/chatblobs` URL —
@@ -695,11 +636,6 @@ export default function useMessaging({
    *   message is just another durable outbox entry.
    */
   const sendMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} body
-     * @param {{ type?: string, attachment?: import('../../../shared/signaling/schemas').AttachmentRecord|null, replyTo?: string|null }} [options]
-     */
     async (peerId: string, body: string, options: { type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; } = {}) => {
       const trimmedPeerId = (peerId ?? '').trim();
       const trimmedBody = (body ?? '').trim();
@@ -714,7 +650,6 @@ export default function useMessaging({
       const createdAt = new Date().toISOString();
       const conversationId =
         conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ?? null;
-      /** @type {ChatMessage} */
       const optimisticMessage: ChatMessage = {
         messageId,
         conversationId,
@@ -762,15 +697,8 @@ export default function useMessaging({
   /**
    * Re-queue a message whose automatic retries were exhausted, putting it back
    * into `pending` and draining immediately.
-   *
-   * @param {string} peerId
-   * @param {string} messageId
    */
   const retryMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     */
     async (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
@@ -800,15 +728,8 @@ export default function useMessaging({
 
   /**
    * Remove one message from the local history, wherever it lives.
-   *
-   * @param {string} peerId
-   * @param {string} messageId
    */
   const removeMessageLocally = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     */
     (peerId: string, messageId: string) => {
     setMessagesByPeer(prev => {
       const existing = prev[peerId];
@@ -821,15 +742,8 @@ export default function useMessaging({
   /**
    * Drop a message that never made it to the server: it leaves both the local
    * history and the outbox, so it is never replayed.
-   *
-   * @param {string} peerId
-   * @param {string} messageId
    */
   const discardMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     */
     (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
@@ -844,15 +758,9 @@ export default function useMessaging({
    * outbox) are simply discarded locally; a message the server already stored
    * is deleted there too, so it disappears for the recipient as well.
    *
-   * @param {string} peerId
-   * @param {string} messageId
-   * @returns {Promise<boolean>} whether the message is gone
+   * @returns whether the message is gone
    */
   const deleteMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     */
     async (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return false;
@@ -900,15 +808,8 @@ export default function useMessaging({
    * per peer while `isTyping` stays true, so a fast typist doesn't flood the
    * socket; the final `isTyping: false` (composer cleared/blurred) always
    * goes out immediately so the peer's indicator doesn't linger.
-   *
-   * @param {string} peerId
-   * @param {boolean} isTyping
    */
   const sendTypingIndicator = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {boolean} isTyping
-     */
     (peerId: string, isTyping: boolean) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
@@ -998,7 +899,7 @@ export default function useMessaging({
     [fetchConversations, markConversationRead],
   );
 
-  const handleMessageDelivered = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage) => {
+  const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
     if (!message?.recipientId) return;
     const peerId = message.recipientId;
     setMessagesByPeer(prev => {
@@ -1017,7 +918,7 @@ export default function useMessaging({
   }, []);
 
   const handleMessageRead = useCallback(
-    /** @param {{ readerId?: string, readAt?: string }} payload */
+    /** @param payload */
     ({ readerId, readAt }: { readerId?: string; readAt?: string; }) => {
       if (!readerId) return;
       // `readerId` is the peer who just read our messages; messagesByPeer
@@ -1041,7 +942,7 @@ export default function useMessaging({
   );
 
   const handleTypingEvent = useCallback(
-    /** @param {{ senderId?: string, isTyping?: boolean }} payload */
+    /** @param payload */
     ({ senderId, isTyping }: { senderId?: string; isTyping?: boolean; }) => {
     if (!senderId) return;
       clearTimeout(typingTimeoutsRef.current[senderId]);
@@ -1061,8 +962,7 @@ export default function useMessaging({
    * both sides converge on "Message deleted" rather than on a hole — a reply
    * that quotes the message must still resolve to something.
    *
-   * @param {{ conversationId?: string, messageId?: string, deletedBy?: string,
-   *   message?: Partial<ChatMessage>|null }} payload
+   * @param payload
    */
   const handleMessageDeleted = useCallback(
     (payload: {
@@ -1075,7 +975,6 @@ export default function useMessaging({
     if (!messageId) return;
       setMessagesByPeer(prev => {
         let changed = false;
-        /** @type {Record<string, ChatMessage[]>} */
         const next: Record<string, ChatMessage[]> = {};
         Object.entries(prev).forEach(([peerId, messages]) => {
           next[peerId] = messages.map(m => {
@@ -1094,8 +993,6 @@ export default function useMessaging({
    * A reaction was added or removed on a message in one of the user's
    * conversations, by either participant — including this user on another
    * device, which is what makes the local optimistic update converge.
-   *
-   * @param {{ messageId?: string, reactions?: Record<string, string[]> }} payload
    */
   const handleMessageReaction = useCallback(
     (payload: { messageId?: string; reactions?: Record<string, string[]> }) => {
@@ -1104,7 +1001,6 @@ export default function useMessaging({
       const reactions = payload?.reactions ?? {};
       setMessagesByPeer(prev => {
         let changed = false;
-        /** @type {Record<string, ChatMessage[]>} */
         const next: Record<string, ChatMessage[]> = {};
         Object.entries(prev).forEach(([peerId, messages]) => {
           next[peerId] = messages.map(m => {
@@ -1126,19 +1022,9 @@ export default function useMessaging({
    * in the `message.reaction` fan-out that reaches every other device) is what
    * the UI ends up rendering, so a lost ack cannot leave the devices disagreeing.
    *
-   * @param {string} peerId
-   * @param {string} messageId
-   * @param {string} emoji
-   * @param {'add'|'remove'} action
-   * @returns {Promise<boolean>} whether the reaction was stored
+   * @returns whether the reaction was stored
    */
   const reactToMessage = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} messageId
-     * @param {string} emoji
-     * @param {'add'|'remove'} action
-     */
     async (peerId: string, messageId: string, emoji: string, action: 'add' | 'remove') => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId || !emoji) return false;

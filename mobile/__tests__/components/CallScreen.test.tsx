@@ -14,30 +14,28 @@ jest.mock('react-native-reanimated', () => {
 
 jest.mock(
   '../../src/components/CallTopBar',
-  () => (/** @type {any} */ props: any) => require('react').createElement('CallTopBar', props),
+  () => (props: any) => require('react').createElement('CallTopBar', props),
 );
 jest.mock(
   '../../src/components/ReconnectBanner',
-  () => (/** @type {any} */ props: any) => require('react').createElement('ReconnectBanner', props),
+  () => (props: any) => require('react').createElement('ReconnectBanner', props),
 );
 jest.mock(
   '../../src/components/CallStage',
-  () => (/** @type {any} */ props: any) => require('react').createElement('CallStage', props),
+  () => (props: any) => require('react').createElement('CallStage', props),
 );
 jest.mock(
   '../../src/components/CallControls',
-  () => (/** @type {any} */ props: any) => require('react').createElement('CallControls', props),
+  () => (props: any) => require('react').createElement('CallControls', props),
 );
 jest.mock(
   '../../src/components/StatusBanner',
-  () => (/** @type {any} */ props: any) => require('react').createElement('StatusBanner', props),
+  () => (props: any) => require('react').createElement('StatusBanner', props),
 );
 
 /**
  * Test props are deliberately partial; the component under test is exercised
  * through the rendered output rather than its prop types.
- *
- * @returns {any}
  */
 function createProps(overrides = {}): any {
   return {
@@ -71,7 +69,6 @@ function createProps(overrides = {}): any {
 }
 
 describe('CallScreen', () => {
-  /** @type {any} */
   let tree: any;
 
   afterEach(() => {
@@ -238,9 +235,9 @@ describe('CallScreen', () => {
 
     // Errors are surfaced with a recovery action instead of a bare status line.
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
-    const errorState = tree.root.findAll((/** @type {any} */ n: any) => n.props.testID === 'call-error-state');
+    const errorState = tree.root.findAll((n: any) => n.props.testID === 'call-error-state');
     expect(errorState.length).toBeGreaterThanOrEqual(1);
-    const retry = tree.root.find((/** @type {any} */ n: any) => n.props.testID === 'call-error-state-action');
+    const retry = tree.root.find((n: any) => n.props.testID === 'call-error-state-action');
     act(() => {
       retry.props.onPress();
     });

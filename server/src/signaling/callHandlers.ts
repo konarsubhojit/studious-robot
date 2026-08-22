@@ -15,21 +15,7 @@ import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
  * Handle an authenticated call-state transition requested over the socket
  * (`call.accept`, `call.decline`, `call.cancel`, `call.end`).
  *
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {object} payload
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   io: any,
- *   eventName: string,
- *   nextStatus: string,
- *   reason?: string|null,
- *   authorize: (
- *     call: import('../stores/contracts.ts').CallRecord,
- *     userId: string,
- *   ) => string|null,
- *   onSuccess?: (call: import('../stores/contracts.ts').CallRecord) => void,
- * }} options
+ * @param options
  */
 function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
         state: import('../stores/contracts.ts').ServerState;
@@ -117,16 +103,7 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
  * checks, and promoting the call from `accepted` to `connecting_media` on the
  * first relayed frame.
  *
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {object} payload
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   io: any,
- *   eventName: string,
- *   dataKey: string,
- *   recordsHeartbeat?: boolean,
- * }} options
+ * @param options
  */
 function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
         state: import('../stores/contracts.ts').ServerState;
@@ -254,11 +231,6 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
  * The first peer to report wins; the second is absorbed by `transitionCall`'s
  * idempotency.  A report of `disconnected`/`failed` ends the call immediately
  * instead of leaving it to a sweep.
- *
- * @param {import('socket.io').Socket} socket
- * @param {Function|undefined} ack
- * @param {object} payload
- * @param {{ state: import('../stores/contracts.ts').ServerState, io: any }} options
  */
 function handleCallConnected(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: { state: import('../stores/contracts.ts').ServerState; io: any; }) {
   // Read before validation only to pick the destination status; the payload is

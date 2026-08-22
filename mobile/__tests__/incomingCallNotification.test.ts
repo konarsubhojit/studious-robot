@@ -14,7 +14,7 @@ jest.mock('../src/ringtone', () => ({
 
 const originalPlatform = Platform.OS;
 
-function setNativeModule(/** @type {any} */ module: any) {
+function setNativeModule(module: any) {
   if (module === null) {
     delete NativeModules.IncomingCallNotification;
   } else {

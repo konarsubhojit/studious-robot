@@ -12,8 +12,6 @@ import { CALL_STATES } from './call/callStateMachine';
 /**
  * Speak `message` if a screen reader is active. Safe to call on any platform:
  * a missing native module simply results in no announcement.
- *
- * @param {string} message
  */
 export function announceForAccessibility(message: string) {
   if (!message) return;
@@ -27,9 +25,8 @@ export function announceForAccessibility(message: string) {
 /**
  * Sentence announced when the call machine enters `callState`.
  *
- * @param {string} callState - One of CALL_STATES.
- * @param {{ callerId?: string|null, calleeId?: string|null }} [peers]
- * @returns {string|null} the announcement, or `null` for states with nothing to say.
+ * @param callState - One of CALL_STATES.
+ * @returns the announcement, or `null` for states with nothing to say.
  */
 export function describeCallState(callState: string, { callerId, calleeId }: { callerId?: string | null; calleeId?: string | null; } = {}): string | null {
   switch (callState) {

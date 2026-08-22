@@ -10,9 +10,6 @@ import { notifyCallCreated, notifyCallTransition } from '../domain/notifications
 /**
  * Constant-time check of the operator debug token, so `/debug/active-calls`
  * can be used to inspect another user without leaking the token via timing.
- *
- * @param {import('express').Request} req
- * @returns {boolean}
  */
 function hasDebugToken(req: import('express').Request): boolean {
   const expected = process.env.DEBUG_API_TOKEN;
@@ -29,9 +26,6 @@ function hasDebugToken(req: import('express').Request): boolean {
  *
  * Needs the live Socket.IO server (`io`) for realtime notifications, so it must
  * be mounted after `io` is created.
- *
- * @param {{ state: import('../stores/contracts.ts').ServerState, io: any, ringingTimeoutMs: number }} ctx
- * @returns {import('express').Router}
  */
 function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../stores/contracts.ts').ServerState; io: any; ringingTimeoutMs: number; }): import('express').Router {
   const router = express.Router();

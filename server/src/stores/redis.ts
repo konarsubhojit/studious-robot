@@ -28,11 +28,8 @@ import { createRedisMessageBus } from '../messageBus.ts';
 
 /**
  * Build the hot in-process keyed collections required by the store contract.
- *
- * @returns {Record<string, Map<unknown, unknown>>}
  */
 function createHotMaps(): Record<string, Map<unknown, unknown>> {
-  /** @type {Record<string, Map<unknown, unknown>>} */
   const maps: Record<string, Map<unknown, unknown>> = {};
   for (const name of STORE_NAMES) {
     maps[name] = new Map();
@@ -52,16 +49,9 @@ function createHotMaps(): Record<string, Map<unknown, unknown>> {
  * factory (each call must return a fresh, connectable client) and a
  * `createAdapter` function.
  *
- * @param {object} [opts]
- * @param {string} [opts.redisUrl]   Redis connection URL (defaults to `REDIS_URL`).
- * @param {() => any} [opts.createClient]   Client factory; defaults to `redis.createClient`.
- * @param {(pub: any, sub: any) => any} [opts.createAdapter]
+ * @param opts.redisUrl   Redis connection URL (defaults to `REDIS_URL`).
+ * @param opts.createClient   Client factory; defaults to `redis.createClient`.
  *   Socket.IO adapter factory; defaults to `@socket.io/redis-adapter.createAdapter`.
- * @returns {Promise<import('./contracts.ts').Stores & {
- *   messageBus: import('../messageBus.ts').MessageBus,
- *   attachAdapter: (io: any) => void,
- *   close: () => Promise<void>,
- * }>}
  */
 async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () => any; createAdapter?: (pub: any, sub: any) => any; } = {}): Promise<import('./contracts.ts').Stores & {
     messageBus: import('../messageBus.ts').MessageBus;
@@ -80,19 +70,17 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
   const createAdapter =
     opts.createAdapter || (await import('@socket.io/redis-adapter')).createAdapter;
 
-  /** @type {any[]} Every Redis client opened here, for orderly shutdown. */
+  /** @type Every Redis client opened here, for orderly shutdown. */
   const clients: any[] = [];
 
   /**
    * Open and connect a fresh Redis client, tracking it for `close()`.
-   *
-   * @returns {Promise<any>}
    */
   async function openClient(): Promise<any> {
     const client = createClient();
     // node-redis surfaces connection errors as 'error' events; log instead of
     // letting them crash the process.
-    client.on?.('error', (/** @type {any} */ error: any) => {
+    client.on?.('error', (error: any) => {
       console.error(`[stores:redis] client error: ${error?.message}`);
     });
     await client.connect?.();
@@ -107,7 +95,6 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
 
   const messageBus = createRedisMessageBus({ pub: busPub, sub: busSub });
 
-  /** @type {Record<string, any>} */
   const bundle: Record<string, any> = createHotMaps();
   bundle.messageBus = messageBus;
 
@@ -115,7 +102,7 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
    * Attach the Socket.IO Redis adapter to a server instance so room/user emits
    * fan out across all instances.
    *
-   * @param {any} io  Socket.IO server.
+   * @param io  Socket.IO server.
    */
   bundle.attachAdapter = (io: any) => {
     io.adapter(createAdapter(adapterPub, adapterSub));
@@ -123,8 +110,6 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
 
   /**
    * Tear down the message bus and close every Redis connection.
-   *
-   * @returns {Promise<void>}
    */
   bundle.close = async (): Promise<void> => {
     await messageBus.close();

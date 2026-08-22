@@ -6,9 +6,6 @@ import { CALL_END_REASONS } from '../config.ts';
  * Operational, no-auth endpoints:
  *   GET /call-end-reasons – static end-reason taxonomy for clients.
  *   GET /metrics          – point-in-time telemetry snapshot for scrapers.
- *
- * @param {{ state: { telemetry: { getSnapshot: () => object } } }} ctx
- * @returns {import('express').Router}
  */
 function createMetricsRouter({ state }: { state: { telemetry: { getSnapshot: () => object; }; }; }): import('express').Router {
   const router = express.Router();

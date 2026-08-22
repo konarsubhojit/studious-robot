@@ -23,11 +23,6 @@ import {
 } from '../../src/storage/chatDb';
 
 /** `count` messages, newest first, one minute apart. */
-/**
- * @param {number} count
- * @param {Partial<import('../../src/hooks/useMessaging').ChatMessage>} [overrides]
- * @returns {import('../../src/hooks/useMessaging').ChatMessage[]}
- */
 function makeMessages(count: number, overrides: Partial<import('../../src/hooks/useMessaging').ChatMessage> = {}): import('../../src/hooks/useMessaging').ChatMessage[] {
   return Array.from({ length: count }, (_unused, index) => ({
     messageId: `m${index}`,

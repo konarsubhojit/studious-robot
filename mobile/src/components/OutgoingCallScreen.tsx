@@ -13,8 +13,7 @@ import type { ThemeColors } from '../theme';
 /**
  * Derives the number of seconds until ringTimeoutAt (clamped to ≥ 0).
  *
- * @param {string|null|undefined} ringTimeoutAt – ISO 8601 timestamp from the call record.
- * @returns {number}
+ * @param ringTimeoutAt – ISO 8601 timestamp from the call record.
  */
 function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
   if (!ringTimeoutAt) return 0;
@@ -29,12 +28,10 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object} props
- * @param {string} [props.calleeId] - The ID / name of the callee; falls back to "Unknown".
- * @param {import('../../../shared/signaling/schemas').CallRecord | null} [props.activeCall]
+ * @param props.calleeId - The ID / name of the callee; falls back to "Unknown".
  *   Live call record (may include ringTimeoutAt).
- * @param {import('./StatusBanner').CallStatus} props.status - Current status.
- * @param {() => void} props.onCancel - Called when the user presses Cancel.
+ * @param props.status - Current status.
+ * @param props.onCancel - Called when the user presses Cancel.
  */
 export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }: { calleeId?: string; activeCall?: CallRecord | null; status: CallStatus; onCancel: () => void; }) {
   const styles = useThemedStyles(createStyles);
@@ -43,7 +40,6 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
   const initials = deriveInitials(calleeId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
-  /** @type {import('react').MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
 
   // ── Pulse animation ───────────────────────────────────────────────────────
@@ -159,7 +155,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

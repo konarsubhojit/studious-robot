@@ -8,7 +8,6 @@ import {
 } from '../src/haptics';
 
 describe('haptics', () => {
-  /** @type {jest.SpyInstance} */
   let vibrateSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -56,7 +55,6 @@ describe('haptics', () => {
   });
 
   test('reacts to later reduce-motion changes', async () => {
-    /** @type {any} */
     let listener: any = null;
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
     jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation(

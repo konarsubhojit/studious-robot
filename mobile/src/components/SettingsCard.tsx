@@ -5,13 +5,6 @@ import type { ThemeColors } from '../theme';
 
 /**
  * One labelled on/off row inside the settings card.
- *
- * @param {object} props
- * @param {string} props.label
- * @param {string} props.hint
- * @param {boolean} props.value
- * @param {() => void} props.onPress
- * @param {string} [props.testID]
  */
 function SettingsToggle({ label, hint, value, onPress, testID }: { label: string; hint: string; value: boolean; onPress: () => void; testID?: string; }) {
   const styles = useThemedStyles(createStyles);
@@ -36,11 +29,6 @@ function SettingsToggle({ label, hint, value, onPress, testID }: { label: string
 
 /**
  * Settings panel exposing persisted preferences.
- *
- * @param {object} props
- * @param {{ autoCameraLightingEnabled: boolean, speakerEnabledByDefault: boolean }} props.settings
- * @param {() => void} props.onToggleAutoLighting
- * @param {() => void} props.onToggleSpeakerDefault
  */
 export default function SettingsCard({ settings, onToggleAutoLighting, onToggleSpeakerDefault }: { settings: { autoCameraLightingEnabled: boolean; speakerEnabledByDefault: boolean; }; onToggleAutoLighting: () => void; onToggleSpeakerDefault: () => void; }) {
   const styles = useThemedStyles(createStyles);
@@ -66,7 +54,7 @@ export default function SettingsCard({ settings, onToggleAutoLighting, onToggleS
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     settingsCard: {

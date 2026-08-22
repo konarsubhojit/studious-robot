@@ -4,26 +4,25 @@ import FloatingCallBubble from '../../src/components/FloatingCallBubble';
 import { triggerHaptic } from '../../src/haptics';
 
 /** Pan-gesture callbacks captured from the mocked gesture builder. */
-/** @type {{ onStart?: any, onUpdate?: any, onEnd?: any }} */
 const mockPanCallbacks: { onStart?: any; onUpdate?: any; onEnd?: any; } = {};
 
 jest.mock('react-native-gesture-handler', () => ({
   __esModule: true,
-  GestureDetector: (/** @type {any} */ { children }: any) => children,
+  GestureDetector: ({ children }: any) => children,
   Gesture: {
     Pan: () => ({
       minDistance: function () {
         return this;
       },
-      onStart: function (/** @type {any} */ callback: any) {
+      onStart: function (callback: any) {
         mockPanCallbacks.onStart = callback;
         return this;
       },
-      onUpdate: function (/** @type {any} */ callback: any) {
+      onUpdate: function (callback: any) {
         mockPanCallbacks.onUpdate = callback;
         return this;
       },
-      onEnd: function (/** @type {any} */ callback: any) {
+      onEnd: function (callback: any) {
         mockPanCallbacks.onEnd = callback;
         return this;
       },
@@ -37,22 +36,22 @@ jest.mock('react-native-reanimated', () => {
     __esModule: true,
     default: { View },
     // Backed by a ref so values survive re-renders, like real shared values.
-    useSharedValue: (/** @type {any} */ init: any) => {
+    useSharedValue: (init: any) => {
       const ref = require('react').useRef((null as any));
       if (ref.current === null) {
         ref.current = { value: init };
       }
       return ref.current;
     },
-    useAnimatedStyle: (/** @type {any} */ fn: any) => fn(),
+    useAnimatedStyle: (fn: any) => fn(),
     // Animations resolve instantly so assertions can read the settled value;
     // completion callbacks are invoked as if the animation finished.
-    withSpring: (/** @type {any} */ toValue: any) => toValue,
-    withTiming: (/** @type {any} */ toValue: any, /** @type {any} */ _config: any, /** @type {any} */ callback: any) => {
+    withSpring: (toValue: any) => toValue,
+    withTiming: (toValue: any, _config: any, callback: any) => {
       callback?.(true);
       return toValue;
     },
-    runOnJS: (/** @type {any} */ fn: any) => fn,
+    runOnJS: (fn: any) => fn,
     ZoomIn: { springify: () => 'zoom-in' },
     ZoomOut: 'zoom-out',
   };
@@ -65,21 +64,21 @@ jest.mock('../../src/haptics', () => ({
 
 jest.mock(
   '../../src/components/IconButton',
-  () => (/** @type {any} */ props: any) => require('react').createElement('IconButton', props),
+  () => (props: any) => require('react').createElement('IconButton', props),
 );
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
 /** Reads the current (x, y) translation applied to the bubble's Animated.View. */
-function readBubbleTranslate(/** @type {any} */ tree: any) {
+function readBubbleTranslate(tree: any) {
   const bubble = findByTestId(tree, 'floating-call-bubble');
-  const transform = bubble.props.style.find((/** @type {any} */ s: any) => s && s.transform)?.transform;
+  const transform = bubble.props.style.find((s: any) => s && s.transform)?.transform;
   return { x: transform[0].translateX, y: transform[1].translateY };
 }
 
-function bubbleElement(/** @type {any} */ props: any) {
+function bubbleElement(props: any) {
   return (
     <FloatingCallBubble
       participantLabel="Call with user-bob"
@@ -95,12 +94,7 @@ function bubbleElement(/** @type {any} */ props: any) {
   );
 }
 
-/**
- * @param {any} [props]
- * @returns {any}
- */
 function render(props?: any): any {
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(bubbleElement(props));
@@ -111,10 +105,6 @@ function render(props?: any): any {
 /**
  * Re-renders so the mocked `useAnimatedStyle` recomputes from the shared
  * values the gesture worklets just mutated.
- */
-/**
- * @param {any} tree
- * @param {any} [props]
  */
 function refresh(tree: any, props?: any) {
   act(() => {
@@ -132,15 +122,15 @@ describe('FloatingCallBubble', () => {
 
   test('renders the participant label and formatted duration', () => {
     const tree = render();
-    const text = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === '01:05');
+    const text = tree.root.findAll((n: any) => n.props?.children === '01:05');
     expect(text.length).toBeGreaterThan(0);
-    const label = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Call with user-bob');
+    const label = tree.root.findAll((n: any) => n.props?.children === 'Call with user-bob');
     expect(label.length).toBeGreaterThan(0);
   });
 
   test('falls back to a generic label when participantLabel is null', () => {
     const tree = render({ participantLabel: null });
-    const label = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Call in progress');
+    const label = tree.root.findAll((n: any) => n.props?.children === 'Call in progress');
     expect(label.length).toBeGreaterThan(0);
   });
 

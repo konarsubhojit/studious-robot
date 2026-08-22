@@ -8,9 +8,7 @@ import { listenOnRandomPort, readJson } from './helpers.ts';
  * The TURN stubs below return only the slice of `Response` the route reads, so
  * `turnFetch` is loosened here instead of at every call site.
  *
- * @param {Omit<import('../src/createServer.ts').CreateServerOptions, 'turnFetch'> & {
- *   turnFetch?: (url: any, options?: any) => Promise<any>,
- * }} [opts]
+ * @param [opts]
  */
 async function startServer(opts: Omit<import('../src/createServer.ts').CreateServerOptions, 'turnFetch'> & {
     turnFetch?: (url: any, options?: any) => Promise<any>;
@@ -30,8 +28,8 @@ async function startServer(opts: Omit<import('../src/createServer.ts').CreateSer
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string): Promise<string> {
   const response = await fetch(`${url}/session`, {
@@ -43,9 +41,7 @@ async function createSession(url: string): Promise<string> {
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} sessionId
- * @returns {Promise<{ response: Response, body: any }>}
+ * @param url - Base URL of the server under test.
  */
 async function getCredentials(url: string, sessionId: string): Promise<{ response: Response; body: any; }> {
   const response = await fetch(`${url}/turn-credentials?sessionId=${encodeURIComponent(sessionId)}`);
@@ -237,7 +233,6 @@ test('GET /turn-credentials prefers Cloudflare over HMAC credentials', async () 
 
 test('GET /turn-credentials falls through to static credentials when TURN_URL is missing', async () => {
   const originalWarn = console.warn;
-  /** @type {string[]} */
   const warns: string[] = [];
   console.warn = (...args) => {
     warns.push(args.join(' '));
@@ -276,9 +271,7 @@ test('GET /turn-credentials requires a valid session and is rate limited', async
 test('GET /turn-credentials logs minting failures at error level when no static TURN exists', async () => {
   const originalError = console.error;
   const originalWarn = console.warn;
-  /** @type {string[]} */
   const errors: string[] = [];
-  /** @type {string[]} */
   const warns: string[] = [];
   console.error = (...args) => {
     errors.push(args.join(' '));

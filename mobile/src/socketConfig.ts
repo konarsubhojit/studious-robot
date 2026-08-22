@@ -19,8 +19,7 @@ export function getSocketOptions(overrides = {}) {
 const UNRECOVERABLE_DISCONNECT_REASONS = new Set(['io client disconnect', 'io server disconnect']);
 
 /**
- * @param {string} [reason] - Socket.IO omits the reason for some transports.
- * @returns {boolean}
+ * @param reason - Socket.IO omits the reason for some transports.
  */
 export function isRecoverableDisconnectReason(reason?: string): boolean {
   return !(reason !== undefined && UNRECOVERABLE_DISCONNECT_REASONS.has(reason));

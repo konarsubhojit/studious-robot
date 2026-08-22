@@ -35,10 +35,6 @@ let serverAttachmentsUnavailable = false;
  */
 export class AttachmentError extends Error {
   status?: number;
-  /**
-   * @param {string} message
-   * @param {number} [status]
-   */
   constructor(message: string, status?: number) {
     super(message);
     this.name = 'AttachmentError';
@@ -59,9 +55,6 @@ export function isAttachmentUploadKnownUnavailable() {
 /**
  * Validate an attachment description against the shared allowlist/caps
  * before spending a round trip on it.
- *
- * @param {{ type?: unknown, mimeType?: unknown, sizeBytes?: unknown }} attachment
- * @returns {{ ok: true } | { ok: false, message: string }}
  */
 export function validateAttachment({ type, mimeType, sizeBytes }: { type?: unknown; mimeType?: unknown; sizeBytes?: unknown; } = {}): { ok: true; } | { ok: false; message: string; } {
   if (!isAttachmentMessageType(type)) {
@@ -84,9 +77,6 @@ export function validateAttachment({ type, mimeType, sizeBytes }: { type?: unkno
 
 /**
  * Human-readable size, e.g. `10 MB`.
- *
- * @param {number} bytes
- * @returns {string}
  */
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
@@ -96,9 +86,6 @@ function formatBytes(bytes: number): string {
 
 /**
  * Turn a failed presign/upload response into the message shown to the user.
- *
- * @param {{ status?: number, message?: string }} params
- * @returns {string}
  */
 export function describeAttachmentError({ status, message }: { status?: number; message?: string; } = {}): string {
   if (status === 503) return "Attachments aren't available on this server";
@@ -114,16 +101,7 @@ export function describeAttachmentError({ status, message }: { status?: number; 
 /**
  * `POST /attachments/presign` via the caller's authenticated fetch.
  *
- * @param {{
- *   authedFetch: (build: (sessionId: string) => { url: string, options?: object }) => Promise<Response|null>,
- *   signalingUrl: string,
- *   peerId: string,
- *   type: string,
- *   mimeType: string,
- *   sizeBytes: number,
- * }} params
- * @returns {Promise<{ conversationId: string, key: string, uploadUrl: string,
- *   publicUrl: string, expiresAt: string, headers: Record<string,string> }>}
+ * @param params
  * @throws {AttachmentError}
  */
 export async function presignAttachment({
@@ -177,13 +155,7 @@ export async function presignAttachment({
  * `SignatureDoesNotMatch`, so this never adds, drops, or normalises a header
  * of its own.
  *
- * @param {{
- *   uploadUrl: string,
- *   headers: Record<string, string>,
- *   body: Blob | { uri: string, type?: string, name?: string },
- *   onProgress?: (fraction: number) => void,
- * }} params
- * @returns {Promise<void>}
+ * @param params
  */
 export function putAttachment({ uploadUrl, headers, body, onProgress }: {
         uploadUrl: string;
@@ -222,22 +194,7 @@ export function putAttachment({ uploadUrl, headers, body, onProgress }: {
  * Full send-side attachment pipeline: validate → presign → `PUT` → the
  * attachment fields `useMessaging.sendMessage` expects.
  *
- * @param {{
- *   authedFetch: (build: (sessionId: string) => { url: string, options?: object }) => Promise<Response|null>,
- *   signalingUrl: string,
- *   peerId: string,
- *   type: string,
- *   uri: string,
- *   mimeType: string,
- *   sizeBytes: number,
- *   name?: string,
- *   width?: number,
- *   height?: number,
- *   durationMs?: number,
- *   onProgress?: (fraction: number) => void,
- * }} params
- * @returns {Promise<{ url: string, mimeType: string, sizeBytes: number,
- *   name?: string, width?: number, height?: number, durationMs?: number }>}
+ * @param params
  * @throws {AttachmentError} `message` is already the user-facing text
  *   ({@link describeAttachmentError}).
  */

@@ -45,10 +45,6 @@ export type CallRow = CallHistoryEntry;
 
 /**
  * Index of `term` inside `text`, case-insensitively, or -1.
- *
- * @param {string | null | undefined} text
- * @param {string} term
- * @returns {number}
  */
 function matchIndex(text: string | null | undefined, term: string): number {
   if (!text || !term) return -1;
@@ -59,10 +55,6 @@ function matchIndex(text: string | null | undefined, term: string): number {
  * Rank comparator for local matches: a prefix match outranks a match in the
  * middle of the text, and ties fall back to the order the caller supplied
  * (already recency-ordered for conversations and calls).
- *
- * @param {{ index: number, order: number }} a
- * @param {{ index: number, order: number }} b
- * @returns {number}
  */
 function byMatchQuality(a: { index: number; order: number; }, b: { index: number; order: number; }): number {
   if (a.index !== b.index) return a.index - b.index;
@@ -72,8 +64,6 @@ function byMatchQuality(a: { index: number; order: number; }, b: { index: number
 /**
  * Text with the matched substring emphasised, so a result makes it obvious
  * *why* it matched.
- *
- * @param {{ text?: string, term: string, style?: object, numberOfLines?: number }} props
  */
 export function HighlightedText({ text, term, style, numberOfLines }: { text?: string; term: string; style?: object; numberOfLines?: number; }) {
   const styles = useThemedStyles(createStyles);
@@ -99,10 +89,6 @@ export function HighlightedText({ text, term, style, numberOfLines }: { text?: s
 
 /**
  * Peer of a call-history entry, relative to the signed-in user.
- *
- * @param {{ callerId?: string, calleeId?: string, direction?: string }} entry
- * @param {string | null | undefined} currentUserId
- * @returns {string}
  */
 function callPeerOf(entry: { callerId?: string; calleeId?: string; direction?: string; }, currentUserId: string | null | undefined): string {
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
@@ -112,19 +98,12 @@ function callPeerOf(entry: { callerId?: string; calleeId?: string; direction?: s
 
 /**
  * Short, human description of a call-history entry.
- *
- * @param {{ status?: string, direction?: string }} entry
- * @returns {string}
  */
 function describeCall(entry: { status?: string; direction?: string; }): string {
   if (entry?.status === 'missed' && entry?.direction === 'incoming') return 'Missed call';
   return entry?.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
 }
 
-/**
- * @param {string | null | undefined} isoString
- * @returns {string}
- */
 function formatTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -282,7 +261,6 @@ export default function SearchScreen({
   }, [contacts, matchedCalls, matchedConversations, messages]);
 
   const renderItem = useCallback(
-    /** @param {{ item: any, section: { key?: string } }} info */
     ({ item, section }: { item: any; section: { key?: string; }; }) => {
       if (section.key === 'contacts') {
         return (
@@ -373,10 +351,6 @@ export default function SearchScreen({
   );
 
   const keyExtractor = useCallback(
-    /**
-     * @param {any} item
-     * @param {number} index
-     */
     (item: any, index: number) =>
       item.messageId ?? item.callId ?? item.conversationId ?? item.userId ?? String(index),
     [],
@@ -491,7 +465,7 @@ export default function SearchScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {

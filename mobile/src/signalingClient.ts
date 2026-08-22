@@ -40,19 +40,14 @@ export type SignalingClient = { socket: object; on: (event: string, handler: (..
 
 /**
  * Create a typed client for an existing Socket.IO connection.
- *
- * @param {import('socket.io-client').Socket} socket
- * @returns {SignalingClient}
  */
 export function createSignalingClient(socket: Socket): SignalingClient {
-  /** @type {{ event: string, payload: object }[]} */
   const queue: { event: string; payload: object; }[] = [];
 
   /**
    * Register a handler for a server event, validating the payload first.
    *
-   * @param {string} event one of `SERVER_EVENTS` / `TRANSPORT_EVENTS`
-   * @param {Function} handler
+   * @param event one of `SERVER_EVENTS` / `TRANSPORT_EVENTS`
    */
   function on(event: string, handler: Function) {
     socket.on(event, (payload, ...rest) => {
@@ -76,10 +71,8 @@ export function createSignalingClient(socket: Socket): SignalingClient {
    * The original payload object is sent rather than the parsed copy, so host
    * objects such as `RTCSessionDescription` reach the wire untouched.
    *
-   * @param {string} event one of `CLIENT_EVENTS`
-   * @param {object} [payload]
-   * @param {Function} [ack]
-   * @returns {boolean} whether the event was sent (`false` when queued/dropped)
+   * @param event one of `CLIENT_EVENTS`
+   * @returns whether the event was sent (`false` when queued/dropped)
    */
   function emit(event: string, payload: object = {}, ack?: Function): boolean {
     const result = parseEventPayload(event, payload, 'client');
@@ -120,9 +113,8 @@ export function createSignalingClient(socket: Socket): SignalingClient {
   /**
    * Emit a client event and await its acknowledgement envelope.
    *
-   * @param {string} event one of `CLIENT_EVENTS`
-   * @param {object} payload
-   * @returns {Promise<any>} resolves with the event-specific ack envelope,
+   * @param event one of `CLIENT_EVENTS`
+   * @returns resolves with the event-specific ack envelope,
    *   rejects on `ok: false`
    */
   function request(event: string, payload: object): Promise<any> {
@@ -138,7 +130,7 @@ export function createSignalingClient(socket: Socket): SignalingClient {
    * this from its own `connect` handler, so the flush is ordered explicitly
    * against the rest of the reconnect work instead of racing it.
    *
-   * @returns {number} how many events were flushed
+   * @returns how many events were flushed
    */
   function flushQueue(): number {
     if (!socket.connected || queue.length === 0) return 0;

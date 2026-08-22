@@ -35,9 +35,8 @@ import { io as ioClient } from 'socket.io-client';
 function spyOnPush() {
   const mod = pushSenders;
   const original = mod.sendIncomingCallPush;
-  /** @type {{ channel: any, callData: any }[]} */
   const calls: { channel: any; callData: any; }[] = [];
-  mod.sendIncomingCallPush = async (/** @type {any} */ channel: any, /** @type {any} */ callData: any) => {
+  mod.sendIncomingCallPush = async (channel: any, callData: any) => {
     calls.push({ channel, callData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -56,9 +55,8 @@ function spyOnPush() {
 function spyOnCancelPush() {
   const mod = pushSenders;
   const original = mod.sendCallCancelledPush;
-  /** @type {{ channel: any, callData: any }[]} */
   const calls: { channel: any; callData: any; }[] = [];
-  mod.sendCallCancelledPush = async (/** @type {any} */ channel: any, /** @type {any} */ callData: any) => {
+  mod.sendCallCancelledPush = async (channel: any, callData: any) => {
     calls.push({ channel, callData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -70,7 +68,7 @@ function spyOnCancelPush() {
   };
 }
 
-/** @param {import('../src/createServer.ts').CreateServerOptions} [opts] */
+/** @param [opts] */
 async function startServer(opts: import('../src/createServer.ts').CreateServerOptions = {}) {
   // Require *after* the spy is installed so `createServer` picks up the mock.
   const server = createServer(opts);
@@ -88,16 +86,12 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });

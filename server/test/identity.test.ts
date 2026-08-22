@@ -27,9 +27,7 @@ async function startServer() {
 }
 
 /**
- * @param {string} url
- * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param auth - Socket.IO handshake auth payload.
  */
 function connect(url: string, auth?: Record<string, unknown>): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -44,11 +42,8 @@ function connect(url: string, auth?: Record<string, unknown>): Promise<import('s
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} path - Request path, including the leading slash.
- * @param {Record<string, any>} body
- * @param {{ sessionId?: string }} [options]
- * @returns {Promise<{ status: number, body: any }>}
+ * @param url - Base URL of the server under test.
+ * @param path - Request path, including the leading slash.
  */
 async function postJson(url: string, path: string, body: Record<string, any>, options: { sessionId?: string; } = {}): Promise<{ status: number; body: any; }> {
   let payload = options.sessionId ? { ...body, sessionId: options.sessionId } : body;
@@ -70,10 +65,8 @@ async function postJson(url: string, path: string, body: Record<string, any>, op
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} path - Request path, including the leading slash.
- * @param {{ sessionId?: string }} [options]
- * @returns {Promise<{ status: number, body: any }>}
+ * @param url - Base URL of the server under test.
+ * @param path - Request path, including the leading slash.
  */
 async function getJson(url: string, path: string, options: { sessionId?: string; } = {}): Promise<{ status: number; body: any; }> {
   const pathname = options.sessionId

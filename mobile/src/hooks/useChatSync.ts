@@ -15,16 +15,7 @@ export type PeerPresence = { status?: string; online: boolean; unknown?: boolean
  * Extracted out of `AppShell` so this concern is independently testable and
  * the component itself stays focused on screen routing / composition.
  *
- * @param {{
- *   chatPeerId: string | null,
- *   isRegistered: boolean,
- *   messagesByPeer: Record<string, Array<{ createdAt?: string }>>,
- *   fetchConversations: () => Promise<void>,
- *   setActiveChatPeerId: (peerId: string | null) => void,
- *   fetchMessagesForPeer: (peerId: string, options?: { before?: string }) => Promise<unknown>,
- *   markConversationRead: (peerId: string) => Promise<void>,
- *   checkPresence: (peerId: string) => Promise<PeerPresence | null>,
- * }} params
+ * @param params
  */
 export type UseChatSyncParams = {
   chatPeerId: string | null;

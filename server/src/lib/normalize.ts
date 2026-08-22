@@ -9,9 +9,6 @@ import { PUSH_PROVIDERS } from '../config.ts';
 
 /**
  * Trim a string and return `null` when it is empty or not a string.
- *
- * @param {unknown} value
- * @returns {string|null}
  */
 function normaliseId(value: unknown): string | null {
   if (typeof value !== 'string') {
@@ -25,9 +22,6 @@ function normaliseId(value: unknown): string | null {
 /**
  * Alias of {@link normaliseId} used where the value is a free-form optional
  * string (e.g. platform) rather than an identifier.
- *
- * @param {unknown} value
- * @returns {string|null}
  */
 function normaliseOptionalString(value: unknown): string | null {
   return normaliseId(value);
@@ -36,9 +30,6 @@ function normaliseOptionalString(value: unknown): string | null {
 /**
  * Normalise and validate a push provider, returning it lowercased when it is
  * one of the supported providers (`apns` / `fcm`), otherwise `null`.
- *
- * @param {unknown} value
- * @returns {string|null}
  */
 function normalisePushProvider(value: unknown): string | null {
   const provider = normaliseId(value)?.toLowerCase();
@@ -46,8 +37,7 @@ function normalisePushProvider(value: unknown): string | null {
 }
 
 /**
- * @param {unknown} value
- * @returns {boolean} `true` when `value` is a non-array object.
+ * @returns `true` when `value` is a non-array object.
  */
 function isPlainObject(value: unknown): boolean {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -55,10 +45,6 @@ function isPlainObject(value: unknown): boolean {
 
 /**
  * Safe `Object.prototype.hasOwnProperty` wrapper.
- *
- * @param {object} value
- * @param {string} key
- * @returns {boolean}
  */
 function hasOwnProp(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -68,9 +54,6 @@ function hasOwnProp(value: object, key: string): boolean {
  * Escape CR/LF and other control characters out of a value before it is
  * interpolated into a log line, so user-controlled input (e.g. a `userId`)
  * cannot forge additional log entries or corrupt log formatting.
- *
- * @param {unknown} value
- * @returns {string}
  */
 function sanitizeForLog(value: unknown): string {
   return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, char =>

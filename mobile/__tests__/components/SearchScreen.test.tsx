@@ -2,24 +2,24 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
-function findAllByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
-function pressByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any, index = 0) {
+function pressByTestId(tree: any, testID: any, index = 0) {
   const pressable = tree.root.findAll(
-    (/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
+    (node: any) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
   )[index];
   act(() => {
     pressable.props.onPress();
   });
 }
 
-function render(/** @type {any} */ props: any) {
+function render(props: any) {
   let tree;
   act(() => {
     tree = renderer.create(<SearchScreen {...props} />);
@@ -27,7 +27,7 @@ function render(/** @type {any} */ props: any) {
   return tree;
 }
 
-function type(/** @type {any} */ tree: any, /** @type {any} */ value: any) {
+function type(tree: any, value: any) {
   act(() => {
     findByTestId(tree, 'search-input').props.onChangeText(value);
   });
@@ -75,7 +75,6 @@ describe('SearchScreen', () => {
   });
 
   test('aborts the in-flight request when the query changes', async () => {
-    /** @type {any} */
     const signals: any = [];
     const onSearchContacts = jest.fn((query, { signal }) => {
       signals.push(signal);

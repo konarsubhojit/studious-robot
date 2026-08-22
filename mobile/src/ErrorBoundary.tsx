@@ -23,20 +23,20 @@ import { saveCrashLog } from './crashReporter';
 export type ErrorBoundaryProps = { children?: React.ReactNode; };
 export type ErrorBoundaryState = { error: Error | null; logPath: string | null; saving: boolean; };
 export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  /** @param {ErrorBoundaryProps} props */
+  /** @param props */
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    /** @type {ErrorBoundaryState} */
+    
     this.state = { error: null, logPath: null, saving: false };
     this.handleRestart = this.handleRestart.bind(this);
   }
 
-  /** @param {Error} error */
+  /** @param error */
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
 
-  /** @param {Error} error */
+  /** @param error */
   componentDidCatch(error: Error) {
     this.setState({ saving: true });
     saveCrashLog(error, true, getLogsAsText)

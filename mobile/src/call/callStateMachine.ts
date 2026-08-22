@@ -46,8 +46,6 @@ export const INITIAL_CALL_STATE = CALL_STATES.IDLE;
 /**
  * Legal transitions, keyed by state then event. A state/event pair that is
  * absent from the table is a no-op.
- *
- * @type {Record<string, Record<string, string>>}
  */
 const TRANSITIONS: Record<string, Record<string, string>> = {
   [CALL_STATES.IDLE]: {
@@ -76,9 +74,9 @@ const TRANSITIONS: Record<string, Record<string, string>> = {
 /**
  * Pure reducer for the call state machine.
  *
- * @param {string} state current state
- * @param {string|{ type: string }} event event (or `{ type }` action)
- * @returns {string} the next state, or `state` when the transition is not legal
+ * @param state current state
+ * @param event event (or `{ type }` action)
+ * @returns the next state, or `state` when the transition is not legal
  */
 export function callStateReducer(state: string, event: string | { type: string; }): string {
   const type = typeof event === 'string' ? event : event?.type;
@@ -86,16 +84,14 @@ export function callStateReducer(state: string, event: string | { type: string; 
 }
 
 /**
- * @param {string} state
- * @returns {boolean} true while a call is ringing in either direction
+ * @returns true while a call is ringing in either direction
  */
 export function isRingingState(state: string): boolean {
   return state === CALL_STATES.OUTGOING_RINGING || state === CALL_STATES.INCOMING_RINGING;
 }
 
 /**
- * @param {string} state
- * @returns {boolean} true while a call occupies the device (ringing or connected)
+ * @returns true while a call occupies the device (ringing or connected)
  */
 export function isCallActiveState(state: string): boolean {
   return state !== CALL_STATES.IDLE && state !== CALL_STATES.ENDED;

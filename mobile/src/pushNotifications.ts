@@ -44,8 +44,7 @@ import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
  */
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -89,9 +88,6 @@ export const PUSH_TYPE_MESSAGE = 'message.received';
  * Parse a WeTalk deep-link URL into a call descriptor.
  *
  * Expected format: `wetalk://call/{callId}`
- *
- * @param {string | null | undefined} url
- * @returns {{ callId: string } | null}
  */
 export function parseCallDeepLink(url: string | null | undefined): { callId: string; } | null {
   if (!url || typeof url !== 'string') return null;
@@ -117,8 +113,6 @@ export function parseCallDeepLink(url: string | null | undefined): { callId: str
 /**
  * Return the call descriptor for the URL the app was launched from, if any.
  * Returns `null` when the app was opened normally (not from a notification tap).
- *
- * @returns {Promise<{ callId: string } | null>}
  */
 export async function getInitialCallLink(): Promise<{ callId: string; } | null> {
   try {
@@ -134,8 +128,7 @@ export async function getInitialCallLink(): Promise<{ callId: string; } | null> 
  * Subscribe to deep-link URLs received while the app is already running
  * (e.g. a notification tap that brings a backgrounded app to the foreground).
  *
- * @param {(descriptor: { callId: string }) => void} callback
- * @returns {() => void} Unsubscribe function – call it in the effect cleanup.
+ * @returns Unsubscribe function – call it in the effect cleanup.
  */
 export function addCallLinkListener(callback: (descriptor: { callId: string; }) => void): () => void {
   const subscription = Linking.addEventListener('url', ({ url }) => {
@@ -153,9 +146,6 @@ export function addCallLinkListener(callback: (descriptor: { callId: string; }) 
  *
  * Expected format: `wetalk://chat/{conversationId}` — the link a message
  * notification opens (see `buildMessageEnvelope` in `server/src/push.js`).
- *
- * @param {string | null | undefined} url
- * @returns {{ conversationId: string } | null}
  */
 export function parseChatDeepLink(url: string | null | undefined): { conversationId: string; } | null {
   if (!url || typeof url !== 'string') return null;
@@ -181,8 +171,6 @@ export function parseChatDeepLink(url: string | null | undefined): { conversatio
  * Return the conversation descriptor for the URL the app was launched from, if
  * any. The chat counterpart of {@link getInitialCallLink}, so a notification
  * tap that cold-starts the app still opens the right conversation.
- *
- * @returns {Promise<{ conversationId: string } | null>}
  */
 export async function getInitialChatLink(): Promise<{ conversationId: string; } | null> {
   try {
@@ -197,8 +185,7 @@ export async function getInitialChatLink(): Promise<{ conversationId: string; } 
 /**
  * Subscribe to chat deep-link URLs received while the app is already running.
  *
- * @param {(descriptor: { conversationId: string }) => void} callback
- * @returns {() => void} Unsubscribe function – call it in the effect cleanup.
+ * @returns Unsubscribe function – call it in the effect cleanup.
  */
 export function addChatLinkListener(callback: (descriptor: { conversationId: string; }) => void): () => void {
   const subscription = Linking.addEventListener('url', ({ url }) => {
@@ -219,13 +206,8 @@ export function addChatLinkListener(callback: (descriptor: { conversationId: str
  * The token must be obtained before calling this function using a native push
  * library appropriate for the platform.
  *
- * @param {{
- *   sessionId: string,
- *   signalingUrl: string,
- *   provider: 'apns' | 'fcm',
- *   pushToken: string,
- * }} opts
- * @returns {Promise<boolean>} `true` on success
+ * @param opts
+ * @returns `true` on success
  */
 export async function registerPushToken({ sessionId, signalingUrl, provider, pushToken }: {
         sessionId: string;
@@ -264,8 +246,7 @@ export async function registerPushToken({ sessionId, signalingUrl, provider, pus
 /**
  * Unregister the push token for the current device session.
  *
- * @param {{ sessionId: string, signalingUrl: string }} opts
- * @returns {Promise<boolean>} `true` on success
+ * @returns `true` on success
  */
 export async function unregisterPushToken({ sessionId, signalingUrl }: { sessionId: string; signalingUrl: string; }): Promise<boolean> {
   try {
@@ -309,8 +290,6 @@ export type MessagingHandle = { instance: FirebaseMessagingTypes.Module; api: ty
 
 /**
  * Cached result of the optional native messaging module lookup.
- *
- * @type {MessagingHandle | null | undefined}
  */
 let cachedMessaging: MessagingHandle | null | undefined;
 let hasLoggedMissingMessaging = false;
@@ -320,8 +299,6 @@ let hasLoggedMissingMessaging = false;
  * default-app messaging instance via the modular `getMessaging(app)` API.
  * Returns `null` when the package is not installed. The lookup is memoised so
  * a missing module is only logged once.
- *
- * @returns {MessagingHandle | null}
  */
 export function loadMessaging(): MessagingHandle | null {
   if (cachedMessaging !== undefined) return cachedMessaging;
@@ -352,8 +329,6 @@ export function _resetMessagingCache() {
  *
  * Firebase Cloud Messaging issues a single token on both platforms (on iOS it
  * proxies to APNs internally), so the provider is reported as `'fcm'`.
- *
- * @returns {Promise<{ provider: 'fcm', pushToken: string } | null>}
  */
 export async function getPushToken(): Promise<{ provider: 'fcm'; pushToken: string; } | null> {
   const handle = loadMessaging();
@@ -398,8 +373,7 @@ export async function getPushToken(): Promise<{ provider: 'fcm'; pushToken: stri
  * single step.  Safe to call repeatedly; returns `false` (never throws) when no
  * token is available or registration fails.
  *
- * @param {{ sessionId: string, signalingUrl: string }} opts
- * @returns {Promise<boolean>} `true` when a token was acquired and registered
+ * @returns `true` when a token was acquired and registered
  */
 export async function registerForPushNotifications({ sessionId, signalingUrl }: { sessionId: string; signalingUrl: string; }): Promise<boolean> {
   if (!sessionId || !signalingUrl) return false;
@@ -415,9 +389,6 @@ export async function registerForPushNotifications({ sessionId, signalingUrl }: 
 
 /**
  * Parse the incoming-call payload from an FCM/APNs data message.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {{ callId: string, callerId: string | null, deepLink: string } | null}
  */
 export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { callId: string; callerId: string | null; deepLink: string; } | null {
   const data = remoteMessage?.data ?? {};
@@ -440,16 +411,6 @@ export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<s
  * Mirrors {@link _extractIncomingCallFromMessage}: message pushes are data-only
  * too, so FCM displays nothing by itself and every field the app needs to
  * render the notification has to come out of `data`.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {{
- *   messageId: string,
- *   conversationId: string,
- *   senderId: string | null,
- *   title: string,
- *   body: string,
- *   deepLink: string,
- * } | null}
  */
 export function _extractMessageFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { messageId: string; conversationId: string; senderId: string | null; title: string; body: string; deepLink: string; } | null {
   const data = remoteMessage?.data ?? {};
@@ -477,9 +438,6 @@ export function _extractMessageFromMessage(remoteMessage: { data?: Record<string
  *
  * Falls back to the payload shape for pushes produced before `type` was
  * carried through, so an older server release still rings calls.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {string | null}
  */
 export function _extractPushType(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): string | null {
   const data = remoteMessage?.data ?? {};
@@ -490,10 +448,6 @@ export function _extractPushType(remoteMessage: { data?: Record<string, unknown>
   return null;
 }
 
-/**
- * @param {{ data?: Record<string, any> } | null | undefined} remoteMessage
- * @returns {string | null}
- */
 function getReceiptBaseUrl(remoteMessage: { data?: Record<string, any>; } | null | undefined): string | null {
   const data = remoteMessage?.data ?? {};
   const fromPayload =
@@ -506,10 +460,6 @@ function getReceiptBaseUrl(remoteMessage: { data?: Record<string, any>; } | null
   return null;
 }
 
-/**
- * @param {{ data?: Record<string, any> } | null | undefined} remoteMessage
- * @returns {Promise<string>}
- */
 async function resolveReceiptBaseUrl(remoteMessage: { data?: Record<string, any>; } | null | undefined): Promise<string> {
   const fromPayload = getReceiptBaseUrl(remoteMessage);
   if (fromPayload) return fromPayload;
@@ -531,16 +481,8 @@ async function resolveReceiptBaseUrl(remoteMessage: { data?: Record<string, any>
  * `sessionId` / `signalingUrl` explicitly; background push handlers instead
  * pass the `remoteMessage` the values are read from.
  *
- * @param {{
- *   remoteMessage?: { data?: Record<string, any> } | null,
- *   callId?: string | null,
- *   messageId?: string | null,
- *   stage: string,
- *   reason?: string | null,
- *   sessionId?: string | null,
- *   signalingUrl?: string | null,
- * }} opts
- * @returns {Promise<boolean>} `true` when the receipt was accepted
+ * @param opts
+ * @returns `true` when the receipt was accepted
  */
 export async function sendPushReceipt({
   remoteMessage,
@@ -612,18 +554,7 @@ export async function sendPushReceipt({
  * receipt stages: a message push that arrives but displays nothing has to be
  * as visible in server logs as one that rings.
  *
- * @param {{
- *   remoteMessage: object | null | undefined,
- *   message: {
- *     messageId: string,
- *     conversationId: string,
- *     senderId: string | null,
- *     title: string,
- *     body: string,
- *     deepLink: string,
- *   },
- * }} opts
- * @returns {Promise<{ shown: boolean, reason?: string }>}
+ * @param opts
  */
 async function displayMessagePush({ remoteMessage, message }: {
         remoteMessage: object | null | undefined;
@@ -688,9 +619,6 @@ async function displayMessagePush({ remoteMessage, message }: {
  * A killed app has no socket and therefore never sees `call.state_changed`, so
  * without this push its incoming-call notification stays on screen — and stays
  * tappable — long after the call ended.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<{ callId: string, reason: string | null } | null>}
  */
 async function handleCallCancelledPush(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): Promise<{ callId: string; reason: string | null; } | null> {
   const data = remoteMessage?.data ?? {};
@@ -717,8 +645,7 @@ async function handleCallCancelledPush(remoteMessage: { data?: Record<string, un
  * Dispatches on the envelope `type` the server sends: message pushes carry no
  * `callId`, so parsing every push as a call silently dropped every message.
  *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<object | null>} the call or message descriptor that was
+ * @returns the call or message descriptor that was
  *   handled, or `null` when the push could not be handled
  */
 export async function handleBackgroundPushMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): Promise<object | null> {
@@ -795,9 +722,6 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
 /**
  * Handle a `message.received` push that arrived while the app is backgrounded
  * or killed.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<object | null>}
  */
 async function handleBackgroundMessagePush(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): Promise<object | null> {
   const message = _extractMessageFromMessage(remoteMessage);
@@ -829,7 +753,7 @@ async function handleBackgroundMessagePush(remoteMessage: { data?: Record<string
  * Install the Firebase background message handler when the native messaging
  * module is available.
  *
- * @returns {boolean} `true` when a handler was registered
+ * @returns `true` when a handler was registered
  */
 export function installBackgroundMessageHandler(): boolean {
   const handle = loadMessaging();
@@ -864,9 +788,6 @@ export function installBackgroundMessageHandler(): boolean {
  * on screen — the exact situation in which the callee's phone never rings.
  *
  * Dispatches on the envelope `type`, exactly like the background handler.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<object | null>}
  */
 export async function handleForegroundPushMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): Promise<object | null> {
   const type = _extractPushType(remoteMessage);
@@ -906,9 +827,6 @@ export async function handleForegroundPushMessage(remoteMessage: { data?: Record
 
 /**
  * Handle a `message.received` push that arrived while the app is on screen.
- *
- * @param {{ data?: Record<string, unknown> } | null | undefined} remoteMessage
- * @returns {Promise<object | null>}
  */
 async function handleForegroundMessagePush(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): Promise<object | null> {
   const message = _extractMessageFromMessage(remoteMessage);
@@ -932,7 +850,7 @@ async function handleForegroundMessagePush(remoteMessage: { data?: Record<string
 /**
  * Subscribe to foreground push messages.
  *
- * @returns {() => void} Unsubscribe function; a no-op when messaging is absent.
+ * @returns Unsubscribe function; a no-op when messaging is absent.
  */
 export function installForegroundMessageHandler(): () => void {
   const handle = loadMessaging();

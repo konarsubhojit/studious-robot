@@ -33,12 +33,12 @@ jest.mock('../../src/storage/chatDb', () => {
   };
 });
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useMessaging(params);
   return null;
 }
 
-function makeSocket(/** @type {any} */ { connected = true, ackResponse = { ok: true, message: null } }: any = {}) {
+function makeSocket({ connected = true, ackResponse = { ok: true, message: null } }: any = {}) {
   return {
     connected,
     emit: jest.fn((event, payload, callback) => {
@@ -48,7 +48,6 @@ function makeSocket(/** @type {any} */ { connected = true, ackResponse = { ok: t
 }
 
 function setup(overrides = {}) {
-  /** @type {any} */
   const params: any = {
     authedFetchRef: { current: jest.fn() },
     sessionIdRef: { current: 'sess-1' },
@@ -63,7 +62,6 @@ function setup(overrides = {}) {
   params.signalingRef = params.signalingRef ?? {
     current: createSignalingClient(params.socketRef.current),
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   let tree;
   act(() => {
@@ -75,7 +73,6 @@ function setup(overrides = {}) {
 
 /** Rendered hooks, unmounted after each test so the outbox retry timer that
  * an unsent message arms cannot outlive the test that queued it. */
-/** @type {any} */
 const mountedTrees: any = [];
 
 beforeEach(() => {
@@ -87,7 +84,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => {
-    mountedTrees.splice(0).forEach((/** @type {any} */ tree: any) => tree.unmount());
+    mountedTrees.splice(0).forEach((tree: any) => tree.unmount());
   });
 });
 
@@ -232,10 +229,10 @@ describe('useMessaging', () => {
       await resultRef.current.fetchMessagesForPeer('bob');
     });
 
-    const bodies = resultRef.current.messagesByPeer.bob.map((/** @type {any} */ m: any) => m.body);
+    const bodies = resultRef.current.messagesByPeer.bob.map((m: any) => m.body);
     expect(bodies).toContain('still queued');
     // Replaced, never duplicated.
-    expect(bodies.filter((/** @type {any} */ body: any) => body === 'sent while offline')).toHaveLength(1);
+    expect(bodies.filter((body: any) => body === 'sent while offline')).toHaveLength(1);
     expect(bodies).toContain('hello');
   });
 

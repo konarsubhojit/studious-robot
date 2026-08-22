@@ -16,7 +16,7 @@ async function startServer() {
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /** @param {...import('socket.io-client').Socket} clients */
+  /** @param clients */
   async function teardown(...clients: import('socket.io-client').Socket[]) {
     clients.forEach((client) => client.disconnect());
     server.httpServer.closeAllConnections?.();
@@ -29,9 +29,7 @@ async function startServer() {
 }
 
 /**
- * @param {string} url
- * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param auth - Socket.IO handshake auth payload.
  */
 function connect(url: string, auth?: Record<string, unknown>): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -42,10 +40,7 @@ function connect(url: string, auth?: Record<string, unknown>): Promise<import('s
 }
 
 /**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve) => {
@@ -54,9 +49,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 }
 
 /**
- * @param {string} url
- * @param {string} userId
- * @returns {Promise<string>} the created session id
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string): Promise<string> {
   const response = await fetch(`${url}${API_ROUTES.SESSION}`, {
@@ -132,7 +125,6 @@ test('malformed signaling payloads are rejected with bad_request, not crashes', 
   const socket = await connect(url, { sessionId: session });
   t.after(() => teardown(socket));
 
-  /** @type {[string, Record<string, unknown>][]} */
   const cases: [string, Record<string, unknown>][] = [
     [CLIENT_EVENTS.CALL_INITIATE, { version: 1 }],
     [CLIENT_EVENTS.CALL_INITIATE, { version: 1, calleeId: 42 }],

@@ -44,7 +44,7 @@ describe('getIceServers', () => {
       resetIceServersForCallCache();
     });
 
-    function response(/** @type {any} */ iceServers: any, /** @type {any} */ expiresAt: any) {
+    function response(iceServers: any, expiresAt: any) {
       return {
         ok: true,
         json: async () => iceServers,
@@ -169,7 +169,6 @@ describe('getIceServers', () => {
 });
 
 describe('getTurnDiagnostics', () => {
-  /** @type {jest.SpyInstance} */
   let consoleWarnSpy: jest.SpyInstance;
   beforeEach(() => {
     clearTurnEnv();

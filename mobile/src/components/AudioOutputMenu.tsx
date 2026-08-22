@@ -12,9 +12,6 @@ const BASE_ROUTES = [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE];
 
 /**
  * Merge the OS-reported routes into the always-available base routes.
- *
- * @param {string[]} [available]
- * @returns {string[]}
  */
 function buildRouteList(available?: string[]): string[] {
   const routes = [...BASE_ROUTES];
@@ -59,7 +56,7 @@ export default function AudioOutputMenu({
   const currentLabel = getAudioRouteLabel(effectiveSelected);
   const currentIcon = effectiveSelected === AUDIO_ROUTES.SPEAKER_PHONE ? 'speaker' : 'speakerOff';
 
-  /** @param {string} route */
+  /** @param route */
   const handleSelect = (route: string) => {
     setIsOpen(false);
     onSelect(route);
@@ -124,7 +121,7 @@ export default function AudioOutputMenu({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     trigger: {

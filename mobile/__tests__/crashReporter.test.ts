@@ -108,11 +108,10 @@ describe('installCrashHandler', () => {
 
   test('new handler calls the previous handler after saving', async () => {
     const original = jest.fn();
-    /** @type {any} */
     let installedHandler: any;
     globalWithErrorUtils.ErrorUtils = {
       getGlobalHandler: jest.fn().mockReturnValue(original),
-      setGlobalHandler: jest.fn((/** @type {any} */ handler: any) => {
+      setGlobalHandler: jest.fn((handler: any) => {
         installedHandler = handler;
       }),
     };

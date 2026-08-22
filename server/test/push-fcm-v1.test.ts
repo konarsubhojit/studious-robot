@@ -29,20 +29,15 @@ const SERVICE_ACCOUNT = {
 
 /**
  * Install a fake `https.request` driven by a per-call handler.
- *
- * @param {(opts: any, body: Buffer) => { statusCode: number, body: string }} handler
- * @returns {{ requests: Array<{opts: any, body: string}>, restore: () => void }}
  */
 function mockHttps(handler: (opts: any, body: Buffer) => { statusCode: number; body: string; }): { requests: Array<{ opts: any; body: string; }>; restore: () => void; } {
   const original = https.request;
-  /** @type {Array<{ opts: any, body: string }>} */
   const requests: Array<{ opts: any; body: string; }> = [];
 
   https.request = (((opts: any, callback: any) => {
-    /** @type {any[]} */
     const chunks: any[] = [];
     const req = (new EventEmitter() as any);
-    req.end = (/** @type {any} */ data: any) => {
+    req.end = (data: any) => {
       if (data) chunks.push(data);
       const body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
       const record = { opts, body: body.toString('utf8') };
@@ -70,8 +65,7 @@ function mockHttps(handler: (opts: any, body: Buffer) => { statusCode: number; b
 }
 
 /**
- * @param {string|undefined} value - `FCM_SERVICE_ACCOUNT_JSON`, or `undefined` to unset it.
- * @param {() => unknown} fn
+ * @param value - `FCM_SERVICE_ACCOUNT_JSON`, or `undefined` to unset it.
  */
 function withFcmEnv(value: string | undefined, fn: () => unknown) {
   const prev = process.env.FCM_SERVICE_ACCOUNT_JSON;

@@ -20,7 +20,6 @@ import { getStartupIssues, recordStartupIssue } from './startupHealth';
  *   emitMetric('call.ice_failed', 1, { callId });
  */
 
-/** @type {Record<string, (message: unknown, metadata?: unknown) => string|undefined>} */
 const LEVEL_LOGGERS: Record<string, (message: unknown, metadata?: unknown) => string | undefined> = {
   debug: logDebug,
   info: logInfo,
@@ -33,15 +32,11 @@ export type ObservabilityInitResult = { correlationId: string; backgroundPushReg
 
 /**
  * Sinks that receive every structured event.
- *
- * @type {Set<(event: ObservabilityEvent) => void>}
  */
 const sinks: Set<(event: ObservabilityEvent) => void> = new Set();
 
-/** @type {string|null} */
 let correlationId: string | null = null;
 let initialized = false;
-/** @type {ObservabilityInitResult|null} */
 let lastInitResult: ObservabilityInitResult | null = null;
 
 function randomId() {
@@ -54,8 +49,6 @@ function randomId() {
 /**
  * Per-app-session correlation ID, generated lazily on first use so background
  * (headless) events share the ID of the process that emitted them.
- *
- * @returns {string}
  */
 export function getCorrelationId(): string {
   if (!correlationId) {
@@ -68,7 +61,7 @@ export function getCorrelationId(): string {
  * Start a new correlation scope. Only intended for tests and for explicit
  * "new session" boundaries (e.g. re-registration).
  *
- * @returns {string} the new correlation ID
+ * @returns the new correlation ID
  */
 export function resetCorrelationId(): string {
   correlationId = null;
@@ -77,9 +70,6 @@ export function resetCorrelationId(): string {
 
 /**
  * Register an additional sink (Crashlytics, server upload, test spy, …).
- *
- * @param {(event: ObservabilityEvent) => void} sink
- * @returns {() => void} unsubscribe
  */
 export function addSink(sink: (event: ObservabilityEvent) => void): () => void {
   if (typeof sink !== 'function') return () => {};
@@ -99,10 +89,6 @@ export function clearSinks() {
  * warnings and errors also persisted so they survive the process being killed
  * while backgrounded.
  */
-/**
- * @param {ObservabilityEvent} event
- * @returns {void}
- */
 function appLogSink(event: ObservabilityEvent): void {
   const { level, name, ...rest } = event;
   const write = LEVEL_LOGGERS[level] || logInfo;
@@ -117,10 +103,9 @@ addSink(appLogSink);
 /**
  * Emit a structured, levelled event to every sink.
  *
- * @param {'debug'|'info'|'warn'|'error'} level
- * @param {string} name      - dotted event name, e.g. `call.qos`
- * @param {object} [data]    - structured payload (redacted by the app logger)
- * @returns {object} the emitted event
+ * @param name      - dotted event name, e.g. `call.qos`
+ * @param data    - structured payload (redacted by the app logger)
+ * @returns the emitted event
  */
 export function emitEvent(level: 'debug' | 'info' | 'warn' | 'error', name: string, data: object = {}): object {
   const event = {
@@ -145,10 +130,7 @@ export function emitEvent(level: 'debug' | 'info' | 'warn' | 'error', name: stri
 /**
  * Emit a metric sample (call setup latency, ICE failures, reconnects, …).
  *
- * @param {string} metric
- * @param {number} [value]
- * @param {object} [data]
- * @returns {object} the emitted event
+ * @returns the emitted event
  */
 export function emitMetric(metric: string, value: number = 1, data: object = {}): object {
   return emitEvent('info', `metric.${metric}`, { metric, value, ...data });
@@ -157,10 +139,6 @@ export function emitMetric(metric: string, value: number = 1, data: object = {})
 /**
  * Record a startup/runtime degradation: it is stored for the degraded-state
  * banner *and* emitted through the same pipeline as every other event.
- *
- * @param {string} source
- * @param {string} message
- * @param {object} [data]
  */
 export function recordDegradation(source: string, message: string, data: object = {}) {
   recordStartupIssue(source, message);
@@ -169,8 +147,6 @@ export function recordDegradation(source: string, message: string, data: object 
 
 /**
  * Current startup degradations, for the banner in `AppShell`.
- *
- * @returns {Array<{source: string, message: string}>}
  */
 export function getDegradations(): Array<{ source: string; message: string; }> {
   return getStartupIssues();
@@ -185,8 +161,6 @@ export function getDegradations(): Array<{ source: string; message: string; }> {
  * degradation through the telemetry pipeline.
  *
  * Idempotent: repeated calls return the first result.
- *
- * @returns {ObservabilityInitResult}
  */
 export function initObservability(): ObservabilityInitResult {
   if (initialized && lastInitResult) {

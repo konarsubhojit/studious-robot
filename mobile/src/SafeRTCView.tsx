@@ -32,7 +32,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 export type SafeRTCViewProps = Omit<RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: StyleProp<ViewStyle>; };
 export type SafeRTCViewState = { hasError: boolean; };
 export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeRTCViewState> {
-  /** @param {SafeRTCViewProps} props */
+  /** @param props */
   constructor(props: SafeRTCViewProps) {
     super(props);
     this.state = { hasError: false };
@@ -42,7 +42,7 @@ export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeR
     return { hasError: true };
   }
 
-  /** @param {Error} error */
+  /** @param error */
   componentDidCatch(error: Error) {
     logError('SafeRTCView render failure', {
       message: error?.message,
@@ -50,7 +50,7 @@ export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeR
     });
   }
 
-  /** @param {SafeRTCViewProps} prevProps */
+  /** @param prevProps */
   componentDidUpdate(prevProps: SafeRTCViewProps) {
     // Recover automatically when the stream URL changes (e.g. a new preview or
     // remote stream arrives) so a previous failure does not stick permanently.

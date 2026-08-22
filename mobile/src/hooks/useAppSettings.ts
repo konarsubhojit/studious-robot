@@ -13,8 +13,6 @@ export const DEFAULT_APP_SETTINGS = {
  *
  * Extracted from the retired room-join hook (`useWebRTCCall`) so the settings
  * helpers outlive it and stay independently testable.
- *
- * @param {{ onStatus?: (message: string, severity?: 'info'|'success'|'error') => void }} [params]
  */
 export default function useAppSettings({ onStatus }: { onStatus?: (message: string, severity?: 'info' | 'success' | 'error') => void; } = {}) {
   const [settings, setSettings] = useState(DEFAULT_APP_SETTINGS);
@@ -33,7 +31,7 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
   }, []);
 
   const persistSetting = useCallback(
-    (/** @type {string} */ key: string, /** @type {unknown} */ value: unknown, /** @type {string} */ message: string) => {
+    (key: string, value: unknown, message: string) => {
       setSettings(previous => {
         const next = { ...previous, [key]: value };
         void saveSettings(next);

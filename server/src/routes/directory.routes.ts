@@ -8,9 +8,6 @@ import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.
 
 /**
  * Presence lookup and the contact directory / discovery endpoints.
- *
- * @param {{ state: import('../stores/contracts.ts').ServerState }} ctx
- * @returns {import('express').Router}
  */
 function createDirectoryRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();

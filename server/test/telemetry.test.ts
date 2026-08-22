@@ -22,10 +22,8 @@ async function startServer() {
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });
@@ -271,7 +269,7 @@ test('GET /calls/:callId/events returns event timeline for participant', async (
     assert.ok(Array.isArray(res.body.events));
 
     // Should have at least: created, accepted, ended
-    const eventNames = res.body.events.map((/** @type {{ event: string }} */ e: { event: string; }) => e.event);
+    const eventNames = res.body.events.map((e: { event: string; }) => e.event);
     assert.ok(eventNames.includes('created'), 'events should include created');
     assert.ok(eventNames.includes('accepted'), 'events should include accepted');
     assert.ok(eventNames.includes('ended'), 'events should include ended');

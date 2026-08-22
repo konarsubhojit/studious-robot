@@ -8,9 +8,6 @@ const MAX_CORRELATION_ID_LENGTH = 64;
  * Normalise the client-supplied per-session correlation id used to trace a
  * call across client and server logs.  Untrusted input: it is trimmed, capped
  * in length and restricted to log-safe characters.
- *
- * @param {unknown} value
- * @returns {string|null}
  */
 function normaliseCorrelationId(value: unknown): string | null {
   const id = normaliseId(value);
@@ -25,9 +22,6 @@ function normaliseCorrelationId(value: unknown): string | null {
 
 /**
  * Extract the bearer token from the HTTP Authorization header.
- *
- * @param {unknown} header
- * @returns {string|null}
  */
 function parseBearerToken(header: unknown): string | null {
   if (typeof header !== 'string') {
@@ -49,10 +43,6 @@ function parseBearerToken(header: unknown): string | null {
  * The session id is taken (in priority order) from the `Authorization` bearer
  * header, the request body, or the query string.  Returns `null` when there is
  * no matching, unexpired session.
- *
- * @param {import('express').Request} req
- * @param {import('../stores/contracts.ts').SessionStore} sessions
- * @returns {import('../stores/contracts.ts').SessionRecord|null}
  */
 function getSessionFromRequest(req: import('express').Request, sessions: import('../stores/contracts.ts').SessionStore): import('../stores/contracts.ts').SessionRecord | null {
   const sessionId =
@@ -82,19 +72,8 @@ function getSessionFromRequest(req: import('express').Request, sessions: import(
  * client only finding out indirectly when an authenticated action (like
  * `call.initiate`) is later rejected.
  *
- * @param {{ handshake: { auth?: Record<string, any> } }} socket
  *   Any Socket.IO socket; only the handshake `auth` payload is read, so tests
  *   may pass a minimal stand-in.
- * @param {import('../stores/contracts.ts').SessionStore} sessions
- * @returns {{
- *   userId: string,
- *   deviceId: string,
- *   platform: string|null,
- *   sessionId: string|null,
- *   presentedSessionId: string|null,
- *   sessionDowngraded: boolean,
- *   correlationId: string|null,
- * }}
  */
 function resolveSocketIdentity(socket: { handshake: { auth?: Record<string, any>; }; }, sessions: import('../stores/contracts.ts').SessionStore): {
     userId: string;

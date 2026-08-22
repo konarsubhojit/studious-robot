@@ -3,7 +3,7 @@ import linking, { PREFIXES } from '../../src/navigation/linking';
 import { CHAT_SCREENS, TABS } from '../../src/navigation/routes';
 
 /** Resolve the leaf route a URL path maps to, mirroring what the container does. */
-function resolveLeafRoute(/** @type {any} */ path: any) {
+function resolveLeafRoute(path: any) {
   let state = getStateFromPath(path, linking.config);
   let route = state?.routes?.[state.routes.length - 1];
   while (route?.state) {

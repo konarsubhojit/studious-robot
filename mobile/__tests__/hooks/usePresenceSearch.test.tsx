@@ -9,7 +9,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = usePresenceSearch(params);
   return null;
 }
@@ -21,7 +21,6 @@ function setup(overrides = {}) {
       return global.fetch(request.url, request.options);
     }),
   };
-  /** @type {any} */
   const params: any = {
     signalingUrl: 'https://signal.example.com',
     authedFetchRef,
@@ -29,9 +28,7 @@ function setup(overrides = {}) {
     calleeId: '',
     ...overrides,
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -143,7 +140,7 @@ describe('usePresenceSearch', () => {
 
   test('debounced calleeId presence effect ignores stale responses for older calleeIds', async () => {
     jest.useFakeTimers();
-    (global.fetch as jest.Mock).mockImplementation(/** @type {any} */ url => {
+    (global.fetch as jest.Mock).mockImplementation(url => {
       if (url.endsWith('/presence/first')) {
         return new Promise(resolve => {
           setTimeout(

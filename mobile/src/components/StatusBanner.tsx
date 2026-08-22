@@ -5,9 +5,6 @@ import type { ThemeColors } from '../theme';
 
 /**
  * Tinted background style for a severity, or `null` for plain 'info'.
- *
- * @param {ReturnType<typeof createStyles>} styles
- * @param {string} severity
  */
 const severityTint = (styles: ReturnType<typeof createStyles>, severity: string) =>
   ({
@@ -18,9 +15,6 @@ const severityTint = (styles: ReturnType<typeof createStyles>, severity: string)
 
 /**
  * Text colour for a severity.
- *
- * @param {import('../theme').ThemeColors} colors
- * @param {string} severity
  */
 const severityColor = (colors: ThemeColors, severity: string) =>
   ({
@@ -39,11 +33,6 @@ export type CallStatus = { message: string; severity?: 'info' | 'success' | 'war
  * Single-line status message whose colour reflects severity (info / success /
  * warning / error). Non-info messages gain a tinted background so they stand
  * out at a glance, making call state transitions easier to notice.
- *
- * @param {object} props
- * @param {CallStatus} [props.status]
- * @param {object} [props.style]
- * @param {object} [props.textStyle]
  */
 export default function StatusBanner({ status, style, textStyle }: { status?: CallStatus; style?: object; textStyle?: object; }) {
   const { colors } = useTheme();
@@ -69,7 +58,7 @@ export default function StatusBanner({ status, style, textStyle }: { status?: Ca
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

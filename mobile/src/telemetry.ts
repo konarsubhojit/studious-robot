@@ -38,15 +38,10 @@ const MAX_ENTRIES = 100;
 export type CallQoSSummary = { callId: string; sessionId: string | null; setupLatencyMs: number | null; firstFrameLatencyMs: number | null; signalingLatencyMs: number | null; durationMs: number | null; reconnectCount: number; iceRestartCount: number; };
 export type CallTelemetryEntry = { callId: string; sessionId: string | null; startedAtMs: number | null; signalingConnectedAtMs: number | null; connectedAtMs: number | null; firstRemoteFrameAtMs: number | null; endedAtMs: number | null; reconnectCount: number; iceRestartCount: number; };
 
-/** @type {Map<string, CallTelemetryEntry>} */
 const entries: Map<string, CallTelemetryEntry> = new Map();
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-/**
- * @param {string} callId
- * @returns {CallTelemetryEntry}
- */
 function getOrCreate(callId: string): CallTelemetryEntry {
   let entry = entries.get(callId);
   if (!entry) {
@@ -69,8 +64,6 @@ function getOrCreate(callId: string): CallTelemetryEntry {
 
 /**
  * Drop the oldest entry once the map grows past {@link MAX_ENTRIES}.
- *
- * @returns {void}
  */
 function pruneOldEntries(): void {
   if (entries.size > MAX_ENTRIES) {
@@ -83,9 +76,6 @@ function pruneOldEntries(): void {
 
 /**
  * Mark the beginning of a call (initiate or accept).
- *
- * @param {string}      callId
- * @param {string|null} sessionId
  */
 export function trackCallStart(callId: string, sessionId: string | null) {
   const entry = getOrCreate(callId);
@@ -95,8 +85,6 @@ export function trackCallStart(callId: string, sessionId: string | null) {
 
 /**
  * Record when the signaling socket first connects after a call starts.
- *
- * @param {string} callId
  */
 export function trackSignalingConnected(callId: string) {
   const entry = entries.get(callId);
@@ -106,8 +94,6 @@ export function trackSignalingConnected(callId: string) {
 
 /**
  * Record when the call reaches the `in_call` phase (media connected).
- *
- * @param {string} callId
  */
 export function trackCallConnected(callId: string) {
   const entry = entries.get(callId);
@@ -118,8 +104,6 @@ export function trackCallConnected(callId: string) {
 /**
  * Record the timestamp of the first received remote video frame.
  * Only the first invocation per call has any effect.
- *
- * @param {string} callId
  */
 export function trackFirstRemoteFrame(callId: string) {
   const entry = entries.get(callId);
@@ -129,8 +113,6 @@ export function trackFirstRemoteFrame(callId: string) {
 
 /**
  * Increment the socket reconnect counter for the call.
- *
- * @param {string} callId
  */
 export function trackReconnect(callId: string) {
   const entry = entries.get(callId);
@@ -140,8 +122,6 @@ export function trackReconnect(callId: string) {
 
 /**
  * Increment the ICE restart counter for the call.
- *
- * @param {string} callId
  */
 export function trackIceRestart(callId: string) {
   const entry = entries.get(callId);
@@ -151,9 +131,6 @@ export function trackIceRestart(callId: string) {
 
 /**
  * Mark the call as ended and return the QoS summary.
- *
- * @param {string} callId
- * @returns {CallQoSSummary|null}
  */
 export function trackCallEnd(callId: string): CallQoSSummary | null {
   const entry = entries.get(callId);
@@ -164,9 +141,6 @@ export function trackCallEnd(callId: string): CallQoSSummary | null {
 
 /**
  * Return the current QoS summary for a call without ending it.
- *
- * @param {string} callId
- * @returns {CallQoSSummary|null}
  */
 export function getCallQoSSummary(callId: string): CallQoSSummary | null {
   const entry = entries.get(callId);
@@ -175,8 +149,6 @@ export function getCallQoSSummary(callId: string): CallQoSSummary | null {
 
 /**
  * Remove telemetry data for a call.
- *
- * @param {string} callId
  */
 export function clearCallTelemetry(callId: string) {
   entries.delete(callId);
@@ -184,10 +156,6 @@ export function clearCallTelemetry(callId: string) {
 
 // ─── Private builder ──────────────────────────────────────────────────────────
 
-/**
- * @param {CallTelemetryEntry} entry
- * @returns {CallQoSSummary}
- */
 function buildSummary(entry: CallTelemetryEntry): CallQoSSummary {
   const { startedAtMs, signalingConnectedAtMs, connectedAtMs, firstRemoteFrameAtMs, endedAtMs } =
     entry;

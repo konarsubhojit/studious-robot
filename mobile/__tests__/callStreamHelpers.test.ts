@@ -18,7 +18,7 @@ jest.mock('../src/diagnostics', () => ({
   }),
 }));
 
-function makeStream(/** @type {string} */ url: string) {
+function makeStream(url: string) {
   return { toURL: () => url };
 }
 

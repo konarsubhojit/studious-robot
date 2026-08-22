@@ -33,9 +33,6 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 
 /**
  * Device push-token registration / unregistration.
- *
- * @param {{ state: import('../stores/contracts.ts').ServerState, db: any }} ctx
- * @returns {import('express').Router}
  */
 function createDevicesRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: any; }): import('express').Router {
   const router = express.Router();

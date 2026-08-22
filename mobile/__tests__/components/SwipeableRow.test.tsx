@@ -7,8 +7,7 @@ jest.mock('../../src/haptics', () => ({
   triggerHaptic: jest.fn(),
 }));
 
-function render(/** @type {any} */ actions: any) {
-  /** @type {any} */
+function render(actions: any) {
   let tree: any;
   act(() => {
     tree = renderer.create(
@@ -21,14 +20,14 @@ function render(/** @type {any} */ actions: any) {
 }
 
 /** The animated row is the only node carrying accessibility actions. */
-function findActionableRow(/** @type {any} */ tree: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => Array.isArray(node.props?.accessibilityActions))[0];
+function findActionableRow(tree: any) {
+  return tree.root.findAll((node: any) => Array.isArray(node.props?.accessibilityActions))[0];
 }
 
 describe('SwipeableRow', () => {
   test('renders its child untouched when there is nothing to swipe for', () => {
     const tree = render([]);
-    expect(tree.root.findAll((/** @type {any} */ node: any) => Array.isArray(node.props?.accessibilityActions))).toHaveLength(
+    expect(tree.root.findAll((node: any) => Array.isArray(node.props?.accessibilityActions))).toHaveLength(
       0,
     );
   });

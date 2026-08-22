@@ -67,7 +67,7 @@ describe('index startup registration diagnostics', () => {
       AppRegistry: { registerComponent },
     }));
     jest.doMock('../App', () => () => null);
-    jest.doMock('../src/ErrorBoundary', () => (/** @type {any} */ { children }: any) => children);
+    jest.doMock('../src/ErrorBoundary', () => ({ children }: any) => children);
     jest.doMock('../src/observability', () => ({ initObservability }));
 
     require('../index');

@@ -12,9 +12,6 @@ import {
  * Lives outside `SearchScreen` so that screen stays presentational (and its
  * tests stay free of the filesystem), matching how the other screens receive
  * their data as props.
- *
- * @returns {{ recentSearches: string[], recordSearch: (term: string) => void,
- *   clearSearches: () => void }}
  */
 export default function useRecentSearches(): {
     recentSearches: string[]; recordSearch: (term: string) => void;
@@ -32,7 +29,7 @@ export default function useRecentSearches(): {
     };
   }, []);
 
-  const recordSearch = useCallback((/** @type {string} */ term: string) => {
+  const recordSearch = useCallback((term: string) => {
     addRecentSearch(term).then(setRecentSearches);
   }, []);
 

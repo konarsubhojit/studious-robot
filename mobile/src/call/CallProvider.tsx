@@ -28,16 +28,12 @@ const CallContext = createContext((null as CallContextValue | null));
  * picture-in-picture self-view, call initiation and the derived stream pair —
  * and publishes them as one context so screens never have to pick between
  * competing call sources (the legacy room-join flow has been retired).
- *
- * @param {{ children: import('react').ReactNode }} props
  */
 export function CallProvider({ children }: { children: ReactNode; }) {
   // Settings are loaded before the call flow because they influence call setup
   // (speaker-on-join). Status messages they raise are forwarded to the call
   // flow's status banner through a ref, since it is created below.
-  /** @type {import('react').MutableRefObject<CallFlow['updateStatus'] | null>} */
   const updateStatusRef: MutableRefObject<CallFlow['updateStatus'] | null> = useRef(null);
-  /** @type {CallFlow['updateStatus']} */
   const notifyStatus: CallFlow['updateStatus'] = useCallback((message, severity) => {
     updateStatusRef.current?.(message, severity);
   }, []);
@@ -200,7 +196,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
 /**
  * Access the single call context.
  *
- * @returns {CallContextValue} the value published by {@link CallProvider}
+ * @returns the value published by {@link CallProvider}
  */
 export function useCall(): CallContextValue {
   const context = useContext(CallContext);

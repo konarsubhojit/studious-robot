@@ -2,10 +2,6 @@ import fs from 'node:fs';
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
-/**
- * @param {string} [value]
- * @returns {import('firebase-admin/app').ServiceAccount & { project_id?: string } | null}
- */
 function readServiceAccount(value?: string): import('firebase-admin/app').ServiceAccount & { project_id?: string; } | null {
   const raw = value?.trim();
   if (!raw) return null;
@@ -28,7 +24,7 @@ function createFirebaseTokenVerifier({ serviceAccountValue = process.env.FCM_SER
   const auth = getAuth(app);
 
   return async function verifyFirebaseToken(
-    /** @type {string} */ idToken: string,
+    idToken: string,
   ) {
     if (typeof idToken !== 'string' || !idToken.trim()) {
       throw new Error('Firebase ID token is required');

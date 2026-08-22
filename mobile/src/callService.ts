@@ -70,8 +70,6 @@ export async function enterPictureInPicture() {
  *
  * Resolves `false` when the app is not in PiP (or on a platform without the
  * native module), so callers can invoke it unconditionally during teardown.
- *
- * @returns {Promise<boolean>}
  */
 export async function exitPictureInPicture(): Promise<boolean> {
   const module = getNativeModule();
@@ -95,8 +93,7 @@ export async function exitPictureInPicture(): Promise<boolean> {
  * The handler receives `{ isInPictureInPictureMode, dismissed }`, where
  * `dismissed` is true when PiP was left because the user closed the window.
  *
- * @param {(status: { isInPictureInPictureMode: boolean, dismissed: boolean }) => void} handler
- * @returns {() => void} unsubscribe function
+ * @returns unsubscribe function
  */
 export function subscribePictureInPictureMode(handler: (status: { isInPictureInPictureMode: boolean; dismissed: boolean; }) => void): () => void {
   const subscription = DeviceEventEmitter.addListener(PIP_MODE_CHANGED_EVENT, payload => {

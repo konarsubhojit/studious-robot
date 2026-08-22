@@ -2,12 +2,12 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import ChatListScreen from '../../src/components/ChatListScreen';
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
-function findAllByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
 function makeConversation(overrides = {}) {
@@ -20,7 +20,7 @@ function makeConversation(overrides = {}) {
   };
 }
 
-function render(/** @type {any} */ props: any) {
+function render(props: any) {
   let tree;
   act(() => {
     tree = renderer.create(<ChatListScreen {...props} />);

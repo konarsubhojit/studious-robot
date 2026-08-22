@@ -23,9 +23,7 @@ import type { ThemeColors } from '../theme';
  * optionally preceded by a semantic icon from `vectorIcons.js` so section
  * headers read consistently with the rest of the app's icon usage.
  *
- * @param {object} props
- * @param {string} [props.icon] - Semantic icon key from ICONS map.
- * @param {import('react').ReactNode} props.children
+ * @param props.icon - Semantic icon key from ICONS map.
  */
 function SectionLabel({ icon, children }: { icon?: string; children: ReactNode; }) {
   const { colors } = useTheme();
@@ -259,7 +257,7 @@ export default function SettingsScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {

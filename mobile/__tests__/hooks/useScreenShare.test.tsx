@@ -18,16 +18,13 @@ jest.mock('../../src/screenShare', () => ({
 
 const screenShare = require('../../src/screenShare');
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useScreenShare(params);
   return null;
 }
 
 /**
  * A media-track double; `onended` is assigned by the hook under test.
- *
- * @param {string} kind
- * @returns {any}
  */
 function makeTrack(kind: string): any {
   return { kind, enabled: true, stop: jest.fn() };
@@ -43,7 +40,6 @@ function setup({ renegotiate = jest.fn(() => Promise.resolve()) } = {}) {
     removeTrack: jest.fn(),
   };
   const localStream = { addTrack: jest.fn(), removeTrack: jest.fn() };
-  /** @type {any} */
   const params: any = {
     peerConnectionRef: { current: peerConnection },
     localStreamRef: { current: localStream },
@@ -52,7 +48,7 @@ function setup({ renegotiate = jest.fn(() => Promise.resolve()) } = {}) {
     renegotiate,
   };
 
-  /** @type {{ current: any }} */
+  
 
   const resultRef: { current: any; } = { current: null };
   act(() => {

@@ -26,10 +26,6 @@ const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infin
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-/**
- * @param {number[]} buckets
- * @returns {Histogram}
- */
 function createHistogram(buckets: number[]): Histogram {
   return {
     count: 0,
@@ -40,10 +36,6 @@ function createHistogram(buckets: number[]): Histogram {
   };
 }
 
-/**
- * @param {Histogram} h
- * @param {number} valueMs
- */
 function observeHistogram(h: Histogram, valueMs: number) {
   h.count += 1;
   h.sum += valueMs;
@@ -57,10 +49,6 @@ function observeHistogram(h: Histogram, valueMs: number) {
   }
 }
 
-/**
- * @param {Histogram} h
- * @returns {HistogramSnapshot}
- */
 function snapshotHistogram(h: Histogram): HistogramSnapshot {
   return {
     count: h.count,
@@ -79,8 +67,6 @@ function snapshotHistogram(h: Histogram): HistogramSnapshot {
  *
  * Each call to `createTelemetry()` produces independent counters so that
  * tests that spin up isolated server instances never share state.
- *
- * @returns {Telemetry}
  */
 function createTelemetry(): Telemetry {
   // ── Counters ──────────────────────────────────────────────────────────────
@@ -114,15 +100,12 @@ function createTelemetry(): Telemetry {
   };
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
-  /** @type {Map<string, { createdMs: number, ringingMs: number|null, acceptedMs: number|null, inCallMs: number|null, endedMs: number|null }>} */
   const callTimestamps: Map<string, { createdMs: number; ringingMs: number | null; acceptedMs: number | null; inCallMs: number | null; endedMs: number | null; }> = new Map();
 
   // ─── Recording API ──────────────────────────────────────────────────────
 
   /**
    * Record a newly created call.
-   *
-   * @param {{ callId: string, status: string, createdAt: string }} call
    */
   function recordCallCreated(call: { callId: string; status: string; createdAt: string; }) {
     counters.calls_initiated += 1;
@@ -147,9 +130,6 @@ function createTelemetry(): Telemetry {
 
   /**
    * Record a call state transition.
-   *
-   * @param {{ callId: string, status: string, endReason?: string|null }} call
-   * @param {string} previousStatus
    */
   function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; }, previousStatus: string) {
     const ts = callTimestamps.get(call.callId);
@@ -223,7 +203,7 @@ function createTelemetry(): Telemetry {
   /**
    * Increment the signaling error counter.
    *
-   * @param {string} [_code] - Error code (reserved for future per-code breakdown).
+   * @param _code - Error code (reserved for future per-code breakdown).
    */
   function recordSignalingError(_code?: string) {
     counters.signaling_errors += 1;
@@ -248,8 +228,6 @@ function createTelemetry(): Telemetry {
    *
    * The shape is intentionally flat and JSON-serialisable so it can be
    * returned verbatim from a `/metrics` HTTP endpoint.
-   *
-   * @returns {MetricsSnapshot}
    */
   function getSnapshot(): MetricsSnapshot {
     const snap = ({
@@ -294,8 +272,7 @@ function createTelemetry(): Telemetry {
 const TERMINAL_STATUSES = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
 /**
- * @param {string} status
- * @returns {boolean} whether the status is terminal.
+ * @returns whether the status is terminal.
  */
 function isTerminalStatus(status: string): boolean {
   return TERMINAL_STATUSES.has(status);

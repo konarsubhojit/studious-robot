@@ -14,9 +14,7 @@ jest.mock('../../src/appLogger', () => ({
 const STATE = { index: 0, routes: [{ name: 'chats' }] };
 
 describe('navigationState', () => {
-  /** @type {any} */
   let navigationState: any;
-  /** @type {any} */
   let RNFS: any;
 
   beforeEach(() => {

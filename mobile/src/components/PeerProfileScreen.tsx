@@ -13,8 +13,6 @@ const MAX_RECENT_CALLS = 5;
 
 /**
  * Up to two uppercase initials derived from a userId, for the avatar circle.
- *
- * @param {string | null | undefined} id
  */
 function getInitials(id: string | null | undefined) {
   const trimmed = (id ?? '').trim();
@@ -24,9 +22,6 @@ function getInitials(id: string | null | undefined) {
 
 /**
  * Peer of a call-history entry, relative to the signed-in user.
- *
- * @param {CallHistoryEntry} entry
- * @param {string | null | undefined} currentUserId
  */
 function callPeerOf(entry: CallHistoryEntry, currentUserId: string | null | undefined) {
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
@@ -34,13 +29,13 @@ function callPeerOf(entry: CallHistoryEntry, currentUserId: string | null | unde
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');
 }
 
-/** @param {CallHistoryEntry} entry */
+/** @param entry */
 function describeCall(entry: CallHistoryEntry) {
   if (entry?.status === 'missed' && entry?.direction === 'incoming') return 'Missed call';
   return entry?.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
 }
 
-/** @param {string | null | undefined} isoString */
+/** @param isoString */
 function formatTimestamp(isoString: string | null | undefined) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -249,7 +244,7 @@ export default function PeerProfileScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {

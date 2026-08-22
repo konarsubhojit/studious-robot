@@ -15,8 +15,7 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
 
 /**
- * @param {any} error
- * @returns {string} the user-facing text for a failed sign-in / registration.
+ * @returns the user-facing text for a failed sign-in / registration.
  */
 function getAuthenticationErrorMessage(error: any): string {
   const code = error?.code;
@@ -46,8 +45,6 @@ function getAuthenticationErrorMessage(error: any): string {
  * authenticated `userId` from this hook. Extracted out of
  * `useCallFlow` so identity persistence stays isolated from that hook's
  * call-lifecycle/session/WebRTC responsibilities.
- *
- * @param {(message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void} updateStatus
  */
 export default function useIdentity(updateStatus: (message: string, severity?: CallStatus['severity']) => void) {
   const [userId, setUserId] = useState('');
@@ -63,7 +60,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
   const canUseGoogleSignIn = isGoogleSignInConfigured();
   const canUseMicrosoftSignIn = isMicrosoftSignInConfigured();
 
-  const commitIdentity = useCallback(async (/** @type {string} */ nextUserId: string) => {
+  const commitIdentity = useCallback(async (nextUserId: string) => {
     const identity = { userId: (nextUserId ?? '').trim() };
     committedIdentityRef.current = identity;
     setUserId(identity.userId);
@@ -71,7 +68,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
     return identity;
   }, []);
 
-  const editUserId = useCallback((/** @type {string} */ nextUserId: string) => {
+  const editUserId = useCallback((nextUserId: string) => {
     const rawUserId = typeof nextUserId === 'string' ? nextUserId : '';
     const trimmedUserId = rawUserId.trim();
     const committedIdentity = committedIdentityRef.current;
@@ -124,13 +121,8 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
   /**
    * Register the local user with the given userId.  Persists the identity to
    * disk and updates the in-memory state so the presence socket connects.
-   *
-   * @param {{ userId: string, method: string, email?: string, password?: string }} registration
    */
   const registerUser = useCallback(
-    /**
-     * @param {{ userId: string, method: string, email?: string, password?: string }} registration
-     */
     async (registration: { userId: string; method: string; email?: string; password?: string; }) => {
       const trimmed = (registration?.userId ?? '').trim();
       if (!trimmed) return;
@@ -172,11 +164,9 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
    * Update the active userId and persist the new value.
    * Use this when the user edits their username in the Lobby so the new
    * identity survives app restarts.
-   *
-   * @param {string} newUserId
    */
   const updateUserId = useCallback(
-    async (/** @type {string} */ newUserId: string) => {
+    async (newUserId: string) => {
       const trimmed = (newUserId ?? '').trim();
       if (!trimmed || trimmed === committedIdentityRef.current.userId) return;
 

@@ -13,11 +13,6 @@ export const navigationRef = createNavigationContainerRef();
  * The app shell does not declare a static param list, so React Navigation types
  * `navigate`/`reset` arguments as `never`. This structurally-typed view keeps
  * the call sites below checkable without inventing a param-list declaration.
- *
- * @type {{
- *   navigate: (screen: string, params?: object) => void,
- *   reset: (state: { index: number, routes: { name: string }[] }) => void,
- * }}
  */
 const nav: {
     navigate: (screen: string, params?: object) => void;
@@ -31,10 +26,9 @@ const nav: {
  * starts the app is never dropped. Only the most recent request is kept: an
  * older pending destination is always superseded by a newer one.
  */
-/** @type {(() => void) | null} */
 let pendingNavigation: (() => void) | null = null;
 
-/** @param {() => void} action */
+/** @param action */
 function runWhenReady(action: () => void) {
   if (navigationRef.isReady()) {
     action();
@@ -59,8 +53,7 @@ export function resetPendingNavigation() {
  * Open a conversation with `peerId` inside the Chats tab, switching to that
  * tab first if another one is selected.
  *
- * @param {string | null | undefined} peerId
- * @param {{ messageId?: string | null }} [options] `messageId` deep-links to a
+ * @param options `messageId` deep-links to a
  *   specific message (a search result), which the conversation screen scrolls
  *   to and highlights.
  */
@@ -84,8 +77,6 @@ export function openSearch() {
 
 /**
  * Open the profile screen for `peerId`.
- *
- * @param {string | null | undefined} peerId
  */
 export function openPeerProfile(peerId: string | null | undefined) {
   if (!peerId) return;
@@ -106,8 +97,6 @@ export function goBack() {
 
 /**
  * Select a bottom tab.
- *
- * @param {'chats'|'calls'|'settings'} tab
  */
 export function openTab(tab: 'chats' | 'calls' | 'settings') {
   runWhenReady(() => nav.navigate(tab));

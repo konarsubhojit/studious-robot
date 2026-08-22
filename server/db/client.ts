@@ -18,15 +18,11 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 /** Maximum app-side pool size; keep small since Neon pools server-side too. */
 const DEFAULT_POOL_MAX = 10;
 
-/** @type {import('pg').Pool | null} */
 let _pool: import('pg').Pool | null = null;
-/** @type {import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema> | null} */
 let _db: import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema> | null = null;
 
 /**
  * Lazily create (or return the cached) `pg` Pool bound to `DATABASE_URL`.
- *
- * @returns {import('pg').Pool}
  */
 function getPool(): import('pg').Pool {
   if (_pool) return _pool;
@@ -48,8 +44,6 @@ function getPool(): import('pg').Pool {
 
 /**
  * Lazily create (or return the cached) Drizzle instance.
- *
- * @returns {import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema>}
  */
 function getDb(): import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema> {
   if (_db) return _db;
@@ -59,8 +53,6 @@ function getDb(): import('drizzle-orm/node-postgres').NodePgDatabase<typeof sche
 
 /**
  * Close the pool and reset cached state.  Used on shutdown and in tests.
- *
- * @returns {Promise<void>}
  */
 async function closeDb(): Promise<void> {
   if (_pool) {

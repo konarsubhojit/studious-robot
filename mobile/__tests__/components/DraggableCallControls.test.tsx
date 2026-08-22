@@ -3,21 +3,19 @@ import * as ReactNative from 'react-native';
 import renderer, { act } from 'react-test-renderer';
 import DraggableCallControls from '../../src/components/DraggableCallControls';
 
-/** @type {{ onStart?: any, onUpdate?: any, onEnd?: any }} */
 const mockPanCallbacks: { onStart?: any; onUpdate?: any; onEnd?: any; } = {};
-/** @type {any} */
 const mockSharedValues: any = [];
 
 jest.mock('react-native-gesture-handler', () => ({
   __esModule: true,
-  GestureDetector: (/** @type {any} */ { children }: any) => children,
+  GestureDetector: ({ children }: any) => children,
   Gesture: {
     Pan: () => ({
-      onStart: function (/** @type {any} */ callback: any) {
+      onStart: function (callback: any) {
         mockPanCallbacks.onStart = callback;
         return this;
       },
-      onUpdate: function (/** @type {any} */ callback: any) {
+      onUpdate: function (callback: any) {
         mockPanCallbacks.onUpdate = callback;
         return this;
       },
@@ -30,19 +28,19 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View },
-    useSharedValue: (/** @type {any} */ init: any) => {
+    useSharedValue: (init: any) => {
       const sharedValue = { value: init };
       mockSharedValues.push(sharedValue);
       return sharedValue;
     },
-    useAnimatedStyle: (/** @type {any} */ fn: any) => fn(),
-    runOnJS: (/** @type {any} */ fn: any) => fn,
+    useAnimatedStyle: (fn: any) => fn(),
+    runOnJS: (fn: any) => fn,
   };
 });
 
 jest.mock(
   '../../src/components/CallControls',
-  () => (/** @type {any} */ props: any) => require('react').createElement('CallControls', props),
+  () => (props: any) => require('react').createElement('CallControls', props),
 );
 
 function createProps(overrides = {}) {
@@ -76,7 +74,6 @@ describe('DraggableCallControls', () => {
   });
 
   test('renders with the draggable-call-controls testID', () => {
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -92,7 +89,6 @@ describe('DraggableCallControls', () => {
   test('forwards all control props to CallControls', () => {
     const onMuteToggle = jest.fn();
     const onLeave = jest.fn();
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(
@@ -109,7 +105,6 @@ describe('DraggableCallControls', () => {
   });
 
   test('renders a drag handle indicator', () => {
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -118,14 +113,13 @@ describe('DraggableCallControls', () => {
     const { View } = require('react-native');
     const views = tree.root.findAllByType(View);
     const handleViews = views.filter(
-      (/** @type {any} */ v: any) =>
+      (v: any) =>
         v.props.accessibilityElementsHidden === true && v.props.importantForAccessibility === 'no',
     );
     expect(handleViews).toHaveLength(1);
   });
 
   test('floating panel uses position absolute', () => {
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(<DraggableCallControls {...createProps()} />);
@@ -151,9 +145,9 @@ describe('DraggableCallControls', () => {
       mockPanCallbacks.onUpdate?.({ translationX: -1000, translationY: -1000 });
     });
 
-    const numericValues = mockSharedValues.map((/** @type {any} */ sharedValue: any) => sharedValue.value);
+    const numericValues = mockSharedValues.map((sharedValue: any) => sharedValue.value);
     expect(numericValues.every(Number.isFinite)).toBe(true);
-    expect(numericValues.some((/** @type {any} */ value: any) => value === 0)).toBe(true);
-    expect(numericValues.every((/** @type {any} */ value: any) => value >= 0)).toBe(true);
+    expect(numericValues.some((value: any) => value === 0)).toBe(true);
+    expect(numericValues.every((value: any) => value >= 0)).toBe(true);
   });
 });

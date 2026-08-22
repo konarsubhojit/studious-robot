@@ -8,17 +8,16 @@ jest.mock('../src/appLogger', () => ({
 }));
 
 function makeSocket(
-  /** @type {{ connected?: boolean, ack?: any }} */ { connected = true, ack = { ok: true } }: { connected?: boolean; ack?: any; } = {},
+  { connected = true, ack = { ok: true } }: { connected?: boolean; ack?: any; } = {},
 ) {
-  /** @type {Record<string, (payload?: any) => void>} */
   const handlers: Record<string, (payload?: any) => void> = {};
   return {
     connected,
     handlers,
-    on: jest.fn((/** @type {string} */ event: string, /** @type {any} */ handler: any) => {
+    on: jest.fn((event: string, handler: any) => {
       handlers[event] = handler;
     }),
-    emit: jest.fn((/** @type {string} */ event: string, /** @type {any} */ payload: any, /** @type {any} */ callback: any) => {
+    emit: jest.fn((event: string, payload: any, callback: any) => {
       if (typeof callback === 'function') callback(ack);
     }),
   };

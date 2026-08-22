@@ -21,9 +21,8 @@ async function startServer() {
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId: `device-${userId}` });
@@ -52,7 +51,7 @@ test('GET /users lists other known users and excludes self', async () => {
 
     const res = await getJson(url, '/users', aliceSession);
     assert.equal(res.status, 200);
-    const ids = res.body.users.map((/** @type {{ userId: string }} */ u: { userId: string; }) => u.userId);
+    const ids = res.body.users.map((u: { userId: string; }) => u.userId);
     assert.deepEqual(ids, ['bob', 'carol']);
     assert.equal(res.body.total, 2);
     // Each entry carries a lightweight presence snapshot.
@@ -77,7 +76,7 @@ test('GET /users filters by case-insensitive search substring', async () => {
     const res = await getJson(url, '/users?search=BOB', aliceSession);
     assert.equal(res.status, 200);
     assert.deepEqual(
-      res.body.users.map((/** @type {{ userId: string }} */ u: { userId: string; }) => u.userId),
+      res.body.users.map((u: { userId: string; }) => u.userId),
       ['bob', 'bobby']
     );
   } finally {
@@ -97,7 +96,7 @@ test('GET /users honours limit and caps total separately', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.users.length, 2);
     assert.deepEqual(
-      res.body.users.map((/** @type {{ userId: string }} */ u: { userId: string; }) => u.userId),
+      res.body.users.map((u: { userId: string; }) => u.userId),
       ['bob', 'carol']
     );
     // total reflects the full match count, not the paginated slice.
@@ -125,7 +124,7 @@ test('GET /users hides users in either direction of a block', async () => {
     const res = await getJson(url, '/users', aliceSession);
     assert.equal(res.status, 200);
     assert.deepEqual(
-      res.body.users.map((/** @type {{ userId: string }} */ u: { userId: string; }) => u.userId),
+      res.body.users.map((u: { userId: string; }) => u.userId),
       []
     );
   } finally {

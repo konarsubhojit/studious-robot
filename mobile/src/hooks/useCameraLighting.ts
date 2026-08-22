@@ -14,7 +14,7 @@ const LIGHTING_ADJUST_INTERVAL_MS = 8000;
  * Extracted from the retired room-join hook (`useWebRTCCall`) so the shared
  * media helper survives it as an isolated, testable concern.
  *
- * @param {{ localStream?: any, enabled?: boolean }} params `localStream` is a
+ * @param params `localStream` is a
  *   `MediaStream`, or anything falsy.
  */
 export default function useCameraLighting({ localStream = null, enabled = false }: { localStream?: any; enabled?: boolean; }) {

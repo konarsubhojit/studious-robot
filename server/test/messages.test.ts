@@ -19,9 +19,8 @@ import { io as ioClient } from 'socket.io-client';
 function spyOnMessagePush() {
   const mod = pushSenders;
   const original = mod.sendMessagePush;
-  /** @type {{ channel: any, messageData: any }[]} */
   const calls: { channel: any; messageData: any; }[] = [];
-  mod.sendMessagePush = async (/** @type {any} */ channel: any, /** @type {any} */ messageData: any) => {
+  mod.sendMessagePush = async (channel: any, messageData: any) => {
     calls.push({ channel, messageData });
     return { ok: true, provider: channel.provider, deviceId: channel.deviceId };
   };
@@ -49,10 +48,8 @@ async function startServer(opts = {}) {
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });
@@ -63,9 +60,8 @@ async function createSession(url: string, userId: string, deviceId: string = `de
 /**
  * Connect a socket.io client and wait for the connection to establish.
  *
- * @param {string} url - Base URL of the server under test.
- * @param {string} [sessionId] - Omitted for an unauthenticated guest socket.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param url - Base URL of the server under test.
+ * @param sessionId - Omitted for an unauthenticated guest socket.
  */
 async function connectSocket(url: string, sessionId?: string): Promise<import('socket.io-client').Socket> {
   const socket = ioClient(url, { auth: { sessionId } });
@@ -76,10 +72,7 @@ async function connectSocket(url: string, sessionId?: string): Promise<import('s
 /**
  * Emit an event and resolve with its acknowledgement.
  *
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve) => socket.emit(event, payload, resolve));
@@ -621,7 +614,7 @@ test('GET /messages returns the conversation newest-first with pagination', asyn
   assert.equal(first.status, 200);
   assert.equal(first.body.messages.length, 2);
   assert.deepEqual(
-    first.body.messages.map((/** @type {any} */ m: any) => m.body),
+    first.body.messages.map((m: any) => m.body),
     ['msg-4', 'msg-3']
   );
 
@@ -633,7 +626,7 @@ test('GET /messages returns the conversation newest-first with pagination', asyn
   );
   assert.equal(second.status, 200);
   assert.deepEqual(
-    second.body.messages.map((/** @type {any} */ m: any) => m.body),
+    second.body.messages.map((m: any) => m.body),
     ['msg-2', 'msg-1']
   );
 
@@ -756,7 +749,7 @@ test("GET /conversations reports each peer's live online status", async (t) => {
 
   const res = await getJson(url, '/conversations', aliceSession);
   assert.equal(res.status, 200);
-  const byPeer = Object.fromEntries(res.body.conversations.map((/** @type {any} */ c: any) => [c.peerId, c]));
+  const byPeer = Object.fromEntries(res.body.conversations.map((c: any) => [c.peerId, c]));
   assert.equal(byPeer['convonline-bob'].online, true, 'bob has a live socket');
   assert.equal(byPeer['convonline-carol'].online, false, 'carol never connected a socket');
 });

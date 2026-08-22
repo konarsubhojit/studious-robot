@@ -21,12 +21,7 @@ const OFFLINE_ERROR_THRESHOLD = 3;
  * Extracted out of `useCallFlow` so this concern stays isolated from that
  * hook's call-lifecycle/session/WebRTC responsibilities.
  *
- * @param {{
- *   signalingUrl: string,
- *   authedFetchRef: { current: Function | null },
- *   sessionIdRef: { current: string | null },
- *   calleeId: string,
- * }} params
+ * @param params
  */
 export type UsePresenceSearchParams = {
   signalingUrl: string;
@@ -63,17 +58,14 @@ export default function usePresenceSearch({
    * Query the signaling server for the online/offline presence of a userId.
    * Returns the presence snapshot, or `null` when the user is unknown (404) or
    * the request fails.  Never throws.
-   *
-   * @param {string} targetUserId
-   * @returns {Promise<{ status: string, online: boolean, unknown?: boolean } | null>}
    */
   const checkPresence = useCallback(
-    async (/** @type {string} */ targetUserId: string) => {
+    async (targetUserId: string) => {
       const trimmedId = (targetUserId ?? '').trim();
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!trimmedId || !trimmedUrl) return null;
       try {
-        const response = await authedFetchRef.current?.((/** @type {string} */ sessionId: string) => ({
+        const response = await authedFetchRef.current?.((sessionId: string) => ({
           url: `${trimmedUrl}/presence/${encodeURIComponent(
             trimmedId,
           )}?sessionId=${encodeURIComponent(sessionId)}`,
@@ -102,22 +94,16 @@ export default function usePresenceSearch({
    * Pass a `signal` to cancel an in-flight request — the unified search screen
    * aborts the previous lookup on every keystroke.
    *
-   * @param {string} [query] optional substring filter
-   * @param {{ limit?: number, signal?: AbortSignal }} [options]
-   * @returns {Promise<Array<{ userId: string, status: string, online: boolean, lastSeen?: string | null }>>}
+   * @param query optional substring filter
    */
   const searchUsers = useCallback(
-    /**
-     * @param {string} [query]
-     * @param {{ limit?: number, signal?: AbortSignal }} [options]
-     */
     async (query: string = '', { limit = 20, signal }: { limit?: number; signal?: AbortSignal; } = {}) => {
       const sessionId = sessionIdRef.current;
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!sessionId || !trimmedUrl) return [];
       try {
         const trimmedQuery = (query ?? '').trim();
-        const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => {
+        const response = await authedFetchRef.current?.((sid: string) => {
           const params = new URLSearchParams({
             sessionId: sid,
             limit: String(limit),

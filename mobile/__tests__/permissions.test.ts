@@ -3,8 +3,8 @@ const mockRequestMultiple = jest.fn();
 
 jest.mock('react-native', () => ({
   PermissionsAndroid: {
-    check: (/** @type {any[]} */ ...args: any[]) => mockCheck(...args),
-    requestMultiple: (/** @type {any[]} */ ...args: any[]) => mockRequestMultiple(...args),
+    check: (...args: any[]) => mockCheck(...args),
+    requestMultiple: (...args: any[]) => mockRequestMultiple(...args),
     PERMISSIONS: {
       CAMERA: 'android.permission.CAMERA',
       RECORD_AUDIO: 'android.permission.RECORD_AUDIO',

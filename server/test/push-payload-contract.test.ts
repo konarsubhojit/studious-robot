@@ -68,9 +68,7 @@ function hubMessageDataBlock() {
  * Return the source of the function declared at `start`, from its opening brace
  * to the matching closing brace, so nested blocks inside the body are included.
  *
- * @param {string} source
- * @param {number} start index of the `function` keyword
- * @returns {string}
+ * @param start index of the `function` keyword
  */
 function extractFunctionBody(source: string, start: number): string {
   // Skip the parameter list first: TypeScript signatures carry object type

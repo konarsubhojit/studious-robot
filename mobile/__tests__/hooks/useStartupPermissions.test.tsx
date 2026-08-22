@@ -10,7 +10,7 @@ jest.mock('../../src/permissions', () => ({
 const { logWarn } = require('../../src/appLogger');
 const { ensureCallPermissions } = require('../../src/permissions');
 
-function TestHook(/** @type {any} */ { userId }: any) {
+function TestHook({ userId }: any) {
   useStartupPermissions(userId);
   return null;
 }
@@ -37,7 +37,6 @@ describe('useStartupPermissions', () => {
   });
 
   test('does not re-request on re-render for the same identity', async () => {
-    /** @type {any} */
     let tree: any;
     await act(async () => {
       tree = renderer.create(<TestHook userId="alice" />);

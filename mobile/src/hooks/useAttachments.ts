@@ -21,12 +21,7 @@ import {
  * state instead of dead-ending silently on every subsequent tap — the bug
  * this whole pipeline exists to fix.
  *
- * @param {{
- *   authedFetchRef: { current: Function | null },
- *   signalingUrl: string,
- *   sendMessage: (peerId: string, body: string, options?: object) => Promise<void>,
- *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
- * }} params
+ * @param params
  */
 export type UseAttachmentsParams = {
   authedFetchRef: { current: Function | null; };
@@ -49,17 +44,12 @@ export default function useAttachments({
   );
 
   const authedFetch = useCallback(
-    (/** @type {(sessionId: string) => { url: string, options?: object }} */ build: (sessionId: string) => { url: string; options?: object; }) =>
+    (build: (sessionId: string) => { url: string; options?: object; }) =>
       authedFetchRef.current?.(build) ?? Promise.resolve(null),
     [authedFetchRef],
   );
 
   const sendPicked = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {string} type
-     * @param {any} picked
-     */
     async (peerId: string, type: string, picked: any) => {
       if (!picked) return;
       setIsUploading(true);
@@ -94,15 +84,8 @@ export default function useAttachments({
   /**
    * Run a picker (photo/camera/file) for `peerId` and, once something is
    * picked, upload and send it.
-   *
-   * @param {string} peerId
-   * @param {'photo'|'camera'|'file'} kind
    */
   const pickAndSend = useCallback(
-    /**
-     * @param {string} peerId
-     * @param {'photo'|'camera'|'file'} kind
-     */
     async (peerId: string, kind: 'photo' | 'camera' | 'file') => {
       const permission = await ensureAttachmentPermission(kind);
       if (!permission.ok) {
@@ -135,7 +118,7 @@ export default function useAttachments({
 
   /** Stop recording and send the resulting voice note to `peerId`. */
   const stopRecordingVoiceNoteAndSend = useCallback(
-    async (/** @type {string} */ peerId: string) => {
+    async (peerId: string) => {
       setIsRecordingVoiceNote(false);
       const recorded = await stopVoiceRecording();
       if (!recorded) return;

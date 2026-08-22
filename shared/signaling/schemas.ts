@@ -327,9 +327,8 @@ const ACK_SCHEMA = s.object(
 /**
  * Look up the schema for an event.
  *
- * @param {string} eventName
- * @param {'client'|'server'} [direction] - Which side *sends* the payload.
- * @returns {import('../schema.ts').Schema | null} the schema, or `null` when the
+ * @param direction - Which side *sends* the payload.
+ * @returns the schema, or `null` when the
  *   event carries no contract (e.g. transport events).
  */
 function getEventSchema(eventName: string, direction: 'client' | 'server' = 'client'): import('../schema.ts').Schema | null {
@@ -343,10 +342,7 @@ function getEventSchema(eventName: string, direction: 'client' | 'server' = 'cli
  * Events without a schema are passed through untouched, so adding a new event
  * never silently drops traffic before its contract lands.
  *
- * @param {string} eventName
- * @param {unknown} payload
- * @param {'client'|'server'} [direction] - Which side *sends* the payload.
- * @returns {{ success: true, data: any } | { success: false, error: { message: string, path: string } }}
+ * @param direction - Which side *sends* the payload.
  */
 function parseEventPayload(eventName: string, payload: unknown, direction: 'client' | 'server' = 'client'): { success: true; data: any; } | { success: false; error: { message: string; path: string; }; } {
   const schema = getEventSchema(eventName, direction);

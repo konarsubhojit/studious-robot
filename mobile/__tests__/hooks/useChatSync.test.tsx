@@ -2,7 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useChatSync from '../../src/hooks/useChatSync';
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useChatSync(params);
   return null;
 }
@@ -19,9 +19,7 @@ async function setup(overrides = {}) {
     checkPresence: jest.fn(async () => ({ status: 'online', online: true })),
     ...overrides,
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
-  /** @type {any} */
   let tree: any;
   await act(async () => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -109,7 +107,6 @@ describe('useChatSync', () => {
   });
 
   test('isLoadingConversations is true only while the first conversation fetch is in flight', async () => {
-    /** @type {any} */
     let resolveFetch: any;
     const fetchConversations = jest.fn(
       () =>
@@ -128,7 +125,6 @@ describe('useChatSync', () => {
   });
 
   test('isLoadingMessages tracks the open conversation history fetch', async () => {
-    /** @type {any} */
     let resolveFetch: any;
     const fetchMessagesForPeer = jest.fn(
       () =>
@@ -153,7 +149,6 @@ describe('useChatSync', () => {
   });
 
   test('handleRefreshConversations toggles isRefreshingConversations around the fetch', async () => {
-    /** @type {any} */
     let resolveFetch: any;
     const fetchConversations = jest.fn(
       () =>
@@ -163,7 +158,6 @@ describe('useChatSync', () => {
     );
     const { resultRef } = await setup({ fetchConversations });
 
-    /** @type {any} */
     let refreshPromise: any;
     act(() => {
       refreshPromise = resultRef.current.handleRefreshConversations();

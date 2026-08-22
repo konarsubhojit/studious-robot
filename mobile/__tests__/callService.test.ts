@@ -10,7 +10,7 @@ import {
 
 const originalPlatform = Platform.OS;
 
-function setCallServiceModule(/** @type {any} */ module: any) {
+function setCallServiceModule(module: any) {
   if (module === null) {
     delete NativeModules.CallService;
   } else {

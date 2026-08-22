@@ -17,8 +17,6 @@ export type CallTimelineEntry = { callId?: string; direction?: string; status?: 
  * A call the caller hung up before it was answered reads as "Cancelled" to the
  * caller but as a missed call to the callee, which is how every mainstream
  * messenger presents it.
- *
- * @type {Record<'outgoing'|'incoming', Record<string, string>>}
  */
 const OUTCOME_LABELS: Record<'outgoing' | 'incoming', Record<string, string>> = {
   outgoing: {
@@ -41,9 +39,6 @@ const OUTCOME_LABELS: Record<'outgoing' | 'incoming', Record<string, string>> = 
 
 /**
  * True when this entry is a call the user never got to take.
- *
- * @param {CallTimelineEntry} entry
- * @returns {boolean}
  */
 export function isMissedCallEntry(entry: CallTimelineEntry): boolean {
   return (
@@ -57,8 +52,7 @@ export function isMissedCallEntry(entry: CallTimelineEntry): boolean {
 /**
  * Format a connected-call duration as `m:ss` (or `h:mm:ss` past an hour).
  *
- * @param {number | null | undefined} durationSeconds
- * @returns {string} Empty string when there was no connected time.
+ * @returns Empty string when there was no connected time.
  */
 export function formatCallDuration(durationSeconds: number | null | undefined): string {
   const total = Number(durationSeconds);
@@ -73,9 +67,6 @@ export function formatCallDuration(durationSeconds: number | null | undefined): 
 
 /**
  * Label for a single call entry, e.g. "Outgoing call · 2:08" or "Missed call".
- *
- * @param {CallTimelineEntry} entry
- * @returns {string}
  */
 export function formatCallEntryLabel(entry: CallTimelineEntry): string {
   const direction = entry?.direction === 'outgoing' ? 'outgoing' : 'incoming';
@@ -87,8 +78,6 @@ export function formatCallEntryLabel(entry: CallTimelineEntry): string {
 /**
  * Plural noun per outcome for a collapsed run of calls, so a group reads as
  * "3 missed calls" rather than repeating the singular row label.
- *
- * @type {Record<'outgoing'|'incoming', Record<string, string>>}
  */
 const GROUP_NOUNS: Record<'outgoing' | 'incoming', Record<string, string>> = {
   outgoing: {
@@ -112,9 +101,6 @@ const GROUP_NOUNS: Record<'outgoing' | 'incoming', Record<string, string>> = {
 /**
  * Label for a collapsed run of same-direction/same-outcome calls, e.g.
  * "3 missed calls".
- *
- * @param {CallTimelineEntry[]} entries
- * @returns {string}
  */
 export function formatCallGroupLabel(entries: CallTimelineEntry[]): string {
   const [first] = entries;
@@ -123,7 +109,7 @@ export function formatCallGroupLabel(entries: CallTimelineEntry[]): string {
   return `${entries.length} ${noun}`;
 }
 
-/** @param {string | null | undefined} isoString */
+/** @param isoString */
 function formatTimestamp(isoString: string | null | undefined) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -152,7 +138,6 @@ const CallTimelineRow = memo(
 
     const offerCallBack = useCallback(() => {
       if (!peerId || (!onCallBack && !onVideoCallBack)) return;
-      /** @type {import('react-native').AlertButton[]} */
       const buttons: AlertButton[] = [];
       if (onCallBack) buttons.push({ text: 'Call back', onPress: () => onCallBack(peerId) });
       if (onVideoCallBack) {
@@ -220,7 +205,7 @@ const CallTimelineRow = memo(
   },
 );
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

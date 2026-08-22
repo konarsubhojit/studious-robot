@@ -2,16 +2,11 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import AppTabBar from '../../src/components/AppTabBar';
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
-/**
- * @param {any} [props]
- * @returns {any}
- */
 function render(props?: any): any {
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(<AppTabBar activeTab="chats" onChangeTab={jest.fn()} {...props} />);
@@ -47,7 +42,7 @@ describe('AppTabBar', () => {
 
   test('caps the badge label at 99+', () => {
     const tree = render({ unreadCount: 150 });
-    const badgeText = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === '99+');
+    const badgeText = tree.root.findAll((n: any) => n.props?.children === '99+');
     expect(badgeText.length).toBeGreaterThan(0);
   });
 
@@ -62,7 +57,7 @@ describe('AppTabBar', () => {
   });
 
   test('pads the bottom of the bar by bottomInset, so it clears gesture navigation', () => {
-    const flat = (/** @type {any} */ style: any) => (Array.isArray(style) ? Object.assign({}, ...style) : style);
+    const flat = (style: any) => (Array.isArray(style) ? Object.assign({}, ...style) : style);
 
     const withoutInset = flat(findByTestId(render({ bottomInset: 0 }), 'app-tab-bar').props.style);
     const withInset = flat(findByTestId(render({ bottomInset: 24 }), 'app-tab-bar').props.style);

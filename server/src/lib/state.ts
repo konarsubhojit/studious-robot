@@ -32,9 +32,7 @@ export type ReachableChannel = WebsocketChannel | PushChannel;
 /**
  * Ensure a presence record exists for a user and return it.
  *
- * @param {Stores} state
- * @param {string} userId
- * @returns {PresenceRecord|null} `null` when `userId` is falsy.
+ * @returns `null` when `userId` is falsy.
  */
 function ensurePresenceRecord(state: Stores, userId: string): PresenceRecord | null {
   if (!userId) {
@@ -54,10 +52,6 @@ function ensurePresenceRecord(state: Stores, userId: string): PresenceRecord | n
 
 /**
  * Track a session id against the user that owns it.
- *
- * @param {Stores} state
- * @param {SessionRecord} session
- * @returns {void}
  */
 function addSessionToUser(state: Stores, session: SessionRecord): void {
   let sessionIds = state.userSessions.get(session.userId);
@@ -80,11 +74,6 @@ function addSessionToUser(state: Stores, session: SessionRecord): void {
  * token resurfaces on a new registration, the row that previously held it is
  * stale and must give it up so it can no longer intercept that device's
  * pushes. See the matching DB-level unique index in `db/schema.js`.
- *
- * @param {Stores} state
- * @param {string} pushToken
- * @param {string} exceptDeviceId
- * @returns {DeviceRecord | null}
  */
 function findDeviceHoldingToken(state: Stores, pushToken: string, exceptDeviceId: string): DeviceRecord | null {
   if (!pushToken) return null;
@@ -99,10 +88,6 @@ function findDeviceHoldingToken(state: Stores, pushToken: string, exceptDeviceId
 /**
  * Create or update a device row, re-linking it to its owner and evicting a
  * reused push token from whichever other row previously held it.
- *
- * @param {Stores} state
- * @param {Partial<DeviceRecord> & { deviceId: string, userId: string }} nextDevice
- * @returns {DeviceRecord}
  */
 function upsertDevice(state: Stores, nextDevice: Partial<DeviceRecord> & { deviceId: string; userId: string; }): DeviceRecord {
   const existing = state.devices.get(nextDevice.deviceId);
@@ -158,9 +143,7 @@ function upsertDevice(state: Stores, nextDevice: Partial<DeviceRecord> & { devic
  * `INVALID_ARGUMENT`), so the row stops being selected for future pushes and
  * stops masking real failures as silent no-ops.
  *
- * @param {Stores} state
- * @param {string} deviceId
- * @returns {boolean} `true` when a row was found and removed
+ * @returns `true` when a row was found and removed
  */
 function removeDevice(state: Stores, deviceId: string): boolean {
   const device = state.devices.get(deviceId);
@@ -172,11 +155,6 @@ function removeDevice(state: Stores, deviceId: string): boolean {
 
 /**
  * Remove a device id from a user's device set, dropping the set when empty.
- *
- * @param {Stores} state
- * @param {string} userId
- * @param {string} deviceId
- * @returns {void}
  */
 function unlinkDeviceFromUser(state: Stores, userId: string, deviceId: string): void {
   const deviceIds = state.userDevices.get(userId);
@@ -194,10 +172,6 @@ function unlinkDeviceFromUser(state: Stores, userId: string, deviceId: string): 
 
 /**
  * Track a live socket connection and mark its owner online.
- *
- * @param {Stores} state
- * @param {ConnectionRecord} connection
- * @returns {void}
  */
 function addConnection(state: Stores, connection: ConnectionRecord): void {
   let connections = state.userConnections.get(connection.userId);
@@ -213,11 +187,6 @@ function addConnection(state: Stores, connection: ConnectionRecord): void {
 
 /**
  * Drop a socket connection, marking its owner offline when it was the last one.
- *
- * @param {Stores} state
- * @param {string} userId
- * @param {string} socketId
- * @returns {void}
  */
 function removeConnection(state: Stores, userId: string, socketId: string): void {
   if (!userId) {
@@ -242,9 +211,6 @@ function removeConnection(state: Stores, userId: string, socketId: string): void
  * affected users offline (with a fresh `lastSeen`).  Called during graceful
  * shutdown so presence reflects the drain immediately rather than waiting for
  * each socket teardown.
- *
- * @param {Stores} state
- * @returns {void}
  */
 function drainLocalPresence(state: Stores): void {
   const now = new Date().toISOString();
@@ -259,17 +225,6 @@ function drainLocalPresence(state: Stores): void {
 
 /**
  * Build the public presence payload for a user.
- *
- * @param {Stores} state
- * @param {string} userId
- * @returns {{
- *   userId: string,
- *   status: 'online'|'offline',
- *   online: boolean,
- *   lastSeen: string|null,
- *   activeConnections: number,
- *   devices: Array<{ deviceId: string, platform: string|null, pushRegistered: boolean, connected: boolean }>,
- * }}
  */
 function getPresenceSnapshot(state: Stores, userId: string): {
     userId: string;
@@ -306,9 +261,7 @@ function getPresenceSnapshot(state: Stores, userId: string): {
 }
 
 /**
- * @param {Stores} state
- * @param {string} userId
- * @returns {boolean} `true` when the server has any record of the user.
+ * @returns `true` when the server has any record of the user.
  */
 function hasKnownUser(state: Stores, userId: string): boolean {
   if (
@@ -326,9 +279,6 @@ function hasKnownUser(state: Stores, userId: string): boolean {
  * Enumerate every userId the server is aware of, deduplicated across the
  * session, device, connection and presence collections.  Used by the contact
  * directory (`GET /users`).
- *
- * @param {Stores} state
- * @returns {Set<string>}
  */
 function listKnownUsers(state: Stores): Set<string> {
   const userIds = new Set<string>();
@@ -342,13 +292,8 @@ function listKnownUsers(state: Stores): Set<string> {
 /**
  * Resolve the set of channels (live WebSocket connections and registered push
  * tokens) through which a user can currently be reached.
- *
- * @param {Stores} state
- * @param {string} userId
- * @returns {ReachableChannel[]}
  */
 function resolveReachableChannels(state: Stores, userId: string): ReachableChannel[] {
-  /** @type {ReachableChannel[]} */
   const channels: ReachableChannel[] = [];
   const connections = state.userConnections.get(userId);
   if (connections) {
@@ -363,7 +308,6 @@ function resolveReachableChannels(state: Stores, userId: string): ReachableChann
   }
 
   const deviceIds = state.userDevices.get(userId);
-  /** @type {Array<PushChannel & { updatedAt: string|null }>} */
   const pushChannels: Array<PushChannel & { updatedAt: string | null; }> = [];
   if (deviceIds) {
     for (const deviceId of deviceIds) {
@@ -410,9 +354,7 @@ function resolveReachableChannels(state: Stores, userId: string): ReachableChann
  * ring.  Gating on "the user has zero connections" silently drops the push for
  * every other registered device.
  *
- * @param {Stores} state
- * @param {string} userId
- * @returns {PushChannel[]} Push channels for devices without a live socket.
+ * @returns Push channels for devices without a live socket.
  */
 function resolveOfflinePushChannels(state: Stores, userId: string): PushChannel[] {
   const connections = state.userConnections.get(userId);
@@ -430,9 +372,6 @@ function resolveOfflinePushChannels(state: Stores, userId: string): PushChannel[
  *
  * Addressing emits to this room (instead of iterating tracked socket ids) lets
  * the Socket.IO Redis adapter deliver to the user's sockets on other instances.
- *
- * @param {string} userId
- * @returns {string}
  */
 function userRoom(userId: string): string {
   return `user:${userId}`;

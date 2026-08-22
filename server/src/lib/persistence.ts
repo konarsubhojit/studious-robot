@@ -26,10 +26,6 @@ export type DeviceRecord = import('../stores/contracts.ts').DeviceRecord;
 
 /**
  * Persist a newly claimed identity so verification survives restarts.
- *
- * @param {DrizzleDb|null} db
- * @param {import('../identity.ts').User} user
- * @returns {Promise<void>}
  */
 async function persistUser(db: DrizzleDb | null, user: import('../identity.ts').User): Promise<void> {
   if (!db || !user) return;
@@ -71,11 +67,6 @@ async function persistUser(db: DrizzleDb | null, user: import('../identity.ts').
  *     left untouched on an existing row so a session created before the push
  *     token is acquired (or while the DB hydration failed) can never wipe a
  *     previously registered token.
- *
- * @param {DrizzleDb|null} db
- * @param {DeviceRecord} device
- * @param {'registration'|'unregistration'|'session'} [action]
- * @returns {Promise<void>}
  */
 async function persistDevice(db: DrizzleDb | null, device: DeviceRecord, action: 'registration' | 'unregistration' | 'session' = 'registration'): Promise<void> {
   if (!db || !device) return;
@@ -89,7 +80,6 @@ async function persistDevice(db: DrizzleDb | null, device: DeviceRecord, action:
     lastUnregisteredAt: device.lastUnregisteredAt ? new Date(device.lastUnregisteredAt) : null,
     updatedAt: new Date(),
   };
-  /** @type {Record<string, unknown>} */
   const set: Record<string, unknown> = {
     userId: values.userId,
     platform: values.platform,
@@ -136,11 +126,7 @@ async function persistDevice(db: DrizzleDb | null, device: DeviceRecord, action:
  * logs the prune explicitly so a dead token is never again indistinguishable
  * from a successful delivery in the logs. Never logs the token itself.
  *
- * @param {DrizzleDb|null} db
- * @param {Stores} state
- * @param {string} deviceId
- * @param {string} reason - e.g. `'UNREGISTERED'` or `'INVALID_ARGUMENT'`.
- * @returns {Promise<void>}
+ * @param reason - e.g. `'UNREGISTERED'` or `'INVALID_ARGUMENT'`.
  */
 async function pruneDeadDevice(db: DrizzleDb | null, state: Stores, deviceId: string, reason: string): Promise<void> {
   const removed = removeDevice(state, deviceId);
@@ -159,11 +145,6 @@ async function pruneDeadDevice(db: DrizzleDb | null, state: Stores, deviceId: st
 
 /**
  * Persist a new block relationship.
- *
- * @param {DrizzleDb|null} db
- * @param {string} blockerId
- * @param {string} blockeeId
- * @returns {Promise<void>}
  */
 async function persistBlock(db: DrizzleDb | null, blockerId: string, blockeeId: string): Promise<void> {
   if (!db) return;
@@ -183,11 +164,6 @@ async function persistBlock(db: DrizzleDb | null, blockerId: string, blockeeId: 
 
 /**
  * Remove a persisted block relationship.
- *
- * @param {DrizzleDb|null} db
- * @param {string} blockerId
- * @param {string} blockeeId
- * @returns {Promise<void>}
  */
 async function deletePersistedBlock(db: DrizzleDb | null, blockerId: string, blockeeId: string): Promise<void> {
   if (!db) return;
@@ -205,9 +181,6 @@ async function deletePersistedBlock(db: DrizzleDb | null, blockerId: string, blo
  *
  * Drizzle hands back `Date` objects for timestamp columns, but a raw driver row
  * (or a stubbed db in tests) may yield a string or nothing at all.
- *
- * @param {Date|string|null|undefined} value
- * @returns {string|null}
  */
 function toIsoString(value: Date | string | null | undefined): string | null {
   return value instanceof Date ? value.toISOString() : value ?? null;
@@ -217,10 +190,9 @@ function toIsoString(value: Date | string | null | undefined): string | null {
  * Run a single hydration step, logging the outcome.  Failures are swallowed so
  * a partial DB outage can never prevent the server from starting.
  *
- * @param {string} label singular record name used in the log lines
- * @param {() => Promise<number>} hydrate resolves to the number of rows read
- * @param {{ required?: boolean }} [opts] when `required`, rethrow the failure
- * @returns {Promise<void>}
+ * @param label singular record name used in the log lines
+ * @param hydrate resolves to the number of rows read
+ * @param opts when `required`, rethrow the failure
  */
 async function runHydrationStep(label: string, hydrate: () => Promise<number>, { required = false }: { required?: boolean; } = {}): Promise<void> {
   try {
@@ -238,10 +210,7 @@ async function runHydrationStep(label: string, hydrate: () => Promise<number>, {
 /**
  * Populate `state.users` with the claimed identities.
  *
- * @param {DrizzleDb} db
- * @param {Stores} state
- * @param {any} usersTable
- * @returns {Promise<number>} number of rows read
+ * @returns number of rows read
  */
 async function hydrateUsers(db: DrizzleDb, state: Stores, usersTable: any): Promise<number> {
   const rows = await db.select().from(usersTable);
@@ -261,10 +230,7 @@ async function hydrateUsers(db: DrizzleDb, state: Stores, usersTable: any): Prom
 /**
  * Populate `state.devices` / `state.userDevices` with the device registrations.
  *
- * @param {DrizzleDb} db
- * @param {Stores} state
- * @param {any} devicesTable
- * @returns {Promise<number>} number of rows read
+ * @returns number of rows read
  */
 async function hydrateDevices(db: DrizzleDb, state: Stores, devicesTable: any): Promise<number> {
   const rows = await db.select().from(devicesTable);
@@ -294,10 +260,7 @@ async function hydrateDevices(db: DrizzleDb, state: Stores, devicesTable: any): 
 /**
  * Populate `state.blocks` with the persisted block relationships.
  *
- * @param {DrizzleDb} db
- * @param {Stores} state
- * @param {any} blocksTable
- * @returns {Promise<number>} number of rows read
+ * @returns number of rows read
  */
 async function hydrateBlocks(db: DrizzleDb, state: Stores, blocksTable: any): Promise<number> {
   const rows = await db.select().from(blocksTable);
@@ -318,10 +281,6 @@ async function hydrateBlocks(db: DrizzleDb, state: Stores, blocksTable: any): Pr
  * This is a best-effort operation: failures are logged but do not prevent the
  * server from starting.  When `db` is null the function is a no-op (i.e. tests
  * and deployments without `DATABASE_URL` are unaffected).
- *
- * @param {DrizzleDb|null} db
- * @param {Stores} state
- * @returns {Promise<void>}
  */
 async function loadPersistedStateFromDb(db: DrizzleDb | null, state: Stores): Promise<void> {
   if (!db) return;

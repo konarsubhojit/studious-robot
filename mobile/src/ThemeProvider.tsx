@@ -16,9 +16,7 @@ import type { ReactNode } from 'react';
  * `useTheme()`/`useThemedStyles()` don't pull the persistence layer (and its
  * native `react-native-fs` dependency) into their import graph.
  *
- * @param {object} props
- * @param {string} [props.initialMode] - Seed mode before the persisted one loads.
- * @param {import('react').ReactNode} props.children
+ * @param props.initialMode - Seed mode before the persisted one loads.
  */
 export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, children }: { initialMode?: string; children: ReactNode; }) {
   const systemScheme = useColorScheme();

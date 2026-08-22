@@ -6,9 +6,6 @@ import ErrorState from './ErrorState';
  * Built on the shared `ErrorState` so a dropped connection is announced as an
  * alert and offers the same recovery affordance as every other failure in the
  * app.
- *
- * @param {object} props
- * @param {() => void} props.onRetry
  */
 export default function ReconnectBanner({ onRetry }: { onRetry: () => void; }) {
   return (

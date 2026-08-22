@@ -34,8 +34,6 @@ let reduceMotionEnabled = false;
  * the current value.
  *
  * Safe to call more than once; each call returns its own unsubscribe function.
- *
- * @returns {() => void} unsubscribe
  */
 export function initHaptics(): () => void {
   let cancelled = false;
@@ -74,7 +72,7 @@ export function initHaptics(): () => void {
   };
 }
 
-/** @returns {boolean} true when haptics are suppressed by accessibility settings. */
+/** @returns true when haptics are suppressed by accessibility settings. */
 export function areHapticsSuppressed(): boolean {
   return reduceMotionEnabled;
 }
@@ -83,8 +81,7 @@ export function areHapticsSuppressed(): boolean {
  * Fires the named haptic pattern, unless the OS accessibility settings ask for
  * reduced motion. Never throws.
  *
- * @param {keyof typeof HAPTIC_PATTERNS} pattern
- * @returns {boolean} true when a vibration was actually triggered.
+ * @returns true when a vibration was actually triggered.
  */
 export function triggerHaptic(pattern: keyof typeof HAPTIC_PATTERNS): boolean {
   const durationMs = HAPTIC_PATTERNS[pattern];

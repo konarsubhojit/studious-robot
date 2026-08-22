@@ -10,15 +10,9 @@ let googleConfigured = false;
 /**
  * The lazily `require`d Google Sign-In module: `undefined` before the first
  * load attempt, `null` when the native module is absent from this build.
- *
- * @type {any}
  */
 let cachedGoogleSignin: any;
 
-/**
- * @param {unknown} error
- * @returns {boolean}
- */
 function isFirebaseAppUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : '';
   return (
@@ -30,8 +24,7 @@ function isFirebaseAppUnavailableError(error: unknown): boolean {
 /**
  * Translate a missing-Firebase-app failure into an actionable error.
  *
- * @param {unknown} error
- * @returns {unknown} the original error, or a coded replacement.
+ * @returns the original error, or a coded replacement.
  */
 function toAuthError(error: unknown): unknown {
   if (isFirebaseAppUnavailableError(error)) {
@@ -91,26 +84,14 @@ function configureGoogle() {
   googleConfigured = true;
 }
 
-/**
- * @param {(user: import('@react-native-firebase/auth').FirebaseAuthTypes.User|null) => void} listener
- * @returns {() => void} unsubscribe
- */
 export function observeAuthState(listener: (user: FirebaseAuthTypes.User | null) => void): () => void {
   return getAuth().onAuthStateChanged(listener);
 }
 
-/**
- * @param {string} email
- * @param {string} password
- */
 export async function registerWithEmail(email: string, password: string) {
   return getAuth().createUserWithEmailAndPassword(email.trim(), password);
 }
 
-/**
- * @param {string} email
- * @param {string} password
- */
 export async function signInWithEmail(email: string, password: string) {
   return getAuth().signInWithEmailAndPassword(email.trim(), password);
 }

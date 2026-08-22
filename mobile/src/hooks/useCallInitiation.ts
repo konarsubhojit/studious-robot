@@ -12,12 +12,7 @@ import { logError } from '../appLogger';
  * Extracted out of `AppShell` so this concern is independently testable and
  * the component itself stays focused on screen routing / composition.
  *
- * @param {{
- *   isInCall: boolean,
- *   setCalleeId: (peerId: string) => void,
- *   placeCall: (peerId?: string) => Promise<void>,
- *   handleVideoToggle: () => void,
- * }} params
+ * @param params
  */
 export default function useCallInitiation({ isInCall, setCalleeId, placeCall, handleVideoToggle }: {
         isInCall: boolean;
@@ -34,7 +29,7 @@ export default function useCallInitiation({ isInCall, setCalleeId, placeCall, ha
    * the Chats tab's video-call header button).
    */
   const startVideoCallWith = useCallback(
-    (/** @type {string} */ peerId: string) => {
+    (peerId: string) => {
       setCalleeId(peerId);
       placeCall(peerId).catch(error => {
         logError('placeCall (video) failed', error);
@@ -48,7 +43,7 @@ export default function useCallInitiation({ isInCall, setCalleeId, placeCall, ha
    * turns the local camera off once it connects (see the effect below).
    */
   const startAudioCallWith = useCallback(
-    (/** @type {string} */ peerId: string) => {
+    (peerId: string) => {
       pendingAudioOnlyCallRef.current = true;
       setCalleeId(peerId);
       placeCall(peerId).catch(error => {

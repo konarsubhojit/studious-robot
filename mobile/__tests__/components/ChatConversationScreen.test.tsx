@@ -5,15 +5,15 @@ import ChatConversationScreen from '../../src/components/ChatConversationScreen'
 
 jest.mock(
   '../../src/components/IconButton',
-  () => (/** @type {any} */ props: any) => require('react').createElement('IconButton', props),
+  () => (props: any) => require('react').createElement('IconButton', props),
 );
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
-function findAllByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID && typeof node.type === 'string');
+function findAllByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
 function makeMessage(overrides = {}) {
@@ -30,8 +30,7 @@ function makeMessage(overrides = {}) {
   };
 }
 
-function render(/** @type {any} */ props: any) {
-  /** @type {any} */
+function render(props: any) {
   let tree: any;
   act(() => {
     tree = renderer.create(<ChatConversationScreen {...props} />);
@@ -64,7 +63,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: true },
     });
 
-    const header = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'user-bob');
+    const header = tree.root.findAll((n: any) => n.props?.children === 'user-bob');
     expect(header.length).toBeGreaterThan(0);
   });
 
@@ -81,8 +80,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((/** @type {any} */ item: any) => item.type === 'message');
-    expect(messageItems.map((/** @type {any} */ item: any) => item.message.messageId)).toEqual(['m1', 'm2']);
+    const messageItems = list.props.data.filter((item: any) => item.type === 'message');
+    expect(messageItems.map((item: any) => item.message.messageId)).toEqual(['m1', 'm2']);
   });
 
   test('back button calls onBack', () => {
@@ -191,7 +190,7 @@ describe('ChatConversationScreen', () => {
     expect(rows).toHaveLength(2);
 
     const retryLabel = tree.root.findAll(
-      (/** @type {any} */ n: any) => n.props?.accessibilityLabel === 'Retry sending message',
+      (n: any) => n.props?.accessibilityLabel === 'Retry sending message',
     )[0];
     expect(retryLabel).toBeDefined();
     act(() => {
@@ -285,7 +284,7 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const dateItems = list.props.data.filter((/** @type {any} */ item: any) => item.type === 'date');
+    const dateItems = list.props.data.filter((item: any) => item.type === 'date');
     expect(dateItems).toHaveLength(1);
     expect(dateItems[0].label).toBe('Today');
   });
@@ -308,8 +307,8 @@ describe('ChatConversationScreen', () => {
     });
 
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItems = list.props.data.filter((/** @type {any} */ item: any) => item.type === 'message');
-    expect(messageItems.map((/** @type {any} */ item: any) => item.isGroupEnd)).toEqual([false, true]);
+    const messageItems = list.props.data.filter((item: any) => item.type === 'message');
+    expect(messageItems.map((item: any) => item.isGroupEnd)).toEqual([false, true]);
 
     const ticks = findAllByTestId(tree, 'chat-message-tick');
     expect(ticks).toHaveLength(1);
@@ -387,7 +386,7 @@ describe('ChatConversationScreen', () => {
       currentUserId: 'user-alice',
     });
     const list = findByTestId(tree, 'chat-message-list');
-    const messageItem = list.props.data.find((/** @type {any} */ item: any) => item.type === 'message');
+    const messageItem = list.props.data.find((item: any) => item.type === 'message');
     expect(findByTestId(tree, 'chat-sticky-date')).toBeNull();
 
     act(() => {
@@ -437,7 +436,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: true },
     });
     expect(findByTestId(online, 'chat-presence-row')).not.toBeNull();
-    expect(online.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Online').length).toBeGreaterThan(0);
+    expect(online.root.findAll((n: any) => n.props?.children === 'Online').length).toBeGreaterThan(0);
 
     const offline = render({
       peerId: 'user-bob',
@@ -448,7 +447,7 @@ describe('ChatConversationScreen', () => {
       peerPresence: { online: false },
     });
     expect(findByTestId(offline, 'chat-presence-row')).not.toBeNull();
-    expect(offline.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Offline').length).toBeGreaterThan(0);
+    expect(offline.root.findAll((n: any) => n.props?.children === 'Offline').length).toBeGreaterThan(0);
   });
 
   test('composer input applies a focus style when focused and clears it on blur', () => {
@@ -882,7 +881,7 @@ describe('ChatConversationScreen', () => {
 
   test('collapses consecutive calls with the same outcome into one row', () => {
     const createdAt = new Date();
-    const makeCall = (/** @type {any} */ callId: any, /** @type {any} */ offsetMinutes: any) => ({
+    const makeCall = (callId: any, offsetMinutes: any) => ({
       type: 'call',
       callId,
       direction: 'incoming',
@@ -1241,7 +1240,7 @@ describe('ChatConversationScreen attachments', () => {
 
     const notice = findByTestId(tree, 'chat-attachment-upload-progress');
     expect(notice).not.toBeNull();
-    const text = notice.findAll((/** @type {any} */ n: any) => typeof n.props?.children === 'string')[0];
+    const text = notice.findAll((n: any) => typeof n.props?.children === 'string')[0];
     expect(text.props.children).toContain('42%');
   });
 

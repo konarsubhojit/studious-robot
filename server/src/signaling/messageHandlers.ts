@@ -21,8 +21,7 @@ import { isManagedAttachmentUrl, loadR2Config, validateAttachmentRequest } from 
  */
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -31,11 +30,8 @@ function errorMessage(error: unknown): string {
 /**
  * Validate a message body, returning the trimmed text or an error code.
  *
- * @param {unknown} value
- * @param {{ allowEmpty?: boolean }} [options] - An attachment message may carry
+ * @param options - An attachment message may carry
  *   an empty body: the caption is optional, the attachment is the content.
- * @returns {{ body: string, error?: undefined, message?: undefined }
- *   | { body?: undefined, error: string, message: string }}
  */
 function validateBody(value: unknown, { allowEmpty = false }: { allowEmpty?: boolean; } = {}): { body: string; error?: undefined; message?: undefined; } |
 { body?: undefined; error: string; message: string; } {
@@ -64,11 +60,6 @@ function validateBody(value: unknown, { allowEmpty = false }: { allowEmpty?: boo
  * requests, and only the second one decides what the recipient is shown.
  * The URL must be one this deployment handed out — an arbitrary URL would make
  * every recipient fetch a host of the sender's choosing.
- *
- * @param {string} type
- * @param {unknown} rawAttachment
- * @returns {{ attachment: Record<string, any>, error?: undefined, message?: undefined }
- *   | { attachment?: undefined, error: string, message: string }}
  */
 function validateAttachment(type: string, rawAttachment: unknown): { attachment: Record<string, any>; error?: undefined; message?: undefined; } |
 { attachment?: undefined; error: string; message: string; } {
@@ -128,10 +119,6 @@ function validateAttachment(type: string, rawAttachment: unknown): { attachment:
  * `system` is server-owned, so a client may not claim it; an unknown type is
  * rejected outright (a *stored* message with an unknown type is a different
  * matter — readers render those as a neutral placeholder).
- *
- * @param {unknown} value
- * @returns {{ type: string, error?: undefined, message?: undefined }
- *   | { type?: undefined, error: string, message: string }}
  */
 function validateMessageType(value: unknown): { type: string; error?: undefined; message?: undefined; } |
 { type?: undefined; error: string; message: string; } {
@@ -145,10 +132,6 @@ function validateMessageType(value: unknown): { type: string; error?: undefined;
 /**
  * Deliver a saved message to the recipient: over their live sockets, and via
  * push to every registered device that has no socket of its own.
- *
- * @param {import('socket.io').Server} io
- * @param {import('../stores/contracts.ts').ServerState} state
- * @param {import('../stores/contracts.ts').MessageRecord} message
  */
 function deliverMessage(io: import('socket.io').Server, state: import('../stores/contracts.ts').ServerState, message: import('../stores/contracts.ts').MessageRecord) {
   const envelope = {
@@ -185,9 +168,6 @@ function deliverMessage(io: import('socket.io').Server, state: import('../stores
 
 /**
  * Register the `message.*` socket handlers for one connection.
- *
- * @param {import('socket.io').Socket} socket
- * @param {{ io: object, state: object }} ctx
  */
 /**
  * Client-supplied message ids are opaque to the server, but they end up in
@@ -199,8 +179,7 @@ const CLIENT_MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 /**
  * Normalise and validate a client-supplied message id.
  *
- * @param {unknown} value
- * @returns {string|null} the id, or `null` when it is unusable
+ * @returns the id, or `null` when it is unusable
  */
 function parseClientMessageId(value: unknown): string | null {
   const normalised = normaliseId(value);
@@ -213,8 +192,7 @@ function parseClientMessageId(value: unknown): string | null {
  * and anything that is not a symbol/emoji — a reaction is not a second, tiny
  * message body.
  *
- * @param {unknown} value
- * @returns {string|null} the emoji, or `null` when it is unusable.
+ * @returns the emoji, or `null` when it is unusable.
  */
 function validateReactionEmoji(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -229,15 +207,13 @@ function validateReactionEmoji(value: unknown): string | null {
 /**
  * Register the text-chat socket handlers on a connected socket.
  *
- * @param {import('socket.io').Socket} socket
- * @param {{ io: import('socket.io').Server,
- *   state: import('../stores/contracts.ts').ServerState }} ctx
+ * @param ctx
  */
 function registerMessageHandlers(socket: import('socket.io').Socket, { io, state }: {
         io: import('socket.io').Server;
         state: import('../stores/contracts.ts').ServerState;
     }) {
-  socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, /** @type {Function|undefined} */ ack: Function | undefined) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_SEND, async (payload = {}, ack: Function | undefined) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_SEND)) {
       return;
     }
@@ -481,7 +457,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
    * a request for a message the caller did not write matches nothing and is
    * reported as `not_found` rather than silently succeeding.
    */
-  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, /** @type {Function|undefined} */ ack: Function | undefined) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_DELETE, async (payload = {}, ack: Function | undefined) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_DELETE)) {
       return;
     }
@@ -594,7 +570,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
    * they never left) is a no-op that still acknowledges successfully, so a
    * retry after a flaky connection cannot toggle the reaction off.
    */
-  socket.on(CLIENT_EVENTS.MESSAGE_REACT, async (payload = {}, /** @type {Function|undefined} */ ack: Function | undefined) => {
+  socket.on(CLIENT_EVENTS.MESSAGE_REACT, async (payload = {}, ack: Function | undefined) => {
     if (!requireSocketSession(socket, ack, CLIENT_EVENTS.MESSAGE_REACT)) {
       return;
     }

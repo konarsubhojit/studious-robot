@@ -9,7 +9,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useCallHistory(params);
   return null;
 }
@@ -22,7 +22,6 @@ function setup(overrides = {}) {
     userId: 'alice',
     ...overrides,
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);

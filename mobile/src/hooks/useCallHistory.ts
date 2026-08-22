@@ -17,20 +17,14 @@ const MAX_CALL_HISTORY = 50;
 export type CallHistoryEntry = { callId: string; callerId: string; calleeId: string; direction: 'incoming' | 'outgoing'; status?: string; endReason?: string | null; createdAt?: string; durationSeconds?: number | null; isRead?: boolean; };
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
 /**
- * @param {{
- *   authedFetchRef: { current: Function | null },
- *   sessionIdRef: { current: string | null },
- *   signalingUrl: string,
- *   userId: string,
- * }} params
+ * @param params
  */
 export default function useCallHistory({ authedFetchRef, sessionIdRef, signalingUrl, userId }: {
         authedFetchRef: { current: Function | null; };
@@ -58,7 +52,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
   );
 
   /** Append or update a call history entry (deduplicates by callId). */
-  const addToHistory = useCallback((/** @type {CallHistoryEntry} */ entry: CallHistoryEntry) => {
+  const addToHistory = useCallback((entry: CallHistoryEntry) => {
     setCallHistory(prev => {
       const without = prev.filter(e => e.callId !== entry.callId);
       return [entry, ...without].slice(0, MAX_CALL_HISTORY);
@@ -75,7 +69,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
    * populate `callHistory`.  Safe to call repeatedly; silently swallows
    * network errors so it never disrupts other call-flow operations.
    *
-   * @param {number} [limit=20]
+   * @param [limit=20]
    */
   const fetchCallHistory = useCallback(
     async (limit = 20) => {
@@ -84,7 +78,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
       try {
         const trimmedUrl = signalingUrl.trim();
         const trimmedUserId = userId.trim();
-        const response = await authedFetchRef.current?.((/** @type {string} */ sid: string) => ({
+        const response = await authedFetchRef.current?.((sid: string) => ({
           url: `${trimmedUrl}${API_ROUTES.CALLS}?sessionId=${encodeURIComponent(
             sid,
           )}&limit=${limit}`,
@@ -92,7 +86,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         if (!response?.ok) return;
         const data = await response.json();
         if (!Array.isArray(data.calls)) return;
-        const entries = data.calls.map((/** @type {any} */ call: any) => ({
+        const entries = data.calls.map((call: any) => ({
           callId: call.callId,
           callerId: call.callerId,
           calleeId: call.calleeId,

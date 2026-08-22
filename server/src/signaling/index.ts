@@ -14,10 +14,6 @@ import { verboseLog } from '../lib/verbose.ts';
 /**
  * Remove `socket` from a legacy signaling room, tidying up the room set and
  * notifying any remaining peer.
- *
- * @param {import('socket.io').Socket} socket
- * @param {string} roomId
- * @param {Map<string, Set<string>>} rooms
  */
 function leaveRoom(socket: import('socket.io').Socket, roomId: string, rooms: Map<string, Set<string>>) {
   const room = rooms.get(roomId);
@@ -42,11 +38,6 @@ function leaveRoom(socket: import('socket.io').Socket, roomId: string, rooms: Ma
  * Without this, a call that reaches `accepted` / `connecting_media` and then
  * loses both peers stays non-terminal forever and permanently marks both
  * participants busy.
- *
- * @param {import('socket.io').Server} io
- * @param {import('../stores/contracts.ts').ServerState} state
- * @param {string|undefined} userId
- * @param {number} graceMs
  */
 function scheduleParticipantDisconnectCleanup(io: import('socket.io').Server, state: import('../stores/contracts.ts').ServerState, userId: string | undefined, graceMs: number) {
   if (!userId) return;
@@ -64,10 +55,6 @@ function scheduleParticipantDisconnectCleanup(io: import('socket.io').Server, st
  * Emit the callId ↔ correlationId link so a call can be followed from the
  * client log (which stamps every event with the same correlation id) into the
  * server log, where subsequent lines are keyed by callId.
- *
- * @param {import('socket.io').Socket} socket
- * @param {string} callId
- * @param {string} eventName
  */
 function logCallCorrelation(socket: import('socket.io').Socket, callId: string, eventName: string) {
   const correlationId = socket.data.identity?.correlationId;
@@ -81,12 +68,7 @@ function logCallCorrelation(socket: import('socket.io').Socket, callId: string, 
 /**
  * Wire up all Socket.IO connection and event handlers.
  *
- * @param {import('socket.io').Server} io
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   ringingTimeoutMs: number,
- *   participantDisconnectGraceMs?: number,
- * }} ctx
+ * @param ctx
  */
 function registerSocketHandlers(
   io: import('socket.io').Server,
@@ -161,7 +143,6 @@ function registerSocketHandlers(
       });
     });
     // Track which room this socket is currently in (one room per socket).
-    /** @type {string|null} */
     let currentRoom: string | null = null;
 
     socket.on(CLIENT_EVENTS.JOIN_ROOM, (roomId) => {
@@ -466,7 +447,7 @@ function registerSocketHandlers(
       const reported = Array.isArray(parsed.activeCallIds)
         ? parsed.activeCallIds
         : [parsed.callId];
-      const activeCallIds = (reported.map((/** @type {unknown} */ value: unknown) => normaliseId(value)).filter(Boolean) as string[]);
+      const activeCallIds = (reported.map((value: unknown) => normaliseId(value)).filter(Boolean) as string[]);
       const cleared = reconcileClientCallState(state, userId, activeCallIds, {
         onTransition: (call, previousStatus, reason) =>
           notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),

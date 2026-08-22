@@ -32,7 +32,6 @@ describe('describeCallState', () => {
 });
 
 describe('announceForAccessibility', () => {
-  /** @type {jest.SpyInstance} */
   let spy: jest.SpyInstance;
 
   beforeEach(() => {

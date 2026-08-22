@@ -25,16 +25,14 @@ jest.mock('../../src/settingsStorage', () => ({
 const authService = require('../../src/authService');
 const { loadIdentity, saveIdentity } = require('../../src/settingsStorage');
 
-/** @type {any} */
 let authListener: any;
 
-function TestHook(/** @type {any} */ { resultRef, updateStatus }: any) {
+function TestHook({ resultRef, updateStatus }: any) {
   resultRef.current = useIdentity(updateStatus);
   return null;
 }
 
 function setup(updateStatus = jest.fn()) {
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} updateStatus={updateStatus} />);
@@ -45,7 +43,7 @@ function setup(updateStatus = jest.fn()) {
 beforeEach(() => {
   jest.clearAllMocks();
   authListener = null;
-  (authService.observeAuthState as jest.Mock).mockImplementation(/** @type {any} */ listener => {
+  (authService.observeAuthState as jest.Mock).mockImplementation(listener => {
     authListener = listener;
     return jest.fn();
   });

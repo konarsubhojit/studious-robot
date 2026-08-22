@@ -4,8 +4,7 @@ import { logInfo, logWarn } from './appLogger';
 import { ensureBluetoothPermission } from './permissions';
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -54,9 +53,6 @@ const AUDIO_ROUTE_FALLBACK_MESSAGE =
 /**
  * Convert a route constant into a display label, falling back to the raw value
  * for any future/unknown device names.
- *
- * @param {string} [route]
- * @returns {string}
  */
 export function getAudioRouteLabel(route?: string): string {
   return (route && AUDIO_ROUTE_LABELS[route]) || route || 'Unknown';
@@ -72,7 +68,7 @@ export function getAudioRouteLabel(route?: string): string {
  * WebRTC/InCallManager) must be prevented by manifest permissions; JS cannot
  * catch a SIGABRT or AndroidRuntime crash after the native thread aborts.
  *
- * @returns {{ ok: true } | { ok: false, error: unknown, message: string }} a failure
+ * @returns a failure
  *   always carries a user-facing message.
  */
 export function startAudioSession(): { ok: true; } | { ok: false; error: unknown; message: string; } {
@@ -89,7 +85,7 @@ export function startAudioSession(): { ok: true; } | { ok: false; error: unknown
  * Stop the in-call audio session.  Releases audio focus, deactivates the
  * proximity sensor override, and allows the screen to turn off normally.
  *
- * @returns {{ ok: true } | { ok: false, error: unknown, message: string }} a failure
+ * @returns a failure
  *   always carries a user-facing message.
  */
 export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown; message: string; } {
@@ -108,9 +104,8 @@ export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown;
  * When a Bluetooth audio device is paired and connected, `speakerEnabled=false`
  * will route through Bluetooth rather than the earpiece.
  *
- * @param {boolean} speakerEnabled - `true` to route through the loudspeaker;
+ * @param speakerEnabled - `true` to route through the loudspeaker;
  *   `false` to route through the earpiece (or Bluetooth if available).
- * @returns {{ ok: boolean, selected: string|null, error?: unknown, message?: string }}
  */
 export function setAudioRoute(speakerEnabled: boolean): { ok: boolean; selected: string | null; error?: unknown; message?: string; } {
   try {
@@ -150,16 +145,12 @@ export function setAudioRoute(speakerEnabled: boolean): { ok: boolean; selected:
  * (e.g. '["SPEAKER_PHONE","EARPIECE"]') and `selectedAudioDevice` as a plain
  * string ('' when none is selected).  This helper tolerates already-parsed
  * arrays, malformed JSON, and missing fields.
- *
- * @param {{ availableAudioDeviceList?: unknown, selectedAudioDevice?: unknown } | null} [payload]
- * @returns {{ available: string[], selected: string|null }}
  */
 export function parseAudioDeviceStatus(payload?: { availableAudioDeviceList?: unknown; selectedAudioDevice?: unknown; } | null): { available: string[]; selected: string | null; } {
   if (!payload || typeof payload !== 'object') {
     return { available: [], selected: null };
   }
 
-  /** @type {unknown[]} */
   let available: unknown[] = [];
   const rawList = payload.availableAudioDeviceList;
   if (Array.isArray(rawList)) {
@@ -177,7 +168,6 @@ export function parseAudioDeviceStatus(payload?: { availableAudioDeviceList?: un
 
   // Keep only recognised, de-duplicated device names so the UI never renders
   // empty or "NONE" entries.
-  /** @type {Set<string>} */
   const seen: Set<string> = new Set();
   available = available.filter(device => {
     if (typeof device !== 'string') {
@@ -202,21 +192,11 @@ export function parseAudioDeviceStatus(payload?: { availableAudioDeviceList?: un
  * Explicitly route call audio to the given device.  Resolves with the updated
  * device status (available list + selected device) so callers can refresh UI.
  *
- * @param {string} route - One of {@link AUDIO_ROUTES}.
- * @param {{ fallbackToSpeaker?: boolean }} [options] - when false, a failed
+ * @param route - One of {@link AUDIO_ROUTES}.
+ * @param options - when false, a failed
  *   Bluetooth selection is reported without forcing the loudspeaker, so the
  *   caller can try the next device in its own preference order.
- * @returns {Promise<
- *   | { available: string[], selected: string|null, ok: true }
- *   | {
- *       available: string[],
- *       selected: string|null,
- *       ok: false,
- *       reason?: string,
- *       error?: unknown,
- *       message: string,
- *     }
- * >} a failure always carries a user-facing message.
+ * @returns a failure always carries a user-facing message.
  */
 export async function chooseAudioRoute(route: string, { fallbackToSpeaker = true }: { fallbackToSpeaker?: boolean; } = {}): Promise<{ available: string[]; selected: string | null; ok: true; } |
 {
@@ -276,8 +256,7 @@ export async function chooseAudioRoute(route: string, { fallbackToSpeaker = true
  * empty or contains nothing recognised, which is what the native side reports
  * for a brief moment right after the audio session starts.
  *
- * @param {string[]} [available]
- * @returns {string} one of {@link AUDIO_ROUTES}
+ * @returns one of {@link AUDIO_ROUTES}
  */
 export function selectPreferredAudioRoute(available: string[] = []): string {
   const devices = new Set(Array.isArray(available) ? available : []);
@@ -297,12 +276,9 @@ export function selectPreferredAudioRoute(available: string[] = []): string {
  * empty array: the first selection reports the available devices, and the
  * route is re-evaluated once against that freshly discovered list.
  *
- * @param {string[]} [available] - devices reported by the native module.
- * @param {{ allowRediscovery?: boolean }} [options] - internal recursion guard.
- * @returns {Promise<
- *   | { ok: true, selected: string, available: string[] }
- *   | { ok: false, selected: string, available: string[], message: string }
- * >} the applied route; a failure always carries a user-facing message.
+ * @param available - devices reported by the native module.
+ * @param options - internal recursion guard.
+ * @returns the applied route; a failure always carries a user-facing message.
  */
 export async function applyPreferredAudioRoute(available: string[] = [], { allowRediscovery = true }: { allowRediscovery?: boolean; } = {}): Promise<{ ok: true; selected: string; available: string[]; } |
 { ok: false; selected: string; available: string[]; message: string; }> {
@@ -345,8 +321,7 @@ export async function applyPreferredAudioRoute(available: string[] = [], { allow
  * Subscribe to native audio-device changes (headset plugged in, Bluetooth
  * connected/disconnected, route switched, …).
  *
- * @param {(status: { available: string[], selected: string|null }) => void} handler
- * @returns {() => void} unsubscribe function
+ * @returns unsubscribe function
  */
 export function subscribeAudioDevices(handler: (status: { available: string[]; selected: string | null; }) => void): () => void {
   const subscription = DeviceEventEmitter.addListener(NATIVE_DEVICE_EVENT, payload => {

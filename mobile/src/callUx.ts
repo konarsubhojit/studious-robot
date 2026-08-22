@@ -1,17 +1,10 @@
-/**
- * @param {number} value
- * @param {number} min
- * @param {number} max
- * @returns {number}
- */
 export function clamp(value: number, min: number, max: number): number {
   'worklet';
   return Math.min(Math.max(value, min), max);
 }
 
 /**
- * @param {number | null | undefined} totalSeconds
- * @returns {string} `mm:ss`, or `hh:mm:ss` past an hour.
+ * @returns `mm:ss`, or `hh:mm:ss` past an hour.
  */
 export function formatCallDuration(totalSeconds: number | null | undefined): string {
   const safeSeconds = Math.floor(Math.max(0, totalSeconds || 0));
@@ -33,9 +26,6 @@ export function formatCallDuration(totalSeconds: number | null | undefined): str
  *
  * The ring window is two minutes, so a raw second count ("117s") reads as
  * noise; anything from a minute up is shown as `m:ss`.
- *
- * @param {number} totalSeconds
- * @returns {string}
  */
 export function formatRingCountdown(totalSeconds: number): string {
   const safeSeconds = Math.floor(Math.max(0, totalSeconds || 0));
@@ -46,8 +36,7 @@ export function formatRingCountdown(totalSeconds: number): string {
 }
 
 /**
- * @param {string|null|undefined} id
- * @returns {string} up to two uppercase initials, `?` when unknown.
+ * @returns up to two uppercase initials, `?` when unknown.
  */
 export function deriveInitials(id: string | null | undefined): string {
   if (!id) return '?';
@@ -61,19 +50,12 @@ export function deriveInitials(id: string | null | undefined): string {
   return id.slice(0, 2).toUpperCase();
 }
 
-/**
- * @param {unknown} value
- * @returns {value is number}
- */
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**
  * Grade the live connection from the latest WebRTC stats sample.
- *
- * @param {{ rttMs?: number, packetLossRatio?: number, bitrateKbps?: number }} stats
- * @returns {{ bars: number, label: string }}
  */
 export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { rttMs?: number; packetLossRatio?: number; bitrateKbps?: number; }): { bars: number; label: string; } {
   if (

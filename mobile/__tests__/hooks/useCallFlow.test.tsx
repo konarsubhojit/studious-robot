@@ -115,7 +115,6 @@ jest.mock('../../src/webrtcConfig', () => ({
 }));
 
 jest.mock('../../src/callKeep', () => {
-  /** @type {any} */
   let pendingAnswerCallId: any = null;
   return {
     bringAppToForeground: jest.fn(() => true),
@@ -200,16 +199,14 @@ jest.mock('../../src/settingsStorage', () => ({
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
-function TestHook(/** @type {any} */ { resultRef }: any) {
+function TestHook({ resultRef }: any) {
   const result = useCallFlow();
   resultRef.current = result;
   return null;
 }
 
 function renderHook() {
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} />);
@@ -332,7 +329,7 @@ describe('useCallFlow', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const sessionRequest = (global.fetch as jest.Mock).mock.calls.find((/** @type {any} */ [url]: any) =>
+    const sessionRequest = (global.fetch as jest.Mock).mock.calls.find(([url]: any) =>
       String(url).endsWith('/session'),
     );
     expect(sessionRequest).toBeTruthy();
@@ -527,7 +524,6 @@ describe('useCallFlow', () => {
 
   test('calleePresence ignores stale presence responses for older calleeIds', async () => {
     jest.useFakeTimers();
-    /** @type {any} */
     const pending: any = [];
     global.fetch = (jest.fn(url => {
       if (String(url).endsWith('/session')) {
@@ -976,7 +972,7 @@ describe('useCallFlow handleCameraSwitch hardening', () => {
     return { kind: 'video', enabled: true, stop: jest.fn(), ...extra };
   }
 
-  function makeStream(/** @type {any} */ videoTrack: any) {
+  function makeStream(videoTrack: any) {
     return {
       getTracks: () => [videoTrack],
       getVideoTracks: () => [videoTrack],
@@ -1155,12 +1151,12 @@ describe('useCallFlow incoming-call ringing', () => {
    * Helper: find a handler registered with socket.on(event) on the most
    * recently created socket from the io() mock.
    */
-  function getSocketHandler(/** @type {any} */ event: any) {
+  function getSocketHandler(event: any) {
     const { io } = require('socket.io-client');
     // Find the most-recently created socket mock instance.
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]?.value;
     if (!socketMock) return undefined;
-    const call = socketMock.on.mock.calls.find((/** @type {any} */ [e]: any) => e === event);
+    const call = socketMock.on.mock.calls.find(([e]: any) => e === event);
     return call?.[1];
   }
 
@@ -1311,7 +1307,7 @@ describe('useCallFlow incoming-call ringing', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.initiate') {
         cb?.({
           ok: true,
@@ -1368,7 +1364,7 @@ describe('useCallFlow incoming-call ringing', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.initiate') {
         cb?.({
           ok: true,
@@ -1429,7 +1425,7 @@ describe('useCallFlow incoming-call ringing', () => {
     // Accept call – emitWithAck needs the socket emit to call back.
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call: { callId: 'call-accept', callerId: 'grace' } });
     });
 
@@ -1463,7 +1459,7 @@ describe('useCallFlow incoming-call ringing', () => {
     // Stub socket.emit for the decline ack.
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true });
     });
 
@@ -1523,7 +1519,7 @@ describe('useCallFlow incoming-call ringing', () => {
     const { resultRef } = await renderWithSocket();
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, clearedCallIds: ['phantom-call'] });
     });
 
@@ -1536,7 +1532,7 @@ describe('useCallFlow incoming-call ringing', () => {
       });
     });
 
-    const report = socketMock.emit.mock.calls.find((/** @type {any} */ [event]: any) => event === 'call.state.report');
+    const report = socketMock.emit.mock.calls.find(([event]: any) => event === 'call.state.report');
     expect(report).toBeDefined();
     expect(report[1].activeCallIds).toEqual([]);
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
@@ -1546,7 +1542,7 @@ describe('useCallFlow incoming-call ringing', () => {
     await renderWithSocket();
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true });
     });
 
@@ -1566,7 +1562,7 @@ describe('useCallFlow incoming-call ringing', () => {
     });
 
     expect(
-      socketMock.emit.mock.calls.some((/** @type {any} */ [event]: any) => event === 'call.state.report'),
+      socketMock.emit.mock.calls.some(([event]: any) => event === 'call.state.report'),
     ).toBe(false);
   });
 
@@ -1660,7 +1656,7 @@ describe('useCallFlow incoming-call ringing', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call: fakeCall });
     });
 
@@ -1692,7 +1688,7 @@ describe('useCallFlow incoming-call ringing', () => {
     const fakeCall = { callId: 'call-headless', callerId: 'leo' };
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call: fakeCall });
     });
 
@@ -1746,7 +1742,7 @@ describe('useCallFlow incoming-call ringing', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => cb?.({ ok: true }));
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => cb?.({ ok: true }));
 
     const { onEnd } = latestCallActionHandlers();
     await act(async () => {
@@ -1768,12 +1764,12 @@ describe('useCallFlow incoming-call ringing', () => {
 // ─── Session lifecycle (session.invalid) ───────────────────────────────────
 
 describe('useCallFlow session lifecycle', () => {
-  function getSocketHandler(/** @type {any} */ event: any, socketIndex = -1) {
+  function getSocketHandler(event: any, socketIndex = -1) {
     const { io } = require('socket.io-client');
     const index = socketIndex === -1 ? (io as jest.Mock).mock.results.length - 1 : socketIndex;
     const socketMock = (io as jest.Mock).mock.results[index]?.value;
     if (!socketMock) return undefined;
-    const call = socketMock.on.mock.calls.find((/** @type {any} */ [e]: any) => e === event);
+    const call = socketMock.on.mock.calls.find(([e]: any) => e === event);
     return call?.[1];
   }
 
@@ -1898,11 +1894,11 @@ describe('useCallFlow chat', () => {
    * recently created socket from the io() mock (same helper as the
    * "incoming-call ringing" describe block above).
    */
-  function getSocketHandler(/** @type {any} */ event: any) {
+  function getSocketHandler(event: any) {
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]?.value;
     if (!socketMock) return undefined;
-    const call = socketMock.on.mock.calls.find((/** @type {any} */ [e]: any) => e === event);
+    const call = socketMock.on.mock.calls.find(([e]: any) => e === event);
     return call?.[1];
   }
 
@@ -2054,7 +2050,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((/** @type {any} */ m: any) => m.messageId)).toEqual(['m2', 'm1']);
+    expect(resultRef.current.messagesByPeer.bob.map((m: any) => m.messageId)).toEqual(['m2', 'm1']);
 
     // Page further back with `before`; new (older) messages are appended and
     // duplicates are deduped by messageId.
@@ -2095,7 +2091,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((/** @type {any} */ m: any) => m.messageId)).toEqual(['m2', 'm1', 'm0']);
+    expect(resultRef.current.messagesByPeer.bob.map((m: any) => m.messageId)).toEqual(['m2', 'm1', 'm0']);
   });
 
   // ── markConversationRead ──────────────────────────────────────────────────
@@ -2141,7 +2137,7 @@ describe('useCallFlow chat', () => {
     });
 
     expect(resultRef.current.unreadTotal).toBe(0);
-    expect(resultRef.current.conversations.find((/** @type {any} */ c: any) => c.peerId === 'bob').unreadCount).toBe(0);
+    expect(resultRef.current.conversations.find((c: any) => c.peerId === 'bob').unreadCount).toBe(0);
   });
 
   // ── sendMessage ────────────────────────────────────────────────────────────
@@ -2180,7 +2176,7 @@ describe('useCallFlow chat', () => {
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
     let capturedPayload;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       if (event === 'message.send') {
         capturedPayload = payload;
         cb?.({
@@ -2234,7 +2230,7 @@ describe('useCallFlow chat', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'message.send') {
         cb?.({ ok: false, error: { code: 'invalid', message: 'body too long' } });
       }
@@ -2313,8 +2309,8 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(resultRef.current.messagesByPeer.bob.map((/** @type {any} */ m: any) => m.messageId)).toEqual(['srv-1']);
-    expect(resultRef.current.conversations.find((/** @type {any} */ c: any) => c.peerId === 'bob').unreadCount).toBe(1);
+    expect(resultRef.current.messagesByPeer.bob.map((m: any) => m.messageId)).toEqual(['srv-1']);
+    expect(resultRef.current.conversations.find((c: any) => c.peerId === 'bob').unreadCount).toBe(1);
     expect(resultRef.current.unreadTotal).toBe(1);
   });
 
@@ -2366,7 +2362,7 @@ describe('useCallFlow chat', () => {
     });
 
     expect(readRequestBody).toEqual({ sessionId: 'sess-chat', peerId: 'bob' });
-    expect(resultRef.current.conversations.find((/** @type {any} */ c: any) => c.peerId === 'bob').unreadCount).toBe(0);
+    expect(resultRef.current.conversations.find((c: any) => c.peerId === 'bob').unreadCount).toBe(0);
   });
 
   test('message.received refetches conversations for a brand-new peer not already in the list', async () => {
@@ -2415,7 +2411,7 @@ describe('useCallFlow chat', () => {
     });
 
     expect(fetchConversationsSpy).toHaveBeenCalled();
-    expect(resultRef.current.conversations.find((/** @type {any} */ c: any) => c.peerId === 'dave')).toBeDefined();
+    expect(resultRef.current.conversations.find((c: any) => c.peerId === 'dave')).toBeDefined();
   });
 
   // ── typing indicators ─────────────────────────────────────────────────────
@@ -2435,7 +2431,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const typingEmits = socketMock.emit.mock.calls.filter((/** @type {any} */ [event]: any) => event === 'message.typing');
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]: any) => event === 'message.typing');
     expect(typingEmits).toHaveLength(1);
     expect(typingEmits[0][1]).toEqual({
       version: expect.any(Number),
@@ -2459,8 +2455,8 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const typingEmits = socketMock.emit.mock.calls.filter((/** @type {any} */ [event]: any) => event === 'message.typing');
-    expect(typingEmits.map((/** @type {any} */ call: any) => call[1].isTyping)).toEqual([true, false]);
+    const typingEmits = socketMock.emit.mock.calls.filter(([event]: any) => event === 'message.typing');
+    expect(typingEmits.map((call: any) => call[1].isTyping)).toEqual([true, false]);
   });
 
   test('sendTypingIndicator is a no-op when there is no connected socket', async () => {
@@ -2578,7 +2574,6 @@ describe('useCallFlow chat', () => {
     });
 
     const { mediaDevices } = require('react-native-webrtc');
-    /** @type {any} */
     let resolveMedia: any;
     (mediaDevices.getUserMedia as jest.Mock).mockImplementationOnce(
       () =>
@@ -2587,7 +2582,6 @@ describe('useCallFlow chat', () => {
         }),
     );
 
-    /** @type {any} */
     let placeCallPromise: any;
     act(() => {
       placeCallPromise = resultRef.current.placeCall();
@@ -2606,7 +2600,7 @@ describe('useCallFlow chat', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.initiate') {
         cb?.({
           ok: true,
@@ -2653,7 +2647,7 @@ describe('useCallFlow chat', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.initiate') {
         cb?.({
           ok: true,
@@ -2737,9 +2731,8 @@ describe('useCallFlow chat', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    /** @type {any} */
     const mediaStateEmits: any = [];
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { callId: 'call-share-1', callerId: 'bob', calleeId: 'alice' } });
       } else if (event === 'call.media-state') {
@@ -2789,7 +2782,7 @@ describe('useCallFlow chat', () => {
    * Accept an incoming call with a peer-connection stub whose state callbacks
    * the test can fire by hand.
    */
-  async function acceptCallWithPeerConnection(/** @type {any} */ callId: any) {
+  async function acceptCallWithPeerConnection(callId: any) {
     const { resultRef, tree } = await renderWithSocket();
 
     const incomingHandler = getSocketHandler('call.incoming');
@@ -2804,7 +2797,6 @@ describe('useCallFlow chat', () => {
       getVideoTracks: () => [],
       getAudioTracks: () => [],
     });
-    /** @type {any} */
     const peerConnection: any = {
       addTrack: jest.fn(),
       getSenders: jest.fn(() => []),
@@ -2821,9 +2813,8 @@ describe('useCallFlow chat', () => {
 
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
-    /** @type {any} */
     const emits: any = [];
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       emits.push({ event, payload });
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { callId, callerId: 'bob', calleeId: 'alice' } });
@@ -2852,7 +2843,7 @@ describe('useCallFlow chat', () => {
       peerConnection.oniceconnectionstatechange?.();
     });
 
-    const connectedEmits = emits.filter((/** @type {any} */ entry: any) => entry.event === 'call.connected');
+    const connectedEmits = emits.filter((entry: any) => entry.event === 'call.connected');
     expect(connectedEmits).toHaveLength(1);
     expect(connectedEmits[0].payload).toEqual({
       version: 1,
@@ -2868,7 +2859,7 @@ describe('useCallFlow chat', () => {
       peerConnection.connectionState = 'connected';
       peerConnection.onconnectionstatechange?.();
     });
-    expect(emits.filter((/** @type {any} */ entry: any) => entry.event === 'call.connected')).toHaveLength(1);
+    expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(1);
   });
 
   test('heartbeats over call.media-state while the call is connected', async () => {
@@ -2882,7 +2873,7 @@ describe('useCallFlow chat', () => {
       });
 
       const beatsBefore = emits.filter(
-        (/** @type {any} */ entry: any) => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
+        (entry: any) => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
       ).length;
 
       await act(async () => {
@@ -2890,7 +2881,7 @@ describe('useCallFlow chat', () => {
       });
 
       const beats = emits.filter(
-        (/** @type {any} */ entry: any) => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
+        (entry: any) => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
       );
       expect(beats.length).toBeGreaterThan(beatsBefore);
       expect(beats[0].payload).toEqual({
@@ -2912,8 +2903,8 @@ describe('useCallFlow chat', () => {
         peerConnection.iceConnectionState = 'disconnected';
         peerConnection.oniceconnectionstatechange?.();
       });
-      // Still inside the grace window: a t/** @type {any} */ ransient dip is not reported.
-      expect(emits.some((/** @type {any} */ entry: any) => entry.event === 'call.connected')).toBe(false);
+      // Still inside the grace window: a transient dip is not reported.
+      expect(emits.some((entry: any) => entry.event === 'call.connected')).toBe(false);
 
       // Recovery cancels the pending report entirely.
       await act(async () => {
@@ -2922,7 +2913,7 @@ describe('useCallFlow chat', () => {
         jest.advanceTimersByTime(30000);
       });
       expect(
-        emits.filter((/** @type {any} */ entry: any) => entry.payload?.iceState === 'disconnected'),
+        emits.filter((entry: any) => entry.payload?.iceState === 'disconnected'),
       ).toHaveLength(0);
 
       // A connection that never comes back is reported so the server can end
@@ -2932,7 +2923,7 @@ describe('useCallFlow chat', () => {
         peerConnection.oniceconnectionstatechange?.();
         jest.advanceTimersByTime(30000);
       });
-      expect(emits.filter((/** @type {any} */ entry: any) => entry.payload?.iceState === 'failed')).toHaveLength(1);
+      expect(emits.filter((entry: any) => entry.payload?.iceState === 'failed')).toHaveLength(1);
     } finally {
       jest.useRealTimers();
     }
@@ -2968,7 +2959,7 @@ describe('useCallFlow chat', () => {
 
     const { RTCPeerConnection } = require('react-native-webrtc');
     expect(RTCPeerConnection).toHaveBeenCalledWith({ iceServers: stunOnly });
-    expect(emits.some((/** @type {any} */ entry: any) => entry.event === 'call.accept')).toBe(true);
+    expect(emits.some((entry: any) => entry.event === 'call.accept')).toBe(true);
   });
 });
 
@@ -2980,11 +2971,11 @@ describe('useCallFlow chat', () => {
 // and nothing on the server. These tests pin each of those paths.
 
 describe('useCallFlow answer path', () => {
-  function getSocketHandler(/** @type {any} */ event: any) {
+  function getSocketHandler(event: any) {
     const { io } = require('socket.io-client');
     const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]?.value;
     if (!socketMock) return undefined;
-    return socketMock.on.mock.calls.find((/** @type {any} */ [e]: any) => e === event)?.[1];
+    return socketMock.on.mock.calls.find(([e]: any) => e === event)?.[1];
   }
 
   function latestSocket() {
@@ -2992,7 +2983,7 @@ describe('useCallFlow answer path', () => {
     return (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
   }
 
-  function mockFetch(/** @type {any} */ routes: any) {
+  function mockFetch(routes: any) {
     global.fetch = (jest.fn(async url => {
       const target = String(url);
       const match = Object.keys(routes).find(key => target.includes(key));
@@ -3021,7 +3012,7 @@ describe('useCallFlow answer path', () => {
     return { resultRef, tree };
   }
 
-  async function ring(/** @type {any} */ resultRef: any, /** @type {any} */ tree: any, /** @type {any} */ call: any) {
+  async function ring(resultRef: any, tree: any, call: any) {
     const handler = getSocketHandler('call.incoming');
     await act(async () => {
       await handler({ call });
@@ -3076,7 +3067,7 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call });
     });
 
@@ -3137,7 +3128,7 @@ describe('useCallFlow answer path', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    const acceptRequest = (global.fetch as jest.Mock).mock.calls.find((/** @type {any} */ [url]: any) =>
+    const acceptRequest = (global.fetch as jest.Mock).mock.calls.find(([url]: any) =>
       String(url).includes('/calls/call-http/accept'),
     );
     expect(acceptRequest).toBeTruthy();
@@ -3175,7 +3166,7 @@ describe('useCallFlow answer path', () => {
 
     const { resultRef, tree } = await renderWithSocket();
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call: { callId: 'call-native', callerId: 'nina' } });
     });
 
@@ -3236,7 +3227,7 @@ describe('useCallFlow answer path', () => {
     );
     // The drain runs before the socket exists, so the decline must reach the
     // server over HTTP rather than being dropped.
-    const declineRequest = (global.fetch as jest.Mock).mock.calls.find((/** @type {any} */ [url]: any) =>
+    const declineRequest = (global.fetch as jest.Mock).mock.calls.find(([url]: any) =>
       String(url).includes('/calls/call-native-decline/decline'),
     );
     expect(declineRequest).toBeTruthy();
@@ -3251,7 +3242,7 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { ...call, status: 'accepted' } });
         return;
@@ -3267,7 +3258,7 @@ describe('useCallFlow answer path', () => {
     });
 
     const acceptEmits = () =>
-      socketMock.emit.mock.calls.filter((/** @type {any} */ [event]: any) => event === 'call.accept').length;
+      socketMock.emit.mock.calls.filter(([event]: any) => event === 'call.accept').length;
     expect(acceptEmits()).toBe(1);
 
     // The same call rings again (a duplicate push, or a rehydration that
@@ -3303,9 +3294,8 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    /** @type {any} */
     let ack: any = null;
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         ack = cb;
         return;
@@ -3325,7 +3315,7 @@ describe('useCallFlow answer path', () => {
     });
 
     expect(
-      socketMock.emit.mock.calls.filter((/** @type {any} */ [event]: any) => event === 'call.accept'),
+      socketMock.emit.mock.calls.filter(([event]: any) => event === 'call.accept'),
     ).toHaveLength(1);
     expect(sendPushReceipt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3342,7 +3332,7 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, firstCall);
 
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { ...firstCall, status: 'accepted' } });
         return;
@@ -3358,7 +3348,7 @@ describe('useCallFlow answer path', () => {
     mockFetch({
       '/calls/call-doomed/accept': { ok: false, status: 409, json: async () => ({}) },
     });
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: false, error: { code: 'invalid_state' } });
         return;
@@ -3387,7 +3377,7 @@ describe('useCallFlow answer path', () => {
     recordPendingAnswer('call-replay', 'test');
     const call = { callId: 'call-replay', callerId: 'nez', status: 'ringing' };
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { ...call, status: 'accepted' } });
         return;
@@ -3406,7 +3396,7 @@ describe('useCallFlow answer path', () => {
     }
 
     expect(
-      socketMock.emit.mock.calls.filter((/** @type {any} */ [event]: any) => event === 'call.accept'),
+      socketMock.emit.mock.calls.filter(([event]: any) => event === 'call.accept'),
     ).toHaveLength(1);
   });
 
@@ -3438,7 +3428,7 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
       if (event === 'call.accept') {
         cb?.({ ok: true, call: { ...call, status: 'accepted' } });
         return;
@@ -3539,9 +3529,8 @@ describe('useCallFlow answer path', () => {
 
   test('prefers an external audio device at call start and keeps the manual choice', async () => {
     const audioRouting = require('../../src/audioRouting');
-    /** @type {any} */
     let deviceChangeHandler: any = null;
-    (audioRouting.subscribeAudioDevices as jest.Mock).mockImplementation(/** @type {any} */ handler => {
+    (audioRouting.subscribeAudioDevices as jest.Mock).mockImplementation(handler => {
       deviceChangeHandler = handler;
       return jest.fn();
     });
@@ -3580,7 +3569,7 @@ describe('useCallFlow answer path', () => {
     await ring(resultRef, tree, call);
 
     const socketMock = latestSocket();
-    socketMock.emit.mockImplementation((/** @type {any} */ _event: any, /** @type {any} */ _payload: any, /** @type {any} */ cb: any) => {
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
       cb?.({ ok: true, call });
     });
 

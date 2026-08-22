@@ -9,10 +9,9 @@ import type NitroSound from 'react-native-nitro-sound';
  * `attachmentPicker.js`.
  */
 
-/** @type {typeof import('react-native-nitro-sound').default | null | undefined} */
 let _recorderCache: typeof NitroSound | null | undefined;
 
-/** @returns {typeof import('react-native-nitro-sound').default | null} */
+
 function loadRecorderModule(): typeof NitroSound | null {
   if (_recorderCache !== undefined) return _recorderCache;
   try {
@@ -43,7 +42,7 @@ export function isVoiceRecorderAvailable() {
 /**
  * Start recording a voice note to a temporary file.
  *
- * @returns {Promise<boolean>} `true` once recording has started, `false` when
+ * @returns `true` once recording has started, `false` when
  *   the native module isn't linked.
  */
 export async function startVoiceRecording(): Promise<boolean> {
@@ -60,7 +59,6 @@ export async function startVoiceRecording(): Promise<boolean> {
 /**
  * Stop the in-progress recording.
  *
- * @returns {Promise<{ uri: string, mimeType: string, durationMs: number, sizeBytes: number } | null>}
  *   `null` when nothing was recording (module not linked, or never started).
  */
 export async function stopVoiceRecording(): Promise<{ uri: string; mimeType: string; durationMs: number; sizeBytes: number; } | null> {
@@ -79,8 +77,7 @@ export async function stopVoiceRecording(): Promise<{ uri: string; mimeType: str
  * the presign request, which needs an exact `Content-Length`) has something
  * to work with — the recorder itself reports elapsed time, not bytes.
  *
- * @param {string} uri
- * @returns {Promise<number>} `0` when the file cannot be statted.
+ * @returns `0` when the file cannot be statted.
  */
 async function statSizeBytes(uri: string): Promise<number> {
   try {

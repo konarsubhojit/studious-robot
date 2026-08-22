@@ -18,11 +18,7 @@ import type { CallStatus } from '../components/StatusBanner';
  * this concern stays isolated from that hook's call-lifecycle/WebRTC
  * responsibilities.
  *
- * @param {{
- *   signalingUrl: string,
- *   userId: string,
- *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
- * }} params
+ * @param params
  */
 export default function useSession({ signalingUrl, userId, updateStatus }: {
         signalingUrl: string;
@@ -98,7 +94,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
    * sessionId. On success the new id is stored in `sessionIdRef`; on failure the
    * stale id is cleared so the next request mints a fresh session. Never throws.
    *
-   * @returns {Promise<string | null>} the new sessionId, or `null` on failure
+   * @returns the new sessionId, or `null` on failure
    */
   const refreshSession = useCallback(async () => {
     const sessionId = sessionIdRef.current;
@@ -138,15 +134,8 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
    * new id. Returns the `Response` (possibly still 401), or `null` when no
    * session could be established. Never throws on refresh; fetch errors
    * propagate to the caller's existing try/catch.
-   *
-   * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
-   * @returns {Promise<Response | null>}
    */
   const authedFetch = useCallback(
-    /**
-     * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
-     * @returns {Promise<Response | null>}
-     */
     async (
       buildRequest: (sessionId: string) => { url: string; options?: object },
     ): Promise<Response | null> => {

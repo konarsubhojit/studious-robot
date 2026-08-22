@@ -21,7 +21,6 @@ jest.mock('react-native-webrtc', () => ({
 }));
 
 describe('SafeRTCView', () => {
-  /** @type {any} */
   let consoleErrorSpy: any;
 
   beforeEach(() => {
@@ -35,7 +34,6 @@ describe('SafeRTCView', () => {
   });
 
   test('renders the underlying RTCView when given a valid streamURL', () => {
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(
@@ -50,7 +48,6 @@ describe('SafeRTCView', () => {
   });
 
   test('renders the fallback text when streamURL is empty', () => {
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(<SafeRTCView streamURL={null} />);
@@ -62,7 +59,6 @@ describe('SafeRTCView', () => {
   test('renders the fallback when RTCView throws and logs the error', () => {
     mockShouldThrow = true;
 
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(
@@ -82,7 +78,6 @@ describe('SafeRTCView', () => {
 
   test('recovers when streamURL changes after an error', () => {
     mockShouldThrow = true;
-    /** @type {any} */
     let tree: any;
     act(() => {
       tree = renderer.create(<SafeRTCView streamURL="stream-1" />);

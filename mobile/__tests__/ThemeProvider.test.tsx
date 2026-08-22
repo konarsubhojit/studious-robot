@@ -16,17 +16,16 @@ jest.mock('react-native/Libraries/Utilities/useColorScheme', () => ({
   default: jest.fn(() => 'dark'),
 }));
 
-function Probe(/** @type {any} */ { onRender }: any) {
+function Probe({ onRender }: any) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   onRender({ theme, styles });
   return null;
 }
 
-const createStyles = (/** @type {any} */ colors: any) => ({ box: { backgroundColor: colors.background } });
+const createStyles = (colors: any) => ({ box: { backgroundColor: colors.background } });
 
-async function renderWithProvider(/** @type {any} */ onRender: any) {
-  /** @type {any} */
+async function renderWithProvider(onRender: any) {
   let tree: any;
   await act(async () => {
     tree = renderer.create(

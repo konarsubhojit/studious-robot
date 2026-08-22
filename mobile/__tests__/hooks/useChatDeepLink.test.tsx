@@ -13,7 +13,7 @@ jest.mock('../../src/pushNotifications', () => ({
   getInitialChatLink: jest.fn(async () => null),
 }));
 
-function TestHook(/** @type {any} */ { params }: any) {
+function TestHook({ params }: any) {
   useChatDeepLink(params);
   return null;
 }
@@ -25,7 +25,6 @@ async function setup(overrides = {}) {
     onOpenConversation: jest.fn(),
     ...overrides,
   };
-  /** @type {any} */
   let tree: any;
   await act(async () => {
     tree = renderer.create(<TestHook params={params} />);
@@ -74,9 +73,8 @@ describe('useChatDeepLink', () => {
   });
 
   test('opens the conversation for a link received while running', async () => {
-    /** @type {any} */
     let emit: any;
-    (addChatLinkListener as jest.Mock).mockImplementation(/** @type {any} */ callback => {
+    (addChatLinkListener as jest.Mock).mockImplementation(callback => {
       emit = callback;
       return jest.fn();
     });

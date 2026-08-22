@@ -5,11 +5,6 @@ export type IdentityClaim = IdentityClaimGranted | IdentityClaimDenied;
 
 /**
  * Bind a verified external account to exactly one public username.
- *
- * @param {Map<string, User>} usersStore
- * @param {string|null} requestedUserId
- * @param {{ authUid: string, email?: string|null, authProvider?: string|null }} identity
- * @returns {IdentityClaim}
  */
 function resolveIdentityClaim(usersStore: Map<string, User>, requestedUserId: string | null, identity: { authUid: string; email?: string | null; authProvider?: string | null; }): IdentityClaim {
   const accountUser = Array.from(usersStore.values()).find(

@@ -10,17 +10,7 @@ import { persistUser, persistDevice } from '../lib/persistence.ts';
 /**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   db: any,
- *   sessionTtlMs: number,
- *   verifyIdToken?: (idToken: string) => Promise<{
- *     authUid: string,
- *     email?: string|null,
- *     authProvider?: string|null,
- *   }>,
- * }} ctx
- * @returns {import('express').Router}
+ * @param ctx
  */
 function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
         state: import('../stores/contracts.ts').ServerState;

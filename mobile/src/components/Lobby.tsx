@@ -25,14 +25,6 @@ import type { ThemeColors } from '../theme';
 
 export type ContactRow = { userId: string; online?: boolean; };
 
-/**
- * @param {object} props
- * @param {string} props.value
- * @param {(value: string) => void} props.onChangeText
- * @param {string} [props.placeholder]
- * @param {string} props.accessibilityLabel
- * @param {string} props.testID
- */
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }: { value: string; onChangeText: (value: string) => void; placeholder?: string; accessibilityLabel: string; testID: string; }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -70,10 +62,6 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
  * endpoint (via `onSearchUsers`).  Tapping a result selects that user as the
  * callee (`onSelectContact`).  The section is hidden entirely when no
  * `onSearchUsers` handler is provided (i.e. when contact search is disabled).
- *
- * @param {object} props
- * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
- * @param {(peerId: string) => void} [props.onSelectContact]
  */
 function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: (query: string) => Promise<ContactRow[]>; onSelectContact?: (peerId: string) => void; }) {
   const { colors } = useTheme();
@@ -86,13 +74,13 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
-    /** @param {string} term */
+    /** @param term */
     async (term: string) => {
       if (typeof onSearchUsers !== 'function') return;
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
-      let /** @type {ContactRow[]} */ users: ContactRow[] = [];
+      let users: ContactRow[] = [];
       try {
         users = await onSearchUsers(term);
       } catch {
@@ -479,7 +467,7 @@ export default function Lobby({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {

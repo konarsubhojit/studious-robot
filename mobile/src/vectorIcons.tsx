@@ -18,14 +18,11 @@ import type MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommu
 
 export type MaterialCommunityIcons = typeof MaterialCommunityIcons;
 
-/** @type {MaterialCommunityIcons | null | undefined} */
 let _cache: MaterialCommunityIcons | null | undefined;
 
 /**
  * Return the MaterialCommunityIcons component, or `null` when the native
  * module / fonts are not yet installed.
- *
- * @returns {MaterialCommunityIcons | null}
  */
 export function loadVectorIcons(): MaterialCommunityIcons | null {
   if (_cache !== undefined) return _cache;
@@ -45,8 +42,6 @@ export function _resetVectorIconsCache() {
 /**
  * Map of semantic icon names used throughout the app to their
  * MaterialCommunityIcons glyph names and emoji fallbacks.
- *
- * @type {Record<string, { icon: string, emoji: string }>}
  */
 export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   settings: { icon: 'cog', emoji: '⚙️' },

@@ -86,7 +86,6 @@ describe('callStateReducer', () => {
 
   test('runs a full outgoing call lifecycle', () => {
     const events = [CALL_EVENTS.PLACE, CALL_EVENTS.CONNECT, CALL_EVENTS.END, CALL_EVENTS.RESET];
-    /** @type {any} */
     const states: any = [];
     events.reduce((state, event) => {
       const next = callStateReducer(state, event);

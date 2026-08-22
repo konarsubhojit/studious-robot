@@ -42,7 +42,7 @@ class FakeXHR {
     FakeXHR.instances.push(this);
   }
 }
-/** @type {FakeXHR[]} */
+
 FakeXHR.instances = [];
 
 describe('attachmentUpload', () => {
@@ -122,8 +122,8 @@ describe('attachmentUpload', () => {
   });
 
   describe('presignAttachment', () => {
-    function buildAuthedFetch(/** @type {any} */ response: any) {
-      return jest.fn((/** @type {any} */ build: any) => {
+    function buildAuthedFetch(response: any) {
+      return jest.fn((build: any) => {
         build('session-1');
         return Promise.resolve(response);
       });
@@ -267,7 +267,7 @@ describe('attachmentUpload', () => {
         expiresAt: '2024-01-01T00:00:00.000Z',
         headers: { 'Content-Type': 'image/png', 'Content-Length': '1024' },
       };
-      const authedFetch = (jest.fn((/** @type {any} */ build: any) => {
+      const authedFetch = (jest.fn((build: any) => {
           build('session-1');
           return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
         }) as any);

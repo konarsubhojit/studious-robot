@@ -26,8 +26,7 @@ import { createCache } from './cache.ts';
 import { logNotificationHubStartupStatus } from './push.ts';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -54,8 +53,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
    * instances. Falls back to the in-memory bundle (single instance) otherwise.
    * When `DATABASE_URL` is set, users and devices are persisted to (and
    * hydrated from) the Neon Postgres database at startup.
-   *
-   * @returns {Promise<{ httpServer: import('http').Server, shutdown: Function, stores?: object }>}
    */
   async function bootstrap(): Promise<{ httpServer: import('http').Server; shutdown: Function; stores?: object; }> {
     logNotificationHubStartupStatus();
@@ -104,7 +101,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       // Graceful shutdown for rolling deploys: drain in-flight connections, then
       // exit cleanly so systemd can restart/replace the instance.
       let exiting = false;
-      const handleSignal = (/** @type {string} */ signal: string) => {
+      const handleSignal = (signal: string) => {
         if (exiting) return;
         exiting = true;
         console.log(`[signaling] received ${signal}; draining connections...`);
@@ -114,7 +111,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
             // specifically but don't abort the exit on them.
             Promise.resolve(
               ((stores ?? {}) as { close?: () => Promise<void> }).close?.()
-            ).catch((/** @type {unknown} */ err: unknown) => {
+            ).catch((err: unknown) => {
               console.error('[signaling] error closing Redis stores:', errorMessage(err));
             })
           )
@@ -122,7 +119,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
             console.log('[signaling] shutdown complete; exiting');
             process.exit(0);
           })
-          .catch((/** @type {unknown} */ err: unknown) => {
+          .catch((err: unknown) => {
             console.error('[signaling] error during shutdown:', err);
             process.exit(1);
           });

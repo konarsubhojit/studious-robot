@@ -60,7 +60,7 @@ export default function useScreenShare({
    * Restore the camera track locally and on the peer connection, and release
    * every screen-capture resource. Safe to call when not sharing.
    *
-   * @param {{ silent?: boolean }} [options] - `silent` skips status updates and
+   * @param options - `silent` skips status updates and
    *   renegotiation (used during teardown when the call is already ending).
    */
   const stopScreenShare = useCallback(
@@ -99,7 +99,7 @@ export default function useScreenShare({
         try {
           const sender = pc
             ?.getSenders?.()
-            .find((/** @type {any} */ s: any) => s.track?.kind === 'video');
+            .find((s: any) => s.track?.kind === 'video');
           if (sender) {
             await sender.replaceTrack(cameraTrack);
           }
@@ -170,7 +170,7 @@ export default function useScreenShare({
     try {
       const videoSender = pc
         .getSenders?.()
-        .find((/** @type {any} */ s: any) => s.track?.kind === 'video');
+        .find((s: any) => s.track?.kind === 'video');
       const cameraTrack = videoSender?.track ?? null;
       if (videoSender) {
         await videoSender.replaceTrack(videoTrack);
@@ -189,7 +189,7 @@ export default function useScreenShare({
           pc
             .getTransceivers?.()
             ?.find(
-              (/** @type {any} */ transceiver: any) => transceiver.sender?.track?.id === videoTrack?.id,
+              (transceiver: any) => transceiver.sender?.track?.id === videoTrack?.id,
             )?.direction ?? null,
       });
 

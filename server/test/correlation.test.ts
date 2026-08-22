@@ -17,7 +17,6 @@ test('correlation ids are normalised to log-safe, bounded strings', () => {
 });
 
 test('socket identity carries the handshake correlation id for sessions and guests', () => {
-  /** @type {import('../src/stores/contracts.ts').SessionStore} */
   const sessions: import('../src/stores/contracts.ts').SessionStore = new Map([
     [
       'session-1',
@@ -62,8 +61,7 @@ test('a call initiated over the socket is logged with the client correlation id'
   const url = `http://127.0.0.1:${port}`;
 
   /**
-   * @param {string} userId
-   * @returns {Promise<any>} the created session document
+   * @returns the created session document
    */
   async function createSession(userId: string): Promise<any> {
     const response = await fetch(`${url}/session`, {
@@ -75,19 +73,12 @@ test('a call initiated over the socket is logged with the client correlation id'
   }
 
   const logs = captureConsoleLog();
-  /** @type {import('socket.io-client').Socket|undefined} */
   let caller: import('socket.io-client').Socket | undefined;
-  /** @type {import('socket.io-client').Socket|undefined} */
   let callee: import('socket.io-client').Socket | undefined;
   try {
     const callerSession = await createSession('user-caller');
     const calleeSession = await createSession('user-callee');
 
-    /**
-     * @param {string} sessionId
-     * @param {string} correlationId
-     * @returns {Promise<import('socket.io-client').Socket>}
-     */
     const connect = (sessionId: string, correlationId: string): Promise<import('socket.io-client').Socket> =>
       new Promise((resolve, reject) => {
         const socket = ioClient(url, {

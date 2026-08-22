@@ -3,16 +3,14 @@ import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * @param {unknown} error
- * @returns {string} the driver error code, when the error carries one.
+ * @returns the driver error code, when the error carries one.
  */
 function errorCode(error: unknown): string {
   const code = ((error ?? {}) as Record<string, unknown>).code;
@@ -27,23 +25,18 @@ function errorCode(error: unknown): string {
  * not be blocked (or failed) by a cache eviction.  The shared cache evicts its
  * local entries synchronously, so a read issued on this instance after the
  * write can never observe the stale page.
- *
- * @param {import('./stores/contracts.ts').ServerState} state
- * @param {...string} userIds
- * @returns {void}
  */
 function invalidateCallHistoryCache(state: import('./stores/contracts.ts').ServerState, ...userIds: string[]): void {
   if (!state?.cache || userIds.length === 0) return;
   const prefixes = userIds.filter(Boolean).map((userId) => callHistoryCachePrefix(userId));
   if (prefixes.length === 0) return;
-  invalidateCache(state, ...prefixes).catch((/** @type {unknown} */ error: unknown) => {
+  invalidateCache(state, ...prefixes).catch((error: unknown) => {
     console.error(`[calls] call history cache invalidation failed: ${errorMessage(error)}`);
   });
 }
 
 /**
- * @param {unknown} value
- * @returns {Date|null} the parsed date, or `null` when it is missing/invalid.
+ * @returns the parsed date, or `null` when it is missing/invalid.
  */
 function toDateOrNull(value: unknown): Date | null {
   if (!value) return null;
@@ -54,9 +47,6 @@ function toDateOrNull(value: unknown): Date | null {
 
 /**
  * Persist (upsert) a call record, fire-and-forget.
- *
- * @param {any} db
- * @param {import('./stores/contracts.ts').CallRecord} call
  */
 function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRecord) {
   if (!db || !call?.callId) return;
@@ -87,7 +77,7 @@ function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRe
         ringTimeoutAt: toDateOrNull(call.ringTimeoutAt),
       },
     })
-    .catch((/** @type {unknown} */ error: unknown) => {
+    .catch((error: unknown) => {
       // Non-fatal: the in-memory call record already reflects reality and the
       // caller doesn't await this promise. `code` is the Postgres error code
       // (e.g. `23503` foreign_key_violation, `23505` unique_violation) — logging
@@ -102,9 +92,6 @@ function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRe
 
 /**
  * Persist a call event, fire-and-forget.
- *
- * @param {any} db
- * @param {import('./stores/contracts.ts').CallEvent} event
  */
 function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEvent) {
   if (!db || !event?.eventId) return;
@@ -119,7 +106,7 @@ function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEv
       reason: event.reason,
       createdAt: toDateOrNull(event.timestamp) ?? new Date(),
     })
-    .catch((/** @type {unknown} */ error: unknown) => {
+    .catch((error: unknown) => {
       // Non-fatal by design (an audit-log write failure must never block the
       // call itself), but this is still a silent audit-trail gap: log the
       // Postgres error `code` plus the ids involved so a recurrence can be
@@ -135,9 +122,6 @@ function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEv
 
 /**
  * Load persisted calls and call events into the in-memory stores at boot.
- *
- * @param {any} db
- * @param {import('./stores/contracts.ts').Stores} state
  */
 async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/contracts.ts').Stores) {
   if (!db) return;

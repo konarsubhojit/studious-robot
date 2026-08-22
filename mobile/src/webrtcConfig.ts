@@ -11,16 +11,10 @@ const DEFAULT_CREDENTIAL_TTL_MS = 55 * 60 * 1000;
 
 export type IceServer = { urls: string[]; username?: string; credential?: string; };
 
-/** @type {IceServer[] | null} */
 let cachedServerIceServers: IceServer[] | null = null;
 let cachedServerIceServersExpiresAt = 0;
-/** @type {Promise<IceServer[]> | null} */
 let pendingServerIceServers: Promise<IceServer[]> | null = null;
 
-/**
- * @param {string} name
- * @returns {string | undefined}
- */
 function readEnv(name: string): string | undefined {
   const env = globalThis?.process?.env;
   return env?.[name];
@@ -45,7 +39,6 @@ export function getIceServers() {
   const turnUsername = readEnv('TURN_USERNAME');
   const turnCredential = readEnv('TURN_CREDENTIAL');
   const turnUrl = readEnv('TURN_URL');
-  /** @type {IceServer[]} */
   const iceServers: IceServer[] = [{ urls: [GOOGLE_STUN_URL] }];
 
   if (turnUsername && turnCredential) {
@@ -76,10 +69,6 @@ export function getIceServers() {
  * Fetch short-lived ICE servers for an authenticated call. A network failure
  * intentionally falls through to a still-valid cache, build-time fallback,
  * and finally STUN-only so call setup is never blocked by TURN availability.
- */
-/**
- * @param {{ signalingUrl?: string, sessionId?: string | null, fetchImpl?: typeof fetch }} [options]
- * @returns {Promise<IceServer[]>}
  */
 export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch }: { signalingUrl?: string; sessionId?: string | null; fetchImpl?: typeof fetch; } = {}): Promise<IceServer[]> {
   const now = Date.now();
@@ -135,8 +124,6 @@ export function resetIceServersForCallCache() {
  * Return a diagnostic snapshot of the active TURN configuration, logging a
  * console warning when no credentials are present.  Useful at app start-up to
  * surface mis-configuration before the first call attempt.
- *
- * @returns {{ configured: boolean, provider: 'none'|'metered'|'custom', description: string }}
  */
 export function getTurnDiagnostics(): { configured: boolean; provider: 'none' | 'metered' | 'custom'; description: string; } {
   const turnUsername = readEnv('TURN_USERNAME');
@@ -169,10 +156,6 @@ export function getTurnDiagnostics(): { configured: boolean; provider: 'none' | 
  * This is a best-effort operation: senders that do not expose
  * `getParameters` / `setParameters` (e.g. older react-native-webrtc builds)
  * are silently skipped.  The function never throws.
- *
- * @param {import('react-native-webrtc').RTCPeerConnection} pc
- * @param {{ videoMaxBps?: number, audioMaxBps?: number }} [opts]
- * @returns {Promise<void>}
  */
 export async function applyBitrateConstraints(pc: RTCPeerConnection, opts: { videoMaxBps?: number; audioMaxBps?: number; } = {}): Promise<void> {
   const videoMaxBps = opts.videoMaxBps ?? VIDEO_MAX_BITRATE_BPS;

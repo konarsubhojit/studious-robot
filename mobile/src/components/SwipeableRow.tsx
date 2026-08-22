@@ -20,10 +20,7 @@ const OPEN_THRESHOLD = 0.5;
  * library so it works inside the existing virtualized lists (and their tests)
  * without pulling in a new dependency.
  *
- * @param {object} props
- * @param {Array<{ key: string, label: string, accessibilityLabel?: string,
- *   testID?: string, onPress: () => void, destructive?: boolean }>} [props.actions]
- * @param {React.ReactNode} props.children
+ * @param [props.actions]
  */
 export default function SwipeableRow({ actions = [], children }: {
         actions?: Array<{
@@ -37,7 +34,7 @@ export default function SwipeableRow({ actions = [], children }: {
   const trayWidth = actions.length * ACTION_WIDTH;
 
   const panResponder = useMemo(() => {
-    /** @param {number} toValue */
+    /** @param toValue */
     const settle = (toValue: number) => {
       // A short tick when the tray latches open, so the row confirms itself
       // without the user having to look away from the list.
@@ -117,7 +114,7 @@ export default function SwipeableRow({ actions = [], children }: {
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {

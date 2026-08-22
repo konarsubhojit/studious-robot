@@ -9,7 +9,7 @@ jest.mock('../../src/appLogger', () => ({
   logVerbose: jest.fn(),
 }));
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useBlocks(params);
   return null;
 }
@@ -21,13 +21,11 @@ function setup() {
       return global.fetch(request.url, request.options);
     }),
   };
-  /** @type {any} */
   const params: any = {
     signalingUrl: 'https://signal.example.com',
     authedFetchRef,
     sessionIdRef: { current: 'sess-1' },
   };
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   act(() => {
     renderer.create(<TestHook resultRef={resultRef} params={params} />);
@@ -36,7 +34,7 @@ function setup() {
 }
 
 /** A minimal `fetch` response double. */
-function respond(/** @type {any} */ body: any, { ok = true, status = 200 } = {}) {
+function respond(body: any, { ok = true, status = 200 } = {}) {
   return Promise.resolve({ ok, status, json: () => Promise.resolve(body) });
 }
 

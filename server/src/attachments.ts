@@ -53,10 +53,7 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
 /**
  * Read the R2 configuration from the environment.
  *
- * @param {Record<string, string|undefined>} [env]
- * @returns {{ accountId: string, bucket: string, accessKeyId: string,
- *   secretAccessKey: string, endpoint: string, publicBaseUrl: string,
- *   ttlSeconds: number } | null} `null` when R2 is not configured, in which
+ * @returns `null` when R2 is not configured, in which
  *   case attachment uploads are simply unavailable and the rest of chat is
  *   unaffected.
  */
@@ -89,9 +86,6 @@ function loadR2Config(env: Record<string, string | undefined> = process.env): {
 
 /**
  * Validate an attachment description against the shared allowlist and caps.
- *
- * @param {{ type?: unknown, mimeType?: unknown, sizeBytes?: unknown }} request
- * @returns {{ type: string, mimeType: string, sizeBytes: number } | { error: string }}
  */
 function validateAttachmentRequest({ type, mimeType, sizeBytes }: { type?: unknown; mimeType?: unknown; sizeBytes?: unknown; } = {}): { type: string; mimeType: string; sizeBytes: number; } | { error: string; } {
   if (!isAttachmentMessageType(type)) {
@@ -119,9 +113,6 @@ function validateAttachmentRequest({ type, mimeType, sizeBytes }: { type?: unkno
  * overwrite somebody else's object or escape the shared prefix. It is
  * namespaced by conversation so lifecycle rules (and manual cleanup) can work
  * per conversation.
- *
- * @param {{ conversationId: string, mimeType: string }} params
- * @returns {string}
  */
 function createAttachmentKey({ conversationId, mimeType }: { conversationId: string; mimeType: string; }): string {
   const extension =
@@ -135,10 +126,6 @@ function createAttachmentKey({ conversationId, mimeType }: { conversationId: str
 
 /**
  * HMAC-SHA256 returning a Buffer.
- *
- * @param {crypto.BinaryLike|crypto.KeyObject} key
- * @param {string} value
- * @returns {Buffer}
  */
 function hmac(key: crypto.BinaryLike | crypto.KeyObject, value: string): Buffer {
   return crypto.createHmac('sha256', key).update(value, 'utf8').digest();
@@ -146,9 +133,6 @@ function hmac(key: crypto.BinaryLike | crypto.KeyObject, value: string): Buffer 
 
 /**
  * Lowercase hex SHA-256 of a string.
- *
- * @param {string} value
- * @returns {string}
  */
 function sha256Hex(value: string): string {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
@@ -157,9 +141,6 @@ function sha256Hex(value: string): string {
 /**
  * Percent-encode one path segment the way SigV4 canonicalisation requires
  * (`encodeURIComponent` leaves `!'()*` alone, which S3 does not).
- *
- * @param {string} segment
- * @returns {string}
  */
 function encodeSegment(segment: string): string {
   return encodeURIComponent(segment).replace(
@@ -175,10 +156,7 @@ function encodeSegment(segment: string): string {
  * send both and they must match: the size cap and MIME allowlist are therefore
  * enforced by object storage, not only by this server or the client.
  *
- * @param {{ config: ReturnType<typeof loadR2Config>, key: string, mimeType: string,
- *   sizeBytes: number, now?: Date }} params
- * @returns {{ uploadUrl: string, publicUrl: string, expiresAt: string,
- *   headers: Record<string, string>, key: string }}
+ * @param params
  */
 function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new Date() }: {
         config: ReturnType<typeof loadR2Config>; key: string; mimeType: string;
@@ -251,10 +229,6 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
  * A message may only reference media this server handed out a presigned URL
  * for: an arbitrary URL would turn every chat bubble into a request to a host
  * of the sender's choosing (an IP-leak / tracking vector for the recipient).
- *
- * @param {ReturnType<typeof loadR2Config>} config
- * @param {unknown} url
- * @returns {boolean}
  */
 function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: unknown): boolean {
   if (!config || typeof url !== 'string') return false;

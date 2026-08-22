@@ -20,11 +20,10 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
 });
 
 /**
- * @param {Date} [date]
- * @returns {string} `YYYYMMDD-HHmmss`, safe to embed in a file name.
+ * @returns `YYYYMMDD-HHmmss`, safe to embed in a file name.
  */
 function formatDateForFile(date: Date = new Date()): string {
-  /** @param {number} value */
+  /** @param value */
   const pad = (value: number) => String(value).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
@@ -33,8 +32,7 @@ function formatDateForFile(date: Date = new Date()): string {
 }
 
 /**
- * @param {string | null | undefined} mimeType
- * @returns {string} a file extension, defaulting to `bin`.
+ * @returns a file extension, defaulting to `bin`.
  */
 function extensionForMimeType(mimeType: string | null | undefined): string {
   const normalised = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
@@ -44,8 +42,7 @@ function extensionForMimeType(mimeType: string | null | undefined): string {
 }
 
 /**
- * @param {string | null | undefined} url
- * @returns {string} the last path segment, or '' when `url` is unparseable.
+ * @returns the last path segment, or '' when `url` is unparseable.
  */
 function filenameFromUrl(url: string | null | undefined): string {
   try {
@@ -60,13 +57,7 @@ function filenameFromUrl(url: string | null | undefined): string {
  * Build a local filename for a downloaded attachment without trusting sender
  * controlled path separators or device-specific reserved characters.
  *
- * @param {{
- *   name?: string | null,
- *   url?: string | null,
- *   mimeType?: string | null,
- *   now?: Date,
- * }} [attachment]
- * @returns {string}
+ * @param [attachment]
  */
 export function attachmentDownloadFileName({ name, url, mimeType, now = new Date() }: {
     name?: string | null;
@@ -100,19 +91,7 @@ function downloadTargets() {
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
- * @param {{
- *   url?: string | null,
- *   name?: string | null,
- *   mimeType?: string | null,
- *   now?: Date,
- * }} [attachment]
- * @returns {Promise<{
- *   success: boolean,
- *   path?: string,
- *   label?: string,
- *   usedFallback?: boolean,
- *   error?: unknown,
- * }>}
+ * @param [attachment]
  */
 export async function downloadAttachment({ url, name, mimeType, now = new Date() }: {
     url?: string | null;
@@ -152,8 +131,7 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
 }
 
 /**
- * @param {{ success?: boolean, label?: string } | null | undefined} result
- * @returns {string} a user-facing summary of the download outcome.
+ * @returns a user-facing summary of the download outcome.
  */
 export function describeAttachmentDownloadResult(result: { success?: boolean; label?: string; } | null | undefined): string {
   if (result?.success) return `Saved attachment to ${result.label}`;

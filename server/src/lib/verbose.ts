@@ -14,7 +14,7 @@ const SENSITIVE_FIELDS = new Set([
 ]);
 
 /**
- * @returns {boolean} `true` when verbose logging is enabled by env vars.
+ * @returns `true` when verbose logging is enabled by env vars.
  */
 function isVerboseLoggingEnabled(): boolean {
   const verbose = process.env.VERBOSE_LOGGING?.trim().toLowerCase();
@@ -28,10 +28,6 @@ function isVerboseLoggingEnabled(): boolean {
   );
 }
 
-/**
- * @param {unknown} key
- * @returns {boolean}
- */
 function isSensitiveKey(key: unknown): boolean {
   return typeof key === 'string' && SENSITIVE_FIELDS.has(key.toLowerCase());
 }
@@ -40,10 +36,7 @@ function isSensitiveKey(key: unknown): boolean {
  * Recursively copy a value, replacing sensitive fields with `[REDACTED]` and
  * guarding against circular references.
  *
- * @param {unknown} value
- * @param {string} [key]  Key the value was found under, used to detect secrets.
- * @param {WeakSet<object>} [seen]
- * @returns {any}
+ * @param key  Key the value was found under, used to detect secrets.
  */
 function redact(value: unknown, key?: string, seen: WeakSet<object> = new WeakSet()): any {
   if (isSensitiveKey(key)) return '[REDACTED]';
@@ -56,7 +49,6 @@ function redact(value: unknown, key?: string, seen: WeakSet<object> = new WeakSe
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redact(item, undefined, seen));
 
-  /** @type {Record<string, any>} */
   const output: Record<string, any> = {};
   for (const [childKey, childValue] of Object.entries(value)) {
     output[childKey] = redact(childValue, childKey, seen);
@@ -66,11 +58,6 @@ function redact(value: unknown, key?: string, seen: WeakSet<object> = new WeakSe
 
 /**
  * Log a redacted verbose message when verbose logging is enabled.
- *
- * @param {string} scope
- * @param {string} message
- * @param {unknown} [metadata]
- * @returns {void}
  */
 function verboseLog(scope: string, message: string, metadata?: unknown): void {
   if (!isVerboseLoggingEnabled()) return;

@@ -12,7 +12,7 @@ async function startServer() {
   const port = await listenOnRandomPort(httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /** @param {...import('socket.io-client').Socket} clients */
+  /** @param clients */
   async function teardown(...clients: import('socket.io-client').Socket[]) {
     clients.forEach((c) => c.disconnect());
     // closeAllConnections() (Node 18.2+) forces lingering keep-alive connections
@@ -27,9 +27,6 @@ async function startServer() {
 let nextClientId = 0;
 /**
  * Helper: connect a client and wait for the 'connect' event.
- *
- * @param {string} url
- * @returns {Promise<import('socket.io-client').Socket>}
  */
 async function connect(url: string): Promise<import('socket.io-client').Socket> {
   nextClientId += 1;
@@ -76,11 +73,6 @@ test('unauthenticated sockets cannot join or inject legacy signaling', async () 
 
 /**
  * Helper: wait for a specific event on a socket, with a short timeout.
- *
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
  */
 function waitFor(socket: import('socket.io-client').Socket, event: string, timeoutMs: number = 1000): Promise<any> {
   return new Promise((resolve, reject) => {

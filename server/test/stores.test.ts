@@ -6,9 +6,6 @@ import { listenOnRandomPort, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * @param {import('../src/createServer.ts').CreateServerOptions} [opts]
- */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
   const server = createServer(opts);
   const port = await listenOnRandomPort(server.httpServer);
@@ -25,11 +22,9 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} path - Request path, including the leading slash.
- * @param {Record<string, unknown>} body
- * @param {string} [sessionId] - Merged into the body when present.
- * @returns {Promise<{ status: number, body: any }>}
+ * @param url - Base URL of the server under test.
+ * @param path - Request path, including the leading slash.
+ * @param sessionId - Merged into the body when present.
  */
 async function postJson(url: string, path: string, body: Record<string, unknown>, sessionId?: string): Promise<{ status: number; body: any; }> {
   const payload = sessionId ? { ...body, sessionId } : body;
@@ -42,10 +37,8 @@ async function postJson(url: string, path: string, body: Record<string, unknown>
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });

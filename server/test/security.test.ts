@@ -6,15 +6,12 @@ import { getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * @param {import('../src/createServer.ts').CreateServerOptions} [opts]
- */
 async function startServer(opts: import('../src/createServer.ts').CreateServerOptions = {}) {
   const server = createServer(opts);
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
-  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
+  /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((c) => c?.disconnect());
     server.httpServer.closeAllConnections?.();
@@ -27,10 +24,9 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} path - Request path, including the leading slash.
- * @param {string} [sessionId] - Appended as `?sessionId=` when present.
- * @returns {Promise<{ status: number, body: any }>}
+ * @param url - Base URL of the server under test.
+ * @param path - Request path, including the leading slash.
+ * @param sessionId - Appended as `?sessionId=` when present.
  */
 async function deleteJson(url: string, path: string, sessionId?: string): Promise<{ status: number; body: any; }> {
   const fullPath = sessionId
@@ -44,10 +40,8 @@ async function deleteJson(url: string, path: string, sessionId?: string): Promis
 }
 
 /**
- * @param {string} url - Base URL of the server under test.
- * @param {string} userId
- * @param {string} [deviceId]
- * @returns {Promise<string>} the created session id
+ * @param url - Base URL of the server under test.
+ * @returns the created session id
  */
 async function createSession(url: string, userId: string, deviceId: string = `device-${userId}`): Promise<string> {
   const res = await postJson(url, '/session', { userId, deviceId });
@@ -56,9 +50,7 @@ async function createSession(url: string, userId: string, deviceId: string = `de
 }
 
 /**
- * @param {string} url
- * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
- * @returns {Promise<import('socket.io-client').Socket>}
+ * @param auth - Socket.IO handshake auth payload.
  */
 function connect(url: string, auth?: Record<string, unknown>): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -73,10 +65,7 @@ function connect(url: string, auth?: Record<string, unknown>): Promise<import('s
 }
 
 /**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {unknown} payload
- * @returns {Promise<any>} the server's acknowledgement
+ * @returns the server's acknowledgement
  */
 function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
   return new Promise((resolve) => {
@@ -84,12 +73,6 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
   });
 }
 
-/**
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
- */
 function waitFor(socket: import('socket.io-client').Socket, event: string, timeoutMs: number = 1000): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -449,7 +432,6 @@ test('GET /session: returns 401 after session expires', async () => {
 
 test('socket connect: a stale sessionId downgrades to guest and emits session.invalid', async () => {
   const { url, teardown } = await startServer({ sessionTtlMs: 100 });
-  /** @type {import('socket.io-client').Socket|undefined} */
   let socket: import('socket.io-client').Socket | undefined;
   try {
     const sessionId = await createSession(url, 'user-alice');
@@ -490,7 +472,6 @@ test('socket connect: a stale sessionId downgrades to guest and emits session.in
 
 test('socket connect: a fresh guest (no sessionId presented) does not emit session.invalid', async () => {
   const { url, teardown } = await startServer();
-  /** @type {import('socket.io-client').Socket|undefined} */
   let socket: import('socket.io-client').Socket | undefined;
   try {
     socket = await connect(url, { userId: 'user-guest' });
@@ -625,7 +606,7 @@ test("GET /audit-log: blocked call attempt appears in the caller's audit log", a
 
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
-    const blockedEntry = log.body.entries.find((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'call.blocked');
+    const blockedEntry = log.body.entries.find((e: { event: string; }) => e.event === 'call.blocked');
     assert.ok(blockedEntry, 'audit log should contain a call.blocked entry');
     assert.equal(blockedEntry.actor, 'user-alice');
     assert.equal(blockedEntry.target, 'user-bob');
@@ -646,7 +627,7 @@ test("GET /audit-log: rate-limited call attempt appears in the caller's audit lo
 
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
-    const rateLimitEntry = log.body.entries.find((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'call.rate_limited');
+    const rateLimitEntry = log.body.entries.find((e: { event: string; }) => e.event === 'call.rate_limited');
     assert.ok(rateLimitEntry, 'audit log should contain a call.rate_limited entry');
     assert.equal(rateLimitEntry.actor, 'user-alice');
     assert.equal(rateLimitEntry.outcome, 'rejected');
@@ -666,12 +647,12 @@ test("GET /audit-log: block management events appear in the blocker's audit log"
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
 
-    const addedEntry = log.body.entries.find((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'block.added');
+    const addedEntry = log.body.entries.find((e: { event: string; }) => e.event === 'block.added');
     assert.ok(addedEntry, 'audit log should contain block.added');
     assert.equal(addedEntry.actor, 'user-alice');
     assert.equal(addedEntry.target, 'user-bob');
 
-    const removedEntry = log.body.entries.find((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'block.removed');
+    const removedEntry = log.body.entries.find((e: { event: string; }) => e.event === 'block.removed');
     assert.ok(removedEntry, 'audit log should contain block.removed');
     assert.equal(removedEntry.actor, 'user-alice');
     assert.equal(removedEntry.target, 'user-bob');
@@ -691,7 +672,7 @@ test("GET /audit-log: session refresh appears in the user's audit log", async ()
 
     const log = await getJson(url, '/audit-log', newSessionId);
     assert.equal(log.status, 200);
-    const refreshEntry = log.body.entries.find((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'session.refreshed');
+    const refreshEntry = log.body.entries.find((e: { event: string; }) => e.event === 'session.refreshed');
     assert.ok(refreshEntry, 'audit log should contain session.refreshed');
     assert.equal(refreshEntry.actor, 'user-alice');
     assert.equal(refreshEntry.outcome, 'success');
@@ -714,7 +695,7 @@ test('GET /audit-log: user only sees their own events', async () => {
     // Bob's audit log should be empty (no events involving Bob yet).
     const bobLog = await getJson(url, '/audit-log', bobSession);
     assert.equal(bobLog.status, 200);
-    const rateLimitEvents = bobLog.body.entries.filter((/** @type {{ event: string }} */ e: { event: string; }) => e.event === 'call.rate_limited');
+    const rateLimitEvents = bobLog.body.entries.filter((e: { event: string; }) => e.event === 'call.rate_limited');
     assert.equal(rateLimitEvents.length, 0, "Bob should not see Alice's rate-limit events");
   } finally {
     await teardown();

@@ -19,12 +19,12 @@ jest.mock('../src/appLogger', () => ({
 
 const mediaDevices = (require('react-native-webrtc').mediaDevices as any);
 
-function makeTrack(/** @type {string} */ kind: string) {
+function makeTrack(kind: string) {
   return { kind, stop: jest.fn() };
 }
 
 function makeStream(
-  /** @type {{ video?: any[], audio?: any[] }} */ { video = [], audio = [] }: { video?: any[]; audio?: any[]; } = {},
+  { video = [], audio = [] }: { video?: any[]; audio?: any[]; } = {},
 ) {
   return {
     getTracks: () => [...video, ...audio],
@@ -37,8 +37,6 @@ function makeStream(
 // assertions below still fail to compile if the returned shape changes.
 /**
  * @template {{ ok: boolean }} T
- * @param {T} result
- * @returns {Extract<T, { ok: true }>}
  */
 function expectOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: true; }> {
   if (!result.ok) {
@@ -50,8 +48,6 @@ function expectOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: true; 
 
 /**
  * @template {{ ok: boolean }} T
- * @param {T} result
- * @returns {Extract<T, { ok: false }>}
  */
 function expectNotOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: false; }> {
   if (result.ok) {

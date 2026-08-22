@@ -49,7 +49,7 @@ export type { OutboxItem };
 
 export type ChatSnapshot = { conversations: ConversationSummary[]; messagesByPeer: Record<string, ChatMessage[]>; outbox: OutboxItem[]; };
 
-/** @returns {ChatSnapshot} */
+
 function emptySnapshot(): ChatSnapshot {
   return { conversations: [], messagesByPeer: {}, outbox: [] };
 }
@@ -57,17 +57,14 @@ function emptySnapshot(): ChatSnapshot {
 /**
  * Last known snapshot, so a save only has to supply the tables it changed and
  * a load after a save does not have to hit the disk.
- * @type {ChatSnapshot | null}
  */
 let cache: ChatSnapshot | null = null;
-/** @type {ReturnType<typeof setTimeout> | null} */
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 /** Resolves once every scheduled write has been flushed. */
 let pendingWrite = Promise.resolve();
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -75,9 +72,6 @@ function errorMessage(error: unknown): string | undefined {
 
 /**
  * Timestamp of a timeline entry, used for retention ordering.
- *
- * @param {any} entry
- * @returns {number}
  */
 function entryTime(entry: any): number {
   const value = Date.parse(entry?.createdAt ?? '');
@@ -89,8 +83,7 @@ function entryTime(entry: any): number {
  * every entry still awaiting delivery: an old message that never sent must
  * never be pruned out from under its outbox row.
  *
- * @param {ChatMessage[]} messages newest-first
- * @returns {ChatMessage[]}
+ * @param messages newest-first
  */
 export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
   if (!Array.isArray(messages)) return [];
@@ -99,7 +92,7 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
   const unsent = ordered
     .slice(MAX_MESSAGES_PER_CONVERSATION)
     .filter(
-      (/** @type {any} */ entry: any) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
+      (entry: any) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
     );
   return unsent.length ? [...kept, ...unsent].sort((a, b) => entryTime(b) - entryTime(a)) : kept;
 }
@@ -108,9 +101,6 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
  * Coerce a parsed file into a valid snapshot, dropping anything malformed so a
  * corrupt or out-of-date file degrades to "less history" instead of breaking
  * the chat screens.
- *
- * @param {unknown} parsed
- * @returns {ChatSnapshot}
  */
 function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   if (!parsed || typeof parsed !== 'object') return emptySnapshot();
@@ -118,32 +108,30 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
 
   const conversations = Array.isArray(raw.conversations)
     ? raw.conversations.filter(
-        (/** @type {any} */ entry: any) => entry && typeof entry.peerId === 'string',
+        (entry: any) => entry && typeof entry.peerId === 'string',
       )
     : [];
 
-  /** @type {Record<string, ChatMessage[]>} */
   const messagesByPeer: Record<string, ChatMessage[]> = {};
-  /** @type {Record<string, any>} */
   const rawMessages: Record<string, any> =
     raw.messagesByPeer && typeof raw.messagesByPeer === 'object' ? raw.messagesByPeer : {};
   Object.keys(rawMessages).forEach(peerId => {
     const entries = Array.isArray(rawMessages[peerId]) ? rawMessages[peerId] : [];
     messagesByPeer[peerId] = pruneMessages(
-      entries.filter((/** @type {any} */ entry: any) => entry && (entry.messageId || entry.callId)),
+      entries.filter((entry: any) => entry && (entry.messageId || entry.callId)),
     );
   });
 
   const outbox = Array.isArray(raw.outbox)
     ? raw.outbox
         .filter(
-          (/** @type {any} */ item: any) =>
+          (item: any) =>
             item &&
             typeof item.messageId === 'string' &&
             typeof item.recipientId === 'string' &&
             typeof item.body === 'string',
         )
-        .map((/** @type {any} */ item: any) => ({ ...item, attempts: Number(item.attempts) || 0 }))
+        .map((item: any) => ({ ...item, attempts: Number(item.attempts) || 0 }))
     : [];
 
   return {
@@ -158,8 +146,6 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
  *
  * Never rejects: an unreadable or corrupt file yields an empty snapshot, which
  * simply means the app starts as it did before anything was cached.
- *
- * @returns {Promise<ChatSnapshot>}
  */
 export async function loadChatSnapshot(): Promise<ChatSnapshot> {
   if (cache) return cache;
@@ -192,13 +178,10 @@ async function flushToDisk() {
  * Merge `partial` into the cached snapshot and schedule a (debounced) write.
  * The in-memory cache is updated synchronously, so a read immediately after a
  * save observes the new state whether or not the write has landed yet.
- *
- * @param {Partial<ChatSnapshot>} partial
  */
 export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
   const base = cache ?? emptySnapshot();
   const messagesByPeer = partial.messagesByPeer ?? base.messagesByPeer;
-  /** @type {Record<string, ChatMessage[]>} */
   const pruned: Record<string, ChatMessage[]> = {};
   Object.keys(messagesByPeer).forEach(peerId => {
     pruned[peerId] = pruneMessages(messagesByPeer[peerId]);
@@ -221,8 +204,6 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
 
 /**
  * Await any scheduled write, flushing it immediately.
- *
- * @returns {Promise<void>}
  */
 export async function flushChatDb(): Promise<void> {
   if (writeTimer) {
@@ -236,8 +217,6 @@ export async function flushChatDb(): Promise<void> {
 
 /**
  * Drop everything held locally (e.g. on sign-out) and forget the cache.
- *
- * @returns {Promise<void>}
  */
 export async function clearChatDb(): Promise<void> {
   if (writeTimer) {

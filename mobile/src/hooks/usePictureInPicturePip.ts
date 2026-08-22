@@ -13,14 +13,7 @@ import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
  * gesture can read them without crossing to the JS thread (avoids a worklet
  * call-non-worklet crash when dragging the PiP).
  *
- * @param {object} params
- * @param {() => void} params.onTap - Invoked when the PiP is tapped (swap streams).
- * @returns {{
- *   stageSize: { width: number, height: number },
- *   handleCallStageLayout: (event: object) => void,
- *   pipGesture: ReturnType<typeof Gesture.Race>,
- *   animatedPipStyle: object,
- * }}
+ * @param params.onTap - Invoked when the PiP is tapped (swap streams).
  */
 export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }): {
     stageSize: { width: number; height: number; };
@@ -76,7 +69,7 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     pipMaxY,
   ]);
 
-  const handleCallStageLayout = useCallback((/** @type {any} */ event: any) => {
+  const handleCallStageLayout = useCallback((event: any) => {
     const { width, height } = event.nativeEvent.layout;
     setStageSize({ width, height });
   }, []);

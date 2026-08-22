@@ -38,8 +38,6 @@ const TERMINAL_CALL_STATES = new Set(['ended', 'declined', 'missed', 'busy', 'un
  * Each key is the value stored in `call.endReason`.  The value is a
  * localization-friendly message key that clients can map to translated text;
  * the key itself also serves as a readable default English hint.
- *
- * @type {Record<string, string>}
  */
 const CALL_END_REASONS: Record<string, string> = {
   ended: 'call_ended',
@@ -60,8 +58,6 @@ const CALL_END_REASONS: Record<string, string> = {
 
 /**
  * Valid next states for each non-terminal call state.
- *
- * @type {Map<string, Set<string>>}
  */
 const CALL_TRANSITIONS: Map<string, Set<string>> = new Map([
   ['ringing', new Set(['accepted', 'declined', 'missed', 'busy', 'unreachable', 'ended'])],

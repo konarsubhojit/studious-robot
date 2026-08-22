@@ -15,8 +15,6 @@ import { ensureCallPermissions } from '../permissions';
  *
  * Extracted out of `useCallFlow` so this one-time startup concern stays
  * isolated from that hook's call-lifecycle/session/WebRTC responsibilities.
- *
- * @param {string} userId
  */
 export default function useStartupPermissions(userId: string) {
   // Guards the one-time upfront permission request, so a fresh identity

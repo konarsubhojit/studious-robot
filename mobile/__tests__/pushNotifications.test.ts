@@ -35,10 +35,10 @@ import {
   showMessageNotification,
 } from '../src/messageNotification';
 
-const globalAny = (/** @type {unknown} */ (global) as any);
+const globalAny = ((global) as any);
 const getInitialURLMock = (Linking.getInitialURL as jest.Mock);
 const addEventListenerMock = (Linking.addEventListener as jest.Mock);
-const showMessageNotificationMock = (/** @type {unknown} */ (showMessageNotification) as jest.Mock);
+const showMessageNotificationMock = ((showMessageNotification) as jest.Mock);
 
 jest.mock('../src/messageNotification', () => {
   const actual = jest.requireActual('../src/messageNotification');
@@ -150,9 +150,8 @@ describe('addCallLinkListener', () => {
 
   test('invokes callback for matching deep links', () => {
     const callback = jest.fn();
-    /** @type {any} */
     let capturedListener: any;
-    addEventListenerMock.mockImplementation((/** @type {string} */ event: string, /** @type {any} */ listener: any) => {
+    addEventListenerMock.mockImplementation((event: string, listener: any) => {
       capturedListener = listener;
       return { remove: jest.fn() };
     });
@@ -165,9 +164,8 @@ describe('addCallLinkListener', () => {
 
   test('does not invoke callback for non-call URLs', () => {
     const callback = jest.fn();
-    /** @type {any} */
     let capturedListener: any;
-    addEventListenerMock.mockImplementation((/** @type {string} */ event: string, /** @type {any} */ listener: any) => {
+    addEventListenerMock.mockImplementation((event: string, listener: any) => {
       capturedListener = listener;
       return { remove: jest.fn() };
     });
@@ -341,8 +339,7 @@ describe('getPushToken / registerForPushNotifications (native module absent)', (
 describe('getPushToken (native module present)', () => {
   const AUTH = { AUTHORIZED: 1, PROVISIONAL: 2, DENIED: 0 };
 
-  function withMessaging(/** @type {any} */ instance: any, /** @type {any} */ run: any) {
-    /** @type {any} */
+  function withMessaging(instance: any, run: any) {
     let mod: any;
     jest.isolateModules(() => {
       // Real @react-native-firebase/messaging's modular API exposes free
@@ -352,13 +349,13 @@ describe('getPushToken (native module present)', () => {
       // modular call sites instead of masking them.
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (/** @type {any} */ inst: any) => inst.requestPermission(),
-        getToken: (/** @type {any} */ inst: any) => inst.getToken(),
-        registerDeviceForRemoteMessages: (/** @type {any} */ inst: any) =>
+        requestPermission: (inst: any) => inst.requestPermission(),
+        getToken: (inst: any) => inst.getToken(),
+        registerDeviceForRemoteMessages: (inst: any) =>
           inst.registerDeviceForRemoteMessages?.(),
-        setBackgroundMessageHandler: (/** @type {any} */ inst: any, /** @type {any} */ handler: any) =>
+        setBackgroundMessageHandler: (inst: any, handler: any) =>
           inst.setBackgroundMessageHandler(handler),
-        onMessage: (/** @type {any} */ inst: any, /** @type {any} */ handler: any) => inst.onMessage(handler),
+        onMessage: (inst: any, handler: any) => inst.onMessage(handler),
         AuthorizationStatus: AUTH,
       };
       jest.doMock('@react-native-firebase/messaging', () => messagingApi, { virtual: true });
@@ -377,7 +374,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue('fcm-token-123'),
     };
-    await withMessaging(instance, async (/** @type {any} */ mod: any) => {
+    await withMessaging(instance, async (mod: any) => {
       await expect(mod.getPushToken()).resolves.toEqual({
         provider: 'fcm',
         pushToken: 'fcm-token-123',
@@ -390,7 +387,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.DENIED),
       getToken: jest.fn(),
     };
-    await withMessaging(instance, async (/** @type {any} */ mod: any) => {
+    await withMessaging(instance, async (mod: any) => {
       await expect(mod.getPushToken()).resolves.toBeNull();
       expect(instance.getToken).not.toHaveBeenCalled();
     });
@@ -401,7 +398,7 @@ describe('getPushToken (native module present)', () => {
       requestPermission: jest.fn().mockResolvedValue(AUTH.AUTHORIZED),
       getToken: jest.fn().mockResolvedValue(''),
     };
-    await withMessaging(instance, async (/** @type {any} */ mod: any) => {
+    await withMessaging(instance, async (mod: any) => {
       await expect(mod.getPushToken()).resolves.toBeNull();
     });
   });
@@ -415,7 +412,7 @@ describe('getPushToken (native module present)', () => {
       ok: true,
       json: async () => ({ deviceId: 'd-1' }),
     });
-    await withMessaging(instance, async (/** @type {any} */ mod: any) => {
+    await withMessaging(instance, async (mod: any) => {
       await expect(
         mod.registerForPushNotifications({
           sessionId: 'sess-9',
@@ -592,16 +589,15 @@ describe('background push handler', () => {
    * memoised native lookup while the mock is active (see the identical helper
    * in the `getPushToken` block).
    */
-  function withMockedMessaging(/** @type {any} */ instance: any, /** @type {any} */ run: any) {
-    /** @type {any} */
+  function withMockedMessaging(instance: any, run: any) {
     let mod: any;
     jest.isolateModules(() => {
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (/** @type {any} */ inst: any) => inst.requestPermission?.(),
-        getToken: (/** @type {any} */ inst: any) => inst.getToken?.(),
-        setBackgroundMessageHandler: (/** @type {any} */ inst: any, /** @type {any} */ handler: any) => inst.setBackgroundMessageHandler?.(handler),
-        onMessage: (/** @type {any} */ inst: any, /** @type {any} */ handler: any) =>
+        requestPermission: (inst: any) => inst.requestPermission?.(),
+        getToken: (inst: any) => inst.getToken?.(),
+        setBackgroundMessageHandler: (inst: any, handler: any) => inst.setBackgroundMessageHandler?.(handler),
+        onMessage: (inst: any, handler: any) =>
           typeof inst.onMessage === 'function' ? inst.onMessage(handler) : undefined,
         AuthorizationStatus: AUTH,
       };
@@ -615,7 +611,7 @@ describe('background push handler', () => {
 
   test('installForegroundMessageHandler rings pushes that arrive while open', async () => {
     const onMessage = jest.fn().mockReturnValue(jest.fn());
-    await withMockedMessaging({ onMessage }, async (/** @type {any} */ mod: any) => {
+    await withMockedMessaging({ onMessage }, async (mod: any) => {
       const unsubscribe = mod.installForegroundMessageHandler();
       expect(onMessage).toHaveBeenCalledTimes(1);
       expect(typeof unsubscribe).toBe('function');
@@ -630,7 +626,7 @@ describe('background push handler', () => {
   });
 
   test('installForegroundMessageHandler is a no-op when onMessage is unavailable', async () => {
-    await withMockedMessaging({}, (/** @type {any} */ mod: any) => {
+    await withMockedMessaging({}, (mod: any) => {
       expect(() => mod.installForegroundMessageHandler()()).not.toThrow();
     });
   });
@@ -641,7 +637,6 @@ describe('background push handler', () => {
 
   test('installBackgroundMessageHandler wires native background callback', async () => {
     const setBackgroundMessageHandler = jest.fn();
-    /** @type {any} */
     let mod: any;
     jest.isolateModules(() => {
       const instance = {
@@ -651,9 +646,9 @@ describe('background push handler', () => {
       };
       const messagingApi = {
         getMessaging: jest.fn(() => instance),
-        requestPermission: (/** @type {any} */ inst: any) => inst.requestPermission(),
-        getToken: (/** @type {any} */ inst: any) => inst.getToken(),
-        setBackgroundMessageHandler: (/** @type {any} */ inst: any, /** @type {any} */ handler: any) =>
+        requestPermission: (inst: any) => inst.requestPermission(),
+        getToken: (inst: any) => inst.getToken(),
+        setBackgroundMessageHandler: (inst: any, handler: any) =>
           inst.setBackgroundMessageHandler(handler),
         AuthorizationStatus: AUTH,
       };
@@ -713,9 +708,8 @@ describe('getInitialChatLink / addChatLinkListener', () => {
 
   test('forwards only chat links to the listener', () => {
     const remove = jest.fn();
-    /** @type {any} */
     let emit: any;
-    addEventListenerMock.mockImplementation((/** @type {string} */ _event: string, /** @type {any} */ handler: any) => {
+    addEventListenerMock.mockImplementation((_event: string, handler: any) => {
       emit = handler;
       return { remove };
     });

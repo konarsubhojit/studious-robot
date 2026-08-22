@@ -30,8 +30,7 @@ export type MessageBusHandler = (message: unknown, channel: string) => void;
 export type MessageBus = { type: 'memory' | 'redis'; publish: (channel: string, message: unknown) => Promise<void>; subscribe: (channel: string, handler: MessageBusHandler) => Promise<() => Promise<void>>; close: () => Promise<void>; };
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -40,9 +39,6 @@ function errorMessage(error: unknown): string {
 /**
  * Serialise a message for transport. Objects become JSON; strings are sent
  * as-is so callers may publish pre-encoded payloads.
- *
- * @param {unknown} message
- * @returns {string}
  */
 function encode(message: unknown): string {
   return typeof message === 'string' ? message : JSON.stringify(message);
@@ -51,9 +47,6 @@ function encode(message: unknown): string {
 /**
  * Parse a transported payload back into an object, falling back to the raw
  * string when it is not valid JSON.
- *
- * @param {string} payload
- * @returns {unknown}
  */
 function decode(payload: string): unknown {
   try {
@@ -69,8 +62,6 @@ function decode(payload: string): unknown {
  * Suitable for single-instance deployments and tests: publishes are delivered
  * to local subscribers only, asynchronously (mirroring network pub/sub timing
  * so call sites cannot accidentally rely on synchronous delivery).
- *
- * @returns {MessageBus}
  */
 function createMemoryMessageBus(): MessageBus {
   const emitter = new EventEmitter();
@@ -91,7 +82,7 @@ function createMemoryMessageBus(): MessageBus {
     },
 
     async subscribe(channel, handler) {
-      const listener = (/** @type {string} */ payload: string) => {
+      const listener = (payload: string) => {
         try {
           handler(decode(payload), channel);
         } catch (error) {
@@ -126,16 +117,12 @@ function createMemoryMessageBus(): MessageBus {
  *   sub.subscribe(channel, (message, channel) => void)
  *   sub.unsubscribe(channel)
  *   client.quit()
- *
- * @param {{ pub: any, sub: any, ownsClients?: boolean }} opts
- * @returns {MessageBus}
  */
 function createRedisMessageBus({ pub, sub, ownsClients = false }: { pub: any; sub: any; ownsClients?: boolean; }): MessageBus {
   if (!pub || !sub) {
     throw new Error('createRedisMessageBus: both "pub" and "sub" clients are required');
   }
 
-  /** @type {Map<string, Set<(message: unknown, channel: string) => void>>} */
   const handlers: Map<string, Set<(message: unknown, channel: string) => void>> = new Map();
   let closed = false;
 
@@ -155,7 +142,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }: { pub: any; su
         set = new Set();
         handlers.set(channel, set);
         // One Redis subscription per channel; fan out to local handlers.
-        await sub.subscribe(channel, (/** @type {string} */ payload: string) => {
+        await sub.subscribe(channel, (payload: string) => {
           const message = decode(payload);
           for (const fn of handlers.get(channel) ?? []) {
             try {

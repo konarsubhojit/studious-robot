@@ -10,7 +10,7 @@ jest.mock('react-native-incall-manager', () => ({
 const mockEnsureBluetoothPermission = jest.fn();
 
 jest.mock('../src/permissions', () => ({
-  ensureBluetoothPermission: (/** @type {any[]} */ ...args: any[]) => mockEnsureBluetoothPermission(...args),
+  ensureBluetoothPermission: (...args: any[]) => mockEnsureBluetoothPermission(...args),
 }));
 
 import { DeviceEventEmitter } from 'react-native';
@@ -263,7 +263,7 @@ describe('audioRouting', () => {
     });
 
     test('discovers devices on the first selection and upgrades to the better one', async () => {
-      chooseAudioRouteMock.mockImplementation(async (/** @type {string} */ route: string) => ({
+      chooseAudioRouteMock.mockImplementation(async (route: string) => ({
         availableAudioDeviceList: '["BLUETOOTH","EARPIECE"]',
         selectedAudioDevice: route,
       }));

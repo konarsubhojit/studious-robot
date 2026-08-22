@@ -36,14 +36,13 @@ const FRAME_CHECK_TIMEOUT_MS = 3000;
 const FRAME_CHECK_INTERVAL_MS = 500;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
-/** @param {any} error */
+/** @param error */
 function isPermissionDeniedError(error: any) {
   const name = error?.name;
   const message = String(error?.message || '').toLowerCase();
@@ -59,8 +58,6 @@ function isPermissionDeniedError(error: any) {
 
 /**
  * Whether the current runtime exposes a display-media capture API.
- *
- * @returns {boolean}
  */
 export function isScreenShareSupported(): boolean {
   return typeof mediaDevices?.getDisplayMedia === 'function';
@@ -68,9 +65,6 @@ export function isScreenShareSupported(): boolean {
 
 /**
  * Human-readable message for a failed `getDisplayMedia` call.
- *
- * @param {unknown} error
- * @returns {string}
  */
 export function getScreenShareErrorMessage(error: unknown): string {
   if (isPermissionDeniedError(error)) {
@@ -85,12 +79,7 @@ export function getScreenShareErrorMessage(error: unknown): string {
 /**
  * Prompt the user for screen-capture consent and return the captured stream.
  *
- * @param {{ withAudio?: boolean }} [options]
  *   `withAudio` requests screen/system audio in addition to the screen video.
- * @returns {Promise<
- *   | { ok: true, stream: object, videoTrack: object, audioTrack: object | null, audioShared: boolean }
- *   | { ok: false, reason: 'unsupported' | 'cancelled' | 'failed', message: string, error?: unknown }
- * >}
  */
 export async function startScreenCapture({ withAudio = false }: { withAudio?: boolean; } = {}): Promise<{ ok: true; stream: object; videoTrack: object; audioTrack: object | null; audioShared: boolean; } |
 { ok: false; reason: 'unsupported' | 'cancelled' | 'failed'; message: string; error?: unknown; }> {
@@ -166,17 +155,13 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
   };
 }
 
-/** @param {number} ms */
+/** @param ms */
 function sleep(ms: number) {
   return new Promise(resolve => {
     setTimeout(resolve, ms);
   });
 }
 
-/**
- * @param {any} report
- * @param {(entry: any) => void} visit
- */
 function forEachStatsEntry(report: any, visit: (entry: any) => void) {
   if (!report) return;
   if (typeof report.forEach === 'function') {
@@ -195,12 +180,11 @@ function forEachStatsEntry(report: any, visit: (entry: any) => void) {
 /**
  * Total frames the outbound video sender has handed to the encoder/network.
  *
- * @param {unknown} report - an `RTCStatsReport` (Map), array or plain object.
- * @returns {number}
+ * @param report - an `RTCStatsReport` (Map), array or plain object.
  */
 function countOutboundVideoFrames(report: unknown): number {
   let frames = 0;
-  forEachStatsEntry(report, (/** @type {any} */ entry: any) => {
+  forEachStatsEntry(report, (entry: any) => {
     if (!entry || entry.type !== 'outbound-rtp') return;
     const kind = entry.kind ?? entry.mediaType;
     if (kind && kind !== 'video') return;
@@ -218,12 +202,7 @@ function countOutboundVideoFrames(report: unknown): number {
  * `startForeground`), which is indistinguishable from success locally. Polling
  * the outbound RTP stats is the only reliable way to tell the difference.
  *
- * @param {any} peerConnection an `RTCPeerConnection`, or anything falsy.
- * @param {{ timeoutMs?: number, intervalMs?: number }} [options]
- * @returns {Promise<
- *   | { ok: true, frames: number | null, verified: boolean }
- *   | { ok: false, reason: 'no_frames', message: string }
- * >}
+ * @param peerConnection an `RTCPeerConnection`, or anything falsy.
  */
 export async function verifyScreenShareFrames(peerConnection: any, options: { timeoutMs?: number; intervalMs?: number; } = {}): Promise<{ ok: true; frames: number | null; verified: boolean; } |
 { ok: false; reason: 'no_frames'; message: string; }> {
@@ -267,11 +246,11 @@ export async function verifyScreenShareFrames(peerConnection: any, options: { ti
 /**
  * Stop every track of a captured display stream. Safe to call with `null`.
  *
- * @param {any} stream a `MediaStream`, or anything falsy.
+ * @param stream a `MediaStream`, or anything falsy.
  */
 export function stopScreenCapture(stream: any) {
   if (!stream?.getTracks) return;
-  stream.getTracks().forEach((/** @type {any} */ track: any) => {
+  stream.getTracks().forEach((track: any) => {
     try {
       track.stop();
     } catch {

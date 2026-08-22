@@ -11,8 +11,7 @@ import { SIGNALING_VERSION } from '../config.ts';
 import { API_ROUTES, SERVER_EVENTS } from '../../../shared/index.ts';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -32,9 +31,6 @@ function errorMessage(error: unknown): string {
  * Follows the conventions of `calls.routes.js`: the session comes from
  * `getSessionFromRequest`, a missing/expired session is a 401, and access to
  * another user's conversation is a 403.
- *
- * @param {{ state: import('../stores/contracts.ts').ServerState, io: any }} ctx
- * @returns {import('express').Router}
  */
 export type MessageRecord = import('../stores/contracts.ts').MessageRecord;
 export type ConversationSummary = { conversationId: string; peerId: string; lastMessage: Record<string, any> | null; unreadCount: number; };
@@ -87,7 +83,6 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     const limit = clampMessageLimit(req.query?.limit);
     const cacheKey = before || includeCalls ? null : messagesCacheKey(conversationId, limit);
 
-    /** @type {MessageRecord[]|undefined} */
     let messages: MessageRecord[] | undefined = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {
       try {
@@ -196,7 +191,6 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     const limit = clampMessageLimit(req.query?.limit);
     const before = normaliseOptionalString(req.query?.before);
 
-    /** @type {Array<MessageRecord>} */
     let matches: Array<MessageRecord>;
     try {
       matches = await state.messageStore.searchMessages({
@@ -264,7 +258,6 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     // The cached value is the raw store result: the blocklist filter and the
     // presence flag below are evaluated per request so neither can go stale.
     const cacheKey = conversationsCacheKey(session.userId);
-    /** @type {ConversationSummary[]|undefined} */
     let conversations: ConversationSummary[] | undefined = await readCached(state, cacheKey);
     if (conversations === undefined) {
       try {

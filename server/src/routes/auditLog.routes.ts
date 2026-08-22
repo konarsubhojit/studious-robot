@@ -4,9 +4,6 @@ import { getSessionFromRequest } from '../lib/auth.ts';
 /**
  * GET /audit-log – return the security audit entries where the authenticated
  * user is the actor or the target (oldest-first).
- *
- * @param {{ state: { sessions: import('../stores/contracts.ts').SessionStore, auditLog: { getForUser: (userId: string) => object[] } } }} ctx
- * @returns {import('express').Router}
  */
 function createAuditLogRouter({ state }: { state: { sessions: import('../stores/contracts.ts').SessionStore; auditLog: { getForUser: (userId: string) => object[]; }; }; }): import('express').Router {
   const router = express.Router();

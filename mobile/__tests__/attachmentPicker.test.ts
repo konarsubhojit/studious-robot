@@ -8,7 +8,7 @@
  * rather than depending on Jest's module-registry state across tests.
  */
 
-function withImagePickerMock(/** @type {any} */ imagePickerMock: any, /** @type {any} */ run: any) {
+function withImagePickerMock(imagePickerMock: any, run: any) {
   let result;
   jest.isolateModules(() => {
     if (imagePickerMock) {
@@ -27,7 +27,7 @@ function withImagePickerMock(/** @type {any} */ imagePickerMock: any, /** @type 
   return result;
 }
 
-function withDocumentPickerMock(/** @type {any} */ documentPickerMock: any, /** @type {any} */ run: any) {
+function withDocumentPickerMock(documentPickerMock: any, run: any) {
   let result;
   jest.isolateModules(() => {
     if (documentPickerMock) {
@@ -49,7 +49,7 @@ function withDocumentPickerMock(/** @type {any} */ documentPickerMock: any, /** 
 describe('attachmentPicker', () => {
   describe('when the native modules are not linked', () => {
     test('isImagePickerAvailable/pickPhoto/pickCameraPhoto degrade to null', async () => {
-      await withImagePickerMock(null, async (/** @type {any} */ picker: any) => {
+      await withImagePickerMock(null, async (picker: any) => {
         expect(picker.isImagePickerAvailable()).toBe(false);
         await expect(picker.pickPhoto()).resolves.toBeNull();
         await expect(picker.pickCameraPhoto()).resolves.toBeNull();
@@ -57,7 +57,7 @@ describe('attachmentPicker', () => {
     });
 
     test('isDocumentPickerAvailable/pickDocument degrade to null', async () => {
-      await withDocumentPickerMock(null, async (/** @type {any} */ picker: any) => {
+      await withDocumentPickerMock(null, async (picker: any) => {
         expect(picker.isDocumentPickerAvailable()).toBe(false);
         await expect(picker.pickDocument()).resolves.toBeNull();
       });
@@ -69,7 +69,7 @@ describe('attachmentPicker', () => {
       const launchImageLibrary = jest.fn().mockResolvedValue({
         assets: [{ uri: 'file:///tmp/a.jpg', type: 'image/jpeg', fileSize: 2048, width: 100, height: 200 }],
       });
-      await withImagePickerMock({ launchImageLibrary }, async (/** @type {any} */ picker: any) => {
+      await withImagePickerMock({ launchImageLibrary }, async (picker: any) => {
         await expect(picker.pickPhoto()).resolves.toEqual({
           uri: 'file:///tmp/a.jpg',
           mimeType: 'image/jpeg',
@@ -86,7 +86,7 @@ describe('attachmentPicker', () => {
 
     test('pickPhoto returns null when the user cancels', async () => {
       const launchImageLibrary = jest.fn().mockResolvedValue({ didCancel: true });
-      await withImagePickerMock({ launchImageLibrary }, async (/** @type {any} */ picker: any) => {
+      await withImagePickerMock({ launchImageLibrary }, async (picker: any) => {
         await expect(picker.pickPhoto()).resolves.toBeNull();
       });
     });
@@ -95,7 +95,7 @@ describe('attachmentPicker', () => {
       const launchCamera = jest.fn().mockResolvedValue({
         assets: [{ uri: 'file:///tmp/cam.jpg', type: 'image/jpeg', fileSize: 1024 }],
       });
-      await withImagePickerMock({ launchCamera }, async (/** @type {any} */ picker: any) => {
+      await withImagePickerMock({ launchCamera }, async (picker: any) => {
         await expect(picker.pickCameraPhoto()).resolves.toEqual({
           uri: 'file:///tmp/cam.jpg',
           mimeType: 'image/jpeg',
@@ -114,7 +114,7 @@ describe('attachmentPicker', () => {
       const pick = jest.fn().mockResolvedValue([
         { uri: 'file:///tmp/doc.pdf', type: 'application/pdf', size: 4096, name: 'doc.pdf' },
       ]);
-      await withDocumentPickerMock({ pick, types: { allFiles: '*/*' } }, async (/** @type {any} */ picker: any) => {
+      await withDocumentPickerMock({ pick, types: { allFiles: '*/*' } }, async (picker: any) => {
         await expect(picker.pickDocument()).resolves.toEqual({
           uri: 'file:///tmp/doc.pdf',
           mimeType: 'application/pdf',
@@ -127,7 +127,7 @@ describe('attachmentPicker', () => {
     test('pickDocument returns null when the user cancels', async () => {
       const pick = jest.fn().mockRejectedValue(new Error('cancelled'));
       const isErrorWithCode = jest.fn(() => true);
-      await withDocumentPickerMock({ pick, isErrorWithCode }, async (/** @type {any} */ picker: any) => {
+      await withDocumentPickerMock({ pick, isErrorWithCode }, async (picker: any) => {
         await expect(picker.pickDocument()).resolves.toBeNull();
       });
     });

@@ -8,11 +8,8 @@ import { STORE_NAMES } from './contracts.ts';
  * state in the current process, which is correct for a single-instance
  * deployment and for tests.  Durable/shared implementations (Redis, Postgres)
  * can be added later behind the same interface.
- *
- * @returns {import('./contracts.ts').Stores}
  */
 function createMemoryStores(): import('./contracts.ts').Stores {
-  /** @type {Record<string, Map<unknown, unknown>>} */
   const stores: Record<string, Map<unknown, unknown>> = {};
   for (const name of STORE_NAMES) {
     stores[name] = new Map();

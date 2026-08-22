@@ -125,9 +125,8 @@ export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_M
  * unknown system scheme both fall back to the dark scheme the app shipped
  * with.
  *
- * @param {string} [mode] - One of THEME_MODES.
- * @param {string|null} [systemScheme] - Value from `useColorScheme()`.
- * @returns {'light'|'dark'}
+ * @param mode - One of THEME_MODES.
+ * @param systemScheme - Value from `useColorScheme()`.
  */
 export function resolveScheme(mode?: string, systemScheme?: string | null): 'light' | 'dark' {
   if (mode === THEME_MODES.LIGHT) return 'light';
@@ -161,8 +160,8 @@ export const sizes = {
  * `sizes.minTouchTarget`, so small icon buttons stay comfortably tappable
  * without inflating the visual design.
  *
- * @param {number} size - Rendered width/height of the control, in dp.
- * @returns {number} slop to apply on every edge (0 when the control is already big enough).
+ * @param size - Rendered width/height of the control, in dp.
+ * @returns slop to apply on every edge (0 when the control is already big enough).
  */
 export function touchSlop(size: number): number {
   return Math.max(0, Math.ceil((sizes.minTouchTarget - size) / 2));
@@ -171,11 +170,6 @@ export function touchSlop(size: number): number {
 /**
  * Text style tokens. Typed as React Native text styles so spreading a token
  * into a `StyleSheet.create` entry keeps its literal `fontWeight` type.
- *
- * @type {Record<
- *   'title'|'sectionTitle'|'groupLabel'|'body'|'label'|'emphasis'|'hint',
- *   import('react-native').TextStyle
- * >}
  */
 export const typography: Record<'title' | 'sectionTitle' | 'groupLabel' | 'body' | 'label' | 'emphasis' | 'hint', TextStyle> = {
   title: { fontSize: 28, fontWeight: '600' },

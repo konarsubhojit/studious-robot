@@ -9,8 +9,6 @@ import { createMemoryStores } from '../src/stores/index.ts';
 /**
  * Start a server on an ephemeral port and return its URL plus the full server
  * handle (so tests can call `shutdown()` directly).
- *
- * @param {import('../src/createServer.ts').CreateServerOptions} [opts]
  */
 async function startServer(opts: import('../src/createServer.ts').CreateServerOptions = {}) {
   const server = createServer(opts);
@@ -20,9 +18,6 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
 
 /**
  * Connect a Socket.IO client and resolve once connected.
- *
- * @param {string} url
- * @returns {Promise<import('socket.io-client').Socket>}
  */
 function connect(url: string): Promise<import('socket.io-client').Socket> {
   return new Promise((resolve, reject) => {
@@ -34,11 +29,6 @@ function connect(url: string): Promise<import('socket.io-client').Socket> {
 
 /**
  * Wait for a named event on a socket, with a timeout.
- *
- * @param {import('socket.io-client').Socket} socket
- * @param {string} event
- * @param {number} [timeoutMs]
- * @returns {Promise<any>}
  */
 function waitFor(socket: import('socket.io-client').Socket, event: string, timeoutMs: number = 1000): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -52,9 +42,6 @@ function waitFor(socket: import('socket.io-client').Socket, event: string, timeo
 
 /**
  * Simple GET helper returning `{ status, body }`.
- *
- * @param {string} url
- * @returns {Promise<{ status: number|undefined, body: any }>}
  */
 function getJson(url: string): Promise<{ status: number | undefined; body: any; }> {
   return new Promise((resolve, reject) => {

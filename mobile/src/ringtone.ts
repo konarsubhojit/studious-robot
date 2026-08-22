@@ -28,8 +28,6 @@ export type InCallManager = { start?: (options: { media: boolean, ringback?: str
 
 /**
  * Cached result of the optional native InCallManager module lookup.
- *
- * @type {InCallManager | null | undefined}
  */
 let cachedInCallManager: InCallManager | null | undefined;
 let hasLoggedMissingInCallManager = false;
@@ -38,14 +36,12 @@ let hasLoggedMissingInCallManager = false;
  * Lazily resolve the optional `react-native-incall-manager` default export.
  * Returns the InCallManager singleton, or `null` when the package is not
  * installed.  The lookup is memoised so a missing module is only logged once.
- *
- * @returns {InCallManager | null}
  */
 function loadInCallManager(): InCallManager | null {
   if (cachedInCallManager !== undefined) return cachedInCallManager;
   try {
     const mod = require('react-native-incall-manager');
-    cachedInCallManager = (/** @type {unknown} */ (mod?.default ?? mod ?? null) as InCallManager | null);
+    cachedInCallManager = ((mod?.default ?? mod ?? null) as InCallManager | null);
   } catch {
     cachedInCallManager = null;
     if (!hasLoggedMissingInCallManager) {
@@ -59,8 +55,7 @@ function loadInCallManager(): InCallManager | null {
 }
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;

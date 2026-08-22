@@ -17,21 +17,7 @@ import { createTurnCredentialsRouter } from './turnCredentials.routes.ts';
  * `/calls/:callId`) remain identical to the original monolith, preserving the
  * public HTTP contract exactly.
  *
- * @param {import('express').Express} app
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   db: any,
- *   io: any,
- *   sessionTtlMs: number,
- *   ringingTimeoutMs: number,
- *   turnFetch?: typeof fetch,
- *   turnEnv?: NodeJS.ProcessEnv,
- *   verifyIdToken?: (idToken: string) => Promise<{
- *     authUid: string,
- *     email?: string|null,
- *     authProvider?: string|null,
- *   }>,
- * }} ctx
+ * @param ctx
  */
 function mountRoutes(app: import('express').Express, ctx: {
         state: import('../stores/contracts.ts').ServerState;

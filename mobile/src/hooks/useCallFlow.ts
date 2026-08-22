@@ -91,8 +91,7 @@ export type AnswerError = Error & { answerFailureReason?: string; };
 export type { CallStatus };
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -180,8 +179,6 @@ export const CALL_PHASES = CALL_STATES;
  * server.  The mapped string is the default English label shown in the UI.
  * Applications that support multiple languages should use these as fallback
  * defaults and provide translated overrides keyed by the same reason code.
- *
- * @type {Record<string, string>}
  */
 export const CALL_END_REASON_LABELS: Record<string, string> = {
   ended: 'Call ended',
@@ -200,9 +197,6 @@ export const CALL_END_REASON_LABELS: Record<string, string> = {
  * Used as a self-heal after a `busy` rejection: a call the server thinks is in
  * progress but that no client is holding is a phantom, and the server closes
  * it out when it hears the client's own view of the world.
- *
- * @param {ReturnType<typeof import('../signalingClient').createSignalingClient>} signaling
- * @param {string[]} activeCallIds
  */
 function reportOwnCallState(signaling: ReturnType<typeof createSignalingClient>, activeCallIds: string[]) {
   logInfo('[CallFlow] Reporting own call state after busy rejection', { activeCallIds });
@@ -246,7 +240,7 @@ function reportOwnCallState(signaling: ReturnType<typeof createSignalingClient>,
  * The hook returns serialisable state and action callbacks so the UI remains
  * purely presentational.
  *
- * @param {{ speakerEnabledByDefault?: boolean }} [options] persisted device
+ * @param options persisted device
  *   preferences that influence call setup (see `useAppSettings`).
  */
 export default function useCallFlow({ speakerEnabledByDefault = false }: { speakerEnabledByDefault?: boolean; } = {}) {
@@ -260,9 +254,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   // transitions (a late `rtc.answer` after hang-up, a second incoming call
   // while already connected, …) are ignored instead of corrupting the UI.
   const [callPhase, dispatchCallEvent] = useReducer(callStateReducer, INITIAL_CALL_STATE);
-  /** @type {[CallRecord | null, (call: CallRecord | null) => void]} */
+  
   const [activeCall, setActiveCall] = useState((null as CallRecord | null));
-  /** @type {[CallRecord | null, (call: CallRecord | null) => void]} */
+  
   const [incomingCall, setIncomingCall] = useState((null as CallRecord | null));
 
   // callId received from a push-notification deep link before the user identity
@@ -376,7 +370,6 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   // stays a no-op when `acceptIncomingCall`'s identity changes.
   const replayedAnswerCallIdsRef = useRef((new Set() as Set<string>));
 
-  /** @type {(message: string, severity?: CallStatus['severity']) => void} */
   const updateStatus: (message: string, severity?: CallStatus['severity']) => void = useCallback((message, severity = 'info') => {
     logVerbose('[CallFlow] Status updated', { message, severity });
     setStatus({ message, severity });
@@ -603,7 +596,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * with `media_connect_timeout` while media is still flowing.  Both peers
    * report and the server accepts whichever arrives first.
    *
-   * @param {string} iceState - the observed peer-connection/ICE state.
+   * @param iceState - the observed peer-connection/ICE state.
    */
   const reportCallConnected = useCallback(
       (iceState: string) => {
@@ -633,10 +626,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * delayed and cancelled the moment the connection comes back — but once the
    * grace period lapses the server ends the call immediately instead of
    * leaving it stranded until a sweep notices.
-   *
-   * @param {string} iceState
    */
-  const reportMediaFailure = useCallback(/** @param {string} iceState */ (iceState: string) => {
+  const reportMediaFailure = useCallback(/** @param iceState */ (iceState: string) => {
     if (iceFailureTimerRef.current || !activeCallIdRef.current) return;
     iceFailureTimerRef.current = setTimeout(() => {
       iceFailureTimerRef.current = null;
@@ -724,7 +715,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   }, []);
 
   const configurePeerConnection = useCallback(
-    /** @param {PeerConnection} pc */
+    /** @param pc */
     async (pc: PeerConnection) => {
       const iceServers = await getIceServersForCall({
         signalingUrl,
@@ -923,10 +914,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * duplicate display for the same callId.
    *
    * Never throws; failures are logged and degraded gracefully.
-   *
    */
   const showIncomingCallUi = useCallback(
-    /** @param {{ callId: string, callerId?: string | null }} call */
+    /** @param call */
     async (call: { callId: string; callerId?: string | null; }) => {
     if (!call?.callId) return;
     if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
@@ -967,16 +957,16 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Wind down an active call.  Preserves the socket connection so the user
    * can receive subsequent incoming calls without reconnecting.
    *
-   * @param {string} [nextMessage='Call ended'] - Status message to display.
-   * @param {string} [severity='info']          - Status severity.
-   * @param {string|null} [endReason=null]      - Canonical end-reason code
+   * @param [nextMessage='Call ended'] - Status message to display.
+   * @param [severity='info']          - Status severity.
+   * @param [endReason=null]      - Canonical end-reason code
    *   (one of the keys from CALL_END_REASON_LABELS) for history tracking.
    */
   const endActiveCall = useCallback(
     /**
-     * @param {string} [nextMessage='Call ended']
-     * @param {CallStatus['severity']} [severity='info']
-     * @param {string|null} [endReason=null]
+     * @param [nextMessage='Call ended']
+     * @param [severity='info']
+     * @param [endReason=null]
      */
     (nextMessage: string = 'Call ended', severity: CallStatus['severity'] = 'info', endReason: string | null = null) => {
       // Capture call record before clearing – activeCallRef / incomingCallRef
@@ -1576,12 +1566,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * If the user identity is not yet known (userId or signalingUrl not set), the
    * callId is stored in `pendingPushCallId` and rehydration is deferred until
    * the presence auto-connect effect fires with a valid identity.
-   *
    */
   const rehydrateCallFromPush = useCallback(
     /**
-     * @param {string} callId
-     * @returns {Promise<'deferred'|'ringing'|'terminal'|'not_found'|'error'|'ignored'>}
      *   what happened, so callers replaying a queued answer can tell "still
      *   waiting on an identity" apart from "this call is gone".
      */
@@ -1777,13 +1764,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Block `peerId` and immediately drop them from the local conversation list:
    * the server hides a blocked peer from `GET /conversations`, so refetching
    * is what makes the block visible in both directions right away.
-   *
    */
   const blockPeer = useCallback(
-    /**
-     * @param {string} peerId
-     * @returns {Promise<boolean>}
-     */
     async (peerId: string): Promise<boolean> => {
       const applied = await blocks.blockUser(peerId);
       if (applied) await fetchConversations();
@@ -1794,13 +1776,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
 
   /**
    * Reverse a block, restoring the peer's conversation and directory entry.
-   *
    */
   const unblockPeer = useCallback(
-    /**
-     * @param {string} peerId
-     * @returns {Promise<boolean>}
-     */
     async (peerId: string): Promise<boolean> => {
       const removed = await blocks.unblockUser(peerId);
       if (removed) await fetchConversations();
@@ -1888,7 +1865,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
   const placeCall = useCallback(
-    /** @param {string} [explicitCalleeId] */
+    /** @param [explicitCalleeId] */
     async (explicitCalleeId?: string) => {
       if (isPlacingCallRef.current) return;
 
@@ -1918,7 +1895,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
           socket = connectSocket(sessionId);
           const connectingSocket = socket;
           // Give the socket a moment to connect.
-          await new Promise(/** @param {(value?: unknown) => void} resolve */ (resolve: (value?: unknown) => void, reject) => {
+          await new Promise(/** @param resolve */ (resolve: (value?: unknown) => void, reject) => {
             const timer = setTimeout(() => reject(new Error('socket connect timeout')), 8_000);
             connectingSocket.once('connect', () => {
               clearTimeout(timer);
@@ -1995,15 +1972,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Report an answer-path stage to the server as a push receipt so a call that
    * rings but cannot be picked up is diagnosable from server logs alone.
    * Never throws.
-   *
    */
   const reportAnswerStage = useCallback(
     /**
-     * @param {string | null} callId
-     * @param {string} stage - a canonical stage name such as
+     * @param stage - a canonical stage name such as
      *   `answer_attempted`, `answer_failed`, `answer_accepted`, `accept_tapped`,
      *   `decline_tapped` or `answer_skipped_duplicate`.
-     * @param {string | null} [reason]
      */
     (callId: string | null, stage: string, reason: string | null = null) => {
       if (!callId) return;
@@ -2033,9 +2007,6 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Resolve a connected socket, waiting up to `timeoutMs` for one (creating it
    * when none exists).  Returns `null` — never throws — when the socket cannot
    * be connected in time, so the caller can fall back to HTTP.
-   *
-   * @param {number} [timeoutMs]
-   * @returns {Promise<object | null>}
    */
   const waitForConnectedSocket = useCallback(
     async (timeoutMs = ANSWER_SOCKET_WAIT_MS) => {
@@ -2048,7 +2019,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
         }
         if (!socket) return null;
         const connectingSocket = socket;
-        await new Promise(/** @param {(value?: unknown) => void} resolve */ (resolve: (value?: unknown) => void, reject) => {
+        await new Promise(/** @param resolve */ (resolve: (value?: unknown) => void, reject) => {
           const timer = setTimeout(() => reject(new Error('socket connect timeout')), timeoutMs);
           connectingSocket.once('connect', () => {
             clearTimeout(timer);
@@ -2073,12 +2044,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   /**
    * Accept the call over the authenticated HTTP endpoint, used when the socket
    * is unavailable so answering never depends on socket timing.
-   *
    */
   const acceptCallOverHttp = useCallback(
     /**
-     * @param {string} callId
-     * @returns {Promise<CallRecord>} the updated call record
+     * @returns the updated call record
      */
     async (callId: string): Promise<CallRecord> => {
       const trimmedUrl = (signalingUrl ?? '').trim();
@@ -2108,13 +2077,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   /**
    * Tell the server the call is accepted, preferring the socket and falling
    * back to HTTP.  Retries the socket emit once before falling back.
-   *
    */
   const sendCallAccept = useCallback(
-    /**
-     * @param {string} callId
-     * @returns {Promise<{ call: CallRecord, transport: 'socket' | 'http' }>}
-     */
     async (callId: string): Promise<{ call: CallRecord; transport: 'socket' | 'http' }> => {
       const socket = await waitForConnectedSocket();
       if (socket) {
@@ -2158,12 +2122,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Acquire local media for a call that has *already* been accepted.  Media
    * failures degrade the call (audio-only / no media) instead of preventing the
    * answer, and every failure is logged, surfaced and reported. Never throws.
-   *
    */
   const acquireMediaForAcceptedCall = useCallback(
-    /**
-     * @param {string} callId
-     */
     async (callId: string) => {
       const permissions = await getMissingCallPermissions().catch(() => null);
       if (permissions?.missing?.length) {
@@ -2214,7 +2174,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   );
 
   /** Remember a callId that must never be accepted twice (bounded). */
-  const rememberAnsweredCall = useCallback(/** @param {string} callId */ (callId: string) => {
+  const rememberAnsweredCall = useCallback(/** @param callId */ (callId: string) => {
     const history = answeredCallIdsRef.current;
     if (history.includes(callId)) return;
     history.push(callId);
@@ -2359,12 +2319,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * Tell the server a call is declined, preferring the socket and falling back
    * to the authenticated HTTP endpoint so a decline tapped during a cold start
    * still reaches the server. Never throws.
-   *
    */
   const declineCallById = useCallback(
     /**
-     * @param {string} callId
-     * @returns {Promise<boolean>} whether the server was told
+     * @returns whether the server was told
      */
     async (callId: string): Promise<boolean> => {
       if (!callId) return false;
@@ -2444,13 +2402,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
    * answer can be drained without waiting on the socket to deliver
    * `call.incoming`. Drops the queue entry — loudly — when the call turns out
    * to be gone.
-   *
    */
   const queueAnswerForReplay = useCallback(
-    /**
-     * @param {string} callUUID
-     * @param {string} source
-     */
     (callUUID: string, source: string) => {
     if (!callUUID) return;
     recordPendingAnswer(callUUID, source);
@@ -2697,7 +2650,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   }, [updateStatus]);
 
   const chooseAudioOutput = useCallback(
-    /** @param {string} route */
+    /** @param route */
     async (route: string) => {
       try {
         manualAudioRouteRef.current = route;
@@ -2772,7 +2725,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
         let totalPacketsReceived = 0;
         let totalBytesReceived = 0;
 
-        report.forEach(/** @param {any} stat */ (stat: any) => {
+        report.forEach(/** @param stat */ (stat: any) => {
           if (
             stat.type === 'candidate-pair' &&
             stat.state === 'succeeded' &&
@@ -2862,7 +2815,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   // Pick the best available output (Bluetooth → wired → earpiece → speaker)
   // unless the user already chose one explicitly during this call.
   const applyAutomaticAudioRoute = useCallback(
-    /** @param {string[]} available */
+    /** @param available */
     async (available: string[]) => {
       if (manualAudioRouteRef.current) return;
       const result = await applyPreferredAudioRoute(available);

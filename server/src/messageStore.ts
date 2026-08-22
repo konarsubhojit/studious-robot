@@ -61,8 +61,7 @@
 import { randomUUID } from 'crypto';
 
 /**
- * @param {unknown} error
- * @returns {string} the error message, or a stringified fallback.
+ * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -95,10 +94,6 @@ const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
  *
  * The ids are sorted before joining so both participants — and both directions
  * of a send — always resolve to the same conversation.
- *
- * @param {string} userA
- * @param {string} userB
- * @returns {string}
  */
 function deriveConversationId(userA: string, userB: string): string {
   return [String(userA), String(userB)].sort().join(':');
@@ -106,9 +101,6 @@ function deriveConversationId(userA: string, userB: string): string {
 
 /**
  * Clamp a requested page size into the supported range.
- *
- * @param {unknown} limit
- * @returns {number}
  */
 function clampLimit(limit: unknown): number {
   const requested = Number(limit);
@@ -128,7 +120,7 @@ function clampLimit(limit: unknown): number {
 let _lastGeneratedAtMs = 0;
 
 /**
- * @returns {string} An ISO timestamp strictly later than the previous one.
+ * @returns An ISO timestamp strictly later than the previous one.
  */
 function nextTimestamp(): string {
   const now = Date.now();
@@ -139,13 +131,9 @@ function nextTimestamp(): string {
 /**
  * Normalise a reactions map: emoji → unique reacting userIds, dropping
  * anything that is not a non-empty array of ids.
- *
- * @param {unknown} value
- * @returns {Record<string, string[]>}
  */
 function normaliseReactions(value: unknown): Record<string, string[]> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  /** @type {Record<string, string[]>} */
   const reactions: Record<string, string[]> = {};
   for (const [emoji, userIds] of Object.entries(value)) {
     if (!Array.isArray(userIds)) continue;
@@ -162,9 +150,7 @@ function normaliseReactions(value: unknown): Record<string, string[]> {
  * every newly written row has one shape; readers still default a *legacy* row
  * with no `type` to `"text"`.
  *
- * @param {Partial<MessageRecord> & { senderId: string, recipientId: string, body: string }}
  *   message
- * @returns {StoredMessage}
  */
 function createMessageRecord(message: Partial<MessageRecord> & { senderId: string; recipientId: string; body: string; }): StoredMessage {
   return {
@@ -194,9 +180,7 @@ function createMessageRecord(message: Partial<MessageRecord> & { senderId: strin
  * participants, but the row survives so a reply that quotes it still resolves
  * (and renders "Message deleted" instead of a dangling reference).
  *
- * @param {StoredMessage} message
- * @param {string} deletedAt
- * @returns {StoredMessage} the same object, mutated.
+ * @returns the same object, mutated.
  */
 function applyTombstone(message: StoredMessage, deletedAt: string): StoredMessage {
   message.body = '';
@@ -212,12 +196,6 @@ function applyTombstone(message: StoredMessage, deletedAt: string): StoredMessag
  * Idempotent in both directions: adding a reaction a user already left, or
  * removing one they never left, leaves the map unchanged — so a retried
  * `message.react` converges rather than toggling.
- *
- * @param {Record<string, string[]>} reactions
- * @param {string} emoji
- * @param {string} userId
- * @param {'add'|'remove'} action
- * @returns {Record<string, string[]>}
  */
 function applyReaction(reactions: Record<string, string[]>, emoji: string, userId: string, action: 'add' | 'remove'): Record<string, string[]> {
   const next = { ...normaliseReactions(reactions) };
@@ -235,9 +213,7 @@ function applyReaction(reactions: Record<string, string[]>, emoji: string, userI
 /**
  * Resolve the "other" participant of a message relative to `userId`.
  *
- * @param {StoredMessage} message
- * @param {string} userId
- * @returns {string} `senderId` when `userId` is the recipient, otherwise `recipientId`.
+ * @returns `senderId` when `userId` is the recipient, otherwise `recipientId`.
  */
 function peerIdOf(message: StoredMessage, userId: string): string {
   return message.senderId === userId ? message.recipientId : message.senderId;
@@ -246,10 +222,6 @@ function peerIdOf(message: StoredMessage, userId: string): string {
 /**
  * Newest-first comparator used by the in-memory store.  `messageId` breaks ties
  * so the ordering stays deterministic even for caller-supplied timestamps.
- *
- * @param {StoredMessage} a
- * @param {StoredMessage} b
- * @returns {number}
  */
 function byNewestFirst(a: StoredMessage, b: StoredMessage): number {
   if (a.createdAt !== b.createdAt) {
@@ -264,9 +236,6 @@ function byNewestFirst(a: StoredMessage, b: StoredMessage): number {
  * search term is only ever matched literally.  Without this a term such as
  * `.*` would match every message, and a pathological one could make the
  * database evaluate a catastrophically backtracking pattern.
- *
- * @param {string} value
- * @returns {string}
  */
 function escapeRegExp(value: string): string {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -274,9 +243,6 @@ function escapeRegExp(value: string): string {
 
 /**
  * Normalise a search term: trimmed, and empty when there is nothing to match.
- *
- * @param {unknown} query
- * @returns {string}
  */
 function normaliseSearchTerm(query: unknown): string {
   return String(query ?? '').trim();
@@ -284,10 +250,6 @@ function normaliseSearchTerm(query: unknown): string {
 
 /**
  * Whether `message.body` contains `term`, case-insensitively.
- *
- * @param {{ body?: string }} message
- * @param {string} term
- * @returns {boolean}
  */
 function bodyMatches(message: { body?: string; }, term: string): boolean {
   return String(message?.body ?? '')
@@ -303,11 +265,8 @@ function bodyMatches(message: { body?: string; }, term: string): boolean {
  * Used when Mongo is not configured and by the test suite.  History does not
  * survive a restart, which matches the pre-existing behaviour of the rest of
  * the in-memory state.
- *
- * @returns {MessageStore}
  */
 function createMemoryMessageStore(): MessageStore {
-  /** @type {StoredMessage[]} */
   const messages: StoredMessage[] = [];
 
   return {
@@ -364,7 +323,6 @@ function createMemoryMessageStore(): MessageStore {
     },
 
     async listConversations(userId) {
-      /** @type {Map<string, ConversationSummary>} */
       const byConversation: Map<string, ConversationSummary> = new Map();
 
       for (const message of messages) {
@@ -459,10 +417,9 @@ function createMemoryMessageStore(): MessageStore {
  * the corresponding guarantee (sort support, uniqueness) degraded. Each index
  * is attempted independently so one rejection doesn't skip the rest.
  *
- * @param {any} messages - The Mongo collection.
- * @param {object} spec - Index key spec, e.g. `{ conversationId: 1 }`.
- * @param {object} [options] - Index options, e.g. `{ unique: true }`.
- * @returns {Promise<void>}
+ * @param messages - The Mongo collection.
+ * @param spec - Index key spec, e.g. `{ conversationId: 1 }`.
+ * @param options - Index options, e.g. `{ unique: true }`.
  */
 async function createIndexOrWarn(messages: any, spec: object, options?: object): Promise<void> {
   try {
@@ -479,10 +436,6 @@ async function createIndexOrWarn(messages: any, spec: object, options?: object):
 /**
  * Best-effort extraction of the Mongo host(s) for startup logging, without
  * ever logging credentials embedded in the connection string.
- *
- * @param {any} mongoClient
- * @param {string} [uri]
- * @returns {string}
  */
 function safeMongoHost(mongoClient: any, uri?: string): string {
   try {
@@ -490,7 +443,7 @@ function safeMongoHost(mongoClient: any, uri?: string): string {
     const hosts = options?.hosts;
     if (Array.isArray(hosts) && hosts.length) {
       return hosts
-        .map((/** @type {any} */ h: any) =>
+        .map((h: any) =>
           h?.host ? `${h.host}${h.port ? `:${h.port}` : ''}` : String(h)
         )
         .join(',');
@@ -516,9 +469,6 @@ function safeMongoHost(mongoClient: any, uri?: string): string {
  * endpoint.  The connection is established lazily on first use so constructing
  * the store never blocks server start-up, and a failure to create indexes is
  * logged rather than fatal (Cosmos DB throttles index builds under load).
- *
- * @param {{ uri?: string, dbName?: string, collectionName?: string, client?: any }} [opts]
- * @returns {MessageStore}
  */
 function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?: string; dbName?: string; collectionName?: string; client?: any; } = {}): MessageStore {
   if (!uri && !client) {
@@ -528,14 +478,13 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
   const database = dbName || DEFAULT_DB_NAME;
   const collection = collectionName || DEFAULT_COLLECTION_NAME;
 
-  /** @type {Promise<any>|null} */
   let clientPromise: Promise<any> | null = null;
   let closed = false;
 
   /**
    * Connect (once) and ensure the supporting indexes exist.
    *
-   * @returns {Promise<any>} The messages collection.
+   * @returns The messages collection.
    */
   function connect(): Promise<any> {
     if (!clientPromise) {
@@ -647,7 +596,6 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
     async listMessages({ conversationId, limit, before } = {}) {
       const cap = clampLimit(limit);
       const { messages } = await connect();
-      /** @type {Record<string, unknown>} */
       const query: Record<string, unknown> = { conversationId };
       if (before) {
         query.createdAt = { $lt: before };
@@ -658,7 +606,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
         .limit(cap)
         .toArray();
       // Strip the driver-managed `_id` so the wire shape matches the memory store.
-      return found.map((/** @type {any} */ { _id, ...rest }: any) => rest);
+      return found.map(({ _id, ...rest }: any) => rest);
     },
 
     async searchMessages({ userId, query, limit, before } = {}) {
@@ -666,7 +614,6 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
       if (!term || !userId) return [];
       const cap = clampLimit(limit);
       const { messages } = await connect();
-      /** @type {Record<string, unknown>} */
       const filter: Record<string, unknown> = {
         $or: [{ senderId: userId }, { recipientId: userId }],
         // Literal, case-insensitive substring match: the term is escaped so a
@@ -685,7 +632,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
       // `listConversations` does, and the page is cut afterwards.
       const found = await messages.find(filter).toArray();
       return found
-        .map((/** @type {any} */ { _id, ...rest }: any) => rest)
+        .map(({ _id, ...rest }: any) => rest)
         .sort(byNewestFirst)
         .slice(0, cap);
     },
@@ -718,7 +665,6 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
         .find({ $or: [{ senderId: userId }, { recipientId: userId }] })
         .toArray();
 
-      /** @type {Map<string, ConversationSummary>} */
       const byConversation: Map<string, ConversationSummary> = new Map();
 
       for (const doc of found) {
@@ -821,9 +767,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
  * Development and tests may use memory explicitly. Production fails closed
  * unless Mongo is configured or ALLOW_IN_MEMORY_MESSAGE_STORE=true is set.
  *
- * @param {object} [opts]
- * @param {MessageStore} [opts.messageStore] - Pre-built store (tests / injection).
- * @returns {MessageStore}
+ * @param opts.messageStore - Pre-built store (tests / injection).
  */
 function createMessageStore(opts: { messageStore?: MessageStore; } = {}): MessageStore {
   if (opts.messageStore) return opts.messageStore;

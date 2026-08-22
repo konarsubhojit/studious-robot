@@ -25,8 +25,6 @@ export type ServerState = Stores & { db: any; auditLog: AuditLog; callInitRateLi
 /**
  * Names of every store in a {@link Stores} bundle.  Implementations must
  * provide a value for each of these keys.
- *
- * @type {readonly (keyof Stores)[]}
  */
 const STORE_NAMES: readonly (keyof Stores)[] = Object.freeze([
   'rooms',

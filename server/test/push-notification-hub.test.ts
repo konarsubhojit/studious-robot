@@ -38,19 +38,15 @@ const CALL = { callId: 'call-abc', callerId: 'alice' };
 
 /**
  * Install a fake `https.request` driven by a per-call handler.
- *
- * @param {(opts: any, body: Buffer) => { statusCode: number, body: string, headers?: object }} handler
  */
 function mockHttps(handler: (opts: any, body: Buffer) => { statusCode: number; body: string; headers?: object; }) {
   const original = https.request;
-  /** @type {Array<{ opts: any, body: string }>} */
   const requests: Array<{ opts: any; body: string; }> = [];
 
   https.request = (((opts: any, callback: any) => {
-    /** @type {any[]} */
     const chunks: any[] = [];
     const req = (new EventEmitter() as any);
-    req.end = (/** @type {any} */ data: any) => {
+    req.end = (data: any) => {
       if (data) chunks.push(data);
       const body = Buffer.concat(chunks.map((c) => Buffer.from(c)));
       requests.push({ opts, body: body.toString('utf8') });
@@ -77,12 +73,7 @@ function mockHttps(handler: (opts: any, body: Buffer) => { statusCode: number; b
 }
 
 /** Run `fn` with the given push-related env vars applied, restoring them after. */
-/**
- * @param {Record<string, string|undefined>} overrides
- * @param {() => unknown} fn
- */
 function withEnv(overrides: Record<string, string | undefined>, fn: () => unknown) {
-  /** @type {Record<string, string|undefined>} */
   const previous: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(overrides)) {
     previous[key] = process.env[key];

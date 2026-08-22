@@ -2,16 +2,11 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import InCallBanner from '../../src/components/InCallBanner';
 
-function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: any) {
-  return tree.root.findAll((/** @type {any} */ node: any) => node.props?.testID === testID)[0] ?? null;
+function findByTestId(tree: any, testID: any) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
-/**
- * @param {any} [props]
- * @returns {any}
- */
 function render(props?: any): any {
-  /** @type {any} */
   let tree: any;
   act(() => {
     tree = renderer.create(
@@ -29,15 +24,15 @@ function render(props?: any): any {
 describe('InCallBanner', () => {
   test('renders the participant label and formatted duration', () => {
     const tree = render();
-    const label = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Call with user-bob');
+    const label = tree.root.findAll((n: any) => n.props?.children === 'Call with user-bob');
     expect(label.length).toBeGreaterThan(0);
-    const duration = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === '01:05');
+    const duration = tree.root.findAll((n: any) => n.props?.children === '01:05');
     expect(duration.length).toBeGreaterThan(0);
   });
 
   test('falls back to a generic label when participantLabel is null', () => {
     const tree = render({ participantLabel: null });
-    const label = tree.root.findAll((/** @type {any} */ n: any) => n.props?.children === 'Call in progress');
+    const label = tree.root.findAll((n: any) => n.props?.children === 'Call in progress');
     expect(label.length).toBeGreaterThan(0);
   });
 

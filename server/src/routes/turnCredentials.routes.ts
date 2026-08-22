@@ -13,10 +13,6 @@ const DEFAULT_TURN_URLS = [
   'turns:global.relay.metered.ca:443?transport=tcp',
 ];
 
-/**
- * @param {IceServer[]} iceServers
- * @returns {IceServer[]}
- */
 function withStunServer(iceServers: IceServer[]): IceServer[] {
   const hasStun = iceServers.some((server) => {
     const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
@@ -26,8 +22,7 @@ function withStunServer(iceServers: IceServer[]): IceServer[] {
 }
 
 /**
- * @param {unknown} value comma-separated TURN URLs, if configured.
- * @returns {string[]}
+ * @param value comma-separated TURN URLs, if configured.
  */
 function parseTurnUrls(value: unknown): string[] {
   return typeof value === 'string'
@@ -35,10 +30,6 @@ function parseTurnUrls(value: unknown): string[] {
     : [];
 }
 
-/**
- * @param {NodeJS.ProcessEnv} env
- * @returns {IceServer[]}
- */
 function getStaticIceServers(env: NodeJS.ProcessEnv): IceServer[] {
   if (!env.TURN_USERNAME || !env.TURN_CREDENTIAL) {
     return [{ urls: ['stun:stun.l.google.com:19302'] }];
@@ -51,10 +42,6 @@ function getStaticIceServers(env: NodeJS.ProcessEnv): IceServer[] {
   ];
 }
 
-/**
- * @param {unknown} value
- * @returns {number}
- */
 function getTtlSeconds(value: unknown): number {
   const ttl = Number(value);
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
@@ -65,9 +52,6 @@ function getTtlSeconds(value: unknown): number {
  *
  * coturn validates `username` as `<unix-expiry>:<anything>` and `credential`
  * as base64(HMAC-SHA1(static-auth-secret, username)).
- *
- * @param {{ secret: string, urls: string[], userId: string, ttlSeconds: number, now: number }} params
- * @returns {{ iceServers: IceServer[], expiresAt: Date }}
  */
 function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }: { secret: string; urls: string[]; userId: string; ttlSeconds: number; now: number; }): { iceServers: IceServer[]; expiresAt: Date; } {
   const expiresAt = new Date(now + ttlSeconds * 1000);
@@ -77,8 +61,7 @@ function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }: { secre
 }
 
 /**
- * @param {any} payload Cloudflare TURN API response body.
- * @returns {IceServer[]}
+ * @param payload Cloudflare TURN API response body.
  */
 function normalizeIceServers(payload: any): IceServer[] {
   if (Array.isArray(payload)) return payload;
@@ -91,12 +74,7 @@ function normalizeIceServers(payload: any): IceServer[] {
 /**
  * Issue ICE server credentials (Cloudflare TURN, coturn HMAC, or static).
  *
- * @param {{
- *   state: import('../stores/contracts.ts').ServerState,
- *   fetchImpl?: typeof fetch,
- *   env?: NodeJS.ProcessEnv,
- * }} ctx
- * @returns {import('express').Router}
+ * @param ctx
  */
 function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.env }: {
         state: import('../stores/contracts.ts').ServerState;
@@ -104,7 +82,6 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         env?: NodeJS.ProcessEnv;
     }): import('express').Router {
   const router = express.Router();
-  /** @type {{ iceServers: IceServer[], expiresAt: Date, refreshAt: number }|null} */
   let cache: { iceServers: IceServer[]; expiresAt: Date; refreshAt: number; } | null = null;
   let warnedMissingTurnUrl = false;
 

@@ -38,8 +38,6 @@ const ATTACHMENT_MESSAGE_TYPES = (Object.freeze([MESSAGE_TYPES.IMAGE, MESSAGE_TY
  *
  * Enforced by the server on both `POST /attachments/presign` and
  * `message.send` — a client-side check is a convenience, never the control.
- *
- * @type {Readonly<Record<string, ReadonlyArray<string>>>}
  */
 const ATTACHMENT_MIME_ALLOWLIST: Readonly<Record<string, ReadonlyArray<string>>> = Object.freeze({
   [MESSAGE_TYPES.IMAGE]: Object.freeze([
@@ -67,8 +65,6 @@ const ATTACHMENT_MIME_ALLOWLIST: Readonly<Record<string, ReadonlyArray<string>>>
 
 /**
  * Maximum upload size per attachment type, in bytes.
- *
- * @type {Readonly<Record<string, number>>}
  */
 const MAX_ATTACHMENT_BYTES: Readonly<Record<string, number>> = Object.freeze({
   [MESSAGE_TYPES.IMAGE]: 10 * 1024 * 1024,
@@ -91,9 +87,6 @@ const MAX_VOICE_DURATION_MS = 10 * 60 * 1000;
 
 /**
  * The effective type of a message, defaulting legacy rows to `"text"`.
- *
- * @param {{ type?: unknown } | null | undefined} message
- * @returns {string}
  */
 function messageTypeOf(message: { type?: unknown; } | null | undefined): string {
   const type = message?.type;
@@ -102,9 +95,6 @@ function messageTypeOf(message: { type?: unknown; } | null | undefined): string 
 
 /**
  * Whether this build knows how to render `type`.
- *
- * @param {unknown} type
- * @returns {boolean}
  */
 function isSupportedMessageType(type: unknown): boolean {
   return KNOWN_MESSAGE_TYPES.includes((type as string));
@@ -112,9 +102,6 @@ function isSupportedMessageType(type: unknown): boolean {
 
 /**
  * Whether a message of `type` must carry an attachment.
- *
- * @param {unknown} type
- * @returns {boolean}
  */
 function isAttachmentMessageType(type: unknown): boolean {
   return ATTACHMENT_MESSAGE_TYPES.includes((type as string));
@@ -122,10 +109,6 @@ function isAttachmentMessageType(type: unknown): boolean {
 
 /**
  * Whether `mimeType` is allowed for an attachment of `type`.
- *
- * @param {string} type
- * @param {unknown} mimeType
- * @returns {boolean}
  */
 function isAllowedAttachmentMimeType(type: string, mimeType: unknown): boolean {
   const allowed = ATTACHMENT_MIME_ALLOWLIST[type];
@@ -135,9 +118,6 @@ function isAllowedAttachmentMimeType(type: string, mimeType: unknown): boolean {
 
 /**
  * Size cap for an attachment of `type`, or `0` when the type takes none.
- *
- * @param {string} type
- * @returns {number}
  */
 function maxAttachmentBytesFor(type: string): number {
   return MAX_ATTACHMENT_BYTES[type] ?? 0;
@@ -151,9 +131,7 @@ function maxAttachmentBytesFor(type: string): number {
  * unknown `type` — a message written by a newer client — yields a neutral
  * placeholder instead of an empty row or a crash.
  *
- * @param {{ type?: string, body?: string, deletedAt?: string|null,
- *   attachment?: { name?: string|null } | null } | null | undefined} message
- * @returns {string}
+ * @param message
  */
 function describeMessagePreview(message: {
         type?: string; body?: string; deletedAt?: string | null;

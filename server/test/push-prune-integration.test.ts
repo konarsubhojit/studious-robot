@@ -13,7 +13,7 @@ import { createServer } from '../src/index.ts';
 import { pushSenders } from '../src/push.ts';
 import { listenOnRandomPort, postJson } from './helpers.ts';
 
-/** @param {import('../src/createServer.ts').CreateServerOptions} [opts] */
+/** @param [opts] */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
   const server = createServer(opts);
   const port = await listenOnRandomPort(server.httpServer);
@@ -28,7 +28,6 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 }
 
 function buildMockDb() {
-  /** @type {any[]} */
   const deletes: any[] = [];
   return {
     deletes,
@@ -40,7 +39,7 @@ function buildMockDb() {
         values: () => ({
           onConflictDoUpdate: () => Promise.resolve(),
           onConflictDoNothing: () => Promise.resolve(),
-          then: (/** @type {any} */ resolve: any) => Promise.resolve().then(resolve),
+          then: (resolve: any) => Promise.resolve().then(resolve),
           catch: () => Promise.resolve(),
         }),
       };
@@ -48,9 +47,9 @@ function buildMockDb() {
     update() {
       return { set: () => ({ where: () => Promise.resolve() }) };
     },
-    delete(/** @type {any} */ table: any) {
+    delete(table: any) {
       return {
-        where(/** @type {any} */ condition: any) {
+        where(condition: any) {
           deletes.push({ table, condition });
           return Promise.resolve();
         },

@@ -5,8 +5,7 @@ import { THEME_MODE_VALUES, THEME_MODES } from './theme';
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
 
 /**
- * @param {unknown} error
- * @returns {string|undefined} the error message, when there is one.
+ * @returns the error message, when there is one.
  */
 function errorMessage(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
@@ -18,9 +17,6 @@ function errorMessage(error: unknown): string | undefined {
  * silently introducing unexpected values.
  *
  * @template {Record<string, unknown>} T
- * @param {T} defaults
- * @param {unknown} loaded
- * @returns {T}
  */
 export function mergeSettings<T extends Record<string, unknown>>(defaults: T, loaded: unknown): T {
   if (!loaded || typeof loaded !== 'object') {
@@ -43,8 +39,6 @@ export function mergeSettings<T extends Record<string, unknown>>(defaults: T, lo
  * unreadable files fall back to the defaults rather than throwing.
  *
  * @template {Record<string, unknown>} T
- * @param {T} defaults
- * @returns {Promise<T>}
  */
 export async function loadSettings<T extends Record<string, unknown>>(defaults: T): Promise<T> {
   try {
@@ -66,8 +60,7 @@ export async function loadSettings<T extends Record<string, unknown>>(defaults: 
  * Persist settings to disk.  Failures are logged but never thrown so a write
  * error can't break the UI flow that triggered it.
  *
- * @param {object} settings
- * @returns {Promise<boolean>} whether the write succeeded
+ * @returns whether the write succeeded
  */
 export async function saveSettings(settings: object): Promise<boolean> {
   try {
@@ -92,8 +85,6 @@ const IDENTITY_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-identity.json`;
  * Load the persisted public username. Authentication credentials remain in
  * the platform Firebase SDK and are never written to this file.
  * when no identity has been saved yet or the file cannot be read.
- *
- * @returns {Promise<{ userId: string }>}
  */
 export async function loadIdentity(): Promise<{ userId: string; }> {
   try {
@@ -115,8 +106,7 @@ export async function loadIdentity(): Promise<{ userId: string; }> {
 /**
  * Persist the user identity to disk.  Failures are logged but never thrown.
  *
- * @param {{ userId: string }} identity
- * @returns {Promise<boolean>} whether the write succeeded
+ * @returns whether the write succeeded
  */
 export async function saveIdentity(identity: { userId: string; }): Promise<boolean> {
   try {
@@ -149,8 +139,6 @@ const THEME_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-theme.json`;
 /**
  * Load the persisted appearance mode ('system' | 'light' | 'dark').  Unknown
  * or unreadable values fall back to 'system'.
- *
- * @returns {Promise<string>}
  */
 export async function loadThemeMode(): Promise<string> {
   try {
@@ -171,8 +159,7 @@ export async function loadThemeMode(): Promise<string> {
  * Persist the appearance mode.  Failures are logged but never thrown so a
  * write error can't break the toggle that triggered it.
  *
- * @param {string} mode
- * @returns {Promise<boolean>} whether the write succeeded
+ * @returns whether the write succeeded
  */
 export async function saveThemeMode(mode: string): Promise<boolean> {
   const safeMode = THEME_MODE_VALUES.includes(mode) ? mode : THEME_MODES.SYSTEM;
@@ -202,8 +189,6 @@ let fallbackDeviceIdCounter = 0;
 /**
  * Generate an opaque per-install device identifier. This is not a credential
  * (the session token is), it only has to be unique and stable.
- *
- * @returns {string}
  */
 function generateDeviceId(): string {
   if (globalThis.crypto?.getRandomValues) {
@@ -224,8 +209,6 @@ function generateDeviceId(): string {
  * Return this install's stable device id, generating and persisting one on
  * first use.  Never throws: an unwritable file only means the id is not reused
  * after a restart.
- *
- * @returns {Promise<string>}
  */
 export async function loadDeviceId(): Promise<string> {
   try {

@@ -25,13 +25,12 @@ jest.mock('../../src/attachmentUpload', () => ({
   uploadAttachment: jest.fn(),
 }));
 
-function TestHook(/** @type {any} */ { resultRef, params }: any) {
+function TestHook({ resultRef, params }: any) {
   resultRef.current = useAttachments(params);
   return null;
 }
 
 function setup(overrides = {}) {
-  /** @type {{ current: any }} */
   const resultRef: { current: any; } = { current: null };
   const params = {
     authedFetchRef: { current: jest.fn() },

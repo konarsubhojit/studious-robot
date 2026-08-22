@@ -29,14 +29,6 @@ export type ConversationRow = ConversationSummary & { online?: boolean; };
  */
 export type ContactRow = { userId: string; online?: boolean; };
 
-/**
- * @param {object} props
- * @param {string} props.value
- * @param {(value: string) => void} props.onChangeText
- * @param {string} [props.placeholder]
- * @param {string} props.accessibilityLabel
- * @param {string} props.testID
- */
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }: { value: string; onChangeText: (value: string) => void; placeholder?: string; accessibilityLabel: string; testID: string; }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -69,10 +61,6 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
   );
 }
 
-/**
- * @param {string | null | undefined} isoString
- * @returns {string}
- */
 function formatConversationTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -88,9 +76,6 @@ function formatConversationTimestamp(isoString: string | null | undefined): stri
 /**
  * The conversation's newest event: a call, when the server merged one in
  * (`lastActivity`), otherwise the last text message.
- *
- * @param {ConversationRow} conversation
- * @returns {import('../hooks/useMessaging').ConversationActivity | null}
  */
 function lastActivityOf(conversation: ConversationRow): ConversationActivity | null {
   return conversation?.lastActivity ?? conversation?.lastMessage ?? null;
@@ -98,9 +83,6 @@ function lastActivityOf(conversation: ConversationRow): ConversationActivity | n
 
 /**
  * Whether a conversation's newest event is a call rather than a message.
- *
- * @param {import('../hooks/useMessaging').ConversationActivity} activity
- * @returns {activity is import('../hooks/useMessaging').CallActivity}
  */
 function isCallActivity(activity: ConversationActivity): activity is CallActivity {
   return activity.type === 'call';
@@ -109,9 +91,6 @@ function isCallActivity(activity: ConversationActivity): activity is CallActivit
 /**
  * One-line preview of a conversation's newest event, so a row whose latest
  * activity was a call reads as such instead of showing a stale older message.
- *
- * @param {ConversationRow} conversation
- * @returns {string}
  */
 function formatActivityPreview(conversation: ConversationRow): string {
   const activity = lastActivityOf(conversation);
@@ -127,9 +106,6 @@ function formatActivityPreview(conversation: ConversationRow): string {
 
 /**
  * Up to two uppercase initials derived from a userId, for the avatar circle.
- *
- * @param {string | null | undefined} id
- * @returns {string}
  */
 function getInitials(id: string | null | undefined): string {
   const trimmed = (id ?? '').trim();
@@ -140,8 +116,6 @@ function getInitials(id: string | null | undefined): string {
 /**
  * Initials avatar with an optional online-status dot, used on both
  * conversation rows and search-result contact rows.
- *
- * @param {{ id: string, online?: boolean, testID?: string }} props
  */
 function Avatar({ id, online, testID }: { id: string; online?: boolean; testID?: string; }) {
   const styles = useThemedStyles(createStyles);
@@ -236,7 +210,7 @@ export default function ChatListScreen({
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
-    /** @param {string} term */
+    /** @param term */
     async (term: string) => {
       if (typeof onSearchUsers !== 'function') return;
       if (!term) {
@@ -248,7 +222,7 @@ export default function ChatListScreen({
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
-      let /** @type {ContactRow[]} */ users: ContactRow[] = [];
+      let users: ContactRow[] = [];
       try {
         users = await onSearchUsers(term);
       } catch {
@@ -347,7 +321,7 @@ export default function ChatListScreen({
   );
 
   const renderItem = useCallback(
-    /** @param {{ item: any }} info */
+    /** @param info */
     ({ item }: { item: any; }) => (isSearchMode ? renderContactRow(item) : renderConversationRow(item)),
     [isSearchMode, renderContactRow, renderConversationRow],
   );
@@ -439,7 +413,7 @@ export default function ChatListScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
+/** @param colors */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {

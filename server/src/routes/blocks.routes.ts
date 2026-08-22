@@ -7,9 +7,6 @@ import { API_ROUTES } from '../../../shared/index.ts';
 
 /**
  * Block management: block / unblock / list.
- *
- * @param {{ state: import('../stores/contracts.ts').ServerState, db: any }} ctx
- * @returns {import('express').Router}
  */
 function createBlocksRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: any; }): import('express').Router {
   const router = express.Router();

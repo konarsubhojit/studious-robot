@@ -12,12 +12,7 @@ import { addChatLinkListener, getInitialChatLink } from '../pushNotifications';
  * `:`) so a notification tapped before the list has loaded — the cold-start
  * case — still opens the right chat.
  *
- * @param {{
- *   conversationId: string,
- *   userId?: string | null,
- *   conversations?: Array<{ conversationId?: string, peerId?: string }>,
- * }} params
- * @returns {string | null}
+ * @param params
  */
 export function resolveChatPeerId({ conversationId, userId, conversations = [] }: {
         conversationId: string;
@@ -50,11 +45,7 @@ export function resolveChatPeerId({ conversationId, userId, conversations = [] }
  * before identity/conversations are known is held until the peer can be
  * resolved, so a tap that launches the app is never dropped.
  *
- * @param {{
- *   userId?: string | null,
- *   conversations?: Array<{ conversationId?: string, peerId?: string }>,
- *   onOpenConversation: (peerId: string) => void,
- * }} params
+ * @param params
  */
 export default function useChatDeepLink({ userId, conversations = [], onOpenConversation }: {
         userId?: string | null;
@@ -70,7 +61,7 @@ export default function useChatDeepLink({ userId, conversations = [], onOpenConv
     onOpenConversationRef.current = onOpenConversation;
   }, [onOpenConversation]);
 
-  const openConversation = useCallback((/** @type {string} */ conversationId: string) => {
+  const openConversation = useCallback((conversationId: string) => {
     if (conversationId) setPendingConversationId(conversationId);
   }, []);
 

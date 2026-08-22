@@ -19,7 +19,7 @@ import { listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** @param {import('../src/createServer.ts').CreateServerOptions} [opts] */
+/** @param [opts] */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
   const server = createServer(opts);
   const port = await listenOnRandomPort(server.httpServer);
@@ -38,11 +38,8 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
  * The `.select().from()` chain returns the given `selectRows`.
  */
 function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map() } = {}) {
-  /** @type {any[]} */
   const inserts: any[] = [];
-  /** @type {any[]} */
   const deletes: any[] = [];
-  /** @type {any[]} */
   const updates: any[] = [];
 
   const db = {
@@ -52,7 +49,7 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
 
     select() {
       return {
-        from(/** @type {any} */ table: any) {
+        from(table: any) {
           if (selectRowsByTable.has(table)) {
             return Promise.resolve(selectRowsByTable.get(table));
           }
@@ -61,21 +58,20 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
       };
     },
 
-    insert(/** @type {any} */ _table: any) {
-      /** @type {{ table: any, values: any, conflictSet: any }} */
+    insert(_table: any) {
       const entry: { table: any; values: any; conflictSet: any; } = { table: _table, values: null, conflictSet: null };
       inserts.push(entry);
       return {
-        values(/** @type {any} */ v: any) {
+        values(v: any) {
           entry.values = v;
           return {
-            then(/** @type {any} */ resolve: any, /** @type {any} */ reject: any) {
+            then(resolve: any, reject: any) {
               return Promise.resolve().then(resolve, reject);
             },
-            catch(/** @type {any} */ reject: any) {
+            catch(reject: any) {
               return Promise.resolve().catch(reject);
             },
-            onConflictDoUpdate(/** @type {{ set: any }} */ { set }: { set: any; }) {
+            onConflictDoUpdate({ set }: { set: any; }) {
               entry.conflictSet = set;
               return Promise.resolve();
             },
@@ -87,24 +83,23 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
       };
     },
 
-    delete(/** @type {any} */ table: any) {
+    delete(table: any) {
       return {
-        where(/** @type {any} */ condition: any) {
+        where(condition: any) {
           deletes.push({ table, condition });
           return Promise.resolve();
         },
       };
     },
 
-    update(/** @type {any} */ table: any) {
-      /** @type {{ table: any, set: any, condition: any }} */
+    update(table: any) {
       const entry: { table: any; set: any; condition: any; } = { table, set: null, condition: null };
       updates.push(entry);
       return {
-        set(/** @type {any} */ values: any) {
+        set(values: any) {
           entry.set = values;
           return {
-            where(/** @type {any} */ condition: any) {
+            where(condition: any) {
               entry.condition = condition;
               return Promise.resolve();
             },
@@ -119,12 +114,11 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
 
 function buildCallEventOrderingDb() {
   let callPersisted = false;
-  /** @type {any[]} */
   const operations: any[] = [];
 
   return {
     operations,
-    insert(/** @type {any} */ table: any) {
+    insert(table: any) {
       return {
         values() {
           if (table === schema.calls) {
@@ -143,7 +137,7 @@ function buildCallEventOrderingDb() {
           }
           if (table === schema.callEvents) {
             return {
-              catch(/** @type {any} */ reject: any) {
+              catch(reject: any) {
                 operations.push(callPersisted ? 'event-after-call' : 'event-before-call');
                 return Promise.resolve().catch(reject);
               },
@@ -160,10 +154,6 @@ function buildCallEventOrderingDb() {
   };
 }
 
-/**
- * @param {any} db
- * @returns {import('../src/stores/contracts.ts').ServerState}
- */
 function buildCallState(db: any): import('../src/stores/contracts.ts').ServerState {
   return ({
     calls: new Map(),
@@ -396,10 +386,6 @@ test('registering a token already held by another device_id evicts the prior hol
 
 // ─── Dead-token pruning ────────────────────────────────────────────────────────
 
-/**
- * @param {any} db
- * @returns {import('../src/stores/contracts.ts').ServerState}
- */
 function buildMinimalState(db: any): import('../src/stores/contracts.ts').ServerState {
   return ({ ...createStores(), db } as any);
 }
@@ -642,7 +628,7 @@ test('loadPersistedState() fails loudly when users hydration fails', async () =>
   const db = {
     select() {
       return {
-        from(/** @type {any} */ table: any) {
+        from(table: any) {
           if (table === schema.users) {
             return Promise.reject(new Error('users column missing'));
           }
