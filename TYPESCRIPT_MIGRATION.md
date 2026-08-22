@@ -65,7 +65,9 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `AudioOutputMenu.js`
   - [x] `CallControls.js`
   - [x] `CallStage.js`
+  - [x] `CallTimelineRow.js`
   - [x] `CallTopBar.js`
+  - [x] `DraggableCallControls.js`
   - [x] `DraggablePip.js`
   - [x] `ErrorState.js`
   - [x] `IconButton.js`

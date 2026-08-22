@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -29,7 +30,8 @@ const PANEL_BOTTOM_GAP = spacing.lg * 2;
  * All in-call actions (mute, camera, audio output, camera swap, leave) are
  * forwarded to the inner {@link CallControls} component unchanged.
  *
- * @param {object} props - Same props as {@link CallControls}.
+ * @param {Parameters<typeof CallControls>[0]} props - Same props as
+ *   {@link CallControls}.
  */
 export default function DraggableCallControls({
   isMuted,
@@ -51,6 +53,7 @@ export default function DraggableCallControls({
   // stay accurate when the font size or content size changes.
   const [panelHeight, setPanelHeight] = useState(PANEL_HEIGHT_ESTIMATE);
   const handlePanelLayout = useCallback(
+    /** @param {import('react-native').LayoutChangeEvent} event */
     event => {
       const { height } = event.nativeEvent.layout;
       if (height > 0 && height !== panelHeight) {
@@ -125,6 +128,7 @@ export default function DraggableCallControls({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     panel: {
