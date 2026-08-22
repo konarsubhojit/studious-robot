@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -92,6 +93,31 @@ function callHistoryCachePrefix(userId) {
   return `callhist::${userId}::`;
 }
 
+/**
+ * @typedef {object} Cache
+ * @property {'memory'|'redis'} type
+ * @property {(key: string) => Promise<any|undefined>} get
+ * @property {(key: string, value: unknown, ttlMs?: number) => Promise<void>} set
+ * @property {(prefix: string) => Promise<void>} delByPrefix
+ * @property {() => Promise<void>} close
+ */
+
+/**
+ * @typedef {{
+ *   cache?: Cache,
+ *   telemetry?: import('./telemetry').Telemetry,
+ *   messageBus?: import('./messageBus').MessageBus|null,
+ * }} CacheableState
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ─── Memory backend ───────────────────────────────────────────────────────────
 
 /**
@@ -102,7 +128,7 @@ function callHistoryCachePrefix(userId) {
  * it to the back of the iteration order and the oldest key is always first.
  *
  * @param {{ maxEntries?: number }} [opts]
- * @returns {object} Cache instance.
+ * @returns {Cache & { size: () => number }} Cache instance.
  */
 function createMemoryCache({ maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
   /** @type {Map<string, { value: unknown, expiresAtMs: number }>} */
@@ -111,7 +137,7 @@ function createMemoryCache({ maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
   return {
     type: 'memory',
 
-    async get(key) {
+    async get(/** @type {string} */ key) {
       const entry = entries.get(key);
       if (!entry) return undefined;
       if (entry.expiresAtMs <= Date.now()) {
@@ -124,7 +150,11 @@ function createMemoryCache({ maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
       return entry.value;
     },
 
-    async set(key, value, ttlMs = DEFAULT_TTL_MS) {
+    async set(
+      /** @type {string} */ key,
+      /** @type {unknown} */ value,
+      ttlMs = DEFAULT_TTL_MS
+    ) {
       entries.delete(key);
       entries.set(key, { value, expiresAtMs: Date.now() + ttlMs });
       while (entries.size > maxEntries) {
@@ -134,7 +164,7 @@ function createMemoryCache({ maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
       }
     },
 
-    async delByPrefix(prefix) {
+    async delByPrefix(/** @type {string} */ prefix) {
       for (const key of entries.keys()) {
         if (key.startsWith(prefix)) entries.delete(key);
       }
@@ -180,7 +210,7 @@ async function* scanKeys(client, pattern) {
  * `delByPrefix` uses `SCAN` (never `KEYS`, which blocks the Redis event loop).
  *
  * @param {{ client: any, ownsClient?: boolean, keyPrefix?: string }} opts
- * @returns {object} Cache instance.
+ * @returns {Cache} Cache instance.
  */
 function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PREFIX }) {
   if (!client) {
@@ -191,7 +221,7 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
   return {
     type: 'redis',
 
-    async get(key) {
+    async get(/** @type {string} */ key) {
       if (closed) return undefined;
       const raw = await client.get(keyPrefix + key);
       if (raw === null || raw === undefined) return undefined;
@@ -202,12 +232,16 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
       }
     },
 
-    async set(key, value, ttlMs = DEFAULT_TTL_MS) {
+    async set(
+      /** @type {string} */ key,
+      /** @type {unknown} */ value,
+      ttlMs = DEFAULT_TTL_MS
+    ) {
       if (closed) return;
       await client.set(keyPrefix + key, JSON.stringify(value), { PX: Math.max(1, ttlMs) });
     },
 
-    async delByPrefix(prefix) {
+    async delByPrefix(/** @type {string} */ prefix) {
       if (closed) return;
       // Escape glob metacharacters so ids can never widen the match pattern.
       const pattern = `${keyPrefix}${prefix}`.replace(/([[\]?*\\])/g, '\\$1') + '*';
@@ -241,7 +275,7 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
  * rather than taking the server down).
  *
  * @param {{ redisUrl?: string, createClient?: () => any, maxEntries?: number }} [opts]
- * @returns {Promise<object>} Cache instance.
+ * @returns {Promise<Cache>} Cache instance.
  */
 async function createCache(opts = {}) {
   const { redisUrl, createClient, maxEntries } = opts;
@@ -252,15 +286,15 @@ async function createCache(opts = {}) {
   const factory = createClient || (() => require('redis').createClient({ url: redisUrl }));
   try {
     const client = factory();
-    client.on?.('error', (error) => {
-      console.error(`[cache] redis client error: ${error?.message}`);
+    client.on?.('error', (/** @type {unknown} */ error) => {
+      console.error(`[cache] redis client error: ${errorMessage(error)}`);
     });
     await client.connect?.();
     return createRedisCache({ client, ownsClient: true });
   } catch (error) {
     console.error(
       '[cache] failed to initialise Redis cache, falling back to in-process cache: ' +
-        error?.message
+        errorMessage(error)
     );
     return createMemoryCache({ maxEntries });
   }
@@ -274,7 +308,7 @@ async function createCache(opts = {}) {
  * Never throws: a cache outage degrades to a miss so the caller falls through
  * to the underlying store.
  *
- * @param {{ cache?: object, telemetry?: object }} state
+ * @param {CacheableState} state
  * @param {string} key
  * @returns {Promise<any|undefined>}
  */
@@ -287,7 +321,7 @@ async function readCached(state, key) {
       return value;
     }
   } catch (error) {
-    console.error(`[cache] read failed for "${key}": ${error?.message}`);
+    console.error(`[cache] read failed for "${key}": ${errorMessage(error)}`);
   }
   state.telemetry?.recordCacheMiss?.();
   return undefined;
@@ -296,7 +330,7 @@ async function readCached(state, key) {
 /**
  * Store a value in the shared cache.  Never throws.
  *
- * @param {{ cache?: object }} state
+ * @param {CacheableState} state
  * @param {string} key
  * @param {unknown} value
  * @param {number} [ttlMs]
@@ -307,7 +341,7 @@ async function writeCached(state, key, value, ttlMs = DEFAULT_TTL_MS) {
   try {
     await state.cache.set(key, value, ttlMs);
   } catch (error) {
-    console.error(`[cache] write failed for "${key}": ${error?.message}`);
+    console.error(`[cache] write failed for "${key}": ${errorMessage(error)}`);
   }
 }
 
@@ -324,7 +358,7 @@ async function writeCached(state, key, value, ttlMs = DEFAULT_TTL_MS) {
  * Best-effort: cache/bus failures are logged, never thrown, because a caching
  * fault must not fail the write that triggered it.
  *
- * @param {{ cache?: object, messageBus?: object|null }} state
+ * @param {CacheableState} state
  * @param {...string} prefixes
  * @returns {Promise<void>}
  */
@@ -332,10 +366,11 @@ async function invalidateCache(state, ...prefixes) {
   const wanted = prefixes.filter(Boolean);
   if (!state?.cache || wanted.length === 0) return;
 
+  const cache = state.cache;
   await Promise.all(
     wanted.map((prefix) =>
-      Promise.resolve(state.cache.delByPrefix(prefix)).catch((error) => {
-        console.error(`[cache] eviction failed for "${prefix}": ${error?.message}`);
+      Promise.resolve(cache.delByPrefix(prefix)).catch((/** @type {unknown} */ error) => {
+        console.error(`[cache] eviction failed for "${prefix}": ${errorMessage(error)}`);
       })
     )
   );
@@ -344,7 +379,7 @@ async function invalidateCache(state, ...prefixes) {
     try {
       await state.messageBus.publish(CACHE_INVALIDATE_CHANNEL, { prefixes: wanted });
     } catch (error) {
-      console.error(`[cache] invalidation publish failed: ${error?.message}`);
+      console.error(`[cache] invalidation publish failed: ${errorMessage(error)}`);
     }
   }
 }
@@ -354,17 +389,22 @@ async function invalidateCache(state, ...prefixes) {
  *
  * A no-op (resolving to `null`) when no cross-instance bus is configured.
  *
- * @param {{ cache?: object, messageBus?: object|null }} state
+ * @param {CacheableState} state
  * @returns {Promise<(() => Promise<void>)|null>} Unsubscribe handle.
  */
 async function subscribeToCacheInvalidations(state) {
   if (!state?.cache || !state?.messageBus) return null;
+  const cache = state.cache;
   return state.messageBus.subscribe(CACHE_INVALIDATE_CHANNEL, (message) => {
-    const prefixes = Array.isArray(message?.prefixes) ? message.prefixes : [];
+    const prefixes = /** @type {unknown[]} */ (
+      Array.isArray(/** @type {any} */ (message)?.prefixes)
+        ? /** @type {any} */ (message).prefixes
+        : []
+    );
     for (const prefix of prefixes) {
       if (typeof prefix !== 'string' || prefix.length === 0) continue;
-      Promise.resolve(state.cache.delByPrefix(prefix)).catch((error) => {
-        console.error(`[cache] remote eviction failed for "${prefix}": ${error?.message}`);
+      Promise.resolve(cache.delByPrefix(prefix)).catch((/** @type {unknown} */ error) => {
+        console.error(`[cache] remote eviction failed for "${prefix}": ${errorMessage(error)}`);
       });
     }
   });
