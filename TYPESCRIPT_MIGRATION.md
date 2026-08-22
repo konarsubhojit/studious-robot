@@ -52,6 +52,9 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/crashReporter.js`
 - [x] `src/callService.js`
 - [x] `src/authService.js`
+- [x] `src/settingsStorage.js`
+- [x] `src/SafeRTCView.js`
+- [x] `src/ErrorBoundary.js`
 - [ ] `src/components/` (in progress)
   - [x] `AppButton.js`
   - [x] `AppTabBar.js`

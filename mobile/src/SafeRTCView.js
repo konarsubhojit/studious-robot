@@ -1,3 +1,4 @@
+// @ts-check
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
@@ -16,8 +17,19 @@ import { logError } from './appLogger';
  * a small inline fallback message instead of crashing the surrounding UI, so a
  * camera/render problem degrades gracefully into a visible error rather than a
  * blank screen or an app exit.
+ *
+ * @typedef {Omit<import('react-native-webrtc').RTCVideoViewProps, 'streamURL'> & {
+ *   streamURL?: string|null,
+ *   fallbackLabel?: string,
+ *   style?: import('react-native').StyleProp<import('react-native').ViewStyle>,
+ * }} SafeRTCViewProps
+ *
+ * @typedef {{ hasError: boolean }} SafeRTCViewState
+ *
+ * @extends {React.Component<SafeRTCViewProps, SafeRTCViewState>}
  */
 export default class SafeRTCView extends React.Component {
+  /** @param {SafeRTCViewProps} props */
   constructor(props) {
     super(props);
     this.state = { hasError: false };
@@ -27,6 +39,7 @@ export default class SafeRTCView extends React.Component {
     return { hasError: true };
   }
 
+  /** @param {Error} error */
   componentDidCatch(error) {
     logError('SafeRTCView render failure', {
       message: error?.message,
@@ -34,6 +47,7 @@ export default class SafeRTCView extends React.Component {
     });
   }
 
+  /** @param {SafeRTCViewProps} prevProps */
   componentDidUpdate(prevProps) {
     // Recover automatically when the stream URL changes (e.g. a new preview or
     // remote stream arrives) so a previous failure does not stick permanently.
@@ -43,7 +57,7 @@ export default class SafeRTCView extends React.Component {
   }
 
   render() {
-    const { fallbackLabel, style, ...rtcProps } = this.props;
+    const { fallbackLabel, style, streamURL, ...rtcProps } = this.props;
 
     if (this.state.hasError) {
       return (
@@ -55,7 +69,7 @@ export default class SafeRTCView extends React.Component {
 
     // Guard against an invalid/empty stream URL, which can also crash the
     // native view on some platforms.
-    if (!rtcProps.streamURL) {
+    if (!streamURL) {
       return (
         <View style={[styles.fallback, style]}>
           <Text style={styles.fallbackText}>No video stream</Text>
@@ -63,7 +77,7 @@ export default class SafeRTCView extends React.Component {
       );
     }
 
-    return <RTCView style={style} {...rtcProps} />;
+    return <RTCView style={style} streamURL={streamURL} {...rtcProps} />;
   }
 }
 
