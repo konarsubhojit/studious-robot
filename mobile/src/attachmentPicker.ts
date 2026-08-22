@@ -31,7 +31,7 @@ function loadImagePicker(): typeof import('react-native-image-picker') | null {
   } catch {
     _imagePickerCache = null;
   }
-  return _imagePickerCache;
+  return _imagePickerCache ?? null;
 }
 
 /** @returns {typeof import('@react-native-documents/picker') | null} */
@@ -42,7 +42,7 @@ function loadDocumentPicker(): typeof import('@react-native-documents/picker') |
   } catch {
     _documentPickerCache = null;
   }
-  return _documentPickerCache;
+  return _documentPickerCache ?? null;
 }
 
 /** Reset the cached modules (tests only). */
@@ -149,7 +149,7 @@ export async function pickDocument(): Promise<{
     // attach sheet available to retry rather than surfacing a hard error.
     // `isErrorWithCode` accepts the expected code at runtime; the published
     // typings declare only the error parameter.
-    const cancelled = /** @type {any} */ (picker).isErrorWithCode?.(error, 'OPERATION_CANCELED');
+    const cancelled = (picker as any).isErrorWithCode?.(error, 'OPERATION_CANCELED');
     if (!cancelled) {
       logWarn('[Attachments] document picker failed', { message: errorMessage(error) });
     }

@@ -47,11 +47,11 @@ describe('useCompactCallView', () => {
       return { remove: mockRemove };
     });
     jest.clearAllMocks();
-    /** @type {jest.Mock} */ (subscribePictureInPictureMode).mockImplementation(/** @type {any} */ listener => {
+    (subscribePictureInPictureMode as jest.Mock).mockImplementation(/** @type {any} */ listener => {
       capturedPipListener = listener;
       return jest.fn();
     });
-    /** @type {jest.Mock} */ (exitPictureInPicture).mockResolvedValue(true);
+    (exitPictureInPicture as jest.Mock).mockResolvedValue(true);
   });
 
   afterEach(() => {

@@ -23,7 +23,7 @@ function loadRecorderModule(): typeof import('react-native-nitro-sound').default
   } catch {
     _recorderCache = null;
   }
-  return _recorderCache;
+  return _recorderCache ?? null;
 }
 
 /** Reset the cached module and any in-progress recorder state (tests only). */

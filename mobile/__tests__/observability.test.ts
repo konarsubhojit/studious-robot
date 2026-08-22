@@ -58,7 +58,7 @@ describe('observability', () => {
   });
 
   test('falls back to info for unknown levels', () => {
-    const event = /** @type {any} */ (emitEvent(/** @type {any} */ ('trace'), 'call.noisy'));
+    const event = (emitEvent('trace' as any, 'call.noisy') as any);
     expect(event.level).toBe('info');
   });
 

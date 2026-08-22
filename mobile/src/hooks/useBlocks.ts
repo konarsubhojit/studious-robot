@@ -37,7 +37,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
         signalingUrl: string;
     }) {
   /** @type {[string[], Function]} ids the authenticated user has blocked. */
-  const [blockedUsers, setBlockedUsers] = useState(/** @type {string[]} */ ([]));
+  const [blockedUsers, setBlockedUsers] = useState(([] as string[]));
 
   const blockedSet = useMemo(() => new Set(blockedUsers), [blockedUsers]);
 

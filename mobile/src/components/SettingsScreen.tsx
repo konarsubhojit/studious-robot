@@ -250,7 +250,7 @@ export default function SettingsScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

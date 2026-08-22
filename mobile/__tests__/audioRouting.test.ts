@@ -29,10 +29,10 @@ import {
   subscribeAudioDevices,
 } from '../src/audioRouting';
 
-const startMock = /** @type {jest.Mock} */ (InCallManager.start);
-const stopMock = /** @type {jest.Mock} */ (InCallManager.stop);
-const setForceSpeakerphoneOnMock = /** @type {jest.Mock} */ (InCallManager.setForceSpeakerphoneOn);
-const chooseAudioRouteMock = /** @type {jest.Mock} */ (InCallManager.chooseAudioRoute);
+const startMock = (InCallManager.start as jest.Mock);
+const stopMock = (InCallManager.stop as jest.Mock);
+const setForceSpeakerphoneOnMock = (InCallManager.setForceSpeakerphoneOn as jest.Mock);
+const chooseAudioRouteMock = (InCallManager.chooseAudioRoute as jest.Mock);
 
 describe('audioRouting', () => {
   beforeEach(() => {
@@ -305,7 +305,7 @@ describe('audioRouting', () => {
 
       expect(result.ok).toBe(false);
       expect(result.selected).toBe(AUDIO_ROUTES.SPEAKER_PHONE);
-      expect(/** @type {any} */ (result).message).toEqual(expect.any(String));
+      expect((result as any).message).toEqual(expect.any(String));
     });
   });
 

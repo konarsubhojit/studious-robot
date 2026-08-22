@@ -42,14 +42,14 @@ async function renderWithProvider(/** @type {any} */ onRender: any) {
 describe('ThemeProvider', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('dark');
-    /** @type {jest.Mock} */ (loadThemeMode).mockResolvedValue(THEME_MODES.SYSTEM);
-    /** @type {jest.Mock} */ (saveThemeMode).mockResolvedValue(true);
+    (useColorScheme as jest.Mock).mockReturnValue('dark');
+    (loadThemeMode as jest.Mock).mockResolvedValue(THEME_MODES.SYSTEM);
+    (saveThemeMode as jest.Mock).mockResolvedValue(true);
   });
 
   test('follows the OS colour scheme in system mode', async () => {
     const onRender = jest.fn();
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('light');
+    (useColorScheme as jest.Mock).mockReturnValue('light');
     await renderWithProvider(onRender);
 
     const { theme } = onRender.mock.calls.at(-1)[0];
@@ -59,11 +59,11 @@ describe('ThemeProvider', () => {
 
   test('re-renders with the dark palette when the device switches theme', async () => {
     const onRender = jest.fn();
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('light');
+    (useColorScheme as jest.Mock).mockReturnValue('light');
     const tree = await renderWithProvider(onRender);
     expect(onRender.mock.calls.at(-1)[0].theme.scheme).toBe('light');
 
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('dark');
+    (useColorScheme as jest.Mock).mockReturnValue('dark');
     await act(async () => {
       tree.update(
         <ThemeProvider>
@@ -79,7 +79,7 @@ describe('ThemeProvider', () => {
 
   test('a manual override wins over the OS scheme and is persisted', async () => {
     const onRender = jest.fn();
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('dark');
+    (useColorScheme as jest.Mock).mockReturnValue('dark');
     await renderWithProvider(onRender);
 
     await act(async () => {
@@ -94,8 +94,8 @@ describe('ThemeProvider', () => {
 
   test('restores the persisted mode on mount', async () => {
     const onRender = jest.fn();
-    /** @type {jest.Mock} */ (loadThemeMode).mockResolvedValue(THEME_MODES.LIGHT);
-    /** @type {jest.Mock} */ (useColorScheme).mockReturnValue('dark');
+    (loadThemeMode as jest.Mock).mockResolvedValue(THEME_MODES.LIGHT);
+    (useColorScheme as jest.Mock).mockReturnValue('dark');
     await renderWithProvider(onRender);
 
     expect(onRender.mock.calls.at(-1)[0].theme.scheme).toBe('light');
@@ -103,7 +103,7 @@ describe('ThemeProvider', () => {
 
   test('keeps the dark palette when the persisted mode cannot be read', async () => {
     const onRender = jest.fn();
-    /** @type {jest.Mock} */ (loadThemeMode).mockRejectedValue(new Error('unreadable'));
+    (loadThemeMode as jest.Mock).mockRejectedValue(new Error('unreadable'));
     await renderWithProvider(onRender);
 
     expect(onRender.mock.calls.at(-1)[0].theme.scheme).toBe('dark');

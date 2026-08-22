@@ -53,7 +53,7 @@ describe('useStartupPermissions', () => {
   });
 
   test('logs a warning when the permission result carries a warning message', async () => {
-    /** @type {jest.Mock} */ (ensureCallPermissions).mockResolvedValueOnce({ ok: true, warningMessage: 'uh oh' });
+    (ensureCallPermissions as jest.Mock).mockResolvedValueOnce({ ok: true, warningMessage: 'uh oh' });
 
     await act(async () => {
       renderer.create(<TestHook userId="alice" />);
@@ -65,7 +65,7 @@ describe('useStartupPermissions', () => {
   });
 
   test('logs a warning instead of throwing when the request rejects', async () => {
-    /** @type {jest.Mock} */ (ensureCallPermissions).mockRejectedValueOnce(new Error('boom'));
+    (ensureCallPermissions as jest.Mock).mockRejectedValueOnce(new Error('boom'));
 
     await act(async () => {
       renderer.create(<TestHook userId="alice" />);

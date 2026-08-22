@@ -42,12 +42,12 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  global.fetch = /** @type {any} */ (jest.fn());
+  global.fetch = (jest.fn() as any);
 });
 
 describe('usePresenceSearch', () => {
   test('checkPresence returns online/offline snapshot on success', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'online', online: true }),
     });
@@ -66,7 +66,7 @@ describe('usePresenceSearch', () => {
   });
 
   test('checkPresence returns unknown:true for a 404', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({ status: 404, ok: false });
+    (global.fetch as jest.Mock).mockResolvedValue({ status: 404, ok: false });
     const { resultRef } = setup();
 
     let presence;
@@ -87,7 +87,7 @@ describe('usePresenceSearch', () => {
     expect(presence).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
 
-    /** @type {jest.Mock} */ (global.fetch).mockRejectedValue(new Error('network down'));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error('network down'));
     await act(async () => {
       presence = await resultRef.current.checkPresence('bob');
     });
@@ -144,7 +144,7 @@ describe('usePresenceSearch', () => {
 
   test('debounced calleeId presence effect ignores stale responses for older calleeIds', async () => {
     jest.useFakeTimers();
-    /** @type {jest.Mock} */ (global.fetch).mockImplementation(/** @type {any} */ url => {
+    (global.fetch as jest.Mock).mockImplementation(/** @type {any} */ url => {
       if (url.endsWith('/presence/first')) {
         return new Promise(resolve => {
           setTimeout(
@@ -190,7 +190,7 @@ describe('usePresenceSearch', () => {
 
   test('clears calleePresence immediately when calleeId is emptied', async () => {
     jest.useFakeTimers();
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({ status: 'online', online: true }),
     });

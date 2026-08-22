@@ -49,14 +49,14 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  /** @type {jest.Mock} */ (ensureAttachmentPermission).mockResolvedValue({ ok: true, granted: true, message: null });
+  (ensureAttachmentPermission as jest.Mock).mockResolvedValue({ ok: true, granted: true, message: null });
   _resetAttachmentAvailabilityCache();
 });
 
 describe('useAttachments', () => {
   test('pickAndSend(photo): uploads the picked photo and sends it', async () => {
-    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
-    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    (uploadAttachment as jest.Mock).mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -74,8 +74,8 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend(file): sends as a FILE message', async () => {
-    /** @type {jest.Mock} */ (pickDocument).mockResolvedValue({ uri: 'file:///a.pdf', mimeType: 'application/pdf', sizeBytes: 100 });
-    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/a.pdf' });
+    (pickDocument as jest.Mock).mockResolvedValue({ uri: 'file:///a.pdf', mimeType: 'application/pdf', sizeBytes: 100 });
+    (uploadAttachment as jest.Mock).mockResolvedValue({ url: 'https://cdn/a.pdf' });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -90,7 +90,7 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend does nothing when the permission is denied', async () => {
-    /** @type {jest.Mock} */ (ensureAttachmentPermission).mockResolvedValue({ ok: false, message: 'Camera permission is required' });
+    (ensureAttachmentPermission as jest.Mock).mockResolvedValue({ ok: false, message: 'Camera permission is required' });
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -102,7 +102,7 @@ describe('useAttachments', () => {
   });
 
   test('pickAndSend does nothing when the user cancels the picker', async () => {
-    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue(null);
+    (pickPhoto as jest.Mock).mockResolvedValue(null);
     const { resultRef, params } = setup();
 
     await act(async () => {
@@ -114,8 +114,8 @@ describe('useAttachments', () => {
   });
 
   test('marks attachmentsAvailable false and surfaces the message on a 503', async () => {
-    /** @type {jest.Mock} */ (pickPhoto).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
-    /** @type {jest.Mock} */ (uploadAttachment).mockRejectedValue({
+    (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+    (uploadAttachment as jest.Mock).mockRejectedValue({
       status: 503,
       message: "Attachments aren't available on this server",
     });
@@ -135,14 +135,14 @@ describe('useAttachments', () => {
   });
 
   test('records and sends a voice note', async () => {
-    /** @type {jest.Mock} */ (startVoiceRecording).mockResolvedValue(true);
-    /** @type {jest.Mock} */ (stopVoiceRecording).mockResolvedValue({
+    (startVoiceRecording as jest.Mock).mockResolvedValue(true);
+    (stopVoiceRecording as jest.Mock).mockResolvedValue({
       uri: 'file:///v.m4a',
       mimeType: 'audio/aac',
       durationMs: 2000,
       sizeBytes: 4096,
     });
-    /** @type {jest.Mock} */ (uploadAttachment).mockResolvedValue({ url: 'https://cdn/v.m4a' });
+    (uploadAttachment as jest.Mock).mockResolvedValue({ url: 'https://cdn/v.m4a' });
     const { resultRef, params } = setup();
 
     await act(async () => {

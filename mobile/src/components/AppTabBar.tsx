@@ -107,7 +107,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     bar: {
       flexDirection: 'row',

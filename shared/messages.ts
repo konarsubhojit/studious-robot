@@ -1,6 +1,3 @@
-// @ts-check
-'use strict';
-
 /**
  * Rich-message contract shared by `mobile/` and `server/`.
  *
@@ -31,14 +28,10 @@ const MESSAGE_TYPES = Object.freeze({
 const DEFAULT_MESSAGE_TYPE = MESSAGE_TYPES.TEXT;
 
 /** Every type this build understands. */
-const KNOWN_MESSAGE_TYPES = /** @type {ReadonlyArray<string>} */ (
-  Object.freeze(Object.values(MESSAGE_TYPES))
-);
+const KNOWN_MESSAGE_TYPES = (Object.freeze(Object.values(MESSAGE_TYPES)) as ReadonlyArray<string>);
 
 /** Types whose payload lives in object storage rather than in `body`. */
-const ATTACHMENT_MESSAGE_TYPES = /** @type {ReadonlyArray<string>} */ (
-  Object.freeze([MESSAGE_TYPES.IMAGE, MESSAGE_TYPES.FILE, MESSAGE_TYPES.VOICE])
-);
+const ATTACHMENT_MESSAGE_TYPES = (Object.freeze([MESSAGE_TYPES.IMAGE, MESSAGE_TYPES.FILE, MESSAGE_TYPES.VOICE]) as ReadonlyArray<string>);
 
 /**
  * Accepted MIME types per attachment type.
@@ -114,7 +107,7 @@ function messageTypeOf(message: { type?: unknown; } | null | undefined): string 
  * @returns {boolean}
  */
 function isSupportedMessageType(type: unknown): boolean {
-  return KNOWN_MESSAGE_TYPES.includes(/** @type {string} */ (type));
+  return KNOWN_MESSAGE_TYPES.includes((type as string));
 }
 
 /**
@@ -124,7 +117,7 @@ function isSupportedMessageType(type: unknown): boolean {
  * @returns {boolean}
  */
 function isAttachmentMessageType(type: unknown): boolean {
-  return ATTACHMENT_MESSAGE_TYPES.includes(/** @type {string} */ (type));
+  return ATTACHMENT_MESSAGE_TYPES.includes((type as string));
 }
 
 /**
@@ -186,7 +179,7 @@ function describeMessagePreview(message: {
   }
 }
 
-module.exports = {
+export {
   ATTACHMENT_MESSAGE_TYPES,
   ATTACHMENT_MIME_ALLOWLIST,
   ATTACHMENT_PATH_PREFIX,

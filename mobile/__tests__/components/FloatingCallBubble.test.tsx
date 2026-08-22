@@ -39,7 +39,7 @@ jest.mock('react-native-reanimated', () => {
     default: { View },
     // Backed by a ref so values survive re-renders, like real shared values.
     useSharedValue: (/** @type {any} */ init: any) => {
-      const ref = require('react').useRef(/** @type {any} */ (null));
+      const ref = require('react').useRef((null as any));
       if (ref.current === null) {
         ref.current = { value: init };
       }
@@ -100,7 +100,7 @@ function bubbleElement(/** @type {any} */ props: any) {
  * @param {any} [props]
  * @returns {any}
  */
-function render(props: any): any {
+function render(props?: any): any {
   /** @type {any} */
   let tree: any;
   act(() => {
@@ -117,7 +117,7 @@ function render(props: any): any {
  * @param {any} tree
  * @param {any} [props]
  */
-function refresh(tree: any, props: any) {
+function refresh(tree: any, props?: any) {
   act(() => {
     tree.update(bubbleElement(props));
   });
@@ -125,7 +125,7 @@ function refresh(tree: any, props: any) {
 
 describe('FloatingCallBubble', () => {
   beforeEach(() => {
-    /** @type {jest.Mock} */ (triggerHaptic).mockClear();
+    (triggerHaptic as jest.Mock).mockClear();
     mockPanCallbacks.onStart = null;
     mockPanCallbacks.onUpdate = null;
     mockPanCallbacks.onEnd = null;

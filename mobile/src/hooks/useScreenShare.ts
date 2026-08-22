@@ -41,10 +41,10 @@ export default function useScreenShare({
   // User preference: include screen (system) audio with the next share.
   const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(false);
 
-  const screenStreamRef = useRef(/** @type {any} */ (null));
-  const screenVideoTrackRef = useRef(/** @type {any} */ (null));
-  const screenAudioSenderRef = useRef(/** @type {any} */ (null));
-  const cameraTrackRef = useRef(/** @type {any} */ (null));
+  const screenStreamRef = useRef((null as any));
+  const screenVideoTrackRef = useRef((null as any));
+  const screenAudioSenderRef = useRef((null as any));
+  const cameraTrackRef = useRef((null as any));
   const isTogglingRef = useRef(false);
 
   const renegotiateRef = useRef(renegotiate);
@@ -161,7 +161,7 @@ export default function useScreenShare({
       return;
     }
 
-    const { stream, videoTrack, audioTrack, audioShared } = /** @type {any} */ (capture);
+    const { stream, videoTrack, audioTrack, audioShared } = (capture as any);
 
     try {
       const videoSender = pc

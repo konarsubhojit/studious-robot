@@ -195,8 +195,8 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
  * @returns {ListItem[]}
  */
 function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
-  const items = /** @type {ListItem[]} */ ([]);
-  let currentDateLabel = /** @type {string | null} */ (null);
+  const items = ([] as ListItem[]);
+  let currentDateLabel = (null as string | null);
   for (let index = 0; index < orderedEntries.length; index++) {
     const entry = orderedEntries[index];
     const createdAt = new Date(entry.createdAt ?? '');
@@ -689,11 +689,11 @@ export default function ChatConversationScreen({
 
   const [draft, setDraft] = useState('');
   // The message the composer is currently replying to, if any.
-  const [replyTarget, setReplyTarget] = useState(/** @type {ChatMessage | null} */ (null));
+  const [replyTarget, setReplyTarget] = useState((null as ChatMessage | null));
   // A bubble briefly emphasised because its quote was tapped; takes precedence
   // over the deep-link highlight the screen may have been opened with.
   const [quotedHighlightId, setQuotedHighlightId] = useState(
-    /** @type {string | null} */ (null),
+    (null as string | null),
   );
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isAttachSheetOpen, setIsAttachSheetOpen] = useState(false);
@@ -703,14 +703,14 @@ export default function ChatConversationScreen({
   // Date label of the topmost visible message, rendered as a pinned pill over
   // the list so the day being read stays on screen while its inline separator
   // scrolls away (sticky date separator).
-  const [stickyDateLabel, setStickyDateLabel] = useState(/** @type {string | null} */ (null));
+  const [stickyDateLabel, setStickyDateLabel] = useState((null as string | null));
   const hasReachedTopRef = useRef(false);
-  const typingIdleTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined));
-  const listRef = useRef(/** @type {FlatList | null} */ (null));
+  const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
+  const listRef = useRef((null as FlatList | null));
   // Tracks the newest message's id so the auto-scroll-to-bottom effect below
   // only fires for a genuinely new/sent message, not when older history is
   // paged in at the top (which must not yank the scroll position).
-  const newestMessageIdRef = useRef(/** @type {string | null} */ (null));
+  const newestMessageIdRef = useRef((null as string | null));
   // Whether the list is currently scrolled near its bottom edge; used to
   // decide whether an incoming message should auto-scroll or instead surface
   // the "scroll to bottom" FAB so mid-history reading isn't interrupted.
@@ -723,7 +723,7 @@ export default function ChatConversationScreen({
   // Resolves a reply's `replyTo` to the quoted message, when it is part of the
   // loaded page. A miss renders as "Message deleted" rather than as nothing.
   const messagesById = useMemo(() => {
-    const byId = /** @type {Map<string, ChatMessage>} */ (new Map());
+    const byId = (new Map() as Map<string, ChatMessage>);
     messages.forEach(message => {
       if (!isCallEntry(message) && message?.messageId) byId.set(message.messageId, message);
     });
@@ -749,8 +749,8 @@ export default function ChatConversationScreen({
       newestMessageIdRef.current = newestId;
       const isOwnMessage =
         Boolean(newestMessage) &&
-        !isCallEntry(/** @type {TimelineEntry} */ (newestMessage)) &&
-        /** @type {ChatMessage} */ (newestMessage).senderId === currentUserId;
+        !isCallEntry((newestMessage as TimelineEntry)) &&
+        (newestMessage as ChatMessage).senderId === currentUserId;
       if (isNearBottomRef.current || isOwnMessage) {
         requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
         setShowScrollToBottom(false);
@@ -816,8 +816,7 @@ export default function ChatConversationScreen({
   }, []);
 
   const reportTyping = useCallback(
-      (    /** @param {boolean} isTyping */
-    isTyping): boolean => {
+      (isTyping: boolean) => {
       clearTimeout(typingIdleTimerRef.current);
       onTypingChange?.(isTyping);
       if (isTyping) {
@@ -828,8 +827,7 @@ export default function ChatConversationScreen({
   );
 
   const handleChangeText = useCallback(
-      (    /** @param {string} text */
-    text): string => {
+      (text: string) => {
       setDraft(text);
       reportTyping(Boolean(text.trim()));
     },
@@ -854,8 +852,7 @@ export default function ChatConversationScreen({
   }, [attachmentsAvailable]);
 
   const handlePickAttachment = useCallback(
-      (    /** @param {'photo'|'camera'|'file'} kind */
-    kind): 'photo' | 'camera' | 'file' => {
+      (kind: 'photo'|'camera'|'file') => {
       onPickAttachment?.(kind);
     },
     [onPickAttachment],
@@ -873,7 +870,7 @@ export default function ChatConversationScreen({
     onCancelVoiceNote?.();
   }, [onCancelVoiceNote]);
 
-  const handleReply = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage): ChatMessage => {
+  const handleReply = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage) => {
     setReplyTarget(message);
   }, []);
 
@@ -889,21 +886,19 @@ export default function ChatConversationScreen({
     [onReactToMessage],
   );
 
-  const handleQuotePress = useCallback(/** @param {string} messageId */ (messageId: string): string => {
+  const handleQuotePress = useCallback(/** @param {string} messageId */ (messageId: string) => {
     if (messageId) setQuotedHighlightId(messageId);
   }, []);
 
   const handleDownloadAttachment = useCallback(
-      (    /** @param {ChatMessage} message */
-    message): ChatMessage => {
+      (message: ChatMessage) => {
       onDownloadAttachment?.(message);
     },
     [onDownloadAttachment],
   );
 
   const handleRetry = useCallback(
-      (    /** @param {ChatMessage} message */
-    message): ChatMessage => {
+      (message: ChatMessage) => {
       if (onRetryMessage) {
         onRetryMessage(message);
         return;
@@ -914,8 +909,7 @@ export default function ChatConversationScreen({
   );
 
   const handleDelete = useCallback(
-      (    /** @param {ChatMessage} message */
-    message): ChatMessage => {
+      (message: ChatMessage) => {
       if (!onDeleteMessage) return;
       Alert.alert(
         'Delete message?',
@@ -935,8 +929,7 @@ export default function ChatConversationScreen({
   );
 
   const handleScroll = useCallback(
-      (    /** @param {import('react-native').NativeSyntheticEvent<import('react-native').NativeScrollEvent>} event */
-    event): import('react-native').NativeSyntheticEvent<import('react-native').NativeScrollEvent> => {
+      (event: import('react-native').NativeSyntheticEvent<import('react-native').NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       if (contentOffset.y <= 0 && !hasReachedTopRef.current) {
         hasReachedTopRef.current = true;
@@ -1034,7 +1027,7 @@ export default function ChatConversationScreen({
     ],
   );
 
-  const handleScrollToIndexFailed = useCallback(/** @param {{ index: number }} info */ (info: { index: number; }): { index: number; } => {
+  const handleScrollToIndexFailed = useCallback(/** @param {{ index: number }} info */ (info: { index: number; }) => {
     setTimeout(() => {
       listRef.current?.scrollToIndex?.({
         index: info.index,
@@ -1301,7 +1294,7 @@ export default function ChatConversationScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

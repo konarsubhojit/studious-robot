@@ -461,20 +461,20 @@ describe('ChatConversationScreen', () => {
       currentUserId: 'user-alice',
     });
     const inputBefore = findByTestId(tree, 'chat-message-input');
-    const unfocusedStyle = /** @type {any[]} */ ([]).concat(inputBefore.props.style).flat();
+    const unfocusedStyle = ([] as any[]).concat(inputBefore.props.style).flat();
 
     act(() => {
       inputBefore.props.onFocus();
     });
     const inputFocused = findByTestId(tree, 'chat-message-input');
-    const focusedStyle = /** @type {any[]} */ ([]).concat(inputFocused.props.style).flat();
+    const focusedStyle = ([] as any[]).concat(inputFocused.props.style).flat();
     expect(focusedStyle).not.toEqual(unfocusedStyle);
 
     act(() => {
       inputFocused.props.onBlur();
     });
     const inputAfterBlur = findByTestId(tree, 'chat-message-input');
-    expect(/** @type {any[]} */ ([]).concat(inputAfterBlur.props.style).flat()).toEqual(unfocusedStyle);
+    expect(([] as any[]).concat(inputAfterBlur.props.style).flat()).toEqual(unfocusedStyle);
   });
 
   test('reports typing state to onTypingChange while composing and after send', () => {
@@ -631,7 +631,7 @@ describe('ChatConversationScreen', () => {
       ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
     );
     expect(showListenerCall).toBeDefined();
-    const [, showListener] = /** @type {any[]} */ (showListenerCall);
+    const [, showListener] = (showListenerCall as any[]);
 
     const flatList = tree.root.findByType(FlatList).instance;
     const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
@@ -660,7 +660,7 @@ describe('ChatConversationScreen', () => {
     const showListenerCall = addListenerSpy.mock.calls.findLast(
       ([eventName]) => eventName === 'keyboardDidShow' || eventName === 'keyboardWillShow',
     );
-    const callIndex = addListenerSpy.mock.calls.indexOf(/** @type {any} */ (showListenerCall));
+    const callIndex = addListenerSpy.mock.calls.indexOf((showListenerCall as any));
     const subscription = addListenerSpy.mock.results[callIndex].value;
     const removeSpy = jest.spyOn(subscription, 'remove');
 

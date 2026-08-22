@@ -11,7 +11,7 @@ function findByTestId(/** @type {any} */ tree: any, /** @type {any} */ testID: a
  * @param {any} [props]
  * @returns {any}
  */
-function render(props: any): any {
+function render(props?: any): any {
   /** @type {any} */
   let tree: any;
   act(() => {

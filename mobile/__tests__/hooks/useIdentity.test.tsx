@@ -46,17 +46,17 @@ function setup(updateStatus = jest.fn()) {
 beforeEach(() => {
   jest.clearAllMocks();
   authListener = null;
-  /** @type {jest.Mock} */ (authService.observeAuthState).mockImplementation(/** @type {any} */ listener => {
+  (authService.observeAuthState as jest.Mock).mockImplementation(/** @type {any} */ listener => {
     authListener = listener;
     return jest.fn();
   });
-  /** @type {jest.Mock} */ (loadIdentity).mockResolvedValue({ userId: '' });
-  /** @type {jest.Mock} */ (saveIdentity).mockResolvedValue(true);
+  (loadIdentity as jest.Mock).mockResolvedValue({ userId: '' });
+  (saveIdentity as jest.Mock).mockResolvedValue(true);
 });
 
 describe('useIdentity', () => {
   test('loads the stored username and waits for Firebase auth state', async () => {
-    /** @type {jest.Mock} */ (loadIdentity).mockResolvedValue({ userId: 'alice' });
+    (loadIdentity as jest.Mock).mockResolvedValue({ userId: 'alice' });
     const { resultRef } = setup();
     await act(async () => {
       await Promise.resolve();
@@ -87,13 +87,13 @@ describe('useIdentity', () => {
       });
     });
 
-    expect(/** @type {Record<string, any>} */ (authService)[functionName]).toHaveBeenCalled();
+    expect((authService as Record<string, any>)[functionName]).toHaveBeenCalled();
     expect(saveIdentity).toHaveBeenCalledWith({ userId: 'alice' });
     expect(resultRef.current.userId).toBe('alice');
   });
 
   test('updateUserId rejects local renames for account-bound usernames', async () => {
-    /** @type {jest.Mock} */ (loadIdentity).mockResolvedValue({ userId: 'alice' });
+    (loadIdentity as jest.Mock).mockResolvedValue({ userId: 'alice' });
     const updateStatus = jest.fn();
     const { resultRef } = setup(updateStatus);
     act(() => authListener({ uid: 'firebase-user' }));
@@ -106,7 +106,7 @@ describe('useIdentity', () => {
   });
 
   test('unregisterUser signs out and clears the persisted username', async () => {
-    /** @type {jest.Mock} */ (loadIdentity).mockResolvedValue({ userId: 'alice' });
+    (loadIdentity as jest.Mock).mockResolvedValue({ userId: 'alice' });
     const { resultRef } = setup();
     act(() => authListener({ uid: 'firebase-user' }));
     await act(async () => {
@@ -130,7 +130,7 @@ describe('useIdentity', () => {
     ],
   ])('registerUser maps %s to a readable status message', async (code, expectedText, message) => {
     const updateStatus = jest.fn();
-    /** @type {jest.Mock} */ (authService.registerWithEmail).mockRejectedValue({
+    (authService.registerWithEmail as jest.Mock).mockRejectedValue({
       code,
       message,
     });

@@ -23,20 +23,20 @@ function errorMessage(error: unknown): string | undefined {
  * @param {unknown} loaded
  * @returns {T}
  */
-export function mergeSettings<T>(defaults: T, loaded: unknown): T {
+export function mergeSettings<T extends Record<string, unknown>>(defaults: T, loaded: unknown): T {
   if (!loaded || typeof loaded !== 'object') {
     return { ...defaults };
   }
 
-  const source = /** @type {Record<string, unknown>} */ (loaded);
-  const merged = /** @type {Record<string, unknown>} */ ({ ...defaults });
+  const source = (loaded as Record<string, unknown>);
+  const merged = ({ ...defaults } as Record<string, unknown>);
   Object.keys(defaults).forEach(key => {
     const value = source[key];
     if (typeof value === typeof defaults[key]) {
       merged[key] = value;
     }
   });
-  return /** @type {T} */ (merged);
+  return (merged as T);
 }
 
 /**
@@ -47,7 +47,7 @@ export function mergeSettings<T>(defaults: T, loaded: unknown): T {
  * @param {T} defaults
  * @returns {Promise<T>}
  */
-export async function loadSettings<T>(defaults: T): Promise<T> {
+export async function loadSettings<T extends Record<string, unknown>>(defaults: T): Promise<T> {
   try {
     const exists = await RNFS.exists(SETTINGS_FILE);
     if (!exists) {

@@ -1,6 +1,3 @@
-// @ts-check
-'use strict';
-
 /**
  * Minimal, dependency-free schema validation with a `zod`-compatible surface.
  *
@@ -135,7 +132,7 @@ function literal(expected: string | number | boolean) {
 function enumOf(values: ReadonlyArray<string>) {
   const allowed = new Set(values);
   return createSchema((value, path) =>
-    allowed.has(/** @type {string} */ (value))
+    allowed.has((value as string))
       ? ok(value)
       : fail(path, `expected one of ${[...allowed].join(', ')}`)
   );
@@ -236,4 +233,4 @@ const s = {
   unknown,
 };
 
-module.exports = { s, isPlainObject };
+export { s, isPlainObject };

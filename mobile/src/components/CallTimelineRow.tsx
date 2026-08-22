@@ -141,9 +141,6 @@ function formatTimestamp(isoString: string | null | undefined) {
  * back, by audio or video.
  */
 export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
-export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
-export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
-export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
 const CallTimelineRow = memo(
   /** @param {CallTimelineRowProps} props */
   function CallTimelineRow({ entries, peerId, onCallBack, onVideoCallBack }: CallTimelineRowProps) {
@@ -224,7 +221,7 @@ const CallTimelineRow = memo(
 );
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       alignItems: 'center',

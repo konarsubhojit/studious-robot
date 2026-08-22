@@ -36,12 +36,10 @@ import {
   showMessageNotification,
 } from '../src/messageNotification';
 
-const globalAny = /** @type {any} */ (/** @type {unknown} */ (global));
-const getInitialURLMock = /** @type {jest.Mock} */ (Linking.getInitialURL);
-const addEventListenerMock = /** @type {jest.Mock} */ (Linking.addEventListener);
-const showMessageNotificationMock = /** @type {jest.Mock} */ (
-  /** @type {unknown} */ (showMessageNotification)
-);
+const globalAny = (/** @type {unknown} */ (global) as any);
+const getInitialURLMock = (Linking.getInitialURL as jest.Mock);
+const addEventListenerMock = (Linking.addEventListener as jest.Mock);
+const showMessageNotificationMock = (/** @type {unknown} */ (showMessageNotification) as jest.Mock);
 
 jest.mock('../src/messageNotification', () => {
   const actual = jest.requireActual('../src/messageNotification');
@@ -108,7 +106,7 @@ describe('parseCallDeepLink', () => {
   });
 
   test('returns null for non-string input', () => {
-    expect(parseCallDeepLink(/** @type {any} */ (42))).toBeNull();
+    expect(parseCallDeepLink((42 as any))).toBeNull();
     expect(parseCallDeepLink(undefined)).toBeNull();
   });
 
@@ -337,7 +335,7 @@ describe('getPushToken / registerForPushNotifications (native module absent)', (
   });
 
   test('registerForPushNotifications resolves false for missing args', async () => {
-    await expect(registerForPushNotifications(/** @type {any} */ ({}))).resolves.toBe(false);
+    await expect(registerForPushNotifications(({} as any))).resolves.toBe(false);
   });
 });
 

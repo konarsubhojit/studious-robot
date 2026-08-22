@@ -29,7 +29,7 @@ describe('haptics', () => {
   });
 
   test('ignores unknown patterns', () => {
-    expect(triggerHaptic(/** @type {any} */ ('nope'))).toBe(false);
+    expect(triggerHaptic(('nope' as any))).toBe(false);
     expect(vibrateSpy).not.toHaveBeenCalled();
   });
 
@@ -44,7 +44,7 @@ describe('haptics', () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
     jest
       .spyOn(AccessibilityInfo, 'addEventListener')
-      .mockReturnValue(/** @type {any} */ ({ remove: () => {} }));
+      .mockReturnValue(({ remove: () => {} } as any));
 
     const unsubscribe = initHaptics();
     await Promise.resolve();
@@ -61,10 +61,10 @@ describe('haptics', () => {
     let listener: any = null;
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
     jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation(
-      /** @type {any} */ ((/** @type {string} */ event: string, /** @type {any} */ handler: any) => {
+      (((event: string, handler: any) => {
         if (event === 'reduceMotionChanged') listener = handler;
         return { remove: () => {} };
-      })
+      }) as any)
     );
 
     const unsubscribe = initHaptics();
@@ -86,7 +86,7 @@ describe('haptics', () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
     jest
       .spyOn(AccessibilityInfo, 'addEventListener')
-      .mockReturnValue(/** @type {any} */ ({ remove }));
+      .mockReturnValue(({ remove } as any));
 
     initHaptics()();
 

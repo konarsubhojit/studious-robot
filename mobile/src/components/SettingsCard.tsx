@@ -67,7 +67,7 @@ export default function SettingsCard({ settings, onToggleAutoLighting, onToggleS
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     settingsCard: {
       borderRadius: radius.md,

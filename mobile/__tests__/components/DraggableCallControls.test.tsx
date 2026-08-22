@@ -69,7 +69,7 @@ describe('DraggableCallControls', () => {
     mockPanCallbacks.onUpdate = null;
     jest
       .spyOn(ReactNative, 'useWindowDimensions')
-      .mockReturnValue(/** @type {any} */ ({ width: 400, height: 800 }));
+      .mockReturnValue(({ width: 400, height: 800 } as any));
   });
 
   afterEach(() => {

@@ -77,7 +77,7 @@ export default function CallScreen({
   const styles = useThemedStyles(createStyles);
 
   const [visibleStatus, setVisibleStatus] = useState(
-    /** @type {import('./StatusBanner').CallStatus | null} */ (null),
+    (null as import('./StatusBanner').CallStatus | null),
   );
   const [showControlsOverlay, setShowControlsOverlay] = useState(true);
   /** @type {import('react').MutableRefObject<ReturnType<typeof setTimeout> | null>} */
@@ -240,8 +240,7 @@ export default function CallScreen({
   );
 }
 
-/** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (_colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     callScreen: {
       flex: 1,

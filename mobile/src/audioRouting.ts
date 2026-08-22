@@ -59,7 +59,7 @@ const AUDIO_ROUTE_FALLBACK_MESSAGE =
  * @param {string} [route]
  * @returns {string}
  */
-export function getAudioRouteLabel(route: string): string {
+export function getAudioRouteLabel(route?: string): string {
   return (route && AUDIO_ROUTE_LABELS[route]) || route || 'Unknown';
 }
 
@@ -155,7 +155,7 @@ export function setAudioRoute(speakerEnabled: boolean): { ok: boolean; selected:
  * @param {{ availableAudioDeviceList?: unknown, selectedAudioDevice?: unknown } | null} [payload]
  * @returns {{ available: string[], selected: string|null }}
  */
-export function parseAudioDeviceStatus(payload: { availableAudioDeviceList?: unknown; selectedAudioDevice?: unknown; } | null): { available: string[]; selected: string | null; } {
+export function parseAudioDeviceStatus(payload?: { availableAudioDeviceList?: unknown; selectedAudioDevice?: unknown; } | null): { available: string[]; selected: string | null; } {
   if (!payload || typeof payload !== 'object') {
     return { available: [], selected: null };
   }
@@ -196,7 +196,7 @@ export function parseAudioDeviceStatus(payload: { availableAudioDeviceList?: unk
       ? payload.selectedAudioDevice
       : null;
 
-  return { available: /** @type {string[]} */ (available), selected };
+  return { available: (available as string[]), selected };
 }
 
 /**

@@ -128,7 +128,7 @@ export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_M
  * @param {string|null} [systemScheme] - Value from `useColorScheme()`.
  * @returns {'light'|'dark'}
  */
-export function resolveScheme(mode: string, systemScheme: string | null): 'light' | 'dark' {
+export function resolveScheme(mode?: string, systemScheme?: string | null): 'light' | 'dark' {
   if (mode === THEME_MODES.LIGHT) return 'light';
   if (mode === THEME_MODES.DARK) return 'dark';
   return systemScheme === 'light' ? 'light' : 'dark';

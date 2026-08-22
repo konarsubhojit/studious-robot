@@ -29,16 +29,14 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
         userId: string;
         updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void;
     }) {
-  const sessionIdRef = useRef(/** @type {string | null} */ (null));
+  const sessionIdRef = useRef((null as string | null));
   // Stable per-install device id, lazily loaded from disk on first session.
-  const deviceIdRef = useRef(/** @type {string | null} */ (null));
+  const deviceIdRef = useRef((null as string | null));
   // Holds the latest authedFetch implementation so callers that only have a
   // ref (e.g. helpers declared before authedFetch exists) can issue
   // 401-recovering requests without a circular dependency.
   const authedFetchRef = useRef(
-    /** @type {((buildRequest: (sessionId: string) => { url: string, options?: object }) => Promise<Response | null>) | null} */ (
-      null
-    ),
+    (null as ((buildRequest: (sessionId: string) => { url: string, options?: object }) => Promise<Response | null>) | null),
   );
 
   const createOrGetSession = useCallback(async () => {
@@ -55,7 +53,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
     try {
       idToken = await getIdToken();
     } catch (error) {
-      const failure = /** @type {{ code?: string, message?: string }} */ (error ?? {});
+      const failure = ((error ?? {}) as { code?: string, message?: string });
       if (failure.code === 'auth/app-not-configured') {
         updateStatus(failure.message ?? 'Firebase auth is not configured', 'error');
       }
@@ -149,7 +147,9 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
      * @param {(sessionId: string) => { url: string, options?: object }} buildRequest
      * @returns {Promise<Response | null>}
      */
-    async (buildRequest: Promise<Response | null>): (sessionId: string) => { url: string; options?: object; } => {
+    async (
+      buildRequest: (sessionId: string) => { url: string; options?: object },
+    ): Promise<Response | null> => {
       let sessionId = sessionIdRef.current;
       if (!sessionId) {
         sessionId = await createOrGetSession().catch(() => null);

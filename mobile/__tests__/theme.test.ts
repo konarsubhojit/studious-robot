@@ -38,23 +38,23 @@ describe('theme palettes', () => {
   });
 
   test.each(['light', 'dark'])('%s text colours meet WCAG AA on every surface', scheme => {
-    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
+    const colors = palettes[(scheme as 'light'|'dark')];
     FOREGROUNDS.forEach(fg => {
       SURFACES.forEach(bg => {
-        const scale = /** @type {Record<string, string>} */ (colors);
+        const scale = (colors as Record<string, string>);
         expect(contrast(scale[fg], scale[bg])).toBeGreaterThanOrEqual(4.5);
       });
     });
   });
 
   test.each(['light', 'dark'])('%s accent buttons meet WCAG AA for their label', scheme => {
-    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
+    const colors = palettes[(scheme as 'light'|'dark')];
     expect(contrast(colors.textOnAccent, colors.accentButton)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(colors.textOnAccent, colors.danger)).toBeGreaterThanOrEqual(4.5);
   });
 
   test.each(['light', 'dark'])('%s control borders meet the 3:1 non-text ratio', scheme => {
-    const colors = palettes[/** @type {'light'|'dark'} */ (scheme)];
+    const colors = palettes[(scheme as 'light'|'dark')];
     expect(contrast(colors.border, colors.surface)).toBeGreaterThanOrEqual(3);
     expect(contrast(colors.border, colors.background)).toBeGreaterThanOrEqual(3);
   });

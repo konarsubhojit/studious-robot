@@ -53,7 +53,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: i
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authUser, setAuthUser] = useState(
-    /** @type {import('@react-native-firebase/auth').FirebaseAuthTypes.User | null} */ (null),
+    (null as import('@react-native-firebase/auth').FirebaseAuthTypes.User | null),
   );
 
   const committedIdentityRef = useRef({ userId: '' });
@@ -130,20 +130,20 @@ export default function useIdentity(updateStatus: (message: string, severity?: i
     /**
      * @param {{ userId: string, method: string, email?: string, password?: string }} registration
      */
-    async (registration: { userId: string; method: string; email?: string; password?: string; }): { userId: string; method: string; email?: string; password?: string; } => {
+    async (registration: { userId: string; method: string; email?: string; password?: string; }) => {
       const trimmed = (registration?.userId ?? '').trim();
       if (!trimmed) return;
       setIsAuthenticating(true);
       try {
         if (registration.method === 'email-register') {
           await registerWithEmail(
-            /** @type {string} */ (registration.email),
-            /** @type {string} */ (registration.password),
+            (registration.email as string),
+            (registration.password as string),
           );
         } else if (registration.method === 'email-sign-in') {
           await signInWithEmail(
-            /** @type {string} */ (registration.email),
-            /** @type {string} */ (registration.password),
+            (registration.email as string),
+            (registration.password as string),
           );
         } else if (registration.method === 'google') {
           await signInWithGoogle();

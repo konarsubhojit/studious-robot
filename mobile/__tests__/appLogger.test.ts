@@ -42,7 +42,7 @@ describe('appLogger', () => {
   });
 
   test('redacts sensitive fields in metadata and errors', () => {
-    const err = /** @type {Error & { context?: unknown }} */ (new Error('socket failed'));
+    const err = (new Error('socket failed') as Error & { context?: unknown });
     err.context = {
       TURN_USERNAME: 'demo-user',
       token: 'secret-token',
@@ -89,9 +89,9 @@ describe('appLogger', () => {
   });
 
   test('background logs are persisted and included in export text', async () => {
-    /** @type {jest.Mock} */ (RNFS.appendFile).mockResolvedValueOnce(undefined);
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValueOnce(true);
-    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValueOnce('persisted background line\n');
+    (RNFS.appendFile as jest.Mock).mockResolvedValueOnce(undefined);
+    (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValueOnce('persisted background line\n');
 
     await logBackgroundInfo('background receipt', { callId: 'call-1' });
     const exported = await getLogsForExport();

@@ -56,7 +56,7 @@ export default function AttachSheet({ visible, onClose, onSelect }: { visible: b
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     backdrop: {
       flex: 1,

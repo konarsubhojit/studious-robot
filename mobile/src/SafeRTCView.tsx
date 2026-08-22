@@ -30,9 +30,7 @@ import { logError } from './appLogger';
  */
 export type SafeRTCViewProps = Omit<import('react-native-webrtc').RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: import('react-native').StyleProp<import('react-native').ViewStyle>; };
 export type SafeRTCViewState = { hasError: boolean; };
-export type SafeRTCViewProps = Omit<import('react-native-webrtc').RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: import('react-native').StyleProp<import('react-native').ViewStyle>; };
-export type SafeRTCViewState = { hasError: boolean; };
-export default class SafeRTCView extends React.Component {
+export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeRTCViewState> {
   /** @param {SafeRTCViewProps} props */
   constructor(props: SafeRTCViewProps) {
     super(props);

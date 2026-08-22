@@ -35,11 +35,12 @@ let serverAttachmentsUnavailable = false;
  * came from an HTTP response) and `.message`, same as any other `Error`.
  */
 export class AttachmentError extends Error {
+  status?: number;
   /**
    * @param {string} message
    * @param {number} [status]
    */
-  constructor(message: string, status: number) {
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'AttachmentError';
     this.status = status;
@@ -68,11 +69,11 @@ export function validateAttachment({ type, mimeType, sizeBytes }: { type?: unkno
     return { ok: false, message: 'Unsupported attachment type' };
   }
   const normalisedMime = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
-  if (!isAllowedAttachmentMimeType(/** @type {string} */ (type), normalisedMime)) {
+  if (!isAllowedAttachmentMimeType((type as string), normalisedMime)) {
     return { ok: false, message: `File type ${normalisedMime || 'unknown'} isn't supported` };
   }
   const size = Number(sizeBytes);
-  const cap = maxAttachmentBytesFor(/** @type {string} */ (type));
+  const cap = maxAttachmentBytesFor((type as string));
   if (!Number.isFinite(size) || size <= 0) {
     return { ok: false, message: 'Could not determine the file size' };
   }
@@ -287,7 +288,7 @@ export async function uploadAttachment({
       sizeBytes,
     });
   } catch (error) {
-    const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+    const failure = ((error ?? {}) as { status?: number, message?: string });
     logWarn('[Attachments] presign failed', {
       status: failure.status,
       message: failure.message,
@@ -303,7 +304,7 @@ export async function uploadAttachment({
       onProgress,
     });
   } catch (error) {
-    const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+    const failure = ((error ?? {}) as { status?: number, message?: string });
     logWarn('[Attachments] upload failed', {
       status: failure.status,
       message: failure.message,

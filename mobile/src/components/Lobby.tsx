@@ -78,14 +78,14 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState(/** @type {ContactRow[]} */ ([]));
+  const [results, setResults] = useState(([] as ContactRow[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
     /** @param {string} term */
-    async (term: string): string => {
+    async (term: string) => {
       if (typeof onSearchUsers !== 'function') return;
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
@@ -93,7 +93,7 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
       let /** @type {ContactRow[]} */ users: ContactRow[] = [];
       try {
         users = await onSearchUsers(term);
-      } catch (_error) {
+      } catch {
         users = [];
       }
       // Ignore stale responses that resolved out of order.
@@ -477,7 +477,7 @@ export default function Lobby({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

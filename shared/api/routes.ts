@@ -1,7 +1,4 @@
-// @ts-check
-'use strict';
-
-const { s } = require('../schema');
+import { s } from '../schema.ts';
 
 /**
  * REST surface shared by the mobile client and the server.
@@ -59,7 +56,7 @@ const USER_SEARCH_RESPONSE = s.object(
   { passthrough: true }
 );
 
-module.exports = {
+export {
   API_ROUTES,
   HEALTH_RESPONSE,
   SESSION_RESPONSE,

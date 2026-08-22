@@ -79,7 +79,7 @@ describe('callStateReducer', () => {
 
   test('ignores unknown events and unknown states', () => {
     expect(callStateReducer(CALL_STATES.IN_CALL, 'nonsense')).toBe(CALL_STATES.IN_CALL);
-    expect(callStateReducer(CALL_STATES.IN_CALL, /** @type {any} */ (undefined))).toBe(
+    expect(callStateReducer(CALL_STATES.IN_CALL, (undefined as any))).toBe(
       CALL_STATES.IN_CALL
     );
     expect(callStateReducer('nonsense', CALL_EVENTS.PLACE)).toBe('nonsense');

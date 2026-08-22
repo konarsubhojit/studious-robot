@@ -13,8 +13,8 @@ jest.mock('react-native', () => ({
 import RNFS from 'react-native-fs';
 import { installCrashHandler, saveCrashLog } from '../src/crashReporter';
 
-const writeFileMock = /** @type {jest.Mock} */ (RNFS.writeFile);
-const globalWithErrorUtils = /** @type {any} */ (global);
+const writeFileMock = (RNFS.writeFile as jest.Mock);
+const globalWithErrorUtils = (global as any);
 
 describe('saveCrashLog', () => {
   beforeEach(() => {

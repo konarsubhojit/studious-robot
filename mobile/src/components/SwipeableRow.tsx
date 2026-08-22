@@ -38,7 +38,7 @@ export default function SwipeableRow({ actions = [], children }: {
 
   const panResponder = useMemo(() => {
     /** @param {number} toValue */
-    const settle = (toValue: number): number => {
+    const settle = (toValue: number) => {
       // A short tick when the tray latches open, so the row confirms itself
       // without the user having to look away from the list.
       if (toValue !== 0 && offsetRef.current !== toValue) {
@@ -118,7 +118,7 @@ export default function SwipeableRow({ actions = [], children }: {
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       position: 'relative',

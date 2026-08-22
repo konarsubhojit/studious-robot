@@ -88,8 +88,8 @@ import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
 import { getDegradations } from '../src/observability';
 
-const useCallFlowMock = /** @type {jest.Mock} */ (/** @type {unknown} */ (useCallFlow));
-const getDegradationsMock = /** @type {jest.Mock} */ (/** @type {unknown} */ (getDegradations));
+const useCallFlowMock = (/** @type {unknown} */ (useCallFlow) as jest.Mock);
+const getDegradationsMock = (/** @type {unknown} */ (getDegradations) as jest.Mock);
 
 function makeCallFlow(overrides = {}) {
   return {

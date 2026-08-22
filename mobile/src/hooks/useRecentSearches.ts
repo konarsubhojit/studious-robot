@@ -21,7 +21,7 @@ export default function useRecentSearches(): {
     recentSearches: string[]; recordSearch: (term: string) => void;
     clearSearches: () => void;
 } {
-  const [recentSearches, setRecentSearches] = useState(/** @type {string[]} */ ([]));
+  const [recentSearches, setRecentSearches] = useState(([] as string[]));
 
   useEffect(() => {
     let cancelled = false;

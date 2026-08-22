@@ -228,14 +228,14 @@ export default function ChatListScreen({
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState(/** @type {ContactRow[]} */ ([]));
+  const [results, setResults] = useState(([] as ContactRow[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
     /** @param {string} term */
-    async (term: string): string => {
+    async (term: string) => {
       if (typeof onSearchUsers !== 'function') return;
       if (!term) {
         setResults([]);
@@ -249,7 +249,7 @@ export default function ChatListScreen({
       let /** @type {ContactRow[]} */ users: ContactRow[] = [];
       try {
         users = await onSearchUsers(term);
-      } catch (_error) {
+      } catch {
         users = [];
       }
       if (requestIdRef.current !== requestId) return;
@@ -273,8 +273,7 @@ export default function ChatListScreen({
   const listData = isSearchMode ? (isSearching ? [] : results) : conversations;
 
   const renderContactRow = useCallback(
-      (    /** @param {ContactRow} contact */
-    contact): ContactRow => (
+      (contact: ContactRow) => (
       <Pressable
         onPress={() => onOpenConversation?.(contact.userId)}
         accessibilityRole="button"
@@ -292,8 +291,7 @@ export default function ChatListScreen({
   );
 
   const renderConversationRow = useCallback(
-      (    /** @param {ConversationRow} conversation */
-    conversation): ConversationRow => {
+      (conversation: ConversationRow) => {
       const hasUnread = (conversation.unreadCount ?? 0) > 0;
       const actions =
         onMarkRead && hasUnread
@@ -440,7 +438,7 @@ export default function ChatListScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,

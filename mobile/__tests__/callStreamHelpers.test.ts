@@ -9,7 +9,7 @@ jest.mock('../src/appLogger', () => ({
 }));
 
 jest.mock('../src/diagnostics', () => ({
-  getStreamUrl: jest.fn((stream, context) => {
+  getStreamUrl: jest.fn((stream, _context) => {
     if (!stream || typeof stream.toURL !== 'function') return null;
     try {
       return stream.toURL();

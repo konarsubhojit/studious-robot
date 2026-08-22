@@ -184,7 +184,7 @@ export async function applyBitrateConstraints(pc: import('react-native-webrtc').
         const params = sender.getParameters?.();
         if (!params) return;
         if (!Array.isArray(params.encodings) || params.encodings.length === 0) {
-          params.encodings = [/** @type {(typeof params.encodings)[number]} */ ({})];
+          params.encodings = [({} as (typeof params.encodings)[number])];
         }
         const maxBitrate = sender.track?.kind === 'audio' ? audioMaxBps : videoMaxBps;
         params.encodings[0] = { ...params.encodings[0], maxBitrate };

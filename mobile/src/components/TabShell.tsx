@@ -139,7 +139,7 @@ export default function TabShell() {
   );
 
   /** @param {string | null} peerId */
-  const renderPeerProfile = (peerId: string | null): string | null => {
+  const renderPeerProfile = (peerId: string | null) => {
     if (!peerId) return null;
     return (
       <PeerProfileScreen

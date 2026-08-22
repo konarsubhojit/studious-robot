@@ -23,7 +23,7 @@ describe('attachmentDownload', () => {
   });
 
   test('sanitizes sender-controlled file names before writing to Downloads', async () => {
-    /** @type {jest.Mock} */ (RNFS.downloadFile).mockReturnValueOnce({
+    (RNFS.downloadFile as jest.Mock).mockReturnValueOnce({
       promise: Promise.resolve({ statusCode: 200 }),
     });
 
@@ -41,7 +41,7 @@ describe('attachmentDownload', () => {
   });
 
   test('falls back to app storage when the Downloads write fails', async () => {
-    /** @type {jest.Mock} */ (RNFS.downloadFile)
+    (RNFS.downloadFile as jest.Mock)
       .mockReturnValueOnce({ promise: Promise.reject(new Error('permission denied')) })
       .mockReturnValueOnce({ promise: Promise.resolve({ statusCode: 200 }) });
 

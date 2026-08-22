@@ -157,7 +157,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

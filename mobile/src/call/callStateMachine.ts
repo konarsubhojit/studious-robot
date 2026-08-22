@@ -20,10 +20,6 @@
  */
 
 export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
-export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
-export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
-export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
-export type CallState = 'idle' | 'outgoing_ringing' | 'incoming_ringing' | 'in_call' | 'ended';
 export const CALL_STATES = {
   IDLE: 'idle',
   OUTGOING_RINGING: 'outgoing_ringing',
@@ -32,10 +28,6 @@ export const CALL_STATES = {
   ENDED: 'ended',
 };
 
-export type CallEvent = 'place' | 'receive' | 'connect' | 'end' | 'reset';
-export type CallEvent = 'place' | 'receive' | 'connect' | 'end' | 'reset';
-export type CallEvent = 'place' | 'receive' | 'connect' | 'end' | 'reset';
-export type CallEvent = 'place' | 'receive' | 'connect' | 'end' | 'reset';
 export type CallEvent = 'place' | 'receive' | 'connect' | 'end' | 'reset';
 export const CALL_EVENTS = {
   /** Local user placed a call (outgoing ringing). */

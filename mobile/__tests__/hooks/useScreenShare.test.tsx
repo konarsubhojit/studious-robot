@@ -65,14 +65,14 @@ function setup({ renegotiate = jest.fn(() => Promise.resolve()) } = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  /** @type {jest.Mock} */ (screenShare.isScreenShareSupported).mockReturnValue(true);
-  /** @type {jest.Mock} */ (screenShare.verifyScreenShareFrames).mockResolvedValue({ ok: true, frames: 1, verified: true });
+  (screenShare.isScreenShareSupported as jest.Mock).mockReturnValue(true);
+  (screenShare.verifyScreenShareFrames as jest.Mock).mockResolvedValue({ ok: true, frames: 1, verified: true });
 });
 
 describe('useScreenShare', () => {
   test('starts video-only sharing by replacing the camera track and renegotiating', async () => {
     const screenVideoTrack = makeTrack('video');
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: screenVideoTrack,
@@ -100,7 +100,7 @@ describe('useScreenShare', () => {
   test('adds a screen audio sender and renegotiates when screen audio is enabled', async () => {
     const screenVideoTrack = makeTrack('video');
     const screenAudioTrack = makeTrack('audio');
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: screenVideoTrack,
@@ -125,7 +125,7 @@ describe('useScreenShare', () => {
   });
 
   test('warns when screen audio was requested but not provided by the platform', async () => {
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: makeTrack('video'),
@@ -150,7 +150,7 @@ describe('useScreenShare', () => {
   test('restores the camera track and releases the capture when sharing stops', async () => {
     const screenVideoTrack = makeTrack('video');
     const screenStream = { id: 'screen' };
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: screenStream,
       videoTrack: screenVideoTrack,
@@ -176,7 +176,7 @@ describe('useScreenShare', () => {
   });
 
   test('removes the screen audio sender and renegotiates on stop', async () => {
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: makeTrack('video'),
@@ -202,7 +202,7 @@ describe('useScreenShare', () => {
   });
 
   test('reports a cancelled capture without changing sharing state', async () => {
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: false,
       reason: 'cancelled',
       message: 'Screen sharing permission denied',
@@ -218,7 +218,7 @@ describe('useScreenShare', () => {
   });
 
   test('surfaces capture failures as errors', async () => {
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: false,
       reason: 'unsupported',
       message: 'Screen sharing is not supported on this device',
@@ -248,7 +248,7 @@ describe('useScreenShare', () => {
   });
 
   test('keeps the screen audio preference stable while sharing', async () => {
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: makeTrack('video'),
@@ -272,7 +272,7 @@ describe('useScreenShare', () => {
 
   test('stops sharing when the OS ends the capture', async () => {
     const screenVideoTrack = makeTrack('video');
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream: { id: 'screen' },
       videoTrack: screenVideoTrack,
@@ -294,14 +294,14 @@ describe('useScreenShare', () => {
   test('stops the share and reports an error when no frames reach the peer', async () => {
     const screenVideoTrack = makeTrack('video');
     const stream = { id: 'screen' };
-    /** @type {jest.Mock} */ (screenShare.startScreenCapture).mockResolvedValue({
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
       stream,
       videoTrack: screenVideoTrack,
       audioTrack: null,
       audioShared: false,
     });
-    /** @type {jest.Mock} */ (screenShare.verifyScreenShareFrames).mockResolvedValue({
+    (screenShare.verifyScreenShareFrames as jest.Mock).mockResolvedValue({
       ok: false,
       reason: 'no_frames',
       message: 'Screen sharing produced no video',

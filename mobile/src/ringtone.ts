@@ -46,9 +46,7 @@ function loadInCallManager(): InCallManager | null {
   if (cachedInCallManager !== undefined) return cachedInCallManager;
   try {
     const mod = require('react-native-incall-manager');
-    cachedInCallManager = /** @type {InCallManager | null} */ (
-      /** @type {unknown} */ (mod?.default ?? mod ?? null)
-    );
+    cachedInCallManager = (/** @type {unknown} */ (mod?.default ?? mod ?? null) as InCallManager | null);
   } catch {
     cachedInCallManager = null;
     if (!hasLoggedMissingInCallManager) {

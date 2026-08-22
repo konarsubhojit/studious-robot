@@ -114,7 +114,7 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
  */
 function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   if (!parsed || typeof parsed !== 'object') return emptySnapshot();
-  const raw = /** @type {Record<string, any>} */ (parsed);
+  const raw = (parsed as Record<string, any>);
 
   const conversations = Array.isArray(raw.conversations)
     ? raw.conversations.filter(

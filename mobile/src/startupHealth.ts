@@ -9,7 +9,7 @@ const startupIssues: StartupIssue[] = [];
  * @param {string} source
  * @param {string} [message]
  */
-export function recordStartupIssue(source: string, message: string) {
+export function recordStartupIssue(source: string, message?: string) {
   if (!source || startupIssues.some(issue => issue.source === source)) return;
   startupIssues.push({ source, message: message || source });
 }

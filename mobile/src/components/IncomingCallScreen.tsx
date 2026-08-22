@@ -168,7 +168,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

@@ -35,9 +35,7 @@ function isFirebaseAppUnavailableError(error: unknown): boolean {
  */
 function toAuthError(error: unknown): unknown {
   if (isFirebaseAppUnavailableError(error)) {
-    const nextError = /** @type {Error & { code?: string }} */ (
-      new Error(FIREBASE_APP_UNAVAILABLE_MESSAGE)
-    );
+    const nextError = (new Error(FIREBASE_APP_UNAVAILABLE_MESSAGE) as Error & { code?: string });
     nextError.code = 'auth/app-not-configured';
     return nextError;
   }
@@ -56,7 +54,7 @@ function loadGoogleSignin() {
   if (cachedGoogleSignin !== undefined) return cachedGoogleSignin;
   try {
     const mod = require('@react-native-google-signin/google-signin');
-    const anyMod = /** @type {any} */ (mod);
+    const anyMod = (mod as any);
     cachedGoogleSignin = anyMod?.GoogleSignin ?? anyMod?.default ?? anyMod;
   } catch {
     cachedGoogleSignin = null;

@@ -79,7 +79,7 @@ export default function useAttachments({
         });
         await sendMessage(peerId, '', { type, attachment });
       } catch (error) {
-        const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+        const failure = ((error ?? {}) as { status?: number, message?: string });
         if (failure.status === 503) setAttachmentsAvailable(false);
         updateStatus?.(failure.message ?? 'Could not send attachment', 'error');
       } finally {

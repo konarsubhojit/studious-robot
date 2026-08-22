@@ -22,9 +22,9 @@ import {
   saveThemeMode,
 } from '../src/settingsStorage';
 
-const existsMock = /** @type {jest.Mock} */ (RNFS.exists);
-const readFileMock = /** @type {jest.Mock} */ (RNFS.readFile);
-const writeFileMock = /** @type {jest.Mock} */ (RNFS.writeFile);
+const existsMock = (RNFS.exists as jest.Mock);
+const readFileMock = (RNFS.readFile as jest.Mock);
+const writeFileMock = (RNFS.writeFile as jest.Mock);
 
 const DEFAULTS = { autoCameraLightingEnabled: false, speakerEnabledByDefault: true };
 

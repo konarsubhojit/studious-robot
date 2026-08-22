@@ -63,7 +63,7 @@ export default function useChatDeepLink({ userId, conversations = [], onOpenConv
         onOpenConversation: (peerId: string) => void;
     }) {
   const [pendingConversationId, setPendingConversationId] = useState(
-    /** @type {string | null} */ (null),
+    (null as string | null),
   );
   const onOpenConversationRef = useRef(onOpenConversation);
 

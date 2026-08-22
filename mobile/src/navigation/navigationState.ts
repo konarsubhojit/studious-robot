@@ -7,9 +7,6 @@ import { logError, logWarn } from '../appLogger';
  * as `initialState`.
  */
 export type PersistedNavigationState = import('@react-navigation/native').InitialState;
-export type PersistedNavigationState = import('@react-navigation/native').InitialState;
-export type PersistedNavigationState = import('@react-navigation/native').InitialState;
-export type PersistedNavigationState = import('@react-navigation/native').InitialState;
 
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
 
@@ -42,7 +39,7 @@ let cachedState: PersistedNavigationState | null | undefined;
  */
 export function isValidNavigationState(state: unknown): boolean {
   if (!state || typeof state !== 'object') return false;
-  const { routes, index } = /** @type {{ routes?: unknown, index?: unknown }} */ (state);
+  const { routes, index } = (state as { routes?: unknown, index?: unknown });
   if (!Array.isArray(routes) || routes.length === 0) return false;
   if (index !== undefined && (typeof index !== 'number' || index < 0 || index >= routes.length)) {
     return false;

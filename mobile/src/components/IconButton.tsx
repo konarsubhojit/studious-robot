@@ -123,7 +123,7 @@ const iconColor = (colors: import('../theme').ThemeColors, variant: string) =>
   }[variant] ?? colors.textPrimary);
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     wrapper: {
       alignItems: 'center',

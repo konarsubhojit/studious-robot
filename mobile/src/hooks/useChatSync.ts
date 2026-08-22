@@ -48,7 +48,7 @@ export default function useChatSync({
     }) {
   // Presence snapshot for the currently open conversation's peer.
   const [peerPresence, setPeerPresence] = useState(
-    /** @type {PeerPresence | null} */ (null),
+    (null as PeerPresence | null),
   );
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
   // True while the very first conversation-list / message-history fetch is in

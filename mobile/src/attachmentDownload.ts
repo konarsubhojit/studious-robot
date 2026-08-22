@@ -26,7 +26,7 @@ const EXTENSION_BY_MIME_TYPE = Object.freeze({
  */
 function formatDateForFile(date: Date = new Date()): string {
   /** @param {number} value */
-  const pad = (value: number): number => String(value).padStart(2, '0');
+  const pad = (value: number) => String(value).padStart(2, '0');
   return (
     `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
     `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
@@ -40,7 +40,7 @@ function formatDateForFile(date: Date = new Date()): string {
 function extensionForMimeType(mimeType: string | null | undefined): string {
   const normalised = typeof mimeType === 'string' ? mimeType.trim().toLowerCase() : '';
   return (
-    /** @type {Record<string, string|undefined>} */ (EXTENSION_BY_MIME_TYPE)[normalised] ?? 'bin'
+    (EXTENSION_BY_MIME_TYPE as Record<string, string|undefined>)[normalised] ?? 'bin'
   );
 }
 
@@ -50,7 +50,7 @@ function extensionForMimeType(mimeType: string | null | undefined): string {
  */
 function filenameFromUrl(url: string | null | undefined): string {
   try {
-    const parsed = new URL(/** @type {string} */ (url));
+    const parsed = new URL((url as string));
     return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? '');
   } catch {
     return '';

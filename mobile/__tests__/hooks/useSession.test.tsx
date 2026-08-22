@@ -43,13 +43,13 @@ function setup(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  /** @type {jest.Mock} */ (loadDeviceId).mockResolvedValue('device-test-1');
-  global.fetch = /** @type {any} */ (jest.fn());
+  (loadDeviceId as jest.Mock).mockResolvedValue('device-test-1');
+  global.fetch = (jest.fn() as any);
 });
 
 describe('useSession', () => {
   test('createOrGetSession posts to /session and stores the returned sessionId', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
     });
@@ -66,7 +66,7 @@ describe('useSession', () => {
       'https://signal.example.com/session',
       expect.objectContaining({ method: 'POST' }),
     );
-    const body = JSON.parse(/** @type {jest.Mock} */ (global.fetch).mock.calls[0][1].body);
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body).toEqual({
       userId: 'alice',
       deviceId: 'device-test-1',
@@ -76,7 +76,7 @@ describe('useSession', () => {
   });
 
   test('createOrGetSession returns the cached sessionId without refetching', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({ sessionId: 'sess-1', userId: 'alice' }),
     });
@@ -85,7 +85,7 @@ describe('useSession', () => {
     await act(async () => {
       await resultRef.current.createOrGetSession();
     });
-    /** @type {jest.Mock} */ (global.fetch).mockClear();
+    (global.fetch as jest.Mock).mockClear();
 
     let sessionId;
     await act(async () => {
@@ -97,7 +97,7 @@ describe('useSession', () => {
   });
 
   test('createOrGetSession surfaces an identity_conflict as a friendly status message', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: false,
       status: 409,
       json: async () => ({ code: 'identity_claimed' }),
@@ -123,7 +123,7 @@ describe('useSession', () => {
   });
 
   test('refreshSession rotates the sessionId on success', async () => {
-    /** @type {jest.Mock} */ (global.fetch)
+    (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-2' }) });
     const { resultRef } = setup();
@@ -142,7 +142,7 @@ describe('useSession', () => {
   });
 
   test('refreshSession clears the sessionId and returns null on failure', async () => {
-    /** @type {jest.Mock} */ (global.fetch)
+    (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) })
       .mockResolvedValueOnce({ ok: false, status: 410 });
     const { resultRef } = setup();
@@ -173,7 +173,7 @@ describe('useSession', () => {
   });
 
   test('authedFetch retries once after a 401 by refreshing the session', async () => {
-    /** @type {jest.Mock} */ (global.fetch)
+    (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-1' }) }) // createOrGetSession
       .mockResolvedValueOnce({ status: 401, ok: false }) // first authed call
       .mockResolvedValueOnce({ ok: true, json: async () => ({ sessionId: 'sess-2' }) }) // refreshSession
@@ -200,7 +200,7 @@ describe('useSession', () => {
   });
 
   test('authedFetch returns null when no session can be established', async () => {
-    /** @type {jest.Mock} */ (global.fetch).mockResolvedValue({ ok: false, status: 500 });
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 500 });
     const { resultRef } = setup();
 
     /** @type {any} */

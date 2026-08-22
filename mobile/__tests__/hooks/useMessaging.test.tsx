@@ -81,9 +81,9 @@ const mountedTrees: any = [];
 
 beforeEach(() => {
   jest.clearAllMocks();
-  /** @type {any} */ (chatDb).__snapshot.conversations = [];
-  /** @type {any} */ (chatDb).__snapshot.messagesByPeer = {};
-  /** @type {any} */ (chatDb).__snapshot.outbox = [];
+  (chatDb as any).__snapshot.conversations = [];
+  (chatDb as any).__snapshot.messagesByPeer = {};
+  (chatDb as any).__snapshot.outbox = [];
 });
 
 afterEach(() => {
@@ -133,7 +133,7 @@ describe('useMessaging', () => {
 
   test('fetchMessagesForPeer sets the first page and pages older messages with `before`', async () => {
     const { resultRef, params } = setup();
-    /** @type {jest.Mock} */ (params.authedFetchRef.current)
+    (params.authedFetchRef.current as jest.Mock)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -165,7 +165,7 @@ describe('useMessaging', () => {
 
   test('fetchMessagesForPeer requests the merged timeline and dedupes call entries', async () => {
     const { resultRef, params } = setup();
-    /** @type {jest.Mock} */ (params.authedFetchRef.current)
+    (params.authedFetchRef.current as jest.Mock)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -291,7 +291,7 @@ describe('useMessaging', () => {
     expect(params.updateStatus).not.toHaveBeenCalled();
     // Written to the durable outbox before anything was emitted, so a
     // force-quit here cannot lose the message.
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox).toEqual([
+    expect((chatDb as any).__snapshot.outbox).toEqual([
       expect.objectContaining({ body: 'hi', recipientId: 'bob', attempts: 0 }),
     ]);
     expect(resultRef.current.pendingSendCount).toBe(1);
@@ -305,7 +305,7 @@ describe('useMessaging', () => {
     await act(async () => {
       await resultRef.current.sendMessage('bob', 'from the train');
     });
-    const queuedId = /** @type {any} */ (chatDb).__snapshot.outbox[0].messageId;
+    const queuedId = (chatDb as any).__snapshot.outbox[0].messageId;
 
     socket.connected = true;
     await act(async () => {
@@ -318,12 +318,12 @@ describe('useMessaging', () => {
       expect.objectContaining({ messageId: queuedId, body: 'from the train' }),
       expect.any(Function),
     );
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ syncState: 'synced' });
   });
 
   test('a send queued by a previous run is replayed on mount', async () => {
-    /** @type {any} */ (chatDb).__snapshot.outbox = [
+    (chatDb as any).__snapshot.outbox = [
       {
         messageId: 'queued-1',
         conversationId: 'c1',
@@ -333,7 +333,7 @@ describe('useMessaging', () => {
         attempts: 0,
       },
     ];
-    /** @type {any} */ (chatDb).__snapshot.messagesByPeer = {
+    (chatDb as any).__snapshot.messagesByPeer = {
       bob: [
         {
           messageId: 'queued-1',
@@ -357,19 +357,19 @@ describe('useMessaging', () => {
       expect.any(Function),
     );
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
   });
 
   test('hydrates conversations and history from the local store before any fetch', async () => {
-    /** @type {any} */ (chatDb).__snapshot.conversations = [{ conversationId: 'c1', peerId: 'bob', unreadCount: 2 }];
-    /** @type {any} */ (chatDb).__snapshot.messagesByPeer = {
+    (chatDb as any).__snapshot.conversations = [{ conversationId: 'c1', peerId: 'bob', unreadCount: 2 }];
+    (chatDb as any).__snapshot.messagesByPeer = {
       bob: [{ messageId: 'm1', body: 'cached', createdAt: '2024-01-01T00:00:00.000Z' }],
     };
     const { resultRef, params } = setup();
 
     await act(async () => {});
 
-    expect(resultRef.current.conversations).toEqual(/** @type {any} */ (chatDb).__snapshot.conversations);
+    expect(resultRef.current.conversations).toEqual((chatDb as any).__snapshot.conversations);
     expect(resultRef.current.messagesByPeer.bob[0].body).toBe('cached');
     expect(resultRef.current.unreadTotal).toBe(2);
     expect(params.authedFetchRef.current).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ describe('useMessaging', () => {
       resultRef.current.discardMessage('bob', messageId);
     });
     expect(resultRef.current.messagesByPeer.bob).toEqual([]);
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
   });
 
   test('deleteMessage tombstones a sent message on the server and locally', async () => {
@@ -455,7 +455,7 @@ describe('useMessaging', () => {
 
     expect(socket.emit).not.toHaveBeenCalled();
     expect(resultRef.current.messagesByPeer.bob).toEqual([]);
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox).toEqual([]);
+    expect((chatDb as any).__snapshot.outbox).toEqual([]);
   });
 
   test('deleteMessage reports an error when a sent message cannot be deleted', async () => {
@@ -561,7 +561,7 @@ describe('useMessaging', () => {
     });
     // One attempt spent: still pending, still queued.
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ pending: true });
-    expect(/** @type {any} */ (chatDb).__snapshot.outbox[0].attempts).toBe(1);
+    expect((chatDb as any).__snapshot.outbox[0].attempts).toBe(1);
     expect(params.updateStatus).not.toHaveBeenCalled();
 
     for (let attempt = 1; attempt < 5; attempt += 1) {

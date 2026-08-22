@@ -223,7 +223,7 @@ describe('applyBitrateConstraints', () => {
     const audioSender = makeAudioSender();
     const pc = { getSenders: () => [videoSender, audioSender] };
 
-    await applyBitrateConstraints(/** @type {any} */ (pc));
+    await applyBitrateConstraints((pc as any));
 
     expect(videoSender.setParameters).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -245,7 +245,7 @@ describe('applyBitrateConstraints', () => {
     };
     const pc = { getSenders: () => [sender] };
 
-    await applyBitrateConstraints(/** @type {any} */ (pc), { videoMaxBps: 500_000 });
+    await applyBitrateConstraints((pc as any), { videoMaxBps: 500_000 });
 
     expect(sender.setParameters).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -257,7 +257,7 @@ describe('applyBitrateConstraints', () => {
   test('silently skips senders without getParameters', async () => {
     const sender = { track: { kind: 'video' }, setParameters: jest.fn() };
     const pc = { getSenders: () => [sender] };
-    await expect(applyBitrateConstraints(/** @type {any} */ (pc))).resolves.toBeUndefined();
+    await expect(applyBitrateConstraints((pc as any))).resolves.toBeUndefined();
     expect(sender.setParameters).not.toHaveBeenCalled();
   });
 
@@ -268,6 +268,6 @@ describe('applyBitrateConstraints', () => {
       setParameters: jest.fn().mockRejectedValue(new Error('not supported')),
     };
     const pc = { getSenders: () => [sender] };
-    await expect(applyBitrateConstraints(/** @type {any} */ (pc))).resolves.toBeUndefined();
+    await expect(applyBitrateConstraints((pc as any))).resolves.toBeUndefined();
   });
 });

@@ -76,7 +76,7 @@ function toSafeError(err: any, seen: WeakSet<object>): unknown {
  * @param {WeakSet<object>} [seen] already-visited objects, for cycle detection.
  * @returns {any} `value` with sensitive fields redacted and cycles broken.
  */
-function toSafeValue(value: any, key: string | undefined, seen: WeakSet<object> = new WeakSet()): any {
+function toSafeValue(value: any, key?: string | undefined, seen: WeakSet<object> = new WeakSet()): any {
   if (isSensitiveKey(key)) {
     return REDACTED_TEXT;
   }
@@ -145,7 +145,7 @@ function safeSerialize(metadata: unknown): string | undefined {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-function addLog(level: string, message: unknown, metadata: unknown): string {
+function addLog(level: string, message: unknown, metadata?: unknown): string {
   const timestamp = new Date().toISOString();
   const safeMessage = typeof message === 'string' ? message : String(message);
   const serializedMetadata = safeSerialize(metadata);
@@ -171,7 +171,7 @@ function addLog(level: string, message: unknown, metadata: unknown): string {
  */
 function loadRNFS(): any {
   try {
-    const mod = /** @type {any} */ (require('react-native-fs'));
+    const mod = (require('react-native-fs') as any);
     return mod?.default ?? mod ?? null;
   } catch {
     return null;
@@ -245,7 +245,7 @@ export async function getPersistedLogsAsText() {
  * @returns {Promise<boolean|void>} resolves once the line is queued for
  *   durable storage.
  */
-export function logBackgroundInfo(message: unknown, metadata: unknown): Promise<boolean | void> {
+export function logBackgroundInfo(message: unknown, metadata?: unknown): Promise<boolean | void> {
   return persistLogLine(info(message, metadata));
 }
 
@@ -255,7 +255,7 @@ export function logBackgroundInfo(message: unknown, metadata: unknown): Promise<
  * @returns {Promise<boolean|void>} resolves once the line is queued for
  *   durable storage.
  */
-export function logBackgroundWarn(message: unknown, metadata: unknown): Promise<boolean | void> {
+export function logBackgroundWarn(message: unknown, metadata?: unknown): Promise<boolean | void> {
   return persistLogLine(warn(message, metadata));
 }
 
@@ -265,7 +265,7 @@ export function logBackgroundWarn(message: unknown, metadata: unknown): Promise<
  * @returns {Promise<boolean|void>} resolves once the line is queued for
  *   durable storage.
  */
-export function logBackgroundError(message: unknown, metadata: unknown): Promise<boolean | void> {
+export function logBackgroundError(message: unknown, metadata?: unknown): Promise<boolean | void> {
   return persistLogLine(error(message, metadata));
 }
 
@@ -274,7 +274,7 @@ export function logBackgroundError(message: unknown, metadata: unknown): Promise
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function debug(message: unknown, metadata: unknown): string {
+export function debug(message: unknown, metadata?: unknown): string {
   return addLog('debug', message, metadata);
 }
 
@@ -283,7 +283,7 @@ export function debug(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function info(message: unknown, metadata: unknown): string {
+export function info(message: unknown, metadata?: unknown): string {
   return addLog('info', message, metadata);
 }
 
@@ -292,7 +292,7 @@ export function info(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function warn(message: unknown, metadata: unknown): string {
+export function warn(message: unknown, metadata?: unknown): string {
   return addLog('warn', message, metadata);
 }
 
@@ -301,7 +301,7 @@ export function warn(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function error(message: unknown, metadata: unknown): string {
+export function error(message: unknown, metadata?: unknown): string {
   return addLog('error', message, metadata);
 }
 
@@ -310,7 +310,7 @@ export function error(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function logDebug(message: unknown, metadata: unknown): string {
+export function logDebug(message: unknown, metadata?: unknown): string {
   return debug(message, metadata);
 }
 
@@ -320,7 +320,7 @@ export function logDebug(message: unknown, metadata: unknown): string {
  * @returns {string|undefined} the buffered line, or `undefined` when verbose
  *   logging is disabled.
  */
-export function verbose(message: unknown, metadata: unknown): string | undefined {
+export function verbose(message: unknown, metadata?: unknown): string | undefined {
   if (!isVerboseLoggingEnabled()) return undefined;
   return addLog('verbose', message, metadata);
 }
@@ -331,7 +331,7 @@ export function verbose(message: unknown, metadata: unknown): string | undefined
  * @returns {string|undefined} the buffered line, or `undefined` when verbose
  *   logging is disabled.
  */
-export function logVerbose(message: unknown, metadata: unknown): string | undefined {
+export function logVerbose(message: unknown, metadata?: unknown): string | undefined {
   return verbose(message, metadata);
 }
 
@@ -340,7 +340,7 @@ export function logVerbose(message: unknown, metadata: unknown): string | undefi
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function logInfo(message: unknown, metadata: unknown): string {
+export function logInfo(message: unknown, metadata?: unknown): string {
   return info(message, metadata);
 }
 
@@ -349,7 +349,7 @@ export function logInfo(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function logWarn(message: unknown, metadata: unknown): string {
+export function logWarn(message: unknown, metadata?: unknown): string {
   return warn(message, metadata);
 }
 
@@ -358,7 +358,7 @@ export function logWarn(message: unknown, metadata: unknown): string {
  * @param {unknown} [metadata]
  * @returns {string} the formatted line that was buffered.
  */
-export function logError(message: unknown, metadata: unknown): string {
+export function logError(message: unknown, metadata?: unknown): string {
   return error(message, metadata);
 }
 

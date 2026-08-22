@@ -15,7 +15,7 @@
  * Icon names: https://pictogrammers.com/library/mdi/
  */
 
-export type MaterialCommunityIcons = import('react-native-vector-icons/MaterialCommunityIcons').default;
+export type MaterialCommunityIcons = typeof import('react-native-vector-icons/MaterialCommunityIcons').default;
 
 /** @type {MaterialCommunityIcons | null | undefined} */
 let _cache: MaterialCommunityIcons | null | undefined;
@@ -33,7 +33,7 @@ export function loadVectorIcons(): MaterialCommunityIcons | null {
   } catch {
     _cache = null;
   }
-  return _cache;
+  return _cache ?? null;
 }
 
 /** Reset the cached icon module (for testing only). */

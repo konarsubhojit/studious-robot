@@ -1,6 +1,3 @@
-// @ts-check
-'use strict';
-
 /**
  * Canonical Socket.IO event names.
  *
@@ -94,7 +91,7 @@ const ERROR_CODES = Object.freeze({
 /** Protocol version carried by every `call.*`, `rtc.*` and `message.*` payload. */
 const SIGNALING_VERSION = 1;
 
-module.exports = {
+export {
   CLIENT_EVENTS,
   SERVER_EVENTS,
   TRANSPORT_EVENTS,

@@ -167,9 +167,7 @@ export type LightingConstraints = { frameRate: { ideal: number; max?: number; };
 export function getLightingAdjustedConstraints(brightness: number | null | undefined): { condition: string; constraints: LightingConstraints | null; } {
   const condition = classifyLighting(brightness);
   const profile =
-    /** @type {Record<string, { frameRate: { ideal: number, max?: number }, exposureCompensation: number, brightness: number } | undefined>} */ (
-      LIGHTING_PROFILES
-    )[condition];
+    (LIGHTING_PROFILES as Record<string, { frameRate: { ideal: number, max?: number }, exposureCompensation: number, brightness: number } | undefined>)[condition];
 
   if (!profile) {
     return { condition, constraints: null };

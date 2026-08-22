@@ -27,7 +27,6 @@ import StatusBanner from './StatusBanner';
  * @param {boolean} [props.isMicrosoftSignInAvailable]
  */
 export type AuthMethod = 'email-register' | 'email-sign-in' | 'google' | 'microsoft';
-export type AuthMethod = 'email-register' | 'email-sign-in' | 'google' | 'microsoft';
 export default function RegistrationScreen({
   onRegister,
   isLoading = false,
@@ -43,10 +42,10 @@ export default function RegistrationScreen({
   const [password, setPassword] = useState('');
   // Remembered so a failed attempt can be retried from the error state
   // without the user having to work out which button they pressed.
-  const [lastMethod, setLastMethod] = useState(/** @type {AuthMethod | null} */ (null));
+  const [lastMethod, setLastMethod] = useState((null as AuthMethod | null));
 
   /** @param {AuthMethod} method */
-  const submit = (method: AuthMethod): AuthMethod => {
+  const submit = (method: AuthMethod) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     setLastMethod(method);
@@ -182,7 +181,7 @@ export default function RegistrationScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

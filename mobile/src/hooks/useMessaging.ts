@@ -85,7 +85,7 @@ const OUTBOX_MAX_RETRY_MS = 60_000;
  * @param {Partial<ChatMessage>} [serverTombstone] - the server's version, when it sent one.
  * @returns {Partial<ChatMessage>}
  */
-function tombstoneOf(message: ChatMessage, serverTombstone: Partial<ChatMessage>): Partial<ChatMessage> {
+function tombstoneOf(message: ChatMessage, serverTombstone?: Partial<ChatMessage>): Partial<ChatMessage> {
   return {
     ...(serverTombstone ?? {}),
     body: '',
@@ -201,48 +201,48 @@ export default function useMessaging({
   // newer, so the chat list preview never shows a stale message for a
   // conversation whose latest event was a call.
   const [conversations, setConversations] = useState(
-    /** @type {ConversationSummary[]} */ ([]),
+    ([] as ConversationSummary[]),
   );
   // Keyed by peerId → array of message objects, newest-first (matches the
   // server's ordering). Optimistic (pending/failed) sends are tagged inline.
   const [messagesByPeer, setMessagesByPeer] = useState(
-    /** @type {Record<string, ChatMessage[]>} */ ({}),
+    ({} as Record<string, ChatMessage[]>),
   );
   // peerId of the conversation currently open in the UI, or null. Drives
   // auto-mark-read for incoming messages from that peer.
-  const [activeChatPeerId, setActiveChatPeerId] = useState(/** @type {string | null} */ (null));
+  const [activeChatPeerId, setActiveChatPeerId] = useState((null as string | null));
   // Keyed by peerId → boolean. True while that peer is actively typing in the
   // open conversation (relayed via the ephemeral `message.typing` socket
   // event). Cleared on receipt of isTyping:false or after a short timeout, in
   // case a "stopped typing" event is dropped.
-  const [typingByPeer, setTypingByPeer] = useState(/** @type {Record<string, boolean>} */ ({}));
+  const [typingByPeer, setTypingByPeer] = useState(({} as Record<string, boolean>));
   const typingTimeoutsRef = useRef(
-    /** @type {Record<string, ReturnType<typeof setTimeout>>} */ ({}),
+    ({} as Record<string, ReturnType<typeof setTimeout>>),
   );
-  const typingSentAtRef = useRef(/** @type {Record<string, number>} */ ({}));
+  const typingSentAtRef = useRef(({} as Record<string, number>));
   // Mirrors activeChatPeerId so the message.received socket handler never
   // reads a stale value through a captured closure.
-  const activeChatPeerIdRef = useRef(/** @type {string | null} */ (null));
+  const activeChatPeerIdRef = useRef((null as string | null));
 
   // ─── Offline-first state ─────────────────────────────────────────────────
   // Durable queue of sends awaiting an ack, mirrored into the local store on
   // every mutation so it survives process death. Held in a ref (not state) so
   // the drain loop always reads the latest queue.
-  const outboxRef = useRef(/** @type {OutboxItem[]} */ ([]));
+  const outboxRef = useRef(([] as OutboxItem[]));
   const [pendingSendCount, setPendingSendCount] = useState(0);
   // null until the socket reports either way, so the UI doesn't flash an
   // "offline" banner during the first connect.
   const [isSocketConnected, setIsSocketConnected] = useState(
-    /** @type {boolean | null} */ (null),
+    (null as boolean | null),
   );
-  const drainTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
+  const drainTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   const drainAttemptRef = useRef(0);
   const isDrainingRef = useRef(false);
   const drainOutboxRef = useRef(() => {});
   // True once the local store has been read; gates persistence so an empty
   // initial render can't overwrite the cached history with nothing.
   const hydratedRef = useRef(false);
-  const conversationsRef = useRef(/** @type {ConversationSummary[]} */ ([]));
+  const conversationsRef = useRef(([] as ConversationSummary[]));
 
   useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
@@ -413,7 +413,7 @@ export default function useMessaging({
    */
   const markConversationRead = useCallback(
     /** @param {string} peerId */
-    async (peerId: string): string => {
+    async (peerId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId) return;
       try {
@@ -521,7 +521,7 @@ export default function useMessaging({
    *
    * @param {OutboxItem[]} next
    */
-  const persistOutbox = useCallback(/** @param {OutboxItem[]} next */ (next: OutboxItem[]): OutboxItem[] => {
+  const persistOutbox = useCallback(/** @param {OutboxItem[]} next */ (next: OutboxItem[]) => {
     outboxRef.current = next;
     setPendingSendCount(next.length);
     saveChatSnapshot({ outbox: next });
@@ -551,7 +551,7 @@ export default function useMessaging({
    */
   const sendOutboxItem = useCallback(
     /** @param {OutboxItem} item */
-    async (item: OutboxItem): OutboxItem => {
+    async (item: OutboxItem) => {
       const signaling = signalingRef?.current;
       if (!signaling || !socketRef.current?.connected) return false;
 
@@ -569,7 +569,7 @@ export default function useMessaging({
           // resolves to the same message instead of a duplicate.
           messageId: item.messageId,
         });
-        const confirmed = /** @type {{ message?: ChatMessage } | undefined} */ (ack)?.message;
+        const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
         patchMessage(item.recipientId, item.messageId, entry => ({
           ...entry,
           ...(confirmed ?? {}),
@@ -946,8 +946,7 @@ export default function useMessaging({
   // this hook's state, so `useCallFlow`'s socket handlers stay thin.
 
   const handleMessageReceived = useCallback(
-      (    /** @param {ChatMessage} message */
-    message): ChatMessage => {
+      (message: ChatMessage) => {
       if (!message?.senderId) return;
       const senderId = message.senderId;
 
@@ -994,7 +993,7 @@ export default function useMessaging({
     [fetchConversations, markConversationRead],
   );
 
-  const handleMessageDelivered = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage): ChatMessage => {
+  const handleMessageDelivered = useCallback(/** @param {ChatMessage} message */ (message: ChatMessage) => {
     if (!message?.recipientId) return;
     const peerId = message.recipientId;
     setMessagesByPeer(prev => {
@@ -1061,14 +1060,12 @@ export default function useMessaging({
    *   message?: Partial<ChatMessage>|null }} payload
    */
   const handleMessageDeleted = useCallback(
-      (    /**
-     * @param {{ conversationId?: string, messageId?: string, deletedBy?: string,
-     *   message?: Partial<ChatMessage>|null }} payload
-     */
-    payload): {
-          conversationId?: string; messageId?: string; deletedBy?: string;
-          message?: Partial<ChatMessage> | null;
-      } => {
+    (payload: {
+      conversationId?: string;
+      messageId?: string;
+      deletedBy?: string;
+      message?: Partial<ChatMessage> | null;
+    }) => {
     const messageId = payload?.messageId;
     if (!messageId) return;
       setMessagesByPeer(prev => {
@@ -1096,8 +1093,7 @@ export default function useMessaging({
    * @param {{ messageId?: string, reactions?: Record<string, string[]> }} payload
    */
   const handleMessageReaction = useCallback(
-      (    /** @param {{ messageId?: string, reactions?: Record<string, string[]> }} payload */
-    payload): { messageId?: string; reactions?: Record<string, string[]>; } => {
+    (payload: { messageId?: string; reactions?: Record<string, string[]> }) => {
     const messageId = payload?.messageId;
     if (!messageId) return;
       const reactions = payload?.reactions ?? {};
@@ -1157,7 +1153,7 @@ export default function useMessaging({
           action,
         });
         const reactions =
-          /** @type {{ reactions?: Record<string, string[]> } | undefined} */ (ack)?.reactions ?? {};
+          (ack as { reactions?: Record<string, string[]> } | undefined)?.reactions ?? {};
         handleMessageReaction({ messageId, reactions });
         return true;
       } catch (error) {

@@ -20,7 +20,7 @@ describe('socketConfig', () => {
     const options = getSocketOptions({ reconnectionAttempts: 2, extra: true });
 
     expect(options.reconnectionAttempts).toBe(2);
-    expect(/** @type {any} */ (options).extra).toBe(true);
+    expect((options as any).extra).toBe(true);
     expect(options.reconnection).toBe(true);
   });
 

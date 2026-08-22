@@ -24,7 +24,7 @@ function errorMessage(error: unknown): string | undefined {
  */
 export function formatDateForFile(date: Date = new Date()): string {
   /** @param {number} value */
-  const pad = (value: number): number => String(value).padStart(2, '0');
+  const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
     date.getHours(),
   )}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
@@ -103,7 +103,7 @@ export function summarizeIceCandidate(candidate: { candidate?: string; sdpMid?: 
  * @param {string} [context] label used when the conversion fails.
  * @returns {string | null}
  */
-export function getStreamUrl(stream: any, context: string): string | null {
+export function getStreamUrl(stream: any, context?: string): string | null {
   if (!stream || typeof stream.toURL !== 'function') {
     return null;
   }
@@ -125,7 +125,7 @@ export function getStreamUrl(stream: any, context: string): string | null {
  * @returns {string} a user-facing explanation of a getUserMedia failure.
  */
 export function getMediaAccessStatus(error: unknown): string {
-  const failure = /** @type {{ name?: string, message?: string } | null | undefined} */ (error);
+  const failure = (error as { name?: string, message?: string } | null | undefined);
   const name = `${failure?.name || ''}`.toLowerCase();
   const message = `${failure?.message || ''}`.toLowerCase();
   const combined = `${name} ${message}`;

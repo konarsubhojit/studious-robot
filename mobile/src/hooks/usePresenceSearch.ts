@@ -43,7 +43,7 @@ export default function usePresenceSearch({
   // Presence of the user currently entered in `calleeId`, or `null` while
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
   const [calleePresence, setCalleePresence] = useState(
-    /** @type {{ status: string, online: boolean, unknown?: boolean } | null} */ (null),
+    (null as { status: string, online: boolean, unknown?: boolean } | null),
   );
 
   /**

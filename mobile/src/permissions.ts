@@ -2,10 +2,6 @@
 import { PermissionsAndroid, Platform } from 'react-native';
 
 export type Permission = import('react-native').Permission;
-export type Permission = import('react-native').Permission;
-export type Permission = import('react-native').Permission;
-export type Permission = import('react-native').Permission;
-export type Permission = import('react-native').Permission;
 
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;
@@ -165,9 +161,7 @@ export async function ensureCallPermissions(): Promise<{ ok: true; warningMessag
     return { ok: true, warningMessage: null, deniedPermissions: [] };
   }
 
-  const results = /** @type {Record<string, string>} */ (
-    await PermissionsAndroid.requestMultiple(missingPermissions)
-  );
+  const results = (await PermissionsAndroid.requestMultiple(missingPermissions) as Record<string, string>);
   const deniedRequiredPermissions = missingPermissions.filter(
     permission =>
       REQUIRED_CALL_PERMISSIONS.includes(permission) &&
@@ -286,7 +280,7 @@ function getAttachmentPermissionDeniedMessage(kind: string): string {
  * @param {number|string} [androidApiLevel]
  * @returns {Permission | undefined}
  */
-function attachmentPermissionFor(kind: string, androidApiLevel: number | string): Permission | undefined {
+function attachmentPermissionFor(kind: string, androidApiLevel?: number | string): Permission | undefined {
   if (kind === 'photo') return getPhotoLibraryPermission(androidApiLevel);
   if (kind === 'camera') return CAMERA_PERMISSION;
   if (kind === 'voice') return MICROPHONE_PERMISSION;
@@ -324,9 +318,7 @@ export async function ensureAttachmentPermission(
   const alreadyGranted = await PermissionsAndroid.check(permission);
   if (alreadyGranted) return { ok: true, granted: true, message: null };
 
-  const results = /** @type {Record<string, string>} */ (
-    await PermissionsAndroid.requestMultiple([permission])
-  );
+  const results = (await PermissionsAndroid.requestMultiple([permission]) as Record<string, string>);
   const granted = results[permission] === PermissionsAndroid.RESULTS.GRANTED;
   return {
     ok: granted,

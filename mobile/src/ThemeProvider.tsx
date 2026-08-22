@@ -42,8 +42,7 @@ export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, childr
   }, []);
 
   const setMode = useCallback(
-      (    /** @param {string} nextMode */
-    nextMode): string => {
+      (nextMode: string) => {
       setModeState(nextMode);
       void saveThemeMode(nextMode);
     },

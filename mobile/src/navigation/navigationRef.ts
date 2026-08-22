@@ -23,7 +23,7 @@ export const navigationRef = createNavigationContainerRef();
 const nav: {
     navigate: (screen: string, params?: object) => void;
     reset: (state: { index: number; routes: { name: string; }[]; }) => void;
-} = /** @type {any} */ (navigationRef);
+} = (navigationRef as any);
 
 /**
  * Navigation requested before the container was ready (or while a full-screen

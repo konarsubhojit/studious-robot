@@ -1,9 +1,6 @@
-// @ts-check
-'use strict';
-
-const { s } = require('../schema');
-const { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } = require('./events');
-const { KNOWN_MESSAGE_TYPES, MAX_REACTION_LENGTH } = require('../messages');
+import { s } from '../schema.ts';
+import { CLIENT_EVENTS, SERVER_EVENTS, SIGNALING_VERSION } from './events.ts';
+import { KNOWN_MESSAGE_TYPES, MAX_REACTION_LENGTH } from '../messages.ts';
 
 /**
  * Payload schema for every signaling event, keyed by event name.
@@ -39,9 +36,6 @@ const opaqueObject = s.opaque();
  * A persisted call row as broadcast to participants.
  */
 export type CallRecord = { callId: string; callerId: string; calleeId: string; status: string; ringTimeoutAt?: string | null; endReason?: string | null; createdAt?: string; };
-export type CallRecord = { callId: string; callerId: string; calleeId: string; status: string; ringTimeoutAt?: string | null; endReason?: string | null; createdAt?: string; };
-export type CallRecord = { callId: string; callerId: string; calleeId: string; status: string; ringTimeoutAt?: string | null; endReason?: string | null; createdAt?: string; };
-export type CallRecord = { callId: string; callerId: string; calleeId: string; status: string; ringTimeoutAt?: string | null; endReason?: string | null; createdAt?: string; };
 const callRecord = s.object(
   {
     callId: idField,
@@ -58,9 +52,6 @@ const callRecord = s.object(
  * Only `url` and `mimeType` are required: the optional dimensions/duration are
  * rendering hints the sender supplies when it knows them.
  */
-export type AttachmentRecord = { url: string; mimeType: string; sizeBytes?: number; name?: string | null; width?: number | null; height?: number | null; durationMs?: number | null; thumbnailUrl?: string | null; };
-export type AttachmentRecord = { url: string; mimeType: string; sizeBytes?: number; name?: string | null; width?: number | null; height?: number | null; durationMs?: number | null; thumbnailUrl?: string | null; };
-export type AttachmentRecord = { url: string; mimeType: string; sizeBytes?: number; name?: string | null; width?: number | null; height?: number | null; durationMs?: number | null; thumbnailUrl?: string | null; };
 export type AttachmentRecord = { url: string; mimeType: string; sizeBytes?: number; name?: string | null; width?: number | null; height?: number | null; durationMs?: number | null; thumbnailUrl?: string | null; };
 const attachmentRecord = s.object(
   {
@@ -84,9 +75,6 @@ const attachmentRecord = s.object(
  * placeholder) instead of dropping the event. Legacy rows carry no `type` at
  * all, which readers default to `"text"`.
  */
-export type MessageRecord = { messageId: string; conversationId: string; senderId: string; recipientId: string; body: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; reactions?: Record<string, string[]> | null; deletedAt?: string | null; createdAt?: string; };
-export type MessageRecord = { messageId: string; conversationId: string; senderId: string; recipientId: string; body: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; reactions?: Record<string, string[]> | null; deletedAt?: string | null; createdAt?: string; };
-export type MessageRecord = { messageId: string; conversationId: string; senderId: string; recipientId: string; body: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; reactions?: Record<string, string[]> | null; deletedAt?: string | null; createdAt?: string; };
 export type MessageRecord = { messageId: string; conversationId: string; senderId: string; recipientId: string; body: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; reactions?: Record<string, string[]> | null; deletedAt?: string | null; createdAt?: string; };
 const messageRecord = s.object(
   {
@@ -345,9 +333,7 @@ const ACK_SCHEMA = s.object(
  *   event carries no contract (e.g. transport events).
  */
 function getEventSchema(eventName: string, direction: 'client' | 'server' = 'client'): import('../schema').Schema | null {
-  const table = /** @type {Record<string, import('../schema').Schema>} */ (
-    direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS
-  );
+  const table = ((direction === 'server' ? SERVER_EVENT_SCHEMAS : CLIENT_EVENT_SCHEMAS) as Record<string, import('../schema').Schema>);
   return table[eventName] ?? null;
 }
 
@@ -370,7 +356,7 @@ function parseEventPayload(eventName: string, payload: unknown, direction: 'clie
   return schema.safeParse(payload);
 }
 
-module.exports = {
+export {
   ACK_SCHEMA,
   CALL_TRANSITION_NOTIFICATION,
   CLIENT_EVENT_SCHEMAS,

@@ -105,7 +105,7 @@ describe('CallTimelineRow', () => {
     });
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    const buttons = /** @type {any[]} */ (alertSpy.mock.calls[0][2]);
+    const buttons = (alertSpy.mock.calls[0][2] as any[]);
     expect(buttons.map(button => button.text)).toEqual([
       'Call back',
       'Video call back',

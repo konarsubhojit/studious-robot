@@ -81,7 +81,7 @@ export function createSignalingClient(socket: import('socket.io-client').Socket)
    * @param {Function} [ack]
    * @returns {boolean} whether the event was sent (`false` when queued/dropped)
    */
-  function emit(event: string, payload: object = {}, ack: Function): boolean {
+  function emit(event: string, payload: object = {}, ack?: Function): boolean {
     const result = parseEventPayload(event, payload, 'client');
     if (!result.success) {
       logWarn('[Signaling] Refused to emit malformed event', {

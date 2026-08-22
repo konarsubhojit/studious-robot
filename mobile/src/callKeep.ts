@@ -91,7 +91,7 @@ let isConfigured = false;
  * than in each caller. Without this the OS would show (and ring) the same
  * incoming call more than once.
  */
-const displayedCallIds = new Set();
+const displayedCallIds = new Set<string>();
 
 /**
  * Caller id per displayed call (`callId` → `callerId`).
@@ -102,7 +102,7 @@ const displayedCallIds = new Set();
  * call therefore dismisses the previous one from the same caller instead of
  * stacking on top of it.
  */
-const displayedCallerIds = new Map();
+const displayedCallerIds = new Map<string, string>();
 
 /**
  * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
@@ -147,7 +147,7 @@ let pendingAnswerCallId: string | null = null;
  * @returns {(() => void) & { registered: boolean }}
  */
 function registrationResult(registered: boolean): (() => void) & { registered: boolean; } {
-  const unsubscribe = /** @type {(() => void) & { registered: boolean }} */ (() => {});
+  const unsubscribe = ((() => {}) as (() => void) & { registered: boolean });
   unsubscribe.registered = registered;
   return unsubscribe;
 }
@@ -163,9 +163,7 @@ export function loadCallKeep(): CallKeep | null {
   if (cachedCallKeep !== undefined) return cachedCallKeep;
   try {
     const mod = require('react-native-callkeep');
-    cachedCallKeep = /** @type {CallKeep | null} */ (
-      /** @type {unknown} */ (mod?.default ?? mod ?? null)
-    );
+    cachedCallKeep = (/** @type {unknown} */ (mod?.default ?? mod ?? null) as CallKeep | null);
   } catch {
     cachedCallKeep = null;
     if (!hasLoggedMissingCallKeep) {
@@ -239,7 +237,7 @@ export function peekPendingAnswer(): string | null {
  * @param {string} [callUUID] - when given, only drains a matching queue entry
  * @returns {string | null} the drained callId, or `null` when nothing matched
  */
-export function consumePendingAnswer(callUUID: string): string | null {
+export function consumePendingAnswer(callUUID?: string): string | null {
   if (!pendingAnswerCallId) return null;
   if (callUUID && pendingAnswerCallId !== callUUID) return null;
   const drained = pendingAnswerCallId;
@@ -256,7 +254,7 @@ export function consumePendingAnswer(callUUID: string): string | null {
  * @param {string} [reason]
  * @returns {boolean} `true` when an entry was dropped
  */
-export function clearPendingAnswer(callUUID: string, reason: string = 'unspecified'): boolean {
+export function clearPendingAnswer(callUUID?: string, reason: string = 'unspecified'): boolean {
   if (!pendingAnswerCallId) return false;
   if (callUUID && pendingAnswerCallId !== callUUID) return false;
   logWarn('[CallKeep] Pending answer dropped', { callUUID: pendingAnswerCallId, reason });
@@ -294,7 +292,7 @@ export async function setupCallKeep(): Promise<boolean> {
     try {
       await callKeep.setup(CALLKEEP_SETUP_OPTIONS);
     } catch (error) {
-      if (!isMissingActivityError(/** @type {any} */ (error))) throw error;
+      if (!isMissingActivityError((error as any))) throw error;
       // A push that cold-starts the app runs in a headless JS context with no
       // foreground Activity, so CallKeep's post-setup phone-account permission
       // prompt rejects. The native half of setup (phone-account registration,
@@ -361,7 +359,7 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true }:
   dismissStaleCallsFromCaller(callId, callerId);
 
   // `loadCallKeep()` already returned a module above, so it cannot be null here.
-  const callKeep = /** @type {CallKeep} */ (loadCallKeep());
+  const callKeep = (loadCallKeep() as CallKeep);
   try {
     if (
       Platform.OS === 'android' &&
@@ -651,7 +649,7 @@ export function setCallActionHandlers({ onAnswer, onEnd }: {
 
   if (pendingAnswerCallId) {
     // `pendingAnswerCallId` is set, so the queue always drains to a call id.
-    const callUUID = /** @type {string} */ (consumePendingAnswer());
+    const callUUID = (consumePendingAnswer() as string);
     logInfo('[CallKeep] Replaying queued answerCall', { callUUID });
     onAnswer?.(callUUID);
   }

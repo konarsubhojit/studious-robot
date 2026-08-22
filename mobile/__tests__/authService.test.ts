@@ -27,7 +27,7 @@ describe('authService optional-provider loading', () => {
       signOut,
       currentUser,
     };
-    const authMock = /** @type {jest.Mock & Record<string, any>} */ (jest.fn(() => instance));
+    const authMock = (jest.fn(() => instance) as jest.Mock & Record<string, any>);
     authMock.GoogleAuthProvider = { credential: jest.fn(() => ({ provider: 'google' })) };
     authMock.OAuthProvider = function OAuthProvider() {
       this.addScope = jest.fn();

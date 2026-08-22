@@ -41,7 +41,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
     }) {
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
-  const [callHistory, setCallHistory] = useState(/** @type {CallHistoryEntry[]} */ ([]));
+  const [callHistory, setCallHistory] = useState(([] as CallHistoryEntry[]));
 
   /**
    * Number of incoming calls that ended as 'missed' and have not yet been

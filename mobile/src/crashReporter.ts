@@ -26,7 +26,7 @@ function formatDateForFile(date: Date = new Date()): string {
  * @param {() => string} [getLogsCallback]  Returns buffered in-memory app logs.
  * @returns {Promise<{success: boolean, path?: string, label?: string}>}
  */
-export async function saveCrashLog(error: Error | unknown, isFatal: boolean, getLogsCallback: () => string): Promise<{ success: boolean; path?: string; label?: string; }> {
+export async function saveCrashLog(error: Error | unknown, isFatal: boolean, getLogsCallback?: () => string): Promise<{ success: boolean; path?: string; label?: string; }> {
   const details = error instanceof Error ? error : null;
   const fileName = `wetalk-crash-${formatDateForFile()}.txt`;
 
@@ -81,7 +81,7 @@ export async function saveCrashLog(error: Error | unknown, isFatal: boolean, get
  * @param {() => string} getLogsCallback  Returns buffered in-memory app logs.
  */
 export function installCrashHandler(getLogsCallback: () => string) {
-  if (!(/** @type {any} */ (global).ErrorUtils)) {
+  if (!((global as any).ErrorUtils)) {
     return;
   }
 

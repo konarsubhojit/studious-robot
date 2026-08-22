@@ -16,7 +16,7 @@ const BASE_ROUTES = [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE];
  * @param {string[]} [available]
  * @returns {string[]}
  */
-function buildRouteList(available: string[]): string[] {
+function buildRouteList(available?: string[]): string[] {
   const routes = [...BASE_ROUTES];
   (available || []).forEach(route => {
     if (!routes.includes(route)) {
@@ -56,7 +56,7 @@ export default function AudioOutputMenu({
   const currentIcon = effectiveSelected === AUDIO_ROUTES.SPEAKER_PHONE ? 'speaker' : 'speakerOff';
 
   /** @param {string} route */
-  const handleSelect = (route: string): string => {
+  const handleSelect = (route: string) => {
     setIsOpen(false);
     onSelect(route);
   };
@@ -121,7 +121,7 @@ export default function AudioOutputMenu({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     trigger: {
       alignItems: 'center',

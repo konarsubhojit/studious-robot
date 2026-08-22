@@ -148,7 +148,7 @@ export default function AppShell() {
  * @param {string|null|undefined} calleeId
  */
 function useCallStateAnnouncements(callState: string, callerId: string | null | undefined, calleeId: string | null | undefined) {
-  const previousStateRef = useRef(/** @type {string | null} */ (null));
+  const previousStateRef = useRef((null as string | null));
 
   useEffect(() => {
     if (previousStateRef.current === callState) return;
@@ -255,7 +255,7 @@ function MinimizedCallBubble() {
 }
 
 /** @param {import('./theme').ThemeColors} colors */
-const createStyles = (colors: import('./theme').ThemeColors): import('./theme').ThemeColors =>
+const createStyles = (colors: import('./theme').ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

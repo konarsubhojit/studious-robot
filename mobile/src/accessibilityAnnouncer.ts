@@ -20,7 +20,7 @@ export function announceForAccessibility(message: string) {
   if (!message) return;
   try {
     AccessibilityInfo.announceForAccessibility?.(message);
-  } catch (_error) {
+  } catch {
     // Announcements are advisory: never let one break a call flow.
   }
 }

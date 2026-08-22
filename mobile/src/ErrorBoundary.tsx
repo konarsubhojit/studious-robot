@@ -23,9 +23,7 @@ import { saveCrashLog } from './crashReporter';
  */
 export type ErrorBoundaryProps = { children?: React.ReactNode; };
 export type ErrorBoundaryState = { error: Error | null; logPath: string | null; saving: boolean; };
-export type ErrorBoundaryProps = { children?: React.ReactNode; };
-export type ErrorBoundaryState = { error: Error | null; logPath: string | null; saving: boolean; };
-export default class ErrorBoundary extends React.Component {
+export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   /** @param {ErrorBoundaryProps} props */
   constructor(props: ErrorBoundaryProps) {
     super(props);

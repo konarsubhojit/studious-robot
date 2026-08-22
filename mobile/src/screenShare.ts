@@ -107,7 +107,7 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
   try {
     // `getDisplayMedia` accepts constraints at runtime; react-native-webrtc's
     // typings declare it without parameters.
-    stream = await /** @type {any} */ (mediaDevices).getDisplayMedia({
+    stream = await (mediaDevices as any).getDisplayMedia({
       video: true,
       audio: Boolean(withAudio),
     });
@@ -119,7 +119,7 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
         message: errorMessage(error),
       });
       try {
-        stream = await /** @type {any} */ (mediaDevices).getDisplayMedia({ video: true });
+        stream = await (mediaDevices as any).getDisplayMedia({ video: true });
       } catch (retryError) {
         logError('Screen capture failed; MediaProjection did not start', retryError);
         return {

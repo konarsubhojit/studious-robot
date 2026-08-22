@@ -185,11 +185,11 @@ export default function SearchScreen({
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [contacts, setContacts] = useState(/** @type {ContactResult[]} */ ([]));
-  const [messages, setMessages] = useState(/** @type {MessageResult[]} */ ([]));
+  const [contacts, setContacts] = useState(([] as ContactResult[]));
+  const [messages, setMessages] = useState(([] as MessageResult[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const abortRef = useRef(/** @type {AbortController | null} */ (null));
+  const abortRef = useRef((null as AbortController | null));
 
   const term = query.trim();
 
@@ -488,7 +488,7 @@ export default function SearchScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors): import('../theme').ThemeColors =>
+const createStyles = (colors: import('../theme').ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,

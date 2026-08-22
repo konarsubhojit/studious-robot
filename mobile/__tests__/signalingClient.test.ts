@@ -32,7 +32,7 @@ beforeEach(() => {
 describe('createSignalingClient inbound validation', () => {
   test('delivers a payload that matches the contract', () => {
     const socket = makeSocket();
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
     const handler = jest.fn();
 
     client.on(SERVER_EVENTS.CALL_INCOMING, handler);
@@ -47,7 +47,7 @@ describe('createSignalingClient inbound validation', () => {
 
   test('drops and logs a malformed payload instead of calling the handler', () => {
     const socket = makeSocket();
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
     const handler = jest.fn();
 
     client.on(SERVER_EVENTS.CALL_INCOMING, handler);
@@ -65,7 +65,7 @@ describe('createSignalingClient inbound validation', () => {
 describe('createSignalingClient outbound validation', () => {
   test('emits a valid payload untouched, preserving object identity', () => {
     const socket = makeSocket();
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
     const sdp = { type: 'offer', sdp: 'v=0' };
 
     const sent = client.emit(CLIENT_EVENTS.RTC_OFFER, {
@@ -85,7 +85,7 @@ describe('createSignalingClient outbound validation', () => {
 
   test('refuses to emit a payload that breaks the contract', () => {
     const socket = makeSocket();
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
 
     const sent = client.emit(CLIENT_EVENTS.MESSAGE_SEND, { version: 1, recipientId: 'bob' });
 
@@ -99,7 +99,7 @@ describe('createSignalingClient outbound validation', () => {
 
   test('request rejects a malformed payload without touching the socket', async () => {
     const socket = makeSocket();
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
 
     await expect(client.request(CLIENT_EVENTS.CALL_INITIATE, { version: 1 })).rejects.toThrow(
       /calleeId/,
@@ -109,7 +109,7 @@ describe('createSignalingClient outbound validation', () => {
 
   test('request resolves with the acknowledgement envelope', async () => {
     const socket = makeSocket({ ack: { ok: true, call: { callId: 'call-9' } } });
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
 
     const result = await client.request(CLIENT_EVENTS.CALL_INITIATE, {
       version: 1,
@@ -123,7 +123,7 @@ describe('createSignalingClient outbound validation', () => {
 describe('createSignalingClient offline queue', () => {
   test('queues fire-and-forget events while disconnected and flushes on reconnect', () => {
     const socket = makeSocket({ connected: false });
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
 
     const sent = client.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
       version: 1,
@@ -147,7 +147,7 @@ describe('createSignalingClient offline queue', () => {
 
   test('caps the queue, dropping the oldest event once it is full', () => {
     const socket = makeSocket({ connected: false });
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
 
     for (let index = 0; index < MAX_QUEUED_EVENTS + 3; index += 1) {
       client.emit(CLIENT_EVENTS.MESSAGE_TYPING, {
@@ -166,7 +166,7 @@ describe('createSignalingClient offline queue', () => {
 
   test('an ack-carrying emit is never queued, since its caller is waiting now', () => {
     const socket = makeSocket({ connected: false });
-    const client = createSignalingClient(/** @type {any} */ (socket));
+    const client = createSignalingClient((socket as any));
     const ack = jest.fn();
 
     client.emit(CLIENT_EVENTS.CALL_END, { version: 1, callId: 'call-1' }, ack);

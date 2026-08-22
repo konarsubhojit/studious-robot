@@ -157,7 +157,7 @@ describe('Lobby – call history section', () => {
 
     const rowNodes = tree.root.findAll((/** @type {any} */ n: any) => n.props.testID === 'call-history-row');
     const hostRow = rowNodes.find((/** @type {any} */ n: any) => typeof n.type === 'string');
-    const flatStyle = /** @type {any[]} */ ([]).concat(hostRow.props.style).flat();
+    const flatStyle = ([] as any[]).concat(hostRow.props.style).flat();
     expect(flatStyle.some(s => s?.minHeight === 56)).toBe(true);
 
     const pressableRow = rowNodes.find((/** @type {any} */ n: any) => typeof n.props.onPress === 'function');

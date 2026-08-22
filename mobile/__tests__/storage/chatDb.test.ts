@@ -30,22 +30,22 @@ import {
  * @returns {import('../../src/hooks/useMessaging').ChatMessage[]}
  */
 function makeMessages(count: number, overrides: Partial<import('../../src/hooks/useMessaging').ChatMessage> = {}): import('../../src/hooks/useMessaging').ChatMessage[] {
-  return Array.from({ length: count }, (_unused, index) => /** @type {any} */ ({
+  return Array.from({ length: count }, (_unused, index) => ({
     messageId: `m${index}`,
     body: `message ${index}`,
     createdAt: new Date(Date.UTC(2024, 0, 1) + (count - index) * 60_000).toISOString(),
     syncState: 'synced',
     ...overrides,
-  }));
+  } as any));
 }
 
 describe('chatDb', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetChatDbCache();
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(false);
-    /** @type {jest.Mock} */ (RNFS.writeFile).mockResolvedValue(undefined);
-    /** @type {jest.Mock} */ (RNFS.unlink).mockResolvedValue(undefined);
+    (RNFS.exists as jest.Mock).mockResolvedValue(false);
+    (RNFS.writeFile as jest.Mock).mockResolvedValue(undefined);
+    (RNFS.unlink as jest.Mock).mockResolvedValue(undefined);
   });
 
   test('loads an empty snapshot when nothing has been persisted', async () => {
@@ -55,8 +55,8 @@ describe('chatDb', () => {
   });
 
   test('loads previously persisted conversations, history and outbox', async () => {
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
-    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(
       JSON.stringify({
         conversations: [{ conversationId: 'c1', peerId: 'bob', unreadCount: 1 }],
         messagesByPeer: { bob: [{ messageId: 'm1', body: 'hi', createdAt: '2024-01-01' }] },
@@ -72,8 +72,8 @@ describe('chatDb', () => {
   });
 
   test('degrades to an empty snapshot when the file is corrupt', async () => {
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
-    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue('{not json');
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue('{not json');
 
     expect(await loadChatSnapshot()).toEqual({
       conversations: [],
@@ -83,8 +83,8 @@ describe('chatDb', () => {
   });
 
   test('drops malformed rows rather than surfacing them to the UI', async () => {
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
-    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(
       JSON.stringify({
         conversations: [{ peerId: 'bob' }, { conversationId: 'no-peer' }, null],
         messagesByPeer: { bob: [{ messageId: 'm1' }, { body: 'no id' }] },
@@ -127,7 +127,7 @@ describe('chatDb', () => {
     await flushChatDb();
 
     expect(RNFS.writeFile).toHaveBeenCalledTimes(1);
-    const [path, contents] = /** @type {jest.Mock} */ (RNFS.writeFile).mock.calls[0];
+    const [path, contents] = (RNFS.writeFile as jest.Mock).mock.calls[0];
     expect(path).toBe(CHAT_DB_FILE_PATH);
     const written = JSON.parse(contents);
     expect(written.messagesByPeer.bob).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
@@ -137,7 +137,7 @@ describe('chatDb', () => {
 
   test('a write failure is swallowed so it cannot break the chat UI', async () => {
     await loadChatSnapshot();
-    /** @type {jest.Mock} */ (RNFS.writeFile).mockRejectedValue(new Error('disk full'));
+    (RNFS.writeFile as jest.Mock).mockRejectedValue(new Error('disk full'));
 
     saveChatSnapshot({ conversations: [{ peerId: 'bob' }] });
 
@@ -145,8 +145,8 @@ describe('chatDb', () => {
   });
 
   test('clearing removes the file and empties the snapshot', async () => {
-    /** @type {jest.Mock} */ (RNFS.exists).mockResolvedValue(true);
-    /** @type {jest.Mock} */ (RNFS.readFile).mockResolvedValue(JSON.stringify({ conversations: [{ peerId: 'bob' }] }));
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify({ conversations: [{ peerId: 'bob' }] }));
     await loadChatSnapshot();
 
     await clearChatDb();

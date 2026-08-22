@@ -164,7 +164,7 @@ export async function isCallConnectionLive(callId: string): Promise<boolean | nu
  * @param {string} [callId]
  * @returns {boolean} `true` when a dismiss request was sent
  */
-export function dismissIncomingCallNotification(callId: string): boolean {
+export function dismissIncomingCallNotification(callId?: string): boolean {
   if (!callId) return false;
   const module = getNativeModule();
   if (!module || typeof module.dismiss !== 'function') return false;

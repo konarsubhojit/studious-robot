@@ -23,6 +23,6 @@ const UNRECOVERABLE_DISCONNECT_REASONS = new Set(['io client disconnect', 'io se
  * @param {string} [reason] - Socket.IO omits the reason for some transports.
  * @returns {boolean}
  */
-export function isRecoverableDisconnectReason(reason: string): boolean {
+export function isRecoverableDisconnectReason(reason?: string): boolean {
   return !(reason !== undefined && UNRECOVERABLE_DISCONNECT_REASONS.has(reason));
 }

@@ -27,7 +27,7 @@ import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from './routes';
 export type ScreenRenderers = { renderChatList?: () => import('react').ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => import('react').ReactNode; renderSearch?: () => import('react').ReactNode; renderPeerProfile?: (peerId: string | null) => import('react').ReactNode; renderCalls?: () => import('react').ReactNode; renderSettings?: () => import('react').ReactNode; };
 
 /** @type {import('react').Context<ScreenRenderers>} */
-const ScreenRenderersContext: import('react').Context<ScreenRenderers> = createContext(/** @type {ScreenRenderers} */ ({}));
+const ScreenRenderersContext: import('react').Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
 
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
@@ -182,8 +182,7 @@ export default function AppNavigator({
   }, [onRouteChange]);
 
   const handleStateChange = useCallback(
-      (    /** @param {import('@react-navigation/native').NavigationState | undefined} state */
-    state): import('@react-navigation/native').NavigationState | undefined => {
+      (state: import('@react-navigation/native').NavigationState | undefined) => {
       onRouteChange?.(deriveShellRoute(state));
       saveNavigationState(state);
     },
@@ -197,9 +196,7 @@ export default function AppNavigator({
         activeTab={
           // The tab navigator only registers the three `TABS` route names, so
           // the active route name is always a tab bar key.
-          /** @type {import('../components/AppTabBar').TabKey} */ (
-            state.routes[state.index]?.name ?? DEFAULT_TAB
-          )
+          ((state.routes[state.index]?.name ?? DEFAULT_TAB) as import('../components/AppTabBar').TabKey)
         }
         onChangeTab={tab => {
           onTabPress?.(tab);

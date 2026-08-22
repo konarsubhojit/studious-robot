@@ -18,7 +18,7 @@ jest.mock('../src/appLogger', () => ({
   logWarn: jest.fn(),
 }));
 
-const mediaDevices = /** @type {any} */ (require('react-native-webrtc').mediaDevices);
+const mediaDevices = (require('react-native-webrtc').mediaDevices as any);
 
 function makeTrack(/** @type {string} */ kind: string) {
   return { kind, stop: jest.fn() };
@@ -41,12 +41,12 @@ function makeStream(
  * @param {T} result
  * @returns {Extract<T, { ok: true }>}
  */
-function expectOk<T>(result: T): Extract<T, { ok: true; }> {
+function expectOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: true; }> {
   if (!result.ok) {
-    const { reason } = /** @type {any} */ (result);
+    const { reason } = (result as any);
     throw new Error(`expected a successful result, got a failure: ${reason}`);
   }
-  return /** @type {Extract<T, { ok: true }>} */ (result);
+  return (result as Extract<T, { ok: true }>);
 }
 
 /**
@@ -54,11 +54,11 @@ function expectOk<T>(result: T): Extract<T, { ok: true; }> {
  * @param {T} result
  * @returns {Extract<T, { ok: false }>}
  */
-function expectNotOk<T>(result: T): Extract<T, { ok: false; }> {
+function expectNotOk<T extends { ok: boolean }>(result: T): Extract<T, { ok: false; }> {
   if (result.ok) {
     throw new Error('expected a failed result, got a successful one');
   }
-  return /** @type {Extract<T, { ok: false }>} */ (result);
+  return (result as Extract<T, { ok: false }>);
 }
 
 beforeEach(() => {

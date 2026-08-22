@@ -93,7 +93,7 @@ describe('AppNavigator', () => {
       findByTestID(tree, 'app-tab-settings').props.onPress();
     });
 
-    const [path, contents] = /** @type {jest.Mock} */ (RNFS.writeFile).mock.calls[/** @type {jest.Mock} */ (RNFS.writeFile).mock.calls.length - 1];
+    const [path, contents] = (RNFS.writeFile as jest.Mock).mock.calls[(RNFS.writeFile as jest.Mock).mock.calls.length - 1];
     expect(path).toBe('/docs/wetalk-navigation-state.json');
     const saved = JSON.parse(contents);
     expect(saved.routes[saved.index].name).toBe(TABS.SETTINGS);
