@@ -94,6 +94,9 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/screenShare.js`
 - [x] `src/voiceRecorder.js`
 - [x] `src/attachmentDownload.js`
+- [x] `src/attachmentUpload.js`
+- [x] `src/attachmentPicker.js`
+- [x] `src/pushNotifications.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`

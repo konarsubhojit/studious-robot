@@ -1,3 +1,4 @@
+// @ts-check
 import { logInfo, logWarn } from './appLogger';
 import {
   API_ROUTES,
@@ -81,7 +82,12 @@ export function validateAttachment({ type, mimeType, sizeBytes } = {}) {
   return { ok: true };
 }
 
-/** Human-readable size, e.g. `10 MB`. */
+/**
+ * Human-readable size, e.g. `10 MB`.
+ *
+ * @param {number} bytes
+ * @returns {string}
+ */
 function formatBytes(bytes) {
   if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -202,7 +208,7 @@ export function putAttachment({ uploadUrl, headers, body, onProgress }) {
  * attachment fields `useMessaging.sendMessage` expects.
  *
  * @param {{
- *   authedFetch: Function,
+ *   authedFetch: (build: (sessionId: string) => { url: string, options?: object }) => Promise<Response|null>,
  *   signalingUrl: string,
  *   peerId: string,
  *   type: string,
@@ -250,8 +256,12 @@ export async function uploadAttachment({
       sizeBytes,
     });
   } catch (error) {
-    logWarn('[Attachments] presign failed', { status: error?.status, message: error?.message });
-    throw new AttachmentError(describeAttachmentError(error ?? {}), error?.status);
+    const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+    logWarn('[Attachments] presign failed', {
+      status: failure.status,
+      message: failure.message,
+    });
+    throw new AttachmentError(describeAttachmentError(failure), failure.status);
   }
 
   try {
@@ -262,8 +272,12 @@ export async function uploadAttachment({
       onProgress,
     });
   } catch (error) {
-    logWarn('[Attachments] upload failed', { status: error?.status, message: error?.message });
-    throw new AttachmentError(describeAttachmentError(error ?? {}), error?.status);
+    const failure = /** @type {{ status?: number, message?: string }} */ (error ?? {});
+    logWarn('[Attachments] upload failed', {
+      status: failure.status,
+      message: failure.message,
+    });
+    throw new AttachmentError(describeAttachmentError(failure), failure.status);
   }
 
   logInfo('[Attachments] uploaded', { type, sizeBytes });

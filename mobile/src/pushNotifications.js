@@ -1,3 +1,4 @@
+// @ts-check
 import { Linking, Platform } from 'react-native';
 import { API_ROUTES } from '../../shared';
 import { getApp } from '@react-native-firebase/app';
@@ -41,6 +42,14 @@ import { loadDeviceId, loadSettings } from './settingsStorage';
  * has already retrieved via such a library, and it registers it with the
  * signaling server's POST /devices/register endpoint.
  */
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 // ─── Deep-link helpers ────────────────────────────────────────────────────────
 
@@ -116,7 +125,7 @@ export async function getInitialCallLink() {
     const url = await Linking.getInitialURL();
     return parseCallDeepLink(url);
   } catch (error) {
-    logWarn('[Push] getInitialURL failed', { message: error?.message });
+    logWarn('[Push] getInitialURL failed', { message: errorMessage(error) });
     return null;
   }
 }
@@ -180,7 +189,7 @@ export async function getInitialChatLink() {
     const url = await Linking.getInitialURL();
     return parseChatDeepLink(url);
   } catch (error) {
-    logWarn('[Push] getInitialURL failed', { message: error?.message });
+    logWarn('[Push] getInitialURL failed', { message: errorMessage(error) });
     return null;
   }
 }
@@ -299,7 +308,11 @@ export async function unregisterPushToken({ sessionId, signalingUrl }) {
  *   The modular free-function exports (`getToken`, `requestPermission`, …).
  */
 
-/** Cached result of the optional native messaging module lookup. */
+/**
+ * Cached result of the optional native messaging module lookup.
+ *
+ * @type {MessagingHandle | null | undefined}
+ */
 let cachedMessaging;
 let hasLoggedMissingMessaging = false;
 
@@ -478,6 +491,10 @@ export function _extractPushType(remoteMessage) {
   return null;
 }
 
+/**
+ * @param {{ data?: Record<string, any> } | null | undefined} remoteMessage
+ * @returns {string | null}
+ */
 function getReceiptBaseUrl(remoteMessage) {
   const data = remoteMessage?.data ?? {};
   const fromPayload =
@@ -490,6 +507,10 @@ function getReceiptBaseUrl(remoteMessage) {
   return null;
 }
 
+/**
+ * @param {{ data?: Record<string, any> } | null | undefined} remoteMessage
+ * @returns {Promise<string>}
+ */
 async function resolveReceiptBaseUrl(remoteMessage) {
   const fromPayload = getReceiptBaseUrl(remoteMessage);
   if (fromPayload) return fromPayload;
@@ -512,7 +533,7 @@ async function resolveReceiptBaseUrl(remoteMessage) {
  * pass the `remoteMessage` the values are read from.
  *
  * @param {{
- *   remoteMessage?: object | null,
+ *   remoteMessage?: { data?: Record<string, any> } | null,
  *   callId?: string | null,
  *   messageId?: string | null,
  *   stage: string,
@@ -572,7 +593,7 @@ export async function sendPushReceipt({
     }
     return true;
   } catch (error) {
-    await logBackgroundWarn('[Push] push receipt threw', { message: error?.message, stage });
+    await logBackgroundWarn('[Push] push receipt threw', { message: errorMessage(error), stage });
     return false;
   }
 }
@@ -632,7 +653,7 @@ async function displayMessagePush({ remoteMessage, message }) {
   const result = await showMessageNotification(message).catch(error => ({
     shown: false,
     reason: 'notification_threw',
-    message: error?.message,
+    message: errorMessage(error),
   }));
   await sendPushReceipt({
     remoteMessage,
@@ -668,7 +689,7 @@ async function handleCallCancelledPush(remoteMessage) {
   try {
     endCallKeepCall(callId);
   } catch (error) {
-    logWarn('[Push] Failed to dismiss cancelled call UI', { callId, message: error?.message });
+    logWarn('[Push] Failed to dismiss cancelled call UI', { callId, message: errorMessage(error) });
   }
   return { callId, reason: reason || null };
 }
@@ -726,7 +747,7 @@ export async function handleBackgroundPushMessage(remoteMessage) {
   }).catch(error => ({
     shown: false,
     reason: 'telecom_threw',
-    message: error?.message,
+    message: errorMessage(error),
   }));
   await logBackgroundInfo('[Push] CallKeep displayIncomingCall resolved', {
     callId: incoming.callId,
@@ -860,7 +881,7 @@ export async function handleForegroundPushMessage(remoteMessage) {
     callId: incoming.callId,
     callerId: incoming.callerId,
   }).catch(error => {
-    logWarn('[Push] CallKeep displayIncomingCall failed', { message: error?.message });
+    logWarn('[Push] CallKeep displayIncomingCall failed', { message: errorMessage(error) });
   });
 
   return incoming;

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Lazy-loaded wrappers around the native attachment pickers.
  *
@@ -9,8 +10,18 @@
 
 import { logWarn } from './appLogger';
 
+/** @type {typeof import('react-native-image-picker') | null | undefined} */
 let _imagePickerCache;
+/** @type {typeof import('@react-native-documents/picker') | null | undefined} */
 let _documentPickerCache;
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
 
 /** @returns {typeof import('react-native-image-picker') | null} */
 function loadImagePicker() {
@@ -54,6 +65,10 @@ export function isDocumentPickerAvailable() {
  * Normalise a `react-native-image-picker` asset into the shape
  * `attachmentUpload.js` expects.
  */
+/**
+ * @param {any} asset
+ * @returns {{ uri: string, mimeType: string, sizeBytes: number, name?: string, width?: number, height?: number } | null}
+ */
 function normaliseImageAsset(asset) {
   if (!asset?.uri) return null;
   return {
@@ -90,7 +105,11 @@ export async function pickPhoto() {
 export async function pickCameraPhoto() {
   const picker = loadImagePicker();
   if (!picker) return null;
-  const result = await picker.launchCamera({ mediaType: 'photo', quality: 0.8, saveToPhotos: true });
+  const result = await picker.launchCamera({
+    mediaType: 'photo',
+    quality: 0.8,
+    saveToPhotos: true,
+  });
   if (result.didCancel || result.errorCode) return null;
   return normaliseImageAsset(result.assets?.[0]);
 }
@@ -119,9 +138,11 @@ export async function pickDocument() {
     // picker failure (e.g. the native module errored) worth a log line, but
     // still resolves to "no attachment" — the composer just leaves the
     // attach sheet available to retry rather than surfacing a hard error.
-    const cancelled = picker.isErrorWithCode?.(error, 'OPERATION_CANCELED');
+    // `isErrorWithCode` accepts the expected code at runtime; the published
+    // typings declare only the error parameter.
+    const cancelled = /** @type {any} */ (picker).isErrorWithCode?.(error, 'OPERATION_CANCELED');
     if (!cancelled) {
-      logWarn('[Attachments] document picker failed', { message: error?.message });
+      logWarn('[Attachments] document picker failed', { message: errorMessage(error) });
     }
     return null;
   }
