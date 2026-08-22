@@ -4,6 +4,7 @@
   "private": true,
   "description": "Signaling/API contracts (event names, payload schemas, REST routes) shared by the mobile app and the server.",
   "main": "index.ts",
+  "type": "module",
   "engines": {
     "node": ">=22"
   },

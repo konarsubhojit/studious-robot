@@ -451,14 +451,7 @@ export function _extractIncomingCallFromMessage(remoteMessage: { data?: Record<s
  *   deepLink: string,
  * } | null}
  */
-export function _extractMessageFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): {
-    messageId: string;
-    conversationId: string;
-    senderId: string | null;
-    title: string;
-    body: string;
-    deepLink: string;
-} | null {
+export function _extractMessageFromMessage(remoteMessage: { data?: Record<string, unknown>; } | null | undefined): { messageId: string; conversationId: string; senderId: string | null; title: string; body: string; deepLink: string; } | null {
   const data = remoteMessage?.data ?? {};
   const messageId = typeof data.messageId === 'string' ? data.messageId.trim() : '';
   const conversationId = typeof data.conversationId === 'string' ? data.conversationId.trim() : '';

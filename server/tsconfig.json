@@ -7,9 +7,10 @@
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023"],
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "noEmit": true,
     "strict": true,
@@ -19,6 +20,12 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.js", "db/**/*.js", "test/**/*.js", "../shared/**/*.js"],
+  "include": [
+    "src/**/*.ts",
+    "db/**/*.ts",
+    "test/**/*.ts",
+    "drizzle.config.ts",
+    "../shared/**/*.ts"
+  ],
   "exclude": ["node_modules", "../shared/node_modules"]
 }
