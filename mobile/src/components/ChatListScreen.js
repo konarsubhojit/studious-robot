@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,6 +18,28 @@ import SwipeableRow from './SwipeableRow';
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
 
+/**
+ * Conversation row, as held by the chat provider.
+ *
+ * @typedef {import('../hooks/useMessaging').ConversationSummary & { online?: boolean }} ConversationRow
+ */
+
+/**
+ * Contact returned by the server-side user search.
+ *
+ * @typedef {object} ContactRow
+ * @property {string} userId
+ * @property {boolean} [online]
+ */
+
+/**
+ * @param {object} props
+ * @param {string} props.value
+ * @param {(value: string) => void} props.onChangeText
+ * @param {string} [props.placeholder]
+ * @param {string} props.accessibilityLabel
+ * @param {string} props.testID
+ */
 function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -49,6 +72,10 @@ function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, 
   );
 }
 
+/**
+ * @param {string | null | undefined} isoString
+ * @returns {string}
+ */
 function formatConversationTimestamp(isoString) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -65,18 +92,28 @@ function formatConversationTimestamp(isoString) {
  * The conversation's newest event: a call, when the server merged one in
  * (`lastActivity`), otherwise the last text message.
  *
- * @param {{ lastActivity?: object, lastMessage?: object }} conversation
- * @returns {object | null}
+ * @param {ConversationRow} conversation
+ * @returns {import('../hooks/useMessaging').ConversationActivity | null}
  */
 function lastActivityOf(conversation) {
   return conversation?.lastActivity ?? conversation?.lastMessage ?? null;
 }
 
 /**
+ * Whether a conversation's newest event is a call rather than a message.
+ *
+ * @param {import('../hooks/useMessaging').ConversationActivity} activity
+ * @returns {activity is import('../hooks/useMessaging').CallActivity}
+ */
+function isCallActivity(activity) {
+  return activity.type === 'call';
+}
+
+/**
  * One-line preview of a conversation's newest event, so a row whose latest
  * activity was a call reads as such instead of showing a stale older message.
  *
- * @param {{ lastActivity?: object, lastMessage?: object }} conversation
+ * @param {ConversationRow} conversation
  * @returns {string}
  */
 function formatActivityPreview(conversation) {
@@ -84,14 +121,19 @@ function formatActivityPreview(conversation) {
   if (!activity) return 'No messages yet';
   // A rich message describes itself ("📷 Photo", "🎤 Voice message", or a
   // neutral placeholder for a type this build does not know).
-  if (activity.type !== 'call') return describeMessagePreview(activity) || 'No messages yet';
+  if (!isCallActivity(activity)) return describeMessagePreview(activity) || 'No messages yet';
   if (activity.status === 'missed' && activity.direction === 'incoming') {
     return '📞 Missed call';
   }
   return activity.direction === 'outgoing' ? '📞 Outgoing call' : '📞 Incoming call';
 }
 
-/** Up to two uppercase initials derived from a userId, for the avatar circle. */
+/**
+ * Up to two uppercase initials derived from a userId, for the avatar circle.
+ *
+ * @param {string | null | undefined} id
+ * @returns {string}
+ */
 function getInitials(id) {
   const trimmed = (id ?? '').trim();
   if (!trimmed) return '?';
@@ -162,9 +204,9 @@ function EmptyConversations() {
  * the conversation list once the search query is cleared.
  *
  * @param {object} props
- * @param {Array<import('../hooks/useMessaging').ConversationSummary & { online?: boolean }>} props.conversations
+ * @param {ConversationRow[]} [props.conversations]
  * @param {(peerId: string) => void} props.onOpenConversation
- * @param {(query: string) => Promise<Array>} [props.onSearchUsers]
+ * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
  * @param {() => void} [props.onRefresh]
  * @param {boolean} [props.isRefreshing]
  * @param {boolean} [props.isLoading] - Shows skeleton rows while the first conversation
@@ -190,12 +232,13 @@ export default function ChatListScreen({
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState(/** @type {ContactRow[]} */ ([]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
+    /** @param {string} term */
     async term => {
       if (typeof onSearchUsers !== 'function') return;
       if (!term) {
@@ -207,7 +250,7 @@ export default function ChatListScreen({
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
-      let users = [];
+      let /** @type {ContactRow[]} */ users = [];
       try {
         users = await onSearchUsers(term);
       } catch (_error) {
@@ -234,6 +277,7 @@ export default function ChatListScreen({
   const listData = isSearchMode ? (isSearching ? [] : results) : conversations;
 
   const renderContactRow = useCallback(
+    /** @param {ContactRow} contact */
     contact => (
       <Pressable
         onPress={() => onOpenConversation?.(contact.userId)}
@@ -252,8 +296,9 @@ export default function ChatListScreen({
   );
 
   const renderConversationRow = useCallback(
+    /** @param {ConversationRow} conversation */
     conversation => {
-      const hasUnread = conversation.unreadCount > 0;
+      const hasUnread = (conversation.unreadCount ?? 0) > 0;
       const actions =
         onMarkRead && hasUnread
           ? [
@@ -306,6 +351,7 @@ export default function ChatListScreen({
   );
 
   const renderItem = useCallback(
+    /** @param {{ item: any }} info */
     ({ item }) => (isSearchMode ? renderContactRow(item) : renderConversationRow(item)),
     [isSearchMode, renderContactRow, renderConversationRow],
   );
@@ -397,6 +443,7 @@ export default function ChatListScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     root: {

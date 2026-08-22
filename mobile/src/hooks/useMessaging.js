@@ -23,6 +23,23 @@ import { SIGNALING_VERSION } from '../socketProtocol';
  */
 
 /**
+ * Newest event of a conversation: either a message or a call, as merged by the
+ * server (`lastActivity`).
+ *
+ * @typedef {object} CallActivity
+ * @property {'call'} type
+ * @property {string} callId
+ * @property {string} [conversationId]
+ * @property {'incoming' | 'outgoing'} direction
+ * @property {string} status
+ * @property {string | null} [endReason]
+ * @property {number | null} [durationSeconds]
+ * @property {string} createdAt
+ */
+
+/** @typedef {ChatMessage | CallActivity} ConversationActivity */
+
+/**
  * One row of the chat list: the peer, the newest message and whether anything
  * in it is still unread.
  *
@@ -30,7 +47,7 @@ import { SIGNALING_VERSION } from '../socketProtocol';
  * @property {string} [conversationId]
  * @property {string} peerId
  * @property {ChatMessage | null} [lastMessage]
- * @property {string} [lastActivity]
+ * @property {ConversationActivity | null} [lastActivity]
  * @property {number} [unreadCount]
  */
 
