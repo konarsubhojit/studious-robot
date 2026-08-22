@@ -117,6 +117,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `usePresenceSearch.js`
   - [x] `useIdentity.js`
   - [x] `useScreenShare.js`
+  - [x] `useMessaging.js`
 - [x] `src/storage/` (chatDb, recentSearches)
 - [x] `src/diagnostics.js`
 - [x] `src/audioRouting.js`
@@ -136,7 +137,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/webrtcConfig.js`
 - [x] `src/AppShell.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
-- [ ] `App.js`
+- [x] `App.js`
 - [ ] `__tests__/`
 
 ### server/

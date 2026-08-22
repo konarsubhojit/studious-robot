@@ -43,7 +43,11 @@ export const MAX_CONVERSATIONS = 100;
  * fetched history page, a delivery receipt, a read receipt) costs one write. */
 const WRITE_DEBOUNCE_MS = 250;
 
-/** @typedef {{ conversations: Array<object>, messagesByPeer: Record<string, Array<object>>, outbox: Array<object> }} ChatSnapshot */
+/** @typedef {import('../hooks/useMessaging').ConversationSummary} ConversationSummary */
+/** @typedef {import('../hooks/useMessaging').ChatMessage} ChatMessage */
+/** @typedef {import('../hooks/useMessaging').OutboxItem} OutboxItem */
+
+/** @typedef {{ conversations: ConversationSummary[], messagesByPeer: Record<string, ChatMessage[]>, outbox: OutboxItem[] }} ChatSnapshot */
 
 /** @returns {ChatSnapshot} */
 function emptySnapshot() {
@@ -85,8 +89,8 @@ function entryTime(entry) {
  * every entry still awaiting delivery: an old message that never sent must
  * never be pruned out from under its outbox row.
  *
- * @param {Array<object>} messages newest-first
- * @returns {Array<object>}
+ * @param {ChatMessage[]} messages newest-first
+ * @returns {ChatMessage[]}
  */
 export function pruneMessages(messages) {
   if (!Array.isArray(messages)) return [];
@@ -118,7 +122,7 @@ function sanitizeSnapshot(parsed) {
       )
     : [];
 
-  /** @type {Record<string, Array<object>>} */
+  /** @type {Record<string, ChatMessage[]>} */
   const messagesByPeer = {};
   /** @type {Record<string, any>} */
   const rawMessages =
@@ -194,7 +198,7 @@ async function flushToDisk() {
 export function saveChatSnapshot(partial) {
   const base = cache ?? emptySnapshot();
   const messagesByPeer = partial.messagesByPeer ?? base.messagesByPeer;
-  /** @type {Record<string, Array<object>>} */
+  /** @type {Record<string, ChatMessage[]>} */
   const pruned = {};
   Object.keys(messagesByPeer).forEach(peerId => {
     pruned[peerId] = pruneMessages(messagesByPeer[peerId]);
