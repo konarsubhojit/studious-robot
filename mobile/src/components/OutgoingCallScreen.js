@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { deriveInitials, formatRingCountdown } from '../callUx';
@@ -25,11 +26,12 @@ function secondsRemaining(ringTimeoutAt) {
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object}   props
- * @param {string}   props.calleeId    - The ID / name of the callee.
- * @param {object|null} props.activeCall - Live call record (may include ringTimeoutAt).
- * @param {object}   props.status      - Current status `{ message, severity }`.
- * @param {Function} props.onCancel    - Called when the user presses Cancel.
+ * @param {object} props
+ * @param {string} props.calleeId - The ID / name of the callee.
+ * @param {{ ringTimeoutAt?: string|null } | null} [props.activeCall] - Live call
+ *   record (may include ringTimeoutAt).
+ * @param {import('./StatusBanner').CallStatus} props.status - Current status.
+ * @param {() => void} props.onCancel - Called when the user presses Cancel.
  */
 export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }) {
   const styles = useThemedStyles(createStyles);
@@ -38,6 +40,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
   const initials = deriveInitials(calleeId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
+  /** @type {import('react').MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const intervalRef = useRef(null);
 
   // ── Pulse animation ───────────────────────────────────────────────────────
@@ -76,7 +79,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
     intervalRef.current = setInterval(() => {
       const remaining = secondsRemaining(ringTimeoutAt);
       setSecondsLeft(remaining);
-      if (remaining <= 0) {
+      if (remaining <= 0 && intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
@@ -153,6 +156,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

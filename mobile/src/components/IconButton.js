@@ -16,7 +16,8 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * @param {string}   props.icon              - Semantic icon key from ICONS map,
  *                                            OR a raw emoji/unicode glyph string.
  * @param {string}   [props.label]           - Optional text label displayed below the circle.
- * @param {() => void} props.onPress
+ * @param {() => void} [props.onPress] - Omitted for a decorative button; the
+ *   press is then a no-op.
  * @param {'default'|'danger'|'success'|'active'|'muted'} [props.variant='default']
  * @param {boolean}  [props.disabled=false]
  * @param {boolean}  [props.loading=false]   - Shows a spinner in place of the icon and

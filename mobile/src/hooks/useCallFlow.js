@@ -79,6 +79,7 @@ import {
 } from '../ringtone';
 
 /** @typedef {import('../../../shared/signaling/schemas').CallRecord} CallRecord */
+/** @typedef {import('../components/StatusBanner').CallStatus} CallStatus */
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -254,7 +255,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // ─── UI state ─────────────────────────────────────────────────────────────
   // Raw state setter; callers use the `updateStatus(message, severity)` helper
   // declared below rather than setting the shape by hand.
-  const [status, setStatus] = useState({ message: '', severity: 'info' });
+  const [status, setStatus] = useState(
+    /** @type {CallStatus} */ ({ message: '', severity: 'info' }),
+  );
   const [callSummary, setCallSummary] = useState(null);
 
   // True while the remote participant is screen-sharing (relayed via the
@@ -339,6 +342,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // stays a no-op when `acceptIncomingCall`'s identity changes.
   const replayedAnswerCallIdsRef = useRef(new Set());
 
+  /** @type {(message: string, severity?: CallStatus['severity']) => void} */
   const updateStatus = useCallback((message, severity = 'info') => {
     logVerbose('[CallFlow] Status updated', { message, severity });
     setStatus({ message, severity });

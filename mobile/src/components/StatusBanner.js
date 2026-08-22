@@ -31,12 +31,20 @@ const severityColor = (colors, severity) =>
   }[severity] ?? colors.textMuted);
 
 /**
+ * A status line shown to the user: the message plus how severe it is.
+ *
+ * @typedef {object} CallStatus
+ * @property {string} message
+ * @property {'info'|'success'|'warning'|'error'} [severity]
+ */
+
+/**
  * Single-line status message whose colour reflects severity (info / success /
  * warning / error). Non-info messages gain a tinted background so they stand
  * out at a glance, making call state transitions easier to notice.
  *
  * @param {object} props
- * @param {{ message: string, severity?: 'info'|'success'|'warning'|'error' }} props.status
+ * @param {CallStatus} props.status
  * @param {object} [props.style]
  * @param {object} [props.textStyle]
  */

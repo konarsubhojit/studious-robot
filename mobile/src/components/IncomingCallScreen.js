@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { deriveInitials, formatRingCountdown } from '../callUx';
@@ -25,11 +26,12 @@ function secondsRemaining(ringTimeoutAt) {
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object}   props
- * @param {object}   props.incomingCall   - Call record from the server (callerId, ringTimeoutAt).
- * @param {object}   props.status         - Current status `{ message, severity }`.
- * @param {Function} props.onAccept       - Called when the user presses Accept.
- * @param {Function} props.onDecline      - Called when the user presses Decline.
+ * @param {object} props
+ * @param {{ callerId?: string|null, ringTimeoutAt?: string|null } | null} [props.incomingCall]
+ *   Call record from the server (callerId, ringTimeoutAt).
+ * @param {import('./StatusBanner').CallStatus} props.status - Current status.
+ * @param {() => void} props.onAccept - Called when the user presses Accept.
+ * @param {() => void} props.onDecline - Called when the user presses Decline.
  */
 export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }) {
   const styles = useThemedStyles(createStyles);
@@ -39,6 +41,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
   const initials = deriveInitials(callerId);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
+  /** @type {import('react').MutableRefObject<ReturnType<typeof setInterval> | null>} */
   const intervalRef = useRef(null);
 
   // ── Pulse animation ───────────────────────────────────────────────────────
@@ -77,7 +80,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
     intervalRef.current = setInterval(() => {
       const remaining = secondsRemaining(ringTimeoutAt);
       setSecondsLeft(remaining);
-      if (remaining <= 0) {
+      if (remaining <= 0 && intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
@@ -164,6 +167,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

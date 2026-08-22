@@ -54,7 +54,9 @@ const OUTCOME_LABELS = {
 export function isMissedCallEntry(entry) {
   return (
     entry?.direction === 'incoming' &&
-    (entry?.status === 'missed' || entry?.status === 'cancelled' || entry?.endReason === 'timeout')
+    (entry?.status === 'missed' ||
+      entry?.status === 'cancelled' ||
+      entry?.endReason === 'timeout')
   );
 }
 

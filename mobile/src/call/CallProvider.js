@@ -67,7 +67,7 @@ export function CallProvider({ children }) {
   // flow's status banner through a ref, since it is created below.
   /** @type {import('react').MutableRefObject<CallFlow['updateStatus'] | null>} */
   const updateStatusRef = useRef(null);
-  /** @type {(message: string, severity?: string) => void} */
+  /** @type {CallFlow['updateStatus']} */
   const notifyStatus = useCallback((message, severity) => {
     updateStatusRef.current?.(message, severity);
   }, []);

@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -217,6 +218,7 @@ export default function FloatingCallBubble({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     bubble: {
