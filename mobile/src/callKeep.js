@@ -1,3 +1,4 @@
+// @ts-check
 import { Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 import {
@@ -57,7 +58,45 @@ const CALLKEEP_SETUP_OPTIONS = {
   },
 };
 
-/** Cached result of the optional native CallKeep module lookup. */
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
+/**
+ * The subset of the optional `react-native-callkeep` surface this module uses.
+ * Every member is optional because the package (and the test doubles) may only
+ * implement part of it, which the call sites already probe for.
+ *
+ * @typedef {{
+ *   setup?: (options: object) => Promise<unknown>,
+ *   setAvailable?: (available: boolean) => void,
+ *   hasPhoneAccount?: () => Promise<boolean>,
+ *   checkPhoneAccountEnabled?: () => Promise<boolean>,
+ *   displayIncomingCall?: (
+ *     callId: string,
+ *     handle: string,
+ *     name?: string,
+ *     handleType?: string,
+ *     hasVideo?: boolean,
+ *   ) => void,
+ *   setCurrentCallActive?: (callId: string) => void,
+ *   backToForeground?: () => void,
+ *   endCall?: (callId: string) => void,
+ *   endAllCalls?: () => void,
+ *   addEventListener?: (event: string, handler: (payload: any) => void) => void,
+ *   removeEventListener?: (event: string) => void,
+ * }} CallKeep
+ */
+
+/**
+ * Cached result of the optional native CallKeep module lookup.
+ *
+ * @type {CallKeep | null | undefined}
+ */
 let cachedCallKeep;
 let hasLoggedMissingCallKeep = false;
 /** Whether `setup()` has completed successfully (guards repeated setup). */
@@ -88,6 +127,8 @@ const displayedCallerIds = new Map();
  * The call-flow handlers currently allowed to act on CallKeep's `answerCall` /
  * `endCall` events, or `null` when nothing is attached.
  *
+ * @type {{ onAnswer?: (callId: string) => void, onEnd?: (callId: string) => void } | null}
+ *
  * `registerCallActionListeners` wires the *native* event subscription exactly
  * once, at module scope (see `mobile/index.js`), so it exists even in the
  * headless JS context a background push cold-starts — before any component,
@@ -112,6 +153,8 @@ let activeCallActionHandlers = null;
  * There is deliberately exactly one queue: a second queue inside the call flow
  * would mean an answer could be lost in the hand-off between the two. Every
  * enqueue, drain and drop is logged so a swallowed tap is always traceable.
+ *
+ * @type {string | null}
  */
 let pendingAnswerCallId = null;
 
@@ -133,13 +176,15 @@ function registrationResult(registered) {
  * the RNCallKeep singleton, or `null` when the package is not installed. The
  * lookup is memoised so a missing module is only logged once.
  *
- * @returns {object | null}
+ * @returns {CallKeep | null}
  */
 export function loadCallKeep() {
   if (cachedCallKeep !== undefined) return cachedCallKeep;
   try {
     const mod = require('react-native-callkeep');
-    cachedCallKeep = mod?.default ?? mod ?? null;
+    cachedCallKeep = /** @type {CallKeep | null} */ (
+      /** @type {unknown} */ (mod?.default ?? mod ?? null)
+    );
   } catch {
     cachedCallKeep = null;
     if (!hasLoggedMissingCallKeep) {
@@ -268,7 +313,7 @@ export async function setupCallKeep() {
     try {
       await callKeep.setup(CALLKEEP_SETUP_OPTIONS);
     } catch (error) {
-      if (!isMissingActivityError(error)) throw error;
+      if (!isMissingActivityError(/** @type {any} */ (error))) throw error;
       // A push that cold-starts the app runs in a headless JS context with no
       // foreground Activity, so CallKeep's post-setup phone-account permission
       // prompt rejects. The native half of setup (phone-account registration,
@@ -317,7 +362,7 @@ function dismissStaleCallsFromCaller(callId, callerId) {
  * Duplicate calls for the same `callId` are ignored, so it is safe to invoke
  * this from the socket, foreground-push and background-push paths at once.
  *
- * @param {{ callId: string, callerId?: string | null, hasVideo?: boolean }} opts
+ * @param {{ callId?: string, callerId?: string | null, hasVideo?: boolean }} [opts]
  * @returns {Promise<{ shown: true } | { shown: false, reason: string, message?: string }>}
  */
 export async function displayIncomingCall({ callId, callerId, hasVideo = true } = {}) {
@@ -334,7 +379,8 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true } 
 
   dismissStaleCallsFromCaller(callId, callerId);
 
-  const callKeep = loadCallKeep();
+  // `loadCallKeep()` already returned a module above, so it cannot be null here.
+  const callKeep = /** @type {CallKeep} */ (loadCallKeep());
   try {
     if (
       Platform.OS === 'android' &&
@@ -354,14 +400,14 @@ export async function displayIncomingCall({ callId, callerId, hasVideo = true } 
     const name = callerId || 'Incoming call';
     displayedCallIds.add(callId);
     if (callerId) displayedCallerIds.set(callId, callerId);
-    callKeep.displayIncomingCall(callId, handle, name, 'generic', hasVideo);
+    callKeep.displayIncomingCall?.(callId, handle, name, 'generic', hasVideo);
     logInfo('[CallKeep] Displayed incoming call', { callId, callerId: callerId ?? null });
     return { shown: true };
   } catch (error) {
     displayedCallIds.delete(callId);
     displayedCallerIds.delete(callId);
     logError('[CallKeep] displayIncomingCall failed', error);
-    return { shown: false, reason: 'telecom_threw', message: error?.message };
+    return { shown: false, reason: 'telecom_threw', message: errorMessage(error) };
   }
 }
 
@@ -402,7 +448,7 @@ export function bringAppToForeground() {
     logInfo('[CallKeep] Requested app foreground');
     return true;
   } catch (error) {
-    logWarn('[CallKeep] backToForeground failed', { message: error?.message });
+    logWarn('[CallKeep] backToForeground failed', { message: errorMessage(error) });
     return false;
   }
 }
@@ -475,7 +521,7 @@ export function registerCallActionListeners() {
     return registrationResult(false);
   }
 
-  const answerHandler = ({ callUUID } = {}) => {
+  const answerHandler = (/** @type {any} */ { callUUID } = {}) => {
     logInfo('[CallKeep] answerCall', {
       callUUID,
       hasActiveHandler: Boolean(activeCallActionHandlers),
@@ -491,7 +537,7 @@ export function registerCallActionListeners() {
     });
     recordPendingAnswer(callUUID, 'native_no_handler');
   };
-  const endHandler = ({ callUUID } = {}) => {
+  const endHandler = (/** @type {any} */ { callUUID } = {}) => {
     logInfo('[CallKeep] endCall', {
       callUUID,
       hasActiveHandler: Boolean(activeCallActionHandlers),
@@ -509,8 +555,8 @@ export function registerCallActionListeners() {
   };
 
   try {
-    callKeep.addEventListener('answerCall', answerHandler);
-    callKeep.addEventListener('endCall', endHandler);
+    callKeep.addEventListener?.('answerCall', answerHandler);
+    callKeep.addEventListener?.('endCall', endHandler);
   } catch (error) {
     logError('[CallKeep] registerCallActionListeners failed', error);
     return registrationResult(false);
@@ -523,7 +569,7 @@ export function registerCallActionListeners() {
       callKeep.removeEventListener?.('answerCall');
       callKeep.removeEventListener?.('endCall');
     } catch (error) {
-      logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
+      logWarn('[CallKeep] removeEventListener failed', { message: errorMessage(error) });
     }
   };
   unsubscribe.registered = true;
@@ -561,7 +607,7 @@ export function registerShowIncomingCallUiListener() {
     return registrationResult(false);
   }
 
-  const handler = async ({ callUUID, handle, name } = {}) => {
+  const handler = async (/** @type {any} */ { callUUID, handle, name } = {}) => {
     logInfo('[CallKeep] showIncomingCallUi', { callUUID });
     const shown = await showIncomingCallNotification({
       callId: callUUID,
@@ -580,7 +626,7 @@ export function registerShowIncomingCallUiListener() {
   };
 
   try {
-    callKeep.addEventListener('showIncomingCallUi', handler);
+    callKeep.addEventListener?.('showIncomingCallUi', handler);
   } catch (error) {
     logError('[CallKeep] registerShowIncomingCallUiListener failed', error);
     return registrationResult(false);
@@ -590,7 +636,7 @@ export function registerShowIncomingCallUiListener() {
     try {
       callKeep.removeEventListener?.('showIncomingCallUi');
     } catch (error) {
-      logWarn('[CallKeep] removeEventListener failed', { message: error?.message });
+      logWarn('[CallKeep] removeEventListener failed', { message: errorMessage(error) });
     }
   };
   unsubscribe.registered = true;
@@ -620,7 +666,8 @@ export function setCallActionHandlers({ onAnswer, onEnd } = {}) {
   activeCallActionHandlers = handlers;
 
   if (pendingAnswerCallId) {
-    const callUUID = consumePendingAnswer();
+    // `pendingAnswerCallId` is set, so the queue always drains to a call id.
+    const callUUID = /** @type {string} */ (consumePendingAnswer());
     logInfo('[CallKeep] Replaying queued answerCall', { callUUID });
     onAnswer?.(callUUID);
   }

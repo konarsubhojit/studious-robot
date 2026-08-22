@@ -1,4 +1,7 @@
+// @ts-check
 import { PermissionsAndroid, Platform } from 'react-native';
+
+/** @typedef {import('react-native').Permission} Permission */
 
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;
@@ -43,6 +46,10 @@ export function getCallRuntimePermissions(androidApiLevel = Platform.Version) {
   return permissions;
 }
 
+/**
+ * @param {Permission[]} permissions
+ * @returns {string}
+ */
 function getRuntimePermissionDeniedMessage(permissions) {
   const denied = new Set(permissions);
   const deniedCamera = denied.has(CAMERA_PERMISSION);
@@ -68,7 +75,12 @@ function getRuntimePermissionDeniedMessage(permissions) {
   return 'Required Android permissions are missing';
 }
 
+/**
+ * @param {Permission[]} permissions
+ * @returns {Promise<Permission[]>}
+ */
 async function getMissingPermissions(permissions) {
+  /** @type {Permission[]} */
   const missing = [];
 
   for (const permission of permissions) {
@@ -135,7 +147,9 @@ export async function ensureCallPermissions() {
     return { ok: true, warningMessage: null, deniedPermissions: [] };
   }
 
-  const results = await PermissionsAndroid.requestMultiple(missingPermissions);
+  const results = /** @type {Record<string, string>} */ (
+    await PermissionsAndroid.requestMultiple(missingPermissions)
+  );
   const deniedRequiredPermissions = missingPermissions.filter(
     permission =>
       REQUIRED_CALL_PERMISSIONS.includes(permission) &&
@@ -213,8 +227,8 @@ const READ_EXTERNAL_STORAGE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.READ_E
  * name (and scope) in Android 13 (API 33): `READ_MEDIA_IMAGES` replaced the
  * broader `READ_EXTERNAL_STORAGE` for image access.
  *
- * @param {number} [androidApiLevel]
- * @returns {string | undefined} `undefined` on iOS (handled by Info.plist,
+ * @param {number|string} [androidApiLevel]
+ * @returns {Permission | undefined} `undefined` on iOS (handled by Info.plist,
  *   not `PermissionsAndroid`) or when neither permission constant exists.
  */
 export function getPhotoLibraryPermission(androidApiLevel = Platform.Version) {
@@ -222,7 +236,12 @@ export function getPhotoLibraryPermission(androidApiLevel = Platform.Version) {
   return Number(androidApiLevel) >= 33 ? MEDIA_IMAGES_PERMISSION : READ_EXTERNAL_STORAGE_PERMISSION;
 }
 
-/** User-facing text for a denied attachment permission. */
+/**
+ * User-facing text for a denied attachment permission.
+ *
+ * @param {string} kind
+ * @returns {string}
+ */
 function getAttachmentPermissionDeniedMessage(kind) {
   if (kind === 'photo') return 'Photo library permission is required to attach a photo';
   if (kind === 'camera') return 'Camera permission is required to take a photo';
@@ -230,7 +249,14 @@ function getAttachmentPermissionDeniedMessage(kind) {
   return 'Required permission is missing';
 }
 
-/** The Android runtime permission constant `ensureAttachmentPermission` needs to check/request for `kind`. */
+/**
+ * The Android runtime permission constant `ensureAttachmentPermission` needs to
+ * check/request for `kind`.
+ *
+ * @param {string} kind
+ * @param {number|string} [androidApiLevel]
+ * @returns {Permission | undefined}
+ */
 function attachmentPermissionFor(kind, androidApiLevel) {
   if (kind === 'photo') return getPhotoLibraryPermission(androidApiLevel);
   if (kind === 'camera') return CAMERA_PERMISSION;
@@ -247,10 +273,13 @@ function attachmentPermissionFor(kind, androidApiLevel) {
  * it always resolves `ok: true` without prompting.
  *
  * @param {'photo'|'camera'|'voice'|'file'} kind
- * @param {{ androidApiLevel?: number }} [options]
+ * @param {{ androidApiLevel?: number|string }} [options]
  * @returns {Promise<{ ok: boolean, granted: boolean, message?: string | null }>}
  */
-export async function ensureAttachmentPermission(kind, { androidApiLevel = Platform.Version } = {}) {
+export async function ensureAttachmentPermission(
+  kind,
+  { androidApiLevel = Platform.Version } = {},
+) {
   if (
     Platform.OS !== 'android' ||
     kind === 'file' ||
@@ -266,7 +295,9 @@ export async function ensureAttachmentPermission(kind, { androidApiLevel = Platf
   const alreadyGranted = await PermissionsAndroid.check(permission);
   if (alreadyGranted) return { ok: true, granted: true, message: null };
 
-  const results = await PermissionsAndroid.requestMultiple([permission]);
+  const results = /** @type {Record<string, string>} */ (
+    await PermissionsAndroid.requestMultiple([permission])
+  );
   const granted = results[permission] === PermissionsAndroid.RESULTS.GRANTED;
   return {
     ok: granted,

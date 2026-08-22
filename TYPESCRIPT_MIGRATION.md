@@ -97,6 +97,8 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/attachmentUpload.js`
 - [x] `src/attachmentPicker.js`
 - [x] `src/pushNotifications.js`
+- [x] `src/callKeep.js`
+- [x] `src/permissions.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`
