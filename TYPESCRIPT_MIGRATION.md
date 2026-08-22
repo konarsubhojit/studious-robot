@@ -86,6 +86,8 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/routes/blocks.routes.js`
 - [x] `src/routes/health.routes.js`
 - [x] `src/routes/metrics.routes.js`
+- [x] `src/routes/directory.routes.js`
+- [x] `src/routes/turnCredentials.routes.js`
 - [ ] `src/routes/` (remaining routes)
 - [ ] `src/domain/` (in progress)
   - [x] `callTimeline.js`

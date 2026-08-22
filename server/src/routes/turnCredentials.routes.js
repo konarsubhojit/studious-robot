@@ -1,9 +1,14 @@
+// @ts-check
 'use strict';
 
 const crypto = require('node:crypto');
 const express = require('express');
 const { API_ROUTES } = require('../../../shared');
 const { getSessionFromRequest } = require('../lib/auth');
+
+/**
+ * @typedef {{ urls: string|string[], username?: string, credential?: string }} IceServer
+ */
 
 const DEFAULT_TTL_SECONDS = 60 * 60;
 const DEFAULT_TURN_URLS = [
@@ -13,6 +18,10 @@ const DEFAULT_TURN_URLS = [
   'turns:global.relay.metered.ca:443?transport=tcp',
 ];
 
+/**
+ * @param {IceServer[]} iceServers
+ * @returns {IceServer[]}
+ */
 function withStunServer(iceServers) {
   const hasStun = iceServers.some((server) => {
     const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
@@ -21,12 +30,20 @@ function withStunServer(iceServers) {
   return hasStun ? iceServers : [{ urls: ['stun:stun.l.google.com:19302'] }, ...iceServers];
 }
 
+/**
+ * @param {unknown} value comma-separated TURN URLs, if configured.
+ * @returns {string[]}
+ */
 function parseTurnUrls(value) {
   return typeof value === 'string'
     ? value.split(',').map((url) => url.trim()).filter(Boolean)
     : [];
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {IceServer[]}
+ */
 function getStaticIceServers(env) {
   if (!env.TURN_USERNAME || !env.TURN_CREDENTIAL) {
     return [{ urls: ['stun:stun.l.google.com:19302'] }];
@@ -39,6 +56,10 @@ function getStaticIceServers(env) {
   ];
 }
 
+/**
+ * @param {unknown} value
+ * @returns {number}
+ */
 function getTtlSeconds(value) {
   const ttl = Number(value);
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
@@ -49,6 +70,9 @@ function getTtlSeconds(value) {
  *
  * coturn validates `username` as `<unix-expiry>:<anything>` and `credential`
  * as base64(HMAC-SHA1(static-auth-secret, username)).
+ *
+ * @param {{ secret: string, urls: string[], userId: string, ttlSeconds: number, now: number }} params
+ * @returns {{ iceServers: IceServer[], expiresAt: Date }}
  */
 function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }) {
   const expiresAt = new Date(now + ttlSeconds * 1000);
@@ -57,6 +81,10 @@ function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }) {
   return { iceServers: withStunServer([{ urls, username, credential }]), expiresAt };
 }
 
+/**
+ * @param {any} payload Cloudflare TURN API response body.
+ * @returns {IceServer[]}
+ */
 function normalizeIceServers(payload) {
   if (Array.isArray(payload)) return payload;
   const iceServers = payload?.iceServers;
@@ -65,8 +93,19 @@ function normalizeIceServers(payload) {
   return [];
 }
 
+/**
+ * Issue ICE server credentials (Cloudflare TURN, coturn HMAC, or static).
+ *
+ * @param {{
+ *   state: import('../stores/contracts').ServerState,
+ *   fetchImpl?: typeof fetch,
+ *   env?: NodeJS.ProcessEnv,
+ * }} ctx
+ * @returns {import('express').Router}
+ */
 function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.env }) {
   const router = express.Router();
+  /** @type {{ iceServers: IceServer[], expiresAt: Date, refreshAt: number }|null} */
   let cache = null;
   let warnedMissingTurnUrl = false;
 
@@ -139,7 +178,8 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         return;
       } catch (error) {
         const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
-        logger(`[turn] credential minting failed: ${error?.message || 'unknown error'}`);
+        const message = error instanceof Error ? error.message : '';
+        logger(`[turn] credential minting failed: ${message || 'unknown error'}`);
       }
     }
 
