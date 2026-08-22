@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,6 +23,32 @@ const MAX_ROWS_PER_SECTION = 8;
 
 /** Contacts, conversations, messages and calls. */
 const SECTION_COUNT = 4;
+
+/**
+ * Contact returned by the server-side user search.
+ *
+ * @typedef {object} ContactResult
+ * @property {string} userId
+ * @property {boolean} [online]
+ */
+
+/**
+ * Message returned by the server-side message search.
+ *
+ * @typedef {object} MessageResult
+ * @property {string} messageId
+ * @property {string} peerId
+ * @property {string} [body]
+ * @property {string} [createdAt]
+ */
+
+/**
+ * Conversation row, as held by the chat provider.
+ *
+ * @typedef {import('../hooks/useMessaging').ConversationSummary & { online?: boolean }} ConversationRow
+ */
+
+/** @typedef {import('../hooks/useCallHistory').CallHistoryEntry} CallRow */
 
 /**
  * Index of `term` inside `text`, case-insensitively, or -1.
@@ -90,12 +117,21 @@ function callPeerOf(entry, currentUserId) {
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');
 }
 
-/** Short, human description of a call-history entry. */
+/**
+ * Short, human description of a call-history entry.
+ *
+ * @param {{ status?: string, direction?: string }} entry
+ * @returns {string}
+ */
 function describeCall(entry) {
   if (entry?.status === 'missed' && entry?.direction === 'incoming') return 'Missed call';
   return entry?.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
 }
 
+/**
+ * @param {string | null | undefined} isoString
+ * @returns {string}
+ */
 function formatTimestamp(isoString) {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -124,10 +160,10 @@ function formatTimestamp(isoString) {
  * never see the results of a stale query.
  *
  * @param {object} props
- * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<Array<any>>} [props.onSearchContacts]
- * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<Array<any>>} [props.onSearchMessages]
- * @param {Array<import('../hooks/useMessaging').ConversationSummary & { online?: boolean }>} [props.conversations]
- * @param {Array<import('../hooks/useCallHistory').CallHistoryEntry>} [props.callHistory]
+ * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<ContactResult[]>} [props.onSearchContacts]
+ * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<MessageResult[]>} [props.onSearchMessages]
+ * @param {ConversationRow[]} [props.conversations]
+ * @param {CallRow[]} [props.callHistory]
  * @param {string | null} [props.currentUserId]
  * @param {(peerId: string) => void} [props.onOpenConversation]
  * @param {(result: { peerId: string, messageId: string }) => void} [props.onOpenMessage]
@@ -158,11 +194,11 @@ export default function SearchScreen({
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [contacts, setContacts] = useState([]);
-  const [messages, setMessages] = useState([]);
+  const [contacts, setContacts] = useState(/** @type {ContactResult[]} */ ([]));
+  const [messages, setMessages] = useState(/** @type {MessageResult[]} */ ([]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const abortRef = useRef(null);
+  const abortRef = useRef(/** @type {AbortController | null} */ (null));
 
   const term = query.trim();
 
@@ -251,6 +287,7 @@ export default function SearchScreen({
   }, [contacts, matchedCalls, matchedConversations, messages]);
 
   const renderItem = useCallback(
+    /** @param {{ item: any, section: { key?: string } }} info */
     ({ item, section }) => {
       if (section.key === 'contacts') {
         return (
@@ -341,6 +378,10 @@ export default function SearchScreen({
   );
 
   const keyExtractor = useCallback(
+    /**
+     * @param {any} item
+     * @param {number} index
+     */
     (item, index) =>
       item.messageId ?? item.callId ?? item.conversationId ?? item.userId ?? String(index),
     [],
@@ -455,6 +496,7 @@ export default function SearchScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     root: {

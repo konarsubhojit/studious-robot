@@ -79,6 +79,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `PeerProfileScreen.js`
   - [x] `ReconnectBanner.js`
   - [x] `RegistrationScreen.js`
+  - [x] `SearchScreen.js`
   - [x] `SettingsCard.js`
   - [x] `SettingsScreen.js`
   - [x] `StatusBanner.js`
