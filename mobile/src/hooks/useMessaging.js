@@ -12,6 +12,29 @@ import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
 
 /**
+ * A chat message as persisted by the server, plus the client-only fields an
+ * optimistic send carries until the server acknowledges it.
+ *
+ * @typedef {import('../../../shared/signaling/schemas').MessageRecord & {
+ *   status?: string,
+ *   peerId?: string,
+ *   localId?: string,
+ * }} ChatMessage
+ */
+
+/**
+ * One row of the chat list: the peer, the newest message and whether anything
+ * in it is still unread.
+ *
+ * @typedef {object} ConversationSummary
+ * @property {string} [conversationId]
+ * @property {string} peerId
+ * @property {ChatMessage | null} [lastMessage]
+ * @property {string} [lastActivity]
+ * @property {number} [unreadCount]
+ */
+
+/**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
  * this long after the last `isTyping: true` event, in case the corresponding
  * `isTyping: false` event is dropped (e.g. the peer's app is killed mid-type).
@@ -139,10 +162,14 @@ export default function useMessaging({
   // `lastActivity` is whichever of the last message and the last call is
   // newer, so the chat list preview never shows a stale message for a
   // conversation whose latest event was a call.
-  const [conversations, setConversations] = useState([]);
+  const [conversations, setConversations] = useState(
+    /** @type {ConversationSummary[]} */ ([]),
+  );
   // Keyed by peerId → array of message objects, newest-first (matches the
   // server's ordering). Optimistic (pending/failed) sends are tagged inline.
-  const [messagesByPeer, setMessagesByPeer] = useState({});
+  const [messagesByPeer, setMessagesByPeer] = useState(
+    /** @type {Record<string, ChatMessage[]>} */ ({}),
+  );
   // peerId of the conversation currently open in the UI, or null. Drives
   // auto-mark-read for incoming messages from that peer.
   const [activeChatPeerId, setActiveChatPeerId] = useState(/** @type {string | null} */ (null));
@@ -150,7 +177,7 @@ export default function useMessaging({
   // open conversation (relayed via the ephemeral `message.typing` socket
   // event). Cleared on receipt of isTyping:false or after a short timeout, in
   // case a "stopped typing" event is dropped.
-  const [typingByPeer, setTypingByPeer] = useState({});
+  const [typingByPeer, setTypingByPeer] = useState(/** @type {Record<string, boolean>} */ ({}));
   const typingTimeoutsRef = useRef({});
   const typingSentAtRef = useRef({});
   // Mirrors activeChatPeerId so the message.received socket handler never

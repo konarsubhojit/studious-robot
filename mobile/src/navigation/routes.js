@@ -5,6 +5,8 @@
  * The tab route names deliberately match the keys `AppTabBar` already uses
  * (`chats` / `calls` / `settings`) so the existing tab bar can be plugged into
  * the bottom-tab navigator as a custom `tabBar` without any name mapping.
+ *
+ * @type {{ CHATS: 'chats', CALLS: 'calls', SETTINGS: 'settings' }}
  */
 export const TABS = {
   CHATS: 'chats',

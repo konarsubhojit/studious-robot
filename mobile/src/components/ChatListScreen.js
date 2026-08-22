@@ -162,8 +162,7 @@ function EmptyConversations() {
  * the conversation list once the search query is cleared.
  *
  * @param {object} props
- * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object,
- *   lastActivity?: object, unreadCount?: number, online?: boolean }>} props.conversations
+ * @param {Array<import('../hooks/useMessaging').ConversationSummary & { online?: boolean }>} props.conversations
  * @param {(peerId: string) => void} props.onOpenConversation
  * @param {(query: string) => Promise<Array>} [props.onSearchUsers]
  * @param {() => void} [props.onRefresh]

@@ -124,11 +124,10 @@ function formatTimestamp(isoString) {
  * never see the results of a stale query.
  *
  * @param {object} props
- * @param {(query: string, options: { signal: AbortSignal }) => Promise<Array>} [props.onSearchContacts]
- * @param {(query: string, options: { signal: AbortSignal }) => Promise<Array>} [props.onSearchMessages]
- * @param {Array<{ conversationId: string, peerId: string, lastMessage?: object,
- *   lastActivity?: object, online?: boolean }>} [props.conversations]
- * @param {Array<object>} [props.callHistory]
+ * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<Array<any>>} [props.onSearchContacts]
+ * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<Array<any>>} [props.onSearchMessages]
+ * @param {Array<import('../hooks/useMessaging').ConversationSummary & { online?: boolean }>} [props.conversations]
+ * @param {Array<import('../hooks/useCallHistory').CallHistoryEntry>} [props.callHistory]
  * @param {string | null} [props.currentUserId]
  * @param {(peerId: string) => void} [props.onOpenConversation]
  * @param {(result: { peerId: string, messageId: string }) => void} [props.onOpenMessage]

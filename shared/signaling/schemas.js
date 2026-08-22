@@ -61,6 +61,16 @@ const callRecord = s.object(
  *
  * Only `url` and `mimeType` are required: the optional dimensions/duration are
  * rendering hints the sender supplies when it knows them.
+ *
+ * @typedef {object} AttachmentRecord
+ * @property {string} url
+ * @property {string} mimeType
+ * @property {number} [sizeBytes]
+ * @property {string | null} [name]
+ * @property {number | null} [width]
+ * @property {number | null} [height]
+ * @property {number | null} [durationMs]
+ * @property {string | null} [thumbnailUrl]
  */
 const attachmentRecord = s.object(
   {
@@ -90,6 +100,12 @@ const attachmentRecord = s.object(
  * @property {string} senderId
  * @property {string} recipientId
  * @property {string} body
+ * @property {string} [type] - Message type; absent on legacy rows ("text").
+ * @property {AttachmentRecord | null} [attachment]
+ * @property {string | null} [replyTo]
+ * @property {Record<string, string[]> | null} [reactions]
+ * @property {string | null} [deletedAt]
+ * @property {string} [createdAt]
  */
 const messageRecord = s.object(
   {

@@ -1,3 +1,4 @@
+// @ts-check
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
@@ -47,54 +48,63 @@ export default function TabShell() {
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
 
-  const renderChatConversation = (peerId, { messageId } = {}) => (
-    <ChatConversationScreen
-      peerId={peerId}
-      messages={chat.messagesByPeer[peerId] ?? []}
-      highlightMessageId={messageId ?? null}
-      onOpenProfile={() => openPeerProfile(peerId)}
-      onSendMessage={(body, options) => chat.sendMessage(peerId, body, options)}
-      onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
-      onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
-      onReactToMessage={(message, emoji, action) =>
-        chat.reactToMessage(peerId, message.messageId, emoji, action)
-      }
-      onDownloadAttachment={async message => {
-        const result = await downloadAttachment({
-          url: message?.attachment?.url,
-          name: message?.attachment?.name,
-          mimeType: message?.attachment?.mimeType,
-        });
-        callFlow.updateStatus(
-          describeAttachmentDownloadResult(result),
-          result.success ? 'success' : 'error',
-        );
-      }}
-      isOffline={chat.isChatOffline}
-      onLoadOlder={chat.handleLoadOlderMessages}
-      onBack={closeChatConversation}
-      currentUserId={chat.currentUserId}
-      peerPresence={chat.peerPresence}
-      keyboardVerticalOffset={insets.top}
-      onStartAudioCall={() => startAudioCallWith(peerId)}
-      onStartVideoCall={() => startVideoCallWith(peerId)}
-      onCallBack={startAudioCallWith}
-      onVideoCallBack={startVideoCallWith}
-      isStartingCall={callFlow.isPlacingCall}
-      isPeerTyping={Boolean(chat.typingByPeer[peerId])}
-      isLoadingMessages={chat.isLoadingMessages}
-      onPickAttachment={kind => chat.pickAndSendAttachment(peerId, kind)}
-      onStartVoiceNote={() => chat.startRecordingVoiceNote()}
-      onStopVoiceNote={() => chat.stopRecordingVoiceNoteAndSend(peerId)}
-      onCancelVoiceNote={() => chat.cancelRecordingVoiceNote()}
-      isUploadingAttachment={chat.isUploadingAttachment}
-      attachmentUploadProgress={chat.attachmentUploadProgress}
-      isRecordingVoiceNote={chat.isRecordingVoiceNote}
-      attachmentsAvailable={chat.attachmentsAvailable}
-      isVoiceNoteSupported={chat.isVoiceNoteSupported}
-      onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
-    />
-  );
+  /**
+   * @param {string | null} peerId
+   * @param {{ messageId?: string | null }} [options]
+   */
+  const renderChatConversation = (peerId, { messageId } = {}) => {
+    // A conversation route always carries its peer; without one there is
+    // nothing to render (and every handler below would target no peer).
+    if (!peerId) return null;
+    return (
+      <ChatConversationScreen
+        peerId={peerId}
+        messages={chat.messagesByPeer[peerId] ?? []}
+        highlightMessageId={messageId ?? null}
+        onOpenProfile={() => openPeerProfile(peerId)}
+        onSendMessage={(body, options) => chat.sendMessage(peerId, body, options)}
+        onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
+        onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
+        onReactToMessage={(message, emoji, action) =>
+          chat.reactToMessage(peerId, message.messageId, emoji, action)
+        }
+        onDownloadAttachment={async message => {
+          const result = await downloadAttachment({
+            url: message?.attachment?.url,
+            name: message?.attachment?.name,
+            mimeType: message?.attachment?.mimeType,
+          });
+          callFlow.updateStatus(
+            describeAttachmentDownloadResult(result),
+            result.success ? 'success' : 'error',
+          );
+        }}
+        isOffline={chat.isChatOffline}
+        onLoadOlder={chat.handleLoadOlderMessages}
+        onBack={closeChatConversation}
+        currentUserId={chat.currentUserId}
+        peerPresence={chat.peerPresence}
+        keyboardVerticalOffset={insets.top}
+        onStartAudioCall={() => startAudioCallWith(peerId)}
+        onStartVideoCall={() => startVideoCallWith(peerId)}
+        onCallBack={startAudioCallWith}
+        onVideoCallBack={startVideoCallWith}
+        isStartingCall={callFlow.isPlacingCall}
+        isPeerTyping={Boolean(chat.typingByPeer[peerId])}
+        isLoadingMessages={chat.isLoadingMessages}
+        onPickAttachment={kind => chat.pickAndSendAttachment(peerId, kind)}
+        onStartVoiceNote={() => chat.startRecordingVoiceNote()}
+        onStopVoiceNote={() => chat.stopRecordingVoiceNoteAndSend(peerId)}
+        onCancelVoiceNote={() => chat.cancelRecordingVoiceNote()}
+        isUploadingAttachment={chat.isUploadingAttachment}
+        attachmentUploadProgress={chat.attachmentUploadProgress}
+        isRecordingVoiceNote={chat.isRecordingVoiceNote}
+        attachmentsAvailable={chat.attachmentsAvailable}
+        isVoiceNoteSupported={chat.isVoiceNoteSupported}
+        onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
+      />
+    );
+  };
 
   const renderChatList = () => (
     <ChatListScreen
@@ -128,21 +138,25 @@ export default function TabShell() {
     />
   );
 
-  const renderPeerProfile = peerId => (
-    <PeerProfileScreen
-      peerId={peerId}
-      presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
-      isBlocked={Boolean(chat.isUserBlocked?.(peerId))}
-      callHistory={callFlow.callHistory}
-      currentUserId={chat.currentUserId}
-      onBack={goBack}
-      onMessage={openChatConversation}
-      onAudioCall={startAudioCallWith}
-      onVideoCall={startVideoCallWith}
-      onBlock={chat.blockPeer}
-      onUnblock={chat.unblockPeer}
-    />
-  );
+  /** @param {string | null} peerId */
+  const renderPeerProfile = peerId => {
+    if (!peerId) return null;
+    return (
+      <PeerProfileScreen
+        peerId={peerId}
+        presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
+        isBlocked={Boolean(chat.isUserBlocked?.(peerId))}
+        callHistory={callFlow.callHistory}
+        currentUserId={chat.currentUserId}
+        onBack={goBack}
+        onMessage={openChatConversation}
+        onAudioCall={startAudioCallWith}
+        onVideoCall={startVideoCallWith}
+        onBlock={chat.blockPeer}
+        onUnblock={chat.unblockPeer}
+      />
+    );
+  };
 
   const renderCalls = () => (
     <Lobby
@@ -175,7 +189,7 @@ export default function TabShell() {
       callHistory={callFlow.callHistory}
       missedCallCount={callFlow.missedCallCount}
       onMarkMissedRead={callFlow.markMissedCallsRead}
-      onRedial={peerId => startVideoCallWith(peerId)}
+      onRedial={startVideoCallWith}
     />
   );
 

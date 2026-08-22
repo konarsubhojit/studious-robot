@@ -234,7 +234,7 @@ function buildListItems(orderedEntries) {
  * client must never blank out or crash an older one.
  *
  * @param {{ message: object, isOwn: boolean, styles: object,
- *   onDownloadAttachment?: (message: object) => void }} props
+ *   onDownloadAttachment?: (message: import('../hooks/useMessaging').ChatMessage) => void }} props
  */
 function MessageContent({ message, isOwn, styles, onDownloadAttachment }) {
   const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
@@ -543,14 +543,14 @@ function MessageSkeleton() {
  *   Entries tagged `type: 'call'` are rendered as call records inline in the
  *   timeline; everything else is a text message.
  * @param {(body: string, options?: { replyTo?: string|null }) => void} props.onSendMessage
- * @param {(message: object) => void} [props.onRetryMessage] - Re-sends a failed message.
+ * @param {(message: import('../hooks/useMessaging').ChatMessage) => void} [props.onRetryMessage] - Re-sends a failed message.
  *   Falls back to re-sending its body through `onSendMessage` when absent.
- * @param {(message: object) => void} [props.onDeleteMessage] - Deletes one of the user's own
+ * @param {(message: import('../hooks/useMessaging').ChatMessage) => void} [props.onDeleteMessage] - Deletes one of the user's own
  *   messages, revealed by swiping the bubble left.
- * @param {(message: object, emoji: string, action: 'add'|'remove') => void} [props.onReactToMessage]
+ * @param {(message: import('../hooks/useMessaging').ChatMessage, emoji: string, action: 'add'|'remove') => void} [props.onReactToMessage]
  *   Adds or removes one of the user's emoji reactions, from the long-press reaction bar or
  *   by tapping an existing chip.
- * @param {(message: object) => void} [props.onDownloadAttachment] Saves a message attachment.
+ * @param {(message: import('../hooks/useMessaging').ChatMessage) => void} [props.onDownloadAttachment] Saves a message attachment.
  * @param {() => void} [props.onLoadOlder]
  * @param {() => void} props.onBack
  * @param {string} props.currentUserId

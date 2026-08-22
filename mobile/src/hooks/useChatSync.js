@@ -2,6 +2,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
 /**
+ * Online/offline snapshot for the peer whose conversation is open.
+ *
+ * @typedef {{ status?: string, online: boolean, unknown?: boolean }} PeerPresence
+ */
+
+/**
  * Owns text-chat wiring for the AppShell's Chats tab: fetching the
  * conversation list once identity is established, keeping `useCallFlow`'s
  * `activeChatPeerId` mirror in sync with the locally open conversation
@@ -19,7 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
  *   setActiveChatPeerId: (peerId: string | null) => void,
  *   fetchMessagesForPeer: (peerId: string, options?: { before?: string }) => Promise<unknown>,
  *   markConversationRead: (peerId: string) => Promise<void>,
- *   checkPresence: (peerId: string) => Promise<unknown>,
+ *   checkPresence: (peerId: string) => Promise<PeerPresence | null>,
  * }} params
  */
 export default function useChatSync({
@@ -33,7 +39,9 @@ export default function useChatSync({
   checkPresence,
 }) {
   // Presence snapshot for the currently open conversation's peer.
-  const [peerPresence, setPeerPresence] = useState(/** @type {unknown} */ (null));
+  const [peerPresence, setPeerPresence] = useState(
+    /** @type {PeerPresence | null} */ (null),
+  );
   const [isRefreshingConversations, setIsRefreshingConversations] = useState(false);
   // True while the very first conversation-list / message-history fetch is in
   // flight, so the screens can show skeleton placeholders instead of an

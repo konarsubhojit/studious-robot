@@ -83,6 +83,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `SettingsScreen.js`
   - [x] `StatusBanner.js`
   - [x] `SwipeableRow.js`
+  - [x] `TabShell.js`
 - [ ] `src/call/` (in progress)
   - [x] `callStateMachine.js`
   - [x] `CallProvider.js`
