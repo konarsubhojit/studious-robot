@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -35,6 +36,14 @@ const fs = require('fs');
 const http2 = require('http2');
 const https = require('https');
 const { createSign, createHmac } = require('crypto');
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -90,6 +99,7 @@ const CANCELLED_CALL_TTL_SECONDS = 60;
 
 // ─── APNs JWT cache ───────────────────────────────────────────────────────────
 
+/** @type {string|null} */
 let _apnsJwt = null;
 let _apnsJwtExpiresAt = 0;
 
@@ -126,8 +136,10 @@ function buildApnsJwt(config) {
 
 // ─── FCM OAuth2 access-token cache ─────────────────────────────────────────────
 
+/** @type {string|null} */
 let _fcmAccessToken = null;
 let _fcmAccessTokenExpiresAt = 0;
+/** @type {string|null} */
 let _fcmAccessTokenEmail = null;
 
 /**
@@ -221,7 +233,7 @@ function requestFcmAccessToken(config) {
       }
     );
     req.on('error', () => {
-      resolve({ ok: false, statusCode: null, reason: 'token_request_failed' });
+      resolve({ ok: false, reason: 'token_request_failed' });
     });
     req.end(body);
   });
@@ -246,7 +258,7 @@ async function getFcmAccessToken(config) {
 
   const result = await requestFcmAccessToken(config);
   if (result.ok) {
-    _fcmAccessToken = result.accessToken;
+    _fcmAccessToken = result.accessToken ?? null;
     _fcmAccessTokenEmail = config.clientEmail;
     _fcmAccessTokenExpiresAt = nowSecs + FCM_TOKEN_TTL_SECS;
   }
@@ -292,7 +304,7 @@ function loadFcmConfig() {
     try {
       json = fs.readFileSync(raw, 'utf8');
     } catch (error) {
-      console.warn(`[push] FCM service account file unreadable: ${error?.message}`);
+      console.warn(`[push] FCM service account file unreadable: ${errorMessage(error)}`);
       return null;
     }
   }
@@ -301,7 +313,7 @@ function loadFcmConfig() {
   try {
     parsed = JSON.parse(json);
   } catch (error) {
-    console.warn(`[push] FCM service account JSON is invalid: ${error?.message}`);
+    console.warn(`[push] FCM service account JSON is invalid: ${errorMessage(error)}`);
     return null;
   }
 
@@ -398,8 +410,10 @@ function loadNotificationHubConfig() {
   };
 }
 
+/** @type {string|null} */
 let _notificationHubToken = null;
 let _notificationHubTokenExpiresAt = 0;
+/** @type {string|null} */
 let _notificationHubTokenUri = null;
 
 /**
@@ -619,6 +633,7 @@ function buildApnsPayload(callData) {
  * @returns {Record<string, string>}
  */
 function buildDataBlock(envelope) {
+  /** @type {Record<string, string>} */
   const data = {};
   for (const [key, value] of Object.entries(envelope.data)) {
     data[key] = String(value);
@@ -659,7 +674,12 @@ function buildFcmPayload(pushToken, callData) {
  * @param {PushEnvelope} envelope
  * @returns {string}
  */
-function buildFcmEnvelopePayload(pushToken, envelope, { ttlSeconds = null } = {}) {
+function buildFcmEnvelopePayload(
+  pushToken,
+  envelope,
+  /** @type {{ ttlSeconds?: number|null }} */ { ttlSeconds = null } = {}
+) {
+  /** @type {Record<string, string>} */
   const apnsHeaders = { 'apns-priority': '10' };
   if (ttlSeconds && Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
     apnsHeaders['apns-expiration'] = String(Math.floor(Date.now() / 1000) + ttlSeconds);
@@ -707,7 +727,10 @@ function buildNotificationHubAndroidPayload(callData) {
  * @param {PushEnvelope} envelope
  * @returns {{ message: { android: { data: Record<string, string>, priority: string } } }}
  */
-function buildNotificationHubAndroidEnvelopePayload(envelope, { ttlSeconds = null } = {}) {
+function buildNotificationHubAndroidEnvelopePayload(
+  envelope,
+  /** @type {{ ttlSeconds?: number|null }} */ { ttlSeconds = null } = {}
+) {
   return {
     message: {
       android: {
@@ -726,7 +749,8 @@ function buildNotificationHubAndroidEnvelopePayload(envelope, { ttlSeconds = nul
 /**
  * Perform one APNs HTTP/2 delivery attempt.
  *
- * @param {object} config
+ * @param {{ production?: boolean, bundleId: string, keyId: string, teamId: string, key: string }}
+ *   config
  * @param {string} pushToken
  * @param {PushEnvelope} envelope
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
@@ -755,6 +779,7 @@ function sendApnsOnce(config, pushToken, envelope) {
     });
 
     let body = '';
+    /** @type {number|undefined} */
     let statusCode;
 
     req.on('response', (headers) => {
@@ -789,7 +814,8 @@ function sendApnsOnce(config, pushToken, envelope) {
  * credentials, then POSTs the v1 message to
  * `/v1/projects/{projectId}/messages:send`.
  *
- * @param {object} config
+ * @param {{ projectId: string, clientEmail: string, privateKey: string, tokenUri: string }}
+ *   config
  * @param {string} pushToken
  * @param {PushEnvelope} envelope
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
@@ -801,7 +827,7 @@ async function sendFcmOnce(config, pushToken, envelope) {
     // failures surface their status so withRetry can short-circuit.
     return {
       ok: false,
-      statusCode: token.statusCode ?? null,
+      statusCode: token.statusCode,
       reason: token.reason ?? 'token_error',
     };
   }
@@ -887,6 +913,7 @@ function sendNotificationHubOnce(config, channel, envelope) {
     new URL(config.hubName, config.endpoint).toString()
   );
   const payloadLen = Buffer.byteLength(payload);
+  /** @type {Record<string, string|number>} */
   const headers = {
     Authorization: sasToken,
     'Content-Type': 'application/json;charset=utf-8',
@@ -894,7 +921,7 @@ function sendNotificationHubOnce(config, channel, envelope) {
     'ServiceBusNotification-Format': format,
     'ServiceBusNotification-DeviceHandle': channel.pushToken,
   };
-  if (Number.isFinite(envelope.ttlSeconds) && envelope.ttlSeconds > 0) {
+  if (Number.isFinite(envelope.ttlSeconds) && (envelope.ttlSeconds ?? 0) > 0) {
     headers['ServiceBusNotification-TTL'] = String(envelope.ttlSeconds);
   }
 
@@ -947,7 +974,12 @@ function sendNotificationHubOnce(config, channel, envelope) {
   });
 }
 
+/**
+ * @param {Record<string, string|string[]|undefined>} [headers]
+ * @returns {Record<string, string>} the `x-ms-*` headers, lower-cased.
+ */
 function extractNotificationHubCorrelationHeaders(headers = {}) {
+  /** @type {Record<string, string>} */
   const output = {};
   for (const [key, value] of Object.entries(headers)) {
     const lower = key.toLowerCase();
@@ -999,6 +1031,7 @@ const DEAD_TOKEN_REASON_PATTERN =
  */
 function isDeadTokenResult(result) {
   if (!result || result.ok) return false;
+  if (result.statusCode === undefined) return false;
   if (!DEAD_TOKEN_STATUS_CODES.has(result.statusCode)) return false;
   return typeof result.reason === 'string' && DEAD_TOKEN_REASON_PATTERN.test(result.reason);
 }
@@ -1012,6 +1045,7 @@ function isDeadTokenResult(result) {
  * @returns {Promise<{ ok: boolean, statusCode?: number, reason?: string }>}
  */
 async function withRetry(fn, label) {
+  /** @type {{ ok: boolean, statusCode?: number, reason?: string }|undefined} */
   let last;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -1031,8 +1065,10 @@ async function withRetry(fn, label) {
         `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} failed status=${result.statusCode}`
       );
     } catch (error) {
-      last = { ok: false, statusCode: null, reason: error?.message };
-      console.error(`[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${error?.message}`);
+      last = { ok: false, reason: errorMessage(error) };
+      console.error(
+        `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${errorMessage(error)}`
+      );
     }
 
     if (attempt < MAX_ATTEMPTS) {
@@ -1104,7 +1140,9 @@ async function tryNotificationHub(channel, envelope, label) {
  *   deviceId: string,
  *   transport: 'notification_hub'|'direct',
  *   statusCode?: number,
- *   reason?: string
+ *   reason?: string,
+ *   trackingId?: string|null,
+ *   deadToken: boolean
  * }>}
  */
 async function deliverPush(channel, envelope) {
@@ -1180,7 +1218,16 @@ async function deliverPush(channel, envelope) {
 /**
  * Log the outcome of a delivery attempt for operational visibility.
  *
- * @param {{ ok: boolean, provider: string, deviceId: string, transport: string, statusCode?: number, reason?: string, trackingId?: string|null }} outcome
+ * @param {{
+ *   ok: boolean,
+ *   provider: string,
+ *   deviceId: string,
+ *   transport: string,
+ *   statusCode?: number,
+ *   reason?: string,
+ *   trackingId?: string|null,
+ *   deadToken?: boolean,
+ * }} outcome
  * @param {string} description - Event description, e.g. `call.incoming callId=…`.
  */
 function logDeliveryOutcome(outcome, description) {
@@ -1331,7 +1378,10 @@ module.exports = {
   _resetFcmTokenCache,
   _loadFcmConfig: loadFcmConfig,
   _buildFcmPayload: buildFcmPayload,
-  _buildFcmMessagePayload: (pushToken, messageData) =>
+  _buildFcmMessagePayload: (
+    /** @type {string} */ pushToken,
+    /** @type {any} */ messageData
+  ) =>
     buildFcmEnvelopePayload(pushToken, buildMessageEnvelope(messageData)),
   _resetNotificationHubTokenCache,
   _loadNotificationHubConfig: loadNotificationHubConfig,
@@ -1339,7 +1389,7 @@ module.exports = {
   _buildNotificationHubAndroidPayload: buildNotificationHubAndroidPayload,
   _buildCallCancelledEnvelope: buildCallCancelledEnvelope,
   _resolveCallTtlSeconds: resolveCallTtlSeconds,
-  _buildNotificationHubAndroidMessagePayload: (messageData) =>
+  _buildNotificationHubAndroidMessagePayload: (/** @type {any} */ messageData) =>
     buildNotificationHubAndroidEnvelopePayload(buildMessageEnvelope(messageData)),
   _isDeadTokenResult: isDeadTokenResult,
 };

@@ -121,5 +121,6 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/domain/` (callTimeline, calls, notifications)
 - [x] `src/identity.js`
 - [x] `src/firebaseAuth.js`
-- [ ] remaining `src/*.js` modules
+- [x] `src/push.js`
+- [x] remaining `src/*.js` modules
 - [ ] `test/`
