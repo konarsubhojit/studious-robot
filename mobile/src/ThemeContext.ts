@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import { palettes, radius, sizes, spacing, THEME_MODES, typography } from './theme';
+import type { ThemeColors } from './theme';
 
 /**
  * Build the theme object handed to consumers for a given mode/scheme pair.
@@ -50,7 +51,7 @@ export function useTheme() {
  * @param {(colors: import('./theme').ThemeColors) => T} factory
  * @returns {T}
  */
-export function useThemedStyles<T>(factory: (colors: import('./theme').ThemeColors) => T): T {
+export function useThemedStyles<T>(factory: (colors: ThemeColors) => T): T {
   const { colors } = useTheme();
   return useMemo(() => factory(colors), [factory, colors]);
 }

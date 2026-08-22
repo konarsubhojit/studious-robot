@@ -5,6 +5,10 @@ import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
+import type { CallRecord } from '../../../shared/signaling/schemas';
+import type { CallStatus } from './StatusBanner';
+import type { MutableRefObject } from 'react';
+import type { ThemeColors } from '../theme';
 
 /**
  * Derives the number of seconds until ringTimeoutAt (clamped to ≥ 0).
@@ -32,7 +36,7 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
  * @param {() => void} props.onAccept - Called when the user presses Accept.
  * @param {() => void} props.onDecline - Called when the user presses Decline.
  */
-export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }: { incomingCall?: import('../../../shared/signaling/schemas').CallRecord | null; status: import('./StatusBanner').CallStatus; onAccept: () => void; onDecline: () => void; }) {
+export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; }) {
   const styles = useThemedStyles(createStyles);
 
   const ringTimeoutAt = incomingCall?.ringTimeoutAt ?? null;
@@ -41,7 +45,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   /** @type {import('react').MutableRefObject<ReturnType<typeof setInterval> | null>} */
-  const intervalRef: import('react').MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
+  const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
 
   // ── Pulse animation ───────────────────────────────────────────────────────
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -167,7 +171,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

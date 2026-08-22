@@ -3,23 +3,27 @@ import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import type { ThemeColors } from '../theme';
+
+export type CallTopBarProps = {
+  elapsedCallSeconds: number;
+  connectionQuality: { bars: number; label: string; };
+  /** Remote participant name/id. */
+  participantLabel?: string | null;
+  /** Shows the floating call bubble and returns to the tab shell. */
+  onMinimize?: () => void;
+};
 
 /**
  * In-call top bar overlay: participant label + timer (left), connection
  * strength indicator and an optional minimize button (right).
- *
- * @param {object} props
- * @param {number} props.elapsedCallSeconds
- * @param {{ bars: number, label: string }} props.connectionQuality
- * @param {string|null} [props.participantLabel] - Remote participant name/id.
- * @param {() => void} [props.onMinimize] - Shows the floating call bubble and returns to the tab shell.
  */
 export default function CallTopBar({
   elapsedCallSeconds,
   connectionQuality,
   participantLabel = null,
   onMinimize,
-}: { elapsedCallSeconds: number; connectionQuality: { bars: number; label: string; }; participantLabel?: string | null; onMinimize?: () => void; }) {
+}: CallTopBarProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -77,7 +81,7 @@ export default function CallTopBar({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     topBar: {
       minHeight: 44,

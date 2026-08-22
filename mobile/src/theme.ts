@@ -1,3 +1,5 @@
+import type { TextStyle } from 'react-native';
+
 /**
  * Centralised design tokens for the WeTalk UI.
  *
@@ -175,7 +177,7 @@ export function touchSlop(size: number): number {
  *   import('react-native').TextStyle
  * >}
  */
-export const typography: Record<'title' | 'sectionTitle' | 'groupLabel' | 'body' | 'label' | 'emphasis' | 'hint', import('react-native').TextStyle> = {
+export const typography: Record<'title' | 'sectionTitle' | 'groupLabel' | 'body' | 'label' | 'emphasis' | 'hint', TextStyle> = {
   title: { fontSize: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 16, fontWeight: '700' },
   groupLabel: {

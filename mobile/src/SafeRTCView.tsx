@@ -2,6 +2,8 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RTCView } from 'react-native-webrtc';
 import { logError } from './appLogger';
+import type { RTCVideoViewProps } from 'react-native-webrtc';
+import type { StyleProp, ViewStyle } from 'react-native';
 
 /**
  * Crash-safe wrapper around react-native-webrtc's <RTCView>.
@@ -27,7 +29,7 @@ import { logError } from './appLogger';
  *
  * @extends {React.Component<SafeRTCViewProps, SafeRTCViewState>}
  */
-export type SafeRTCViewProps = Omit<import('react-native-webrtc').RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: import('react-native').StyleProp<import('react-native').ViewStyle>; };
+export type SafeRTCViewProps = Omit<RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: StyleProp<ViewStyle>; };
 export type SafeRTCViewState = { hasError: boolean; };
 export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeRTCViewState> {
   /** @param {SafeRTCViewProps} props */

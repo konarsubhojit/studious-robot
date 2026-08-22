@@ -26,6 +26,17 @@ export type PeerPresence = { status?: string; online: boolean; unknown?: boolean
  *   checkPresence: (peerId: string) => Promise<PeerPresence | null>,
  * }} params
  */
+export type UseChatSyncParams = {
+  chatPeerId: string | null;
+  isRegistered: boolean;
+  messagesByPeer: Record<string, Array<{ createdAt?: string; }>>;
+  fetchConversations: () => Promise<void>;
+  setActiveChatPeerId: (peerId: string | null) => void;
+  fetchMessagesForPeer: (peerId: string, options?: { before?: string; }) => Promise<unknown>;
+  markConversationRead: (peerId: string) => Promise<void>;
+  checkPresence: (peerId: string) => Promise<PeerPresence | null>;
+};
+
 export default function useChatSync({
   chatPeerId,
   isRegistered,
@@ -35,16 +46,7 @@ export default function useChatSync({
   fetchMessagesForPeer,
   markConversationRead,
   checkPresence,
-}: {
-        chatPeerId: string | null;
-        isRegistered: boolean;
-        messagesByPeer: Record<string, Array<{ createdAt?: string; }>>;
-        fetchConversations: () => Promise<void>;
-        setActiveChatPeerId: (peerId: string | null) => void;
-        fetchMessagesForPeer: (peerId: string, options?: { before?: string; }) => Promise<unknown>;
-        markConversationRead: (peerId: string) => Promise<void>;
-        checkPresence: (peerId: string) => Promise<PeerPresence | null>;
-    }) {
+}: UseChatSyncParams) {
   // Presence snapshot for the currently open conversation's peer.
   const [peerPresence, setPeerPresence] = useState(
     (null as PeerPresence | null),

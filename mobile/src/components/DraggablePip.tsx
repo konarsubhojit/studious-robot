@@ -5,6 +5,22 @@ import SafeRTCView from '../SafeRTCView';
 import { PIP_HEIGHT, PIP_WIDTH } from '../pipConstants';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
+import type { Gesture } from 'react-native-gesture-handler';
+import type { ThemeColors } from '../theme';
+
+export type DraggablePipProps = {
+  /** Composed gesture from the PiP hook. */
+  gesture: ReturnType<typeof Gesture.Race>;
+  /** Animated transform style. */
+  animatedStyle: object;
+  streamURL: string | null;
+  /** True when this tile shows the local stream. */
+  mirror: boolean;
+  /** Local microphone is muted. */
+  isMuted?: boolean;
+  /** Local camera is on. */
+  isVideoEnabled?: boolean;
+};
 
 /**
  * Draggable picture-in-picture self-view. Tap swaps streams; drag repositions
@@ -12,15 +28,6 @@ import { radius, spacing, typography } from '../theme';
  *
  * When the PiP represents the local user (`mirror=true`), visual overlays are
  * shown to communicate muted and camera-off states at a glance.
- *
- * @param {object} props
- * @param {ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>} props.gesture
- *   Composed gesture from the PiP hook.
- * @param {object} props.animatedStyle - Animated transform style.
- * @param {string|null} props.streamURL
- * @param {boolean} props.mirror - True when this tile shows the local stream.
- * @param {boolean} [props.isMuted] - Local microphone is muted.
- * @param {boolean} [props.isVideoEnabled] - Local camera is on.
  */
 export default function DraggablePip({
   gesture,
@@ -29,7 +36,7 @@ export default function DraggablePip({
   mirror,
   isMuted = false,
   isVideoEnabled = true,
-}: { gesture: ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>; animatedStyle: object; streamURL: string | null; mirror: boolean; isMuted?: boolean; isVideoEnabled?: boolean; }) {
+}: DraggablePipProps) {
   const styles = useThemedStyles(createStyles);
 
   const showVideoOff = mirror && !isVideoEnabled;
@@ -67,7 +74,7 @@ export default function DraggablePip({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     localPip: {
       position: 'absolute',

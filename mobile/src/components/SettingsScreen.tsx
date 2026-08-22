@@ -14,6 +14,9 @@ import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../t
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
+import type { CallStatus } from './StatusBanner';
+import type { ReactNode } from 'react';
+import type { ThemeColors } from '../theme';
 
 /**
  * Small uppercase group label used to introduce each settings section,
@@ -24,7 +27,7 @@ import StatusBanner from './StatusBanner';
  * @param {string} [props.icon] - Semantic icon key from ICONS map.
  * @param {import('react').ReactNode} props.children
  */
-function SectionLabel({ icon, children }: { icon?: string; children: import('react').ReactNode; }) {
+function SectionLabel({ icon, children }: { icon?: string; children: ReactNode; }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -48,6 +51,28 @@ const APPEARANCE_OPTIONS = [
   { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
 ];
 
+export type SettingsScreenProps = {
+  /** Current username. */
+  userId: string;
+  /** Persist a new username. */
+  onSaveUserId: (userId: string) => void;
+  /** Current signaling server URL. */
+  signalingUrl: string;
+  /** Persist a new URL. */
+  onSaveSignalingUrl: (url: string) => void;
+  /** Clear the identity and return to registration. */
+  onSignOut: () => void;
+  /** Dismiss the screen (back to Lobby). */
+  onClose: () => void;
+  /** Optional: export diagnostic logs. */
+  onExportLogs?: () => void;
+  /** Whether the legacy room-join developer tools are shown in the Lobby. */
+  developerModeEnabled?: boolean;
+  /** Toggle developer mode on/off. */
+  onToggleDeveloperMode?: () => void;
+  status?: CallStatus;
+};
+
 /**
  * Account & connection settings.
  *
@@ -58,20 +83,6 @@ const APPEARANCE_OPTIONS = [
  * Purely presentational – all behaviour is supplied via props.  Local input
  * state is committed only when the user presses the matching "Save" button so
  * an in-progress edit never mutates the live identity.
- *
- * @param {object} props
- * @param {string} props.userId - Current username.
- * @param {(userId: string) => void} props.onSaveUserId - Persist a new username.
- * @param {string} props.signalingUrl - Current signaling server URL.
- * @param {(url: string) => void} props.onSaveSignalingUrl - Persist a new URL.
- * @param {() => void} props.onSignOut - Clear the identity and return to registration.
- * @param {() => void} props.onClose - Dismiss the screen (back to Lobby).
- * @param {() => void} [props.onExportLogs] - Optional: export diagnostic logs.
- * @param {boolean} [props.developerModeEnabled] - Whether the legacy room-join
- *   developer tools are shown in the Lobby.
- * @param {() => void} [props.onToggleDeveloperMode] - Toggle developer mode
- *   on/off.
- * @param {import('./StatusBanner').CallStatus} [props.status]
  */
 export default function SettingsScreen({
   userId,
@@ -84,7 +95,7 @@ export default function SettingsScreen({
   developerModeEnabled,
   onToggleDeveloperMode,
   status,
-}: { userId: string; onSaveUserId: (userId: string) => void; signalingUrl: string; onSaveSignalingUrl: (url: string) => void; onSignOut: () => void; onClose: () => void; onExportLogs?: () => void; developerModeEnabled?: boolean; onToggleDeveloperMode?: () => void; status?: import('./StatusBanner').CallStatus; }) {
+}: SettingsScreenProps) {
   const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -249,7 +260,7 @@ export default function SettingsScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

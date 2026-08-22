@@ -5,6 +5,8 @@ import { radius, spacing } from '../theme';
 import AppButton from './AppButton';
 import ErrorState from './ErrorState';
 import StatusBanner from './StatusBanner';
+import type { CallStatus } from './StatusBanner';
+import type { ThemeColors } from '../theme';
 
 /**
  * First-launch registration screen.
@@ -26,13 +28,21 @@ import StatusBanner from './StatusBanner';
  * @param {boolean} [props.isMicrosoftSignInAvailable]
  */
 export type AuthMethod = 'email-register' | 'email-sign-in' | 'google' | 'microsoft';
+export type RegistrationScreenProps = {
+  onRegister: (registration: { userId: string; method: AuthMethod; email?: string; password?: string; }) => void;
+  isLoading?: boolean;
+  status?: CallStatus;
+  isGoogleSignInAvailable?: boolean;
+  isMicrosoftSignInAvailable?: boolean;
+};
+
 export default function RegistrationScreen({
   onRegister,
   isLoading = false,
   status,
   isGoogleSignInAvailable = true,
   isMicrosoftSignInAvailable = true,
-}: { onRegister: (registration: { userId: string; method: AuthMethod; email?: string; password?: string; }) => void; isLoading?: boolean; status?: import('./StatusBanner').CallStatus; isGoogleSignInAvailable?: boolean; isMicrosoftSignInAvailable?: boolean; }) {
+}: RegistrationScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -180,7 +190,7 @@ export default function RegistrationScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

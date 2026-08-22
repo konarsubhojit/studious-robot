@@ -1,3 +1,5 @@
+import type MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
 /**
  * Lazy-loaded wrapper for react-native-vector-icons/MaterialCommunityIcons.
  *
@@ -14,7 +16,7 @@
  * Icon names: https://pictogrammers.com/library/mdi/
  */
 
-export type MaterialCommunityIcons = typeof import('react-native-vector-icons/MaterialCommunityIcons').default;
+export type MaterialCommunityIcons = typeof MaterialCommunityIcons;
 
 /** @type {MaterialCommunityIcons | null | undefined} */
 let _cache: MaterialCommunityIcons | null | undefined;

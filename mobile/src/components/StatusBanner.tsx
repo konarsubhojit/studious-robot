@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /**
  * Tinted background style for a severity, or `null` for plain 'info'.
@@ -21,7 +22,7 @@ const severityTint = (styles: ReturnType<typeof createStyles>, severity: string)
  * @param {import('../theme').ThemeColors} colors
  * @param {string} severity
  */
-const severityColor = (colors: import('../theme').ThemeColors, severity: string) =>
+const severityColor = (colors: ThemeColors, severity: string) =>
   ({
     info: colors.textMuted,
     success: colors.success,
@@ -69,7 +70,7 @@ export default function StatusBanner({ status, style, textStyle }: { status?: Ca
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       borderRadius: radius.sm,

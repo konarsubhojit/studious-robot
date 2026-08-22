@@ -4,6 +4,7 @@ import { logError } from './appLogger';
 import { loadThemeMode, saveThemeMode } from './settingsStorage';
 import ThemeContext, { buildTheme } from './ThemeContext';
 import { resolveScheme, THEME_MODES } from './theme';
+import type { ReactNode } from 'react';
 
 /**
  * Provides the active palette to the tree and keeps it in sync with both the
@@ -19,7 +20,7 @@ import { resolveScheme, THEME_MODES } from './theme';
  * @param {string} [props.initialMode] - Seed mode before the persisted one loads.
  * @param {import('react').ReactNode} props.children
  */
-export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, children }: { initialMode?: string; children: import('react').ReactNode; }) {
+export default function ThemeProvider({ initialMode = THEME_MODES.SYSTEM, children }: { initialMode?: string; children: ReactNode; }) {
   const systemScheme = useColorScheme();
   const [mode, setModeState] = useState(initialMode);
 

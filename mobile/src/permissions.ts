@@ -1,6 +1,7 @@
 import { PermissionsAndroid, Platform } from 'react-native';
+import type { Permission } from 'react-native';
 
-export type Permission = import('react-native').Permission;
+export type { Permission };
 
 const CAMERA_PERMISSION = PermissionsAndroid?.PERMISSIONS?.CAMERA;
 const MICROPHONE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.RECORD_AUDIO;

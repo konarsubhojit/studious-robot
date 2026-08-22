@@ -1,11 +1,12 @@
 import RNFS from 'react-native-fs';
 import { logError, logWarn } from '../appLogger';
+import type { InitialState } from '@react-navigation/native';
 
 /**
  * Persisted React Navigation state, in the partial shape the container accepts
  * as `initialState`.
  */
-export type PersistedNavigationState = import('@react-navigation/native').InitialState;
+export type PersistedNavigationState = InitialState;
 
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
 

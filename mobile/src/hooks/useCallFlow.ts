@@ -59,6 +59,10 @@ import {
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
+import type { CallRecord } from '../../../shared/signaling/schemas';
+import type { CallStatus } from '../components/StatusBanner';
+import type { MediaStream } from 'react-native-webrtc';
+import type { Socket } from 'socket.io-client';
 import {
   bringAppToForeground,
   clearPendingAnswer,
@@ -78,13 +82,13 @@ import {
   stopOutgoingRingback,
 } from '../ringtone';
 
-export type CallRecord = import('../../../shared/signaling/schemas').CallRecord;
+export type { CallRecord };
 
 /**
  * An accept failure annotated with the canonical reason reported to the server.
  */
 export type AnswerError = Error & { answerFailureReason?: string; };
-export type CallStatus = import('../components/StatusBanner').CallStatus;
+export type { CallStatus };
 
 /**
  * @param {unknown} error
@@ -97,8 +101,8 @@ function errorMessage(error: unknown): string | undefined {
  * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
  * properties it supports at runtime but omits from its published types.
  */
-export type PeerConnection = import('react-native-webrtc').RTCPeerConnection & { onicecandidate: ((event: any) => void) | null; ontrack: ((event: any) => void) | null; oniceconnectionstatechange: ((event: any) => void) | null; onconnectionstatechange: ((event: any) => void) | null; };
-export type WebrtcMediaStream = import('react-native-webrtc').MediaStream;
+export type PeerConnection = RTCPeerConnection & { onicecandidate: ((event: any) => void) | null; ontrack: ((event: any) => void) | null; oniceconnectionstatechange: ((event: any) => void) | null; onconnectionstatechange: ((event: any) => void) | null; };
+export type WebrtcMediaStream = MediaStream;
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -200,7 +204,7 @@ export const CALL_END_REASON_LABELS: Record<string, string> = {
  * @param {ReturnType<typeof import('../signalingClient').createSignalingClient>} signaling
  * @param {string[]} activeCallIds
  */
-function reportOwnCallState(signaling: ReturnType<typeof import('../signalingClient').createSignalingClient>, activeCallIds: string[]) {
+function reportOwnCallState(signaling: ReturnType<typeof createSignalingClient>, activeCallIds: string[]) {
   logInfo('[CallFlow] Reporting own call state after busy rejection', { activeCallIds });
   signaling.emit(
     CLIENT_EVENTS.CALL_STATE_REPORT,
@@ -316,11 +320,11 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
-  const socketRef = useRef((null as import('socket.io-client').Socket | null));
+  const socketRef = useRef((null as Socket | null));
   // Typed wrapper around `socketRef.current`: validates every payload against
   // the shared contract and queues fire-and-forget emits while offline.
   const signalingRef = useRef(
-    (null as ReturnType<typeof import('../signalingClient').createSignalingClient> | null),
+    (null as ReturnType<typeof createSignalingClient> | null),
   );
   const peerConnectionRef = useRef((null as PeerConnection | null));
   const pendingPeerConnectionRef = useRef((null as Promise<PeerConnection> | null));

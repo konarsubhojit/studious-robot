@@ -15,6 +15,7 @@ import { triggerHaptic } from '../haptics';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
+import type { ThemeColors } from '../theme';
 
 const BUBBLE_WIDTH = 180;
 const BUBBLE_HEIGHT = 72;
@@ -28,6 +29,19 @@ const FLING_DISMISS_VELOCITY = 1200;
 
 /** Duration of the fling-out animation played before `onDismiss` fires. */
 const DISMISS_DURATION_MS = 160;
+
+export type FloatingCallBubbleProps = {
+  participantLabel?: string | null;
+  elapsedCallSeconds?: number;
+  isMuted?: boolean;
+  isScreenSharing?: boolean;
+  onExpand: () => void;
+  onMuteToggle?: () => void;
+  onEndCall?: () => void;
+  onStopScreenShare?: () => void;
+  /** Called once the bubble has been flung off-screen. When omitted, fling-to-dismiss is disabled and a fling just springs the bubble back to the nearest edge. */
+  onDismiss?: () => void;
+};
 
 /**
  * In-app floating call bubble: a small draggable "call in progress" pill,
@@ -45,19 +59,6 @@ const DISMISS_DURATION_MS = 160;
  * every frame is computed on the UI thread (no JS round trip); on release the
  * bubble springs to the nearest horizontal screen edge, and a fast sideways
  * fling animates it off-screen and reports `onDismiss`.
- *
- * @param {object} props
- * @param {string|null} [props.participantLabel]
- * @param {number} [props.elapsedCallSeconds]
- * @param {boolean} [props.isMuted]
- * @param {boolean} [props.isScreenSharing]
- * @param {() => void} props.onExpand
- * @param {() => void} [props.onMuteToggle]
- * @param {() => void} [props.onEndCall]
- * @param {() => void} [props.onStopScreenShare]
- * @param {() => void} [props.onDismiss] - Called once the bubble has been
- *   flung off-screen. When omitted, fling-to-dismiss is disabled and a fling
- *   just springs the bubble back to the nearest edge.
  */
 export default function FloatingCallBubble({
   participantLabel = null,
@@ -69,7 +70,7 @@ export default function FloatingCallBubble({
   onEndCall,
   onStopScreenShare,
   onDismiss,
-}: { participantLabel?: string | null; elapsedCallSeconds?: number; isMuted?: boolean; isScreenSharing?: boolean; onExpand: () => void; onMuteToggle?: () => void; onEndCall?: () => void; onStopScreenShare?: () => void; onDismiss?: () => void; }) {
+}: FloatingCallBubbleProps) {
   const styles = useThemedStyles(createStyles);
 
   const { width, height } = useWindowDimensions();
@@ -218,7 +219,7 @@ export default function FloatingCallBubble({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     bubble: {
       position: 'absolute',

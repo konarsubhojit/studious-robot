@@ -1,21 +1,26 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing } from '../theme';
+import type { ThemeColors } from '../theme';
+
+export type AppButtonProps = {
+  /** Visible button label (also the default a11y label). */
+  title: string;
+  onPress?: () => void;
+  /** Highlights the button (e.g. muted / video-off). */
+  active?: boolean;
+  disabled?: boolean;
+  /** Extra container style(s). */
+  style?: object;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+  testID?: string;
+};
 
 /**
  * Unified pill button used across both the lobby and the in-call controls so
  * the app speaks a single visual language.  Accessibility roles/labels/state
  * are first-class props rather than afterthoughts.
- *
- * @param {object} props
- * @param {string} props.title - Visible button label (also the default a11y label).
- * @param {() => void} [props.onPress]
- * @param {boolean} [props.active] - Highlights the button (e.g. muted / video-off).
- * @param {boolean} [props.disabled]
- * @param {object} [props.style] - Extra container style(s).
- * @param {string} [props.accessibilityLabel]
- * @param {string} [props.accessibilityHint]
- * @param {string} [props.testID]
  */
 export default function AppButton({
   title,
@@ -26,7 +31,7 @@ export default function AppButton({
   accessibilityLabel,
   accessibilityHint,
   testID,
-}: { title: string; onPress?: () => void; active?: boolean; disabled?: boolean; style?: object; accessibilityLabel?: string; accessibilityHint?: string; testID?: string; }) {
+}: AppButtonProps) {
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -51,7 +56,7 @@ export default function AppButton({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     button: {
       flex: 1,

@@ -1,3 +1,5 @@
+import type { RTCPeerConnection } from 'react-native-webrtc';
+
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
 
 /** Default video sender max bitrate in bits/second (1.5 Mbps). */
@@ -172,7 +174,7 @@ export function getTurnDiagnostics(): { configured: boolean; provider: 'none' | 
  * @param {{ videoMaxBps?: number, audioMaxBps?: number }} [opts]
  * @returns {Promise<void>}
  */
-export async function applyBitrateConstraints(pc: import('react-native-webrtc').RTCPeerConnection, opts: { videoMaxBps?: number; audioMaxBps?: number; } = {}): Promise<void> {
+export async function applyBitrateConstraints(pc: RTCPeerConnection, opts: { videoMaxBps?: number; audioMaxBps?: number; } = {}): Promise<void> {
   const videoMaxBps = opts.videoMaxBps ?? VIDEO_MAX_BITRATE_BPS;
   const audioMaxBps = opts.audioMaxBps ?? AUDIO_MAX_BITRATE_BPS;
 

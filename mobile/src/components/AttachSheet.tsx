@@ -1,6 +1,7 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /**
  * Bottom sheet offering the composer's attachment choices (photo / camera /
@@ -55,7 +56,7 @@ export default function AttachSheet({ visible, onClose, onSelect }: { visible: b
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     backdrop: {
       flex: 1,

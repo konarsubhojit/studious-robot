@@ -3,8 +3,10 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import AppButton from './AppButton';
+import type { CallHistoryEntry } from '../hooks/useCallHistory';
+import type { ThemeColors } from '../theme';
 
-export type CallHistoryEntry = import('../hooks/useCallHistory').CallHistoryEntry;
+export type { CallHistoryEntry };
 
 /** How many recent calls with this peer are listed. */
 const MAX_RECENT_CALLS = 5;
@@ -49,6 +51,24 @@ function formatTimestamp(isoString: string | null | undefined) {
   })}`;
 }
 
+export type PeerProfileScreenProps = {
+  peerId: string;
+  presence?: { online?: boolean; status?: string; } | null;
+  isBlocked?: boolean;
+  isMuted?: boolean;
+  /** Full history; filtered to this peer here. */
+  callHistory?: CallHistoryEntry[];
+  currentUserId?: string | null;
+  onBack?: () => void;
+  onMessage?: (peerId: string) => void;
+  onAudioCall?: (peerId: string) => void;
+  onVideoCall?: (peerId: string) => void;
+  onToggleMute?: (peerId: string) => void;
+  onBlock?: (peerId: string) => Promise<boolean> | void;
+  onUnblock?: (peerId: string) => Promise<boolean> | void;
+  onReport?: (peerId: string) => void;
+};
+
 /**
  * Per-contact screen, reachable from the chat header, a call-log row or a
  * search result.
@@ -58,22 +78,6 @@ function formatTimestamp(isoString: string | null | undefined) {
  * Blocking is enforced server-side in both directions (the peer disappears
  * from the directory, the conversation list and search, and can no longer
  * call or message), and the same control reverses it.
- *
- * @param {object} props
- * @param {string} props.peerId
- * @param {{ online?: boolean, status?: string } | null} [props.presence]
- * @param {boolean} [props.isBlocked]
- * @param {boolean} [props.isMuted]
- * @param {CallHistoryEntry[]} [props.callHistory] - Full history; filtered to this peer here.
- * @param {string | null} [props.currentUserId]
- * @param {() => void} [props.onBack]
- * @param {(peerId: string) => void} [props.onMessage]
- * @param {(peerId: string) => void} [props.onAudioCall]
- * @param {(peerId: string) => void} [props.onVideoCall]
- * @param {(peerId: string) => void} [props.onToggleMute]
- * @param {(peerId: string) => Promise<boolean> | void} [props.onBlock]
- * @param {(peerId: string) => Promise<boolean> | void} [props.onUnblock]
- * @param {(peerId: string) => void} [props.onReport]
  */
 export default function PeerProfileScreen({
   peerId,
@@ -90,7 +94,7 @@ export default function PeerProfileScreen({
   onBlock,
   onUnblock,
   onReport,
-}: { peerId: string; presence?: { online?: boolean; status?: string; } | null; isBlocked?: boolean; isMuted?: boolean; callHistory?: CallHistoryEntry[]; currentUserId?: string | null; onBack?: () => void; onMessage?: (peerId: string) => void; onAudioCall?: (peerId: string) => void; onVideoCall?: (peerId: string) => void; onToggleMute?: (peerId: string) => void; onBlock?: (peerId: string) => Promise<boolean> | void; onUnblock?: (peerId: string) => Promise<boolean> | void; onReport?: (peerId: string) => void; }) {
+}: PeerProfileScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
@@ -246,7 +250,7 @@ export default function PeerProfileScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,

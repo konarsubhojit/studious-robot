@@ -3,26 +3,35 @@ import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
+import type { Gesture } from 'react-native-gesture-handler';
+import type { ThemeColors } from '../theme';
+
+export type CallStageProps = {
+  onLayout: (event: object) => void;
+  mainStreamUrl: string | null;
+  hasMainStream: boolean;
+  pipStreamUrl: string | null;
+  hasPipStream: boolean;
+  mirrorPip: boolean;
+  /** Mirror the main stream (true when local front camera is primary). */
+  mirrorMain?: boolean;
+  pipGesture: ReturnType<typeof Gesture.Race>;
+  animatedPipStyle: object;
+  /** Local microphone muted state (forwarded to PiP overlay). */
+  isMuted?: boolean;
+  /** Local camera on/off state (forwarded to PiP overlay). */
+  isVideoEnabled?: boolean;
+  isCompact?: boolean;
+  /** Local user is presenting their screen. */
+  isScreenSharing?: boolean;
+  /** Remote peer is presenting their screen. */
+  isRemoteScreenSharing?: boolean;
+  /** Remote participant name/id, used in the "they are presenting" banner. */
+  participantLabel?: string | null;
+};
 
 /**
  * The full-screen video stage: primary stream plus optional PiP self-view.
- *
- * @param {object} props
- * @param {(event: object) => void} props.onLayout
- * @param {string|null} props.mainStreamUrl
- * @param {boolean} props.hasMainStream
- * @param {string|null} props.pipStreamUrl
- * @param {boolean} props.hasPipStream
- * @param {boolean} props.mirrorPip
- * @param {boolean} [props.mirrorMain] - Mirror the main stream (true when local front camera is primary).
- * @param {ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>} props.pipGesture
- * @param {object} props.animatedPipStyle
- * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
- * @param {boolean} [props.isVideoEnabled] - Local camera on/off state (forwarded to PiP overlay).
- * @param {boolean} [props.isCompact]
- * @param {boolean} [props.isScreenSharing] - Local user is presenting their screen.
- * @param {boolean} [props.isRemoteScreenSharing] - Remote peer is presenting their screen.
- * @param {string|null} [props.participantLabel] - Remote participant name/id, used in the "they are presenting" banner.
  */
 export default function CallStage({
   onLayout,
@@ -40,7 +49,7 @@ export default function CallStage({
   isScreenSharing = false,
   isRemoteScreenSharing = false,
   participantLabel = null,
-}: { onLayout: (event: object) => void; mainStreamUrl: string | null; hasMainStream: boolean; pipStreamUrl: string | null; hasPipStream: boolean; mirrorPip: boolean; mirrorMain?: boolean; pipGesture: ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>; animatedPipStyle: object; isMuted?: boolean; isVideoEnabled?: boolean; isCompact?: boolean; isScreenSharing?: boolean; isRemoteScreenSharing?: boolean; participantLabel?: string | null; }) {
+}: CallStageProps) {
   const styles = useThemedStyles(createStyles);
 
   const { width, height } = useWindowDimensions();
@@ -97,7 +106,7 @@ export default function CallStage({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     callStage: {
       flex: 1,

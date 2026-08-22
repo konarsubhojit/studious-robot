@@ -16,6 +16,7 @@ import TabShell from './components/TabShell';
 import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 import { spacing } from './theme';
+import type { ThemeColors } from './theme';
 
 /**
  * Screen router: picks what the app shows for the current call state and
@@ -254,7 +255,7 @@ function MinimizedCallBubble() {
 }
 
 /** @param {import('./theme').ThemeColors} colors */
-const createStyles = (colors: import('./theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       flex: 1,

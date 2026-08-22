@@ -10,19 +10,23 @@ import { loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
+import type { AttachmentRecord, MessageRecord } from '../../../shared/signaling/schemas';
+import type { CallStatus } from '../components/StatusBanner';
+import type { SignalingClient } from '../signalingClient';
+import type { Socket } from 'socket.io-client';
 
 /**
  * A chat message as persisted by the server, plus the client-only fields an
  * optimistic send carries until the server acknowledges it.
  */
-export type ChatMessage = Omit<import('../../../shared/signaling/schemas').MessageRecord, 'conversationId'> & { conversationId?: string | null; status?: string; peerId?: string; localId?: string; pending?: boolean; failed?: boolean; syncState?: 'pending' | 'synced' | 'failed'; deliveredTo?: string[]; readAt?: string | null; };
+export type ChatMessage = Omit<MessageRecord, 'conversationId'> & { conversationId?: string | null; status?: string; peerId?: string; localId?: string; pending?: boolean; failed?: boolean; syncState?: 'pending' | 'synced' | 'failed'; deliveredTo?: string[]; readAt?: string | null; };
 
 /**
  * A message queued for (re)delivery, with the bookkeeping the outbox drain
  * needs: which peer it belongs to, how many sends have been attempted and why
  * the last one failed.
  */
-export type OutboxItem = { messageId: string; recipientId: string; conversationId?: string | null; body?: string; type?: string; attachment?: import('../../../shared/signaling/schemas').AttachmentRecord | null; replyTo?: string | null; createdAt?: string; attempts?: number; lastAttemptAt?: string | null; lastError?: string | null; };
+export type OutboxItem = { messageId: string; recipientId: string; conversationId?: string | null; body?: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; createdAt?: string; attempts?: number; lastAttemptAt?: string | null; lastError?: string | null; };
 
 /**
  * Newest event of a conversation: either a message or a call, as merged by the
@@ -177,6 +181,16 @@ function createMessageId(): string {
  *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
  * }} params
  */
+export type UseMessagingParams = {
+  authedFetchRef: { current: Function | null; };
+  sessionIdRef: { current: string | null; };
+  signalingUrl: string;
+  signalingRef: { current: SignalingClient | null; };
+  socketRef: { current: Socket | null; };
+  userId: string;
+  updateStatus: (message: string, severity?: CallStatus['severity']) => void;
+};
+
 export default function useMessaging({
   authedFetchRef,
   sessionIdRef,
@@ -185,15 +199,7 @@ export default function useMessaging({
   socketRef,
   userId,
   updateStatus,
-}: {
-        authedFetchRef: { current: Function | null; };
-        sessionIdRef: { current: string | null; };
-        signalingUrl: string;
-        signalingRef: { current: import('../signalingClient').SignalingClient | null; };
-        socketRef: { current: import('socket.io-client').Socket | null; };
-        userId: string;
-        updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void;
-    }) {
+}: UseMessagingParams) {
   // One entry per conversation the user participates in: { conversationId,
   // peerId, lastMessage, lastActivity, unreadCount }, newest-activity first.
   // `lastActivity` is whichever of the last message and the last call is
@@ -694,7 +700,7 @@ export default function useMessaging({
      * @param {string} body
      * @param {{ type?: string, attachment?: import('../../../shared/signaling/schemas').AttachmentRecord|null, replyTo?: string|null }} [options]
      */
-    async (peerId: string, body: string, options: { type?: string; attachment?: import('../../../shared/signaling/schemas').AttachmentRecord | null; replyTo?: string | null; } = {}) => {
+    async (peerId: string, body: string, options: { type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; } = {}) => {
       const trimmedPeerId = (peerId ?? '').trim();
       const trimmedBody = (body ?? '').trim();
       const type = options.type ?? MESSAGE_TYPES.TEXT;

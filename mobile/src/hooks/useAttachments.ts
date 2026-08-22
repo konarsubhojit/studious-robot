@@ -3,6 +3,7 @@ import { MESSAGE_TYPES } from '../../../shared';
 import { isAttachmentUploadKnownUnavailable, uploadAttachment } from '../attachmentUpload';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
 import { ensureAttachmentPermission } from '../permissions';
+import type { CallStatus } from '../components/StatusBanner';
 import {
   isVoiceRecorderAvailable,
   startVoiceRecording,
@@ -27,17 +28,19 @@ import {
  *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
  * }} params
  */
+export type UseAttachmentsParams = {
+  authedFetchRef: { current: Function | null; };
+  signalingUrl: string;
+  sendMessage: (peerId: string, body: string, options?: object) => Promise<void>;
+  updateStatus: (message: string, severity?: CallStatus['severity']) => void;
+};
+
 export default function useAttachments({
   authedFetchRef,
   signalingUrl,
   sendMessage,
   updateStatus,
-}: {
-        authedFetchRef: { current: Function | null; };
-        signalingUrl: string;
-        sendMessage: (peerId: string, body: string, options?: object) => Promise<void>;
-        updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void;
-    }) {
+}: UseAttachmentsParams) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);

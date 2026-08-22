@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
+import type { ChatMessage, ConversationSummary, OutboxItem } from '../hooks/useMessaging';
 
 /**
  * Durable local chat store: the conversation list, per-conversation message
@@ -42,9 +43,9 @@ export const MAX_CONVERSATIONS = 100;
  * fetched history page, a delivery receipt, a read receipt) costs one write. */
 const WRITE_DEBOUNCE_MS = 250;
 
-export type ConversationSummary = import('../hooks/useMessaging').ConversationSummary;
-export type ChatMessage = import('../hooks/useMessaging').ChatMessage;
-export type OutboxItem = import('../hooks/useMessaging').OutboxItem;
+export type { ConversationSummary };
+export type { ChatMessage };
+export type { OutboxItem };
 
 export type ChatSnapshot = { conversations: ConversationSummary[]; messagesByPeer: Record<string, ChatMessage[]>; outbox: OutboxItem[]; };
 

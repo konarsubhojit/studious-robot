@@ -2,6 +2,21 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import type { ThemeColors } from '../theme';
+
+export type IconButtonProps = {
+  icon: string;
+  label?: string;
+  /** Omitted for a decorative button; the press is then a no-op. */
+  onPress?: () => void;
+  variant?: 'default' | 'danger' | 'success' | 'active' | 'muted';
+  disabled?: boolean;
+  loading?: boolean;
+  size?: number;
+  testID?: string;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+};
 
 /**
  * Circular icon-only button for call action controls (accept, decline, mute, etc.).
@@ -11,20 +26,8 @@ import { ICONS, loadVectorIcons } from '../vectorIcons';
  * rendered as a crisp vector glyph; otherwise it degrades to the emoji/unicode
  * fallback so the app works in CI and before native fonts are linked.
  *
- * @param {object}   props
- * @param {string}   props.icon              - Semantic icon key from ICONS map,
  *                                            OR a raw emoji/unicode glyph string.
- * @param {string}   [props.label]           - Optional text label displayed below the circle.
- * @param {() => void} [props.onPress] - Omitted for a decorative button; the
- *   press is then a no-op.
- * @param {'default'|'danger'|'success'|'active'|'muted'} [props.variant='default']
- * @param {boolean}  [props.disabled=false]
- * @param {boolean}  [props.loading=false]   - Shows a spinner in place of the icon and
  *                                            implies `disabled` (e.g. call being initiated).
- * @param {number}   [props.size=64]         - Diameter of the circle in dp.
- * @param {string}   [props.testID]
- * @param {string}   [props.accessibilityLabel]
- * @param {string}   [props.accessibilityHint]
  */
 export default function IconButton({
   icon,
@@ -37,7 +40,7 @@ export default function IconButton({
   testID,
   accessibilityLabel,
   accessibilityHint,
-}: { icon: string; label?: string; onPress?: () => void; variant?: 'default' | 'danger' | 'success' | 'active' | 'muted'; disabled?: boolean; loading?: boolean; size?: number; testID?: string; accessibilityLabel?: string; accessibilityHint?: string; }) {
+}: IconButtonProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const bgColor = variantColor(colors, variant);
@@ -97,7 +100,7 @@ export default function IconButton({
  * @param {import('../theme').ThemeColors} colors
  * @param {string} variant
  */
-const variantColor = (colors: import('../theme').ThemeColors, variant: string) =>
+const variantColor = (colors: ThemeColors, variant: string) =>
   ({
     default: colors.surfaceControl,
     danger: colors.danger,
@@ -112,7 +115,7 @@ const variantColor = (colors: import('../theme').ThemeColors, variant: string) =
  * @param {import('../theme').ThemeColors} colors
  * @param {string} variant
  */
-const iconColor = (colors: import('../theme').ThemeColors, variant: string) =>
+const iconColor = (colors: ThemeColors, variant: string) =>
   ({
     default: colors.textPrimary,
     danger: '#fff',
@@ -122,7 +125,7 @@ const iconColor = (colors: import('../theme').ThemeColors, variant: string) =>
   }[variant] ?? colors.textPrimary);
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     wrapper: {
       alignItems: 'center',

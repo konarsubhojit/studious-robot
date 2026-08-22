@@ -1,4 +1,5 @@
 import auth from '@react-native-firebase/auth';
+import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
   'Firebase is not configured in this build. Add google-services.json (Android) or GoogleService-Info.plist (iOS).';
@@ -94,7 +95,7 @@ function configureGoogle() {
  * @param {(user: import('@react-native-firebase/auth').FirebaseAuthTypes.User|null) => void} listener
  * @returns {() => void} unsubscribe
  */
-export function observeAuthState(listener: (user: import('@react-native-firebase/auth').FirebaseAuthTypes.User | null) => void): () => void {
+export function observeAuthState(listener: (user: FirebaseAuthTypes.User | null) => void): () => void {
   return getAuth().onAuthStateChanged(listener);
 }
 

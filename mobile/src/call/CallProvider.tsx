@@ -8,6 +8,7 @@ import useCallMinimize from '../hooks/useCallMinimize';
 import useCameraLighting from '../hooks/useCameraLighting';
 import usePictureInPicturePip from '../hooks/usePictureInPicturePip';
 import { CALL_STATES, isCallActiveState } from './callStateMachine';
+import type { MutableRefObject, ReactNode } from 'react';
 
 export type CallFlow = ReturnType<typeof useCallFlow>;
 export type AppSettings = ReturnType<typeof useAppSettings>;
@@ -30,12 +31,12 @@ const CallContext = createContext((null as CallContextValue | null));
  *
  * @param {{ children: import('react').ReactNode }} props
  */
-export function CallProvider({ children }: { children: import('react').ReactNode; }) {
+export function CallProvider({ children }: { children: ReactNode; }) {
   // Settings are loaded before the call flow because they influence call setup
   // (speaker-on-join). Status messages they raise are forwarded to the call
   // flow's status banner through a ref, since it is created below.
   /** @type {import('react').MutableRefObject<CallFlow['updateStatus'] | null>} */
-  const updateStatusRef: import('react').MutableRefObject<CallFlow['updateStatus'] | null> = useRef(null);
+  const updateStatusRef: MutableRefObject<CallFlow['updateStatus'] | null> = useRef(null);
   /** @type {CallFlow['updateStatus']} */
   const notifyStatus: CallFlow['updateStatus'] = useCallback((message, severity) => {
     updateStatusRef.current?.(message, severity);

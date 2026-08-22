@@ -1,6 +1,23 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, typography } from '../theme';
+import type { ThemeColors } from '../theme';
+
+export type ErrorStateProps = {
+  /** Short summary, e.g. "Can't reach the server"; nothing renders without it. */
+  title?: string;
+  /** Why it happened / what the user can do. */
+  description?: string;
+  /** Visible label of the recovery button. */
+  actionLabel?: string;
+  /** Recovery handler; the button is hidden without it. */
+  onAction?: () => void;
+  /** Accessibility hint for the recovery button. */
+  actionHint?: string;
+  severity?: 'error' | 'warning';
+  style?: object;
+  testID?: string;
+};
 
 /**
  * Shared failure surface: a short title, an explanation of what went wrong,
@@ -11,16 +28,6 @@ import { radius, sizes, spacing, typography } from '../theme';
  * The container is announced as an alert (and as a live region on Android, so
  * TalkBack speaks it when it appears mid-screen); the action is a real button
  * that always clears `sizes.minTouchTarget`.
- *
- * @param {object} props
- * @param {string} [props.title] - Short summary, e.g. "Can't reach the server"; nothing renders without it.
- * @param {string} [props.description] - Why it happened / what the user can do.
- * @param {string} [props.actionLabel] - Visible label of the recovery button.
- * @param {() => void} [props.onAction] - Recovery handler; the button is hidden without it.
- * @param {string} [props.actionHint] - Accessibility hint for the recovery button.
- * @param {'error'|'warning'} [props.severity]
- * @param {object} [props.style]
- * @param {string} [props.testID]
  */
 export default function ErrorState({
   title,
@@ -31,7 +38,7 @@ export default function ErrorState({
   severity = 'error',
   style,
   testID,
-}: { title?: string; description?: string; actionLabel?: string; onAction?: () => void; actionHint?: string; severity?: 'error' | 'warning'; style?: object; testID?: string; }) {
+}: ErrorStateProps) {
   const styles = useThemedStyles(createStyles);
 
   if (!title) {
@@ -70,7 +77,7 @@ export default function ErrorState({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       borderRadius: radius.md,

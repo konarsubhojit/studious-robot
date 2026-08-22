@@ -6,6 +6,7 @@ import {
 } from '../../shared';
 import { logInfo, logWarn } from './appLogger';
 import { emitWithAck } from './socketProtocol';
+import type { Socket } from 'socket.io-client';
 
 /**
  * Thin typed wrapper around a Socket.IO connection.
@@ -43,7 +44,7 @@ export type SignalingClient = { socket: object; on: (event: string, handler: (..
  * @param {import('socket.io-client').Socket} socket
  * @returns {SignalingClient}
  */
-export function createSignalingClient(socket: import('socket.io-client').Socket): SignalingClient {
+export function createSignalingClient(socket: Socket): SignalingClient {
   /** @type {{ event: string, payload: object }[]} */
   const queue: { event: string; payload: object; }[] = [];
 

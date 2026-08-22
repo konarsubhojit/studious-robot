@@ -11,6 +11,8 @@ import {
   signOut,
 } from '../authService';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
+import type { CallStatus } from '../components/StatusBanner';
+import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
 
 /**
  * @param {any} error
@@ -47,12 +49,12 @@ function getAuthenticationErrorMessage(error: any): string {
  *
  * @param {(message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void} updateStatus
  */
-export default function useIdentity(updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void) {
+export default function useIdentity(updateStatus: (message: string, severity?: CallStatus['severity']) => void) {
   const [userId, setUserId] = useState('');
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authUser, setAuthUser] = useState(
-    (null as import('@react-native-firebase/auth').FirebaseAuthTypes.User | null),
+    (null as FirebaseAuthTypes.User | null),
   );
 
   const committedIdentityRef = useRef({ userId: '' });

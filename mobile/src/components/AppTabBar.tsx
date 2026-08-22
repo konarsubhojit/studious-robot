@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { sizes, spacing } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import type { ThemeColors } from '../theme';
 
 export type TabKey = 'chats' | 'calls' | 'settings';
 
@@ -106,7 +107,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     bar: {
       flexDirection: 'row',

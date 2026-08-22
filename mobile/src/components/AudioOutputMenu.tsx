@@ -4,6 +4,7 @@ import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 import IconButton from './IconButton';
+import type { ThemeColors } from '../theme';
 
 // Speaker and earpiece are always selectable; Bluetooth and wired headset are
 // merged in only when the OS reports them as available.
@@ -25,17 +26,21 @@ function buildRouteList(available?: string[]): string[] {
   return routes;
 }
 
+export type AudioOutputMenuProps = {
+  /** Device names reported by the OS. */
+  available?: string[];
+  /** Currently selected device name. */
+  selected?: string | null;
+  /** Fallback selection when none reported. */
+  isSpeakerEnabled: boolean;
+  onSelect: (route: string) => void;
+  disabled?: boolean;
+};
+
 /**
  * Dropdown control letting the user pick the call audio output (speaker,
  * earpiece, Bluetooth headset, wired headset).  Bluetooth/wired entries appear
  * automatically when the device reports them as available.
- *
- * @param {object} props
- * @param {string[]} [props.available] - Device names reported by the OS.
- * @param {string|null} [props.selected] - Currently selected device name.
- * @param {boolean} props.isSpeakerEnabled - Fallback selection when none reported.
- * @param {(route: string) => void} props.onSelect
- * @param {boolean} [props.disabled]
  */
 export default function AudioOutputMenu({
   available,
@@ -43,7 +48,7 @@ export default function AudioOutputMenu({
   isSpeakerEnabled,
   onSelect,
   disabled = false,
-}: { available?: string[]; selected?: string | null; isSpeakerEnabled: boolean; onSelect: (route: string) => void; disabled?: boolean; }) {
+}: AudioOutputMenuProps) {
   const styles = useThemedStyles(createStyles);
 
   const [isOpen, setIsOpen] = useState(false);
@@ -120,7 +125,7 @@ export default function AudioOutputMenu({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     trigger: {
       alignItems: 'center',

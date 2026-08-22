@@ -2,6 +2,14 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
+import type { ThemeColors } from '../theme';
+
+export type InCallBannerProps = {
+  /** e.g. "Call with bob"; falls back to a generic label when the remote party can't be determined yet. */
+  participantLabel?: string | null;
+  elapsedCallSeconds?: number;
+  onExpand: () => void;
+};
 
 /**
  * Slim, persistent banner shown at the top of the tab shell whenever an
@@ -11,18 +19,12 @@ import { spacing, typography } from '../theme';
  * always obvious a call is still live and with whom, and tapping it restores
  * the full-screen `CallScreen` (mirrors `FloatingCallBubble`'s `onExpand`,
  * which stays available too for its quick mute/end controls).
- *
- * @param {object} props
- * @param {string|null} [props.participantLabel] - e.g. "Call with bob"; falls
- *   back to a generic label when the remote party can't be determined yet.
- * @param {number} [props.elapsedCallSeconds]
- * @param {() => void} props.onExpand
  */
 export default function InCallBanner({
   participantLabel = null,
   elapsedCallSeconds = 0,
   onExpand,
-}: { participantLabel?: string | null; elapsedCallSeconds?: number; onExpand: () => void; }) {
+}: InCallBannerProps) {
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -42,7 +44,7 @@ export default function InCallBanner({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     banner: {
       flexDirection: 'row',

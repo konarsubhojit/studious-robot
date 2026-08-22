@@ -28,17 +28,19 @@ const OFFLINE_ERROR_THRESHOLD = 3;
  *   calleeId: string,
  * }} params
  */
+export type UsePresenceSearchParams = {
+  signalingUrl: string;
+  authedFetchRef: { current: Function | null; };
+  sessionIdRef: { current: string | null; };
+  calleeId: string;
+};
+
 export default function usePresenceSearch({
   signalingUrl,
   authedFetchRef,
   sessionIdRef,
   calleeId,
-}: {
-        signalingUrl: string;
-        authedFetchRef: { current: Function | null; };
-        sessionIdRef: { current: string | null; };
-        calleeId: string;
-    }) {
+}: UsePresenceSearchParams) {
   // Presence of the user currently entered in `calleeId`, or `null` while
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
   const [calleePresence, setCalleePresence] = useState(

@@ -3,6 +3,26 @@ import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
+import type { ThemeColors } from '../theme';
+
+export type CallControlsProps = {
+  isMuted: boolean;
+  isVideoEnabled: boolean;
+  hasLocalStream: boolean;
+  audioDevices?: { available?: string[]; selected?: string | null; };
+  isSpeakerEnabled: boolean;
+  isScreenSharing?: boolean;
+  isScreenAudioEnabled?: boolean;
+  isScreenAudioShared?: boolean;
+  isScreenShareSupported?: boolean;
+  onMuteToggle: () => void;
+  onVideoToggle: () => void;
+  onChooseAudioOutput: (deviceId: string) => void;
+  onCameraSwitch: () => void;
+  onScreenShareToggle?: () => void;
+  onScreenAudioToggle?: () => void;
+  onLeave: () => void;
+};
 
 /**
  * In-call control deck: mute, camera on/off, audio-output picker, camera swap,
@@ -10,24 +30,6 @@ import IconButton from './IconButton';
  *
  * All action buttons use icon-only circular IconButton components for a clean,
  * professional look.  The leave button is visually distinct (danger variant).
- *
- * @param {object} props
- * @param {boolean} props.isMuted
- * @param {boolean} props.isVideoEnabled
- * @param {boolean} props.hasLocalStream
- * @param {{ available?: string[], selected?: string|null }} [props.audioDevices]
- * @param {boolean} props.isSpeakerEnabled
- * @param {boolean} [props.isScreenSharing]
- * @param {boolean} [props.isScreenAudioEnabled]
- * @param {boolean} [props.isScreenAudioShared]
- * @param {boolean} [props.isScreenShareSupported]
- * @param {() => void} props.onMuteToggle
- * @param {() => void} props.onVideoToggle
- * @param {(deviceId: string) => void} props.onChooseAudioOutput
- * @param {() => void} props.onCameraSwitch
- * @param {() => void} [props.onScreenShareToggle]
- * @param {() => void} [props.onScreenAudioToggle]
- * @param {() => void} props.onLeave
  */
 export default function CallControls({
   isMuted,
@@ -46,7 +48,7 @@ export default function CallControls({
   onScreenShareToggle,
   onScreenAudioToggle,
   onLeave,
-}: { isMuted: boolean; isVideoEnabled: boolean; hasLocalStream: boolean; audioDevices?: { available?: string[]; selected?: string | null; }; isSpeakerEnabled: boolean; isScreenSharing?: boolean; isScreenAudioEnabled?: boolean; isScreenAudioShared?: boolean; isScreenShareSupported?: boolean; onMuteToggle: () => void; onVideoToggle: () => void; onChooseAudioOutput: (deviceId: string) => void; onCameraSwitch: () => void; onScreenShareToggle?: () => void; onScreenAudioToggle?: () => void; onLeave: () => void; }) {
+}: CallControlsProps) {
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -138,7 +140,7 @@ export default function CallControls({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     controls: {
       gap: spacing.sm,

@@ -10,6 +10,9 @@ import {
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
+import type { CallHistoryEntry } from '../hooks/useCallHistory';
+import type { ConversationSummary } from '../hooks/useMessaging';
+import type { ThemeColors } from '../theme';
 
 /**
  * How long the input must be idle before a server request is issued. Long
@@ -36,9 +39,9 @@ export type MessageResult = { messageId: string; peerId: string; body?: string; 
 /**
  * Conversation row, as held by the chat provider.
  */
-export type ConversationRow = import('../hooks/useMessaging').ConversationSummary & { online?: boolean; };
+export type ConversationRow = ConversationSummary & { online?: boolean; };
 
-export type CallRow = import('../hooks/useCallHistory').CallHistoryEntry;
+export type CallRow = CallHistoryEntry;
 
 /**
  * Index of `term` inside `text`, case-insensitively, or -1.
@@ -136,6 +139,24 @@ function formatTimestamp(isoString: string | null | undefined): string {
     : date.toLocaleDateString();
 }
 
+export type SearchScreenProps = {
+  onSearchContacts?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<ContactResult[]>;
+  onSearchMessages?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<MessageResult[]>;
+  conversations?: ConversationRow[];
+  callHistory?: CallRow[];
+  currentUserId?: string | null;
+  onOpenConversation?: (peerId: string) => void;
+  onOpenMessage?: (result: { peerId: string; messageId: string; }) => void;
+  onOpenProfile?: (peerId: string) => void;
+  onBack?: () => void;
+  /** Shows the "local results only" note. */
+  isServerUnreachable?: boolean;
+  recentSearches?: string[];
+  /** Called with the term behind a result the user opened, so history reflects real searches. */
+  onRecordRecentSearch?: (term: string) => void;
+  onClearRecentSearches?: () => void;
+};
+
 /**
  * Unified search: one ranked list across contacts, conversations, messages and
  * calls, each in its own labelled section.
@@ -148,22 +169,6 @@ function formatTimestamp(isoString: string | null | undefined): string {
  * Requests are debounced ({@link SEARCH_DEBOUNCE_MS}) and the previous ones are
  * aborted on every new keystroke, so a fast typist issues one request and can
  * never see the results of a stale query.
- *
- * @param {object} props
- * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<ContactResult[]>} [props.onSearchContacts]
- * @param {(query: string, options?: { limit?: number, signal?: AbortSignal }) => Promise<MessageResult[]>} [props.onSearchMessages]
- * @param {ConversationRow[]} [props.conversations]
- * @param {CallRow[]} [props.callHistory]
- * @param {string | null} [props.currentUserId]
- * @param {(peerId: string) => void} [props.onOpenConversation]
- * @param {(result: { peerId: string, messageId: string }) => void} [props.onOpenMessage]
- * @param {(peerId: string) => void} [props.onOpenProfile]
- * @param {() => void} [props.onBack]
- * @param {boolean} [props.isServerUnreachable] - Shows the "local results only" note.
- * @param {string[]} [props.recentSearches]
- * @param {(term: string) => void} [props.onRecordRecentSearch] - Called with the
- *   term behind a result the user opened, so history reflects real searches.
- * @param {() => void} [props.onClearRecentSearches]
  */
 export default function SearchScreen({
   onSearchContacts,
@@ -179,7 +184,7 @@ export default function SearchScreen({
   recentSearches = [],
   onRecordRecentSearch,
   onClearRecentSearches,
-}: { onSearchContacts?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<ContactResult[]>; onSearchMessages?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<MessageResult[]>; conversations?: ConversationRow[]; callHistory?: CallRow[]; currentUserId?: string | null; onOpenConversation?: (peerId: string) => void; onOpenMessage?: (result: { peerId: string; messageId: string; }) => void; onOpenProfile?: (peerId: string) => void; onBack?: () => void; isServerUnreachable?: boolean; recentSearches?: string[]; onRecordRecentSearch?: (term: string) => void; onClearRecentSearches?: () => void; }) {
+}: SearchScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -487,7 +492,7 @@ export default function SearchScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,

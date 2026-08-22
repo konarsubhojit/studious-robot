@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /**
  * One labelled on/off row inside the settings card.
@@ -66,7 +67,7 @@ export default function SettingsCard({ settings, onToggleAutoLighting, onToggleS
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     settingsCard: {
       borderRadius: radius.md,

@@ -19,6 +19,9 @@ import AppButton from './AppButton';
 import ErrorState from './ErrorState';
 import SettingsCard from './SettingsCard';
 import StatusBanner from './StatusBanner';
+import type { CallHistoryEntry } from '../hooks/useCallHistory';
+import type { CallStatus } from './StatusBanner';
+import type { ThemeColors } from '../theme';
 
 export type ContactRow = { userId: string; online?: boolean; };
 
@@ -165,6 +168,35 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
   );
 }
 
+export type LobbyProps = {
+  userId: string;
+  onChangeUserId: (value: string) => void;
+  calleeId: string;
+  onChangeCalleeId: (value: string) => void;
+  onCall: () => void;
+  calleePresence?: { status: string; online: boolean; unknown?: boolean; } | null;
+  onOpenSettings?: () => void;
+  isServerUnreachable?: boolean;
+  onRetryConnect?: () => void;
+  onSearchUsers?: (query: string) => Promise<ContactRow[]>;
+  onSelectContact?: (peerId: string) => void;
+  onOpenSearch?: () => void;
+  developerMode?: boolean;
+  isSettingsVisible?: boolean;
+  onToggleSettings?: () => void;
+  onExportLogs?: () => void;
+  settings: Parameters<typeof SettingsCard>[0]['settings'];
+  onToggleAutoLighting: () => void;
+  onToggleSpeakerDefault: () => void;
+  status?: CallStatus;
+  callSummary?: { durationSeconds: number | null; quality: string; } | null;
+  onDismissSummary?: () => void;
+  callHistory?: CallHistoryEntry[];
+  missedCallCount?: number;
+  onMarkMissedRead?: () => void;
+  onRedial?: (peerId: string) => void;
+};
+
 /**
  * Pre-call lobby: branding, last-call summary, recent calls, the contact
  * directory and the call form.
@@ -173,34 +205,6 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
  * `calleeId`; the server manages call state and drives the outgoing/incoming
  * screens.  The developer tools (diagnostic log export and the media settings
  * panel) are shown only when `developerMode` is enabled in Settings.
- *
- * @param {object} props
- * @param {string} props.userId
- * @param {(value: string) => void} props.onChangeUserId
- * @param {string} props.calleeId
- * @param {(value: string) => void} props.onChangeCalleeId
- * @param {() => void} props.onCall
- * @param {{ status: string, online: boolean, unknown?: boolean } | null} [props.calleePresence]
- * @param {() => void} [props.onOpenSettings]
- * @param {boolean} [props.isServerUnreachable]
- * @param {() => void} [props.onRetryConnect]
- * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
- * @param {(peerId: string) => void} [props.onSelectContact]
- * @param {() => void} [props.onOpenSearch]
- * @param {boolean} [props.developerMode]
- * @param {boolean} [props.isSettingsVisible]
- * @param {() => void} [props.onToggleSettings]
- * @param {() => void} [props.onExportLogs]
- * @param {Parameters<typeof SettingsCard>[0]['settings']} props.settings
- * @param {() => void} props.onToggleAutoLighting
- * @param {() => void} props.onToggleSpeakerDefault
- * @param {import('./StatusBanner').CallStatus} [props.status]
- * @param {{ durationSeconds: number | null, quality: string } | null} [props.callSummary]
- * @param {() => void} [props.onDismissSummary]
- * @param {import('../hooks/useCallHistory').CallHistoryEntry[]} [props.callHistory]
- * @param {number} [props.missedCallCount]
- * @param {() => void} [props.onMarkMissedRead]
- * @param {(peerId: string) => void} [props.onRedial]
  */
 export default function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
@@ -234,7 +238,7 @@ export default function Lobby({
   missedCallCount = 0,
   onMarkMissedRead,
   onRedial,
-}: { userId: string; onChangeUserId: (value: string) => void; calleeId: string; onChangeCalleeId: (value: string) => void; onCall: () => void; calleePresence?: { status: string; online: boolean; unknown?: boolean; } | null; onOpenSettings?: () => void; isServerUnreachable?: boolean; onRetryConnect?: () => void; onSearchUsers?: (query: string) => Promise<ContactRow[]>; onSelectContact?: (peerId: string) => void; onOpenSearch?: () => void; developerMode?: boolean; isSettingsVisible?: boolean; onToggleSettings?: () => void; onExportLogs?: () => void; settings: Parameters<typeof SettingsCard>[0]['settings']; onToggleAutoLighting: () => void; onToggleSpeakerDefault: () => void; status?: import('./StatusBanner').CallStatus; callSummary?: { durationSeconds: number | null; quality: string; } | null; onDismissSummary?: () => void; callHistory?: import('../hooks/useCallHistory').CallHistoryEntry[]; missedCallCount?: number; onMarkMissedRead?: () => void; onRedial?: (peerId: string) => void; }) {
+}: LobbyProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -476,7 +480,7 @@ export default function Lobby({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

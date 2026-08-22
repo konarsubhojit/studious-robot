@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import {
   Alert,
   FlatList,
@@ -27,11 +28,28 @@ import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
 import SwipeableRow from './SwipeableRow';
 
-export type ChatMessage = import('../hooks/useMessaging').ChatMessage;
-export type CallActivity = import('../hooks/useMessaging').CallActivity;
+import type { CallActivity, ChatMessage } from '../hooks/useMessaging';
+import type { ThemeColors } from '../theme';
+
+export type { CallActivity, ChatMessage };
 /** A conversation timeline holds messages and (merged) call records alike. */
 export type TimelineEntry = ChatMessage | CallActivity;
 export type ChatStyles = ReturnType<typeof createStyles>;
+
+/** Whether a reaction tap adds or removes the emoji. */
+export type ReactionChange = 'add' | 'remove';
+/** Anything acting on one message: retry, delete, reply, download. */
+export type MessageAction = (message: ChatMessage) => void;
+/** Adds or removes an emoji reaction on a message. */
+export type ReactionAction = (
+  message: ChatMessage,
+  emoji: string,
+  action: ReactionChange,
+) => void;
+/** The peer's presence as shown in the header; `null` while unknown. */
+export type PeerPresence = { online: boolean; status?: string } | null;
+/** The kinds of attachment the attach sheet can start picking. */
+export type AttachmentKind = 'photo' | 'camera' | 'file';
 
 /**
  * One rendered row: a date separator, a bubble, or a collapsed run of calls.
@@ -407,23 +425,23 @@ function ReactionChips({ reactions, currentUserId, onToggle, styles }: {
  * a scroll-driven state update) only re-renders the bubbles whose own data
  * actually changed — the main reason a long conversation can scroll smoothly.
  */
+export type MessageRowProps = {
+  message: ChatMessage;
+  quotedMessage?: ChatMessage | null;
+  isGroupEnd: boolean;
+  isOwn: boolean;
+  isHighlighted: boolean;
+  currentUserId: string;
+  onRetry?: MessageAction;
+  onDelete?: MessageAction;
+  onReply?: MessageAction;
+  onReact?: ReactionAction;
+  onQuotePress?: (messageId: string) => void;
+  onDownloadAttachment?: MessageAction;
+};
+
 const MessageRow = memo(
-  /**
-   * @param {object} props
-   * @param {ChatMessage} props.message
-   * @param {ChatMessage | null} [props.quotedMessage]
-   * @param {boolean} props.isGroupEnd
-   * @param {boolean} props.isOwn
-   * @param {boolean} props.isHighlighted
-   * @param {string} props.currentUserId
-   * @param {(message: ChatMessage) => void} [props.onRetry]
-   * @param {(message: ChatMessage) => void} [props.onDelete]
-   * @param {(message: ChatMessage) => void} [props.onReply]
-   * @param {(message: ChatMessage, emoji: string, action: 'add'|'remove') => void} [props.onReact]
-   * @param {(messageId: string) => void} [props.onQuotePress]
-   * @param {(message: ChatMessage) => void} [props.onDownloadAttachment]
-   */
-  function MessageRow({
+  function MessageRowComponent({
   message,
   quotedMessage = null,
   isGroupEnd,
@@ -436,7 +454,7 @@ const MessageRow = memo(
   onReact,
   onQuotePress,
   onDownloadAttachment,
-}: { message: ChatMessage; quotedMessage?: ChatMessage | null; isGroupEnd: boolean; isOwn: boolean; isHighlighted: boolean; currentUserId: string; onRetry?: (message: ChatMessage) => void; onDelete?: (message: ChatMessage) => void; onReply?: (message: ChatMessage) => void; onReact?: (message: ChatMessage, emoji: string, action: 'add' | 'remove') => void; onQuotePress?: (messageId: string) => void; onDownloadAttachment?: (message: ChatMessage) => void; }) {
+}: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
   const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
@@ -589,64 +607,70 @@ function MessageSkeleton() {
   );
 }
 
+export type ChatConversationScreenProps = {
+  peerId: string;
+  /** newest-first, as delivered by the hook. Entries tagged `type: 'call'` are rendered as call records inline in the timeline; everything else is a text message. */
+  messages?: TimelineEntry[];
+  onSendMessage: (body: string, options?: { replyTo?: string | null }) => void;
+  /** Re-sends a failed message. Falls back to re-sending its body through `onSendMessage` when absent. */
+  onRetryMessage?: MessageAction;
+  /** Deletes one of the user's own messages, revealed by swiping the bubble left. */
+  onDeleteMessage?: MessageAction;
+  /** Adds or removes one of the user's emoji reactions, from the long-press reaction bar or by tapping an existing chip. */
+  onReactToMessage?: ReactionAction;
+  onDownloadAttachment?: MessageAction;
+  onLoadOlder?: () => void;
+  onBack: () => void;
+  currentUserId: string;
+  peerPresence?: PeerPresence;
+  onStartAudioCall?: () => void;
+  onStartVideoCall?: () => void;
+  /** Audio call back from a call row. */
+  onCallBack?: (peerId: string) => void;
+  /** Video call back from a call row. */
+  onVideoCallBack?: (peerId: string) => void;
+  isSending?: boolean;
+  /** True while a call to this peer is being placed; shows a loading spinner on the call header buttons instead of the icon. */
+  isStartingCall?: boolean;
+  /** Shows a "peer is typing…" hint under the header. */
+  isPeerTyping?: boolean;
+  /** Shows skeleton bubbles while the first page of history is still being fetched. */
+  isLoadingMessages?: boolean;
+  /** Shows a persistent banner explaining that queued messages will be delivered once connectivity returns. */
+  isOffline?: boolean;
+  /** Message the screen was opened at (a search result): the list scrolls to it and the bubble is emphasised. */
+  highlightMessageId?: string | null;
+  /** Opens the peer's profile screen. */
+  onOpenProfile?: () => void;
+  /** Reports composer typing state. */
+  onTypingChange?: (isTyping: boolean) => void;
+  /** Distance between the true top of the screen and this screen's root view (e.g. the safe-area top inset applied by an ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate parent, not the screen, so without this offset it under-compensates for the keyboard by exactly that amount and the composer stays partly covered. */
+  keyboardVerticalOffset?: number;
+  /** Runs the named picker, uploads the result, and sends it as an attachment message. */
+  onPickAttachment?: (kind: AttachmentKind) => void;
+  /** Starts recording a voice note. */
+  onStartVoiceNote?: () => void;
+  /** Stops recording and sends the voice note. */
+  onStopVoiceNote?: () => void;
+  /** Stops recording without sending. */
+  onCancelVoiceNote?: () => void;
+  /** An attachment pick is uploading. */
+  isUploadingAttachment?: boolean;
+  /** Upload progress, 0–1. */
+  attachmentUploadProgress?: number;
+  /** A voice note is currently being recorded. */
+  isRecordingVoiceNote?: boolean;
+  /** Whether this server has attachment uploads configured; the attach control stays visible either way (never silently absent) but is disabled with an explanatory message when this is `false`. */
+  attachmentsAvailable?: boolean;
+  /** Whether the voice-recorder native module is linked on this build. */
+  isVoiceNoteSupported?: boolean;
+};
+
 /**
  * One-to-one conversation window: header (back, presence, call actions),
  * a bubble message list (oldest at top, newest at bottom) with date
  * separators and sender/time grouping, and a composer with a typing
  * indicator.
- *
- * @param {object} props
- * @param {string} props.peerId
- * @param {TimelineEntry[]} [props.messages] - newest-first, as delivered by the hook.
- *   Entries tagged `type: 'call'` are rendered as call records inline in the
- *   timeline; everything else is a text message.
- * @param {(body: string, options?: { replyTo?: string|null }) => void} props.onSendMessage
- * @param {(message: ChatMessage) => void} [props.onRetryMessage] - Re-sends a failed message.
- *   Falls back to re-sending its body through `onSendMessage` when absent.
- * @param {(message: ChatMessage) => void} [props.onDeleteMessage] - Deletes one of the user's own
- *   messages, revealed by swiping the bubble left.
- * @param {(message: ChatMessage, emoji: string, action: 'add'|'remove') => void} [props.onReactToMessage]
- *   Adds or removes one of the user's emoji reactions, from the long-press reaction bar or
- *   by tapping an existing chip.
- * @param {(message: ChatMessage) => void} [props.onDownloadAttachment] Saves a message attachment.
- * @param {() => void} [props.onLoadOlder]
- * @param {() => void} props.onBack
- * @param {string} props.currentUserId
- * @param {{ online: boolean, status?: string } | null} [props.peerPresence]
- * @param {() => void} [props.onStartAudioCall]
- * @param {() => void} [props.onStartVideoCall]
- * @param {(peerId: string) => void} [props.onCallBack] - Audio call back from a call row.
- * @param {(peerId: string) => void} [props.onVideoCallBack] - Video call back from a call row.
- * @param {boolean} [props.isSending]
- * @param {boolean} [props.isStartingCall] - True while a call to this peer is being placed;
- *   shows a loading spinner on the call header buttons instead of the icon.
- * @param {boolean} [props.isPeerTyping] - Shows a "peer is typing…" hint under the header.
- * @param {boolean} [props.isLoadingMessages] - Shows skeleton bubbles while the first page
- *   of history is still being fetched.
- * @param {boolean} [props.isOffline] - Shows a persistent banner explaining that queued
- *   messages will be delivered once connectivity returns.
- * @param {string | null} [props.highlightMessageId] - Message the screen was opened at
- *   (a search result): the list scrolls to it and the bubble is emphasised.
- * @param {() => void} [props.onOpenProfile] - Opens the peer's profile screen.
- * @param {(isTyping: boolean) => void} [props.onTypingChange] - Reports composer typing state.
- * @param {number} [props.keyboardVerticalOffset] - Distance between the true top of the
- *   screen and this screen's root view (e.g. the safe-area top inset applied by an
- *   ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate
- *   parent, not the screen, so without this offset it under-compensates for the
- *   keyboard by exactly that amount and the composer stays partly covered.
- * @param {(kind: 'photo'|'camera'|'file') => void} [props.onPickAttachment] - Runs the
- *   named picker, uploads the result, and sends it as an attachment message.
- * @param {() => void} [props.onStartVoiceNote] - Starts recording a voice note.
- * @param {() => void} [props.onStopVoiceNote] - Stops recording and sends the voice note.
- * @param {() => void} [props.onCancelVoiceNote] - Stops recording without sending.
- * @param {boolean} [props.isUploadingAttachment] - An attachment pick is uploading.
- * @param {number} [props.attachmentUploadProgress] - Upload progress, 0–1.
- * @param {boolean} [props.isRecordingVoiceNote] - A voice note is currently being recorded.
- * @param {boolean} [props.attachmentsAvailable] - Whether this server has attachment
- *   uploads configured; the attach control stays visible either way (never silently
- *   absent) but is disabled with an explanatory message when this is `false`.
- * @param {boolean} [props.isVoiceNoteSupported] - Whether the voice-recorder native
- *   module is linked on this build.
  */
 export default function ChatConversationScreen({
   peerId,
@@ -682,7 +706,7 @@ export default function ChatConversationScreen({
   isRecordingVoiceNote = false,
   attachmentsAvailable = true,
   isVoiceNoteSupported = false,
-}: { peerId: string; messages?: TimelineEntry[]; onSendMessage: (body: string, options?: { replyTo?: string | null; }) => void; onRetryMessage?: (message: ChatMessage) => void; onDeleteMessage?: (message: ChatMessage) => void; onReactToMessage?: (message: ChatMessage, emoji: string, action: 'add' | 'remove') => void; onDownloadAttachment?: (message: ChatMessage) => void; onLoadOlder?: () => void; onBack: () => void; currentUserId: string; peerPresence?: { online: boolean; status?: string; } | null; onStartAudioCall?: () => void; onStartVideoCall?: () => void; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; isSending?: boolean; isStartingCall?: boolean; isPeerTyping?: boolean; isLoadingMessages?: boolean; isOffline?: boolean; highlightMessageId?: string | null; onOpenProfile?: () => void; onTypingChange?: (isTyping: boolean) => void; keyboardVerticalOffset?: number; onPickAttachment?: (kind: 'photo' | 'camera' | 'file') => void; onStartVoiceNote?: () => void; onStopVoiceNote?: () => void; onCancelVoiceNote?: () => void; isUploadingAttachment?: boolean; attachmentUploadProgress?: number; isRecordingVoiceNote?: boolean; attachmentsAvailable?: boolean; isVoiceNoteSupported?: boolean; }) {
+}: ChatConversationScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -928,7 +952,7 @@ export default function ChatConversationScreen({
   );
 
   const handleScroll = useCallback(
-      (event: import('react-native').NativeSyntheticEvent<import('react-native').NativeScrollEvent>) => {
+      (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       if (contentOffset.y <= 0 && !hasReachedTopRef.current) {
         hasReachedTopRef.current = true;
@@ -1293,7 +1317,7 @@ export default function ChatConversationScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: {
       flex: 1,

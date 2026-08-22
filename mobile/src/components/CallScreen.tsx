@@ -9,6 +9,9 @@ import CallTopBar from './CallTopBar';
 import ErrorState from './ErrorState';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
+import type { CallStatus } from './StatusBanner';
+import type { MutableRefObject } from 'react';
+import type { ThemeColors } from '../theme';
 
 const STATUS_AUTO_HIDE_MS = 3000;
 const CONTROLS_AUTO_HIDE_MS = 3000;
@@ -69,18 +72,18 @@ export default function CallScreen({
     {
         onRetry: () => void;
         onLeave: () => void;
-        status?: import('./StatusBanner').CallStatus;
+        status?: CallStatus;
         onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
         isReconnecting?: boolean;
     }) {
   const styles = useThemedStyles(createStyles);
 
   const [visibleStatus, setVisibleStatus] = useState(
-    (null as import('./StatusBanner').CallStatus | null),
+    (null as CallStatus | null),
   );
   const [showControlsOverlay, setShowControlsOverlay] = useState(true);
   /** @type {import('react').MutableRefObject<ReturnType<typeof setTimeout> | null>} */
-  const controlsAutoHideTimerRef: import('react').MutableRefObject<ReturnType<typeof setTimeout> | null> = useRef(null);
+  const controlsAutoHideTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null> = useRef(null);
 
   const clearControlsAutoHide = useCallback(() => {
     if (controlsAutoHideTimerRef.current) {
@@ -239,7 +242,7 @@ export default function CallScreen({
   );
 }
 
-const createStyles = (_colors: import('../theme').ThemeColors) =>
+const createStyles = (_colors: ThemeColors) =>
   StyleSheet.create({
     callScreen: {
       flex: 1,

@@ -4,6 +4,7 @@ import { logInfo, logWarn } from '../appLogger';
 import { getIdToken } from '../authService';
 import { loadDeviceId } from '../settingsStorage';
 import { API_ROUTES } from '../../../shared';
+import type { CallStatus } from '../components/StatusBanner';
 
 /**
  * Owns the server-side session lifecycle: creating/refreshing the
@@ -26,7 +27,7 @@ import { API_ROUTES } from '../../../shared';
 export default function useSession({ signalingUrl, userId, updateStatus }: {
         signalingUrl: string;
         userId: string;
-        updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void;
+        updateStatus: (message: string, severity?: CallStatus['severity']) => void;
     }) {
   const sessionIdRef = useRef((null as string | null));
   // Stable per-install device id, lazily loaded from disk on first session.

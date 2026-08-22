@@ -13,6 +13,8 @@ import { describeMessagePreview } from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import SwipeableRow from './SwipeableRow';
+import type { CallActivity, ConversationActivity, ConversationSummary } from '../hooks/useMessaging';
+import type { ThemeColors } from '../theme';
 
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
@@ -20,7 +22,7 @@ const SKELETON_ROW_COUNT = 6;
 /**
  * Conversation row, as held by the chat provider.
  */
-export type ConversationRow = import('../hooks/useMessaging').ConversationSummary & { online?: boolean; };
+export type ConversationRow = ConversationSummary & { online?: boolean; };
 
 /**
  * Contact returned by the server-side user search.
@@ -90,7 +92,7 @@ function formatConversationTimestamp(isoString: string | null | undefined): stri
  * @param {ConversationRow} conversation
  * @returns {import('../hooks/useMessaging').ConversationActivity | null}
  */
-function lastActivityOf(conversation: ConversationRow): import('../hooks/useMessaging').ConversationActivity | null {
+function lastActivityOf(conversation: ConversationRow): ConversationActivity | null {
   return conversation?.lastActivity ?? conversation?.lastMessage ?? null;
 }
 
@@ -100,7 +102,7 @@ function lastActivityOf(conversation: ConversationRow): import('../hooks/useMess
  * @param {import('../hooks/useMessaging').ConversationActivity} activity
  * @returns {activity is import('../hooks/useMessaging').CallActivity}
  */
-function isCallActivity(activity: import('../hooks/useMessaging').ConversationActivity): activity is import('../hooks/useMessaging').CallActivity {
+function isCallActivity(activity: ConversationActivity): activity is CallActivity {
   return activity.type === 'call';
 }
 
@@ -194,23 +196,24 @@ function EmptyConversations() {
   );
 }
 
+export type ChatListScreenProps = {
+  conversations?: ConversationRow[];
+  onOpenConversation: (peerId: string) => void;
+  onSearchUsers?: (query: string) => Promise<ContactRow[]>;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  /** Shows skeleton rows while the first conversation list fetch is still in flight. */
+  isLoading?: boolean;
+  /** Swipe action: mark a conversation read without opening it. */
+  onMarkRead?: (peerId: string) => void;
+  /** Opens the full-screen unified search (contacts, conversations, messages and calls). */
+  onOpenSearch?: () => void;
+  onOpenSettings?: () => void;
+};
+
 /**
  * Teams/Slack-style chat list: a searchable contact directory that swaps to
  * the conversation list once the search query is cleared.
- *
- * @param {object} props
- * @param {ConversationRow[]} [props.conversations]
- * @param {(peerId: string) => void} props.onOpenConversation
- * @param {(query: string) => Promise<ContactRow[]>} [props.onSearchUsers]
- * @param {() => void} [props.onRefresh]
- * @param {boolean} [props.isRefreshing]
- * @param {boolean} [props.isLoading] - Shows skeleton rows while the first conversation
- *   list fetch is still in flight.
- * @param {(peerId: string) => void} [props.onMarkRead] - Swipe action: mark a
- *   conversation read without opening it.
- * @param {() => void} [props.onOpenSearch] - Opens the full-screen unified
- *   search (contacts, conversations, messages and calls).
- * @param {() => void} [props.onOpenSettings]
  */
 export default function ChatListScreen({
   conversations = [],
@@ -222,7 +225,7 @@ export default function ChatListScreen({
   onMarkRead,
   onOpenSearch,
   onOpenSettings,
-}: { conversations?: ConversationRow[]; onOpenConversation: (peerId: string) => void; onSearchUsers?: (query: string) => Promise<ContactRow[]>; onRefresh?: () => void; isRefreshing?: boolean; isLoading?: boolean; onMarkRead?: (peerId: string) => void; onOpenSearch?: () => void; onOpenSettings?: () => void; }) {
+}: ChatListScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
@@ -437,7 +440,7 @@ export default function ChatListScreen({
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,

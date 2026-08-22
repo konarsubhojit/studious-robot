@@ -13,6 +13,11 @@ import {
   saveNavigationState,
 } from './navigationState';
 import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from './routes';
+import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import type { Context, ReactNode } from 'react';
+import type { NavigationState } from '@react-navigation/native';
+import type { TabKey } from '../components/AppTabBar';
+import type { ThemeColors } from '../theme';
 
 /**
  * Screen renderers supplied by the composition root.
@@ -23,10 +28,10 @@ import { CHAT_SCREENS, DEFAULT_TAB, deriveShellRoute, TABS } from './routes';
  * components stable across renders — inline components would remount, and with
  * them lose scroll position and local state, on every state update.
  */
-export type ScreenRenderers = { renderChatList?: () => import('react').ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => import('react').ReactNode; renderSearch?: () => import('react').ReactNode; renderPeerProfile?: (peerId: string | null) => import('react').ReactNode; renderCalls?: () => import('react').ReactNode; renderSettings?: () => import('react').ReactNode; };
+export type ScreenRenderers = { renderChatList?: () => ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => ReactNode; renderSearch?: () => ReactNode; renderPeerProfile?: (peerId: string | null) => ReactNode; renderCalls?: () => ReactNode; renderSettings?: () => ReactNode; };
 
 /** @type {import('react').Context<ScreenRenderers>} */
-const ScreenRenderersContext: import('react').Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
+const ScreenRenderersContext: Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
 
 const Tab = createBottomTabNavigator();
 const ChatStack = createNativeStackNavigator();
@@ -38,7 +43,7 @@ const ChatStack = createNativeStackNavigator();
  * @param {'light'|'dark'} scheme
  * @param {import('../theme').ThemeColors} colors
  */
-function buildNavigationTheme(scheme: 'light' | 'dark', colors: import('../theme').ThemeColors) {
+function buildNavigationTheme(scheme: 'light' | 'dark', colors: ThemeColors) {
   const base = scheme === 'light' ? DefaultTheme : DarkTheme;
   return {
     ...base,
@@ -109,6 +114,19 @@ function ChatsNavigator() {
   );
 }
 
+export type AppNavigatorProps = {
+  unreadCount?: number;
+  bottomInset?: number;
+  onTabPress?: (tab: string) => void;
+  onRouteChange?: (route: { activeTab: string; chatPeerId: string | null; }) => void;
+  renderChatList: () => React.ReactNode;
+  renderChatConversation: (peerId: string | null, options: { messageId: string | null; }) => React.ReactNode;
+  renderSearch?: () => React.ReactNode;
+  renderPeerProfile?: (peerId: string | null) => React.ReactNode;
+  renderCalls: () => React.ReactNode;
+  renderSettings: () => React.ReactNode;
+};
+
 /**
  * React Navigation shell for the registered-user part of the app: a bottom-tab
  * navigator (Chats / Calls / Settings) whose Chats tab hosts a native stack for
@@ -124,20 +142,9 @@ function ChatsNavigator() {
  * to reimplement. A connected call still intercepts back to minimize itself
  * first (see `useCallMinimize`).
  *
- * @param {object} props
- * @param {number} [props.unreadCount] badge count for the Chats tab.
- * @param {number} [props.bottomInset] safe-area inset for the tab bar.
- * @param {(tab: string) => void} [props.onTabPress] called when a tab is
  *   tapped, before navigating (used to minimize an active call).
- * @param {(route: { activeTab: string, chatPeerId: string | null }) => void}
  *   [props.onRouteChange] reports the current tab / open conversation.
- * @param {() => React.ReactNode} props.renderChatList
- * @param {(peerId: string | null, options: { messageId: string | null }) => React.ReactNode}
  *   props.renderChatConversation
- * @param {() => React.ReactNode} [props.renderSearch]
- * @param {(peerId: string | null) => React.ReactNode} [props.renderPeerProfile]
- * @param {() => React.ReactNode} props.renderCalls
- * @param {() => React.ReactNode} props.renderSettings
  */
 export default function AppNavigator({
   unreadCount = 0,
@@ -150,7 +157,7 @@ export default function AppNavigator({
   renderPeerProfile,
   renderCalls,
   renderSettings,
-}: { unreadCount?: number; bottomInset?: number; onTabPress?: (tab: string) => void; onRouteChange?: (route: { activeTab: string; chatPeerId: string | null; }) => void; renderChatList: () => React.ReactNode; renderChatConversation: (peerId: string | null, options: { messageId: string | null; }) => React.ReactNode; renderSearch?: () => React.ReactNode; renderPeerProfile?: (peerId: string | null) => React.ReactNode; renderCalls: () => React.ReactNode; renderSettings: () => React.ReactNode; }) {
+}: AppNavigatorProps) {
   // Navigation state persisted by a previous session, restored so a cold start
   // (and the remount caused by a full-screen call ending) lands the user back
   // on the screen they left. State already read in this process is available
@@ -181,7 +188,7 @@ export default function AppNavigator({
   }, [onRouteChange]);
 
   const handleStateChange = useCallback(
-      (state: import('@react-navigation/native').NavigationState | undefined) => {
+      (state: NavigationState | undefined) => {
       onRouteChange?.(deriveShellRoute(state));
       saveNavigationState(state);
     },
@@ -190,12 +197,12 @@ export default function AppNavigator({
 
   const renderTabBar = useCallback(
     /** @param {import('@react-navigation/bottom-tabs').BottomTabBarProps} props */
-    ({ state, navigation }: import('@react-navigation/bottom-tabs').BottomTabBarProps) => (
+    ({ state, navigation }: BottomTabBarProps) => (
       <AppTabBar
         activeTab={
           // The tab navigator only registers the three `TABS` route names, so
           // the active route name is always a tab bar key.
-          ((state.routes[state.index]?.name ?? DEFAULT_TAB) as import('../components/AppTabBar').TabKey)
+          ((state.routes[state.index]?.name ?? DEFAULT_TAB) as TabKey)
         }
         onChangeTab={tab => {
           onTabPress?.(tab);

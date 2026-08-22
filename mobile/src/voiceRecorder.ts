@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { MAX_VOICE_DURATION_MS } from '../../shared';
+import type NitroSound from 'react-native-nitro-sound';
 
 /**
  * Lazy-loaded wrapper around `react-native-nitro-sound` (the maintained
@@ -9,10 +10,10 @@ import { MAX_VOICE_DURATION_MS } from '../../shared';
  */
 
 /** @type {typeof import('react-native-nitro-sound').default | null | undefined} */
-let _recorderCache: typeof import('react-native-nitro-sound').default | null | undefined;
+let _recorderCache: typeof NitroSound | null | undefined;
 
 /** @returns {typeof import('react-native-nitro-sound').default | null} */
-function loadRecorderModule(): typeof import('react-native-nitro-sound').default | null {
+function loadRecorderModule(): typeof NitroSound | null {
   if (_recorderCache !== undefined) return _recorderCache;
   try {
     const sound = require('react-native-nitro-sound').default;

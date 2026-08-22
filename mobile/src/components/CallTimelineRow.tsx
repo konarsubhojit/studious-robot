@@ -3,6 +3,8 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
+import type { AlertButton } from 'react-native';
+import type { ThemeColors } from '../theme';
 
 /**
  * A single call as stored in a conversation timeline.
@@ -141,8 +143,7 @@ function formatTimestamp(isoString: string | null | undefined) {
  */
 export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
 const CallTimelineRow = memo(
-  /** @param {CallTimelineRowProps} props */
-  function CallTimelineRow({ entries, peerId, onCallBack, onVideoCallBack }: CallTimelineRowProps) {
+  function CallTimelineRowComponent({ entries, peerId, onCallBack, onVideoCallBack }: CallTimelineRowProps) {
     const { colors } = useTheme();
     const styles = useThemedStyles(createStyles);
     const [isExpanded, setIsExpanded] = useState(false);
@@ -152,7 +153,7 @@ const CallTimelineRow = memo(
     const offerCallBack = useCallback(() => {
       if (!peerId || (!onCallBack && !onVideoCallBack)) return;
       /** @type {import('react-native').AlertButton[]} */
-      const buttons: import('react-native').AlertButton[] = [];
+      const buttons: AlertButton[] = [];
       if (onCallBack) buttons.push({ text: 'Call back', onPress: () => onCallBack(peerId) });
       if (onVideoCallBack) {
         buttons.push({ text: 'Video call back', onPress: () => onVideoCallBack(peerId) });
@@ -220,7 +221,7 @@ const CallTimelineRow = memo(
 );
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       alignItems: 'center',

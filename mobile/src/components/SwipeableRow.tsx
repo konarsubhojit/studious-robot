@@ -3,6 +3,7 @@ import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react
 import { triggerHaptic } from '../haptics';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** Width (dp) of a single revealed action button. */
 const ACTION_WIDTH = 84;
@@ -117,7 +118,7 @@ export default function SwipeableRow({ actions = [], children }: {
 }
 
 /** @param {import('../theme').ThemeColors} colors */
-const createStyles = (colors: import('../theme').ThemeColors) =>
+const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     container: {
       position: 'relative',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logError, logInfo, logWarn } from '../appLogger';
+import type { CallStatus } from '../components/StatusBanner';
 import {
   isScreenShareSupported,
   SCREEN_SHARE_CANCELLED,
@@ -7,6 +8,17 @@ import {
   stopScreenCapture,
   verifyScreenShareFrames,
 } from '../screenShare';
+
+export type UseScreenShareParams = {
+  /** holds an `RTCPeerConnection`. */
+  peerConnectionRef: { current: any; };
+  /** holds a `MediaStream`. */
+  localStreamRef: { current: any; };
+  setLocalStream: (stream: any) => void;
+  setStatus: (message: string, severity?: CallStatus['severity']) => void;
+  /** sends a fresh offer. */
+  renegotiate?: () => Promise<void>;
+};
 
 /**
  * Screen-sharing state machine shared by both call flows.
@@ -20,13 +32,6 @@ import {
  * and the platform provides an audio track, the track is added as an extra
  * sender, which does require a renegotiation round-trip through `renegotiate`.
  * The microphone track is left untouched so mute keeps working independently.
- *
- * @param {object}   params
- * @param {{ current: any }} params.peerConnectionRef - holds an `RTCPeerConnection`.
- * @param {{ current: any }} params.localStreamRef - holds a `MediaStream`.
- * @param {(stream: any) => void} params.setLocalStream
- * @param {(message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void} params.setStatus
- * @param {() => Promise<void>} [params.renegotiate] - sends a fresh offer.
  */
 export default function useScreenShare({
   peerConnectionRef,
@@ -34,7 +39,7 @@ export default function useScreenShare({
   setLocalStream,
   setStatus,
   renegotiate,
-}: { peerConnectionRef: { current: any; }; localStreamRef: { current: any; }; setLocalStream: (stream: any) => void; setStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void; renegotiate?: () => Promise<void>; }) {
+}: UseScreenShareParams) {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isScreenAudioShared, setIsScreenAudioShared] = useState(false);
   // User preference: include screen (system) audio with the next share.
