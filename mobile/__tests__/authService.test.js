@@ -1,3 +1,4 @@
+// @ts-check
 describe('authService optional-provider loading', () => {
   const originalGoogleClientId = process.env.GOOGLE_WEB_CLIENT_ID;
 
@@ -26,7 +27,7 @@ describe('authService optional-provider loading', () => {
       signOut,
       currentUser,
     };
-    const authMock = jest.fn(() => instance);
+    const authMock = /** @type {jest.Mock & Record<string, any>} */ (jest.fn(() => instance));
     authMock.GoogleAuthProvider = { credential: jest.fn(() => ({ provider: 'google' })) };
     authMock.OAuthProvider = function OAuthProvider() {
       this.addScope = jest.fn();
@@ -41,6 +42,7 @@ describe('authService optional-provider loading', () => {
       throw new Error('missing module');
     });
 
+    /** @type {any} */
     let authService;
     jest.isolateModules(() => {
       authService = require('../src/authService');
@@ -66,6 +68,7 @@ describe('authService optional-provider loading', () => {
       throw new Error('missing module');
     });
 
+    /** @type {any} */
     let authService;
     jest.isolateModules(() => {
       authService = require('../src/authService');

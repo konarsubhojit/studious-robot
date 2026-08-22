@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   appendFile: jest.fn(),
@@ -57,7 +58,8 @@ describe('observability', () => {
   });
 
   test('falls back to info for unknown levels', () => {
-    expect(emitEvent('trace', 'call.noisy').level).toBe('info');
+    const event = /** @type {any} */ (emitEvent(/** @type {any} */ ('trace'), 'call.noisy'));
+    expect(event.level).toBe('info');
   });
 
   test('fans events out to pluggable sinks and can unsubscribe', () => {

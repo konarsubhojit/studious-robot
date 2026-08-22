@@ -1,3 +1,4 @@
+// @ts-check
 import { deriveCallStreams } from '../src/callStreamHelpers';
 
 jest.mock('../src/appLogger', () => ({
@@ -18,7 +19,7 @@ jest.mock('../src/diagnostics', () => ({
   }),
 }));
 
-function makeStream(url) {
+function makeStream(/** @type {string} */ url) {
   return { toURL: () => url };
 }
 

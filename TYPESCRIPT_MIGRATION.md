@@ -156,6 +156,16 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `SafeRTCView.test.js`
   - [x] `ThemeProvider.test.js`
   - [x] `attachmentPicker.test.js`
+  - [x] `callUx.test.js`
+  - [x] `mediaControls.test.js`
+  - [x] `attachmentDownload.test.js`
+  - [x] `authService.test.js`
+  - [x] `indexStartup.test.js`
+  - [x] `observability.test.js`
+  - [x] `callStreamHelpers.test.js`
+  - [x] `voiceRecorder.test.js`
+  - [x] `crashReporter.test.js`
+  - [x] `callService.test.js`
 
 ### server/
 

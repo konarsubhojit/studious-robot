@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DownloadDirectoryPath: '/storage/emulated/0/Download',
   ExternalDirectoryPath: '/storage/emulated/0/Android/data/com.app/files',
@@ -12,22 +13,25 @@ jest.mock('react-native', () => ({
 import RNFS from 'react-native-fs';
 import { installCrashHandler, saveCrashLog } from '../src/crashReporter';
 
+const writeFileMock = /** @type {jest.Mock} */ (RNFS.writeFile);
+const globalWithErrorUtils = /** @type {any} */ (global);
+
 describe('saveCrashLog', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   test('writes to Downloads first on Android', async () => {
-    RNFS.writeFile.mockResolvedValueOnce(undefined);
+    writeFileMock.mockResolvedValueOnce(undefined);
 
     const error = new Error('test crash');
     const result = await saveCrashLog(error, true, () => 'app log line');
 
     expect(result.success).toBe(true);
     expect(result.label).toBe('Downloads');
-    expect(RNFS.writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
 
-    const [path, content] = RNFS.writeFile.mock.calls[0];
+    const [path, content] = writeFileMock.mock.calls[0];
     expect(path).toMatch(/wetalk-crash-\d{8}-\d{6}\.txt$/);
     expect(content).toContain('test crash');
     expect(content).toContain('app log line');
@@ -35,18 +39,18 @@ describe('saveCrashLog', () => {
   });
 
   test('falls back to next storage target on write failure', async () => {
-    RNFS.writeFile
+    writeFileMock
       .mockRejectedValueOnce(new Error('permission denied'))
       .mockResolvedValueOnce(undefined);
 
     const result = await saveCrashLog(new Error('oops'), false, () => '');
 
     expect(result.success).toBe(true);
-    expect(RNFS.writeFile).toHaveBeenCalledTimes(2);
+    expect(writeFileMock).toHaveBeenCalledTimes(2);
   });
 
   test('returns success: false when all storage targets fail', async () => {
-    RNFS.writeFile.mockRejectedValue(new Error('disk full'));
+    writeFileMock.mockRejectedValue(new Error('disk full'));
 
     const result = await saveCrashLog(new Error('bad'), false, () => '');
 
@@ -55,64 +59,65 @@ describe('saveCrashLog', () => {
   });
 
   test('handles null error without throwing', async () => {
-    RNFS.writeFile.mockResolvedValueOnce(undefined);
+    writeFileMock.mockResolvedValueOnce(undefined);
 
     const result = await saveCrashLog(null, false, () => '');
 
     expect(result.success).toBe(true);
-    const [, content] = RNFS.writeFile.mock.calls[0];
+    const [, content] = writeFileMock.mock.calls[0];
     expect(content).toContain('error.name: unknown');
     expect(content).toContain('error.message: unknown');
   });
 
   test('handles missing log callback', async () => {
-    RNFS.writeFile.mockResolvedValueOnce(undefined);
+    writeFileMock.mockResolvedValueOnce(undefined);
 
     const result = await saveCrashLog(new Error('x'), false, undefined);
 
     expect(result.success).toBe(true);
-    const [, content] = RNFS.writeFile.mock.calls[0];
+    const [, content] = writeFileMock.mock.calls[0];
     expect(content).toContain('no log callback');
   });
 
   test('includes the error stack in the report', async () => {
-    RNFS.writeFile.mockResolvedValueOnce(undefined);
+    writeFileMock.mockResolvedValueOnce(undefined);
 
     const error = new Error('stack test');
     await saveCrashLog(error, false, () => '');
 
-    const [, content] = RNFS.writeFile.mock.calls[0];
+    const [, content] = writeFileMock.mock.calls[0];
     expect(content).toContain('error.stack:');
   });
 });
 
 describe('installCrashHandler', () => {
   afterEach(() => {
-    delete global.ErrorUtils;
+    delete globalWithErrorUtils.ErrorUtils;
   });
 
   test('replaces the global handler when ErrorUtils is available', () => {
     const original = jest.fn();
-    global.ErrorUtils = {
+    globalWithErrorUtils.ErrorUtils = {
       getGlobalHandler: jest.fn().mockReturnValue(original),
       setGlobalHandler: jest.fn(),
     };
 
     installCrashHandler(() => 'logs');
 
-    expect(ErrorUtils.setGlobalHandler).toHaveBeenCalledWith(expect.any(Function));
+    expect(globalWithErrorUtils.ErrorUtils.setGlobalHandler).toHaveBeenCalledWith(expect.any(Function));
   });
 
   test('new handler calls the previous handler after saving', async () => {
     const original = jest.fn();
+    /** @type {any} */
     let installedHandler;
-    global.ErrorUtils = {
+    globalWithErrorUtils.ErrorUtils = {
       getGlobalHandler: jest.fn().mockReturnValue(original),
-      setGlobalHandler: jest.fn(handler => {
+      setGlobalHandler: jest.fn((/** @type {any} */ handler) => {
         installedHandler = handler;
       }),
     };
-    RNFS.writeFile.mockResolvedValueOnce(undefined);
+    writeFileMock.mockResolvedValueOnce(undefined);
 
     installCrashHandler(() => 'logs');
 
@@ -126,7 +131,7 @@ describe('installCrashHandler', () => {
   });
 
   test('does nothing when ErrorUtils is not available', () => {
-    delete global.ErrorUtils;
+    delete globalWithErrorUtils.ErrorUtils;
     expect(() => installCrashHandler(() => '')).not.toThrow();
   });
 });

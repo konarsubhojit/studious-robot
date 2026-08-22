@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Tests the optional-native-module (try/catch require) pattern in
  * `voiceRecorder.js`, mirroring `attachmentPicker.test.js`.
@@ -14,7 +15,11 @@
  * flaky.
  */
 
-function withRecorderMock(fakeSound, run, { statImpl = jest.fn().mockResolvedValue({ size: 4096 }) } = {}) {
+function withRecorderMock(
+  /** @type {any} */ fakeSound,
+  /** @type {any} */ run,
+  { statImpl = jest.fn().mockResolvedValue({ size: 4096 }) } = {},
+) {
   let result;
   jest.isolateModules(() => {
     if (fakeSound) {
@@ -32,7 +37,7 @@ function withRecorderMock(fakeSound, run, { statImpl = jest.fn().mockResolvedVal
 
 describe('voiceRecorder', () => {
   test('degrades to unavailable when the native module is not linked', async () => {
-    await withRecorderMock(null, async recorder => {
+    await withRecorderMock(null, async (/** @type {any} */ recorder) => {
       expect(recorder.isVoiceRecorderAvailable()).toBe(false);
       await expect(recorder.startVoiceRecording()).resolves.toBe(false);
       await expect(recorder.stopVoiceRecording()).resolves.toBeNull();
@@ -51,7 +56,7 @@ describe('voiceRecorder', () => {
       },
     );
 
-    await withRecorderMock(throwingSound, async recorder => {
+    await withRecorderMock(throwingSound, async (/** @type {any} */ recorder) => {
       expect(recorder.isVoiceRecorderAvailable()).toBe(false);
       await expect(recorder.startVoiceRecording()).resolves.toBe(false);
       await expect(recorder.stopVoiceRecording()).resolves.toBeNull();
@@ -69,7 +74,7 @@ describe('voiceRecorder', () => {
       removeRecordBackListener: jest.fn(),
     };
 
-    await withRecorderMock(fakeSound, async recorder => {
+    await withRecorderMock(fakeSound, async (/** @type {any} */ recorder) => {
       await expect(recorder.startVoiceRecording()).resolves.toBe(true);
       const result = await recorder.stopVoiceRecording();
       expect(result).toEqual({
@@ -91,7 +96,7 @@ describe('voiceRecorder', () => {
 
     await withRecorderMock(
       fakeSound,
-      async recorder => {
+      async (/** @type {any} */ recorder) => {
         await recorder.startVoiceRecording();
         const result = await recorder.stopVoiceRecording();
         expect(result).toEqual({
@@ -112,7 +117,7 @@ describe('voiceRecorder', () => {
       addRecordBackListener: jest.fn(),
       removeRecordBackListener: jest.fn(),
     };
-    await withRecorderMock(fakeSound, async recorder => {
+    await withRecorderMock(fakeSound, async (/** @type {any} */ recorder) => {
       await expect(recorder.stopVoiceRecording()).resolves.toBeNull();
     });
   });

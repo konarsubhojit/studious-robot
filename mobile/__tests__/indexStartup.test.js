@@ -1,3 +1,4 @@
+// @ts-check
 describe('index startup registration diagnostics', () => {
   beforeEach(() => {
     jest.resetModules();
@@ -67,7 +68,7 @@ describe('index startup registration diagnostics', () => {
       AppRegistry: { registerComponent },
     }));
     jest.doMock('../App', () => () => null);
-    jest.doMock('../src/ErrorBoundary', () => ({ children }) => children);
+    jest.doMock('../src/ErrorBoundary', () => (/** @type {any} */ { children }) => children);
     jest.doMock('../src/observability', () => ({ initObservability }));
 
     require('../index');

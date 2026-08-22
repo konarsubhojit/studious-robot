@@ -1,3 +1,4 @@
+// @ts-check
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   enterPictureInPicture,
@@ -10,7 +11,7 @@ import {
 
 const originalPlatform = Platform.OS;
 
-function setCallServiceModule(module) {
+function setCallServiceModule(/** @type {any} */ module) {
   if (module === null) {
     delete NativeModules.CallService;
   } else {

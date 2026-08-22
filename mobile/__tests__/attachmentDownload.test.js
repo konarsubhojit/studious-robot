@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));
@@ -22,7 +23,9 @@ describe('attachmentDownload', () => {
   });
 
   test('sanitizes sender-controlled file names before writing to Downloads', async () => {
-    RNFS.downloadFile.mockReturnValueOnce({ promise: Promise.resolve({ statusCode: 200 }) });
+    /** @type {jest.Mock} */ (RNFS.downloadFile).mockReturnValueOnce({
+      promise: Promise.resolve({ statusCode: 200 }),
+    });
 
     const result = await downloadAttachment({
       url: 'https://media.test/chatblobs/c/file.pdf',
@@ -38,7 +41,7 @@ describe('attachmentDownload', () => {
   });
 
   test('falls back to app storage when the Downloads write fails', async () => {
-    RNFS.downloadFile
+    /** @type {jest.Mock} */ (RNFS.downloadFile)
       .mockReturnValueOnce({ promise: Promise.reject(new Error('permission denied')) })
       .mockReturnValueOnce({ promise: Promise.resolve({ statusCode: 200 }) });
 

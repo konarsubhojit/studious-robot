@@ -1,3 +1,4 @@
+// @ts-check
 import { isTrackEnabled, setTrackEnabled } from '../src/mediaControls';
 
 function createStream() {

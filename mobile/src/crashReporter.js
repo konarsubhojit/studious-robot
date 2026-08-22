@@ -23,7 +23,7 @@ function formatDateForFile(date = new Date()) {
  *
  * @param {Error|unknown} error            The caught error object.
  * @param {boolean}       isFatal          Whether the runtime considers it fatal.
- * @param {() => string}  getLogsCallback  Returns buffered in-memory app logs.
+ * @param {() => string} [getLogsCallback]  Returns buffered in-memory app logs.
  * @returns {Promise<{success: boolean, path?: string, label?: string}>}
  */
 export async function saveCrashLog(error, isFatal, getLogsCallback) {
