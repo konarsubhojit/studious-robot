@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-fs', () => ({
   DocumentDirectoryPath: '/docs',
   exists: jest.fn().mockResolvedValue(false),
@@ -87,6 +88,9 @@ import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
 import { getDegradations } from '../src/observability';
 
+const useCallFlowMock = /** @type {jest.Mock} */ (/** @type {unknown} */ (useCallFlow));
+const getDegradationsMock = /** @type {jest.Mock} */ (/** @type {unknown} */ (getDegradations));
+
 function makeCallFlow(overrides = {}) {
   return {
     isLoadingIdentity: false,
@@ -117,6 +121,7 @@ function makeCallFlow(overrides = {}) {
   };
 }
 
+/** @type {{ current: any }} */
 const callRef = { current: null };
 
 function CallProbe() {
@@ -125,6 +130,7 @@ function CallProbe() {
 }
 
 async function renderShell() {
+  /** @type {any} */
   let tree;
   // Async act so the persisted-settings load resolves before assertions.
   await act(async () => {
@@ -148,8 +154,8 @@ async function renderShell() {
 
 // Only host elements are counted, so a testID that appears on both a mocked
 // component and the host element it renders is not double counted.
-function findByTestID(tree, testID) {
-  return tree.root.findAll(node => typeof node.type === 'string' && node.props?.testID === testID);
+function findByTestID(/** @type {any} */ tree, /** @type {string} */ testID) {
+  return tree.root.findAll((/** @type {any} */ node) => typeof node.type === 'string' && node.props?.testID === testID);
 }
 
 describe('AppShell screen routing', () => {
@@ -159,40 +165,40 @@ describe('AppShell screen routing', () => {
   });
 
   test('renders nothing while the identity is loading', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ isLoadingIdentity: true, isRegistered: false }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ isLoadingIdentity: true, isRegistered: false }));
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-registration')).toHaveLength(0);
     expect(findByTestID(tree, 'screen-tab-shell')).toHaveLength(0);
   });
 
   test('renders the registration screen for an unregistered user', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ isRegistered: false }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ isRegistered: false }));
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-registration')).toHaveLength(1);
   });
 
   test('renders the tab shell while idle', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow());
+    useCallFlowMock.mockReturnValue(makeCallFlow());
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-tab-shell')).toHaveLength(1);
     expect(findByTestID(tree, 'call-bubble')).toHaveLength(0);
   });
 
   test('renders the outgoing screen while an outgoing call rings', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.OUTGOING_RINGING }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.OUTGOING_RINGING }));
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-outgoing')).toHaveLength(1);
     expect(findByTestID(tree, 'screen-tab-shell')).toHaveLength(0);
   });
 
   test('renders the incoming screen while an incoming call rings', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.INCOMING_RINGING }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.INCOMING_RINGING }));
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-incoming')).toHaveLength(1);
   });
 
   test('renders the call screen while connected', async () => {
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }),
     );
     const tree = await renderShell();
@@ -201,7 +207,7 @@ describe('AppShell screen routing', () => {
   });
 
   test('minimizing a connected call shows the tab shell with the bubble and banner', async () => {
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }),
     );
     const tree = await renderShell();
@@ -217,7 +223,7 @@ describe('AppShell screen routing', () => {
   });
 
   test('a ringing call is never minimizable', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.INCOMING_RINGING }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.INCOMING_RINGING }));
     const tree = await renderShell();
 
     act(() => {
@@ -229,7 +235,7 @@ describe('AppShell screen routing', () => {
   });
 
   test('OS picture-in-picture keeps the call full screen even when minimized', async () => {
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true, isCompactView: true }),
     );
     const tree = await renderShell();
@@ -248,7 +254,7 @@ describe('CallProvider', () => {
 
   test('exposes the participant label and ends a call from the minimized bubble', async () => {
     const handleEndCall = jest.fn();
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({
         callPhase: CALL_STATES.IN_CALL,
         isInCall: true,
@@ -274,7 +280,7 @@ describe('CallProvider', () => {
   });
 
   test('navigating away minimizes a connected call but leaves a ringing one alone', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.OUTGOING_RINGING }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.OUTGOING_RINGING }));
     await renderShell();
 
     act(() => {
@@ -282,7 +288,7 @@ describe('CallProvider', () => {
     });
     expect(callRef.current.isCallMinimized).toBe(false);
 
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }),
     );
     await renderShell();
@@ -295,12 +301,13 @@ describe('CallProvider', () => {
 });
 
 describe('AppShell accessibility and error states', () => {
+  /** @type {jest.SpyInstance} */
   let announce;
 
   beforeEach(() => {
     announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation();
     announce.mockClear();
-    getDegradations.mockReturnValue([]);
+    getDegradationsMock.mockReturnValue([]);
   });
 
   afterEach(() => {
@@ -309,7 +316,7 @@ describe('AppShell accessibility and error states', () => {
   });
 
   test('announces an incoming call to screen readers', async () => {
-    useCallFlow.mockReturnValue(
+    useCallFlowMock.mockReturnValue(
       makeCallFlow({
         callPhase: CALL_STATES.INCOMING_RINGING,
         incomingCall: { callId: 'call-1', callerId: 'user-alice' },
@@ -321,14 +328,14 @@ describe('AppShell accessibility and error states', () => {
   });
 
   test('announces a connected call', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }));
+    useCallFlowMock.mockReturnValue(makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }));
     await renderShell();
 
     expect(announce).toHaveBeenCalledWith('Call connected');
   });
 
   test('says nothing while idle', async () => {
-    useCallFlow.mockReturnValue(makeCallFlow());
+    useCallFlowMock.mockReturnValue(makeCallFlow());
     await renderShell();
 
     expect(announce).not.toHaveBeenCalled();
@@ -338,17 +345,17 @@ describe('AppShell accessibility and error states', () => {
     const openSettings = jest
       .spyOn(Linking, 'openSettings')
       .mockImplementation(() => Promise.resolve());
-    getDegradations.mockReturnValue([
+    getDegradationsMock.mockReturnValue([
       { source: 'backgroundPush', message: 'Background push handler unavailable' },
     ]);
-    useCallFlow.mockReturnValue(makeCallFlow());
+    useCallFlowMock.mockReturnValue(makeCallFlow());
     const tree = await renderShell();
 
     const [banner] = findByTestID(tree, 'startup-degraded-banner');
     expect(banner.props.accessibilityRole).toBe('alert');
 
     const action = tree.root.find(
-      node =>
+      (/** @type {any} */ node) =>
         node.props?.testID === 'startup-degraded-banner-action' &&
         typeof node.props.onPress === 'function',
     );

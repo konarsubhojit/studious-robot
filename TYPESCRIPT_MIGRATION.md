@@ -174,6 +174,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `permissions.test.js`
   - [x] `audioRouting.test.js`
   - [x] `attachmentUpload.test.js`
+  - [x] `screenShare.test.js`
+  - [x] `AppShell.test.js`
 
 ### server/
 
