@@ -1,74 +1,62 @@
 # TypeScript migration
 
-The codebase is JavaScript with JSDoc. Rather than a big-bang rewrite, type
-checking is enabled **file by file** and enforced in CI, so contracts that are
-documented today become contracts that are checked.
+The migration is **complete**: every source and test file in `mobile/`,
+`server/` and `shared/` is real TypeScript (`.ts`, or `.tsx` where the file
+contains JSX). There is no JavaScript left apart from the mobile tooling
+configs (`metro.config.js`, `babel.config.js`, `jest.config.js`,
+`.eslintrc.js`, `.prettierrc.js`).
+
+It happened in two steps:
+
+1. Every `.js` file was annotated with JSDoc types and checked by `tsc` in
+   `allowJs`/`checkJs` mode, one file at a time, with CI enforcing the result.
+2. Once every file was typed, the files were renamed to `.ts`/`.tsx` and the
+   JSDoc annotations were converted to TypeScript syntax (issue #121).
 
 ## How it works
 
-- `mobile/tsconfig.json` and `server/tsconfig.json` run TypeScript in `allowJs`
-  mode with `strict: true` and `noEmit: true`. Nothing is compiled: `tsc` is a
-  linter here, and Metro/Node keep running the `.js` files unchanged.
-- `checkJs` is **off**, so unmigrated files never fail the build. A file opts in
-  by starting with a `// @ts-check` comment.
+- `mobile/tsconfig.json` and `server/tsconfig.json` run with `strict: true` and
+  `noEmit: true`. There is still **no build step**: `tsc` is a type checker
+  only.
+- `mobile/` is bundled by Metro, which resolves `.ts`/`.tsx` natively. The
+  entry point is `index.tsx`; because the React Native Gradle plugin and
+  `react-native-xcode.sh` both default to `index.js`, the entry file is set
+  explicitly in `android/app/build.gradle` (`entryFile`) and in the Xcode
+  "Bundle React Native code and images" phase (`ENTRY_FILE`).
+- `server/` runs its `.ts` sources directly on Node's built-in type stripping
+  (Node >= 22.18), so `npm start` is `node src/index.ts` and the tests run with
+  `node --test "test/**/*.test.ts"`. Type stripping cannot execute TypeScript
+  that emits code, so the server is plain ESM: no `enum`, no parameter
+  properties, no `import x = require(...)`.
+- Because Node runs the sources as ESM, **relative imports carry the real file
+  extension** (`import { x } from './lib/state.ts'`), which is why both
+  tsconfigs set `allowImportingTsExtensions`.
+- `shared/` is an ESM TypeScript package (`"type": "module"`) consumed by both
+  projects and type-checked from both.
 - `npm run typecheck` (in `mobile/` and in `server/`) runs the check locally;
   both CI workflows run the same command and fail on any type error.
-- `shared/` is checked from both projects, because both consume it.
 
-## Migrating a file
+## Adding a file
 
-1. Add `// @ts-check` as the first line (before `'use strict';` if present).
-2. Run `npm run typecheck` in the owning project.
-3. Fix the reported errors by adding JSDoc types (`@param`, `@returns`,
-   `@typedef`). Prefer describing the real shape over `any`; use
-   `/** @type {...} */ (value)` casts only where a third-party type is wrong.
-4. Tick the file's directory below once every file in it is annotated.
+1. Create it as `.ts`, or `.tsx` if it contains JSX.
+2. Import it with its extension from other server/shared modules
+   (`./thing.ts`); mobile files may rely on Metro's resolution.
+3. Run `npm run typecheck` in the owning project. Prefer describing the real
+   shape over `any`; use `value as T` casts only where a third-party type is
+   wrong.
 
-Migration order (cheapest and most-depended-upon first): shared contracts →
-design tokens and utilities → presentational components → hooks → screens and
-`App.js` → server handlers.
+## Conventions
 
-## Progress
-
-### shared/
-
-- [x] `shared/` (schema, signaling contracts, API routes)
-
-### mobile/
-
-- [x] `src/theme.js`
-- [x] `src/socketProtocol.js`
-- [x] `src/signalingClient.js`
-- [x] `src/ThemeContext.js`
-- [x] `src/ThemeProvider.js`
-- [x] `src/pipConstants.js`
-- [x] `src/startupHealth.js`
-- [x] `src/mediaControls.js`
-- [x] `src/socketConfig.js`
-- [x] `src/accessibilityAnnouncer.js`
-- [x] `src/callStreamHelpers.js`
-- [ ] `src/components/`
-- [ ] `src/call/`
-- [ ] `src/chat/`
-- [ ] `src/navigation/`
-- [ ] `src/hooks/`
-- [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
-- [ ] `App.js`
-- [ ] `__tests__/`
-
-### server/
-
-- [x] `src/signaling/ack.js`
-- [ ] `src/signaling/` (remaining handlers)
-- [x] `src/lib/lifecycle.js`
-- [x] `src/routes/auditLog.routes.js`
-- [x] `src/routes/health.routes.js`
-- [x] `src/routes/metrics.routes.js`
-- [ ] `src/routes/` (remaining routes)
-- [ ] `src/domain/`
-- [ ] `src/stores/`
-- [ ] `src/lib/` (remaining modules)
-- [x] `src/identity.js`
-- [x] `src/firebaseAuth.js`
-- [ ] remaining `src/*.js` modules
-- [ ] `test/`
+- **One source of truth per contract.** Types live in TypeScript syntax only:
+  JSDoc keeps the prose (`@param name what it means`) but never repeats a type
+  in braces, because the annotation next to it is what `tsc` actually checks.
+- **Named prop/param types.** A component takes `XProps` and a hook takes
+  `UseXParams`, both exported next to the function, instead of an inline
+  object type in the parameter list. Callers and tests can then refer to the
+  contract by name.
+- **Real imports for types.** Use `import type { X } from 'mod'` at the top of
+  the file rather than an inline `import('mod').X` reference.
+- **Reuse before redeclaring.** Cross-screen shapes live in one module —
+  presence and directory rows in `mobile/src/types/directory.ts`, wire
+  contracts in `shared/` — and are re-exported (`export type { X };`) from the
+  modules that used to declare their own copy.

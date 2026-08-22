@@ -294,7 +294,7 @@ it never accepts sessions that it cannot verify.
    - **Notification title:** Test call
    - **Target:** your app package `com.wetalk`
    - Click **Send test message**, enter the FCM registration token from the device logs, and send.
-4. The device should display a notification. Check Metro / `adb logcat` for `[Push]` log lines from `pushNotifications.js`.
+4. The device should display a notification. Check Metro / `adb logcat` for `[Push]` log lines from `pushNotifications.ts`.
 
 ### iOS verification
 
@@ -319,7 +319,7 @@ With both the server and app running:
 
 ### `No Firebase App '[DEFAULT]' has been created`
 
-`@react-native-firebase/app` was not imported before `@react-native-firebase/messaging`. Confirm the first two imports in `mobile/index.js` are:
+`@react-native-firebase/app` was not imported before `@react-native-firebase/messaging`. Confirm the first two imports in `mobile/index.tsx` are:
 
 ```js
 import 'react-native-gesture-handler';
@@ -356,4 +356,4 @@ The JSON must be a single line with no wrapping quotes. Re-run the `jq -c` minif
 
 ### Deprecation warning: `This method is deprecated … Please use getApp() instead`
 
-This was caused by calling `messaging()` as a factory. It is fixed in the current codebase — `pushNotifications.js` uses `messaging.method()` directly (modular API).
+This was caused by calling `messaging()` as a factory. It is fixed in the current codebase — `pushNotifications.ts` uses `messaging.method()` directly (modular API).

@@ -5,10 +5,10 @@ Single source of truth for everything that crosses the wire between
 
 | Module | Contents |
 | --- | --- |
-| `shared/schema.js` | Tiny zod-style schema/validation helper (`safeParse`) |
-| `shared/signaling/events.js` | Every Socket.IO event name (`CLIENT_EVENTS`, `SERVER_EVENTS`, `TRANSPORT_EVENTS`) |
-| `shared/signaling/schemas.js` | Payload schema per event + `parseEventPayload()` |
-| `shared/api/routes.js` | REST paths (`API_ROUTES`) and response schemas |
+| `shared/schema.ts` | Tiny zod-style schema/validation helper (`safeParse`) |
+| `shared/signaling/events.ts` | Every Socket.IO event name (`CLIENT_EVENTS`, `SERVER_EVENTS`, `TRANSPORT_EVENTS`) |
+| `shared/signaling/schemas.ts` | Payload schema per event + `parseEventPayload()` |
+| `shared/api/routes.ts` | REST paths (`API_ROUTES`) and response schemas |
 
 ## Why no `zod`?
 
@@ -16,7 +16,7 @@ The two apps are installed independently (`npm ci` in `mobile/` and in
 `server/`, see `.github/workflows/`), so a package in `shared/` cannot resolve
 a third-party dependency from either app's `node_modules`. Keeping this
 package dependency-free means both the Node server (`require`) and the React
-Native bundle (Metro, via `watchFolders`) consume it as-is. `schema.js`
+Native bundle (Metro, via `watchFolders`) consume it as-is. `schema.ts`
 therefore implements the small subset of the `zod` API these contracts need —
 `safeParse`, object/string/number/boolean/literal/array/record/union
 combinators and `.optional()` / `.nullable()` — with the same result shape

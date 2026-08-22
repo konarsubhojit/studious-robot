@@ -13,8 +13,10 @@ User=ubuntu
 # breaks the working directory unless you use an absolute path. Replace
 # `/home/ubuntu` below if the repo lives elsewhere or the service user differs.
 WorkingDirectory=/home/ubuntu/repos/studious-robot/server
+# The server is TypeScript and runs directly on Node's built-in type stripping,
+# so Node >= 22.18 is required on the VM.
 # Adjust the node path if Node is installed elsewhere (e.g. /usr/local/bin/node).
-ExecStart=/usr/bin/node src/index.js
+ExecStart=/usr/bin/node src/index.ts
 Restart=on-failure
 RestartSec=5
 # Graceful shutdown for rolling deploys: send SIGTERM to the main process only

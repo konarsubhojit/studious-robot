@@ -153,7 +153,7 @@ cd server
 npx drizzle-kit migrate
 ```
 
-The schema lives in `server/db/schema.js`; migrations are in `server/db/migrations/`.
+The schema lives in `server/db/schema.ts`; migrations are in `server/db/migrations/`.
 
 ### Redis
 
@@ -201,7 +201,7 @@ APNS_PRODUCTION=false                    # true for production / TestFlight
 
 ### Message store (MongoDB / Cosmos DB)
 
-Chat message history and conversation lists (`server/src/messageStore.js`) use
+Chat message history and conversation lists (`server/src/messageStore.ts`) use
 an in-memory store by default. Setting `MONGODB_URI` switches to a durable
 MongoDB-compatible backend. Two Azure providers have materially different
 behaviour — pick the right connection-string shape and be aware of the
@@ -396,7 +396,7 @@ At app startup, `getTurnDiagnostics()` logs a `console.warn` if no TURN credenti
    apply plugin: "com.google.gms.google-services"
    ```
 
-The `@react-native-firebase/app` and `@react-native-firebase/messaging` packages are already listed in `package.json` and wired into `mobile/index.js` as a background message handler.
+The `@react-native-firebase/app` and `@react-native-firebase/messaging` packages are already listed in `package.json` and wired into `mobile/index.tsx` as a background message handler.
 
 ### Android — Vector icon fonts
 

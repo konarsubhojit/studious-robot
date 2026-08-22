@@ -2,15 +2,16 @@
   "name": "wetalk-server",
   "version": "0.1.0",
   "description": "Signaling server (Express + Socket.IO) for WeTalk.",
-  "main": "src/index.js",
+  "type": "module",
+  "main": "src/index.ts",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dev": "node --watch src/index.js",
-    "test": "node --test \"test/**/*.test.js\"",
+    "dev": "node --watch src/index.ts",
+    "test": "node --experimental-test-module-mocks --test \"test/**/*.test.ts\"",
     "db:generate": "drizzle-kit generate",
     "db:generate:named": "drizzle-kit generate --name",
     "db:check": "drizzle-kit check",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.1",
+    "@types/pg": "^8.23.1",
     "dotenv": "^16.4.5",
     "drizzle-kit": "^0.31.10",
     "socket.io-client": "^4.8.3",

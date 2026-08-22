@@ -73,7 +73,7 @@ jobs:
 
       - name: Check for uncommitted schema drift
         # Regenerating migrations from the schema must produce no changes; a
-        # non-empty diff means db/schema.js was edited without `npm run db:generate`.
+        # non-empty diff means db/schema.ts was edited without `npm run db:generate`.
         run: |
           npm run db:generate
           git diff --exit-code db/migrations
