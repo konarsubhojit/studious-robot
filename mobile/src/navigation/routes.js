@@ -50,7 +50,6 @@ export function deriveShellRoute(state) {
   const chatRoute = Array.isArray(chatRoutes)
     ? chatRoutes[tabRoute.state.index ?? chatRoutes.length - 1]
     : null;
-  const peerId =
-    chatRoute?.name === CHAT_SCREENS.CONVERSATION ? chatRoute?.params?.peerId : null;
+  const peerId = chatRoute?.name === CHAT_SCREENS.CONVERSATION ? chatRoute?.params?.peerId : null;
   return { activeTab: TABS.CHATS, chatPeerId: peerId || null };
 }

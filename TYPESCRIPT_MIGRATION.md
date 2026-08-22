@@ -84,7 +84,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `navigationState.js`
   - [ ] `AppNavigator.js`
 - [ ] `src/hooks/`
-- [ ] remaining `src/*.js` modules (logging, permissions, storage, …)
+- [x] `src/storage/` (chatDb, recentSearches)
+- [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`
 

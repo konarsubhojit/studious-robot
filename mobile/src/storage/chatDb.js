@@ -1,3 +1,4 @@
+// @ts-check
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
 
@@ -55,11 +56,25 @@ function emptySnapshot() {
  * @type {ChatSnapshot | null}
  */
 let cache = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
 let writeTimer = null;
 /** Resolves once every scheduled write has been flushed. */
 let pendingWrite = Promise.resolve();
 
-/** Timestamp of a timeline entry, used for retention ordering. */
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+
+/**
+ * Timestamp of a timeline entry, used for retention ordering.
+ *
+ * @param {any} entry
+ * @returns {number}
+ */
 function entryTime(entry) {
   const value = Date.parse(entry?.createdAt ?? '');
   return Number.isNaN(value) ? 0 : value;
@@ -79,7 +94,9 @@ export function pruneMessages(messages) {
   const kept = ordered.slice(0, MAX_MESSAGES_PER_CONVERSATION);
   const unsent = ordered
     .slice(MAX_MESSAGES_PER_CONVERSATION)
-    .filter(entry => entry?.syncState === 'pending' || entry?.syncState === 'failed');
+    .filter(
+      (/** @type {any} */ entry) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
+    );
   return unsent.length ? [...kept, ...unsent].sort((a, b) => entryTime(b) - entryTime(a)) : kept;
 }
 
@@ -93,31 +110,36 @@ export function pruneMessages(messages) {
  */
 function sanitizeSnapshot(parsed) {
   if (!parsed || typeof parsed !== 'object') return emptySnapshot();
+  const raw = /** @type {Record<string, any>} */ (parsed);
 
-  const conversations = Array.isArray(parsed.conversations)
-    ? parsed.conversations.filter(entry => entry && typeof entry.peerId === 'string')
+  const conversations = Array.isArray(raw.conversations)
+    ? raw.conversations.filter(
+        (/** @type {any} */ entry) => entry && typeof entry.peerId === 'string',
+      )
     : [];
 
+  /** @type {Record<string, Array<object>>} */
   const messagesByPeer = {};
+  /** @type {Record<string, any>} */
   const rawMessages =
-    parsed.messagesByPeer && typeof parsed.messagesByPeer === 'object' ? parsed.messagesByPeer : {};
+    raw.messagesByPeer && typeof raw.messagesByPeer === 'object' ? raw.messagesByPeer : {};
   Object.keys(rawMessages).forEach(peerId => {
     const entries = Array.isArray(rawMessages[peerId]) ? rawMessages[peerId] : [];
     messagesByPeer[peerId] = pruneMessages(
-      entries.filter(entry => entry && (entry.messageId || entry.callId)),
+      entries.filter((/** @type {any} */ entry) => entry && (entry.messageId || entry.callId)),
     );
   });
 
-  const outbox = Array.isArray(parsed.outbox)
-    ? parsed.outbox
+  const outbox = Array.isArray(raw.outbox)
+    ? raw.outbox
         .filter(
-          item =>
+          (/** @type {any} */ item) =>
             item &&
             typeof item.messageId === 'string' &&
             typeof item.recipientId === 'string' &&
             typeof item.body === 'string',
         )
-        .map(item => ({ ...item, attempts: Number(item.attempts) || 0 }))
+        .map((/** @type {any} */ item) => ({ ...item, attempts: Number(item.attempts) || 0 }))
     : [];
 
   return {
@@ -146,7 +168,7 @@ export async function loadChatSnapshot() {
     const content = await RNFS.readFile(CHAT_DB_FILE, 'utf8');
     cache = sanitizeSnapshot(JSON.parse(content));
   } catch (error) {
-    logWarn('[ChatDb] Failed to load chat snapshot', { message: error?.message });
+    logWarn('[ChatDb] Failed to load chat snapshot', { message: errorMessage(error) });
     cache = emptySnapshot();
   }
   return cache;
@@ -158,7 +180,7 @@ async function flushToDisk() {
   try {
     await RNFS.writeFile(CHAT_DB_FILE, JSON.stringify(snapshot), 'utf8');
   } catch (error) {
-    logWarn('[ChatDb] Failed to persist chat snapshot', { message: error?.message });
+    logWarn('[ChatDb] Failed to persist chat snapshot', { message: errorMessage(error) });
   }
 }
 
@@ -172,6 +194,7 @@ async function flushToDisk() {
 export function saveChatSnapshot(partial) {
   const base = cache ?? emptySnapshot();
   const messagesByPeer = partial.messagesByPeer ?? base.messagesByPeer;
+  /** @type {Record<string, Array<object>>} */
   const pruned = {};
   Object.keys(messagesByPeer).forEach(peerId => {
     pruned[peerId] = pruneMessages(messagesByPeer[peerId]);
@@ -222,7 +245,7 @@ export async function clearChatDb() {
     const exists = await RNFS.exists(CHAT_DB_FILE);
     if (exists) await RNFS.unlink(CHAT_DB_FILE);
   } catch (error) {
-    logWarn('[ChatDb] Failed to clear chat snapshot', { message: error?.message });
+    logWarn('[ChatDb] Failed to clear chat snapshot', { message: errorMessage(error) });
   }
 }
 
