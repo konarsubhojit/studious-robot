@@ -99,7 +99,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `navigationRef.js`
   - [x] `navigationState.js`
   - [x] `AppNavigator.js`
-- [ ] `src/hooks/` (in progress)
+- [x] `src/hooks/`
   - [x] `useRecentSearches.js`
   - [x] `useStartupPermissions.js`
   - [x] `useCameraLighting.js`
@@ -118,6 +118,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `useIdentity.js`
   - [x] `useScreenShare.js`
   - [x] `useMessaging.js`
+  - [x] `useCallFlow.js`
 - [x] `src/storage/` (chatDb, recentSearches)
 - [x] `src/diagnostics.js`
 - [x] `src/audioRouting.js`

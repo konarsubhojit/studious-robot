@@ -21,7 +21,7 @@ import { API_ROUTES } from '../../../shared';
  * @param {{
  *   signalingUrl: string,
  *   userId: string,
- *   updateStatus: (message: string, severity?: string) => void,
+ *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
  * }} params
  */
 export default function useSession({ signalingUrl, userId, updateStatus }) {

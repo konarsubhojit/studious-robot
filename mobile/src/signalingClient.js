@@ -39,9 +39,9 @@ export const MAX_QUEUED_EVENTS = 32;
 /**
  * @typedef {object} SignalingClient
  * @property {object} socket                 - The wrapped Socket.IO connection.
- * @property {(event: string, handler: Function) => void} on
- * @property {(event: string, payload?: object, ack?: Function) => boolean} emit
- * @property {(event: string, payload: object) => Promise<object>} request
+ * @property {(event: string, handler: (...args: any[]) => void) => void} on
+ * @property {(event: string, payload?: object, ack?: (response: any) => void) => boolean} emit
+ * @property {(event: string, payload: object) => Promise<any>} request
  * @property {() => number} flushQueue
  * @property {() => number} getQueuedEventCount
  */
@@ -130,7 +130,8 @@ export function createSignalingClient(socket) {
    *
    * @param {string} event one of `CLIENT_EVENTS`
    * @param {object} payload
-   * @returns {Promise<object>} resolves with the ack, rejects on `ok: false`
+   * @returns {Promise<any>} resolves with the event-specific ack envelope,
+   *   rejects on `ok: false`
    */
   function request(event, payload) {
     const result = parseEventPayload(event, payload, 'client');

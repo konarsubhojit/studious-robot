@@ -25,7 +25,7 @@ import {
  *   authedFetchRef: { current: Function | null },
  *   signalingUrl: string,
  *   sendMessage: (peerId: string, body: string, options?: object) => Promise<void>,
- *   updateStatus: (message: string, severity?: string) => void,
+ *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
  * }} params
  */
 export default function useAttachments({

@@ -26,7 +26,7 @@ import {
  * @param {{ current: any }} params.peerConnectionRef - holds an `RTCPeerConnection`.
  * @param {{ current: any }} params.localStreamRef - holds a `MediaStream`.
  * @param {(stream: any) => void} params.setLocalStream
- * @param {(message: string, severity?: string) => void} params.setStatus
+ * @param {(message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void} params.setStatus
  * @param {() => Promise<void>} [params.renegotiate] - sends a fresh offer.
  */
 export default function useScreenShare({

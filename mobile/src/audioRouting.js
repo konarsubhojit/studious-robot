@@ -72,6 +72,9 @@ export function getAudioRouteLabel(route) {
  * thread crashes (for example a manifest-missing SecurityException inside
  * WebRTC/InCallManager) must be prevented by manifest permissions; JS cannot
  * catch a SIGABRT or AndroidRuntime crash after the native thread aborts.
+ *
+ * @returns {{ ok: true } | { ok: false, error: unknown, message: string }} a failure
+ *   always carries a user-facing message.
  */
 export function startAudioSession() {
   try {
@@ -86,6 +89,9 @@ export function startAudioSession() {
 /**
  * Stop the in-call audio session.  Releases audio focus, deactivates the
  * proximity sensor override, and allows the screen to turn off normally.
+ *
+ * @returns {{ ok: true } | { ok: false, error: unknown, message: string }} a failure
+ *   always carries a user-facing message.
  */
 export function stopAudioSession() {
   try {
@@ -201,14 +207,17 @@ export function parseAudioDeviceStatus(payload) {
  * @param {{ fallbackToSpeaker?: boolean }} [options] - when false, a failed
  *   Bluetooth selection is reported without forcing the loudspeaker, so the
  *   caller can try the next device in its own preference order.
- * @returns {Promise<{
- *   available: string[],
- *   selected: string|null,
- *   ok?: boolean,
- *   reason?: string,
- *   error?: unknown,
- *   message?: string,
- * }>}
+ * @returns {Promise<
+ *   | { available: string[], selected: string|null, ok: true }
+ *   | {
+ *       available: string[],
+ *       selected: string|null,
+ *       ok: false,
+ *       reason?: string,
+ *       error?: unknown,
+ *       message: string,
+ *     }
+ * >} a failure always carries a user-facing message.
  */
 export async function chooseAudioRoute(route, { fallbackToSpeaker = true } = {}) {
   if (route === AUDIO_ROUTES.BLUETOOTH) {
@@ -283,7 +292,10 @@ export function selectPreferredAudioRoute(available = []) {
  *
  * @param {string[]} [available] - devices reported by the native module.
  * @param {{ allowRediscovery?: boolean }} [options] - internal recursion guard.
- * @returns {Promise<{ ok: boolean, selected: string, available: string[], message?: string }>}
+ * @returns {Promise<
+ *   | { ok: true, selected: string, available: string[] }
+ *   | { ok: false, selected: string, available: string[], message: string }
+ * >} the applied route; a failure always carries a user-facing message.
  */
 export async function applyPreferredAudioRoute(available = [], { allowRediscovery = true } = {}) {
   const devices = Array.isArray(available) ? available : [];

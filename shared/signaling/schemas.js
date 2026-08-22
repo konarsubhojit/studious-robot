@@ -45,6 +45,9 @@ const opaqueObject = s.opaque();
  * @property {string} status
  * @property {string | null} [ringTimeoutAt] - When an unanswered call stops
  *   ringing, for the ringing screens' countdown.
+ * @property {string | null} [endReason] - Canonical end-reason code, once the
+ *   call has ended.
+ * @property {string} [createdAt]
  */
 const callRecord = s.object(
   {

@@ -82,7 +82,7 @@ export function getIceServers() {
  * and finally STUN-only so call setup is never blocked by TURN availability.
  */
 /**
- * @param {{ signalingUrl?: string, sessionId?: string, fetchImpl?: typeof fetch }} [options]
+ * @param {{ signalingUrl?: string, sessionId?: string | null, fetchImpl?: typeof fetch }} [options]
  * @returns {Promise<IceServer[]>}
  */
 export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch } = {}) {

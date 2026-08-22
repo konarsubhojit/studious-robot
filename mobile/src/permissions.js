@@ -127,6 +127,14 @@ export async function getMissingCallPermissions() {
   };
 }
 
+/**
+ * Request the runtime permissions a call needs.
+ *
+ * @returns {Promise<
+ *   | { ok: true, warningMessage: string|null, deniedPermissions: string[] }
+ *   | { ok: false, message: string, warningMessage: null, deniedPermissions: string[] }
+ * >} a denial always carries a user-facing message.
+ */
 export async function ensureCallPermissions() {
   if (
     Platform.OS !== 'android' ||
@@ -180,6 +188,16 @@ export async function ensureCallPermissions() {
   };
 }
 
+/**
+ * Check — and optionally request — the runtime permission Bluetooth call audio
+ * needs on Android 12+.
+ *
+ * @param {{ requestIfNeeded?: boolean }} [options]
+ * @returns {Promise<
+ *   | { ok: true, granted: true, requested: boolean }
+ *   | { ok: false, granted: false, requested: boolean, message: string }
+ * >} a denial always carries a user-facing message.
+ */
 export async function ensureBluetoothPermission({ requestIfNeeded = false } = {}) {
   if (
     Platform.OS !== 'android' ||

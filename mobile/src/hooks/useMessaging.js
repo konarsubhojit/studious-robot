@@ -213,7 +213,7 @@ function createMessageId() {
  *   signalingRef: { current: import('../signalingClient').SignalingClient | null },
  *   socketRef: { current: import('socket.io-client').Socket | null },
  *   userId: string,
- *   updateStatus: (message: string, severity?: string) => void,
+ *   updateStatus: (message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void,
  * }} params
  */
 export default function useMessaging({

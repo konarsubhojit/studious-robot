@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
@@ -79,7 +80,33 @@ import {
 } from '../ringtone';
 
 /** @typedef {import('../../../shared/signaling/schemas').CallRecord} CallRecord */
+
+/**
+ * An accept failure annotated with the canonical reason reported to the server.
+ *
+ * @typedef {Error & { answerFailureReason?: string }} AnswerError
+ */
 /** @typedef {import('../components/StatusBanner').CallStatus} CallStatus */
+
+/**
+ * @param {unknown} error
+ * @returns {string|undefined} the error message, when there is one.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : undefined;
+}
+/**
+ * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
+ * properties it supports at runtime but omits from its published types.
+ *
+ * @typedef {import('react-native-webrtc').RTCPeerConnection & {
+ *   onicecandidate: ((event: any) => void) | null,
+ *   ontrack: ((event: any) => void) | null,
+ *   oniceconnectionstatechange: ((event: any) => void) | null,
+ *   onconnectionstatechange: ((event: any) => void) | null,
+ * }} PeerConnection
+ */
+/** @typedef {import('react-native-webrtc').MediaStream} WebrtcMediaStream */
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -244,7 +271,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
   // callId received from a push-notification deep link before the user identity
   // is fully established.  Cleared once rehydration is attempted.
-  const [pendingPushCallId, setPendingPushCallId] = useState(null);
+  const [pendingPushCallId, setPendingPushCallId] = useState(
+    /** @type {string | null} */ (null),
+  );
 
   // True from the moment `placeCall` is invoked until the call reaches
   // OUTGOING_RINGING (or fails). Lets chat-header call buttons show a brief
@@ -268,8 +297,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
 
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
+  const [localStream, setLocalStream] = useState(/** @type {WebrtcMediaStream | null} */ (null));
+  const [remoteStream, setRemoteStream] = useState(/** @type {WebrtcMediaStream | null} */ (null));
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   // Starts false: the route is picked automatically from the connected
@@ -278,14 +307,16 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(false);
   // Route the user explicitly picked; never overridden by automatic
   // re-evaluation for the rest of the call.
-  const manualAudioRouteRef = useRef(null);
+  const manualAudioRouteRef = useRef(/** @type {string | null} */ (null));
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
-  const [audioDevices, setAudioDevices] = useState({
-    available: [],
-    selected: null,
-  });
+  const [audioDevices, setAudioDevices] = useState(
+    /** @type {{ available: any[], selected: any }} */ ({
+      available: [],
+      selected: null,
+    }),
+  );
   const [connectionQuality, setConnectionQuality] = useState({
     bars: 0,
     label: 'No link',
@@ -293,57 +324,61 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
-  const socketRef = useRef(null);
+  const socketRef = useRef(/** @type {import('socket.io-client').Socket | null} */ (null));
   // Typed wrapper around `socketRef.current`: validates every payload against
   // the shared contract and queues fire-and-forget emits while offline.
-  const signalingRef = useRef(null);
-  const peerConnectionRef = useRef(null);
-  const pendingPeerConnectionRef = useRef(null);
-  const localStreamRef = useRef(null);
-  const activeCallIdRef = useRef(null);
+  const signalingRef = useRef(
+    /** @type {ReturnType<import('../signalingClient').createSignalingClient> | null} */ (null),
+  );
+  const peerConnectionRef = useRef(/** @type {PeerConnection | null} */ (null));
+  const pendingPeerConnectionRef = useRef(/** @type {Promise<PeerConnection> | null} */ (null));
+  const localStreamRef = useRef(/** @type {WebrtcMediaStream | null} */ (null));
+  const activeCallIdRef = useRef(/** @type {string | null} */ (null));
   const isCallerRef = useRef(false);
   // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
   // (rapid double-tap) without waiting for the state update to flush.
   const isPlacingCallRef = useRef(false);
-  const callConnectedAtRef = useRef(null);
-  const elapsedTimerRef = useRef(null);
+  const callConnectedAtRef = useRef(/** @type {number | null} */ (null));
+  const elapsedTimerRef = useRef(/** @type {ReturnType<typeof setInterval> | null} */ (null));
   // Guards against re-emitting `call.connected` for the same call (both ICE
   // and connection-state callbacks fire, often more than once).
-  const connectedReportedCallIdRef = useRef(null);
+  const connectedReportedCallIdRef = useRef(/** @type {string | null} */ (null));
   // Periodic in-call liveness report to the server (see CALL_HEARTBEAT_INTERVAL_MS).
-  const heartbeatTimerRef = useRef(null);
+  const heartbeatTimerRef = useRef(/** @type {ReturnType<typeof setInterval> | null} */ (null));
   // Pending "media is gone" report, cancelled if ICE recovers in time.
-  const iceFailureTimerRef = useRef(null);
+  const iceFailureTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
   // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
   // without re-creating the timer on every toggle.
   const isScreenSharingRef = useRef(false);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
-  const connectionStatsRef = useRef({
-    timestampMs: null,
-    totalBytesReceived: 0,
-  });
+  const connectionStatsRef = useRef(
+    /** @type {{ timestampMs: number | null, totalBytesReceived: number }} */ ({
+      timestampMs: null,
+      totalBytesReceived: 0,
+    }),
+  );
   const isInCallRef = useRef(false);
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
-  const iceCandidateBufferRef = useRef([]);
+  const iceCandidateBufferRef = useRef(/** @type {any[]} */ ([]));
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
   // Refs that mirror activeCall / incomingCall state for use in any callback
   // where capturing the value via a React closure would otherwise be stale.
-  const activeCallRef = useRef(null);
-  const incomingCallRef = useRef(null);
+  const activeCallRef = useRef(/** @type {CallRecord | null} */ (null));
+  const incomingCallRef = useRef(/** @type {CallRecord | null} */ (null));
   // Tracks callIds for which the incoming-call UI has already been shown so
   // duplicate socket or push events never trigger a second CallKeep display.
-  const displayedIncomingCallIdsRef = useRef(new Set());
+  const displayedIncomingCallIdsRef = useRef(/** @type {Set<string>} */ (new Set()));
   // Answer bookkeeping. The same tap can reach `acceptIncomingCall` through
   // several paths at once (CallKeep event, replayed queue entry, in-app
   // button), and a second accept for a call that is already up fails
   // server-side — so each callId is accepted at most once.
-  const acceptInFlightCallIdRef = useRef(null);
-  const answeredCallIdsRef = useRef([]);
+  const acceptInFlightCallIdRef = useRef(/** @type {string | null} */ (null));
+  const answeredCallIdsRef = useRef(/** @type {string[]} */ ([]));
   // callIds whose queued answer has already been replayed, so the replay effect
   // stays a no-op when `acceptIncomingCall`'s identity changes.
-  const replayedAnswerCallIdsRef = useRef(new Set());
+  const replayedAnswerCallIdsRef = useRef(/** @type {Set<string>} */ (new Set()));
 
   /** @type {(message: string, severity?: CallStatus['severity']) => void} */
   const updateStatus = useCallback((message, severity = 'info') => {
@@ -551,7 +586,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           mediaState: { isScreenSharing: isScreenSharingRef.current, heartbeat: true },
         })
         .catch(error => {
-          logWarn('[CallFlow] call heartbeat failed', { message: error?.message });
+          logWarn('[CallFlow] call heartbeat failed', { message: errorMessage(error) });
         });
     }, CALL_HEARTBEAT_INTERVAL_MS);
   }, []);
@@ -575,6 +610,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * @param {string} iceState - the observed peer-connection/ICE state.
    */
   const reportCallConnected = useCallback(
+    /** @param {string} iceState */
     iceState => {
       const callId = activeCallIdRef.current;
       if (!callId) return;
@@ -605,7 +641,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    *
    * @param {string} iceState
    */
-  const reportMediaFailure = useCallback(iceState => {
+  const reportMediaFailure = useCallback(/** @param {string} iceState */ iceState => {
     if (iceFailureTimerRef.current || !activeCallIdRef.current) return;
     iceFailureTimerRef.current = setTimeout(() => {
       iceFailureTimerRef.current = null;
@@ -693,6 +729,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   }, []);
 
   const configurePeerConnection = useCallback(
+    /** @param {PeerConnection} pc */
     async pc => {
       const iceServers = await getIceServersForCall({
         signalingUrl,
@@ -714,15 +751,16 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       signalingUrl,
       sessionId: sessionIdRef.current,
     });
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = /** @type {PeerConnection} */ (new RTCPeerConnection({ iceServers }));
 
-    if (localStreamRef.current) {
+    const currentLocalStream = localStreamRef.current;
+    if (currentLocalStream) {
       // Guard against double-adding tracks when ensurePeerConnection is called
       // more than once during renegotiation (idempotent attach).
       const attachedTracks = new Set((pc.getSenders?.() ?? []).map(s => s.track).filter(Boolean));
-      localStreamRef.current.getTracks().forEach(track => {
+      currentLocalStream.getTracks().forEach(track => {
         if (!attachedTracks.has(track)) {
-          pc.addTrack(track, localStreamRef.current);
+          pc.addTrack(track, currentLocalStream);
         }
       });
     }
@@ -891,9 +929,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    *
    * Never throws; failures are logged and degraded gracefully.
    *
-   * @param {{ callId: string, callerId?: string | null }} call
    */
-  const showIncomingCallUi = useCallback(async call => {
+  const showIncomingCallUi = useCallback(
+    /** @param {{ callId: string, callerId?: string | null }} call */
+    async call => {
     if (!call?.callId) return;
     if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
     displayedIncomingCallIdsRef.current.add(call.callId);
@@ -910,9 +949,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       callerId: call.callerId,
     }).catch(error => {
       logWarn('[CallFlow] displayIncomingCall failed', {
-        message: error?.message,
+        message: errorMessage(error),
       });
-      return { shown: false, reason: 'telecom_threw', message: error?.message };
+      return { shown: false, reason: 'telecom_threw', message: errorMessage(error) };
     });
 
     logInfo('[CallFlow] Incoming-call UI result', {
@@ -939,6 +978,11 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    *   (one of the keys from CALL_END_REASON_LABELS) for history tracking.
    */
   const endActiveCall = useCallback(
+    /**
+     * @param {string} [nextMessage='Call ended']
+     * @param {CallStatus['severity']} [severity='info']
+     * @param {string|null} [endReason=null]
+     */
     (nextMessage = 'Call ended', severity = 'info', endReason = null) => {
       // Capture call record before clearing – activeCallRef / incomingCallRef
       // are kept in sync with state throughout the call lifecycle.
@@ -1083,6 +1127,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * simply because a callback identity changed.
    */
   const connectSocket = useCallback(
+    /** @param {string} sessionId */
     sessionId => {
       disconnectSocket();
 
@@ -1125,7 +1170,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         // state updates are never blocked if CallKeep setup is slow.
         showIncomingCallUi(call).catch(error => {
           logWarn('[CallFlow] showIncomingCallUi unexpected error', {
-            message: error?.message,
+            message: errorMessage(error),
           });
         });
       });
@@ -1282,7 +1327,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
               await pc.addIceCandidate(new RTCIceCandidate(c));
             } catch (err) {
               logWarn('[CallFlow] Failed to add buffered ICE candidate', {
-                message: err?.message,
+                message: errorMessage(err),
               });
             }
           }
@@ -1330,7 +1375,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
               await pc.addIceCandidate(new RTCIceCandidate(c));
             } catch (err) {
               logWarn('[CallFlow] Failed to add buffered ICE candidate', {
-                message: err?.message,
+                message: errorMessage(err),
               });
             }
           }
@@ -1360,7 +1405,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
           logWarn('[CallFlow] Failed to add ICE candidate', {
-            message: error?.message,
+            message: errorMessage(error),
           });
         }
       });
@@ -1468,8 +1513,8 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
       socket.on(TRANSPORT_EVENTS.CONNECT_ERROR, error => {
         logError('[CallFlow] Socket connect error', {
-          message: error?.message,
-          description: error?.description,
+          message: errorMessage(error),
+          description: /** @type {{ description?: unknown }} */ (error)?.description,
         });
         recordConnectError();
       });
@@ -1538,12 +1583,14 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * callId is stored in `pendingPushCallId` and rehydration is deferred until
    * the presence auto-connect effect fires with a valid identity.
    *
-   * @param {string} callId
-   * @returns {Promise<'deferred'|'ringing'|'terminal'|'not_found'|'error'|'ignored'>}
-   *   what happened, so callers replaying a queued answer can tell "still
-   *   waiting on an identity" apart from "this call is gone".
    */
   const rehydrateCallFromPush = useCallback(
+    /**
+     * @param {string} callId
+     * @returns {Promise<'deferred'|'ringing'|'terminal'|'not_found'|'error'|'ignored'>}
+     *   what happened, so callers replaying a queued answer can tell "still
+     *   waiting on an identity" apart from "this call is gone".
+     */
     async callId => {
       if (!callId) return 'ignored';
 
@@ -1588,7 +1635,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           updateStatus(`Incoming call from ${call.callerId}`);
           showIncomingCallUi(call).catch(error => {
             logWarn('[CallFlow] showIncomingCallUi unexpected error', {
-              message: error?.message,
+              message: errorMessage(error),
             });
           });
 
@@ -1606,7 +1653,9 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
             busy: 'Line was busy',
             unreachable: 'Call unreachable',
           };
-          const message = terminalMessages[call.status] ?? 'Call no longer active';
+          const message =
+            terminalMessages[/** @type {keyof typeof terminalMessages} */ (call.status)] ??
+            'Call no longer active';
           logInfo('[CallFlow] Push call already finished', {
             callId,
             status: call.status,
@@ -1676,14 +1725,14 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
             })
             .catch(error => {
               logWarn('[CallFlow] Push registration failed', {
-                message: error?.message,
+                message: errorMessage(error),
               });
             });
         }
       } catch (error) {
         if (!cancelled) {
           logWarn('[CallFlow] Failed to establish presence socket', {
-            message: error?.message,
+            message: errorMessage(error),
           });
         }
       }
@@ -1718,7 +1767,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       if (!sessionIdRef.current) return;
       await refreshSession().catch(error => {
         logWarn('[CallFlow] Proactive session refresh failed', {
-          message: error?.message,
+          message: errorMessage(error),
         });
         updateStatus(
           'Session refresh failed — your token may expire soon. Reconnect if calls stop working.',
@@ -1735,10 +1784,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * the server hides a blocked peer from `GET /conversations`, so refetching
    * is what makes the block visible in both directions right away.
    *
-   * @param {string} peerId
-   * @returns {Promise<boolean>}
    */
   const blockPeer = useCallback(
+    /**
+     * @param {string} peerId
+     * @returns {Promise<boolean>}
+     */
     async peerId => {
       const applied = await blocks.blockUser(peerId);
       if (applied) await fetchConversations();
@@ -1750,10 +1801,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   /**
    * Reverse a block, restoring the peer's conversation and directory entry.
    *
-   * @param {string} peerId
-   * @returns {Promise<boolean>}
    */
   const unblockPeer = useCallback(
+    /**
+     * @param {string} peerId
+     * @returns {Promise<boolean>}
+     */
     async peerId => {
       const removed = await blocks.unblockUser(peerId);
       if (removed) await fetchConversations();
@@ -1776,7 +1829,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       connectSocket(sessionId);
     } catch (error) {
       logWarn('[CallFlow] retryPresenceConnect failed', {
-        message: error?.message,
+        message: errorMessage(error),
       });
       markServerUnreachable();
     }
@@ -1841,6 +1894,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
   const placeCall = useCallback(
+    /** @param {string} [explicitCalleeId] */
     async explicitCalleeId => {
       if (isPlacingCallRef.current) return;
 
@@ -1868,14 +1922,15 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         if (!socket?.connected) {
           const sessionId = await createOrGetSession();
           socket = connectSocket(sessionId);
+          const connectingSocket = socket;
           // Give the socket a moment to connect.
-          await new Promise((resolve, reject) => {
+          await new Promise(/** @param {(value?: unknown) => void} resolve */ (resolve, reject) => {
             const timer = setTimeout(() => reject(new Error('socket connect timeout')), 8_000);
-            socket.once('connect', () => {
+            connectingSocket.once('connect', () => {
               clearTimeout(timer);
               resolve();
             });
-            socket.once('connect_error', err => {
+            connectingSocket.once('connect_error', err => {
               clearTimeout(timer);
               reject(err);
             });
@@ -1883,7 +1938,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         }
 
         updateStatus(`Calling ${trimmedCalleeId}…`);
-        const ack = await signalingRef.current.request(CLIENT_EVENTS.CALL_INITIATE, {
+        const ack = await signalingRef.current?.request(CLIENT_EVENTS.CALL_INITIATE, {
           version: SIGNALING_VERSION,
           calleeId: trimmedCalleeId,
         });
@@ -1899,7 +1954,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         emitEvent('info', 'call.started', { callId: ack.call.callId, direction: 'outgoing' });
       } catch (error) {
         logError('[CallFlow] placeCall failed', error);
-        updateStatus(`Failed to place call: ${error.message}`, 'error');
+        updateStatus(`Failed to place call: ${errorMessage(error)}`, 'error');
         endActiveCall();
       } finally {
         isPlacingCallRef.current = false;
@@ -1925,14 +1980,14 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await signalingRef.current.request(CLIENT_EVENTS.CALL_CANCEL, {
+        await signalingRef.current?.request(CLIENT_EVENTS.CALL_CANCEL, {
           version: SIGNALING_VERSION,
           callId,
         });
       } catch (error) {
         // Server may already have transitioned; log and continue cleanup.
         logWarn('[CallFlow] cancel ack failed (call may already be terminal)', {
-          message: error?.message,
+          message: errorMessage(error),
         });
       }
     }
@@ -1947,11 +2002,15 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * rings but cannot be picked up is diagnosable from server logs alone.
    * Never throws.
    *
-   * @param {string | null} callId
-   * @param {'answer_attempted'|'answer_failed'|'answer_accepted'} stage
-   * @param {string | null} [reason]
    */
   const reportAnswerStage = useCallback(
+    /**
+     * @param {string | null} callId
+     * @param {string} stage - a canonical stage name such as
+     *   `answer_attempted`, `answer_failed`, `answer_accepted`, `accept_tapped`,
+     *   `decline_tapped` or `answer_skipped_duplicate`.
+     * @param {string | null} [reason]
+     */
     (callId, stage, reason = null) => {
       if (!callId) return;
       sendPushReceipt({
@@ -1963,7 +2022,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       }).catch(error => {
         logWarn('[CallFlow] answer receipt failed', {
           stage,
-          message: error?.message,
+          message: errorMessage(error),
         });
       });
     },
@@ -1994,13 +2053,14 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           socket = connectSocket(sessionId);
         }
         if (!socket) return null;
-        await new Promise((resolve, reject) => {
+        const connectingSocket = socket;
+        await new Promise(/** @param {(value?: unknown) => void} resolve */ (resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('socket connect timeout')), timeoutMs);
-          socket.once('connect', () => {
+          connectingSocket.once('connect', () => {
             clearTimeout(timer);
             resolve();
           });
-          socket.once('connect_error', error => {
+          connectingSocket.once('connect_error', error => {
             clearTimeout(timer);
             reject(error);
           });
@@ -2008,7 +2068,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         return socketRef.current?.connected ? socketRef.current : null;
       } catch (error) {
         logWarn('[CallFlow] Socket not connected in time to answer', {
-          message: error?.message,
+          message: errorMessage(error),
         });
         return null;
       }
@@ -2020,10 +2080,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * Accept the call over the authenticated HTTP endpoint, used when the socket
    * is unavailable so answering never depends on socket timing.
    *
-   * @param {string} callId
-   * @returns {Promise<object>} the updated call record
    */
   const acceptCallOverHttp = useCallback(
+    /**
+     * @param {string} callId
+     * @returns {Promise<CallRecord>} the updated call record
+     */
     async callId => {
       const trimmedUrl = (signalingUrl ?? '').trim();
       const response = await authedFetchRef.current?.(sessionId => ({
@@ -2035,12 +2097,14 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         },
       }));
       if (!response) {
-        const error = new Error('no session available to accept over HTTP');
+        const error = /** @type {AnswerError} */ (
+          new Error('no session available to accept over HTTP')
+        );
         error.answerFailureReason = 'no_session';
         throw error;
       }
       if (!response.ok) {
-        const error = new Error(`HTTP ${response.status}`);
+        const error = /** @type {AnswerError} */ (new Error(`HTTP ${response.status}`));
         error.answerFailureReason = 'http_accept_failed';
         throw error;
       }
@@ -2053,16 +2117,18 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * Tell the server the call is accepted, preferring the socket and falling
    * back to HTTP.  Retries the socket emit once before falling back.
    *
-   * @param {string} callId
-   * @returns {Promise<{ call: object, transport: 'socket' | 'http' }>}
    */
   const sendCallAccept = useCallback(
+    /**
+     * @param {string} callId
+     * @returns {Promise<{ call: CallRecord, transport: 'socket' | 'http' }>}
+     */
     async callId => {
       const socket = await waitForConnectedSocket();
       if (socket) {
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
-            const ack = await signalingRef.current.request(CLIENT_EVENTS.CALL_ACCEPT, {
+            const ack = await signalingRef.current?.request(CLIENT_EVENTS.CALL_ACCEPT, {
               version: SIGNALING_VERSION,
               callId,
             });
@@ -2071,7 +2137,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
             logWarn('[CallFlow] call.accept over socket failed', {
               callId,
               attempt,
-              message: error?.message,
+              message: errorMessage(error),
             });
           }
         }
@@ -2101,9 +2167,11 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * failures degrade the call (audio-only / no media) instead of preventing the
    * answer, and every failure is logged, surfaced and reported. Never throws.
    *
-   * @param {string} callId
    */
   const acquireMediaForAcceptedCall = useCallback(
+    /**
+     * @param {string} callId
+     */
     async callId => {
       const permissions = await getMissingCallPermissions().catch(() => null);
       if (permissions?.missing?.length) {
@@ -2154,7 +2222,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   );
 
   /** Remember a callId that must never be accepted twice (bounded). */
-  const rememberAnsweredCall = useCallback(callId => {
+  const rememberAnsweredCall = useCallback(/** @param {string} callId */ callId => {
     const history = answeredCallIdsRef.current;
     if (history.includes(callId)) return;
     history.push(callId);
@@ -2254,7 +2322,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       // callPhase advances to in_call via the rtc.offer handler once the caller
       // sends its offer.
     } catch (error) {
-      const reason = error?.answerFailureReason ?? 'accept_failed';
+      const reason = /** @type {AnswerError} */ (error)?.answerFailureReason ?? 'accept_failed';
       logError('[CallFlow] acceptIncomingCall failed', error);
       reportAnswerStage(call.callId, 'answer_failed', reason);
       clearPendingAnswer(call.callId, reason);
@@ -2275,7 +2343,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         return;
       }
 
-      updateStatus(`Failed to accept call: ${error.message}`, 'error');
+      updateStatus(`Failed to accept call: ${errorMessage(error)}`, 'error');
       endActiveCall();
     } finally {
       if (acceptInFlightCallIdRef.current === call.callId) {
@@ -2300,23 +2368,25 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * to the authenticated HTTP endpoint so a decline tapped during a cold start
    * still reaches the server. Never throws.
    *
-   * @param {string} callId
-   * @returns {Promise<boolean>} whether the server was told
    */
   const declineCallById = useCallback(
+    /**
+     * @param {string} callId
+     * @returns {Promise<boolean>} whether the server was told
+     */
     async callId => {
       if (!callId) return false;
       clearPendingAnswer(callId, 'declined');
 
       if (socketRef.current?.connected) {
         try {
-          await signalingRef.current.request(CLIENT_EVENTS.CALL_DECLINE, {
+          await signalingRef.current?.request(CLIENT_EVENTS.CALL_DECLINE, {
             version: SIGNALING_VERSION,
             callId,
           });
           return true;
         } catch (error) {
-          logWarn('[CallFlow] decline ack failed', { message: error?.message });
+          logWarn('[CallFlow] decline ack failed', { message: errorMessage(error) });
         }
       }
 
@@ -2336,7 +2406,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
           status: response?.status ?? null,
         });
       } catch (error) {
-        logWarn('[CallFlow] HTTP decline threw', { callId, message: error?.message });
+        logWarn('[CallFlow] HTTP decline threw', { callId, message: errorMessage(error) });
       }
       return false;
     },
@@ -2383,10 +2453,13 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
    * `call.incoming`. Drops the queue entry — loudly — when the call turns out
    * to be gone.
    *
-   * @param {string} callUUID
-   * @param {string} source
    */
-  const queueAnswerForReplay = useCallback((callUUID, source) => {
+  const queueAnswerForReplay = useCallback(
+    /**
+     * @param {string} callUUID
+     * @param {string} source
+     */
+    (callUUID, source) => {
     if (!callUUID) return;
     recordPendingAnswer(callUUID, source);
     Promise.resolve(rehydrateCallFromPushRef.current?.(callUUID)).then(outcome => {
@@ -2451,7 +2524,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
       })
       .catch(error => {
         logWarn('[CallFlow] Failed to drain persisted notification action', {
-          message: error?.message,
+          message: errorMessage(error),
         });
       });
     return () => {
@@ -2529,12 +2602,12 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
 
     if (callId && socketRef.current?.connected) {
       try {
-        await signalingRef.current.request(CLIENT_EVENTS.CALL_END, {
+        await signalingRef.current?.request(CLIENT_EVENTS.CALL_END, {
           version: SIGNALING_VERSION,
           callId,
         });
       } catch (error) {
-        logWarn('[CallFlow] end call ack failed', { message: error?.message });
+        logWarn('[CallFlow] end call ack failed', { message: errorMessage(error) });
       }
     }
 
@@ -2632,6 +2705,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   }, [updateStatus]);
 
   const chooseAudioOutput = useCallback(
+    /** @param {string} route */
     async route => {
       try {
         manualAudioRouteRef.current = route;
@@ -2670,15 +2744,17 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   useEffect(() => {
     isScreenSharingRef.current = isScreenSharing;
     if (!socketRef.current?.connected || !activeCallIdRef.current) return;
-    signalingRef.current.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
-      version: SIGNALING_VERSION,
-      callId: activeCallIdRef.current,
-      mediaState: { isScreenSharing },
-    }).catch(error => {
-      logWarn('[CallFlow] call.media-state emit failed', {
-        message: error?.message,
+    signalingRef.current
+      ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
+        version: SIGNALING_VERSION,
+        callId: activeCallIdRef.current,
+        mediaState: { isScreenSharing },
+      })
+      .catch(error => {
+        logWarn('[CallFlow] call.media-state emit failed', {
+          message: errorMessage(error),
+        });
       });
-    });
   }, [isScreenSharing]);
 
   // ─── Connection quality polling ───────────────────────────────────────────
@@ -2704,7 +2780,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         let totalPacketsReceived = 0;
         let totalBytesReceived = 0;
 
-        report.forEach(stat => {
+        report.forEach(/** @param {any} stat */ stat => {
           if (
             stat.type === 'candidate-pair' &&
             stat.state === 'succeeded' &&
@@ -2755,7 +2831,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
         }
       } catch (error) {
         logWarn('[CallFlow] Failed to read connection stats', {
-          message: error?.message,
+          message: errorMessage(error),
         });
       }
     };
@@ -2794,6 +2870,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false } = {}) {
   // Pick the best available output (Bluetooth → wired → earpiece → speaker)
   // unless the user already chose one explicitly during this call.
   const applyAutomaticAudioRoute = useCallback(
+    /** @param {string[]} available */
     async available => {
       if (manualAudioRouteRef.current) return;
       const result = await applyPreferredAudioRoute(available);

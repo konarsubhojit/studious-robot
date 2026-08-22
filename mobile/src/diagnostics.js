@@ -121,12 +121,13 @@ export function getStreamUrl(stream, context) {
 }
 
 /**
- * @param {{ name?: string, message?: string } | null | undefined} error
+ * @param {unknown} error
  * @returns {string} a user-facing explanation of a getUserMedia failure.
  */
 export function getMediaAccessStatus(error) {
-  const name = `${error?.name || ''}`.toLowerCase();
-  const message = `${error?.message || ''}`.toLowerCase();
+  const failure = /** @type {{ name?: string, message?: string } | null | undefined} */ (error);
+  const name = `${failure?.name || ''}`.toLowerCase();
+  const message = `${failure?.message || ''}`.toLowerCase();
   const combined = `${name} ${message}`;
 
   if (

@@ -46,7 +46,7 @@ function getAuthenticationErrorMessage(error) {
  * `useCallFlow` so identity persistence stays isolated from that hook's
  * call-lifecycle/session/WebRTC responsibilities.
  *
- * @param {(message: string, severity?: string) => void} updateStatus
+ * @param {(message: string, severity?: import('../components/StatusBanner').CallStatus['severity']) => void} updateStatus
  */
 export default function useIdentity(updateStatus) {
   const [userId, setUserId] = useState('');
