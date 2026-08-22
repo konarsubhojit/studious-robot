@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -22,24 +23,32 @@ const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
 const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function startServer() {
   const server = createServer();
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
   async function teardown(...clients) {
-    clients.forEach((c) => c.disconnect());
+    clients.forEach((c) => c?.disconnect());
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
+/**
+ * @param {string} url
+ * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url, auth) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, {
@@ -52,6 +61,12 @@ function connect(url, auth) {
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
+ */
 function waitFor(socket, event, timeoutMs = 1500) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -62,30 +77,24 @@ function waitFor(socket, event, timeoutMs = 1500) {
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => {
     socket.emit(event, payload, resolve);
   });
 }
 
-async function postJson(url, path, body, sessionId) {
-  const data = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -124,8 +133,8 @@ test('reconnect: ringing call is preserved when the caller socket disconnects', 
 
     // The call must still be ringing – socket disconnect does not end a call.
     const call = getCall(callId);
-    assert.equal(call.status, 'ringing', 'call must remain ringing after socket disconnect');
-    assert.equal(call.endReason, null);
+    assert.equal(call?.status, 'ringing', 'call must remain ringing after socket disconnect');
+    assert.equal(call?.endReason, null);
   } finally {
     await teardown();
   }
@@ -195,8 +204,8 @@ test('reconnect: ringing timeout fires and marks call missed even when caller is
     assert.equal(transitioned, 1, 'call should be transitioned to missed');
 
     const call = getCall(callId);
-    assert.equal(call.status, 'missed');
-    assert.equal(call.endReason, 'timeout');
+    assert.equal(call?.status, 'missed');
+    assert.equal(call?.endReason, 'timeout');
   } finally {
     await teardown();
   }
@@ -240,8 +249,8 @@ test('reconnect: active call remains in RTC-active state after callee socket dro
     const RTC_ACTIVE = new Set(['accepted', 'connecting_media', 'in_call']);
     const callAfterDrop = getCall(callId);
     assert.ok(
-      RTC_ACTIVE.has(callAfterDrop.status),
-      `call must remain RTC-active after socket drop, got: ${callAfterDrop.status}`
+      RTC_ACTIVE.has(callAfterDrop?.status ?? ''),
+      `call must remain RTC-active after socket drop, got: ${callAfterDrop?.status}`
     );
   } finally {
     await teardown(caller);
@@ -366,8 +375,8 @@ test('network handoff: call completes cleanly after callee switches networks mid
 
     const callMidHandoff = getCall(callId);
     assert.ok(
-      ['accepted', 'connecting_media', 'in_call'].includes(callMidHandoff.status),
-      `expected active state during handoff, got: ${callMidHandoff.status}`
+      ['accepted', 'connecting_media', 'in_call'].includes(callMidHandoff?.status ?? ''),
+      `expected active state during handoff, got: ${callMidHandoff?.status}`
     );
 
     // Step 3: Callee connects on the new network (new socket, same session).
@@ -398,8 +407,8 @@ test('network handoff: call completes cleanly after callee switches networks mid
     assert.equal(endAck.ok, true);
 
     const finalCall = getCall(callId);
-    assert.equal(finalCall.status, 'ended');
-    assert.equal(finalCall.endReason, 'ended');
+    assert.equal(finalCall?.status, 'ended');
+    assert.equal(finalCall?.endReason, 'ended');
   } finally {
     await teardown(caller, calleeNew);
   }
@@ -441,7 +450,7 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
     assert.equal(transitioned, 0, 'accepted call must not be re-transitioned to missed');
 
     const call = getCall(callId);
-    assert.equal(call.status, 'accepted');
+    assert.equal(call?.status, 'accepted');
   } finally {
     await teardown(caller);
   }

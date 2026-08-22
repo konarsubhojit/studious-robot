@@ -1,45 +1,37 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, CALL_END_REASONS } = require('../src/index.js');
 const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
+const { getJson, listenOnRandomPort, postJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function startServer() {
   const server = createServer();
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
-/** Create a session for a given userId, returning the sessionId. */
+/**
+ * Create a session for a given userId, returning the sessionId.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -503,9 +495,9 @@ test('tickRingingTimeouts: transitions stale ringing calls to missed', async () 
     assert.equal(transitioned, 1);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'missed');
-    assert.equal(call.endReason, 'timeout');
-    assert.equal(call.ringTimeoutAt, null);
+    assert.equal(call?.status, 'missed');
+    assert.equal(call?.endReason, 'timeout');
+    assert.equal(call?.ringTimeoutAt, null);
   } finally {
     await teardown();
   }
@@ -525,7 +517,7 @@ test('tickRingingTimeouts: does not affect calls not yet expired', async () => {
     assert.equal(transitioned, 0);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'ringing');
+    assert.equal(call?.status, 'ringing');
   } finally {
     await teardown();
   }

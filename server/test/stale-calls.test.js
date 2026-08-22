@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -22,50 +23,74 @@ const {
   TERMINAL_CALL_STATES,
 } = require('../src/config.js');
 const { getCallExpiry } = require('../src/domain/calls.js');
-const { captureConsoleLog } = require('./helpers');
 const schema = require('../db/schema');
+const { captureConsoleLog, listenOnRandomPort, postJson, readJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Build the minimal call shape the timeout helpers read, typed as a full
+ * record so the guard tests can exercise them without a live call.
+ *
+ * @param {{ status: string, createdAt: string, updatedAt: string }} fields
+ * @returns {import('../src/stores/contracts').CallRecord}
+ */
+function callFixture(fields) {
+  return /** @type {any} */ (fields);
+}
+
+/**
+ * @param {import('../src/createServer').CreateServerOptions} [opts]
+ */
 async function startServer(opts) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
   async function teardown(...clients) {
-    clients.forEach((client) => client.disconnect());
+    clients.forEach((client) => client?.disconnect());
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {string} [sessionId] - Appended as `?sessionId=` when present.
+ * @param {Record<string, string>} [headers]
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function getJson(url, path, sessionId, headers = {}) {
   const pathname = sessionId
     ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
     : path;
   const response = await fetch(`${url}${pathname}`, { headers });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await readJson(response) };
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
+/**
+ * @param {string} url
+ * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url, auth) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, { auth, forceNew: true, transports: ['websocket'] });
@@ -74,16 +99,28 @@ function connect(url, auth) {
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for ack of "${event}"`)), 1500);
-    socket.emit(event, payload, (ack) => {
+    socket.emit(event, payload, (/** @type {any} */ ack) => {
       clearTimeout(timer);
       resolve(ack);
     });
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
+ */
 function waitFor(socket, event, timeoutMs = 2000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -94,16 +131,24 @@ function waitFor(socket, event, timeoutMs = 2000) {
   });
 }
 
+/** @param {number} ms */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Resolve on the first `call.state_changed` carrying `status`. */
+/**
+ * Resolve on the first `call.state_changed` carrying `status`.
+ *
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} status
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
+ */
 function waitForStatus(socket, status, timeoutMs = 2000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`Timeout waiting for status "${status}"`)),
       timeoutMs
     );
-    socket.on('call.state_changed', (payload) => {
+    socket.on('call.state_changed', (/** @type {any} */ payload) => {
       if (payload?.status !== status) return;
       clearTimeout(timer);
       resolve(payload);
@@ -111,7 +156,14 @@ function waitForStatus(socket, status, timeoutMs = 2000) {
   });
 }
 
-/** Drive a call through to `connecting_media` over HTTP + sockets. */
+/**
+ * Drive a call through to `connecting_media` over HTTP + sockets.
+ *
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} callerSession
+ * @param {string} calleeSession
+ * @returns {Promise<string>} the created call id
+ */
 async function startConnectingMediaCall(url, callerSession, calleeSession) {
   const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
   const callId = created.body.callId;
@@ -133,8 +185,8 @@ test('sweep: an accepted call that never connects media is ended, not left activ
     assert.equal(transitioned, 1);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'ended');
-    assert.equal(call.endReason, 'media_connect_timeout');
+    assert.equal(call?.status, 'ended');
+    assert.equal(call?.endReason, 'media_connect_timeout');
 
     // …and the participants are free to call each other again.
     const next = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
@@ -156,14 +208,14 @@ test('sweep: a call still inside the media-connect window is left alone', async 
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
-    assert.equal(getCall(callId).status, 'connecting_media');
+    assert.equal(getCall(callId)?.status, 'connecting_media');
 
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_MEDIA_CONNECT_TIMEOUT_MS - 1_000), 0);
-    assert.equal(getCall(callId).status, 'connecting_media');
+    assert.equal(getCall(callId)?.status, 'connecting_media');
 
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_MEDIA_CONNECT_TIMEOUT_MS + 1_000), 1);
-    assert.equal(getCall(callId).status, 'ended');
-    assert.equal(getCall(callId).endReason, 'media_connect_timeout');
+    assert.equal(getCall(callId)?.status, 'ended');
+    assert.equal(getCall(callId)?.endReason, 'media_connect_timeout');
   } finally {
     await teardown(caller, callee);
   }
@@ -186,14 +238,14 @@ test('disconnect: an in-progress call ends once both participants lose their soc
     caller.disconnect();
     await sleep(60);
     // The callee is still connected: the call must survive the caller's drop.
-    assert.equal(getCall(callId).status, 'accepted');
+    assert.equal(getCall(callId)?.status, 'accepted');
 
     callee.disconnect();
     await sleep(120);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'ended');
-    assert.equal(call.endReason, 'participant_disconnected');
+    assert.equal(call?.status, 'ended');
+    assert.equal(call?.endReason, 'participant_disconnected');
   } finally {
     await teardown();
   }
@@ -229,6 +281,7 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
   const db = {
     select() {
       return {
+        /** @param {unknown} table */
         from(table) {
           return Promise.resolve(table === schema.calls ? callRows : []);
         },
@@ -238,7 +291,12 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
       return {
         values() {
           return {
+            /**
+             * @param {(value: unknown) => unknown} resolve
+             * @param {(reason: unknown) => unknown} reject
+             */
             then: (resolve, reject) => Promise.resolve().then(resolve, reject),
+            /** @param {(reason: unknown) => unknown} reject */
             catch: (reject) => Promise.resolve().catch(reject),
             onConflictDoUpdate: () => Promise.resolve(),
             onConflictDoNothing: () => Promise.resolve(),
@@ -253,11 +311,11 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
     await loadPersistedState();
 
     const stale = getCall(staleCallId);
-    assert.equal(stale.status, 'ended');
-    assert.equal(stale.endReason, 'stale_cleanup');
+    assert.equal(stale?.status, 'ended');
+    assert.equal(stale?.endReason, 'stale_cleanup');
 
     // A call that was mid-setup moments before the restart is still legitimate.
-    assert.equal(getCall(freshCallId).status, 'connecting_media');
+    assert.equal(getCall(freshCallId)?.status, 'connecting_media');
 
     // The stale record must not make its participants busy any more.
     const zenSession = await createSession(url, 'user-zen');
@@ -366,8 +424,8 @@ test('call.state.report: a client with no active call clears its phantom calls',
     assert.equal(ack.activeCalls.length, 0);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'ended');
-    assert.equal(call.endReason, 'client_state_reconciled');
+    assert.equal(call?.status, 'ended');
+    assert.equal(call?.endReason, 'client_state_reconciled');
     assert.equal((await stateChanged).status, 'ended');
 
     // The caller can immediately place a new call.
@@ -394,7 +452,7 @@ test('call.state.report: a call the client still holds is left untouched', async
     });
     assert.equal(ack.ok, true);
     assert.deepEqual(ack.clearedCallIds, []);
-    assert.equal(getCall(callId).status, 'accepted');
+    assert.equal(getCall(callId)?.status, 'accepted');
   } finally {
     await teardown(caller);
   }
@@ -414,7 +472,7 @@ test('call.connected: media reaching the connected ICE state advances the call',
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
-    assert.equal(getCall(callId).status, 'connecting_media');
+    assert.equal(getCall(callId)?.status, 'connecting_media');
 
     const stateChanged = waitForStatus(callee, CONNECTED_CALL_STATUS);
     const ack = await emitWithAck(caller, 'call.connected', {
@@ -423,7 +481,7 @@ test('call.connected: media reaching the connected ICE state advances the call',
       iceState: 'connected',
     });
     assert.equal(ack.ok, true);
-    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
     assert.equal((await stateChanged).status, CONNECTED_CALL_STATUS);
 
     // The peer reports too; the second report is absorbed, not rejected.
@@ -433,7 +491,7 @@ test('call.connected: media reaching the connected ICE state advances the call',
       iceState: 'completed',
     });
     assert.equal(second.ok, true);
-    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
   } finally {
     await teardown(caller, callee);
   }
@@ -450,16 +508,16 @@ test('sweep: a connected call is never ended by the media-connect timeout', asyn
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(caller, 'rtc.offer', { version: 1, callId, sdp: { type: 'offer', sdp: 'x' } });
     await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
-    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
 
     // Well past the media-connect window: a healthy call must stay up.
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_MEDIA_CONNECT_TIMEOUT_MS + 30_000), 0);
-    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
 
     // …and when it does eventually expire it is because the device stopped
     // reporting liveness, never because media "failed to connect".
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS + 5_000), 1);
-    assert.equal(getCall(callId).endReason, 'heartbeat_timeout');
+    assert.equal(getCall(callId)?.endReason, 'heartbeat_timeout');
   } finally {
     await teardown(caller);
   }
@@ -482,8 +540,8 @@ test('call.connected: an unrecovered ICE failure ends the call without waiting f
     assert.equal(ack.ok, true);
 
     const call = getCall(callId);
-    assert.equal(call.status, 'ended');
-    assert.equal(call.endReason, 'media_failed');
+    assert.equal(call?.status, 'ended');
+    assert.equal(call?.endReason, 'media_failed');
   } finally {
     await teardown(caller);
   }
@@ -507,12 +565,12 @@ test('heartbeat: a connected call is aged out only once its liveness reports sto
       mediaState: { isScreenSharing: false, heartbeat: true },
     });
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS - 5_000), 0);
-    assert.equal(getCall(callId).status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(callId)?.status, CONNECTED_CALL_STATUS);
 
     // Once the beats stop, the abandoned call is closed out long before the
     // absolute duration cap would have fired.
     assert.equal(tickRingingTimeouts(Date.now() + DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS + 5_000), 1);
-    assert.equal(getCall(callId).endReason, 'heartbeat_timeout');
+    assert.equal(getCall(callId)?.endReason, 'heartbeat_timeout');
   } finally {
     await teardown(caller);
   }
@@ -528,7 +586,7 @@ test('heartbeat: only an explicit liveness report refreshes a connected call', a
 
     const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
     await emitWithAck(caller, 'call.connected', { version: 1, callId, iceState: 'connected' });
-    const stampedAt = getCall(callId).lastHeartbeatAt;
+    const stampedAt = getCall(callId)?.lastHeartbeatAt;
     assert.ok(stampedAt, 'call.connected must stamp the first liveness report');
 
     // A client that predates the heartbeat still emits `call.media-state` when
@@ -540,14 +598,14 @@ test('heartbeat: only an explicit liveness report refreshes a connected call', a
       callId,
       mediaState: { isScreenSharing: true },
     });
-    assert.equal(getCall(callId).lastHeartbeatAt, stampedAt);
+    assert.equal(getCall(callId)?.lastHeartbeatAt, stampedAt);
 
     await emitWithAck(caller, 'call.media-state', {
       version: 1,
       callId,
       mediaState: { isScreenSharing: true, heartbeat: true },
     });
-    assert.notEqual(getCall(callId).lastHeartbeatAt, stampedAt);
+    assert.notEqual(getCall(callId)?.lastHeartbeatAt, stampedAt);
   } finally {
     await teardown(caller);
   }
@@ -564,7 +622,11 @@ test('guard: every non-terminal status has a forward transition and a bounded ti
     );
 
     const expiry = getCallExpiry(
-      { status, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      callFixture({
+        status,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
       {}
     );
     assert.ok(expiry, `status "${status}" has no timeout and could stay active forever`);
@@ -574,20 +636,20 @@ test('guard: every non-terminal status has a forward transition and a bounded ti
 
 test('guard: the connected steady state is never subject to the media-connect timeout', () => {
   const now = Date.now();
-  const call = {
+  const call = callFixture({
     status: CONNECTED_CALL_STATUS,
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
-  };
+  });
   const expiry = getCallExpiry(call, {});
-  assert.notEqual(expiry.reason, 'media_connect_timeout');
+  assert.notEqual(expiry?.reason, 'media_connect_timeout');
   assert.ok(
-    expiry.deadlineMs - now > DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
+    (expiry?.deadlineMs ?? 0) - now > DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
     'a connected call must outlive the media-connect window by a wide margin'
   );
 
   // Only a status that is still setting up media may carry that reason.
   for (const status of ['accepted', 'connecting_media']) {
-    assert.equal(getCallExpiry({ ...call, status }, {}).reason, 'media_connect_timeout');
+    assert.equal(getCallExpiry({ ...call, status }, {})?.reason, 'media_connect_timeout');
   }
 });

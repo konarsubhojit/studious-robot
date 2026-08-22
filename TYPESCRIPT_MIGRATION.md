@@ -200,3 +200,8 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `signaling.test.js`
   - [x] `telemetry.test.js`
   - [x] `turn-credentials.test.js`
+  - [x] `calls.test.js`
+  - [x] `identity.test.js`
+  - [x] `reconnect.test.js`
+  - [x] `signaling-contract.test.js`
+  - [x] `stale-calls.test.js`

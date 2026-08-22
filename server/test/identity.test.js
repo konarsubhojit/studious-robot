@@ -1,9 +1,11 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
 const PRESENCE_UPDATE_DELAY_MS = 25;
 
@@ -14,18 +16,24 @@ async function startServer() {
       return { authUid: idToken, email: `${idToken}@example.com`, authProvider: 'password' };
     },
   });
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
+/**
+ * @param {string} url
+ * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url, auth) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, {
@@ -38,6 +46,13 @@ function connect(url, auth) {
   });
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {Record<string, any>} body
+ * @param {{ sessionId?: string }} [options]
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function postJson(url, path, body, options = {}) {
   let payload = options.sessionId ? { ...body, sessionId: options.sessionId } : body;
   if (path === '/session' && !payload.idToken) {
@@ -53,10 +68,16 @@ async function postJson(url, path, body, options = {}) {
 
   return {
     status: response.status,
-    body: await response.json(),
+    body: await readJson(response),
   };
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {{ sessionId?: string }} [options]
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function getJson(url, path, options = {}) {
   const pathname = options.sessionId
     ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(options.sessionId)}`
@@ -65,7 +86,7 @@ async function getJson(url, path, options = {}) {
 
   return {
     status: response.status,
-    body: await response.json(),
+    body: await readJson(response),
   };
 }
 
