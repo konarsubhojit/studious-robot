@@ -56,11 +56,11 @@ const AUDIO_ROUTE_FALLBACK_MESSAGE =
  * Convert a route constant into a display label, falling back to the raw value
  * for any future/unknown device names.
  *
- * @param {string} route
+ * @param {string} [route]
  * @returns {string}
  */
 export function getAudioRouteLabel(route) {
-  return AUDIO_ROUTE_LABELS[route] || route || 'Unknown';
+  return (route && AUDIO_ROUTE_LABELS[route]) || route || 'Unknown';
 }
 
 /**

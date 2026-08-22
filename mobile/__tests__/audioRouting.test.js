@@ -1,3 +1,4 @@
+// @ts-check
 jest.mock('react-native-incall-manager', () => ({
   start: jest.fn(),
   stop: jest.fn(),
@@ -10,7 +11,7 @@ jest.mock('react-native-incall-manager', () => ({
 const mockEnsureBluetoothPermission = jest.fn();
 
 jest.mock('../src/permissions', () => ({
-  ensureBluetoothPermission: (...args) => mockEnsureBluetoothPermission(...args),
+  ensureBluetoothPermission: (/** @type {any[]} */ ...args) => mockEnsureBluetoothPermission(...args),
 }));
 
 import { DeviceEventEmitter } from 'react-native';
@@ -27,6 +28,12 @@ import {
   stopAudioSession,
   subscribeAudioDevices,
 } from '../src/audioRouting';
+
+const startMock = /** @type {jest.Mock} */ (InCallManager.start);
+const stopMock = /** @type {jest.Mock} */ (InCallManager.stop);
+const setSpeakerphoneOnMock = /** @type {jest.Mock} */ (InCallManager.setSpeakerphoneOn);
+const setForceSpeakerphoneOnMock = /** @type {jest.Mock} */ (InCallManager.setForceSpeakerphoneOn);
+const chooseAudioRouteMock = /** @type {jest.Mock} */ (InCallManager.chooseAudioRoute);
 
 describe('audioRouting', () => {
   beforeEach(() => {
@@ -45,7 +52,7 @@ describe('audioRouting', () => {
     });
 
     test('returns an error result instead of throwing when native start fails', () => {
-      InCallManager.start.mockImplementation(() => {
+      startMock.mockImplementation(() => {
         throw new Error('missing WAKE_LOCK');
       });
 
@@ -68,7 +75,7 @@ describe('audioRouting', () => {
     });
 
     test('returns an error result instead of throwing when native stop fails', () => {
-      InCallManager.stop.mockImplementation(() => {
+      stopMock.mockImplementation(() => {
         throw new Error('stop failed');
       });
 
@@ -99,7 +106,7 @@ describe('audioRouting', () => {
     });
 
     test('falls back to speaker when route update fails', () => {
-      InCallManager.setForceSpeakerphoneOn
+      setForceSpeakerphoneOnMock
         .mockImplementationOnce(() => {
           throw new Error('missing BLUETOOTH_CONNECT');
         })
@@ -173,7 +180,7 @@ describe('audioRouting', () => {
     });
 
     test('delegates to InCallManager and returns parsed status', async () => {
-      InCallManager.chooseAudioRoute.mockResolvedValue({
+      chooseAudioRouteMock.mockResolvedValue({
         availableAudioDeviceList: '["SPEAKER_PHONE","BLUETOOTH"]',
         selectedAudioDevice: 'BLUETOOTH',
       });
@@ -206,7 +213,7 @@ describe('audioRouting', () => {
     });
 
     test('returns a non-throwing error result when native route selection fails', async () => {
-      InCallManager.chooseAudioRoute.mockRejectedValue(new Error('native failure'));
+      chooseAudioRouteMock.mockRejectedValue(new Error('native failure'));
 
       const status = await chooseAudioRoute(AUDIO_ROUTES.EARPIECE);
 
@@ -242,7 +249,7 @@ describe('audioRouting', () => {
     });
 
     test('routes to Bluetooth when a headset is connected', async () => {
-      InCallManager.chooseAudioRoute.mockResolvedValue({
+      chooseAudioRouteMock.mockResolvedValue({
         availableAudioDeviceList: '["BLUETOOTH","EARPIECE","SPEAKER_PHONE"]',
         selectedAudioDevice: 'BLUETOOTH',
       });
@@ -258,7 +265,7 @@ describe('audioRouting', () => {
     });
 
     test('discovers devices on the first selection and upgrades to the better one', async () => {
-      InCallManager.chooseAudioRoute.mockImplementation(async route => ({
+      chooseAudioRouteMock.mockImplementation(async (/** @type {string} */ route) => ({
         availableAudioDeviceList: '["BLUETOOTH","EARPIECE"]',
         selectedAudioDevice: route,
       }));
@@ -276,7 +283,7 @@ describe('audioRouting', () => {
         granted: false,
         message: 'Bluetooth permission denied. Call will stay on speaker or earpiece.',
       });
-      InCallManager.chooseAudioRoute.mockResolvedValue({
+      chooseAudioRouteMock.mockResolvedValue({
         availableAudioDeviceList: '["WIRED_HEADSET","SPEAKER_PHONE"]',
         selectedAudioDevice: 'WIRED_HEADSET',
       });
@@ -293,13 +300,13 @@ describe('audioRouting', () => {
     });
 
     test('reports a degraded result when every device fails', async () => {
-      InCallManager.chooseAudioRoute.mockRejectedValue(new Error('native failure'));
+      chooseAudioRouteMock.mockRejectedValue(new Error('native failure'));
 
       const result = await applyPreferredAudioRoute(['EARPIECE', 'SPEAKER_PHONE']);
 
       expect(result.ok).toBe(false);
       expect(result.selected).toBe(AUDIO_ROUTES.SPEAKER_PHONE);
-      expect(result.message).toEqual(expect.any(String));
+      expect(/** @type {any} */ (result).message).toEqual(expect.any(String));
     });
   });
 

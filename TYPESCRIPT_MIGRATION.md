@@ -171,6 +171,9 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `signalingClient.test.js`
   - [x] `incomingCallNotification.test.js`
   - [x] `settingsStorage.test.js`
+  - [x] `permissions.test.js`
+  - [x] `audioRouting.test.js`
+  - [x] `attachmentUpload.test.js`
 
 ### server/
 

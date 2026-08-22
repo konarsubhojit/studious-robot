@@ -1,3 +1,4 @@
+// @ts-check
 import {
   _resetAttachmentAvailabilityCache,
   describeAttachmentError,
@@ -12,28 +13,43 @@ import { MESSAGE_TYPES } from '../../shared';
 /** Minimal fake XMLHttpRequest driving `putAttachment`'s XHR usage. */
 class FakeXHR {
   constructor() {
+    /** @type {any} */
     this.upload = {};
+    /** @type {Record<string, string>} */
     this.requestHeaders = {};
+    /** @type {string} */
+    this.method = '';
+    /** @type {string} */
+    this.url = '';
+    /** @type {any} */
+    this.body = undefined;
+    /** @type {number} */
+    this.status = 0;
+    /** @type {() => void} */
+    this.onload = () => {};
+    /** @type {() => void} */
+    this.onerror = () => {};
   }
-  open(method, url) {
+  open(/** @type {string} */ method, /** @type {string} */ url) {
     this.method = method;
     this.url = url;
   }
-  setRequestHeader(name, value) {
+  setRequestHeader(/** @type {string} */ name, /** @type {string} */ value) {
     this.requestHeaders[name] = value;
   }
-  send(body) {
+  send(/** @type {any} */ body) {
     this.body = body;
     FakeXHR.instances.push(this);
   }
 }
+/** @type {FakeXHR[]} */
 FakeXHR.instances = [];
 
 describe('attachmentUpload', () => {
   beforeEach(() => {
     _resetAttachmentAvailabilityCache();
     FakeXHR.instances = [];
-    global.XMLHttpRequest = FakeXHR;
+    global.XMLHttpRequest = /** @type {any} */ (FakeXHR);
   });
 
   describe('validateAttachment', () => {
@@ -106,8 +122,8 @@ describe('attachmentUpload', () => {
   });
 
   describe('presignAttachment', () => {
-    function buildAuthedFetch(response) {
-      return jest.fn(build => {
+    function buildAuthedFetch(/** @type {any} */ response) {
+      return jest.fn((/** @type {any} */ build) => {
         build('session-1');
         return Promise.resolve(response);
       });
@@ -210,7 +226,7 @@ describe('attachmentUpload', () => {
       const promise = putAttachment({
         uploadUrl: 'https://r2.example/upload',
         headers: {},
-        body: {},
+        body: /** @type {any} */ ({}),
       });
       const xhr = FakeXHR.instances[0];
       xhr.status = 403;
@@ -219,7 +235,7 @@ describe('attachmentUpload', () => {
     });
 
     test('rejects on a network error', async () => {
-      const promise = putAttachment({ uploadUrl: 'https://r2.example/upload', headers: {}, body: {} });
+      const promise = putAttachment({ uploadUrl: 'https://r2.example/upload', headers: {}, body: /** @type {any} */ ({}) });
       FakeXHR.instances[0].onerror();
       await expect(promise).rejects.toMatchObject({ message: expect.any(String) });
     });
@@ -251,10 +267,12 @@ describe('attachmentUpload', () => {
         expiresAt: '2024-01-01T00:00:00.000Z',
         headers: { 'Content-Type': 'image/png', 'Content-Length': '1024' },
       };
-      const authedFetch = jest.fn(build => {
-        build('session-1');
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
-      });
+      const authedFetch = /** @type {any} */ (
+        jest.fn((/** @type {any} */ build) => {
+          build('session-1');
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(payload) });
+        })
+      );
 
       const promise = uploadAttachment({
         authedFetch,
@@ -287,12 +305,14 @@ describe('attachmentUpload', () => {
     });
 
     test('maps a 503 presign failure to the user-facing message', async () => {
-      const authedFetch = jest.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 503,
-          json: () => Promise.resolve({ error: 'not configured' }),
-        }),
+      const authedFetch = /** @type {any} */ (
+        jest.fn(() =>
+          Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () => Promise.resolve({ error: 'not configured' }),
+          }),
+        )
       );
 
       await expect(
