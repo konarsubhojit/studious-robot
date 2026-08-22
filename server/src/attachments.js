@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -127,7 +128,8 @@ function validateAttachmentRequest({ type, mimeType, sizeBytes } = {}) {
  * @returns {string}
  */
 function createAttachmentKey({ conversationId, mimeType }) {
-  const extension = EXTENSION_BY_MIME_TYPE[mimeType] ?? 'bin';
+  const extension =
+    /** @type {Record<string, string>} */ (EXTENSION_BY_MIME_TYPE)[mimeType] ?? 'bin';
   // The conversation id is derived from two user ids, which are already
   // restricted to safe characters, but encode it anyway: the key ends up in a
   // URL path.
@@ -135,12 +137,23 @@ function createAttachmentKey({ conversationId, mimeType }) {
   return `${ATTACHMENT_PATH_PREFIX}/${scope}/${crypto.randomUUID()}.${extension}`;
 }
 
-/** HMAC-SHA256 returning a Buffer. */
+/**
+ * HMAC-SHA256 returning a Buffer.
+ *
+ * @param {crypto.BinaryLike|crypto.KeyObject} key
+ * @param {string} value
+ * @returns {Buffer}
+ */
 function hmac(key, value) {
   return crypto.createHmac('sha256', key).update(value, 'utf8').digest();
 }
 
-/** Lowercase hex SHA-256 of a string. */
+/**
+ * Lowercase hex SHA-256 of a string.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }

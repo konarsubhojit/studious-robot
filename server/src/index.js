@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -23,6 +24,14 @@ const { createStores, createRedisPgStores } = require('./stores');
 const { createMemoryMessageBus, createRedisMessageBus } = require('./messageBus');
 const { createCache } = require('./cache');
 const { logNotificationHubStartupStatus } = require('./push');
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 module.exports = {
   createServer,
@@ -74,7 +83,7 @@ if (require.main === module) {
       } catch (err) {
         // Fail closed on an explicitly configured but unreachable Redis so the
         // operator notices rather than silently losing cross-instance state.
-        console.error('[signaling] failed to initialise Redis stores:', err?.message);
+        console.error('[signaling] failed to initialise Redis stores:', errorMessage(err));
         throw err;
       }
     }
@@ -96,7 +105,7 @@ if (require.main === module) {
       // Graceful shutdown for rolling deploys: drain in-flight connections, then
       // exit cleanly so systemd can restart/replace the instance.
       let exiting = false;
-      const handleSignal = (signal) => {
+      const handleSignal = (/** @type {string} */ signal) => {
         if (exiting) return;
         exiting = true;
         console.log(`[signaling] received ${signal}; draining connections...`);
@@ -104,15 +113,17 @@ if (require.main === module) {
           .then(() =>
             // Close Redis connections after draining; log close failures
             // specifically but don't abort the exit on them.
-            Promise.resolve(stores?.close?.()).catch((err) => {
-              console.error('[signaling] error closing Redis stores:', err?.message);
+            Promise.resolve(
+              /** @type {{ close?: () => Promise<void> }} */ (stores ?? {}).close?.()
+            ).catch((/** @type {unknown} */ err) => {
+              console.error('[signaling] error closing Redis stores:', errorMessage(err));
             })
           )
           .then(() => {
             console.log('[signaling] shutdown complete; exiting');
             process.exit(0);
           })
-          .catch((err) => {
+          .catch((/** @type {unknown} */ err) => {
             console.error('[signaling] error during shutdown:', err);
             process.exit(1);
           });

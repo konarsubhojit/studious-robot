@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 /**
@@ -27,6 +28,25 @@
  */
 
 const { EventEmitter } = require('events');
+
+/**
+ * @typedef {(message: unknown, channel: string) => void} MessageBusHandler
+ *
+ * @typedef {object} MessageBus
+ * @property {'memory'|'redis'} type
+ * @property {(channel: string, message: unknown) => Promise<void>} publish
+ * @property {(channel: string, handler: MessageBusHandler)
+ *   => Promise<() => Promise<void>>} subscribe
+ * @property {() => Promise<void>} close
+ */
+
+/**
+ * @param {unknown} error
+ * @returns {string} the error message, or a stringified fallback.
+ */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Serialise a message for transport. Objects become JSON; strings are sent
@@ -61,7 +81,7 @@ function decode(payload) {
  * to local subscribers only, asynchronously (mirroring network pub/sub timing
  * so call sites cannot accidentally rely on synchronous delivery).
  *
- * @returns {import('./messageBus').MessageBus}
+ * @returns {MessageBus}
  */
 function createMemoryMessageBus() {
   const emitter = new EventEmitter();
@@ -82,11 +102,11 @@ function createMemoryMessageBus() {
     },
 
     async subscribe(channel, handler) {
-      const listener = (payload) => {
+      const listener = (/** @type {string} */ payload) => {
         try {
           handler(decode(payload), channel);
         } catch (error) {
-          console.error(`[messageBus] handler for "${channel}" threw: ${error?.message}`);
+          console.error(`[messageBus] handler for "${channel}" threw: ${errorMessage(error)}`);
         }
       };
       emitter.on(channel, listener);
@@ -119,7 +139,7 @@ function createMemoryMessageBus() {
  *   client.quit()
  *
  * @param {{ pub: any, sub: any, ownsClients?: boolean }} opts
- * @returns {import('./messageBus').MessageBus}
+ * @returns {MessageBus}
  */
 function createRedisMessageBus({ pub, sub, ownsClients = false }) {
   if (!pub || !sub) {
@@ -146,13 +166,13 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
         set = new Set();
         handlers.set(channel, set);
         // One Redis subscription per channel; fan out to local handlers.
-        await sub.subscribe(channel, (payload) => {
+        await sub.subscribe(channel, (/** @type {string} */ payload) => {
           const message = decode(payload);
           for (const fn of handlers.get(channel) ?? []) {
             try {
               fn(message, channel);
             } catch (error) {
-              console.error(`[messageBus] handler for "${channel}" threw: ${error?.message}`);
+              console.error(`[messageBus] handler for "${channel}" threw: ${errorMessage(error)}`);
             }
           }
         });
@@ -169,7 +189,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
             try {
               await sub.unsubscribe(channel);
             } catch (error) {
-              console.error(`[messageBus] unsubscribe "${channel}" failed: ${error?.message}`);
+              console.error(`[messageBus] unsubscribe "${channel}" failed: ${errorMessage(error)}`);
             }
           }
         }
@@ -187,7 +207,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }) {
           try {
             await sub.unsubscribe(channel);
           } catch (error) {
-            console.error(`[messageBus] unsubscribe "${channel}" failed: ${error?.message}`);
+            console.error(`[messageBus] unsubscribe "${channel}" failed: ${errorMessage(error)}`);
           }
         }
       }
