@@ -64,6 +64,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `AttachSheet.js`
   - [x] `AudioOutputMenu.js`
   - [x] `CallControls.js`
+  - [x] `CallScreen.js`
   - [x] `CallStage.js`
   - [x] `CallTimelineRow.js`
   - [x] `CallTopBar.js`
@@ -76,6 +77,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `IncomingCallScreen.js`
   - [x] `OutgoingCallScreen.js`
   - [x] `ReconnectBanner.js`
+  - [x] `RegistrationScreen.js`
   - [x] `SettingsCard.js`
   - [x] `StatusBanner.js`
   - [x] `SwipeableRow.js`
@@ -125,6 +127,7 @@ design tokens and utilities → presentational components → hooks → screens 
 - [x] `src/permissions.js`
 - [x] `src/vectorIcons.js`
 - [x] `src/webrtcConfig.js`
+- [x] `src/AppShell.js`
 - [ ] remaining `src/*.js` modules (logging, permissions, …)
 - [ ] `App.js`
 - [ ] `__tests__/`

@@ -16,7 +16,7 @@ import DraggablePip from './DraggablePip';
  * @param {boolean} props.hasPipStream
  * @param {boolean} props.mirrorPip
  * @param {boolean} [props.mirrorMain] - Mirror the main stream (true when local front camera is primary).
- * @param {import('react-native-gesture-handler').ComposedGesture} props.pipGesture
+ * @param {ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>} props.pipGesture
  * @param {object} props.animatedPipStyle
  * @param {boolean} [props.isMuted] - Local microphone muted state (forwarded to PiP overlay).
  * @param {boolean} [props.isVideoEnabled] - Local camera on/off state (forwarded to PiP overlay).

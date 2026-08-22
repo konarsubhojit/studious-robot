@@ -15,7 +15,7 @@ import { radius, spacing, typography } from '../theme';
  * shown to communicate muted and camera-off states at a glance.
  *
  * @param {object} props
- * @param {import('react-native-gesture-handler').ComposedGesture} props.gesture
+ * @param {ReturnType<typeof import('react-native-gesture-handler').Gesture.Race>} props.gesture
  *   Composed gesture from the PiP hook.
  * @param {object} props.animatedStyle - Animated transform style.
  * @param {string|null} props.streamURL

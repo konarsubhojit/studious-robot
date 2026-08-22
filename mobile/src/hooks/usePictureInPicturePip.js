@@ -19,7 +19,7 @@ import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
  * @returns {{
  *   stageSize: { width: number, height: number },
  *   handleCallStageLayout: (event: object) => void,
- *   pipGesture: object,
+ *   pipGesture: ReturnType<typeof Gesture.Race>,
  *   animatedPipStyle: object,
  * }}
  */

@@ -28,8 +28,8 @@ function secondsRemaining(ringTimeoutAt) {
  *
  * @param {object} props
  * @param {string} props.calleeId - The ID / name of the callee.
- * @param {{ ringTimeoutAt?: string|null } | null} [props.activeCall] - Live call
- *   record (may include ringTimeoutAt).
+ * @param {import('../../../shared/signaling/schemas').CallRecord | null} [props.activeCall]
+ *   Live call record (may include ringTimeoutAt).
  * @param {import('./StatusBanner').CallStatus} props.status - Current status.
  * @param {() => void} props.onCancel - Called when the user presses Cancel.
  */

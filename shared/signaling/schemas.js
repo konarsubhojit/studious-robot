@@ -43,6 +43,8 @@ const opaqueObject = s.opaque();
  * @property {string} callerId
  * @property {string} calleeId
  * @property {string} status
+ * @property {string | null} [ringTimeoutAt] - When an unanswered call stops
+ *   ringing, for the ringing screens' countdown.
  */
 const callRecord = s.object(
   {

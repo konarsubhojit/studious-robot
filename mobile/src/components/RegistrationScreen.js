@@ -1,3 +1,4 @@
+// @ts-check
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
@@ -15,10 +16,13 @@ import StatusBanner from './StatusBanner';
  *
  * Purely presentational – all behaviour is supplied via props.
  *
- * @param {object}   props
- * @param {Function} props.onRegister - Called with the chosen authentication method and profile fields.
- * @param {boolean}  [props.isLoading] - Shows a loading state while the server is being reached.
- * @param {{ message: string, severity?: 'info'|'success'|'error' }} [props.status]
+ * @typedef {'email-register'|'email-sign-in'|'google'|'microsoft'} AuthMethod
+ *
+ * @param {object} props
+ * @param {(registration: { userId: string, method: AuthMethod, email?: string, password?: string }) => void} props.onRegister
+ *   Called with the chosen authentication method and profile fields.
+ * @param {boolean} [props.isLoading] - Shows a loading state while the server is being reached.
+ * @param {import('./StatusBanner').CallStatus} [props.status]
  * @param {boolean} [props.isGoogleSignInAvailable]
  * @param {boolean} [props.isMicrosoftSignInAvailable]
  */
@@ -37,8 +41,9 @@ export default function RegistrationScreen({
   const [password, setPassword] = useState('');
   // Remembered so a failed attempt can be retried from the error state
   // without the user having to work out which button they pressed.
-  const [lastMethod, setLastMethod] = useState(null);
+  const [lastMethod, setLastMethod] = useState(/** @type {AuthMethod | null} */ (null));
 
+  /** @param {AuthMethod} method */
   const submit = method => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -76,7 +81,7 @@ export default function RegistrationScreen({
               description={status.message}
               actionLabel="Try again"
               actionHint="Retries the last sign-in attempt"
-              onAction={canRetry ? () => submit(lastMethod) : undefined}
+              onAction={canRetry && lastMethod ? () => submit(lastMethod) : undefined}
               testID="registration-error"
             />
           ) : (
@@ -174,6 +179,7 @@ export default function RegistrationScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

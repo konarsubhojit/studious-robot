@@ -1,3 +1,4 @@
+// @ts-check
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
@@ -17,6 +18,17 @@ const OVERLAY_FADE_MS = 180;
 /**
  * Full-screen in-call screen whose overlay chrome (top bar + control deck)
  * auto-hides after a few seconds of inactivity and fades back in on tap.
+ *
+ * @param {Omit<Parameters<typeof CallStage>[0], 'onLayout'>
+ *   & Parameters<typeof CallControls>[0]
+ *   & Parameters<typeof CallTopBar>[0]
+ *   & {
+ *       onRetry: () => void,
+ *       onLeave: () => void,
+ *       status?: import('./StatusBanner').CallStatus,
+ *       onStageLayout: Parameters<typeof CallStage>[0]['onLayout'],
+ *       isReconnecting?: boolean,
+ *     }} props
  */
 export default function CallScreen({
   elapsedCallSeconds,
@@ -56,8 +68,11 @@ export default function CallScreen({
 }) {
   const styles = useThemedStyles(createStyles);
 
-  const [visibleStatus, setVisibleStatus] = useState(null);
+  const [visibleStatus, setVisibleStatus] = useState(
+    /** @type {import('./StatusBanner').CallStatus | null} */ (null),
+  );
   const [showControlsOverlay, setShowControlsOverlay] = useState(true);
+  /** @type {import('react').MutableRefObject<ReturnType<typeof setTimeout> | null>} */
   const controlsAutoHideTimerRef = useRef(null);
 
   const clearControlsAutoHide = useCallback(() => {
@@ -217,6 +232,7 @@ export default function CallScreen({
   );
 }
 
+/** @param {import('../theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     callScreen: {

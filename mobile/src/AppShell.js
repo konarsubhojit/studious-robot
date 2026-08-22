@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useRef } from 'react';
 import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -147,7 +148,7 @@ export default function AppShell() {
  * @param {string|null|undefined} calleeId
  */
 function useCallStateAnnouncements(callState, callerId, calleeId) {
-  const previousStateRef = useRef(null);
+  const previousStateRef = useRef(/** @type {string | null} */ (null));
 
   useEffect(() => {
     if (previousStateRef.current === callState) return;
@@ -253,6 +254,7 @@ function MinimizedCallBubble() {
   );
 }
 
+/** @param {import('./theme').ThemeColors} colors */
 const createStyles = colors =>
   StyleSheet.create({
     container: {

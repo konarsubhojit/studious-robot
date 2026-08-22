@@ -44,7 +44,7 @@ const severityColor = (colors, severity) =>
  * out at a glance, making call state transitions easier to notice.
  *
  * @param {object} props
- * @param {CallStatus} props.status
+ * @param {CallStatus} [props.status]
  * @param {object} [props.style]
  * @param {object} [props.textStyle]
  */

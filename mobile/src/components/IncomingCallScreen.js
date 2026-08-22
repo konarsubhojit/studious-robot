@@ -27,7 +27,7 @@ function secondsRemaining(ringTimeoutAt) {
  * Purely presentational – all behaviour is supplied via props.
  *
  * @param {object} props
- * @param {{ callerId?: string|null, ringTimeoutAt?: string|null } | null} [props.incomingCall]
+ * @param {import('../../../shared/signaling/schemas').CallRecord | null} [props.incomingCall]
  *   Call record from the server (callerId, ringTimeoutAt).
  * @param {import('./StatusBanner').CallStatus} props.status - Current status.
  * @param {() => void} props.onAccept - Called when the user presses Accept.
