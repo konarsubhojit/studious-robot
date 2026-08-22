@@ -196,3 +196,7 @@ design tokens and utilities → presentational components → hooks → screens 
   - [x] `message-bus.test.js`
   - [x] `shared-contract.test.js`
   - [x] `shutdown.test.js`
+  - [x] `security.test.js`
+  - [x] `signaling.test.js`
+  - [x] `telemetry.test.js`
+  - [x] `turn-credentials.test.js`

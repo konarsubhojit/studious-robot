@@ -1,34 +1,39 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
 /**
  * Helper: start a server on an ephemeral port and return its URL + teardown.
  */
 async function startServer() {
   const { httpServer, io } = createServer();
-  await new Promise((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = httpServer.address();
+  const port = await listenOnRandomPort(httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /** @param {...import('socket.io-client').Socket} clients */
   async function teardown(...clients) {
     clients.forEach((c) => c.disconnect());
     // closeAllConnections() (Node 18.2+) forces lingering keep-alive connections
     // to close so that httpServer.close() can finish promptly.
     httpServer.closeAllConnections?.();
-    await new Promise((resolve) => io.close(() => httpServer.close(resolve)));
+    await new Promise((resolve) => io.close(() => httpServer.close(() => resolve(undefined))));
   }
 
   return { url, teardown };
 }
 
+let nextClientId = 0;
 /**
  * Helper: connect a client and wait for the 'connect' event.
+ *
+ * @param {string} url
+ * @returns {Promise<import('socket.io-client').Socket>}
  */
-let nextClientId = 0;
 async function connect(url) {
   nextClientId += 1;
   const userId = `legacy-test-${nextClientId}`;
@@ -37,7 +42,7 @@ async function connect(url) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ userId }),
   });
-  const session = await response.json();
+  const session = await readJson(response);
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, {
       auth: { sessionId: session.sessionId },
@@ -52,11 +57,13 @@ async function connect(url) {
 test('unauthenticated sockets cannot join or inject legacy signaling', async () => {
   const { url, teardown } = await startServer();
   const authenticated = await connect(url);
-  const guest = await new Promise((resolve, reject) => {
-    const socket = ioClient(url, { forceNew: true, transports: ['websocket'] });
-    socket.once('connect', () => resolve(socket));
-    socket.once('connect_error', reject);
-  });
+  const guest = await /** @type {Promise<import('socket.io-client').Socket>} */ (
+    new Promise((resolve, reject) => {
+      const socket = ioClient(url, { forceNew: true, transports: ['websocket'] });
+      socket.once('connect', () => resolve(socket));
+      socket.once('connect_error', reject);
+    })
+  );
   try {
     authenticated.emit('join-room', 'secured-room');
     guest.emit('join-room', 'secured-room');
@@ -74,6 +81,11 @@ test('unauthenticated sockets cannot join or inject legacy signaling', async () 
 
 /**
  * Helper: wait for a specific event on a socket, with a short timeout.
+ *
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
  */
 function waitFor(socket, event, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {

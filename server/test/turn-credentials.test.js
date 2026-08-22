@@ -1,36 +1,56 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createHmac } = require('node:crypto');
 const { createServer } = require('../src/index.js');
+const { listenOnRandomPort, readJson } = require('./helpers');
 
+/**
+ * The TURN stubs below return only the slice of `Response` the route reads, so
+ * `turnFetch` is loosened here instead of at every call site.
+ *
+ * @param {Omit<import('../src/createServer').CreateServerOptions, 'turnFetch'> & {
+ *   turnFetch?: (url: any, options?: any) => Promise<any>,
+ * }} [opts]
+ */
 async function startServer(opts = {}) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   return {
     ...server,
     url: `http://127.0.0.1:${port}`,
     async teardown() {
       server.httpServer.closeAllConnections?.();
-      await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+      await new Promise((resolve) =>
+        server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+      );
     },
   };
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url) {
   const response = await fetch(`${url}/session`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ userId: 'turn-user', deviceId: 'turn-device' }),
   });
-  return (await response.json()).sessionId;
+  return (await readJson(response)).sessionId;
 }
 
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} sessionId
+ * @returns {Promise<{ response: Response, body: any }>}
+ */
 async function getCredentials(url, sessionId) {
   const response = await fetch(`${url}/turn-credentials?sessionId=${encodeURIComponent(sessionId)}`);
-  return { response, body: await response.json() };
+  return { response, body: await readJson(response) };
 }
 
 test('GET /turn-credentials mints and caches Cloudflare credentials', async () => {
@@ -62,7 +82,9 @@ test('GET /turn-credentials mints and caches Cloudflare credentials', async () =
       { urls: ['stun:stun.l.google.com:19302'] },
       { urls: ['turn:cf.example'] },
     ]);
-    assert.match(first.response.headers.get('x-turn-credential-expires-at'), /^\d{4}-/);
+    const expiresAt = first.response.headers.get('x-turn-credential-expires-at');
+    assert.ok(expiresAt, 'the expiry header is present');
+    assert.match(expiresAt, /^\d{4}-/);
     assert.deepEqual(second.body, first.body);
     assert.equal(calls, 1);
   } finally {
@@ -160,6 +182,7 @@ test('GET /turn-credentials mints HMAC credentials for coturn use-auth-secret', 
     );
 
     const expiresAtHeader = response.headers.get('x-turn-credential-expires-at');
+    assert.ok(expiresAtHeader, 'the expiry header is present');
     assert.equal(Math.floor(Date.parse(expiresAtHeader) / 1000), Number(expiry));
   } finally {
     await server.teardown();
@@ -175,13 +198,13 @@ test('GET /turn-credentials mints per-user HMAC credentials without sharing a ca
   });
   try {
     const first = await getCredentials(server.url, await createSession(server.url));
-    const secondSession = await (
+    const secondSession = await readJson(
       await fetch(`${server.url}/session`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ userId: 'other-user', deviceId: 'turn-device-2' }),
       })
-    ).json();
+    );
     const second = await getCredentials(server.url, secondSession.sessionId);
 
     assert.match(first.body[1].username, /:turn-user$/);
@@ -215,8 +238,11 @@ test('GET /turn-credentials prefers Cloudflare over HMAC credentials', async () 
 
 test('GET /turn-credentials falls through to static credentials when TURN_URL is missing', async () => {
   const originalWarn = console.warn;
+  /** @type {string[]} */
   const warns = [];
-  console.warn = (...args) => warns.push(args.join(' '));
+  console.warn = (...args) => {
+    warns.push(args.join(' '));
+  };
   const server = await startServer({
     turnEnv: {
       TURN_STATIC_AUTH_SECRET: 'super-secret',
@@ -251,10 +277,16 @@ test('GET /turn-credentials requires a valid session and is rate limited', async
 test('GET /turn-credentials logs minting failures at error level when no static TURN exists', async () => {
   const originalError = console.error;
   const originalWarn = console.warn;
+  /** @type {string[]} */
   const errors = [];
+  /** @type {string[]} */
   const warns = [];
-  console.error = (...args) => errors.push(args.join(' '));
-  console.warn = (...args) => warns.push(args.join(' '));
+  console.error = (...args) => {
+    errors.push(args.join(' '));
+  };
+  console.warn = (...args) => {
+    warns.push(args.join(' '));
+  };
 
   const server = await startServer({
     turnEnv: {

@@ -1,44 +1,35 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createServer, CALL_END_REASONS } = require('../src/index.js');
 const { DEFAULT_RINGING_TIMEOUT_MS } = require('../src/config.js');
+const { getJson, listenOnRandomPort, postJson, readJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function startServer() {
   const server = createServer();
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
@@ -88,7 +79,7 @@ test('GET /metrics does not require authentication', async () => {
     // No session header – should still return 200
     const res = await fetch(`${url}/metrics`);
     assert.equal(res.status, 200);
-    const body = await res.json();
+    const body = await readJson(res);
     assert.equal(typeof body.counters, 'object');
   } finally {
     await teardown();
@@ -283,7 +274,7 @@ test('GET /calls/:callId/events returns event timeline for participant', async (
     assert.ok(Array.isArray(res.body.events));
 
     // Should have at least: created, accepted, ended
-    const eventNames = res.body.events.map((e) => e.event);
+    const eventNames = res.body.events.map((/** @type {{ event: string }} */ e) => e.event);
     assert.ok(eventNames.includes('created'), 'events should include created');
     assert.ok(eventNames.includes('accepted'), 'events should include accepted');
     assert.ok(eventNames.includes('ended'), 'events should include ended');

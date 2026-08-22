@@ -1,37 +1,40 @@
+// @ts-check
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: ioClient } = require('socket.io-client');
 const { createServer } = require('../src/index.js');
+const { getJson, listenOnRandomPort, postJson, readJson } = require('./helpers');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * @param {import('../src/createServer').CreateServerOptions} [opts]
+ */
 async function startServer(opts = {}) {
   const server = createServer(opts);
-  await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
-  const { port } = server.httpServer.address();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
+  /** @param {...(import('socket.io-client').Socket|undefined)} clients */
   async function teardown(...clients) {
-    clients.forEach((c) => c.disconnect());
+    clients.forEach((c) => c?.disconnect());
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) =>
+      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
+    );
   }
 
   return { ...server, url, teardown };
 }
 
-async function postJson(url, path, body, sessionId) {
-  const payload = sessionId ? { ...body, sessionId } : body;
-  const response = await fetch(`${url}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} path - Request path, including the leading slash.
+ * @param {string} [sessionId] - Appended as `?sessionId=` when present.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function deleteJson(url, path, sessionId) {
   const fullPath = sessionId
     ? `${url}${path}?sessionId=${encodeURIComponent(sessionId)}`
@@ -40,23 +43,26 @@ async function deleteJson(url, path, sessionId) {
     method: 'DELETE',
     headers: { 'content-type': 'application/json' },
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await readJson(response) };
 }
 
-async function getJson(url, path, sessionId) {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
-  return { status: response.status, body: await response.json() };
-}
-
+/**
+ * @param {string} url - Base URL of the server under test.
+ * @param {string} userId
+ * @param {string} [deviceId]
+ * @returns {Promise<string>} the created session id
+ */
 async function createSession(url, userId, deviceId = `device-${userId}`) {
   const res = await postJson(url, '/session', { userId, deviceId });
   assert.equal(res.status, 201);
   return res.body.sessionId;
 }
 
+/**
+ * @param {string} url
+ * @param {Record<string, unknown>} [auth] - Socket.IO handshake auth payload.
+ * @returns {Promise<import('socket.io-client').Socket>}
+ */
 function connect(url, auth) {
   return new Promise((resolve, reject) => {
     const socket = ioClient(url, {
@@ -69,12 +75,24 @@ function connect(url, auth) {
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {unknown} payload
+ * @returns {Promise<any>} the server's acknowledgement
+ */
 function emitWithAck(socket, event, payload) {
   return new Promise((resolve) => {
     socket.emit(event, payload, resolve);
   });
 }
 
+/**
+ * @param {import('socket.io-client').Socket} socket
+ * @param {string} event
+ * @param {number} [timeoutMs]
+ * @returns {Promise<any>}
+ */
 function waitFor(socket, event, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout waiting for "${event}"`)), timeoutMs);
@@ -434,6 +452,7 @@ test('GET /session: returns 401 after session expires', async () => {
 
 test('socket connect: a stale sessionId downgrades to guest and emits session.invalid', async () => {
   const { url, teardown } = await startServer({ sessionTtlMs: 100 });
+  /** @type {import('socket.io-client').Socket|undefined} */
   let socket;
   try {
     const sessionId = await createSession(url, 'user-alice');
@@ -447,11 +466,16 @@ test('socket connect: a stale sessionId downgrades to guest and emits session.in
     // emit it immediately after the handshake, arriving in the same read as
     // the CONNECT packet, so waiting for `connect` to resolve first can lose
     // the race and miss a `once`-registered listener.
-    socket = ioClient(url, { auth: { sessionId }, forceNew: true, transports: ['websocket'] });
-    const invalidPromise = waitFor(socket, 'session.invalid');
+    const client = ioClient(url, {
+      auth: { sessionId },
+      forceNew: true,
+      transports: ['websocket'],
+    });
+    socket = client;
+    const invalidPromise = waitFor(client, 'session.invalid');
     await new Promise((resolve, reject) => {
-      socket.once('connect', resolve);
-      socket.once('connect_error', reject);
+      client.once('connect', () => resolve(undefined));
+      client.once('connect_error', reject);
     });
 
     const invalidPayload = await invalidPromise;
@@ -459,7 +483,7 @@ test('socket connect: a stale sessionId downgrades to guest and emits session.in
 
     // The socket authenticated as a guest, so an authenticated action like
     // call.initiate is rejected instead of silently using the stale identity.
-    const ack = await emitWithAck(socket, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const ack = await emitWithAck(client, 'call.initiate', { version: 1, calleeId: 'user-bob' });
     assert.equal(ack.ok, false);
     assert.equal(ack.error.code, 'unauthorized');
   } finally {
@@ -469,6 +493,7 @@ test('socket connect: a stale sessionId downgrades to guest and emits session.in
 
 test('socket connect: a fresh guest (no sessionId presented) does not emit session.invalid', async () => {
   const { url, teardown } = await startServer();
+  /** @type {import('socket.io-client').Socket|undefined} */
   let socket;
   try {
     socket = await connect(url, { userId: 'user-guest' });
@@ -603,7 +628,7 @@ test("GET /audit-log: blocked call attempt appears in the caller's audit log", a
 
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
-    const blockedEntry = log.body.entries.find((e) => e.event === 'call.blocked');
+    const blockedEntry = log.body.entries.find((/** @type {{ event: string }} */ e) => e.event === 'call.blocked');
     assert.ok(blockedEntry, 'audit log should contain a call.blocked entry');
     assert.equal(blockedEntry.actor, 'user-alice');
     assert.equal(blockedEntry.target, 'user-bob');
@@ -624,7 +649,7 @@ test("GET /audit-log: rate-limited call attempt appears in the caller's audit lo
 
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
-    const rateLimitEntry = log.body.entries.find((e) => e.event === 'call.rate_limited');
+    const rateLimitEntry = log.body.entries.find((/** @type {{ event: string }} */ e) => e.event === 'call.rate_limited');
     assert.ok(rateLimitEntry, 'audit log should contain a call.rate_limited entry');
     assert.equal(rateLimitEntry.actor, 'user-alice');
     assert.equal(rateLimitEntry.outcome, 'rejected');
@@ -644,12 +669,12 @@ test("GET /audit-log: block management events appear in the blocker's audit log"
     const log = await getJson(url, '/audit-log', aliceSession);
     assert.equal(log.status, 200);
 
-    const addedEntry = log.body.entries.find((e) => e.event === 'block.added');
+    const addedEntry = log.body.entries.find((/** @type {{ event: string }} */ e) => e.event === 'block.added');
     assert.ok(addedEntry, 'audit log should contain block.added');
     assert.equal(addedEntry.actor, 'user-alice');
     assert.equal(addedEntry.target, 'user-bob');
 
-    const removedEntry = log.body.entries.find((e) => e.event === 'block.removed');
+    const removedEntry = log.body.entries.find((/** @type {{ event: string }} */ e) => e.event === 'block.removed');
     assert.ok(removedEntry, 'audit log should contain block.removed');
     assert.equal(removedEntry.actor, 'user-alice');
     assert.equal(removedEntry.target, 'user-bob');
@@ -669,7 +694,7 @@ test("GET /audit-log: session refresh appears in the user's audit log", async ()
 
     const log = await getJson(url, '/audit-log', newSessionId);
     assert.equal(log.status, 200);
-    const refreshEntry = log.body.entries.find((e) => e.event === 'session.refreshed');
+    const refreshEntry = log.body.entries.find((/** @type {{ event: string }} */ e) => e.event === 'session.refreshed');
     assert.ok(refreshEntry, 'audit log should contain session.refreshed');
     assert.equal(refreshEntry.actor, 'user-alice');
     assert.equal(refreshEntry.outcome, 'success');
@@ -692,7 +717,7 @@ test('GET /audit-log: user only sees their own events', async () => {
     // Bob's audit log should be empty (no events involving Bob yet).
     const bobLog = await getJson(url, '/audit-log', bobSession);
     assert.equal(bobLog.status, 200);
-    const rateLimitEvents = bobLog.body.entries.filter((e) => e.event === 'call.rate_limited');
+    const rateLimitEvents = bobLog.body.entries.filter((/** @type {{ event: string }} */ e) => e.event === 'call.rate_limited');
     assert.equal(rateLimitEvents.length, 0, "Bob should not see Alice's rate-limit events");
   } finally {
     await teardown();
