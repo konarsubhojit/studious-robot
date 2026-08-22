@@ -157,7 +157,7 @@ export function estimateSceneBrightness(settings, capabilities) {
 
 /**
  * @typedef {{
- *   frameRate: object,
+ *   frameRate: { ideal: number, max?: number },
  *   advanced: Array<Record<string, unknown>>,
  * }} LightingConstraints
  */
@@ -169,7 +169,7 @@ export function estimateSceneBrightness(settings, capabilities) {
 export function getLightingAdjustedConstraints(brightness) {
   const condition = classifyLighting(brightness);
   const profile =
-    /** @type {Record<string, { frameRate: object, exposureCompensation: number, brightness: number } | undefined>} */ (
+    /** @type {Record<string, { frameRate: { ideal: number, max?: number }, exposureCompensation: number, brightness: number } | undefined>} */ (
       LIGHTING_PROFILES
     )[condition];
 

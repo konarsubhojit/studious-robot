@@ -34,6 +34,33 @@ function makeStream(
   };
 }
 
+// Narrow a discriminated `{ ok }` result instead of casting it to `any`, so the
+// assertions below still fail to compile if the returned shape changes.
+/**
+ * @template {{ ok: boolean }} T
+ * @param {T} result
+ * @returns {Extract<T, { ok: true }>}
+ */
+function expectOk(result) {
+  if (!result.ok) {
+    const { reason } = /** @type {any} */ (result);
+    throw new Error(`expected a successful result, got a failure: ${reason}`);
+  }
+  return /** @type {Extract<T, { ok: true }>} */ (result);
+}
+
+/**
+ * @template {{ ok: boolean }} T
+ * @param {T} result
+ * @returns {Extract<T, { ok: false }>}
+ */
+function expectNotOk(result) {
+  if (result.ok) {
+    throw new Error('expected a failed result, got a successful one');
+  }
+  return /** @type {Extract<T, { ok: false }>} */ (result);
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -56,7 +83,7 @@ describe('startScreenCapture', () => {
     const videoTrack = makeTrack('video');
     mediaDevices.getDisplayMedia.mockResolvedValue(makeStream({ video: [videoTrack] }));
 
-    const result = /** @type {any} */ (await startScreenCapture());
+    const result = expectOk(await startScreenCapture());
 
     expect(mediaDevices.getDisplayMedia).toHaveBeenCalledWith({ video: true, audio: false });
     expect(result.ok).toBe(true);
@@ -72,7 +99,7 @@ describe('startScreenCapture', () => {
       makeStream({ video: [videoTrack], audio: [audioTrack] }),
     );
 
-    const result = /** @type {any} */ (await startScreenCapture({ withAudio: true }));
+    const result = expectOk(await startScreenCapture({ withAudio: true }));
 
     expect(mediaDevices.getDisplayMedia).toHaveBeenCalledWith({ video: true, audio: true });
     expect(result.ok).toBe(true);
@@ -86,7 +113,7 @@ describe('startScreenCapture', () => {
       .mockRejectedValueOnce(new Error('audio capture not supported'))
       .mockResolvedValueOnce(makeStream({ video: [videoTrack] }));
 
-    const result = /** @type {any} */ (await startScreenCapture({ withAudio: true }));
+    const result = expectOk(await startScreenCapture({ withAudio: true }));
 
     expect(mediaDevices.getDisplayMedia).toHaveBeenCalledTimes(2);
     expect(mediaDevices.getDisplayMedia).toHaveBeenLastCalledWith({ video: true });
@@ -99,7 +126,7 @@ describe('startScreenCapture', () => {
     error.name = 'NotAllowedError';
     mediaDevices.getDisplayMedia.mockRejectedValue(error);
 
-    const result = /** @type {any} */ (await startScreenCapture());
+    const result = expectNotOk(await startScreenCapture());
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe(SCREEN_SHARE_CANCELLED);
@@ -110,7 +137,7 @@ describe('startScreenCapture', () => {
     const audioTrack = makeTrack('audio');
     mediaDevices.getDisplayMedia.mockResolvedValue(makeStream({ audio: [audioTrack] }));
 
-    const result = /** @type {any} */ (await startScreenCapture());
+    const result = expectNotOk(await startScreenCapture());
 
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('failed');
@@ -121,7 +148,7 @@ describe('startScreenCapture', () => {
     const original = mediaDevices.getDisplayMedia;
     delete mediaDevices.getDisplayMedia;
 
-    const result = /** @type {any} */ (await startScreenCapture());
+    const result = await startScreenCapture();
 
     expect(result).toEqual({
       ok: false,
@@ -192,7 +219,7 @@ describe('verifyScreenShareFrames', () => {
       ]),
     };
 
-    const result = /** @type {any} */ (await verifyScreenShareFrames(peerConnection, options));
+    const result = expectNotOk(await verifyScreenShareFrames(peerConnection, options));
     expect(result.ok).toBe(false);
     expect(result.reason).toBe(SCREEN_SHARE_NO_FRAMES);
     expect(result.message).toMatch(/black screen/i);

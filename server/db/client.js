@@ -42,7 +42,7 @@ function getPool() {
     connectionString,
     max: Number(process.env.DATABASE_POOL_MAX) || DEFAULT_POOL_MAX,
   });
-  _pool.on('error', (/** @type {any} */ error) => {
+  _pool.on('error', (error) => {
     console.error('[database] unexpected idle Postgres client error:', error?.message);
   });
   return _pool;
