@@ -261,7 +261,9 @@ describe('CallProvider', () => {
     );
     await renderShell();
 
-    expect(callRef.current.participantLabel).toBe('Call with user-alice');
+    // The local user is `user-alice` (the caller here), so the label has to
+    // name the *other* end of the call.
+    expect(callRef.current.participantLabel).toBe('Call with user-bob');
     expect(callRef.current.isCallConnected).toBe(true);
 
     act(() => {
@@ -274,6 +276,22 @@ describe('CallProvider', () => {
     });
     expect(handleEndCall).toHaveBeenCalledTimes(1);
     expect(callRef.current.isCallMinimized).toBe(false);
+  });
+
+  test('labels the call with the remote party when this device is the callee', async () => {
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({
+        callPhase: CALL_STATES.IN_CALL,
+        isInCall: true,
+        userId: 'user-bob',
+        // Swapping the tiles must not change who the remote party is.
+        isLocalPrimary: true,
+        activeCall: { callId: 'call-1', callerId: 'user-alice', calleeId: 'user-bob' },
+      }),
+    );
+    await renderShell();
+
+    expect(callRef.current.participantLabel).toBe('Call with user-alice');
   });
 
   test('navigating away minimizes a connected call but leaves a ringing one alone', async () => {

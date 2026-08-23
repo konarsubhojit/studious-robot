@@ -2,11 +2,16 @@ package com.wetalk
 
 import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -19,6 +24,22 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnable
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 class MainActivity : ReactActivity() {
+  private var isPipActionReceiverRegistered = false
+
+  /** Receives taps on the PiP window's system-drawn controls. */
+  private val pipActionReceiver =
+    object : BroadcastReceiver() {
+      override fun onReceive(
+        context: Context,
+        intent: Intent,
+      ) {
+        if (intent.action != ACTION_PIP_CONTROL) return
+        val control = intent.getStringExtra(EXTRA_PIP_CONTROL) ?: return
+        Log.i(TAG, "PiP control tapped control=$control")
+        CallServiceModule.emitPictureInPictureAction(this@MainActivity, control)
+      }
+    }
+
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
@@ -42,7 +63,37 @@ class MainActivity : ReactActivity() {
    */
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(null)
+    registerPictureInPictureActionReceiver()
     handleIncomingCallIntent(intent)
+  }
+
+  override fun onDestroy() {
+    if (isPipActionReceiverRegistered) {
+      unregisterReceiver(pipActionReceiver)
+      isPipActionReceiverRegistered = false
+    }
+    super.onDestroy()
+  }
+
+  /**
+   * A Picture-in-Picture window never delivers touches to the app's own views —
+   * the only controls a PiP window can offer are the system-drawn
+   * [RemoteAction]s in [buildPipParams]. Those fire a broadcast, which this
+   * receiver forwards to JS so the call hook can mute or hang up.
+   *
+   * The broadcast is explicitly *not* exported: the action string is a plain
+   * intent action, so without this any other app could mute or end a call.
+   */
+  private fun registerPictureInPictureActionReceiver() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isPipActionReceiverRegistered) return
+    val filter = IntentFilter(ACTION_PIP_CONTROL)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      registerReceiver(pipActionReceiver, filter)
+    }
+    isPipActionReceiverRegistered = true
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -161,7 +212,7 @@ class MainActivity : ReactActivity() {
    * how the user leaves the screen.
    */
   fun updatePictureInPictureParams() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !supportsPictureInPicture()) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !supportsPictureInPicture()) {
       return
     }
     try {
@@ -249,11 +300,64 @@ class MainActivity : ReactActivity() {
             CallServiceModule.PIP_ASPECT_RATIO_WIDTH,
             CallServiceModule.PIP_ASPECT_RATIO_HEIGHT,
           ),
-        )
+        ).setActions(buildPipActions())
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       builder.setAutoEnterEnabled(autoEnter)
     }
     return builder.build()
+  }
+
+  /**
+   * Mute/unmute and hang-up controls for the PiP window, in that order.
+   *
+   * These are the only controls the user gets while the call is in PiP, so a
+   * muted mic can be un-muted and the call can be ended without first
+   * restoring the app to full screen. The mute action reflects
+   * [CallServiceModule.isMicrophoneMuted], which JS keeps in sync, so the icon
+   * and label never contradict the actual track state.
+   *
+   * Platform icons are used deliberately: they are guaranteed to exist on every
+   * device and already match the system's PiP control styling.
+   */
+  private fun buildPipActions(): List<RemoteAction> {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return emptyList()
+    val muted = CallServiceModule.isMicrophoneMuted
+    val muteTitle =
+      if (muted) getString(R.string.pip_action_unmute) else getString(R.string.pip_action_mute)
+    val muteIcon =
+      if (muted) {
+        android.R.drawable.ic_lock_silent_mode
+      } else {
+        android.R.drawable.ic_lock_silent_mode_off
+      }
+    return listOf(
+      buildPipAction(CONTROL_MUTE, muteIcon, muteTitle),
+      buildPipAction(
+        CONTROL_HANG_UP,
+        android.R.drawable.ic_menu_close_clear_cancel,
+        getString(R.string.pip_action_hang_up),
+      ),
+    )
+  }
+
+  /** One PiP [RemoteAction] backed by an immutable, app-private broadcast. */
+  private fun buildPipAction(
+    control: String,
+    iconRes: Int,
+    title: String,
+  ): RemoteAction {
+    val intent =
+      Intent(ACTION_PIP_CONTROL)
+        .setPackage(packageName)
+        .putExtra(EXTRA_PIP_CONTROL, control)
+    val pendingIntent =
+      PendingIntent.getBroadcast(
+        this,
+        control.hashCode(),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+      )
+    return RemoteAction(Icon.createWithResource(this, iconRes), title, title, pendingIntent)
   }
 
   /** Enter PiP, swallowing device/OEM failures. Returns true when entered. */
@@ -282,5 +386,17 @@ class MainActivity : ReactActivity() {
      * used for a plain notification tap.
      */
     const val EXTRA_INCOMING_CALL = "com.wetalk.EXTRA_INCOMING_CALL"
+
+    /** Broadcast action fired by the Picture-in-Picture window's controls. */
+    const val ACTION_PIP_CONTROL = "com.wetalk.ACTION_PIP_CONTROL"
+
+    /** Extra naming which PiP control was tapped ([CONTROL_MUTE]/[CONTROL_HANG_UP]). */
+    const val EXTRA_PIP_CONTROL = "com.wetalk.EXTRA_PIP_CONTROL"
+
+    /** Toggle the microphone from the PiP window. */
+    const val CONTROL_MUTE = "mute"
+
+    /** End the call from the PiP window. */
+    const val CONTROL_HANG_UP = "hangUp"
   }
 }

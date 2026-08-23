@@ -1,8 +1,14 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
-import { logError, logInfo } from './appLogger';
+import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 
 /** Native event emitted by `MainActivity.onPictureInPictureModeChanged`. */
 const PIP_MODE_CHANGED_EVENT = 'CallService.pictureInPictureModeChanged';
+
+/** Native event emitted when a control in the PiP window is tapped. */
+const PIP_ACTION_EVENT = 'CallService.pictureInPictureAction';
+
+/** Controls offered by the Picture-in-Picture window (see `MainActivity`). */
+export type PictureInPictureControl = 'mute' | 'hangUp';
 
 function getNativeModule() {
   return NativeModules?.CallService || null;
@@ -57,7 +63,14 @@ export async function enterPictureInPicture() {
 
   try {
     const entered = await module.enterPictureInPictureMode();
-    logInfo('Picture-in-Picture mode requested', { entered: Boolean(entered) });
+    if (entered) {
+      logInfo('Picture-in-Picture mode entered');
+    } else {
+      // The activity refused PiP (OEM restriction, permission off, or no
+      // foreground activity). The call keeps running with no visible window,
+      // which is exactly the symptom users report — so it is not an INFO.
+      logWarn('Picture-in-Picture mode was refused by the activity');
+    }
     return Boolean(entered);
   } catch (error) {
     logError('Failed to enter Picture-in-Picture mode', error);
@@ -79,7 +92,14 @@ export async function exitPictureInPicture(): Promise<boolean> {
 
   try {
     const exited = await module.exitPictureInPictureMode();
-    logInfo('Picture-in-Picture exit requested', { exited: Boolean(exited) });
+    if (exited) {
+      logInfo('Picture-in-Picture mode exited');
+    } else {
+      // Teardown calls this unconditionally, so "we were not in PiP" is the
+      // common case and says nothing about the call — INFO here just buries
+      // the lines that matter in the exported log.
+      logVerbose('Picture-in-Picture exit skipped; not in Picture-in-Picture');
+    }
     return Boolean(exited);
   } catch (error) {
     logError('Failed to exit Picture-in-Picture mode', error);
@@ -101,6 +121,51 @@ export function subscribePictureInPictureMode(handler: (status: { isInPictureInP
       isInPictureInPictureMode: Boolean(payload?.isInPictureInPictureMode),
       dismissed: Boolean(payload?.dismissed),
     });
+  });
+  return () => subscription.remove();
+}
+
+/**
+ * Publish the current microphone state so the Picture-in-Picture window's mute
+ * control shows the matching icon and label.
+ *
+ * A PiP window never receives touches on the app's own views, so its
+ * system-drawn controls are the only in-PiP affordances there are — and a
+ * control that says "Mute" while the mic is already muted is worse than none.
+ *
+ * @returns true when the state was handed to the native module.
+ */
+export function setPictureInPictureMuted(isMuted: boolean): boolean {
+  const module = getNativeModule();
+  if (!isCallServiceAvailable() || typeof module.setPictureInPictureMuted !== 'function') {
+    return false;
+  }
+
+  try {
+    module.setPictureInPictureMuted(Boolean(isMuted));
+    return true;
+  } catch (error) {
+    logError('Failed to publish the Picture-in-Picture mute state', error);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to taps on the Picture-in-Picture window's controls.
+ *
+ * The handler receives the control that was tapped; unknown controls (an older
+ * JS bundle paired with a newer binary) are dropped rather than guessed at.
+ *
+ * @returns unsubscribe function
+ */
+export function subscribePictureInPictureAction(handler: (control: PictureInPictureControl) => void): () => void {
+  const subscription = DeviceEventEmitter.addListener(PIP_ACTION_EVENT, payload => {
+    const control = payload?.control;
+    if (control !== 'mute' && control !== 'hangUp') {
+      logWarn('Ignoring unknown Picture-in-Picture control', { control });
+      return;
+    }
+    handler(control);
   });
   return () => subscription.remove();
 }

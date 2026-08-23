@@ -1275,4 +1275,107 @@ describe('ChatConversationScreen attachments', () => {
 
     expect(onDownloadAttachment).toHaveBeenCalledWith(fileMessage);
   });
+
+  test('tapping a received photo opens it in the fullscreen viewer, and closing returns to the chat', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'img-1',
+          body: '',
+          type: 'image',
+          attachment: { url: 'https://media.test/chatblobs/c/p.jpg', mimeType: 'image/jpeg' },
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findAllByTestId(tree, 'media-viewer-image')).toHaveLength(0);
+
+    act(() => {
+      findByTestId(tree, 'chat-message-image-open').props.onPress();
+    });
+    expect(findByTestId(tree, 'media-viewer-image').props.source).toEqual({
+      uri: 'https://media.test/chatblobs/c/p.jpg',
+    });
+
+    act(() => {
+      findByTestId(tree, 'media-viewer-close').props.onPress();
+    });
+    expect(findAllByTestId(tree, 'media-viewer-image')).toHaveLength(0);
+  });
+
+  test('a voice note renders an inline player instead of a bare description', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'voice-1',
+          body: '',
+          type: 'voice',
+          attachment: {
+            url: 'https://media.test/chatblobs/c/note.m4a',
+            mimeType: 'audio/aac',
+            durationMs: 8000,
+          },
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    expect(findByTestId(tree, 'chat-audio-player')).not.toBeNull();
+    expect(findByTestId(tree, 'chat-audio-player-duration').props.children).toBe('0:08');
+  });
+
+  test('a video file renders a play affordance that opens the viewer', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'video-1',
+          body: '',
+          type: 'file',
+          attachment: {
+            url: 'https://media.test/chatblobs/c/clip.mp4',
+            mimeType: 'video/mp4',
+            name: 'clip.mp4',
+          },
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const video = findByTestId(tree, 'chat-message-video');
+    expect(video.props.accessibilityLabel).toBe('Play video');
+
+    act(() => {
+      video.props.onPress();
+    });
+    expect(findByTestId(tree, 'media-viewer')).not.toBeNull();
+  });
+
+  test('an attachment still uploading says so instead of offering a download', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'file-pending',
+          senderId: 'user-alice',
+          body: '',
+          type: 'file',
+          pending: true,
+          attachment: null,
+        }),
+      ],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment: jest.fn(),
+    });
+
+    expect(findAllByTestId(tree, 'chat-attachment-download')).toHaveLength(0);
+    expect(findByTestId(tree, 'chat-attachment-uploading')).not.toBeNull();
+  });
 });

@@ -1,16 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
-import { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { clamp } from '../callUx';
 import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
+
+/** Spring used to settle the tile against an edge after a drag or a fling. */
+const PIP_SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.6, overshootClamping: true };
+
+/**
+ * Distance (px) the finger must travel before the drag takes over from the tap.
+ * Small enough that dragging feels immediate, large enough that the tremor in a
+ * tap is not mistaken for one.
+ */
+const PIP_DRAG_ACTIVATION_PX = 4;
+
+/**
+ * How much of the release velocity carries into the settle position, expressed
+ * as seconds of projected travel.  Enough for a flick to reach the far edge
+ * without the tile sailing across the screen.
+ */
+const PIP_FLING_PROJECTION_S = 0.12;
 
 /**
  * Encapsulates the draggable picture-in-picture self-view: tracks the call
  * stage size, keeps the PiP clamped within bounds, and exposes a tap-to-swap /
  * drag-to-move gesture plus the animated style.
  *
- * Bounds are stored as shared values so the UI-thread worklets inside the Pan
- * gesture can read them without crossing to the JS thread (avoids a worklet
+ * The tile's position lives entirely in shared values, so a drag runs on the UI
+ * thread and never waits on a React render.  Routing the position through
+ * component state made every drag end re-render the call screen and re-run the
+ * bounds effect, and the tile stopped dead wherever the finger lifted.  On
+ * release it now springs to the nearest side, carrying a little of the fling
+ * velocity — the behaviour every system PiP window has.
+ *
+ * Bounds are stored as shared values too so the UI-thread worklets inside the
+ * Pan gesture can read them without crossing to the JS thread (avoids a worklet
  * call-non-worklet crash when dragging the PiP).
  *
  * @param params.onTap - Invoked when the PiP is tapped (swap streams).
@@ -22,7 +46,6 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     animatedPipStyle: object;
 } {
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
-  const [pipPosition, setPipPosition] = useState({ x: PIP_MARGIN, y: PIP_MARGIN });
   const hasDefaultPositioned = useRef(false);
 
   const pipX = useSharedValue(PIP_MARGIN);
@@ -46,32 +69,22 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
       hasDefaultPositioned.current = true;
       pipX.value = maxX;
       pipY.value = maxY;
-      setPipPosition({ x: maxX, y: maxY });
       return;
     }
 
-    const clampedX = clamp(pipPosition.x, PIP_MARGIN, maxX);
-    const clampedY = clamp(pipPosition.y, PIP_MARGIN, maxY);
-    if (clampedX !== pipPosition.x || clampedY !== pipPosition.y) {
-      setPipPosition({ x: clampedX, y: clampedY });
-      return;
-    }
-    pipX.value = clampedX;
-    pipY.value = clampedY;
-  }, [
-    stageSize.width,
-    stageSize.height,
-    pipPosition.x,
-    pipPosition.y,
-    pipX,
-    pipY,
-    pipMaxX,
-    pipMaxY,
-  ]);
+    // A rotation or a stage resize can leave the tile outside the new bounds;
+    // ease it back in rather than teleporting it.
+    const clampedX = clamp(pipX.value, PIP_MARGIN, maxX);
+    const clampedY = clamp(pipY.value, PIP_MARGIN, maxY);
+    if (clampedX !== pipX.value) pipX.value = withSpring(clampedX, PIP_SETTLE_SPRING);
+    if (clampedY !== pipY.value) pipY.value = withSpring(clampedY, PIP_SETTLE_SPRING);
+  }, [stageSize.width, stageSize.height, pipX, pipY, pipMaxX, pipMaxY]);
 
   const handleCallStageLayout = useCallback((event: any) => {
     const { width, height } = event.nativeEvent.layout;
-    setStageSize({ width, height });
+    setStageSize(current =>
+      current.width === width && current.height === height ? current : { width, height },
+    );
   }, []);
 
   const animatedPipStyle = useAnimatedStyle(() => ({
@@ -88,6 +101,7 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
           runOnJS(onTap)();
         }),
         Gesture.Pan()
+          .minDistance(PIP_DRAG_ACTIVATION_PX)
           .onStart(() => {
             pipStartX.value = pipX.value;
             pipStartY.value = pipY.value;
@@ -96,8 +110,19 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
             pipX.value = clamp(pipStartX.value + event.translationX, PIP_MARGIN, pipMaxX.value);
             pipY.value = clamp(pipStartY.value + event.translationY, PIP_MARGIN, pipMaxY.value);
           })
-          .onEnd(() => {
-            runOnJS(setPipPosition)({ x: pipX.value, y: pipY.value });
+          .onEnd(event => {
+            // Project the fling, then park flush against whichever side the
+            // tile ended up closest to.
+            const projectedX = pipX.value + (event.velocityX ?? 0) * PIP_FLING_PROJECTION_S;
+            const projectedY = pipY.value + (event.velocityY ?? 0) * PIP_FLING_PROJECTION_S;
+            const restingX =
+              projectedX > (PIP_MARGIN + pipMaxX.value) / 2 ? pipMaxX.value : PIP_MARGIN;
+
+            pipX.value = withSpring(restingX, PIP_SETTLE_SPRING);
+            pipY.value = withSpring(
+              clamp(projectedY, PIP_MARGIN, pipMaxY.value),
+              PIP_SETTLE_SPRING,
+            );
           }),
       ),
     // Shared-value references are stable; only onTap needs to trigger recreation.

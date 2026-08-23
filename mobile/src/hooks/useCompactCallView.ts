@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { logInfo } from '../appLogger';
+import { logInfo, logWarn } from '../appLogger';
 import {
   enterPictureInPicture,
   exitPictureInPicture,
+  setPictureInPictureMuted,
+  subscribePictureInPictureAction,
   subscribePictureInPictureMode,
 } from '../callService';
 
@@ -17,6 +19,12 @@ import {
  * enters or leaves PiP on its own (Android 12+ auto-enter, the window's expand
  * button, or the user closing the window).
  *
+ * The PiP window's own controls (mute / hang up) are drawn by the system, not
+ * by React: a PiP window never delivers touches to the app's views, so any
+ * in-window buttons this app rendered would be dead pixels. Taps on the system
+ * controls arrive as native events and are forwarded to `onToggleMute` /
+ * `onEndCall`.
+ *
  * Extracted from the call hook so that PiP / display concerns stay isolated
  * from call-lifecycle logic.
  *
@@ -26,8 +34,10 @@ import {
  * @param options -
  *   `onPictureInPictureClosed` is invoked when the user closes the PiP window,
  *   so the call can be ended instead of continuing invisibly.
+ *   `isMuted` keeps the PiP window's mute control labelled correctly, and
+ *   `onToggleMute` / `onEndCall` handle taps on those controls.
  */
-export default function useCompactCallView(isInRoomRef: React.MutableRefObject<boolean>, { onPictureInPictureClosed }: { onPictureInPictureClosed?: () => void; } = {}): {
+export default function useCompactCallView(isInRoomRef: React.MutableRefObject<boolean>, { onPictureInPictureClosed, onToggleMute, onEndCall, isMuted = false }: { onPictureInPictureClosed?: () => void; onToggleMute?: () => void; onEndCall?: () => void; isMuted?: boolean; } = {}): {
     isCompactView: boolean; setIsCompactView: (value: boolean) => void;
     exitCompactView: () => Promise<boolean>;
 } {
@@ -37,6 +47,13 @@ export default function useCompactCallView(isInRoomRef: React.MutableRefObject<b
   useEffect(() => {
     onClosedRef.current = onPictureInPictureClosed;
   }, [onPictureInPictureClosed]);
+
+  const onToggleMuteRef = useRef(onToggleMute);
+  const onEndCallRef = useRef(onEndCall);
+  useEffect(() => {
+    onToggleMuteRef.current = onToggleMute;
+    onEndCallRef.current = onEndCall;
+  }, [onEndCall, onToggleMute]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') {
@@ -68,6 +85,37 @@ export default function useCompactCallView(isInRoomRef: React.MutableRefObject<b
       if (dismissed && isInRoomRef.current) {
         logInfo('Picture-in-Picture window closed; ending the call');
         onClosedRef.current?.();
+      }
+    });
+  }, [isInRoomRef]);
+
+  // Keep the PiP window's mute control in step with the real track state, so a
+  // mute made from the full-screen deck (or from the window itself) is
+  // reflected the next time the window is drawn.
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+    setPictureInPictureMuted(isMuted);
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') {
+      return undefined;
+    }
+
+    return subscribePictureInPictureAction(control => {
+      if (!isInRoomRef.current) {
+        // The system kept the window's controls alive past the end of the
+        // call; nothing to act on, but it is a mismatch worth seeing.
+        logWarn('Ignoring Picture-in-Picture control with no call in progress', { control });
+        return;
+      }
+      logInfo('Picture-in-Picture control tapped', { control });
+      if (control === 'mute') {
+        onToggleMuteRef.current?.();
+      } else {
+        onEndCallRef.current?.();
       }
     });
   }, [isInRoomRef]);

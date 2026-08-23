@@ -160,6 +160,40 @@ const SHUTDOWN_DRAIN_POLL_MS = 50;
 const USER_DIRECTORY_DEFAULT_LIMIT = 50;
 const USER_DIRECTORY_MAX_LIMIT = 100;
 
+/**
+ * How long a device row may go without a push re-registration before it is
+ * considered abandoned and swept.
+ *
+ * Dead-token pruning (`pruneDeadDevice`) only fires when the provider reports
+ * `UNREGISTERED` / `INVALID_ARGUMENT` for a specific token.  Delivering through
+ * Azure Notification Hubs, a `201` means the hub *queued* the notification —
+ * the per-token verdict never comes back on that path, so the documented
+ * fallback never runs and rows orphaned by an app reinstall (which wipes the
+ * client-persisted `device_id`) accumulate forever.
+ *
+ * The app re-registers its push token on every launch, so a row untouched for
+ * two months belongs to an install that no longer exists.  Override with
+ * `STALE_DEVICE_MAX_AGE_MS`.
+ */
+const DEFAULT_STALE_DEVICE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+
+/** How often the background worker sweeps abandoned device rows. */
+const DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Maximum number of push-registered devices a single user's notification fans
+ * out to, most recently registered first.  A backstop for the accumulation
+ * above: even before a sweep runs, one message must not push to an unbounded
+ * number of rows.  Override with `MAX_PUSH_DEVICES_PER_USER`.
+ */
+const DEFAULT_MAX_PUSH_DEVICES_PER_USER = 3;
+
+/**
+ * Device count above which a user is reported in the `/metrics` device
+ * summary, so accumulating stale rows are noticeable before users complain.
+ */
+const DEVICE_FANOUT_ALERT_THRESHOLD = 3;
+
 export {
   MAX_ROOM_SIZE,
   PUSH_PROVIDERS,
@@ -183,4 +217,8 @@ export {
   SHUTDOWN_DRAIN_POLL_MS,
   USER_DIRECTORY_DEFAULT_LIMIT,
   USER_DIRECTORY_MAX_LIMIT,
+  DEFAULT_STALE_DEVICE_MAX_AGE_MS,
+  DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS,
+  DEFAULT_MAX_PUSH_DEVICES_PER_USER,
+  DEVICE_FANOUT_ALERT_THRESHOLD,
 };

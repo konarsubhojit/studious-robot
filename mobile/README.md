@@ -168,23 +168,52 @@ silently "succeeding".
 ## ICE restart and reconnection
 
 WebRTC ICE connections can break when the device switches networks (e.g. Wi-Fi
-→ mobile data) or when the device wakes from sleep. Two mechanisms are in
-place to restore connectivity without ending the call:
+→ mobile data) or when the device wakes from sleep. Three triggers start the
+same recovery ladder, so a call survives a handoff without ending:
 
 1. **Socket.IO reconnect → ICE restart**: when the signaling socket reconnects
-   after a transient drop, the app re-emits `join-room` and — if it was the
-   original offerer — immediately sends a new WebRTC offer with
-   `{ iceRestart: true }`. This re-negotiates the ICE candidates over the new
-   network path while keeping the existing media tracks and call UI intact.
+   after a transient drop, the app re-emits `join-room` and sends a new WebRTC
+   offer with `{ iceRestart: true }`. This re-negotiates the ICE candidates
+   over the new network path while keeping the existing media tracks and call
+   UI intact.
 
 2. **Automatic ICE failure recovery**: an `oniceconnectionstatechange` handler
-   on the `RTCPeerConnection` watches for the `failed` state. If reached, and
-   the offerer role is held and the socket is still connected, an ICE-restart
-   offer is sent automatically — without any user action required.
+   on the `RTCPeerConnection` watches for the `failed` state, and starts the
+   ladder as soon as it is reached — without any user action required.
 
-> **Note:** Only the side that created the original SDP offer sends ICE-restart
-> offers. The answerer simply processes the new offer normally. This
-> convention avoids signaling races if both peers detect failure simultaneously.
+3. **Proactive network-change recovery**: connectivity transitions are watched
+   directly (`@react-native-community/netinfo`, loaded defensively so an
+   unlinked build simply falls back to the two triggers above). A Wi-Fi →
+   cellular handoff restarts ICE immediately, debounced by 800 ms, instead of
+   waiting the several seconds ICE takes to move from `disconnected` to
+   `failed` — that interval is audible as dead air.
+
+**Either peer restarts.** Recovery used to be gated on the offerer role, which
+meant a *callee* whose IP changed waited for an offer the caller had no reason
+to send, and the call died after the grace period. Now whichever side detects
+the problem sends the ICE-restart offer, and glare is prevented by a
+deterministic tie-break: the peer with the lexicographically lower `userId`
+restarts immediately, the other waits 1.5 s and only proceeds if the connection
+has not recovered by then. The existing negotiation guard still serialises
+offer/answer exchanges.
+
+**The ladder is bounded and TURN-aware.** Each attempt re-fetches ICE servers
+and insists on a relay — a handoff is exactly when TURN matters, since the new
+path is far more likely to sit behind carrier-grade NAT. A TURN-less list is
+logged at `error` and the credential fetch is retried once, but never blocks
+the restart: degraded recovery beats none. A failed restart is retried up to
+three times with a `0 / 1.5 s / 4 s` backoff, and the ladder is cleared the
+moment ICE reports `connected`/`completed` or the call ends.
+
+Media loss is still only reported to the server after `ICE_FAILURE_GRACE_MS`
+(12 s), and that report is cancelled if any of the above recovers the call.
+Every attempt logs its trigger (`ice-failure`, `socket-reconnect`,
+`network-change`), attempt number and outcome, so a dropped call can be
+diagnosed from an exported log alone.
+
+If the server rejects the presented session mid-call (a restart wipes the
+in-memory session table), the client mints a fresh session and reconnects,
+retrying up to three times rather than ending the call.
 
 To keep calls alive when the app is backgrounded, Android uses a lightweight
 foreground service and the system Picture-in-Picture (PiP) window:

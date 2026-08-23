@@ -93,10 +93,15 @@ const callEvents = pgTable(
  *  - What this index does *not* solve: an app reinstall wipes the
  *    client-persisted `device_id`, so the same physical handset registers as
  *    a brand-new row with a brand-new token, orphaning the old row (which
- *    keeps its now-dead token forever otherwise). That is handled instead by
- *    dead-token pruning on delivery failure (`server/src/push.js`) and by
- *    preferring the most-recently-updated device when a user still has
- *    multiple push-registered rows (see `resolveReachableChannels`).
+ *    keeps its now-dead token forever otherwise). Three things handle that:
+ *    dead-token pruning on delivery failure (`pruneDeadDevice`), which only
+ *    fires when a provider actually reports `UNREGISTERED`/`INVALID_ARGUMENT`
+ *    — notably *not* on the Azure Notification Hubs path, where a `201` only
+ *    means the hub queued the notification; an age-based sweep of rows whose
+ *    registration has not been refreshed within `STALE_DEVICE_MAX_AGE_MS`
+ *    (`pruneStaleDevices`), which is the mechanism that actually collects
+ *    reinstall orphans; and a bounded, most-recently-registered-first push
+ *    fan-out per user (see `resolveReachableChannels`).
  */
 const devices = pgTable(
   'devices',

@@ -63,7 +63,9 @@ import {
   getIceServersForCall,
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
+  resetIceServersForCallCache,
 } from '../webrtcConfig';
+import { subscribeNetworkChanges } from '../networkMonitor';
 import useScreenShare from './useScreenShare';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
@@ -113,6 +115,13 @@ export type WebrtcMediaStream = MediaStream;
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
+
+/**
+ * How long peer-connection setup will wait for a session to be minted before
+ * giving up on TURN credentials. TURN is worth a short wait; a stalled network
+ * must never stall the call itself.
+ */
+const ICE_SESSION_WAIT_MS = 5000;
 
 function getTurnServerEndpoints(iceServers: unknown): string[] {
   if (!Array.isArray(iceServers)) return [];
@@ -176,10 +185,48 @@ const CALL_HEARTBEAT_INTERVAL_MS = 30000;
  * of media is reported to the server.
  *
  * ICE routinely dips through `disconnected` during a network handoff and
- * recovers on its own (and the caller additionally attempts an ICE restart on
- * `failed`), so reporting immediately would tear down recoverable calls.
+ * recovers on its own (and either peer attempts an ICE restart on `failed`, on
+ * socket reconnect, or on a network change), so reporting immediately would
+ * tear down recoverable calls.
  */
 const ICE_FAILURE_GRACE_MS = 12000;
+
+/** How many ICE restarts a single loss of connectivity may attempt. */
+const ICE_RESTART_MAX_ATTEMPTS = 3;
+
+/**
+ * Delay before each attempt. The first is immediate — the whole point is to
+ * beat the grace period — and the later ones back off to cover a handoff where
+ * the new interface is not routable yet.
+ */
+const ICE_RESTART_BACKOFF_MS = [0, 1500, 4000];
+
+/**
+ * How long the peer that loses the tie-break waits before restarting.
+ *
+ * Both peers now react to a failure, so without a tie-break both would send an
+ * `rtc.offer` at once and glare. The lexicographically lower userId restarts
+ * immediately; the other waits this long and only proceeds if the connection
+ * has not come back in the meantime.
+ */
+const ICE_RESTART_TIEBREAK_MS = 1500;
+
+/**
+ * How long connectivity must settle before a network change triggers a
+ * restart, so a flapping interface produces one restart rather than a storm.
+ */
+const NETWORK_CHANGE_DEBOUNCE_MS = 800;
+
+/**
+ * How many times a session is re-minted after the server rejects the presented
+ * one, and how long between tries. More than one only mid-call, where losing
+ * the session means losing the call.
+ */
+const SESSION_REMINT_ATTEMPTS = 3;
+const SESSION_REMINT_RETRY_MS = 1000;
+
+/** What prompted an ICE restart; carried into every log line about it. */
+type IceRestartTrigger = 'ice-failure' | 'socket-reconnect' | 'network-change';
 
 /** How many answered callIds are remembered for duplicate-accept suppression. */
 const ANSWERED_CALL_HISTORY_LIMIT = 20;
@@ -395,6 +442,20 @@ export default function useCallFlow({
   const iceCandidateBufferRef = useRef(([] as any[]));
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
+  // Bookkeeping for the bounded, backed-off ICE-restart ladder: how many
+  // attempts this loss of connectivity has used, the pending timer, and
+  // whether one is already in flight.
+  const iceRestartRef = useRef({
+    attempt: 0,
+    timer: (null as ReturnType<typeof setTimeout> | null),
+    inFlight: false,
+  });
+  // Set below, so the socket/ICE/network handlers can schedule a restart
+  // without depending on the callback identity.
+  const scheduleIceRestartRef = useRef((null as ((trigger: IceRestartTrigger) => void) | null));
+  const beginIceRecoveryRef = useRef((null as ((trigger: IceRestartTrigger) => void) | null));
+  const cancelIceRestartsRef = useRef((null as ((reason: string) => void) | null));
+  const networkChangeTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   // Refs that mirror activeCall / incomingCall state for use in any callback
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef((null as CallRecord | null));
@@ -423,6 +484,12 @@ export default function useCallFlow({
   // orchestration that ties them into one coherent call experience.
   const identity = useIdentity(updateStatus);
   const { userId, unregisterUser: identityUnregisterUser } = identity;
+  // The tie-break compares userIds inside callbacks that must not be rebuilt
+  // whenever the identity re-renders.
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   const session = useSession({
     signalingUrl,
@@ -542,10 +609,22 @@ export default function useCallFlow({
   const { isRegistered } = identity;
 
   // Closing the Picture-in-Picture window must end the call: leaving it running
-  // invisibly gives the user no way back to it and no way to hang up.
+  // invisibly gives the user no way back to it and no way to hang up. The mute
+  // and hang-up controls the window itself offers are routed back here too —
+  // they are drawn by the system, since a PiP window cannot deliver touches to
+  // the app's own views.
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef, {
     onPictureInPictureClosed: () =>
       endActiveCallRef.current?.('Call ended', 'info', 'ended'),
+    onToggleMute: () => handleMuteToggleRef.current?.(),
+    onEndCall: () => {
+      handleEndCallRef.current?.().catch(error =>
+        logWarn('[CallFlow] Picture-in-Picture hang up failed', {
+          message: errorMessage(error),
+        }),
+      );
+    },
+    isMuted,
   });
 
   /**
@@ -756,18 +835,296 @@ export default function useCallFlow({
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
-  const configurePeerConnection = useCallback(
-    /** @param pc */
-    async (pc: PeerConnection) => {
-      const iceServers = await getIceServersForCall({
-        signalingUrl,
-        sessionId: sessionIdRef.current,
+  /**
+   * The session id TURN credentials are minted against.
+   *
+   * `sessionIdRef` is populated asynchronously by `createOrGetSession`, and a
+   * call answered from a background push builds its peer connection about a
+   * second after rehydration — early enough to read a null ref and fetch no
+   * TURN credentials at all, leaving the call with a STUN-only ICE list. So
+   * the session is *ensured* here rather than read optimistically; a failure
+   * still degrades (never blocks) call setup, and says why.
+   */
+  const ensureIceSessionId = useCallback(async () => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const minted = createOrGetSession().catch(error => {
+      logWarn('[CallFlow] Session mint failed; ICE will have no TURN servers', {
+        message: errorMessage(error),
       });
+      return null;
+    });
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), ICE_SESSION_WAIT_MS);
+    });
+
+    try {
+      const sessionId = await Promise.race([minted, deadline]);
+      if (!sessionId) {
+        logWarn('[CallFlow] No session id for TURN credentials', {
+          waitedMs: ICE_SESSION_WAIT_MS,
+        });
+      }
+      return sessionId ?? null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }, [createOrGetSession, sessionIdRef]);
+
+  /**
+   * Whether the peer connection is carrying media again.
+   *
+   * Both state machines are consulted: `iceConnectionState` moves first, but a
+   * stub (or a platform that only surfaces `connectionState`) may not have it.
+   */
+  function isPeerConnectionRecovered(pc: PeerConnection | null): boolean {
+    if (!pc) return false;
+    const state = pc.iceConnectionState ?? pc.connectionState;
+    return state === 'connected' || state === 'completed';
+  }
+
+  /** Abandon any pending/queued ICE restart, and say why. */
+  const cancelIceRestarts = useCallback((reason: string) => {
+    const restart = iceRestartRef.current;
+    if (restart.timer) {
+      clearTimeout(restart.timer);
+      restart.timer = null;
+    }
+    if (restart.attempt > 0) {
+      logInfo('[CallFlow] ICE restart ladder cleared', { reason, attempts: restart.attempt });
+    }
+    restart.attempt = 0;
+  }, []);
+
+  /**
+   * ICE servers for a restart, insisting on a relay.
+   *
+   * A handoff is exactly when TURN matters: the new path is far more likely to
+   * sit behind carrier-grade NAT, so restarting on a STUN-only list usually
+   * just fails again. A missing relay is therefore an error worth one forced
+   * re-fetch — but never a reason to abandon the restart, since degraded
+   * recovery still beats none.
+   */
+  const fetchIceServersForRestart = useCallback(async (trigger: IceRestartTrigger) => {
+    const request = { signalingUrl, sessionId: await ensureIceSessionId() };
+    let iceServers = await getIceServersForCall(request);
+    if (getTurnServerEndpoints(iceServers).length > 0) return iceServers;
+
+    logError('[CallFlow] ICE restart has no TURN server; re-fetching credentials', {
+      trigger,
+      callId: activeCallIdRef.current,
+    });
+    try {
+      resetIceServersForCallCache?.();
+      iceServers = await getIceServersForCall({
+        ...request,
+        sessionId: await ensureIceSessionId(),
+      });
+    } catch (error) {
+      logWarn('[CallFlow] TURN credential re-fetch failed before ICE restart', {
+        trigger,
+        message: errorMessage(error),
+      });
+    }
+    if (getTurnServerEndpoints(iceServers).length === 0) {
+      logError('[CallFlow] Restarting ICE without any TURN server', {
+        trigger,
+        callId: activeCallIdRef.current,
+        impact: 'recovery will fail if either peer is behind symmetric NAT',
+      });
+    }
+    return iceServers;
+  }, [ensureIceSessionId, signalingUrl]);
+
+  /**
+   * Send an ICE-restart offer for the active call.
+   *
+   * Deliberately *not* gated on the caller role: if the callee's IP changes it
+   * is the callee that sees the failure, and waiting for an offer that the
+   * other side has no reason to send is how those calls used to die. Glare is
+   * prevented by the userId tie-break in `scheduleIceRestart` plus the
+   * existing `isNegotiatingRef` guard.
+   */
+  const runIceRestart = useCallback(async (trigger: IceRestartTrigger) => {
+    const restart = iceRestartRef.current;
+    const callId = activeCallIdRef.current;
+    const pc = peerConnectionRef.current;
+
+    if (!callId || !pc) {
+      logVerbose('[CallFlow] ICE restart skipped: no active call', { trigger });
+      cancelIceRestarts('no-active-call');
+      return;
+    }
+    // A network change is acted on *before* ICE notices the old path is dead,
+    // so on its first attempt a still-"connected" state is expected and is not
+    // a reason to skip. Every other case stops the moment media is back.
+    const proactive = trigger === 'network-change' && restart.attempt <= 1;
+    if (!proactive && isPeerConnectionRecovered(pc)) {
+      logInfo('[CallFlow] ICE restart skipped: connection already recovered', { trigger, callId });
+      cancelIceRestarts('recovered');
+      return;
+    }
+    if (!socketRef.current?.connected) {
+      logWarn('[CallFlow] ICE restart skipped: signaling socket is offline', { trigger, callId });
+      return;
+    }
+    if (isNegotiatingRef.current) {
+      logWarn('[CallFlow] ICE restart skipped: a negotiation is already in flight', {
+        trigger,
+        callId,
+      });
+      return;
+    }
+
+    restart.inFlight = true;
+    const attempt = restart.attempt;
+    try {
+      const iceServers = await fetchIceServersForRestart(trigger);
       pc.setConfiguration?.({ iceServers, iceTransportPolicy: activeIceTransportPolicy });
-      return pc;
-    },
-    [activeIceTransportPolicy, signalingUrl, sessionIdRef],
-  );
+      Telemetry.trackIceRestart(callId);
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      signalingRef.current?.emit(
+        CLIENT_EVENTS.RTC_OFFER,
+        { version: SIGNALING_VERSION, callId, sdp: pc.localDescription },
+        ack => {
+          if (ack?.ok) return;
+          logWarn('[CallFlow] ICE restart rtc.offer ack failed', {
+            trigger,
+            attempt,
+            error: ack?.error,
+          });
+          scheduleIceRestartRef.current?.(trigger);
+        },
+      );
+      logInfo('[CallFlow] ICE restart offer sent', { trigger, callId, attempt });
+    } catch (error) {
+      // One failed restart used to end the call; a handoff often just needs the
+      // new interface to become routable, so the ladder gets another rung.
+      logError('[CallFlow] ICE restart failed', {
+        trigger,
+        callId,
+        attempt,
+        message: errorMessage(error),
+      });
+      restart.inFlight = false;
+      scheduleIceRestartRef.current?.(trigger);
+      return;
+    } finally {
+      restart.inFlight = false;
+    }
+  }, [activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart]);
+
+  /**
+   * How long this peer waits before restarting, so two peers that both saw the
+   * failure do not offer at once. Lower userId goes first; the other only acts
+   * if the connection is still down when its turn comes.
+   */
+  const iceRestartTiebreakDelay = useCallback(() => {
+    const call = activeCallRef.current;
+    const localId = (userIdRef.current ?? '').trim();
+    const remoteId = ((isCallerRef.current ? call?.calleeId : call?.callerId) ?? '').trim();
+    // With no peer id to compare there is no glare risk worth a delay.
+    if (!localId || !remoteId || localId === remoteId) return 0;
+    return localId < remoteId ? 0 : ICE_RESTART_TIEBREAK_MS;
+  }, []);
+
+  /** Queue the next rung of the restart ladder for `trigger`. */
+  const scheduleIceRestart = useCallback((trigger: IceRestartTrigger) => {
+    const restart = iceRestartRef.current;
+    if (!activeCallIdRef.current || !peerConnectionRef.current) {
+      logVerbose('[CallFlow] ICE restart not scheduled: no active call', { trigger });
+      return;
+    }
+    if (restart.timer || restart.inFlight) {
+      logVerbose('[CallFlow] ICE restart already pending', { trigger, attempt: restart.attempt });
+      return;
+    }
+    if (restart.attempt >= ICE_RESTART_MAX_ATTEMPTS) {
+      logWarn('[CallFlow] ICE restart attempts exhausted', {
+        trigger,
+        callId: activeCallIdRef.current,
+        attempts: restart.attempt,
+      });
+      return;
+    }
+
+    restart.attempt += 1;
+    const backoffMs = ICE_RESTART_BACKOFF_MS[
+      Math.min(restart.attempt - 1, ICE_RESTART_BACKOFF_MS.length - 1)
+    ];
+    const tiebreakMs = restart.attempt === 1 ? iceRestartTiebreakDelay() : 0;
+    const delayMs = backoffMs + tiebreakMs;
+    logInfo('[CallFlow] Scheduling ICE restart', {
+      trigger,
+      callId: activeCallIdRef.current,
+      attempt: restart.attempt,
+      delayMs,
+      deferredForGlare: tiebreakMs > 0,
+    });
+    if (delayMs <= 0) {
+      void runIceRestart(trigger);
+      return;
+    }
+    restart.timer = setTimeout(() => {
+      restart.timer = null;
+      void runIceRestart(trigger);
+    }, delayMs);
+  }, [iceRestartTiebreakDelay, runIceRestart]);
+
+  useEffect(() => {
+    scheduleIceRestartRef.current = scheduleIceRestart;
+  }, [scheduleIceRestart]);
+
+  /** Start a fresh restart ladder for a newly observed loss of connectivity. */
+  const beginIceRecovery = useCallback((trigger: IceRestartTrigger) => {
+    cancelIceRestarts(`new-trigger:${trigger}`);
+    scheduleIceRestart(trigger);
+  }, [cancelIceRestarts, scheduleIceRestart]);
+
+  useEffect(() => {
+    beginIceRecoveryRef.current = beginIceRecovery;
+    cancelIceRestartsRef.current = cancelIceRestarts;
+  }, [beginIceRecovery, cancelIceRestarts]);
+
+  // ── Proactive recovery: restart on a network path change ─────────────────
+  //
+  // Waiting for ICE to reach `failed` means seconds of dead audio on a
+  // Wi-Fi→cellular handoff. The transport knows first, so the call acts on
+  // that instead — debounced, and only while a call is actually up.
+  useEffect(() => {
+    const unsubscribe = subscribeNetworkChanges(({ from, to }) => {
+      // A call that is still negotiating counts: `isInCall` only flips once
+      // media is up, and the handoff most worth surviving is the one during
+      // setup.
+      if (!activeCallIdRef.current || !peerConnectionRef.current) {
+        logVerbose('[CallFlow] Network change ignored: no active call', { to: to.type });
+        return;
+      }
+      if (networkChangeTimerRef.current) clearTimeout(networkChangeTimerRef.current);
+      networkChangeTimerRef.current = setTimeout(() => {
+        networkChangeTimerRef.current = null;
+        if (!activeCallIdRef.current) return;
+        logWarn('[CallFlow] Network path changed mid-call; restarting ICE', {
+          callId: activeCallIdRef.current,
+          from: from?.type ?? null,
+          to: to.type,
+          // The old path is already dead here even when ICE still says it is
+          // connected; that lag is the audio gap this restart avoids.
+          iceState: peerConnectionRef.current?.iceConnectionState ?? null,
+        });
+        beginIceRecovery('network-change');
+      }, NETWORK_CHANGE_DEBOUNCE_MS);
+    });
+    return () => {
+      unsubscribe();
+      if (networkChangeTimerRef.current) {
+        clearTimeout(networkChangeTimerRef.current);
+        networkChangeTimerRef.current = null;
+      }
+    };
+  }, [beginIceRecovery]);
 
   const createPeerConnection = useCallback(async () => {
     // ICE servers must be known *before* construction: gathering starts as soon
@@ -776,7 +1133,7 @@ export default function useCallFlow({
     // degrades to build-time config and finally STUN-only.
     const iceServers = await getIceServersForCall({
       signalingUrl,
-      sessionId: sessionIdRef.current,
+      sessionId: await ensureIceSessionId(),
     });
     const turnServers = getTurnServerEndpoints(iceServers);
     logInfo('[CallFlow] Creating RTCPeerConnection', {
@@ -854,13 +1211,14 @@ export default function useCallFlow({
       }
     };
 
-    // Trigger an ICE restart when the caller detects ICE failure so the call
+    // Trigger an ICE restart when *either* peer detects ICE failure so the call
     // can survive a network handoff without tearing down entirely.
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       logInfo('[CallFlow] ICE connection state', { state });
       if (state === 'connected' || state === 'completed') {
         reportCallConnected(state);
+        cancelIceRestarts('ice-connected');
         return;
       }
       if (state === 'disconnected') {
@@ -873,42 +1231,25 @@ export default function useCallFlow({
       // report is cancelled if the ICE restart below succeeds.
       reportMediaFailure(state);
       emitMetric('call.ice_failed', 1, { callId: activeCallIdRef.current });
-      if (!isCallerRef.current || !socketRef.current?.connected) return;
-      logWarn('[CallFlow] ICE failed; attempting restart');
-      if (activeCallIdRef.current) {
-        Telemetry.trackIceRestart(activeCallIdRef.current);
-      }
-      (async () => {
-        try {
-          await configurePeerConnection(pc);
-          const offer = await pc.createOffer({ iceRestart: true });
-          await pc.setLocalDescription(offer);
-          signalingRef.current?.emit(
-            CLIENT_EVENTS.RTC_OFFER,
-            {
-              version: SIGNALING_VERSION,
-              callId: activeCallIdRef.current,
-              sdp: pc.localDescription,
-            },
-            ack => {
-              if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
-            },
-          );
-        } catch (err) {
-          logError('[CallFlow] ICE restart failed', err);
-        }
-      })();
+      // Whichever peer saw the failure restarts: a callee whose IP changed
+      // gets no offer from the caller, who may still think the path is fine.
+      logWarn('[CallFlow] ICE failed; attempting restart', {
+        callId: activeCallIdRef.current,
+        isCaller: isCallerRef.current,
+      });
+      beginIceRecovery('ice-failure');
     };
 
     peerConnectionRef.current = pc;
     return pc;
   }, [
     activeIceTransportPolicy,
-    configurePeerConnection,
+    beginIceRecovery,
+    cancelIceRestarts,
+    ensureIceSessionId,
     markCallConnected,
     reportCallConnected,
     reportMediaFailure,
-    sessionIdRef,
     signalingUrl,
     updateStatus,
   ]);
@@ -1094,6 +1435,7 @@ export default function useCallFlow({
       }
       stopCallHeartbeat();
       clearMediaFailureReport();
+      cancelIceRestartsRef.current?.('call-ended');
       connectedReportedCallIdRef.current = null;
 
       activeCallIdRef.current = null;
@@ -1515,33 +1857,15 @@ export default function useCallFlow({
           Telemetry.trackReconnect(activeCallIdRef.current);
           emitMetric('call.reconnect', 1, { callId: activeCallIdRef.current });
         }
-        // When the caller's socket reconnects mid-call, send an ICE-restart
-        // offer so the peer connection can negotiate a new network path.
-        if (isCallerRef.current) {
-          const pc = peerConnectionRef.current;
-          if (pc) {
-            try {
-              logInfo('[CallFlow] Sending ICE restart offer after socket reconnect');
-              if (activeCallIdRef.current) {
-                Telemetry.trackIceRestart(activeCallIdRef.current);
-              }
-              const offer = await pc.createOffer({ iceRestart: true });
-              await pc.setLocalDescription(offer);
-              signaling.emit(
-                CLIENT_EVENTS.RTC_OFFER,
-                {
-                  version: SIGNALING_VERSION,
-                  callId: activeCallIdRef.current,
-                  sdp: pc.localDescription,
-                },
-                ack => {
-                  if (!ack?.ok) logWarn('[CallFlow] ICE restart rtc.offer ack failed', ack?.error);
-                },
-              );
-            } catch (err) {
-              logError('[CallFlow] ICE restart after socket reconnect failed', err);
-            }
-          }
+        // Either peer's socket reconnecting mid-call means its network path
+        // may have moved, so it offers an ICE restart rather than waiting for
+        // the other side to notice.
+        if (peerConnectionRef.current) {
+          logInfo('[CallFlow] Socket reconnected mid-call; restarting ICE', {
+            callId: activeCallIdRef.current,
+            isCaller: isCallerRef.current,
+          });
+          beginIceRecoveryRef.current?.('socket-reconnect');
         }
       });
 
@@ -1572,17 +1896,39 @@ export default function useCallFlow({
       signaling.on(SERVER_EVENTS.SESSION_INVALID, async ({ sessionId: staleSessionId } = {}) => {
         logWarn('[CallFlow] Session invalidated by server; re-minting session', {
           sessionId: staleSessionId,
+          inCall: isInCallRef.current,
         });
         sessionIdRef.current = null;
-        try {
-          const newSessionId = await createOrGetSession();
-          // A newer socket may already have replaced this one (e.g. the
-          // presence effect re-ran, or the user signed out) — don't race it.
-          if (socketRef.current !== socket) return;
-          connectSocket(newSessionId);
-        } catch (error) {
-          logError('[CallFlow] Failed to re-mint session after session.invalid', error);
-          updateStatus('Session expired — please reconnect.', 'error');
+        // Mid-call this is not a cosmetic re-auth: the socket carrying the
+        // call's signaling is a guest until a live session replaces it, so a
+        // single failed mint (the handoff that caused the reconnect is often
+        // still settling) must not be what ends the call.
+        const attempts = isInCallRef.current ? SESSION_REMINT_ATTEMPTS : 1;
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+          try {
+            const newSessionId = await createOrGetSession();
+            // A newer socket may already have replaced this one (e.g. the
+            // presence effect re-ran, or the user signed out) — don't race it.
+            if (socketRef.current !== socket) return;
+            logInfo('[CallFlow] Session re-minted after session.invalid', { attempt });
+            connectSocket(newSessionId);
+            return;
+          } catch (error) {
+            logWarn('[CallFlow] Session re-mint attempt failed', {
+              attempt,
+              attempts,
+              message: errorMessage(error),
+            });
+            if (socketRef.current !== socket) return;
+            if (attempt >= attempts) {
+              logError('[CallFlow] Failed to re-mint session after session.invalid', error);
+              updateStatus('Session expired — please reconnect.', 'error');
+              return;
+            }
+            await new Promise(resolve => setTimeout(resolve, SESSION_REMINT_RETRY_MS));
+            // The identity may have gone away while this was waiting.
+            if (socketRef.current !== socket) return;
+          }
         }
       });
 
@@ -2630,6 +2976,16 @@ export default function useCallFlow({
     setIsMuted(nextMuted);
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
   }, [isMuted, updateStatus]);
+
+  // The Picture-in-Picture window's controls are wired up long before these
+  // handlers exist (the hook that owns them runs near the top of this one), so
+  // they are reached through refs that always hold the current versions.
+  const handleMuteToggleRef = useRef(handleMuteToggle);
+  const handleEndCallRef = useRef(handleEndCall);
+  useEffect(() => {
+    handleMuteToggleRef.current = handleMuteToggle;
+    handleEndCallRef.current = handleEndCall;
+  }, [handleEndCall, handleMuteToggle]);
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;

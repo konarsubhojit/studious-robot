@@ -3,7 +3,7 @@ import { hydrateCallsAndEventsFromDb } from '../callPersistence.ts';
 import { users as usersTable } from '../../db/schema.ts';
 import { devices as devicesTable } from '../../db/schema.ts';
 import { and, eq, ne } from 'drizzle-orm';
-import { removeDevice } from './state.ts';
+import { removeDevice, deviceFreshnessTimestamp, isDeviceInActiveUse } from './state.ts';
 import { blocks as blocksTable } from '../../db/schema.ts';
 
 /**
@@ -132,15 +132,71 @@ async function pruneDeadDevice(db: DrizzleDb | null, state: Stores, deviceId: st
   const removed = removeDevice(state, deviceId);
   if (!removed) return;
 
-  if (db) {
-    try {
-      await db.delete(devicesTable).where(eq(devicesTable.deviceId, deviceId));
-    } catch (err) {
-      console.error(`[push] failed to prune device ${deviceId} from DB:`, ((err as any))?.message);
-    }
-  }
+  await deleteDeviceRow(db, deviceId);
 
   console.log(`[push] Pruned unregistered token device=${deviceId} reason=${reason}`);
+}
+
+/**
+ * Best-effort delete of a device row from the DB.  Never throws: the in-memory
+ * removal has already happened and a transient DB failure must not surface to
+ * the caller.
+ */
+async function deleteDeviceRow(db: DrizzleDb | null, deviceId: string): Promise<void> {
+  if (!db) return;
+  try {
+    await db.delete(devicesTable).where(eq(devicesTable.deviceId, deviceId));
+  } catch (err) {
+    console.error(`[push] failed to prune device ${deviceId} from DB:`, ((err as any))?.message);
+  }
+}
+
+/**
+ * Sweep device rows whose push registration has not been refreshed within
+ * `maxAgeMs`, independent of any delivery feedback.
+ *
+ * `pruneDeadDevice` only fires when a provider reports a dead token, which the
+ * Azure Notification Hubs delivery path never surfaces synchronously — a `201`
+ * means the hub queued the notification, not that FCM accepted the token. So
+ * rows orphaned by an app reinstall (which wipes the client-persisted
+ * `device_id` and registers a brand-new row) would otherwise live forever and
+ * take a push for every message.
+ *
+ * The app re-registers its token on every launch, so a row untouched for the
+ * whole window belongs to an install that no longer exists.  A row backing a
+ * live socket or an unexpired session is never swept, however old it looks, and
+ * neither is a row that is merely unregistered but recent.
+ *
+ * @returns the number of device rows removed.
+ */
+async function pruneStaleDevices(db: DrizzleDb | null, state: Stores, { maxAgeMs, now = Date.now() }: { maxAgeMs: number; now?: number; }): Promise<number> {
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) return 0;
+
+  const cutoff = now - maxAgeMs;
+  const stale: Array<{ deviceId: string; ageMs: number; }> = [];
+
+  for (const device of state.devices.values()) {
+    const timestamp = deviceFreshnessTimestamp(device);
+    const lastSeen = timestamp ? Date.parse(timestamp) : NaN;
+    // An unparseable/absent timestamp says nothing about the row's age, so
+    // leave it alone rather than guess.
+    if (Number.isNaN(lastSeen) || lastSeen > cutoff) continue;
+    if (isDeviceInActiveUse(state, device)) continue;
+    stale.push({ deviceId: device.deviceId, ageMs: now - lastSeen });
+  }
+
+  let pruned = 0;
+  for (const { deviceId, ageMs } of stale) {
+    if (!removeDevice(state, deviceId)) continue;
+    await deleteDeviceRow(db, deviceId);
+    pruned += 1;
+    console.log(
+      `[devices] Pruned stale device=${deviceId}` +
+        ` ageDays=${Math.floor(ageMs / 86_400_000)} reason=registration_expired`
+    );
+  }
+
+  return pruned;
 }
 
 /**
@@ -295,6 +351,7 @@ export {
   persistUser,
   persistDevice,
   pruneDeadDevice,
+  pruneStaleDevices,
   persistBlock,
   deletePersistedBlock,
   loadPersistedStateFromDb,

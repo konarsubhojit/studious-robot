@@ -1,4 +1,5 @@
 import { hasOwnProp } from './normalize.ts';
+import { DEFAULT_MAX_PUSH_DEVICES_PER_USER, DEVICE_FANOUT_ALERT_THRESHOLD } from '../config.ts';
 
 /**
  * In-memory state helpers.
@@ -290,10 +291,96 @@ function listKnownUsers(state: Stores): Set<string> {
 }
 
 /**
+ * Timestamp used to judge how fresh a device row is.
+ *
+ * `lastRegisteredAt` is bumped every time the app re-registers its push token
+ * (once per launch); `updatedAt` also moves for session-only writes, so it is
+ * only the fallback for rows that predate a registration.
+ */
+function deviceFreshnessTimestamp(device: DeviceRecord): string | null {
+  return device.lastRegisteredAt ?? device.updatedAt ?? null;
+}
+
+/**
+ * Read the per-user push fan-out cap from the environment at call time, so a
+ * test (or an operator restarting with a new value) is honoured without
+ * re-importing the module.
+ */
+function resolveMaxPushDevicesPerUser(): number {
+  const configured = Number(process.env.MAX_PUSH_DEVICES_PER_USER);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_PUSH_DEVICES_PER_USER;
+}
+
+/**
+ * @returns `true` when the device currently backs a live socket connection or
+ *   an unexpired session — such a row must never be swept, however old its
+ *   push registration looks.
+ */
+function isDeviceInActiveUse(state: Stores, device: DeviceRecord): boolean {
+  const connections = state.userConnections.get(device.userId);
+  if (connections) {
+    for (const connection of connections.values()) {
+      if (connection.deviceId === device.deviceId) return true;
+    }
+  }
+
+  for (const session of state.sessions.values()) {
+    if (session.deviceId !== device.deviceId) continue;
+    const expiresAt = session.expiresAt ? Date.parse(session.expiresAt) : NaN;
+    if (Number.isNaN(expiresAt) || expiresAt > Date.now()) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Aggregate device statistics for `GET /metrics`.
+ *
+ * Deliberately aggregate-only: no per-user detail and never a push token.  The
+ * point is to make "one user is accumulating device rows" visible to a scraper
+ * before it shows up as duplicate pushes.
+ */
+function summarizeDeviceFanout(state: Stores, threshold: number = DEVICE_FANOUT_ALERT_THRESHOLD): {
+  total: number;
+  pushRegistered: number;
+  usersWithDevices: number;
+  maxPerUser: number;
+  threshold: number;
+  usersOverThreshold: number;
+} {
+  let pushRegistered = 0;
+  for (const device of state.devices.values()) {
+    if (device.pushProvider && device.pushToken) pushRegistered += 1;
+  }
+
+  let maxPerUser = 0;
+  let usersOverThreshold = 0;
+  for (const deviceIds of state.userDevices.values()) {
+    if (deviceIds.size > maxPerUser) maxPerUser = deviceIds.size;
+    if (deviceIds.size > threshold) usersOverThreshold += 1;
+  }
+
+  return {
+    total: state.devices.size,
+    pushRegistered,
+    usersWithDevices: state.userDevices.size,
+    maxPerUser,
+    threshold,
+    usersOverThreshold,
+  };
+}
+
+/**
  * Resolve the set of channels (live WebSocket connections and registered push
  * tokens) through which a user can currently be reached.
+ *
+ * @param maxPushDevices - Cap on the number of push channels returned, most
+ *   recently registered first.  Truncation is logged at `warn` because it means
+ *   stale device rows are accumulating for this user.
  */
-function resolveReachableChannels(state: Stores, userId: string): ReachableChannel[] {
+function resolveReachableChannels(state: Stores, userId: string, maxPushDevices: number = resolveMaxPushDevicesPerUser()): ReachableChannel[] {
   const channels: ReachableChannel[] = [];
   const connections = state.userConnections.get(userId);
   if (connections) {
@@ -321,7 +408,7 @@ function resolveReachableChannels(state: Stores, userId: string): ReachableChann
         deviceId,
         provider: device.pushProvider,
         pushToken: device.pushToken,
-        updatedAt: device.updatedAt ?? null,
+        updatedAt: deviceFreshnessTimestamp(device),
       });
     }
   }
@@ -337,7 +424,18 @@ function resolveReachableChannels(state: Stores, userId: string): ReachableChann
     return bTime - aTime;
   });
 
-  for (const { updatedAt: _updatedAt, ...channel } of pushChannels) {
+  // Bound the fan-out. Delivering to every row a user has ever owned wastes a
+  // push per orphan and rings handsets that were reinstalled months ago.
+  const delivered = maxPushDevices > 0 ? pushChannels.slice(0, maxPushDevices) : pushChannels;
+  if (delivered.length < pushChannels.length) {
+    console.warn(
+      `[push] Capped push fan-out user=${userId}` +
+        ` devices=${pushChannels.length} delivered=${delivered.length}` +
+        ' reason=max_push_devices_per_user'
+    );
+  }
+
+  for (const { updatedAt: _updatedAt, ...channel } of delivered) {
     channels.push(channel);
   }
 
@@ -391,5 +489,8 @@ export {
   listKnownUsers,
   resolveReachableChannels,
   resolveOfflinePushChannels,
+  deviceFreshnessTimestamp,
+  isDeviceInActiveUse,
+  summarizeDeviceFanout,
   userRoom,
 };
