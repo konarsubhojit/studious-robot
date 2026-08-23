@@ -3,8 +3,10 @@ import {
   enterPictureInPicture,
   exitPictureInPicture,
   isCallServiceAvailable,
+  setPictureInPictureMuted,
   startCallService,
   stopCallService,
+  subscribePictureInPictureAction,
   subscribePictureInPictureMode,
 } from '../src/callService';
 
@@ -130,5 +132,48 @@ describe('callService', () => {
       isInPictureInPictureMode: true,
     });
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  test('setPictureInPictureMuted forwards the mute state to the native module', () => {
+    Platform.OS = 'android';
+    const setMuted = jest.fn();
+    setCallServiceModule({ setPictureInPictureMuted: setMuted });
+
+    expect(setPictureInPictureMuted(true)).toBe(true);
+    expect(setMuted).toHaveBeenCalledWith(true);
+  });
+
+  test('setPictureInPictureMuted is a no-op without the native method', () => {
+    Platform.OS = 'android';
+    setCallServiceModule({});
+    expect(setPictureInPictureMuted(true)).toBe(false);
+  });
+
+  test('setPictureInPictureMuted swallows native errors', () => {
+    Platform.OS = 'android';
+    setCallServiceModule({
+      setPictureInPictureMuted: jest.fn(() => {
+        throw new Error('boom');
+      }),
+    });
+    expect(setPictureInPictureMuted(false)).toBe(false);
+  });
+
+  test('subscribePictureInPictureAction forwards known controls only', () => {
+    const handler = jest.fn();
+    const unsubscribe = subscribePictureInPictureAction(handler);
+
+    DeviceEventEmitter.emit('CallService.pictureInPictureAction', { control: 'mute' });
+    DeviceEventEmitter.emit('CallService.pictureInPictureAction', { control: 'hangUp' });
+    DeviceEventEmitter.emit('CallService.pictureInPictureAction', { control: 'teleport' });
+    DeviceEventEmitter.emit('CallService.pictureInPictureAction', {});
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenNthCalledWith(1, 'mute');
+    expect(handler).toHaveBeenNthCalledWith(2, 'hangUp');
+
+    unsubscribe();
+    DeviceEventEmitter.emit('CallService.pictureInPictureAction', { control: 'mute' });
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 });

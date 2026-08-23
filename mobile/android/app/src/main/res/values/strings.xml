@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">WeTalk</string>
+    <string name="pip_action_mute">Mute</string>
+    <string name="pip_action_unmute">Unmute</string>
+    <string name="pip_action_hang_up">Hang up</string>
 </resources>

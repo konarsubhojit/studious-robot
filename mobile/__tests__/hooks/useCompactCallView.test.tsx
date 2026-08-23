@@ -7,12 +7,16 @@ jest.mock('../../src/appLogger', () => ({ logInfo: jest.fn() }));
 jest.mock('../../src/callService', () => ({
   enterPictureInPicture: jest.fn(),
   exitPictureInPicture: jest.fn(() => Promise.resolve(true)),
+  setPictureInPictureMuted: jest.fn(),
+  subscribePictureInPictureAction: jest.fn(() => jest.fn()),
   subscribePictureInPictureMode: jest.fn(() => jest.fn()),
 }));
 
 const {
   enterPictureInPicture,
   exitPictureInPicture,
+  setPictureInPictureMuted,
+  subscribePictureInPictureAction,
   subscribePictureInPictureMode,
 } = require('../../src/callService');
 
@@ -32,11 +36,13 @@ function TestHook({ isInRoomRef, resultRef, options }: any) {
 describe('useCompactCallView', () => {
   let capturedListener: any;
   let capturedPipListener: any;
+  let capturedActionListener: any;
   let mockRemove: any;
 
   beforeEach(() => {
     capturedListener = null;
     capturedPipListener = null;
+    capturedActionListener = null;
     mockRemove = jest.fn();
     jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
       capturedListener = listener;
@@ -45,6 +51,10 @@ describe('useCompactCallView', () => {
     jest.clearAllMocks();
     (subscribePictureInPictureMode as jest.Mock).mockImplementation(listener => {
       capturedPipListener = listener;
+      return jest.fn();
+    });
+    (subscribePictureInPictureAction as jest.Mock).mockImplementation(listener => {
+      capturedActionListener = listener;
       return jest.fn();
     });
     (exitPictureInPicture as jest.Mock).mockResolvedValue(true);
@@ -266,5 +276,93 @@ describe('useCompactCallView', () => {
 
     expect(exitPictureInPicture).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isCompactView).toBe(false);
+  });
+
+  test('publishes the mute state so the window control is labelled correctly', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: true };
+    const resultRef: { current: any; } = { current: null };
+
+    let instance: any;
+    act(() => {
+      instance = renderer.create(
+        <TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} options={{ isMuted: false }} />,
+      );
+    });
+    expect(setPictureInPictureMuted).toHaveBeenLastCalledWith(false);
+
+    act(() => {
+      instance.update(
+        <TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} options={{ isMuted: true }} />,
+      );
+    });
+    expect(setPictureInPictureMuted).toHaveBeenLastCalledWith(true);
+  });
+
+  test('does not publish the mute state on non-Android platforms', () => {
+    Platform.OS = 'ios';
+    const isInRoomRef = { current: true };
+    const resultRef: { current: any; } = { current: null };
+
+    act(() => {
+      renderer.create(
+        <TestHook isInRoomRef={isInRoomRef} resultRef={resultRef} options={{ isMuted: true }} />,
+      );
+    });
+
+    expect(setPictureInPictureMuted).not.toHaveBeenCalled();
+    expect(subscribePictureInPictureAction).not.toHaveBeenCalled();
+  });
+
+  test('routes the window controls to the mute and hang-up handlers', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: true };
+    const resultRef: { current: any; } = { current: null };
+    const onToggleMute = jest.fn();
+    const onEndCall = jest.fn();
+
+    act(() => {
+      renderer.create(
+        <TestHook
+          isInRoomRef={isInRoomRef}
+          resultRef={resultRef}
+          options={{ onToggleMute, onEndCall }}
+        />,
+      );
+    });
+
+    act(() => {
+      capturedActionListener('mute');
+      capturedActionListener('hangUp');
+    });
+
+    expect(onToggleMute).toHaveBeenCalledTimes(1);
+    expect(onEndCall).toHaveBeenCalledTimes(1);
+  });
+
+  test('ignores window controls once the call is over', () => {
+    Platform.OS = 'android';
+    const isInRoomRef = { current: false };
+    const resultRef: { current: any; } = { current: null };
+    const onToggleMute = jest.fn();
+    const onEndCall = jest.fn();
+
+    act(() => {
+      renderer.create(
+        <TestHook
+          isInRoomRef={isInRoomRef}
+          resultRef={resultRef}
+          options={{ onToggleMute, onEndCall }}
+        />,
+      );
+    });
+
+    act(() => {
+      capturedActionListener('mute');
+      capturedActionListener('hangUp');
+    });
+
+    expect(onToggleMute).not.toHaveBeenCalled();
+    expect(onEndCall).not.toHaveBeenCalled();
   });
 });

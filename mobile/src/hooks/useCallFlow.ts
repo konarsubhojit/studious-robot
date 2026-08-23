@@ -609,10 +609,22 @@ export default function useCallFlow({
   const { isRegistered } = identity;
 
   // Closing the Picture-in-Picture window must end the call: leaving it running
-  // invisibly gives the user no way back to it and no way to hang up.
+  // invisibly gives the user no way back to it and no way to hang up. The mute
+  // and hang-up controls the window itself offers are routed back here too —
+  // they are drawn by the system, since a PiP window cannot deliver touches to
+  // the app's own views.
   const { isCompactView, setIsCompactView } = useCompactCallView(isInCallRef, {
     onPictureInPictureClosed: () =>
       endActiveCallRef.current?.('Call ended', 'info', 'ended'),
+    onToggleMute: () => handleMuteToggleRef.current?.(),
+    onEndCall: () => {
+      handleEndCallRef.current?.().catch(error =>
+        logWarn('[CallFlow] Picture-in-Picture hang up failed', {
+          message: errorMessage(error),
+        }),
+      );
+    },
+    isMuted,
   });
 
   /**
@@ -2964,6 +2976,16 @@ export default function useCallFlow({
     setIsMuted(nextMuted);
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
   }, [isMuted, updateStatus]);
+
+  // The Picture-in-Picture window's controls are wired up long before these
+  // handlers exist (the hook that owns them runs near the top of this one), so
+  // they are reached through refs that always hold the current versions.
+  const handleMuteToggleRef = useRef(handleMuteToggle);
+  const handleEndCallRef = useRef(handleEndCall);
+  useEffect(() => {
+    handleMuteToggleRef.current = handleMuteToggle;
+    handleEndCallRef.current = handleEndCall;
+  }, [handleEndCall, handleMuteToggle]);
 
   const handleVideoToggle = useCallback(() => {
     const nextVideoEnabled = !isVideoEnabled;

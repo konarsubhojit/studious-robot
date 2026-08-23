@@ -14,6 +14,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
@@ -53,6 +54,19 @@ class CallServiceModule(
   private fun refreshPictureInPictureParams() {
     val activity = reactApplicationContext.currentActivity as? MainActivity ?: return
     activity.runOnUiThread { activity.updatePictureInPictureParams() }
+  }
+
+  /**
+   * Record the current microphone state so the Picture-in-Picture window's
+   * mute control shows the right icon and label, and re-publish the params so a
+   * mute toggle made from the full-screen deck is reflected immediately in an
+   * already-open PiP window.
+   */
+  @ReactMethod
+  fun setPictureInPictureMuted(muted: Boolean) {
+    if (isMicrophoneMuted == muted) return
+    isMicrophoneMuted = muted
+    refreshPictureInPictureParams()
   }
 
   @ReactMethod
@@ -138,22 +152,52 @@ class CallServiceModule(
       isInPictureInPictureMode: Boolean,
       dismissed: Boolean,
     ) {
-      val reactContext: ReactContext =
-        (context.applicationContext as? ReactApplication)
-          ?.reactHost
-          ?.currentReactContext ?: return
       val params =
         Arguments.createMap().apply {
           putBoolean("isInPictureInPictureMode", isInPictureInPictureMode)
           putBoolean("dismissed", dismissed)
         }
+      emitEvent(context, EVENT_PIP_MODE_CHANGED, params)
+    }
+
+    /** Emit [event] to JS, no-oping when no React context is available yet. */
+    private fun emitEvent(
+      context: Context,
+      event: String,
+      params: WritableMap,
+    ) {
+      val reactContext: ReactContext =
+        (context.applicationContext as? ReactApplication)
+          ?.reactHost
+          ?.currentReactContext ?: return
       try {
         reactContext
           .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-          .emit(EVENT_PIP_MODE_CHANGED, params)
+          .emit(event, params)
       } catch (error: Exception) {
-        Log.w(TAG, "Failed to emit Picture-in-Picture mode change", error)
+        Log.w(TAG, "Failed to emit $event", error)
       }
+    }
+
+    /** Event emitted to JS whenever a Picture-in-Picture window control is tapped. */
+    const val EVENT_PIP_ACTION = "CallService.pictureInPictureAction"
+
+    /**
+     * Bridge a tap on one of the Picture-in-Picture window's controls to JS.
+     *
+     * A PiP window cannot deliver touches to the app's own views, so these
+     * system-drawn controls are the only way to mute or hang up without
+     * restoring the app to full screen.
+     *
+     * @param control One of `MainActivity.CONTROL_MUTE` / `CONTROL_HANG_UP`.
+     */
+    @JvmStatic
+    fun emitPictureInPictureAction(
+      context: Context,
+      control: String,
+    ) {
+      val params = Arguments.createMap().apply { putString("control", control) }
+      emitEvent(context, EVENT_PIP_ACTION, params)
     }
 
     /** Aspect ratio (width:height) used for the Picture-in-Picture window (portrait). */
@@ -163,5 +207,13 @@ class CallServiceModule(
     /** Set while a call is active so the activity can enter PiP on user leave. */
     @Volatile
     var isCallActive: Boolean = false
+
+    /**
+     * Latest microphone state reported by JS, used to label the PiP window's
+     * mute control. Only ever read on the UI thread when building PiP params,
+     * but written from the JS thread — hence `@Volatile`.
+     */
+    @Volatile
+    var isMicrophoneMuted: Boolean = false
   }
 }

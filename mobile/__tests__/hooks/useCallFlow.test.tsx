@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import useCompactCallView from '../../src/hooks/useCompactCallView';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -305,6 +306,23 @@ describe('useCallFlow', () => {
     for (const fn of required) {
       expect(typeof resultRef.current[fn]).toBe('function');
     }
+  });
+
+  test('wires the Picture-in-Picture window controls to mute and hang up', () => {
+    const { resultRef } = renderHook();
+    const compactOptions = (useCompactCallView as jest.Mock).mock.calls.at(-1)?.[1];
+
+    expect(compactOptions.isMuted).toBe(false);
+
+    act(() => {
+      compactOptions.onToggleMute();
+    });
+    expect(resultRef.current.isMuted).toBe(true);
+
+    expect(typeof compactOptions.onEndCall).toBe('function');
+    act(() => {
+      compactOptions.onEndCall();
+    });
   });
 
   test('setUserId updates the userId state', () => {
