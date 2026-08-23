@@ -7,12 +7,12 @@ import { createRateLimiter, createAuditLog } from './security.ts';
 import { createStores } from './stores/index.ts';
 import { createMessageStore } from './messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from './cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS } from './config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from './lib/state.ts';
 import { waitForSocketsToDrain } from './lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls } from './domain/calls.ts';
 import { notifyCallTransition } from './domain/notifications.ts';
-import { loadPersistedStateFromDb } from './lib/persistence.ts';
+import { loadPersistedStateFromDb, pruneStaleDevices } from './lib/persistence.ts';
 import { mountRoutes } from './routes/index.ts';
 import { registerSocketHandlers } from './signaling/index.ts';
 import { verboseLog } from './lib/verbose.ts';
@@ -24,7 +24,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type CreateServerOptions = { verifyIdToken?: (idToken: string) => Promise<{ authUid: string, email?: string|null, authProvider?: string|null, }>; stores?: any; db?: any; messageStore?: any; cache?: import('./cache.ts').Cache; messageBus?: import('./messageBus.ts').MessageBus | null; sessionTtlMs?: number; participantDisconnectGraceMs?: number; callRateLimit?: number; callRateWindowMs?: number; rtcRateLimit?: number; rtcRateWindowMs?: number; turnRateLimit?: number; turnRateWindowMs?: number; messageRateLimit?: number; messageRateWindowMs?: number; messageSearchRateLimit?: number; messageSearchRateWindowMs?: number; shutdownDrainMs?: number; turnFetch?: typeof fetch; turnEnv?: NodeJS.ProcessEnv; };
+export type CreateServerOptions = { verifyIdToken?: (idToken: string) => Promise<{ authUid: string, email?: string|null, authProvider?: string|null, }>; stores?: any; db?: any; messageStore?: any; cache?: import('./cache.ts').Cache; messageBus?: import('./messageBus.ts').MessageBus | null; sessionTtlMs?: number; participantDisconnectGraceMs?: number; callRateLimit?: number; callRateWindowMs?: number; rtcRateLimit?: number; rtcRateWindowMs?: number; turnRateLimit?: number; turnRateWindowMs?: number; messageRateLimit?: number; messageRateWindowMs?: number; messageSearchRateLimit?: number; messageSearchRateWindowMs?: number; shutdownDrainMs?: number; staleDeviceMaxAgeMs?: number; turnFetch?: typeof fetch; turnEnv?: NodeJS.ProcessEnv; };
 
 /**
  * Build the Express app and HTTP/Socket.IO server.
@@ -280,6 +280,19 @@ function createServer(opts: CreateServerOptions = {}) {
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
+  // Background worker: sweep device rows abandoned by an app reinstall. The
+  // Notification Hubs delivery path never reports a dead token synchronously,
+  // so age is the only signal available (see pruneStaleDevices).
+  const staleDeviceMaxAgeMs =
+    opts.staleDeviceMaxAgeMs ??
+    (Number(process.env.STALE_DEVICE_MAX_AGE_MS) || DEFAULT_STALE_DEVICE_MAX_AGE_MS);
+  const deviceSweepTimer = setInterval(() => {
+    pruneStaleDevices(db, state, { maxAgeMs: staleDeviceMaxAgeMs }).catch((err) => {
+      console.error('[devices] stale device sweep failed:', (err as any)?.message);
+    });
+  }, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS);
+  deviceSweepTimer.unref();
+
   const shutdownDrainMs =
     opts.shutdownDrainMs ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
 
@@ -303,6 +316,7 @@ function createServer(opts: CreateServerOptions = {}) {
     shutdownPromise = (async () => {
       // Stop the background worker.
       clearInterval(pollTimer);
+      clearInterval(deviceSweepTimer);
 
       // Tell connected clients to reconnect elsewhere.
       io.emit(SERVER_EVENTS.SERVER_DRAINING, { reason, ts: new Date().toISOString() });

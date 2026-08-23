@@ -10,8 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { createCallRecord, appendCallEvent } from '../src/domain/calls.ts';
-import { pruneDeadDevice } from '../src/lib/persistence.ts';
-import { upsertDevice } from '../src/lib/state.ts';
+import { pruneDeadDevice, pruneStaleDevices } from '../src/lib/persistence.ts';
+import { upsertDevice, resolveReachableChannels, summarizeDeviceFanout } from '../src/lib/state.ts';
 import { createStores } from '../src/stores/index.ts';
 import { createMemoryCache } from '../src/cache.ts';
 import * as schema from '../db/schema.ts';
@@ -430,6 +430,188 @@ test('pruneDeadDevice is a no-op when the device is already absent', async () =>
   await assert.doesNotReject(pruneDeadDevice(db, state, 'device-never-existed', 'UNREGISTERED'));
 
   assert.equal(db.deletes.length, 0, 'no DB delete for a device that was never registered');
+});
+
+// ─── Age-based device pruning ─────────────────────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Register a device row whose last push registration is `ageDays` old.
+ */
+function registerDeviceAged(state: any, deviceId: string, userId: string, ageDays: number, pushToken: string | null = `token-${deviceId}`): void {
+  const timestamp = new Date(Date.now() - ageDays * DAY_MS).toISOString();
+  upsertDevice(state, {
+    deviceId,
+    userId,
+    pushProvider: pushToken ? 'fcm' : null,
+    pushToken,
+    lastRegisteredAt: timestamp,
+  });
+  // upsertDevice stamps `updatedAt` with "now"; age is judged by
+  // `lastRegisteredAt`, so back-date the fallback too for rows that have none.
+  state.devices.get(deviceId).updatedAt = timestamp;
+}
+
+/**
+ * Run `fn` with console.warn captured.
+ */
+async function captureWarnings(fn: () => unknown | Promise<unknown>): Promise<string[]> {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
+test('pruneStaleDevices removes registrations older than the window and keeps recent ones', async () => {
+  const db = buildMockDb();
+  const state = buildMinimalState(db);
+  registerDeviceAged(state, 'device-stale', 'user-stale', 90);
+  registerDeviceAged(state, 'device-fresh', 'user-stale', 1);
+
+  const pruned = await pruneStaleDevices(db, state, { maxAgeMs: 60 * DAY_MS });
+
+  assert.equal(pruned, 1);
+  assert.equal(state.devices.has('device-stale'), false, 'abandoned row swept');
+  assert.ok(state.devices.has('device-fresh'), 'recent row kept');
+  assert.equal(db.deletes.length, 1);
+  assert.equal(db.deletes[0].table, schema.devices);
+  assert.equal(
+    state.userDevices.get('user-stale')?.has('device-stale'),
+    false,
+    'the user -> device index is updated too'
+  );
+});
+
+test('pruneStaleDevices keeps an old row that is merely unregistered but recent', async () => {
+  const state = buildMinimalState(null);
+  // No push token, but the row was touched yesterday: the install still exists,
+  // the user just turned notifications off.
+  registerDeviceAged(state, 'device-unregistered', 'user-unreg', 1, null);
+
+  const pruned = await pruneStaleDevices(null, state, { maxAgeMs: 60 * DAY_MS });
+
+  assert.equal(pruned, 0);
+  assert.ok(state.devices.has('device-unregistered'));
+});
+
+test('pruneStaleDevices never removes the row backing an active session', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-session', 'user-session', 200);
+  state.sessions.set('sess-live', {
+    sessionId: 'sess-live',
+    userId: 'user-session',
+    deviceId: 'device-session',
+    platform: 'android',
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + DAY_MS).toISOString(),
+  });
+
+  const pruned = await pruneStaleDevices(null, state, { maxAgeMs: 60 * DAY_MS });
+
+  assert.equal(pruned, 0);
+  assert.ok(state.devices.has('device-session'), 'a session still resolves to this row');
+});
+
+test('pruneStaleDevices never removes the row backing a live socket connection', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-connected', 'user-connected', 200);
+  state.userConnections.set(
+    'user-connected',
+    new Map([
+      ['socket-1', {
+        userId: 'user-connected',
+        socketId: 'socket-1',
+        deviceId: 'device-connected',
+        sessionId: null,
+      }],
+    ])
+  );
+
+  const pruned = await pruneStaleDevices(null, state, { maxAgeMs: 60 * DAY_MS });
+
+  assert.equal(pruned, 0);
+  assert.ok(state.devices.has('device-connected'));
+});
+
+test('pruneStaleDevices leaves rows with no usable timestamp alone', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-undated', 'user-undated', 200);
+  const device: any = state.devices.get('device-undated');
+  device.lastRegisteredAt = null;
+  device.updatedAt = null;
+
+  const pruned = await pruneStaleDevices(null, state, { maxAgeMs: 60 * DAY_MS });
+
+  assert.equal(pruned, 0, 'an unknown age is not evidence of abandonment');
+});
+
+// ─── Push fan-out cap ─────────────────────────────────────────────────────────
+
+test('resolveReachableChannels caps push fan-out at the configured limit, newest first', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-oldest', 'user-fanout', 30);
+  registerDeviceAged(state, 'device-middle', 'user-fanout', 10);
+  registerDeviceAged(state, 'device-newest', 'user-fanout', 1);
+
+  const channels = resolveReachableChannels(state, 'user-fanout', 2);
+  const deviceIds = channels
+    .filter((channel) => channel.type === 'push')
+    .map((channel) => channel.deviceId);
+
+  assert.deepEqual(deviceIds, ['device-newest', 'device-middle']);
+});
+
+test('resolveReachableChannels warns when the fan-out cap truncates delivery', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-a', 'user-capped', 30);
+  registerDeviceAged(state, 'device-b', 'user-capped', 20);
+  registerDeviceAged(state, 'device-c', 'user-capped', 10);
+
+  const warnings = await captureWarnings(() => resolveReachableChannels(state, 'user-capped', 1));
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Capped push fan-out user=user-capped devices=3 delivered=1/);
+  assert.ok(
+    warnings.every((line) => !line.includes('token-device-')),
+    'the warning never contains a push token'
+  );
+});
+
+test('resolveReachableChannels does not warn when every device is delivered to', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-only', 'user-uncapped', 1);
+
+  const warnings = await captureWarnings(() => resolveReachableChannels(state, 'user-uncapped', 3));
+
+  assert.deepEqual(warnings, []);
+});
+
+test('summarizeDeviceFanout reports aggregate counts without per-user detail', async () => {
+  const state = buildMinimalState(null);
+  registerDeviceAged(state, 'device-1', 'user-many', 1);
+  registerDeviceAged(state, 'device-2', 'user-many', 2);
+  registerDeviceAged(state, 'device-3', 'user-many', 3);
+  registerDeviceAged(state, 'device-4', 'user-few', 1, null);
+
+  const summary = summarizeDeviceFanout(state, 2);
+
+  assert.equal(summary.total, 4);
+  assert.equal(summary.pushRegistered, 3);
+  assert.equal(summary.usersWithDevices, 2);
+  assert.equal(summary.maxPerUser, 3);
+  assert.equal(summary.threshold, 2);
+  assert.equal(summary.usersOverThreshold, 1);
+  assert.equal(
+    JSON.stringify(summary).includes('user-many'),
+    false,
+    'aggregate only: no per-user detail'
+  );
 });
 
 test('POST /calls persists call records and call events to the DB', async () => {
