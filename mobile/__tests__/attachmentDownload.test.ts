@@ -87,7 +87,7 @@ describe('attachmentDownload', () => {
     });
 
     expect(result).toMatchObject({ success: false, reason: 'unauthorized', statusCode: 403 });
-    expect(result.message).toMatch(/403/);
+    expect(result.message).toMatch(/refused access/i);
     // A refusal by storage is identical in every directory, so it is not retried.
     expect(RNFS.downloadFile).toHaveBeenCalledTimes(1);
   });

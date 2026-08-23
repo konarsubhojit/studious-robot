@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { logInfo, logVerbose, logWarn } from '../appLogger';
+import { isAudioSessionActive } from '../audioSessionState';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { loadVideoComponent } from '../videoPlayback';
@@ -233,13 +234,18 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
 
   useEffect(() => {
     if (visible && item) {
-      logInfo('[Media] viewer opened', { kind: item.kind, mimeType: item.mimeType });
+      logInfo('[Media] viewer opened', {
+        kind: item.kind,
+        mimeType: item.mimeType,
+        callActive: isAudioSessionActive(),
+      });
     }
   }, [item, visible]);
 
   if (!visible) return null;
 
   const VideoComponent = item?.kind === 'video' ? loadVideoComponent() : null;
+  const callOwnsAudio = isAudioSessionActive();
   const hasFailed = Boolean(item && failedKey === item.key);
 
   return (
@@ -288,7 +294,9 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
               source={{ uri: item.url }}
               style={styles.media}
               controls
-              paused={false}
+              // A call owns the audio route; a video that autoplayed into it
+              // would take the route away mid-call, so it waits for a tap.
+              paused={callOwnsAudio}
               resizeMode="contain"
               onError={(error: unknown) => {
                 logWarn('[Media] video playback failed', { error, mimeType: item.mimeType });

@@ -124,7 +124,7 @@ export type IceFallbackReason =
  * The TURN endpoints in an ICE server list, as `scheme:host` — never the
  * username or credential that comes with them.
  */
-export function summarizeTurnEndpoints(iceServers: unknown): string[] {
+function summarizeTurnEndpoints(iceServers: unknown): string[] {
   if (!Array.isArray(iceServers)) return [];
   const endpoints = new Set<string>();
   iceServers.forEach(server => {

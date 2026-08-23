@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import MediaViewer, { resolveMediaGesture } from '../../src/components/MediaViewer';
+import { setAudioSessionActive } from '../../src/audioSessionState';
 
 const mockLoadVideoComponent = jest.fn();
 jest.mock('../../src/videoPlayback', () => ({
@@ -44,6 +45,7 @@ describe('MediaViewer', () => {
   beforeEach(() => {
     mockLoadVideoComponent.mockReset();
     mockLoadVideoComponent.mockReturnValue(null);
+    setAudioSessionActive(false);
   });
 
   test('renders nothing until it is opened', () => {
@@ -122,6 +124,18 @@ describe('MediaViewer', () => {
     });
 
     expect(findByTestId(tree, 'media-viewer-error')).not.toBeNull();
+  });
+
+  test('does not autoplay a video while a call owns the audio session', () => {
+    mockLoadVideoComponent.mockReturnValue('Video');
+    setAudioSessionActive(true);
+    try {
+      const tree = render({ items: [VIDEO], visible: true });
+      // The call flow owns the route; the video waits for an explicit tap.
+      expect(findByTestId(tree, 'media-viewer-video').props.paused).toBe(true);
+    } finally {
+      setAudioSessionActive(false);
+    }
   });
 
   test('plays a video with the linked player, and falls back to a download hint without it', () => {

@@ -254,7 +254,7 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
 const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
   'missing-url': 'This attachment has no file yet — it may still be uploading',
   'unsupported-url': "This attachment's link isn't supported by this app",
-  unauthorized: 'The server refused access to this file (403). Ask the admin to check storage access.',
+  unauthorized: 'The server refused access to this file. Ask the admin to check storage access.',
   'not-found': 'This file is no longer available on the server',
   'server-error': 'The file server could not deliver this attachment. Try again later.',
   network: 'Could not reach the file server. Check your connection and try again.',
