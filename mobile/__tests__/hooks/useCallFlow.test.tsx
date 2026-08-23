@@ -3000,7 +3000,7 @@ describe('useCallFlow chat', () => {
     const relayServers = [
       { urls: ['stun:stun.l.google.com:19302'] },
       {
-        urls: ['******turn.example.com:3478'],
+        urls: ['turn:turn.example.com:3478'],
         username: '1700000000:alice',
         credential: 'hmac-signature',
       },

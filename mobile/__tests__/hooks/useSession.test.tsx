@@ -33,10 +33,11 @@ function setup(overrides = {}) {
     ...overrides,
   };
   const resultRef: { current: any; } = { current: null };
+  let tree: any;
   act(() => {
-    renderer.create(<TestHook resultRef={resultRef} params={params} />);
+    tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
   });
-  return { resultRef, params };
+  return { resultRef, params, tree };
 }
 
 beforeEach(() => {
@@ -92,6 +93,95 @@ describe('useSession', () => {
 
     expect(sessionId).toBe('sess-1');
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('concurrent session consumers share one POST /session and authoritative id', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => ({ sessionId: 'sess-shared', userId: 'alice' }),
+    });
+    const { resultRef } = setup();
+
+    let sessions!: string[];
+    await act(async () => {
+      sessions = await Promise.all([
+        resultRef.current.createOrGetSession(),
+        resultRef.current.createOrGetSession(),
+        resultRef.current.createOrGetSession(),
+      ]);
+    });
+
+    expect(sessions).toEqual(['sess-shared', 'sess-shared', 'sess-shared']);
+    expect(resultRef.current.sessionIdRef.current).toBe('sess-shared');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('identity changes invalidate the cached session and mint a new one', async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessionId: 'sess-alice', userId: 'alice' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessionId: 'sess-bob', userId: 'bob' }),
+      });
+    const { resultRef, params, tree } = setup();
+
+    await act(async () => {
+      await resultRef.current.createOrGetSession();
+    });
+    act(() => {
+      tree.update(
+        <TestHook resultRef={resultRef} params={{ ...params, userId: 'bob' }} />,
+      );
+    });
+    let sessionId;
+    await act(async () => {
+      sessionId = await resultRef.current.createOrGetSession();
+    });
+
+    expect(sessionId).toBe('sess-bob');
+    expect(resultRef.current.sessionIdRef.current).toBe('sess-bob');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('a late response for the previous identity cannot replace the authoritative id', async () => {
+    let resolveAlice!: (data: any) => void;
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => new Promise(resolve => {
+          resolveAlice = resolve;
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ sessionId: 'sess-bob', userId: 'bob' }),
+      });
+    const { resultRef, params, tree } = setup();
+
+    let aliceSessionPromise!: Promise<string>;
+    await act(async () => {
+      aliceSessionPromise = resultRef.current.createOrGetSession();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      tree.update(
+        <TestHook resultRef={resultRef} params={{ ...params, userId: 'bob' }} />,
+      );
+    });
+    await act(async () => {
+      await resultRef.current.createOrGetSession();
+    });
+    await act(async () => {
+      resolveAlice({ sessionId: 'sess-alice', userId: 'alice' });
+      await aliceSessionPromise;
+    });
+
+    expect(resultRef.current.sessionIdRef.current).toBe('sess-bob');
   });
 
   test('createOrGetSession surfaces an identity_conflict as a friendly status message', async () => {
