@@ -108,12 +108,24 @@ jest.mock('../../src/socketConfig', () => ({
   isRecoverableDisconnectReason: jest.fn(),
 }));
 
+const mockNetworkListeners: any[] = [];
+jest.mock('../../src/networkMonitor', () => ({
+  subscribeNetworkChanges: (listener: any) => {
+    mockNetworkListeners.push(listener);
+    return () => {
+      const index = mockNetworkListeners.indexOf(listener);
+      if (index >= 0) mockNetworkListeners.splice(index, 1);
+    };
+  },
+}));
+
 jest.mock('../../src/webrtcConfig', () => ({
   ICE_TRANSPORT_POLICIES: { ALL: 'all', RELAY: 'relay' },
   getIceServers: jest.fn(() => []),
   getIceServersForCall: jest.fn(async () => []),
   applyBitrateConstraints: jest.fn(async () => {}),
   normalizeIceTransportPolicy: jest.fn(value => (value === 'relay' ? 'relay' : 'all')),
+  resetIceServersForCallCache: jest.fn(),
 }));
 
 jest.mock('../../src/callKeep', () => {
@@ -2784,12 +2796,12 @@ describe('useCallFlow chat', () => {
    * Accept an incoming call with a peer-connection stub whose state callbacks
    * the test can fire by hand.
    */
-  async function acceptCallWithPeerConnection(callId: any, options?: any) {
+  async function acceptCallWithPeerConnection(callId: any, options?: any, { callerId = 'bob' }: { callerId?: string; } = {}) {
     const { resultRef, tree } = await renderWithSocket(options);
 
     const incomingHandler = getSocketHandler('call.incoming');
     await act(async () => {
-      await incomingHandler({ call: { callId, callerId: 'bob' } });
+      await incomingHandler({ call: { callId, callerId } });
     });
     await act(async () => {});
 
@@ -2812,6 +2824,7 @@ describe('useCallFlow chat', () => {
       getStats: jest.fn().mockResolvedValue(new Map()),
       setRemoteDescription: jest.fn().mockResolvedValue(undefined),
       createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'answer-sdp' }),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: 'restart-offer-sdp' }),
       setLocalDescription: jest.fn().mockResolvedValue(undefined),
       localDescription: { type: 'answer', sdp: 'answer-sdp' },
     };
@@ -2823,7 +2836,7 @@ describe('useCallFlow chat', () => {
     socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       emits.push({ event, payload });
       if (event === 'call.accept') {
-        cb?.({ ok: true, call: { callId, callerId: 'bob', calleeId: 'alice' } });
+        cb?.({ ok: true, call: { callId, callerId, calleeId: 'alice' } });
       } else {
         cb?.({ ok: true });
       }
@@ -3024,6 +3037,163 @@ describe('useCallFlow chat', () => {
     });
   });
 
+
+  // ── Mid-call recovery ─────────────────────────────────────────────────────
+  //
+  // Recovery used to be caller-only and reactive: a callee whose IP changed
+  // waited for an offer nobody was going to send, and even the caller waited
+  // for ICE to reach `failed` first. These cover the symmetric, proactive,
+  // retried behaviour.
+
+  async function failIce(peerConnection: any) {
+    await act(async () => {
+      peerConnection.iceConnectionState = 'failed';
+      peerConnection.oniceconnectionstatechange?.();
+      await Promise.resolve();
+    });
+    await act(async () => {});
+  }
+
+  test('a callee whose ICE fails sends an ICE restart offer', async () => {
+    const { peerConnection, emits } = await acceptCallWithPeerConnection('call-restart-callee');
+    emits.length = 0;
+    peerConnection.createOffer.mockClear();
+
+    await failIce(peerConnection);
+
+    // 'alice' answered a call from 'bob', so this peer is the callee.
+    expect(peerConnection.createOffer).toHaveBeenCalledWith({ iceRestart: true });
+    expect(emits.filter((entry: any) => entry.event === 'rtc.offer')).toHaveLength(1);
+  });
+
+  test('the tie-break defers the higher userId, and recovery cancels its restart', async () => {
+    jest.useFakeTimers();
+    try {
+      // 'alice' > 'aaa', so this peer must let the other one restart first.
+      const { peerConnection } = await acceptCallWithPeerConnection(
+        'call-restart-glare',
+        undefined,
+        { callerId: 'aaa' },
+      );
+      peerConnection.createOffer.mockClear();
+
+      await failIce(peerConnection);
+      expect(peerConnection.createOffer).not.toHaveBeenCalled();
+
+      // The other peer's restart worked: this one must not offer as well.
+      await act(async () => {
+        peerConnection.iceConnectionState = 'connected';
+        peerConnection.oniceconnectionstatechange?.();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(5000);
+        await Promise.resolve();
+      });
+
+      expect(peerConnection.createOffer).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a network change restarts ICE without waiting for a failure', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection } = await acceptCallWithPeerConnection('call-restart-network');
+      peerConnection.iceConnectionState = 'connected';
+      peerConnection.createOffer.mockClear();
+
+      const notify = mockNetworkListeners[mockNetworkListeners.length - 1];
+      await act(async () => {
+        notify({
+          from: { type: 'wifi', isConnected: true },
+          to: { type: 'cellular', isConnected: true },
+        });
+        jest.advanceTimersByTime(800);
+        await Promise.resolve();
+      });
+      await act(async () => {});
+
+      // ICE still says "connected" here — that lag is exactly the audio gap
+      // this restart exists to avoid.
+      expect(peerConnection.createOffer).toHaveBeenCalledWith({ iceRestart: true });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a failed ICE restart is retried after a backoff', async () => {
+    jest.useFakeTimers();
+    try {
+      const { logError } = require('../../src/appLogger');
+      const { peerConnection } = await acceptCallWithPeerConnection('call-restart-retry');
+      peerConnection.createOffer.mockClear();
+      peerConnection.createOffer
+        .mockRejectedValueOnce(new Error('interface not routable'))
+        .mockResolvedValue({ type: 'offer', sdp: 'restart-sdp' });
+
+      await failIce(peerConnection);
+      expect(peerConnection.createOffer).toHaveBeenCalledTimes(1);
+      expect(logError).toHaveBeenCalledWith(
+        '[CallFlow] ICE restart failed',
+        expect.objectContaining({ trigger: 'ice-failure', attempt: 1 }),
+      );
+
+      await act(async () => {
+        jest.advanceTimersByTime(1500);
+        await Promise.resolve();
+      });
+      await act(async () => {});
+
+      expect(peerConnection.createOffer).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a restart with no TURN server logs an error and still recovers', async () => {
+    const { logError } = require('../../src/appLogger');
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    (getIceServersForCall as jest.Mock).mockResolvedValue([
+      { urls: ['stun:stun.l.google.com:19302'] },
+    ]);
+    const { peerConnection, emits } = await acceptCallWithPeerConnection('call-restart-no-turn');
+    emits.length = 0;
+    peerConnection.createOffer.mockClear();
+
+    await failIce(peerConnection);
+
+    expect(logError).toHaveBeenCalledWith(
+      '[CallFlow] ICE restart has no TURN server; re-fetching credentials',
+      expect.objectContaining({ trigger: 'ice-failure' }),
+    );
+    // Degraded recovery still beats no recovery.
+    expect(emits.filter((entry: any) => entry.event === 'rtc.offer')).toHaveLength(1);
+  });
+
+  test('a network change with no active call restarts nothing', async () => {
+    jest.useFakeTimers();
+    try {
+      const { RTCPeerConnection } = require('react-native-webrtc');
+      await renderWithSocket();
+      (RTCPeerConnection as jest.Mock).mockClear();
+
+      const notify = mockNetworkListeners[mockNetworkListeners.length - 1];
+      await act(async () => {
+        notify({
+          from: { type: 'wifi', isConnected: true },
+          to: { type: 'cellular', isConnected: true },
+        });
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(RTCPeerConnection).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 
   test('fetches TURN credentials with a session id when answering', async () => {
     const { getIceServersForCall } = require('../../src/webrtcConfig');
