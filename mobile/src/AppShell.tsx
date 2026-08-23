@@ -168,6 +168,7 @@ function openDeviceSettings() {
 function ActiveCallScreen() {
   const {
     callFlow,
+    settings,
     isCompact,
     participantLabel,
     streams,
@@ -204,6 +205,7 @@ function ActiveCallScreen() {
       isScreenAudioShared={callFlow.isScreenAudioShared}
       isScreenShareSupported={callFlow.isScreenShareSupported}
       isRemoteScreenSharing={callFlow.isRemoteScreenSharing}
+      iceTransportPolicy={settings.iceTransportPolicy}
       onMuteToggle={callFlow.handleMuteToggle}
       onVideoToggle={callFlow.handleVideoToggle}
       onChooseAudioOutput={callFlow.chooseAudioOutput}

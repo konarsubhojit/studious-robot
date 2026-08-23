@@ -9,6 +9,24 @@ const AUDIO_MAX_BITRATE_BPS = 64_000;
 const CACHE_REFRESH_MARGIN_MS = 60_000;
 const DEFAULT_CREDENTIAL_TTL_MS = 55 * 60 * 1000;
 
+export const ICE_TRANSPORT_POLICIES = {
+  ALL: 'all',
+  RELAY: 'relay',
+} as const;
+
+export const ICE_TRANSPORT_POLICY_VALUES = [
+  ICE_TRANSPORT_POLICIES.ALL,
+  ICE_TRANSPORT_POLICIES.RELAY,
+];
+
+export type IceTransportPolicy = (typeof ICE_TRANSPORT_POLICY_VALUES)[number];
+
+export function normalizeIceTransportPolicy(value: unknown): IceTransportPolicy {
+  return ICE_TRANSPORT_POLICY_VALUES.includes(value as IceTransportPolicy)
+    ? (value as IceTransportPolicy)
+    : ICE_TRANSPORT_POLICIES.ALL;
+}
+
 export type IceServer = { urls: string[]; username?: string; credential?: string; };
 
 let cachedServerIceServers: IceServer[] | null = null;

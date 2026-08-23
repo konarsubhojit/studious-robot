@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadSettings, saveSettings } from '../settingsStorage';
+import {
+  ICE_TRANSPORT_POLICIES,
+  normalizeIceTransportPolicy,
+  resetIceServersForCallCache,
+} from '../webrtcConfig';
+import type { IceTransportPolicy } from '../webrtcConfig';
 
-export const DEFAULT_APP_SETTINGS = {
+export type AppSettingsValues = {
+  autoCameraLightingEnabled: boolean;
+  speakerEnabledByDefault: boolean;
+  developerModeEnabled: boolean;
+  iceTransportPolicy: IceTransportPolicy;
+};
+
+export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
   autoCameraLightingEnabled: false,
   speakerEnabledByDefault: true,
   developerModeEnabled: false,
+  iceTransportPolicy: ICE_TRANSPORT_POLICIES.ALL,
 };
 
 /**
@@ -23,7 +37,10 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     let cancelled = false;
     loadSettings(DEFAULT_APP_SETTINGS).then(loaded => {
       if (cancelled) return;
-      setSettings(loaded);
+      setSettings({
+        ...loaded,
+        iceTransportPolicy: normalizeIceTransportPolicy(loaded.iceTransportPolicy),
+      });
     });
     return () => {
       cancelled = true;
@@ -69,6 +86,22 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     );
   }, [persistSetting, settings.developerModeEnabled]);
 
+  const handleIceTransportPolicyChange = useCallback(
+    (policy: string) => {
+      const nextPolicy = normalizeIceTransportPolicy(policy);
+      if (nextPolicy === settings.iceTransportPolicy) return;
+      resetIceServersForCallCache();
+      persistSetting(
+        'iceTransportPolicy',
+        nextPolicy,
+        nextPolicy === ICE_TRANSPORT_POLICIES.RELAY
+          ? 'TURN relay forced for new calls'
+          : 'ICE transport policy reset to default',
+      );
+    },
+    [persistSetting, settings.iceTransportPolicy],
+  );
+
   return {
     settings,
     isSettingsVisible,
@@ -76,5 +109,6 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
+    handleIceTransportPolicyChange,
   };
 }

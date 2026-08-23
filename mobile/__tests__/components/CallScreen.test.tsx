@@ -169,6 +169,15 @@ describe('CallScreen', () => {
     });
   });
 
+
+  test('forwards the ICE transport policy to the top bar', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ iceTransportPolicy: 'relay' })} />);
+    });
+
+    expect(tree.root.findAllByType('CallTopBar')[0].props.iceTransportPolicy).toBe('relay');
+  });
+
   test('forwards isMuted and isVideoEnabled to CallStage', () => {
     act(() => {
       tree = renderer.create(

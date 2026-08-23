@@ -15,7 +15,7 @@ export type AppSettings = ReturnType<typeof useAppSettings>;
 export type PipView = ReturnType<typeof usePictureInPicturePip>;
 export type CallInitiation = ReturnType<typeof useCallInitiation>;
 
-export type CallContextValue = { callFlow: CallFlow; settings: AppSettings['settings']; isSettingsPanelVisible: AppSettings['isSettingsVisible']; setIsSettingsPanelVisible: AppSettings['setIsSettingsVisible']; handleAutoLightingToggle: AppSettings['handleAutoLightingToggle']; handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle']; handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle']; callState: CallFlow['callPhase']; isCallActive: boolean; isCallConnected: boolean; isCompact: CallFlow['isCompactView']; participantLabel: string | null; streams: ReturnType<typeof deriveCallStreams>; isCallMinimized: boolean; isBubbleDismissed: boolean; dismissBubble: () => void; minimizeCall: () => void; expandCall: () => void; minimizeCallOnNavigate: () => void; handleCallStageLayout: PipView['handleCallStageLayout']; pipGesture: PipView['pipGesture']; animatedPipStyle: PipView['animatedPipStyle']; startVideoCallWith: CallInitiation['startVideoCallWith']; startAudioCallWith: CallInitiation['startAudioCallWith']; endCall: () => void; handleExportLogs: () => Promise<void>; };
+export type CallContextValue = { callFlow: CallFlow; settings: AppSettings['settings']; isSettingsPanelVisible: AppSettings['isSettingsVisible']; setIsSettingsPanelVisible: AppSettings['setIsSettingsVisible']; handleAutoLightingToggle: AppSettings['handleAutoLightingToggle']; handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle']; handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle']; handleIceTransportPolicyChange: AppSettings['handleIceTransportPolicyChange']; callState: CallFlow['callPhase']; isCallActive: boolean; isCallConnected: boolean; isCompact: CallFlow['isCompactView']; participantLabel: string | null; streams: ReturnType<typeof deriveCallStreams>; isCallMinimized: boolean; isBubbleDismissed: boolean; dismissBubble: () => void; minimizeCall: () => void; expandCall: () => void; minimizeCallOnNavigate: () => void; handleCallStageLayout: PipView['handleCallStageLayout']; pipGesture: PipView['pipGesture']; animatedPipStyle: PipView['animatedPipStyle']; startVideoCallWith: CallInitiation['startVideoCallWith']; startAudioCallWith: CallInitiation['startAudioCallWith']; endCall: () => void; handleExportLogs: () => Promise<void>; };
 
 const CallContext = createContext((null as CallContextValue | null));
 
@@ -41,6 +41,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
 
   const callFlow = useCallFlow({
     speakerEnabledByDefault: appSettings.settings.speakerEnabledByDefault,
+    iceTransportPolicy: appSettings.settings.iceTransportPolicy,
   });
   useEffect(() => {
     updateStatusRef.current = callFlow.updateStatus;
@@ -128,9 +129,10 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       localStream: callFlow.localStream,
       remoteStream: callFlow.remoteStream,
       isInCall: callFlow.isInCall,
+      iceTransportPolicy: appSettings.settings.iceTransportPolicy,
     });
     callFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
-  }, [callFlow]);
+  }, [appSettings.settings.iceTransportPolicy, callFlow]);
 
   const value = useMemo(
     () => ({
@@ -142,6 +144,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       handleAutoLightingToggle: appSettings.handleAutoLightingToggle,
       handleSpeakerDefaultToggle: appSettings.handleSpeakerDefaultToggle,
       handleDeveloperModeToggle: appSettings.handleDeveloperModeToggle,
+      handleIceTransportPolicyChange: appSettings.handleIceTransportPolicyChange,
       // Unified call state machine view
       callState,
       isCallActive,

@@ -156,6 +156,37 @@ describe('SettingsScreen', () => {
     expect(toggle.props.accessibilityState).toEqual({ checked: true });
   });
 
+
+  test('ICE transport policy selector reflects and changes the selected value', () => {
+    const onChangeIceTransportPolicy = jest.fn();
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          developerModeEnabled
+          onToggleDeveloperMode={jest.fn()}
+          iceTransportPolicy="relay"
+          onChangeIceTransportPolicy={onChangeIceTransportPolicy}
+        />,
+      );
+    });
+
+    expect(findByTestID(tree, 'settings-ice-policy-relay')[0].props.accessibilityState).toEqual({
+      selected: true,
+      checked: true,
+    });
+    expect(findByTestID(tree, 'settings-ice-policy-all')[0].props.accessibilityState).toEqual({
+      selected: false,
+      checked: false,
+    });
+
+    act(() => {
+      findByTestID(tree, 'settings-ice-policy-all')[0].props.onPress();
+    });
+    expect(onChangeIceTransportPolicy).toHaveBeenCalledWith('all');
+  });
+
   test('renders section labels with the expected text for each visible section', () => {
     let tree: any;
     act(() => {

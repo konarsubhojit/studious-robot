@@ -161,6 +161,7 @@ export function buildExportHeader({
   remoteStream,
   isInCall,
   socket,
+  iceTransportPolicy,
 }: {
         signalingUrl?: string;
         callId?: string | null;
@@ -169,6 +170,7 @@ export function buildExportHeader({
         remoteStream?: object | null;
         isInCall?: boolean;
         socket?: any;
+        iceTransportPolicy?: string;
     }): string {
   const lines = [
     'WeTalk diagnostic logs',
@@ -187,6 +189,7 @@ export function buildExportHeader({
     `socketConnected: ${Boolean(socket?.connected)}`,
     `socketId: ${socket?.id || 'none'}`,
     `socketTransport: ${getSocketTransportName(socket)}`,
+    `iceTransportPolicy: ${iceTransportPolicy || 'all'}`,
     '',
     '--- logs ---',
   ];
@@ -246,6 +249,7 @@ export async function exportDiagnosticLogs(context: {
     remoteStream?: object | null;
     isInCall?: boolean;
     socket?: object | null;
+    iceTransportPolicy?: string;
 } = {}): Promise<{ ok: boolean; message: string; }> {
   try {
     logInfo('Export Logs button press');
