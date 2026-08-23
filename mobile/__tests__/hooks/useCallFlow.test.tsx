@@ -3025,6 +3025,22 @@ describe('useCallFlow chat', () => {
   });
 
 
+  test('fetches TURN credentials with a session id when answering', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    (getIceServersForCall as jest.Mock).mockResolvedValueOnce([
+      { urls: ['turn:turn.example.com:3478'] },
+    ]);
+
+    await acceptCallWithPeerConnection('call-ice-session-1');
+
+    // A call answered from a push builds its peer connection moments after
+    // rehydration; without a session id the TURN fetch is skipped entirely and
+    // the call silently loses every relay candidate.
+    expect(getIceServersForCall).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'sess-chat' }),
+    );
+  });
+
   test('creates the peer connection with forced relay policy when configured', async () => {
     const { getIceServersForCall } = require('../../src/webrtcConfig');
     const relayServers = [{ urls: ['turn:turn.example.com:3478'] }];

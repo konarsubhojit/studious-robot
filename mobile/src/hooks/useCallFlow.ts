@@ -114,6 +114,13 @@ const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:417
 
 const STATS_POLL_INTERVAL_MS = 7000;
 
+/**
+ * How long peer-connection setup will wait for a session to be minted before
+ * giving up on TURN credentials. TURN is worth a short wait; a stalled network
+ * must never stall the call itself.
+ */
+const ICE_SESSION_WAIT_MS = 5000;
+
 function getTurnServerEndpoints(iceServers: unknown): string[] {
   if (!Array.isArray(iceServers)) return [];
 
@@ -756,17 +763,54 @@ export default function useCallFlow({
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
+  /**
+   * The session id TURN credentials are minted against.
+   *
+   * `sessionIdRef` is populated asynchronously by `createOrGetSession`, and a
+   * call answered from a background push builds its peer connection about a
+   * second after rehydration — early enough to read a null ref and fetch no
+   * TURN credentials at all, leaving the call with a STUN-only ICE list. So
+   * the session is *ensured* here rather than read optimistically; a failure
+   * still degrades (never blocks) call setup, and says why.
+   */
+  const ensureIceSessionId = useCallback(async () => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const minted = createOrGetSession().catch(error => {
+      logWarn('[CallFlow] Session mint failed; ICE will have no TURN servers', {
+        message: errorMessage(error),
+      });
+      return null;
+    });
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), ICE_SESSION_WAIT_MS);
+    });
+
+    try {
+      const sessionId = await Promise.race([minted, deadline]);
+      if (!sessionId) {
+        logWarn('[CallFlow] No session id for TURN credentials', {
+          waitedMs: ICE_SESSION_WAIT_MS,
+        });
+      }
+      return sessionId ?? null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }, [createOrGetSession, sessionIdRef]);
+
   const configurePeerConnection = useCallback(
     /** @param pc */
     async (pc: PeerConnection) => {
       const iceServers = await getIceServersForCall({
         signalingUrl,
-        sessionId: sessionIdRef.current,
+        sessionId: await ensureIceSessionId(),
       });
       pc.setConfiguration?.({ iceServers, iceTransportPolicy: activeIceTransportPolicy });
       return pc;
     },
-    [activeIceTransportPolicy, signalingUrl, sessionIdRef],
+    [activeIceTransportPolicy, ensureIceSessionId, signalingUrl],
   );
 
   const createPeerConnection = useCallback(async () => {
@@ -776,7 +820,7 @@ export default function useCallFlow({
     // degrades to build-time config and finally STUN-only.
     const iceServers = await getIceServersForCall({
       signalingUrl,
-      sessionId: sessionIdRef.current,
+      sessionId: await ensureIceSessionId(),
     });
     const turnServers = getTurnServerEndpoints(iceServers);
     logInfo('[CallFlow] Creating RTCPeerConnection', {
@@ -905,10 +949,10 @@ export default function useCallFlow({
   }, [
     activeIceTransportPolicy,
     configurePeerConnection,
+    ensureIceSessionId,
     markCallConnected,
     reportCallConnected,
     reportMediaFailure,
-    sessionIdRef,
     signalingUrl,
     updateStatus,
   ]);

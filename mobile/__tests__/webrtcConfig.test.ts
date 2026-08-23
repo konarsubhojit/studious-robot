@@ -8,6 +8,14 @@ import {
   normalizeIceTransportPolicy,
   resetIceServersForCallCache,
 } from '../src/webrtcConfig';
+import { logError, logInfo, logVerbose, logWarn } from '../src/appLogger';
+
+jest.mock('../src/appLogger', () => ({
+  logError: jest.fn(),
+  logInfo: jest.fn(),
+  logVerbose: jest.fn(),
+  logWarn: jest.fn(),
+}));
 
 // Use indirect delete via a local reference so that
 // babel-plugin-transform-inline-environment-variables (which replaces the
@@ -149,6 +157,204 @@ describe('getIceServers', () => {
           fetchImpl: jest.fn().mockRejectedValue(new Error('offline')),
         }),
       ).resolves.toEqual([{ urls: ['stun:stun.l.google.com:19302'] }]);
+    });
+
+    describe('degradation logging', () => {
+      const turnServers = [
+        { urls: ['turn:relay.example.com:3478'], username: 'minted', credential: 'secret' },
+      ];
+
+      beforeEach(() => {
+        (logError as jest.Mock).mockClear();
+        (logInfo as jest.Mock).mockClear();
+        (logVerbose as jest.Mock).mockClear();
+        (logWarn as jest.Mock).mockClear();
+      });
+
+      /** The metadata of the single warn emitted by a degraded call. */
+      function warnMetadata() {
+        expect(logWarn).toHaveBeenCalledTimes(1);
+        return (logWarn as jest.Mock).mock.calls[0][1];
+      }
+
+      test('a successful fetch logs neither a warning nor an error', async () => {
+        const fetchImpl = jest
+          .fn()
+          .mockResolvedValue(response(turnServers, new Date(Date.now() + 5 * 60 * 1000).toISOString()));
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(logWarn).not.toHaveBeenCalled();
+        expect(logError).not.toHaveBeenCalled();
+        expect(logInfo).toHaveBeenCalledWith(
+          '[WebRTC] ICE servers fetched',
+          expect.objectContaining({ tier: 'fetched', turnServers: ['turn:relay.example.com'] }),
+        );
+      });
+
+      test('never logs the credentials it fetched', async () => {
+        const fetchImpl = jest
+          .fn()
+          .mockResolvedValue(response(turnServers, new Date(Date.now() + 5 * 60 * 1000).toISOString()));
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        const logged = JSON.stringify([
+          (logInfo as jest.Mock).mock.calls,
+          (logVerbose as jest.Mock).mock.calls,
+        ]);
+        expect(logged).not.toContain('minted');
+        expect(logged).not.toContain('secret');
+        expect(logged).not.toContain('session-id');
+      });
+
+      test('warns with the missing-session-id reason when no fetch is attempted', async () => {
+        const fetchImpl = jest.fn();
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: null,
+          fetchImpl,
+        });
+
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warnMetadata()).toMatchObject({
+          tier: 'build-time-config',
+          reason: 'missing-session-id',
+          host: 'https://signal.example',
+        });
+      });
+
+      test('warns with the missing-signaling-url reason', async () => {
+        await getIceServersForCall({ sessionId: 'session-id', fetchImpl: jest.fn() });
+
+        expect(warnMetadata()).toMatchObject({
+          tier: 'build-time-config',
+          reason: 'missing-signaling-url',
+          host: 'unset',
+        });
+      });
+
+      test('warns with the HTTP status when the credential request is rejected', async () => {
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: jest.fn().mockResolvedValue({ ok: false, status: 401 }),
+        });
+
+        expect(warnMetadata()).toMatchObject({
+          tier: 'build-time-config',
+          reason: 'http-error',
+          status: 401,
+        });
+      });
+
+      test('warns with the transport error instead of discarding it', async () => {
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: jest.fn().mockRejectedValue(new Error('Network request failed')),
+        });
+
+        expect(warnMetadata()).toMatchObject({
+          tier: 'build-time-config',
+          reason: 'transport-error',
+          message: expect.stringContaining('Network request failed'),
+        });
+      });
+
+      test('warns with the malformed-response reason for a non-array body', async () => {
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl: jest.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ iceServers: [] }),
+            headers: { get: () => null },
+          }),
+        });
+
+        expect(warnMetadata()).toMatchObject({
+          tier: 'build-time-config',
+          reason: 'malformed-response',
+        });
+      });
+
+      test('warns that it served a stale cache, and does not repeat the error', async () => {
+        const fetchImpl = jest
+          .fn()
+          .mockResolvedValueOnce(response(turnServers, new Date(Date.now() + 30_000).toISOString()))
+          .mockRejectedValueOnce(new Error('offline'));
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+        (logWarn as jest.Mock).mockClear();
+        (logError as jest.Mock).mockClear();
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(warnMetadata()).toMatchObject({
+          tier: 'stale-cache',
+          reason: 'transport-error',
+          turnServers: ['turn:relay.example.com'],
+        });
+        // A stale relay is still a relay, so this is not the TURN-less error.
+        expect(logError).not.toHaveBeenCalled();
+      });
+
+      test('logs an error when the final list has no TURN server at all', async () => {
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: null,
+          fetchImpl: jest.fn(),
+        });
+
+        expect(logError).toHaveBeenCalledWith(
+          '[WebRTC] ICE server list contains no TURN server',
+          expect.objectContaining({ tier: 'build-time-config', reason: 'missing-session-id' }),
+        );
+      });
+
+      test('serves a fresh cache as verbose detail rather than news', async () => {
+        const fetchImpl = jest
+          .fn()
+          .mockResolvedValue(response(turnServers, new Date(Date.now() + 5 * 60 * 1000).toISOString()));
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+        (logInfo as jest.Mock).mockClear();
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(logVerbose).toHaveBeenCalledWith(
+          '[WebRTC] ICE servers served from cache',
+          expect.objectContaining({ tier: 'cache' }),
+        );
+        expect(logWarn).not.toHaveBeenCalled();
+        expect(logError).not.toHaveBeenCalled();
+      });
     });
   });
 

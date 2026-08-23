@@ -1,3 +1,4 @@
+import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 import type { RTCPeerConnection } from 'react-native-webrtc';
 
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
@@ -104,31 +105,177 @@ export function getIceServers() {
 }
 
 /**
+ * The source the ICE server list returned by {@link getIceServersForCall}
+ * actually came from. Anything other than `fetched` means the call has, at
+ * best, the credentials this build was compiled with.
+ */
+export type IceServerTier = 'fetched' | 'cache' | 'stale-cache' | 'build-time-config';
+
+/** Why a call fell back to a tier below `fetched`. */
+export type IceFallbackReason =
+  | 'missing-session-id'
+  | 'missing-signaling-url'
+  | 'no-fetch-implementation'
+  | 'http-error'
+  | 'transport-error'
+  | 'malformed-response';
+
+/**
+ * The TURN endpoints in an ICE server list, as `scheme:host` — never the
+ * username or credential that comes with them.
+ */
+export function summarizeTurnEndpoints(iceServers: unknown): string[] {
+  if (!Array.isArray(iceServers)) return [];
+  const endpoints = new Set<string>();
+  iceServers.forEach(server => {
+    if (!server || typeof server !== 'object') return;
+    const rawUrls = (server as { urls?: unknown }).urls;
+    const urls = Array.isArray(rawUrls) ? rawUrls : [rawUrls];
+    urls.forEach(value => {
+      if (typeof value !== 'string') return;
+      const match = value.trim().match(/^(turns?):(?:\/\/)?(.*)$/i);
+      if (!match) return;
+      const scheme = match[1].toLowerCase();
+      try {
+        const parsed = new URL(`${scheme}://${match[2]}`);
+        if (parsed.hostname) endpoints.add(`${scheme}:${parsed.hostname}`);
+      } catch {
+        // A malformed URL cannot relay anything, so it is not an endpoint.
+      }
+    });
+  });
+  return [...endpoints];
+}
+
+/**
+ * The host of `signalingUrl`, so a log line can name the server without
+ * carrying a session token or any query string with it.
+ */
+function signalingHost(signalingUrl: unknown): string {
+  if (typeof signalingUrl !== 'string' || !signalingUrl.trim()) return 'unset';
+  try {
+    const parsed = new URL(signalingUrl.trim());
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return 'unparseable';
+  }
+}
+
+/**
+ * An error carrying why the TURN credential fetch failed, so the single
+ * `catch` below can name the branch instead of discarding it.
+ */
+class IceFetchError extends Error {
+  reason: IceFallbackReason;
+  status?: number;
+
+  constructor(message: string, reason: IceFallbackReason, status?: number) {
+    super(message);
+    this.name = 'IceFetchError';
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+/**
+ * Log the tier the call ended up on, and — separately — the fact that a call
+ * is about to be set up with no relay at all.
+ *
+ * A TURN-less list is not a warning but an error: such a call cannot traverse
+ * symmetric NAT, and until now it looked exactly like a healthy one in the
+ * logs. Credentials are never included; only `scheme:host`.
+ */
+function reportIceServers(iceServers: IceServer[], tier: IceServerTier, metadata: Record<string, unknown> = {}): IceServer[] {
+  const turnServers = summarizeTurnEndpoints(iceServers);
+  if (tier === 'fetched') {
+    logInfo('[WebRTC] ICE servers fetched', { tier, turnServers, ...metadata });
+  } else if (tier === 'cache') {
+    // Every call before the credentials expire takes this path, so it is
+    // detail rather than news.
+    logVerbose('[WebRTC] ICE servers served from cache', { tier, turnServers, ...metadata });
+  } else {
+    logWarn('[WebRTC] ICE servers degraded below fetched credentials', {
+      tier,
+      turnServers,
+      ...metadata,
+    });
+  }
+
+  if (turnServers.length === 0) {
+    logError('[WebRTC] ICE server list contains no TURN server', {
+      tier,
+      ...metadata,
+      impact: 'the call cannot traverse symmetric NAT and may fail to connect',
+    });
+  }
+  return iceServers;
+}
+
+/**
  * Fetch short-lived ICE servers for an authenticated call. A network failure
  * intentionally falls through to a still-valid cache, build-time fallback,
  * and finally STUN-only so call setup is never blocked by TURN availability.
+ *
+ * Every one of those degradations is logged with the tier it landed on and the
+ * reason it got there: a relay-less call used to be indistinguishable from a
+ * healthy one in the logs, which is what made an empty TURN list impossible to
+ * diagnose after the fact.
  */
 export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch }: { signalingUrl?: string; sessionId?: string | null; fetchImpl?: typeof fetch; } = {}): Promise<IceServer[]> {
   const now = Date.now();
+  const host = signalingHost(signalingUrl);
   if (cachedServerIceServers && cachedServerIceServersExpiresAt - now > CACHE_REFRESH_MARGIN_MS) {
-    return cachedServerIceServers;
+    return reportIceServers(cachedServerIceServers, 'cache', {
+      host,
+      expiresInMs: cachedServerIceServersExpiresAt - now,
+    });
   }
 
   if (!signalingUrl || !sessionId || typeof fetchImpl !== 'function') {
-    return getIceServers();
+    // No fetch is even attempted here — the branch that produced a TURN-less
+    // call with no trace of a request in either the client or server logs.
+    const reason: IceFallbackReason = !signalingUrl
+      ? 'missing-signaling-url'
+      : !sessionId
+        ? 'missing-session-id'
+        : 'no-fetch-implementation';
+    return reportIceServers(getIceServers(), 'build-time-config', { host, reason });
   }
 
   if (!pendingServerIceServers) {
     pendingServerIceServers = (async () => {
-      const response = await fetchImpl(`${signalingUrl.trim().replace(/\/+$/, '')}/turn-credentials`, {
-        headers: { Authorization: 'Bearer ' + sessionId },
-      });
-      if (!response.ok) {
-        throw new Error(`TURN credentials request failed (HTTP ${response.status})`);
+      let response;
+      try {
+        response = await fetchImpl(`${signalingUrl.trim().replace(/\/+$/, '')}/turn-credentials`, {
+          headers: { Authorization: 'Bearer ' + sessionId },
+        });
+      } catch (error) {
+        throw new IceFetchError(
+          `TURN credentials request could not be sent: ${error instanceof Error ? error.message : String(error)}`,
+          'transport-error',
+        );
       }
-      const iceServers = await response.json();
+      if (!response.ok) {
+        throw new IceFetchError(
+          `TURN credentials request failed (HTTP ${response.status})`,
+          'http-error',
+          response.status,
+        );
+      }
+      let iceServers;
+      try {
+        iceServers = await response.json();
+      } catch (error) {
+        throw new IceFetchError(
+          `TURN credentials response could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
+          'malformed-response',
+        );
+      }
       if (!Array.isArray(iceServers)) {
-        throw new Error('TURN credentials response was not an ICE server array');
+        throw new IceFetchError(
+          'TURN credentials response was not an ICE server array',
+          'malformed-response',
+        );
       }
       const expiresAt = Date.parse(response.headers?.get?.('x-turn-credential-expires-at') || '');
       cachedServerIceServers = iceServers;
@@ -143,12 +290,25 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
   }
 
   try {
-    return await pendingServerIceServers;
-  } catch {
+    return reportIceServers(await pendingServerIceServers, 'fetched', { host });
+  } catch (error) {
+    // The reason must survive: a swallowed error here is exactly why an empty
+    // TURN list could not be explained from the logs.
+    const reason: IceFallbackReason =
+      error instanceof IceFetchError ? error.reason : 'transport-error';
+    const status = error instanceof IceFetchError ? error.status : undefined;
+    // The message, never the error object: a serialized error can carry the
+    // request it was thrown from, and that request carries the session token.
+    const message = error instanceof Error ? error.message : String(error);
     if (cachedServerIceServers && cachedServerIceServersExpiresAt > now) {
-      return cachedServerIceServers;
+      return reportIceServers(cachedServerIceServers, 'stale-cache', {
+        host,
+        reason,
+        status,
+        message,
+      });
     }
-    return getIceServers();
+    return reportIceServers(getIceServers(), 'build-time-config', { host, reason, status, message });
   }
 }
 
