@@ -447,6 +447,9 @@ export default function useCallFlow({
   // Ref-forwarded wake-up so socket listeners registered once (and the AppState
   // listener) can nudge the heartbeat without being re-registered.
   const wakeCallHeartbeatRef = useRef((null as ((trigger: string) => void) | null));
+  // Removes this hook's `ping` listener from the (URL-shared, socket-outliving)
+  // Engine.IO manager.
+  const detachManagerPingRef = useRef((null as (() => void) | null));
   // Pending "media is gone" report, cancelled if ICE recovers in time.
   const iceFailureTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
@@ -1576,6 +1579,10 @@ export default function useCallFlow({
    * until the userId or signalingUrl changes.
    */
   const disconnectSocket = useCallback(() => {
+    // The Engine.IO manager is shared between sockets created for the same URL,
+    // so its listener outlives `socket.off()` and must be removed by hand.
+    detachManagerPingRef.current?.();
+    detachManagerPingRef.current = null;
     if (socketRef.current) {
       logInfo('[CallFlow] Disconnecting socket');
       socketRef.current.off(); // remove all listeners before disconnect
@@ -1630,10 +1637,16 @@ export default function useCallFlow({
       // networking bridge, not the JS timer queue, so they keep beating while
       // the OS has that queue suspended — which is the whole reason a call in
       // Picture-in-Picture stopped proving itself live.
-      const manager = (socket as { io?: { on?: (event: string, listener: () => void) => void } }).io;
-      manager?.on?.('ping', () => {
+      type ManagerEvents = {
+        on?: (event: string, listener: () => void) => void;
+        off?: (event: string, listener: () => void) => void;
+      };
+      const manager = (socket as { io?: ManagerEvents }).io;
+      const onManagerPing = () => {
         wakeCallHeartbeatRef.current?.('socket-ping');
-      });
+      };
+      manager?.on?.('ping', onManagerPing);
+      detachManagerPingRef.current = () => manager?.off?.('ping', onManagerPing);
 
       // ── Incoming call ──────────────────────────────────────────────────
       signaling.on(SERVER_EVENTS.CALL_INCOMING, ({ call }) => {

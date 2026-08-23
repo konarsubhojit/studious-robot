@@ -32,7 +32,7 @@ jest.mock('socket.io-client', () => ({
     emit: jest.fn(),
     // The Engine.IO manager. Its `ping` event is the timer-free clock the call
     // heartbeat falls back on while the OS has the JS timer queue suspended.
-    io: { on: jest.fn() },
+    io: { on: jest.fn(), off: jest.fn() },
   })),
 }));
 
@@ -3097,13 +3097,6 @@ describe('useCallFlow chat', () => {
 
   test('keeps beating across an AppState background/foreground transition', async () => {
     jest.useFakeTimers();
-    const appStateListeners: any[] = [];
-    const addEventListener = jest
-      .spyOn(AppState, 'addEventListener')
-      .mockImplementation((_event, listener) => {
-        appStateListeners.push(listener);
-        return { remove: jest.fn() } as any;
-      });
     try {
       const { peerConnection, emits } = await acceptCallWithPeerConnection('call-bg-1');
 
@@ -3112,6 +3105,12 @@ describe('useCallFlow chat', () => {
         peerConnection.onconnectionstatechange?.();
       });
       const before = heartbeatEmits(emits).length;
+
+      // React Native's Jest preset already records every AppState listener,
+      // so the registered handlers can be replayed without re-mocking it.
+      const appStateListeners = (AppState.addEventListener as jest.Mock).mock.calls
+        .filter(([event]: any) => event === 'change')
+        .map(([, listener]: any) => listener);
       expect(appStateListeners.length).toBeGreaterThan(0);
 
       const notifyAppState = async (nextState: string) => {
@@ -3136,7 +3135,6 @@ describe('useCallFlow chat', () => {
       });
       expect(heartbeatEmits(emits)).toHaveLength(before + 2);
     } finally {
-      addEventListener.mockRestore();
       jest.useRealTimers();
     }
   });
@@ -3227,6 +3225,27 @@ describe('useCallFlow chat', () => {
           ([message]: any) => message === '[CallFlow] Call heartbeat stopped',
         ),
       ).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('detaches its Engine.IO ping listener when the socket is torn down', async () => {
+    jest.useFakeTimers();
+    try {
+      const { tree } = await acceptCallWithPeerConnection('call-hb-detach-1');
+      const { io } = require('socket.io-client');
+      const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]
+        .value;
+      const onPing = getManagerHandler('ping');
+
+      act(() => {
+        tree.unmount();
+      });
+
+      // The manager is shared between sockets for the same URL, so a listener
+      // left behind would pile up (and pin this hook) on every reconnect.
+      expect(socketMock.io.off).toHaveBeenCalledWith('ping', onPing);
     } finally {
       jest.useRealTimers();
     }
