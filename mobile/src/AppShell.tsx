@@ -96,6 +96,7 @@ export default function AppShell() {
         status={callFlow.status}
         onAccept={callFlow.acceptIncomingCall}
         onDecline={callFlow.declineIncomingCall}
+        onCancelAnswer={callFlow.handleEndCall}
       />
     );
   } else if (isCallFullScreen) {

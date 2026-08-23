@@ -28,15 +28,43 @@ function makeCall(overrides = {}): any {
   };
 }
 
+const mountedTrees: any[] = [];
+
+/**
+ * Renders the screen and registers the tree so `afterEach` can unmount it.
+ *
+ * The screen owns a looping pulse animation and a 1s countdown interval, both
+ * of which keep running (and keep Jest's worker alive) unless the tree is
+ * unmounted when the test ends.
+ */
+function createTree(element: any) {
+  const tree = renderer.create(element);
+  mountedTrees.push(tree);
+  return tree;
+}
+
 describe('IncomingCallScreen', () => {
+  // The screen starts a 1s countdown interval on mount and the trees below are
+  // never unmounted, so on real timers that interval keeps firing after the
+  // suite finishes and holds the Jest worker open. Fake timers are installed
+  // for every test here; the ones that need the countdown to advance drive them
+  // explicitly with `jest.advanceTimersByTime`.
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
   afterEach(() => {
+    act(() => {
+      mountedTrees.splice(0).forEach(tree => tree.unmount());
+    });
+    jest.clearAllTimers();
     jest.useRealTimers();
   });
 
   test('renders without throwing', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall()}
           status={DEFAULT_STATUS}
@@ -51,7 +79,7 @@ describe('IncomingCallScreen', () => {
   test('displays the caller ID', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall({ callerId: 'charlie' })}
           status={DEFAULT_STATUS}
@@ -68,7 +96,7 @@ describe('IncomingCallScreen', () => {
   test('derives avatar initials from multi-part caller IDs', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall({ callerId: 'charlie-brown' })}
           status={DEFAULT_STATUS}
@@ -85,7 +113,7 @@ describe('IncomingCallScreen', () => {
   test('renders Accept and Decline icon buttons', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall()}
           status={DEFAULT_STATUS}
@@ -105,7 +133,7 @@ describe('IncomingCallScreen', () => {
     const onAccept = jest.fn();
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall()}
           status={DEFAULT_STATUS}
@@ -127,7 +155,7 @@ describe('IncomingCallScreen', () => {
     const onDecline = jest.fn();
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall()}
           status={DEFAULT_STATUS}
@@ -148,7 +176,7 @@ describe('IncomingCallScreen', () => {
   test('shows countdown when ringTimeoutAt is provided', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall()}
           status={DEFAULT_STATUS}
@@ -164,7 +192,7 @@ describe('IncomingCallScreen', () => {
   test('renders a two-minute ring window as m:ss', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall({ ringTimeoutAt: new Date(Date.now() + 119_000).toISOString() })}
           status={DEFAULT_STATUS}
@@ -180,7 +208,7 @@ describe('IncomingCallScreen', () => {
   test('hides countdown when ringTimeoutAt is absent', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={makeCall({ ringTimeoutAt: null })}
           status={DEFAULT_STATUS}
@@ -195,7 +223,7 @@ describe('IncomingCallScreen', () => {
   test('falls back to "Unknown" caller ID when incomingCall is null', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(
+      tree = createTree(
         <IncomingCallScreen
           incomingCall={null}
           status={DEFAULT_STATUS}
@@ -207,5 +235,67 @@ describe('IncomingCallScreen', () => {
     const nodes = tree.root.findAll((n: any) => n.props.testID === 'incoming-caller-id');
     expect(nodes.length).toBeGreaterThanOrEqual(1);
     expect(nodes[0].props.children).toBe('Unknown');
+  });
+  test('replaces Accept/Decline with a connecting indicator once answered', () => {
+    let tree: any;
+    act(() => {
+      tree = createTree(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+          isAnswering
+        />,
+      );
+    });
+
+    expect(tree.root.findAll((n: any) => n.props.testID === 'incoming-accept')).toHaveLength(0);
+    expect(tree.root.findAll((n: any) => n.props.testID === 'incoming-decline')).toHaveLength(0);
+    expect(
+      tree.root.findAll((n: any) => n.props.testID === 'incoming-connecting').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(tree.root.findAll((n: any) => n.props.testID === 'incoming-countdown')).toHaveLength(0);
+  });
+
+  test('offers a way out of a stalled connect when onCancelAnswer is supplied', () => {
+    const onCancelAnswer = jest.fn();
+    let tree: any;
+    act(() => {
+      tree = createTree(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+          onCancelAnswer={onCancelAnswer}
+          isAnswering
+        />,
+      );
+    });
+
+    const [cancel] = tree.root.findAll((n: any) => n.props.testID === 'incoming-cancel-answer');
+    act(() => {
+      cancel.props.onPress();
+    });
+    expect(onCancelAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  test('omits the connecting abort button when no handler is supplied', () => {
+    let tree: any;
+    act(() => {
+      tree = createTree(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+          isAnswering
+        />,
+      );
+    });
+    expect(
+      tree.root.findAll((n: any) => n.props.testID === 'incoming-cancel-answer'),
+    ).toHaveLength(0);
   });
 });

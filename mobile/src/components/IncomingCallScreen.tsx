@@ -34,8 +34,11 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
  * @param props.onDecline - Called when the user presses Decline.
  * @param props.isAnswering - The call has been accepted and is connecting; the
  *   screen keeps showing who is calling but stops offering Accept/Decline.
+ * @param props.onCancelAnswer - Hangs up a call that is still connecting after
+ *   it was accepted.  Omit to leave the connecting state without an abort
+ *   affordance.
  */
-export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline, isAnswering = false }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; isAnswering?: boolean; }) {
+export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline, isAnswering = false, onCancelAnswer }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; isAnswering?: boolean; onCancelAnswer?: () => void; }) {
   const styles = useThemedStyles(createStyles);
 
   const ringTimeoutAt = isAnswering ? null : incomingCall?.ringTimeoutAt ?? null;
@@ -146,15 +149,34 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
           screen. */}
       <View style={styles.actions}>
         {isAnswering ? (
-          <IconButton
-            icon="callAccept"
-            label="Connecting…"
-            loading
-            variant="success"
-            size={72}
-            accessibilityLabel={`Connecting to ${callerId}`}
-            testID="incoming-connecting"
-          />
+          <>
+            <IconButton
+              icon="callAccept"
+              label="Connecting…"
+              loading
+              variant="success"
+              size={72}
+              accessibilityLabel={`Connecting to ${callerId}`}
+              testID="incoming-connecting"
+            />
+            {/* Media negotiation can stall (no network, a peer that never
+                answers), and without this the answered call is a spinner with
+                no way out until the server's own timeout fires. Declining is
+                no longer possible at this point — the call has been accepted —
+                so this hangs the call up instead. */}
+            {onCancelAnswer ? (
+              <IconButton
+                icon="callEnd"
+                label="End call"
+                onPress={onCancelAnswer}
+                variant="danger"
+                size={72}
+                accessibilityLabel="End the call being connected"
+                accessibilityHint="Stops connecting and hangs up"
+                testID="incoming-cancel-answer"
+              />
+            ) : null}
+          </>
         ) : (
           <>
             <IconButton

@@ -3,7 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { AppState, Platform } from 'react-native';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 
-jest.mock('../../src/appLogger', () => ({ logInfo: jest.fn() }));
+jest.mock('../../src/appLogger', () => ({ logInfo: jest.fn(), logWarn: jest.fn() }));
 jest.mock('../../src/callService', () => ({
   enterPictureInPicture: jest.fn(),
   exitPictureInPicture: jest.fn(() => Promise.resolve(true)),

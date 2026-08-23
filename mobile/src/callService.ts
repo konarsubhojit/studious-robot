@@ -1,5 +1,5 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
-import { logError, logInfo, logWarn } from './appLogger';
+import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 
 /** Native event emitted by `MainActivity.onPictureInPictureModeChanged`. */
 const PIP_MODE_CHANGED_EVENT = 'CallService.pictureInPictureModeChanged';
@@ -63,7 +63,14 @@ export async function enterPictureInPicture() {
 
   try {
     const entered = await module.enterPictureInPictureMode();
-    logInfo('Picture-in-Picture mode requested', { entered: Boolean(entered) });
+    if (entered) {
+      logInfo('Picture-in-Picture mode entered');
+    } else {
+      // The activity refused PiP (OEM restriction, permission off, or no
+      // foreground activity). The call keeps running with no visible window,
+      // which is exactly the symptom users report — so it is not an INFO.
+      logWarn('Picture-in-Picture mode was refused by the activity');
+    }
     return Boolean(entered);
   } catch (error) {
     logError('Failed to enter Picture-in-Picture mode', error);
@@ -85,7 +92,14 @@ export async function exitPictureInPicture(): Promise<boolean> {
 
   try {
     const exited = await module.exitPictureInPictureMode();
-    logInfo('Picture-in-Picture exit requested', { exited: Boolean(exited) });
+    if (exited) {
+      logInfo('Picture-in-Picture mode exited');
+    } else {
+      // Teardown calls this unconditionally, so "we were not in PiP" is the
+      // common case and says nothing about the call — INFO here just buries
+      // the lines that matter in the exported log.
+      logVerbose('Picture-in-Picture exit skipped; not in Picture-in-Picture');
+    }
     return Boolean(exited);
   } catch (error) {
     logError('Failed to exit Picture-in-Picture mode', error);

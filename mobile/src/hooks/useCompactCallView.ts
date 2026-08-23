@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { logInfo } from '../appLogger';
+import { logInfo, logWarn } from '../appLogger';
 import {
   enterPictureInPicture,
   exitPictureInPicture,
@@ -106,7 +106,9 @@ export default function useCompactCallView(isInRoomRef: React.MutableRefObject<b
 
     return subscribePictureInPictureAction(control => {
       if (!isInRoomRef.current) {
-        logInfo('Ignoring Picture-in-Picture control with no call in progress', { control });
+        // The system kept the window's controls alive past the end of the
+        // call; nothing to act on, but it is a mismatch worth seeing.
+        logWarn('Ignoring Picture-in-Picture control with no call in progress', { control });
         return;
       }
       logInfo('Picture-in-Picture control tapped', { control });
