@@ -2810,6 +2810,10 @@ describe('useCallFlow chat', () => {
       iceConnectionState: 'checking',
       connectionState: 'connecting',
       getStats: jest.fn().mockResolvedValue(new Map()),
+      setRemoteDescription: jest.fn().mockResolvedValue(undefined),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'answer-sdp' }),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'answer', sdp: 'answer-sdp' },
     };
     (RTCPeerConnection as jest.Mock).mockImplementation(() => peerConnection);
 
@@ -2833,6 +2837,65 @@ describe('useCallFlow chat', () => {
     });
 
     return { resultRef, tree, peerConnection, emits };
+  }
+
+  function candidatePairReport({
+    localType,
+    remoteType,
+    protocol = 'udp',
+    relayProtocol,
+  }: {
+    localType: string;
+    remoteType: string;
+    protocol?: string;
+    relayProtocol?: string;
+  }) {
+    return new Map([
+      [
+        'pair-1',
+        {
+          id: 'pair-1',
+          type: 'candidate-pair',
+          state: 'succeeded',
+          localCandidateId: 'local-1',
+          remoteCandidateId: 'remote-1',
+        },
+      ],
+      [
+        'local-1',
+        {
+          id: 'local-1',
+          type: 'local-candidate',
+          candidateType: localType,
+          protocol,
+          relayProtocol,
+        },
+      ],
+      [
+        'remote-1',
+        {
+          id: 'remote-1',
+          type: 'remote-candidate',
+          candidateType: remoteType,
+          protocol,
+        },
+      ],
+    ]);
+  }
+
+  async function connectPeerConnection(peerConnection: any, callId: string) {
+    const offerHandler = getSocketHandler('rtc.offer');
+    await act(async () => {
+      await offerHandler({
+        callId,
+        sdp: { type: 'offer', sdp: 'offer-sdp' },
+      });
+    });
+    await act(async () => {
+      peerConnection.iceConnectionState = 'connected';
+      peerConnection.oniceconnectionstatechange?.();
+      await Promise.resolve();
+    });
   }
 
   test('reports call.connected once media reaches the connected ICE state', async () => {
@@ -2933,10 +2996,11 @@ describe('useCallFlow chat', () => {
 
   test('creates the peer connection with the server-fetched ICE servers', async () => {
     const { getIceServers, getIceServersForCall } = require('../../src/webrtcConfig');
+    const { logInfo } = require('../../src/appLogger');
     const relayServers = [
       { urls: ['stun:stun.l.google.com:19302'] },
       {
-        urls: ['turn:turn.example.com:3478'],
+        urls: ['******turn.example.com:3478'],
         username: '1700000000:alice',
         credential: 'hmac-signature',
       },
@@ -2953,6 +3017,11 @@ describe('useCallFlow chat', () => {
     // Relay servers must not be applied after gathering may already have begun.
     expect((peerConnection as any).setConfiguration).toBeUndefined();
     expect(getIceServers).not.toHaveBeenCalled();
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] Creating RTCPeerConnection', {
+      iceTransportPolicy: 'all',
+      hasTurnServer: true,
+      turnServers: ['turn:turn.example.com'],
+    });
   });
 
 
@@ -2968,6 +3037,115 @@ describe('useCallFlow chat', () => {
       iceServers: relayServers,
       iceTransportPolicy: 'relay',
     });
+  });
+
+  test('logs a selected relay candidate pair once across unchanged stats polls', async () => {
+    const { logInfo } = require('../../src/appLogger');
+    const Telemetry = require('../../src/telemetry');
+    const { peerConnection } = await acceptCallWithPeerConnection('call-relay-pair');
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({
+        localType: 'relay',
+        remoteType: 'srflx',
+        relayProtocol: 'udp',
+      }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-relay-pair');
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
+
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] ICE candidate pair selected', {
+      local: 'relay',
+      remote: 'srflx',
+      protocol: 'udp',
+      relayProtocol: 'udp',
+      usingTurn: true,
+    });
+    expect(
+      logInfo.mock.calls.filter(([message]: any[]) =>
+        message === '[CallFlow] ICE candidate pair selected'),
+    ).toHaveLength(1);
+    expect(Telemetry.getCallQoSSummary('call-relay-pair')).toEqual(
+      expect.objectContaining({ selectedCandidatePairType: 'relay' }),
+    );
+  });
+
+  test('logs a selected direct candidate pair with TURN usage disabled', async () => {
+    const { logInfo } = require('../../src/appLogger');
+    const { peerConnection } = await acceptCallWithPeerConnection('call-direct-pair');
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'host', remoteType: 'srflx' }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-direct-pair');
+
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] ICE candidate pair selected', {
+      local: 'host',
+      remote: 'srflx',
+      protocol: 'udp',
+      usingTurn: false,
+    });
+  });
+
+  test('warns when relay policy selects a non-relay candidate pair', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    const { logWarn } = require('../../src/appLogger');
+    (getIceServersForCall as jest.Mock).mockResolvedValueOnce([
+      { urls: ['turn:turn.example.com:3478'] },
+    ]);
+    const { peerConnection } = await acceptCallWithPeerConnection('call-relay-mismatch', {
+      iceTransportPolicy: 'relay',
+    });
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'host', remoteType: 'srflx' }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-relay-mismatch');
+
+    expect(logWarn).toHaveBeenCalledWith(
+      '[CallFlow] Relay ICE policy selected a non-relay candidate pair',
+      expect.objectContaining({ local: 'host', remote: 'srflx', usingTurn: false }),
+    );
+  });
+
+  test('warns when relay policy has no TURN server at peer-connection creation', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    const { logWarn } = require('../../src/appLogger');
+    (getIceServersForCall as jest.Mock).mockResolvedValueOnce([
+      { urls: ['stun:stun.l.google.com:19302'] },
+    ]);
+
+    await acceptCallWithPeerConnection('call-relay-without-turn', {
+      iceTransportPolicy: 'relay',
+    });
+
+    expect(logWarn).toHaveBeenCalledWith(
+      '[CallFlow] Relay ICE policy configured without a TURN server',
+      { iceTransportPolicy: 'relay' },
+    );
+  });
+
+  test('routes sent ICE candidate detail through verbose logging', async () => {
+    const { logInfo, logVerbose } = require('../../src/appLogger');
+    const { summarizeIceCandidate } = require('../../src/diagnostics');
+    (summarizeIceCandidate as jest.Mock).mockReturnValue({
+      hasCandidate: true,
+      protocol: 'udp',
+      candidateType: 'host',
+    });
+    const { peerConnection } = await acceptCallWithPeerConnection('call-candidate-verbose');
+
+    peerConnection.onicecandidate?.({ candidate: { candidate: 'candidate-detail' } });
+
+    expect(logVerbose).toHaveBeenCalledWith('[CallFlow] ICE candidate sent', {
+      hasCandidate: true,
+      protocol: 'udp',
+      candidateType: 'host',
+    });
+    expect(logInfo).not.toHaveBeenCalledWith('[CallFlow] ICE candidate sent', expect.anything());
   });
 
   test('call setup succeeds when the TURN credential fetch degrades to STUN only', async () => {

@@ -20,4 +20,19 @@ describe('diagnostics', () => {
     );
     expect(buildExportHeader({})).toContain('iceTransportPolicy: all');
   });
+
+  test('includes the last selected ICE candidate pair in the export header', () => {
+    const selectedCandidatePair = {
+      local: 'relay',
+      remote: 'srflx',
+      protocol: 'udp',
+      relayProtocol: 'udp',
+      usingTurn: true,
+    };
+
+    expect(buildExportHeader({ selectedCandidatePair })).toContain(
+      `selectedCandidatePair: ${JSON.stringify(selectedCandidatePair)}`,
+    );
+    expect(buildExportHeader({})).toContain('selectedCandidatePair: none');
+  });
 });

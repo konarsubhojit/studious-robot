@@ -36,6 +36,7 @@ import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { getConnectionQuality } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
+import type { IceCandidatePairSummary } from '../diagnostics';
 import { initHaptics, triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
@@ -112,6 +113,30 @@ export type WebrtcMediaStream = MediaStream;
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
+
+function getTurnServerEndpoints(iceServers: unknown): string[] {
+  if (!Array.isArray(iceServers)) return [];
+
+  const endpoints = new Set<string>();
+  iceServers.forEach(server => {
+    if (!server || typeof server !== 'object') return;
+    const urls = Array.isArray((server as { urls?: unknown }).urls)
+      ? (server as { urls: unknown[] }).urls
+      : [(server as { urls?: unknown }).urls];
+    urls.forEach(value => {
+      if (typeof value !== 'string') return;
+      const match = value.trim().match(/^(turns?):(?:\/\/)?(.*)$/i);
+      if (!match) return;
+      try {
+        const parsed = new URL(`${match[1].toLowerCase()}://${match[2]}`);
+        if (parsed.hostname) endpoints.add(`${match[1].toLowerCase()}:${parsed.hostname}`);
+      } catch {
+        // Ignore malformed URLs; getIceServersForCall owns ICE validation.
+      }
+    });
+  });
+  return [...endpoints];
+}
 
 /**
  * How long to wait for the signaling socket to connect before answering a call
@@ -324,6 +349,9 @@ export default function useCallFlow({
     bars: 0,
     label: 'No link',
   });
+  const [selectedCandidatePair, setSelectedCandidatePair] = useState(
+    (null as IceCandidatePairSummary | null),
+  );
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
@@ -742,9 +770,6 @@ export default function useCallFlow({
   );
 
   const createPeerConnection = useCallback(async () => {
-    logInfo('[CallFlow] Creating RTCPeerConnection', {
-      iceTransportPolicy: activeIceTransportPolicy,
-    });
     // ICE servers must be known *before* construction: gathering starts as soon
     // as the connection is used, so applying relay servers afterwards can leave
     // relay candidates ungathered. getIceServersForCall never throws — it
@@ -753,6 +778,20 @@ export default function useCallFlow({
       signalingUrl,
       sessionId: sessionIdRef.current,
     });
+    const turnServers = getTurnServerEndpoints(iceServers);
+    logInfo('[CallFlow] Creating RTCPeerConnection', {
+      iceTransportPolicy: activeIceTransportPolicy,
+      hasTurnServer: turnServers.length > 0,
+      turnServers,
+    });
+    if (
+      activeIceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY &&
+      turnServers.length === 0
+    ) {
+      logWarn('[CallFlow] Relay ICE policy configured without a TURN server', {
+        iceTransportPolicy: activeIceTransportPolicy,
+      });
+    }
     const pc = (new RTCPeerConnection({
       iceServers,
       iceTransportPolicy: activeIceTransportPolicy,
@@ -773,7 +812,7 @@ export default function useCallFlow({
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate || !socketRef.current?.connected) return;
       const summary = summarizeIceCandidate(candidate);
-      logInfo('[CallFlow] ICE candidate sent', summary);
+      logVerbose('[CallFlow] ICE candidate sent', summary);
       signalingRef.current?.emit(CLIENT_EVENTS.RTC_CANDIDATE, {
         version: SIGNALING_VERSION,
         callId: activeCallIdRef.current,
@@ -1402,7 +1441,7 @@ export default function useCallFlow({
         // a candidate without a remote description throws on all platforms.
         if (!pc.remoteDescription) {
           iceCandidateBufferRef.current.push(candidate);
-          logInfo('[CallFlow] ICE candidate buffered (awaiting remote description)');
+          logVerbose('[CallFlow] ICE candidate buffered (awaiting remote description)');
           return;
         }
         try {
@@ -2729,6 +2768,7 @@ export default function useCallFlow({
       setConnectionQuality({ bars: 0, label: 'No link' });
       connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
       selectedCandidatePairRef.current = null;
+      setSelectedCandidatePair(null);
       return undefined;
     }
 
@@ -2740,6 +2780,7 @@ export default function useCallFlow({
       try {
         const report = await pc.getStats();
         if (cancelled) return;
+        if (!report || typeof report.forEach !== 'function') return;
 
         let rttMs;
         let totalPacketsLost = 0;
@@ -2749,9 +2790,11 @@ export default function useCallFlow({
 
         report.forEach(/** @param stat */ (stat: any) => {
           if (
+            stat &&
+            typeof stat === 'object' &&
             stat.type === 'candidate-pair' &&
             stat.state === 'succeeded' &&
-            (stat.nominated || stat.selected)
+            (!selectedCandidatePair || stat.nominated || stat.selected)
           ) {
             selectedCandidatePair = stat;
             if (typeof stat.currentRoundTripTime === 'number') {
@@ -2759,6 +2802,8 @@ export default function useCallFlow({
             }
           }
           if (
+            stat &&
+            typeof stat === 'object' &&
             stat.type === 'inbound-rtp' &&
             !stat.isRemote &&
             (stat.kind === 'video' || stat.mediaType === 'video')
@@ -2770,18 +2815,62 @@ export default function useCallFlow({
         });
 
         if (selectedCandidatePair) {
-          const localCandidate = report.get?.(selectedCandidatePair.localCandidateId);
-          const remoteCandidate = report.get?.(selectedCandidatePair.remoteCandidateId);
-          const localCandidateType = localCandidate?.candidateType ?? 'unknown';
-          const remoteCandidateType = remoteCandidate?.candidateType ?? 'unknown';
-          const candidatePairKey = `${localCandidateType}:${remoteCandidateType}`;
+          const getReportStat =
+            typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
+          const localCandidate = getReportStat(selectedCandidatePair.localCandidateId);
+          const remoteCandidate = getReportStat(selectedCandidatePair.remoteCandidateId);
+          const localCandidateType =
+            typeof localCandidate?.candidateType === 'string'
+              ? localCandidate.candidateType
+              : 'unknown';
+          const remoteCandidateType =
+            typeof remoteCandidate?.candidateType === 'string'
+              ? remoteCandidate.candidateType
+              : 'unknown';
+          const protocol =
+            typeof localCandidate?.protocol === 'string'
+              ? localCandidate.protocol
+              : typeof remoteCandidate?.protocol === 'string'
+              ? remoteCandidate.protocol
+              : typeof selectedCandidatePair.protocol === 'string'
+              ? selectedCandidatePair.protocol
+              : 'unknown';
+          const relayProtocol =
+            typeof localCandidate?.relayProtocol === 'string'
+              ? localCandidate.relayProtocol
+              : undefined;
+          const summary: IceCandidatePairSummary = {
+            local: localCandidateType,
+            remote: remoteCandidateType,
+            protocol,
+            ...(relayProtocol ? { relayProtocol } : {}),
+            usingTurn: localCandidateType === 'relay',
+          };
+          const candidatePairKey = JSON.stringify([
+            selectedCandidatePair.id,
+            selectedCandidatePair.localCandidateId,
+            selectedCandidatePair.remoteCandidateId,
+            summary,
+          ]);
           if (candidatePairKey !== selectedCandidatePairRef.current) {
             selectedCandidatePairRef.current = candidatePairKey;
-            logInfo('[CallFlow] Selected ICE candidate pair', {
-              localCandidateType,
-              remoteCandidateType,
-              iceTransportPolicy: activeIceTransportPolicy,
-            });
+            setSelectedCandidatePair(summary);
+            logInfo('[CallFlow] ICE candidate pair selected', summary);
+            if (activeCallIdRef.current) {
+              Telemetry.trackSelectedCandidatePair(
+                activeCallIdRef.current,
+                localCandidateType,
+              );
+            }
+            if (
+              activeIceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY &&
+              !summary.usingTurn
+            ) {
+              logWarn(
+                '[CallFlow] Relay ICE policy selected a non-relay candidate pair',
+                summary,
+              );
+            }
           }
         }
 
@@ -3023,6 +3112,7 @@ export default function useCallFlow({
     elapsedCallSeconds,
     audioDevices,
     connectionQuality,
+    selectedCandidatePair,
     isReconnecting,
     iceTransportPolicy: activeIceTransportPolicy,
 
