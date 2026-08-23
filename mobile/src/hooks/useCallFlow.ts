@@ -2786,7 +2786,7 @@ export default function useCallFlow({
         let totalPacketsLost = 0;
         let totalPacketsReceived = 0;
         let totalBytesReceived = 0;
-        let selectedCandidatePair: any = null;
+        let succeededCandidatePair: any = null;
 
         report.forEach(/** @param stat */ (stat: any) => {
           if (
@@ -2794,9 +2794,9 @@ export default function useCallFlow({
             typeof stat === 'object' &&
             stat.type === 'candidate-pair' &&
             stat.state === 'succeeded' &&
-            (!selectedCandidatePair || stat.nominated || stat.selected)
+            (!succeededCandidatePair || stat.nominated || stat.selected)
           ) {
-            selectedCandidatePair = stat;
+            succeededCandidatePair = stat;
             if (typeof stat.currentRoundTripTime === 'number') {
               rttMs = stat.currentRoundTripTime * 1000;
             }
@@ -2814,11 +2814,11 @@ export default function useCallFlow({
           }
         });
 
-        if (selectedCandidatePair) {
+        if (succeededCandidatePair) {
           const getReportStat =
             typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
-          const localCandidate = getReportStat(selectedCandidatePair.localCandidateId);
-          const remoteCandidate = getReportStat(selectedCandidatePair.remoteCandidateId);
+          const localCandidate = getReportStat(succeededCandidatePair.localCandidateId);
+          const remoteCandidate = getReportStat(succeededCandidatePair.remoteCandidateId);
           const localCandidateType =
             typeof localCandidate?.candidateType === 'string'
               ? localCandidate.candidateType
@@ -2832,8 +2832,8 @@ export default function useCallFlow({
               ? localCandidate.protocol
               : typeof remoteCandidate?.protocol === 'string'
               ? remoteCandidate.protocol
-              : typeof selectedCandidatePair.protocol === 'string'
-              ? selectedCandidatePair.protocol
+              : typeof succeededCandidatePair.protocol === 'string'
+              ? succeededCandidatePair.protocol
               : 'unknown';
           const relayProtocol =
             typeof localCandidate?.relayProtocol === 'string'
@@ -2847,9 +2847,9 @@ export default function useCallFlow({
             usingTurn: localCandidateType === 'relay',
           };
           const candidatePairKey = JSON.stringify([
-            selectedCandidatePair.id,
-            selectedCandidatePair.localCandidateId,
-            selectedCandidatePair.remoteCandidateId,
+            succeededCandidatePair.id,
+            succeededCandidatePair.localCandidateId,
+            succeededCandidatePair.remoteCandidateId,
             summary,
           ]);
           if (candidatePairKey !== selectedCandidatePairRef.current) {

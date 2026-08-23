@@ -13,14 +13,6 @@ const DEFAULT_TURN_URLS = [
   'turns:global.relay.metered.ca:443?transport=tcp',
 ];
 
-function withStunServer(iceServers: IceServer[]): IceServer[] {
-  const hasStun = iceServers.some((server) => {
-    const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
-    return urls.some((url) => typeof url === 'string' && url.startsWith('stun:'));
-  });
-  return hasStun ? iceServers : [{ urls: ['stun:stun.l.google.com:19302'] }, ...iceServers];
-}
-
 /**
  * @param value comma-separated TURN URLs, if configured.
  */
@@ -30,16 +22,43 @@ function parseTurnUrls(value: unknown): string[] {
     : [];
 }
 
+export function deriveStunUrlsFromTurnUrl(value: unknown): string[] {
+  const stunUrls = new Set<string>();
+  parseTurnUrls(value).forEach((turnUrl) => {
+    const match = turnUrl.match(/^turn:(?:\/\/)?(.+)$/i);
+    if (!match) return;
+    try {
+      const parsed = new URL(`http://${match[1]}`);
+      if (!parsed.hostname) return;
+      stunUrls.add(`stun:${parsed.hostname}:${parsed.port || '3478'}`);
+    } catch {
+      // Ignore malformed TURN URLs and retain the Google STUN fallback.
+    }
+  });
+  return [...stunUrls];
+}
+
+function withStunServer(iceServers: IceServer[], turnUrl?: unknown): IceServer[] {
+  return [
+    {
+      urls: [
+        ...deriveStunUrlsFromTurnUrl(turnUrl),
+        'stun:stun.l.google.com:19302',
+      ],
+    },
+    ...iceServers,
+  ];
+}
+
 function getStaticIceServers(env: NodeJS.ProcessEnv): IceServer[] {
   if (!env.TURN_USERNAME || !env.TURN_CREDENTIAL) {
-    return [{ urls: ['stun:stun.l.google.com:19302'] }];
+    return withStunServer([], env.TURN_URL);
   }
 
   const urls = env.TURN_URL ? parseTurnUrls(env.TURN_URL) : DEFAULT_TURN_URLS;
-  return [
-    { urls: ['stun:stun.l.google.com:19302'] },
+  return withStunServer([
     { urls, username: env.TURN_USERNAME, credential: env.TURN_CREDENTIAL },
-  ];
+  ], env.TURN_URL);
 }
 
 function getTtlSeconds(value: unknown): number {
@@ -57,7 +76,10 @@ function createHmacIceServers({ secret, urls, userId, ttlSeconds, now }: { secre
   const expiresAt = new Date(now + ttlSeconds * 1000);
   const username = `${Math.floor(expiresAt.getTime() / 1000)}:${userId}`;
   const credential = crypto.createHmac('sha1', secret).update(username).digest('base64');
-  return { iceServers: withStunServer([{ urls, username, credential }]), expiresAt };
+  return {
+    iceServers: withStunServer([{ urls, username, credential }], urls.join(',')),
+    expiresAt,
+  };
 }
 
 /**
@@ -145,7 +167,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
 
         const expiresAt = new Date(now + ttl * 1000);
         cache = {
-          iceServers: withStunServer(iceServers),
+          iceServers: withStunServer(iceServers, env.TURN_URL),
           expiresAt,
           refreshAt: now + Math.floor(ttl * 0.9) * 1000,
         };
