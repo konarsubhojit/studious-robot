@@ -35,8 +35,8 @@
 /** Maximum number of concurrent/recent call entries to keep. */
 const MAX_ENTRIES = 100;
 
-export type CallQoSSummary = { callId: string; sessionId: string | null; setupLatencyMs: number | null; firstFrameLatencyMs: number | null; signalingLatencyMs: number | null; durationMs: number | null; reconnectCount: number; iceRestartCount: number; };
-export type CallTelemetryEntry = { callId: string; sessionId: string | null; startedAtMs: number | null; signalingConnectedAtMs: number | null; connectedAtMs: number | null; firstRemoteFrameAtMs: number | null; endedAtMs: number | null; reconnectCount: number; iceRestartCount: number; };
+export type CallQoSSummary = { callId: string; sessionId: string | null; setupLatencyMs: number | null; firstFrameLatencyMs: number | null; signalingLatencyMs: number | null; durationMs: number | null; reconnectCount: number; iceRestartCount: number; selectedCandidatePairType: string | null; };
+export type CallTelemetryEntry = { callId: string; sessionId: string | null; startedAtMs: number | null; signalingConnectedAtMs: number | null; connectedAtMs: number | null; firstRemoteFrameAtMs: number | null; endedAtMs: number | null; reconnectCount: number; iceRestartCount: number; selectedCandidatePairType: string | null; };
 
 const entries: Map<string, CallTelemetryEntry> = new Map();
 
@@ -55,6 +55,7 @@ function getOrCreate(callId: string): CallTelemetryEntry {
       endedAtMs: null,
       reconnectCount: 0,
       iceRestartCount: 0,
+      selectedCandidatePairType: null,
     };
     entries.set(callId, entry);
     pruneOldEntries();
@@ -130,6 +131,15 @@ export function trackIceRestart(callId: string) {
 }
 
 /**
+ * Record the local candidate type for the currently selected ICE pair.
+ */
+export function trackSelectedCandidatePair(callId: string, candidateType: string) {
+  const entry = entries.get(callId);
+  if (!entry) return;
+  entry.selectedCandidatePairType = candidateType;
+}
+
+/**
  * Mark the call as ended and return the QoS summary.
  */
 export function trackCallEnd(callId: string): CallQoSSummary | null {
@@ -176,5 +186,6 @@ function buildSummary(entry: CallTelemetryEntry): CallQoSSummary {
     durationMs: startedAtMs !== null && endedAtMs !== null ? endedAtMs - startedAtMs : null,
     reconnectCount: entry.reconnectCount,
     iceRestartCount: entry.iceRestartCount,
+    selectedCandidatePairType: entry.selectedCandidatePairType,
   };
 }

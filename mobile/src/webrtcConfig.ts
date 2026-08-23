@@ -38,6 +38,24 @@ function readEnv(name: string): string | undefined {
   return env?.[name];
 }
 
+export function deriveStunUrlsFromTurnUrl(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+
+  const stunUrls = new Set<string>();
+  value.split(',').map(url => url.trim()).filter(Boolean).forEach(turnUrl => {
+    const match = turnUrl.match(/^turn:(?:\/\/)?(.+)$/i);
+    if (!match) return;
+    try {
+      const parsed = new URL(`http://${match[1]}`);
+      if (!parsed.hostname) return;
+      stunUrls.add(`stun:${parsed.hostname}:${parsed.port || '3478'}`);
+    } catch {
+      // Ignore malformed TURN URLs and retain the Google STUN fallback.
+    }
+  });
+  return [...stunUrls];
+}
+
 /**
  * Build the ICE server list from environment variables.
  *
@@ -57,7 +75,9 @@ export function getIceServers() {
   const turnUsername = readEnv('TURN_USERNAME');
   const turnCredential = readEnv('TURN_CREDENTIAL');
   const turnUrl = readEnv('TURN_URL');
-  const iceServers: IceServer[] = [{ urls: [GOOGLE_STUN_URL] }];
+  const iceServers: IceServer[] = [
+    { urls: [...deriveStunUrlsFromTurnUrl(turnUrl), GOOGLE_STUN_URL] },
+  ];
 
   if (turnUsername && turnCredential) {
     let turnUrls;

@@ -3,6 +3,14 @@ import RNFS from 'react-native-fs';
 import appConfig from '../app.json';
 import { getLogsForExport, logError, logInfo } from './appLogger';
 
+export type IceCandidatePairSummary = {
+  local: string;
+  remote: string;
+  protocol: string;
+  relayProtocol?: string;
+  usingTurn: boolean;
+};
+
 /**
  * Diagnostic / logging helpers extracted from App.js.  These are framework
  * utilities (no React state) used by the call hook for status messages, ICE
@@ -162,6 +170,7 @@ export function buildExportHeader({
   isInCall,
   socket,
   iceTransportPolicy,
+  selectedCandidatePair,
 }: {
         signalingUrl?: string;
         callId?: string | null;
@@ -171,6 +180,7 @@ export function buildExportHeader({
         isInCall?: boolean;
         socket?: any;
         iceTransportPolicy?: string;
+        selectedCandidatePair?: IceCandidatePairSummary | null;
     }): string {
   const lines = [
     'WeTalk diagnostic logs',
@@ -190,6 +200,9 @@ export function buildExportHeader({
     `socketId: ${socket?.id || 'none'}`,
     `socketTransport: ${getSocketTransportName(socket)}`,
     `iceTransportPolicy: ${iceTransportPolicy || 'all'}`,
+    `selectedCandidatePair: ${
+      selectedCandidatePair ? JSON.stringify(selectedCandidatePair) : 'none'
+    }`,
     '',
     '--- logs ---',
   ];
@@ -250,6 +263,7 @@ export async function exportDiagnosticLogs(context: {
     isInCall?: boolean;
     socket?: object | null;
     iceTransportPolicy?: string;
+    selectedCandidatePair?: IceCandidatePairSummary | null;
 } = {}): Promise<{ ok: boolean; message: string; }> {
   try {
     logInfo('Export Logs button press');

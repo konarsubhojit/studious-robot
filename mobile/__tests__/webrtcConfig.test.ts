@@ -1,6 +1,7 @@
 import {
   ICE_TRANSPORT_POLICIES,
   applyBitrateConstraints,
+  deriveStunUrlsFromTurnUrl,
   getIceServers,
   getIceServersForCall,
   getTurnDiagnostics,
@@ -43,6 +44,15 @@ describe('getIceServers', () => {
     const servers = getIceServers();
     expect(servers).toHaveLength(1);
     expect(servers[0].urls).toContain('stun:stun.l.google.com:19302');
+  });
+
+  test('derives one self-hosted STUN URL from duplicate TURN transports', () => {
+    expect(
+      deriveStunUrlsFromTurnUrl(
+        'turn:relay.example.com:3478,turn:relay.example.com:3478?transport=tcp,turns:relay.example.com:5349?transport=tcp',
+      ),
+    ).toEqual(['stun:relay.example.com:3478']);
+    expect(deriveStunUrlsFromTurnUrl(undefined)).toEqual([]);
   });
 
   describe('getIceServersForCall', () => {
@@ -148,6 +158,7 @@ describe('getIceServers', () => {
 
     const servers = getIceServers();
     expect(servers).toHaveLength(2);
+    expect(servers[0].urls).toEqual(['stun:stun.l.google.com:19302']);
     expect(servers[1].urls).toContain('turn:global.relay.metered.ca:80');
     expect(servers[1].username).toBe('demo-user');
     expect(servers[1].credential).toBe('demo-pass');
@@ -160,6 +171,10 @@ describe('getIceServers', () => {
 
     const servers = getIceServers();
     expect(servers).toHaveLength(2);
+    expect(servers[0].urls).toEqual([
+      'stun:relay.example.com:3478',
+      'stun:stun.l.google.com:19302',
+    ]);
     expect(servers[1].urls).toEqual([
       'turn:relay.example.com:3478',
       'turns:relay.example.com:5349',
@@ -170,12 +185,15 @@ describe('getIceServers', () => {
     expect(JSON.stringify(servers)).not.toContain('metered.ca');
   });
 
-  test('TURN_URL without credentials is ignored', () => {
+  test('TURN_URL without credentials still advertises self-hosted STUN', () => {
     process.env.TURN_URL = 'turn:relay.example.com:3478';
 
     const servers = getIceServers();
     expect(servers).toHaveLength(1);
-    expect(servers[0].urls).toContain('stun:stun.l.google.com:19302');
+    expect(servers[0].urls).toEqual([
+      'stun:relay.example.com:3478',
+      'stun:stun.l.google.com:19302',
+    ]);
   });
 });
 

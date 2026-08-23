@@ -130,6 +130,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       remoteStream: callFlow.remoteStream,
       isInCall: callFlow.isInCall,
       iceTransportPolicy: appSettings.settings.iceTransportPolicy,
+      selectedCandidatePair: callFlow.selectedCandidatePair,
     });
     callFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
   }, [appSettings.settings.iceTransportPolicy, callFlow]);

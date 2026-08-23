@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from '../src/index.ts';
+import { deriveStunUrlsFromTurnUrl } from '../src/routes/turnCredentials.routes.ts';
 import { listenOnRandomPort, readJson } from './helpers.ts';
 
 /**
@@ -48,6 +49,16 @@ async function getCredentials(url: string, sessionId: string): Promise<{ respons
   return { response, body: await readJson(response) };
 }
 
+test('derives and deduplicates plain STUN URLs from TURN_URL', () => {
+  assert.deepEqual(
+    deriveStunUrlsFromTurnUrl(
+      'turn:turn.example.com:3478, turn:turn.example.com:3478?transport=tcp, turns:turn.example.com:5349?transport=tcp'
+    ),
+    ['stun:turn.example.com:3478']
+  );
+  assert.deepEqual(deriveStunUrlsFromTurnUrl(undefined), []);
+});
+
 test('GET /turn-credentials mints and caches Cloudflare credentials', async () => {
   let calls = 0;
   const server = await startServer({
@@ -55,6 +66,7 @@ test('GET /turn-credentials mints and caches Cloudflare credentials', async () =
       CLOUDFLARE_TURN_KEY_ID: 'key-id',
       CLOUDFLARE_TURN_API_TOKEN: 'api-token',
       CLOUDFLARE_TURN_TTL_SECONDS: '3600',
+      TURN_URL: 'turn:turn.example.com:3478',
     },
     turnFetch: async (url, options) => {
       calls += 1;
@@ -74,7 +86,7 @@ test('GET /turn-credentials mints and caches Cloudflare credentials', async () =
     const second = await getCredentials(server.url, sessionId);
     assert.equal(first.response.status, 200);
     assert.deepEqual(first.body, [
-      { urls: ['stun:stun.l.google.com:19302'] },
+      { urls: ['stun:turn.example.com:3478', 'stun:stun.l.google.com:19302'] },
       { urls: ['turn:cf.example'] },
     ]);
     const expiresAt = first.response.headers.get('x-turn-credential-expires-at');
@@ -150,11 +162,31 @@ test('GET /turn-credentials falls back to static TURN or STUN only', async () =>
   }
 });
 
+test('GET /turn-credentials advertises self-hosted STUN with static credentials', async () => {
+  const server = await startServer({
+    turnEnv: {
+      TURN_URL: 'turn:turn.example.com:3478',
+      TURN_USERNAME: 'static-user',
+      TURN_CREDENTIAL: 'static-password',
+    },
+  });
+  try {
+    const result = await getCredentials(server.url, await createSession(server.url));
+    assert.deepEqual(result.body[0], {
+      urls: ['stun:turn.example.com:3478', 'stun:stun.l.google.com:19302'],
+    });
+    assert.equal(result.body[1].username, 'static-user');
+  } finally {
+    await server.teardown();
+  }
+});
+
 test('GET /turn-credentials mints HMAC credentials for coturn use-auth-secret', async () => {
   const server = await startServer({
     turnEnv: {
       TURN_STATIC_AUTH_SECRET: 'super-secret',
-      TURN_URL: 'turn:turn.example.com:3478, turns:turn.example.com:5349',
+      TURN_URL:
+        'turn:turn.example.com:3478, turn:turn.example.com:3478?transport=tcp, turns:turn.example.com:5349?transport=tcp',
       TURN_TTL_SECONDS: '600',
     },
   });
@@ -165,8 +197,14 @@ test('GET /turn-credentials mints HMAC credentials for coturn use-auth-secret', 
     const after = Math.floor(Date.now() / 1000);
 
     assert.equal(response.status, 200);
-    assert.deepEqual(body[0], { urls: ['stun:stun.l.google.com:19302'] });
-    assert.deepEqual(body[1].urls, ['turn:turn.example.com:3478', 'turns:turn.example.com:5349']);
+    assert.deepEqual(body[0], {
+      urls: ['stun:turn.example.com:3478', 'stun:stun.l.google.com:19302'],
+    });
+    assert.deepEqual(body[1].urls, [
+      'turn:turn.example.com:3478',
+      'turn:turn.example.com:3478?transport=tcp',
+      'turns:turn.example.com:5349?transport=tcp',
+    ]);
 
     const [expiry, userId] = body[1].username.split(':');
     assert.equal(userId, 'turn-user');
