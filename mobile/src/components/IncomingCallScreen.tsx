@@ -32,11 +32,13 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
  * @param props.status - Current status.
  * @param props.onAccept - Called when the user presses Accept.
  * @param props.onDecline - Called when the user presses Decline.
+ * @param props.isAnswering - The call has been accepted and is connecting; the
+ *   screen keeps showing who is calling but stops offering Accept/Decline.
  */
-export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; }) {
+export default function IncomingCallScreen({ incomingCall, status, onAccept, onDecline, isAnswering = false }: { incomingCall?: CallRecord | null; status: CallStatus; onAccept: () => void; onDecline: () => void; isAnswering?: boolean; }) {
   const styles = useThemedStyles(createStyles);
 
-  const ringTimeoutAt = incomingCall?.ringTimeoutAt ?? null;
+  const ringTimeoutAt = isAnswering ? null : incomingCall?.ringTimeoutAt ?? null;
   const callerId = incomingCall?.callerId ?? 'Unknown';
   const initials = deriveInitials(callerId);
 
@@ -98,7 +100,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerLabel} accessibilityRole="header">
-          Incoming call
+          {isAnswering ? 'Connecting' : 'Incoming call'}
         </Text>
       </View>
 
@@ -138,27 +140,45 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
       </View>
 
       {/* ── Action buttons ────────────────────────────────────────────────── */}
+      {/* Once the call has been answered, Accept/Decline would act on a call
+          that is already being set up, so the deck becomes a progress
+          indicator until the media negotiation moves the app to the in-call
+          screen. */}
       <View style={styles.actions}>
-        <IconButton
-          icon="callEnd"
-          label="Decline"
-          onPress={onDecline}
-          variant="danger"
-          size={72}
-          accessibilityLabel="Decline incoming call"
-          accessibilityHint="Rejects the call and tells the caller you are unavailable"
-          testID="incoming-decline"
-        />
-        <IconButton
-          icon="callAccept"
-          label="Accept"
-          onPress={onAccept}
-          variant="success"
-          size={72}
-          accessibilityLabel="Accept incoming call"
-          accessibilityHint="Answers the call and connects audio and video"
-          testID="incoming-accept"
-        />
+        {isAnswering ? (
+          <IconButton
+            icon="callAccept"
+            label="Connecting…"
+            loading
+            variant="success"
+            size={72}
+            accessibilityLabel={`Connecting to ${callerId}`}
+            testID="incoming-connecting"
+          />
+        ) : (
+          <>
+            <IconButton
+              icon="callEnd"
+              label="Decline"
+              onPress={onDecline}
+              variant="danger"
+              size={72}
+              accessibilityLabel="Decline incoming call"
+              accessibilityHint="Rejects the call and tells the caller you are unavailable"
+              testID="incoming-decline"
+            />
+            <IconButton
+              icon="callAccept"
+              label="Accept"
+              onPress={onAccept}
+              variant="success"
+              size={72}
+              accessibilityLabel="Accept incoming call"
+              accessibilityHint="Answers the call and connects audio and video"
+              testID="incoming-accept"
+            />
+          </>
+        )}
       </View>
 
       <StatusBanner status={status} />

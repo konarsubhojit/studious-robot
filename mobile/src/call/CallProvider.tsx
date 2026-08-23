@@ -99,11 +99,17 @@ export function CallProvider({ children }: { children: ReactNode; }) {
    * otherwise.
    */
   const activeCall = callFlow.activeCall;
+  const localUserId = callFlow.userId;
   const participantLabel = useMemo(() => {
     if (!activeCall?.callerId || !activeCall?.calleeId) return null;
-    const remoteId = callFlow.isLocalPrimary ? activeCall.calleeId : activeCall.callerId;
+    // Who the remote party is depends on which end of the call this device is,
+    // never on `isLocalPrimary` — that flag only tracks which stream is
+    // currently in the main tile, so tapping the self-view to swap streams used
+    // to relabel the call with the local user's own id.
+    const remoteId =
+      activeCall.callerId === localUserId ? activeCall.calleeId : activeCall.callerId;
     return `Call with ${remoteId}`;
-  }, [activeCall, callFlow.isLocalPrimary]);
+  }, [activeCall, localUserId]);
 
   const endCall = useCallback(() => {
     setIsCallMinimized(false);

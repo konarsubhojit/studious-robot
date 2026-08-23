@@ -155,7 +155,13 @@ const createStyles = (colors: ThemeColors) =>
     mediaRow: {
       flexDirection: 'row',
       gap: spacing.lg,
-      alignItems: 'center',
+      // Top-aligned, not centre-aligned: a row mixes buttons that carry a
+      // caption (mute, video) with ones that do not (audio output, camera
+      // swap). Centring the *wrapper* heights pushes the caption-less circles
+      // half a caption-height down, so the deck reads as visibly crooked.
+      // Every circle in a row is the same diameter, so aligning their tops
+      // aligns the icons exactly.
+      alignItems: 'flex-start',
       justifyContent: 'center',
     },
   });

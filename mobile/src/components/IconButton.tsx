@@ -123,7 +123,6 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     wrapper: {
       alignItems: 'center',
-      gap: spacing.xs,
     },
     circle: {
       alignItems: 'center',
@@ -138,7 +137,7 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
       fontSize: 11,
       textAlign: 'center',
-      marginTop: 2,
+      marginTop: spacing.xs,
     },
     disabled: {
       opacity: 0.45,

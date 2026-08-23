@@ -83,9 +83,16 @@ export default function AppShell() {
       />
     );
   } else if (callState === CALL_STATES.INCOMING_RINGING) {
+    // Answering clears `incomingCall` immediately, but the call state only
+    // reaches `in_call` once media negotiation completes — so for that second
+    // or two this screen is still on top. Fall back to the active call record
+    // for the caller's identity, or the screen announces the call as being
+    // from "Unknown" the instant the user accepts it.
+    const ringingCall = callFlow.incomingCall ?? callFlow.activeCall;
     screenContent = (
       <IncomingCallScreen
-        incomingCall={callFlow.incomingCall}
+        incomingCall={ringingCall}
+        isAnswering={!callFlow.incomingCall && Boolean(callFlow.activeCall)}
         status={callFlow.status}
         onAccept={callFlow.acceptIncomingCall}
         onDecline={callFlow.declineIncomingCall}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeInUp, FadeOutDown, FadeOutUp } from 'react-native-reanimated';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import CallStage from './CallStage';
@@ -169,13 +169,18 @@ export default function CallScreen({
         participantLabel={participantLabel}
       />
 
-      {!isCompact && showControlsOverlay ? (
-        <Animated.View
-          entering={FadeIn.duration(OVERLAY_FADE_MS)}
-          exiting={FadeOut.duration(OVERLAY_FADE_MS)}
-          style={styles.overlay}
-          pointerEvents="box-none">
-          <View style={styles.topOverlay}>
+      {/* The overlay container is a layout-only box with no visuals of its
+          own, so it stays mounted and each group animates itself. Nesting the
+          groups inside a *single* exiting parent would suppress their own
+          exit animations, and Reanimated would unmount them with no
+          transition at all. */}
+      <View style={styles.overlay} pointerEvents="box-none">
+        {!isCompact && showControlsOverlay ? (
+          <Animated.View
+            entering={FadeInDown.duration(OVERLAY_FADE_MS)}
+            exiting={FadeOutUp.duration(OVERLAY_FADE_MS)}
+            style={styles.topOverlay}
+            pointerEvents="box-none">
             <CallTopBar
               elapsedCallSeconds={elapsedCallSeconds}
               connectionQuality={connectionQuality}
@@ -201,14 +206,19 @@ export default function CallScreen({
                 textStyle={styles.inCallStatusText}
               />
             ) : null}
-          </View>
+          </Animated.View>
+        ) : null}
 
-          {/* No extra bottom safe-area padding is added here: the app-level
-              root container (App.js) already pads its bottom edge by the
-              device's safe-area/gesture-navigation inset whenever a
-              non-compact CallScreen is on screen, so these controls never
-              sit under the system nav bar. */}
-          <View style={styles.bottomOverlay}>
+        {/* No extra bottom safe-area padding is added here: the app-level
+            root container (App.js) already pads its bottom edge by the
+            device's safe-area/gesture-navigation inset whenever a
+            non-compact CallScreen is on screen, so these controls never
+            sit under the system nav bar. */}
+        {!isCompact && showControlsOverlay ? (
+          <Animated.View
+            entering={FadeInUp.duration(OVERLAY_FADE_MS)}
+            exiting={FadeOutDown.duration(OVERLAY_FADE_MS)}
+            style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}
               isVideoEnabled={isVideoEnabled}
@@ -227,9 +237,9 @@ export default function CallScreen({
               onScreenAudioToggle={onScreenAudioToggle}
               onLeave={onLeave}
             />
-          </View>
-        </Animated.View>
-      ) : null}
+          </Animated.View>
+        ) : null}
+      </View>
     </Pressable>
   );
 }

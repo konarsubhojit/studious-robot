@@ -7,8 +7,10 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View },
-    FadeIn: { duration: () => 'fade-in' },
-    FadeOut: { duration: () => 'fade-out' },
+    FadeInDown: { duration: () => 'fade-in-down' },
+    FadeInUp: { duration: () => 'fade-in-up' },
+    FadeOutDown: { duration: () => 'fade-out-down' },
+    FadeOutUp: { duration: () => 'fade-out-up' },
   };
 });
 
