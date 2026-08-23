@@ -237,6 +237,54 @@ export function getPhotoLibraryPermission(androidApiLevel: number | string = Pla
   return Number(androidApiLevel) >= 33 ? MEDIA_IMAGES_PERMISSION : READ_EXTERNAL_STORAGE_PERMISSION;
 }
 
+const WRITE_EXTERNAL_STORAGE_PERMISSION = PermissionsAndroid?.PERMISSIONS?.WRITE_EXTERNAL_STORAGE;
+
+/**
+ * Whether writing into the shared Downloads folder still needs a runtime
+ * grant. Android 10 (API 29) introduced scoped storage, where an app writes
+ * its own downloads without any permission at all, so only API 28 and below
+ * prompt.
+ */
+export function requiresDownloadStoragePermission(androidApiLevel: number | string = Platform.Version): boolean {
+  return (
+    Platform.OS === 'android' &&
+    Number(androidApiLevel) <= 28 &&
+    Boolean(WRITE_EXTERNAL_STORAGE_PERMISSION)
+  );
+}
+
+/**
+ * Ensure the runtime permission needed to save a downloaded attachment into
+ * the shared Downloads folder is granted, requesting it if not.
+ *
+ * A denial is not fatal: the caller falls back to app-private storage, so this
+ * reports the outcome rather than throwing.
+ */
+export async function ensureDownloadPermission({ androidApiLevel = Platform.Version }: { androidApiLevel?: number | string; } = {}): Promise<{ ok: boolean; granted: boolean; message?: string | null; }> {
+  if (
+    !requiresDownloadStoragePermission(androidApiLevel) ||
+    !PermissionsAndroid?.check ||
+    !PermissionsAndroid?.requestMultiple
+  ) {
+    return { ok: true, granted: true, message: null };
+  }
+
+  const alreadyGranted = await PermissionsAndroid.check(WRITE_EXTERNAL_STORAGE_PERMISSION);
+  if (alreadyGranted) return { ok: true, granted: true, message: null };
+
+  const results = (await PermissionsAndroid.requestMultiple([
+    WRITE_EXTERNAL_STORAGE_PERMISSION,
+  ]) as Record<string, string>);
+  const granted = results[WRITE_EXTERNAL_STORAGE_PERMISSION] === PermissionsAndroid.RESULTS.GRANTED;
+  return {
+    ok: granted,
+    granted,
+    message: granted
+      ? null
+      : 'Storage permission denied. The attachment will be saved inside the app instead.',
+  };
+}
+
 /**
  * User-facing text for a denied attachment permission.
  */
