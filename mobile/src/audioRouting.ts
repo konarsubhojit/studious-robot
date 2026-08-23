@@ -1,6 +1,7 @@
 import { DeviceEventEmitter } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 import { logInfo, logWarn } from './appLogger';
+import { setAudioSessionActive } from './audioSessionState';
 import { ensureBluetoothPermission } from './permissions';
 
 /**
@@ -46,19 +47,6 @@ export const AUDIO_ROUTE_PRIORITY = [
 
 const NATIVE_DEVICE_EVENT = 'onAudioDeviceChanged';
 
-/**
- * Whether a call currently owns the audio focus (between `startAudioSession`
- * and `stopAudioSession`).
- *
- * Chat media playback reads this so it never grabs the route from a live call:
- * the call flow owns the audio session, playback is the guest.
- */
-let _audioSessionActive = false;
-
-export function isAudioSessionActive(): boolean {
-  return _audioSessionActive;
-}
-
 const GENERIC_AUDIO_SESSION_ERROR =
   'Unable to update in-call audio. Check app permissions in Settings and confirm the selected audio device is available.';
 const AUDIO_ROUTE_FALLBACK_MESSAGE =
@@ -89,7 +77,9 @@ export function startAudioSession(): { ok: true; } | { ok: false; error: unknown
   try {
     InCallManager.start({ media: 'video' });
     InCallManager.setKeepScreenOn(true);
-    _audioSessionActive = true;
+    // Chat media playback reads this so it never grabs the route from a live
+    // call: the call flow owns the audio session, playback is the guest.
+    setAudioSessionActive(true);
     return { ok: true };
   } catch (error) {
     return { ok: false, error, message: GENERIC_AUDIO_SESSION_ERROR };
@@ -104,7 +94,7 @@ export function startAudioSession(): { ok: true; } | { ok: false; error: unknown
  *   always carries a user-facing message.
  */
 export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown; message: string; } {
-  _audioSessionActive = false;
+  setAudioSessionActive(false);
   try {
     InCallManager.setKeepScreenOn(false);
     InCallManager.stop();

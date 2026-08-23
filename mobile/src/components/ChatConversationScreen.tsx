@@ -19,16 +19,21 @@ import {
   isSupportedMessageType,
   messageTypeOf,
 } from '../../../shared';
+import { logWarn } from '../appLogger';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
+import { isAudioMimeType, isVideoMimeType } from '../videoPlayback';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AttachSheet from './AttachSheet';
+import AudioAttachmentPlayer from './AudioAttachmentPlayer';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
+import MediaViewer from './MediaViewer';
 import StatusBanner from './StatusBanner';
 import SwipeableRow from './SwipeableRow';
 
 import type { CallActivity, ChatMessage } from '../hooks/useMessaging';
+import type { MediaViewerItem } from './MediaViewer';
 import type { ThemeColors } from '../theme';
 import type { PeerPresence } from '../types/directory';
 
@@ -259,13 +264,15 @@ function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
  *
  * @param props
  */
-function MessageContent({ message, isOwn, styles, onDownloadAttachment }: {
+function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMedia }: {
         message: ChatMessage; isOwn: boolean; styles: ChatStyles;
         onDownloadAttachment?: (message: ChatMessage) => void;
+        onOpenMedia?: (message: ChatMessage) => void;
     }) {
   const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
   const type = messageTypeOf(message);
   const attachmentUrl = message.attachment?.url;
+  const isUploading = Boolean(message.pending) && !attachmentUrl;
   const downloadButton =
     attachmentUrl && onDownloadAttachment ? (
       <Pressable
@@ -278,6 +285,10 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment }: {
         testID="chat-attachment-download">
         <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
       </Pressable>
+    ) : isUploading ? (
+      <Text style={[textStyle, styles.placeholderText]} testID="chat-attachment-uploading">
+        Uploading…
+      </Text>
     ) : null;
 
   if (message.deletedAt) {
@@ -299,12 +310,66 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment }: {
   if (type === MESSAGE_TYPES.IMAGE && message.attachment?.url) {
     return (
       <View>
-        <Image
-          source={{ uri: message.attachment.thumbnailUrl || message.attachment.url }}
-          style={styles.attachmentImage}
-          resizeMode="cover"
-          accessibilityLabel={message.body || 'Photo'}
-          testID="chat-message-image"
+        <Pressable
+          onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
+          accessibilityRole={onOpenMedia ? 'button' : undefined}
+          accessibilityLabel={onOpenMedia ? 'Open photo' : undefined}
+          accessibilityHint={onOpenMedia ? 'Opens the photo fullscreen' : undefined}
+          testID="chat-message-image-open">
+          <Image
+            source={{ uri: message.attachment.thumbnailUrl || message.attachment.url }}
+            style={styles.attachmentImage}
+            resizeMode="cover"
+            accessibilityLabel={message.body || 'Photo'}
+            testID="chat-message-image"
+          />
+        </Pressable>
+        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+        {downloadButton}
+      </View>
+    );
+  }
+
+  // A video arrives as a `file` message (`video/mp4` is on the file MIME
+  // allowlist), so it is recognised by its MIME type rather than its type.
+  if (type === MESSAGE_TYPES.FILE && isVideoMimeType(message.attachment?.mimeType) && attachmentUrl) {
+    return (
+      <View>
+        <Pressable
+          onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
+          accessibilityRole={onOpenMedia ? 'button' : undefined}
+          accessibilityLabel={onOpenMedia ? 'Play video' : undefined}
+          accessibilityHint={onOpenMedia ? 'Opens the video fullscreen' : undefined}
+          style={styles.attachmentVideo}
+          testID="chat-message-video">
+          {message.attachment?.thumbnailUrl ? (
+            <Image
+              source={{ uri: message.attachment.thumbnailUrl }}
+              style={styles.attachmentImage}
+              resizeMode="cover"
+              accessibilityLabel={message.attachment?.name || 'Video'}
+              testID="chat-message-video-thumbnail"
+            />
+          ) : (
+            <View style={[styles.attachmentImage, styles.attachmentVideoPlaceholder]} />
+          )}
+          <View style={styles.attachmentVideoBadge} pointerEvents="none">
+            <Text style={styles.attachmentVideoBadgeText}>▶</Text>
+          </View>
+        </Pressable>
+        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
+        {downloadButton}
+      </View>
+    );
+  }
+
+  if (type === MESSAGE_TYPES.VOICE || isAudioMimeType(message.attachment?.mimeType)) {
+    return (
+      <View>
+        <AudioAttachmentPlayer
+          uri={attachmentUrl}
+          durationMs={message.attachment?.durationMs ?? 0}
+          isOwn={isOwn}
         />
         {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
         {downloadButton}
@@ -409,6 +474,7 @@ export type MessageRowProps = {
   onReact?: ReactionAction;
   onQuotePress?: (messageId: string) => void;
   onDownloadAttachment?: MessageAction;
+  onOpenMedia?: MessageAction;
 };
 
 const MessageRow = memo(
@@ -425,6 +491,7 @@ const MessageRow = memo(
   onReact,
   onQuotePress,
   onDownloadAttachment,
+  onOpenMedia,
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
@@ -497,6 +564,7 @@ const MessageRow = memo(
           isOwn={isOwn}
           styles={styles}
           onDownloadAttachment={onDownloadAttachment}
+          onOpenMedia={onOpenMedia}
         />
       </Pressable>
       {isReactionBarOpen ? (
@@ -692,6 +760,9 @@ export default function ChatConversationScreen({
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isAttachSheetOpen, setIsAttachSheetOpen] = useState(false);
   const [showAttachmentsUnavailable, setShowAttachmentsUnavailable] = useState(false);
+  // Index into `mediaItems` of the attachment shown fullscreen; `null` when the
+  // viewer is closed.
+  const [viewerIndex, setViewerIndex] = useState((null as number | null));
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   // Date label of the topmost visible message, rendered as a pinned pill over
@@ -722,6 +793,29 @@ export default function ChatConversationScreen({
       if (!isCallEntry(message) && message?.messageId) byId.set(message.messageId, message);
     });
     return byId;
+  }, [messages]);
+
+  // Every viewable image/video in the loaded page, oldest first, so the
+  // fullscreen viewer can be swiped between them exactly as they appear in the
+  // conversation.
+  const mediaItems = useMemo(() => {
+    const ordered = [...messages].reverse();
+    return ordered.reduce((collected: MediaViewerItem[], entry) => {
+      if (isCallEntry(entry) || entry.deletedAt) return collected;
+      const url = entry.attachment?.url;
+      if (!url) return collected;
+      const type = messageTypeOf(entry);
+      const isVideo = type === MESSAGE_TYPES.FILE && isVideoMimeType(entry.attachment?.mimeType);
+      if (type !== MESSAGE_TYPES.IMAGE && !isVideo) return collected;
+      collected.push({
+        key: entry.messageId,
+        url,
+        mimeType: entry.attachment?.mimeType ?? null,
+        name: entry.attachment?.name ?? null,
+        kind: isVideo ? 'video' : 'image',
+      });
+      return collected;
+    }, []);
   }, [messages]);
 
   const activeHighlightId = quotedHighlightId ?? highlightMessageId;
@@ -886,6 +980,22 @@ export default function ChatConversationScreen({
     [onDownloadAttachment],
   );
 
+  const handleOpenMedia = useCallback(
+    (message: ChatMessage) => {
+      const index = mediaItems.findIndex(candidate => candidate.key === message?.messageId);
+      if (index < 0) {
+        logWarn('[Media] cannot open this attachment', {
+          type: messageTypeOf(message),
+          mimeType: message?.attachment?.mimeType,
+          hasUrl: Boolean(message?.attachment?.url),
+        });
+        return;
+      }
+      setViewerIndex(index);
+    },
+    [mediaItems],
+  );
+
   const handleRetry = useCallback(
       (message: ChatMessage) => {
       if (onRetryMessage) {
@@ -992,6 +1102,7 @@ export default function ChatConversationScreen({
           onReact={onReactToMessage ? handleReact : undefined}
           onQuotePress={handleQuotePress}
           onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
+          onOpenMedia={handleOpenMedia}
         />
       );
     },
@@ -1002,6 +1113,7 @@ export default function ChatConversationScreen({
       handleQuotePress,
       handleReact,
       handleDownloadAttachment,
+      handleOpenMedia,
       handleReply,
       handleRetry,
       messagesById,
@@ -1272,6 +1384,20 @@ export default function ChatConversationScreen({
         </View>
       </View>
 
+      <MediaViewer
+        items={mediaItems}
+        initialIndex={viewerIndex ?? 0}
+        visible={viewerIndex !== null}
+        onClose={() => setViewerIndex(null)}
+        onDownload={
+          onDownloadAttachment
+            ? item => {
+                const message = messagesById.get(item.key);
+                if (message) handleDownloadAttachment(message);
+              }
+            : undefined
+        }
+      />
       <AttachSheet
         visible={isAttachSheetOpen}
         onClose={() => setIsAttachSheetOpen(false)}
@@ -1428,6 +1554,29 @@ const createStyles = (colors: ThemeColors) =>
       height: ATTACHMENT_IMAGE_HEIGHT,
       borderRadius: radius.md,
       marginBottom: spacing.xs,
+    },
+    attachmentVideo: {
+      position: 'relative',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    attachmentVideoPlaceholder: {
+      backgroundColor: colors.stageDark,
+    },
+    attachmentVideoBadge: {
+      position: 'absolute',
+      alignSelf: 'center',
+      top: ATTACHMENT_IMAGE_HEIGHT / 2 - 20,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceControl,
+    },
+    attachmentVideoBadgeText: {
+      color: colors.textPrimary,
+      fontSize: 18,
     },
     attachmentDownloadButton: {
       marginTop: spacing.xs,

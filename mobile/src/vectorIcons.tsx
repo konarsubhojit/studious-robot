@@ -84,4 +84,8 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   attachmentAttach: { icon: 'paperclip', emoji: '📎' },
   attachmentMic: { icon: 'microphone', emoji: '🎤' },
   attachmentMicStop: { icon: 'stop-circle-outline', emoji: '⏹️' },
+  attachmentDownload: { icon: 'download', emoji: '⬇️' },
+  mediaPlay: { icon: 'play', emoji: '▶️' },
+  mediaPause: { icon: 'pause', emoji: '⏸️' },
+  mediaFullscreen: { icon: 'fullscreen', emoji: '⛶' },
 };

@@ -20,7 +20,7 @@ function withPlayerMock(
         throw new Error('Native module is not linked');
       });
     }
-    jest.doMock('../src/audioRouting', () => ({ isAudioSessionActive }));
+    jest.doMock('../src/audioSessionState', () => ({ isAudioSessionActive }));
     result = run(require('../src/audioPlayback'));
   });
   return result;

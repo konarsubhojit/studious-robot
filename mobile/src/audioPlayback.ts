@@ -1,5 +1,5 @@
 import { logError, logInfo, logVerbose, logWarn } from './appLogger';
-import { isAudioSessionActive } from './audioRouting';
+import { isAudioSessionActive } from './audioSessionState';
 import type NitroSound from 'react-native-nitro-sound';
 
 /**
