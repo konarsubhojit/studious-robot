@@ -248,9 +248,12 @@ async function createCache(opts: { redisUrl?: string; createClient?: () => any; 
     return createMemoryCache({ maxEntries });
   }
 
-  const factory = createClient || (() => require('redis').createClient({ url: redisUrl }));
+  // The optional `redis` dependency is imported here (rather than at module
+  // load) so the in-process path never loads it — mirroring `stores/redis.ts`.
+  const factory =
+    createClient || (async () => (await import('redis')).createClient({ url: redisUrl }));
   try {
-    const client = factory();
+    const client = await factory();
     client.on?.('error', (error: unknown) => {
       console.error(`[cache] redis client error: ${errorMessage(error)}`);
     });

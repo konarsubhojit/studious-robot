@@ -467,6 +467,37 @@ test('createMongoMessageStore requires a uri', () => {
   assert.throws(() => createMongoMessageStore({}), /uri.*required/);
 });
 
+// Regression: both the factory and the lazy `connect()` used to build the
+// driver with CommonJS `require('mongodb')`, which throws
+// `ReferenceError: require is not defined` under this ESM package. These two
+// tests take the non-injected path so the real driver import is covered.
+test('createMessageStore builds a Mongo store from MONGODB_URI without an injected client', () => {
+  const previous = process.env.MONGODB_URI;
+  process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/wetalk';
+  try {
+    const store = createMessageStore();
+    assert.equal(store.type, 'mongo');
+  } finally {
+    if (previous === undefined) delete process.env.MONGODB_URI;
+    else process.env.MONGODB_URI = previous;
+  }
+});
+
+test('mongo store connects with the real driver when no client is injected', async () => {
+  // Port 1 is never listening, so the driver fails server selection — the point
+  // is that it fails with a *driver* error rather than a ReferenceError.
+  const store = createMongoMessageStore({ uri: 'mongodb://127.0.0.1:1/wetalk?directConnection=true' });
+  await assert.rejects(
+    () => store.listMessages({ conversationId: 'alice:bob', limit: 1 }),
+    (error: Error) => {
+      assert.ok(!(error instanceof ReferenceError), `unexpected ReferenceError: ${error.message}`);
+      assert.doesNotMatch(error.message, /require is not defined/);
+      return true;
+    }
+  );
+  await store.close?.();
+});
+
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
