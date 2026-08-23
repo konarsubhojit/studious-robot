@@ -5,8 +5,16 @@ import {
   normalizeIceTransportPolicy,
   resetIceServersForCallCache,
 } from '../webrtcConfig';
+import type { IceTransportPolicy } from '../webrtcConfig';
 
-export const DEFAULT_APP_SETTINGS = {
+export type AppSettingsValues = {
+  autoCameraLightingEnabled: boolean;
+  speakerEnabledByDefault: boolean;
+  developerModeEnabled: boolean;
+  iceTransportPolicy: IceTransportPolicy;
+};
+
+export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
   autoCameraLightingEnabled: false,
   speakerEnabledByDefault: true,
   developerModeEnabled: false,

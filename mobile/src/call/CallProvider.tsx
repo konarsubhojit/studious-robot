@@ -132,7 +132,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       iceTransportPolicy: appSettings.settings.iceTransportPolicy,
     });
     callFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
-  }, [callFlow]);
+  }, [appSettings.settings.iceTransportPolicy, callFlow]);
 
   const value = useMemo(
     () => ({
