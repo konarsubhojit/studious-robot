@@ -1,8 +1,10 @@
 import {
+  ICE_TRANSPORT_POLICIES,
   applyBitrateConstraints,
   getIceServers,
   getIceServersForCall,
   getTurnDiagnostics,
+  normalizeIceTransportPolicy,
   resetIceServersForCallCache,
 } from '../src/webrtcConfig';
 
@@ -17,6 +19,15 @@ function clearTurnEnv() {
   delete env.TURN_CREDENTIAL;
   delete env.TURN_URL;
 }
+
+describe('normalizeIceTransportPolicy', () => {
+  test('accepts WebRTC-valid values and defaults unknown values to all', () => {
+    expect(normalizeIceTransportPolicy(ICE_TRANSPORT_POLICIES.ALL)).toBe('all');
+    expect(normalizeIceTransportPolicy(ICE_TRANSPORT_POLICIES.RELAY)).toBe('relay');
+    expect(normalizeIceTransportPolicy('nostun')).toBe('all');
+    expect(normalizeIceTransportPolicy(undefined)).toBe('all');
+  });
+});
 
 describe('getIceServers', () => {
   beforeEach(() => {

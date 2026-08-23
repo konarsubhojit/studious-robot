@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
+import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
 import StatusBanner from './StatusBanner';
@@ -49,6 +50,11 @@ const APPEARANCE_OPTIONS = [
   { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
 ];
 
+const ICE_TRANSPORT_POLICY_OPTIONS = [
+  { policy: ICE_TRANSPORT_POLICIES.ALL, label: 'Default', testID: 'settings-ice-policy-all' },
+  { policy: ICE_TRANSPORT_POLICIES.RELAY, label: 'Force TURN', testID: 'settings-ice-policy-relay' },
+];
+
 export type SettingsScreenProps = {
   /** Current username. */
   userId: string;
@@ -68,6 +74,10 @@ export type SettingsScreenProps = {
   developerModeEnabled?: boolean;
   /** Toggle developer mode on/off. */
   onToggleDeveloperMode?: () => void;
+  /** Current WebRTC ICE transport policy. */
+  iceTransportPolicy?: string;
+  /** Persist the WebRTC ICE transport policy used for new calls. */
+  onChangeIceTransportPolicy?: (policy: string) => void;
   status?: CallStatus;
 };
 
@@ -92,6 +102,8 @@ export default function SettingsScreen({
   onExportLogs,
   developerModeEnabled,
   onToggleDeveloperMode,
+  iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
+  onChangeIceTransportPolicy,
   status,
 }: SettingsScreenProps) {
   const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
@@ -100,6 +112,7 @@ export default function SettingsScreen({
   const [name, setName] = useState(userId ?? '');
   const [url, setUrl] = useState(signalingUrl ?? '');
 
+  const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   const trimmedName = name.trim();
   const trimmedUrl = url.trim();
   const nameDirty = trimmedName.length > 0 && trimmedName !== (userId ?? '').trim();
@@ -226,6 +239,39 @@ export default function SettingsScreen({
               </View>
               <Text style={styles.toggleValue}>{developerModeEnabled ? 'On' : 'Off'}</Text>
             </Pressable>
+            {onChangeIceTransportPolicy ? (
+              <>
+                <Text style={styles.toggleLabel}>ICE transport policy</Text>
+                <Text style={styles.hint}>Force TURN relay for diagnostics, or use the default ICE path.</Text>
+                <View
+                  style={styles.segmentedRow}
+                  accessibilityRole="radiogroup"
+                  testID="settings-ice-policy">
+                  {ICE_TRANSPORT_POLICY_OPTIONS.map(option => {
+                    const isSelected = option.policy === activeIceTransportPolicy;
+                    return (
+                      <Pressable
+                        key={option.policy}
+                        onPress={() => onChangeIceTransportPolicy(option.policy)}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`${option.label} ICE transport policy`}
+                        accessibilityState={{ selected: isSelected, checked: isSelected }}
+                        testID={option.testID}
+                        style={({ pressed }) => [
+                          styles.segment,
+                          isSelected && styles.segmentSelected,
+                          pressed && styles.pressed,
+                        ]}>
+                        <Text
+                          style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
           </>
         ) : null}
 

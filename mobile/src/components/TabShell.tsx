@@ -38,6 +38,7 @@ export default function TabShell() {
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
+    handleIceTransportPolicyChange,
     minimizeCallOnNavigate,
     startAudioCallWith,
     startVideoCallWith,
@@ -209,6 +210,8 @@ export default function TabShell() {
       onExportLogs={handleExportLogs}
       developerModeEnabled={settings.developerModeEnabled}
       onToggleDeveloperMode={handleDeveloperModeToggle}
+      iceTransportPolicy={settings.iceTransportPolicy}
+      onChangeIceTransportPolicy={handleIceTransportPolicyChange}
     />
   );
 

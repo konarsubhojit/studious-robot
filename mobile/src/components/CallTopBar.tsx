@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
+import { ICE_TRANSPORT_POLICIES } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import type { ThemeColors } from '../theme';
 
@@ -10,6 +11,8 @@ export type CallTopBarProps = {
   connectionQuality: { bars: number; label: string; };
   /** Remote participant name/id. */
   participantLabel?: string | null;
+  /** Active WebRTC ICE transport policy. */
+  iceTransportPolicy?: string;
   /** Shows the floating call bubble and returns to the tab shell. */
   onMinimize?: () => void;
 };
@@ -22,6 +25,7 @@ export default function CallTopBar({
   elapsedCallSeconds,
   connectionQuality,
   participantLabel = null,
+  iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
   onMinimize,
 }: CallTopBarProps) {
   const { colors } = useTheme();
@@ -45,6 +49,14 @@ export default function CallTopBar({
         </Text>
       </View>
       <View style={styles.rightGroup}>
+        {iceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY ? (
+          <Text
+            style={styles.policyBadge}
+            accessibilityLabel="ICE transport policy: TURN relay forced"
+            testID="call-ice-policy-badge">
+            TURN relay
+          </Text>
+        ) : null}
         <View
           style={styles.qualityContainer}
           accessibilityLabel={`Connection quality: ${connectionQuality.label}`}>
@@ -112,6 +124,16 @@ const createStyles = (colors: ThemeColors) =>
     timerText: {
       color: '#fff',
       fontWeight: '700',
+    },
+    policyBadge: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '700',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 3,
+      borderRadius: radius.pill,
+      backgroundColor: 'rgba(255, 210, 122, 0.28)',
+      overflow: 'hidden',
     },
     qualityContainer: {
       flexDirection: 'row',

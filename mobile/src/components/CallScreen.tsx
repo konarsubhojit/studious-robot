@@ -27,6 +27,7 @@ export default function CallScreen({
   elapsedCallSeconds,
   connectionQuality,
   participantLabel = null,
+  iceTransportPolicy,
   isReconnecting,
   onRetry,
   onStageLayout,
@@ -179,6 +180,7 @@ export default function CallScreen({
               elapsedCallSeconds={elapsedCallSeconds}
               connectionQuality={connectionQuality}
               participantLabel={participantLabel}
+              iceTransportPolicy={iceTransportPolicy}
               onMinimize={onMinimize}
             />
             {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}

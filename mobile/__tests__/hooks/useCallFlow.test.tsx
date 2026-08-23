@@ -109,9 +109,11 @@ jest.mock('../../src/socketConfig', () => ({
 }));
 
 jest.mock('../../src/webrtcConfig', () => ({
+  ICE_TRANSPORT_POLICIES: { ALL: 'all', RELAY: 'relay' },
   getIceServers: jest.fn(() => []),
   getIceServersForCall: jest.fn(async () => []),
   applyBitrateConstraints: jest.fn(async () => {}),
+  normalizeIceTransportPolicy: jest.fn(value => (value === 'relay' ? 'relay' : 'all')),
 }));
 
 jest.mock('../../src/callKeep', () => {
@@ -199,17 +201,17 @@ jest.mock('../../src/settingsStorage', () => ({
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
-function TestHook({ resultRef }: any) {
-  const result = useCallFlow();
+function TestHook({ resultRef, options }: any) {
+  const result = useCallFlow(options);
   resultRef.current = result;
   return null;
 }
 
-function renderHook() {
+function renderHook(options?: any) {
   const resultRef: { current: any; } = { current: null };
   let tree: any;
   act(() => {
-    tree = renderer.create(<TestHook resultRef={resultRef} />);
+    tree = renderer.create(<TestHook resultRef={resultRef} options={options} />);
   });
   return { resultRef, tree };
 }
@@ -1171,25 +1173,25 @@ describe('useCallFlow incoming-call ringing', () => {
    * Render the hook and establish a socket by setting a userId so the presence
    * effect fires.  Returns the hook result ref and renderer tree.
    */
-  async function renderWithSocket() {
+  async function renderWithSocket(options?: any) {
     global.fetch = (jest.fn(async () => ({
       ok: true,
       status: 201,
       json: async () => ({ sessionId: 'sess-ring', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = renderHook(options);
     // Setting userId triggers the presence effect → createOrGetSession → connectSocket.
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
+      tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
     // Flush async socket-connection work.
     await act(async () => {});
     act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
+      tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
 
     return { resultRef, tree };
@@ -1911,23 +1913,23 @@ describe('useCallFlow chat', () => {
    * Render the hook and establish a socket by setting a userId so the
    * presence effect fires (mirrors `renderWithSocket` above).
    */
-  async function renderWithSocket() {
+  async function renderWithSocket(options?: any) {
     global.fetch = (jest.fn(async () => ({
       ok: true,
       status: 201,
       json: async () => ({ sessionId: 'sess-chat', userId: 'alice' }),
     })) as any);
 
-    const { resultRef, tree } = renderHook();
+    const { resultRef, tree } = renderHook(options);
     await act(async () => {
       resultRef.current.setUserId('alice');
     });
     act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
+      tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
     await act(async () => {});
     act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
+      tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
 
     return { resultRef, tree };
@@ -2782,8 +2784,8 @@ describe('useCallFlow chat', () => {
    * Accept an incoming call with a peer-connection stub whose state callbacks
    * the test can fire by hand.
    */
-  async function acceptCallWithPeerConnection(callId: any) {
-    const { resultRef, tree } = await renderWithSocket();
+  async function acceptCallWithPeerConnection(callId: any, options?: any) {
+    const { resultRef, tree } = await renderWithSocket(options);
 
     const incomingHandler = getSocketHandler('call.incoming');
     await act(async () => {
@@ -2827,7 +2829,7 @@ describe('useCallFlow chat', () => {
       await resultRef.current.acceptIncomingCall();
     });
     act(() => {
-      tree.update(<TestHook resultRef={resultRef} />);
+      tree.update(<TestHook resultRef={resultRef} options={options} />);
     });
 
     return { resultRef, tree, peerConnection, emits };
@@ -2944,10 +2946,28 @@ describe('useCallFlow chat', () => {
     const { peerConnection } = await acceptCallWithPeerConnection('call-ice-servers-1');
 
     const { RTCPeerConnection } = require('react-native-webrtc');
-    expect(RTCPeerConnection).toHaveBeenCalledWith({ iceServers: relayServers });
+    expect(RTCPeerConnection).toHaveBeenCalledWith({
+      iceServers: relayServers,
+      iceTransportPolicy: 'all',
+    });
     // Relay servers must not be applied after gathering may already have begun.
     expect((peerConnection as any).setConfiguration).toBeUndefined();
     expect(getIceServers).not.toHaveBeenCalled();
+  });
+
+
+  test('creates the peer connection with forced relay policy when configured', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    const relayServers = [{ urls: ['turn:turn.example.com:3478'] }];
+    (getIceServersForCall as jest.Mock).mockResolvedValueOnce(relayServers);
+
+    await acceptCallWithPeerConnection('call-ice-policy-relay', { iceTransportPolicy: 'relay' });
+
+    const { RTCPeerConnection } = require('react-native-webrtc');
+    expect(RTCPeerConnection).toHaveBeenCalledWith({
+      iceServers: relayServers,
+      iceTransportPolicy: 'relay',
+    });
   });
 
   test('call setup succeeds when the TURN credential fetch degrades to STUN only', async () => {
@@ -2958,7 +2978,10 @@ describe('useCallFlow chat', () => {
     const { emits } = await acceptCallWithPeerConnection('call-ice-servers-2');
 
     const { RTCPeerConnection } = require('react-native-webrtc');
-    expect(RTCPeerConnection).toHaveBeenCalledWith({ iceServers: stunOnly });
+    expect(RTCPeerConnection).toHaveBeenCalledWith({
+      iceServers: stunOnly,
+      iceTransportPolicy: 'all',
+    });
     expect(emits.some((entry: any) => entry.event === 'call.accept')).toBe(true);
   });
 });

@@ -57,12 +57,18 @@ import {
   createSignalingClient,
 } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
-import { getIceServersForCall, applyBitrateConstraints } from '../webrtcConfig';
+import {
+  ICE_TRANSPORT_POLICIES,
+  getIceServersForCall,
+  applyBitrateConstraints,
+  normalizeIceTransportPolicy,
+} from '../webrtcConfig';
 import useScreenShare from './useScreenShare';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { MediaStream } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
+import type { IceTransportPolicy } from '../webrtcConfig';
 import {
   bringAppToForeground,
   clearPendingAnswer,
@@ -243,7 +249,14 @@ function reportOwnCallState(signaling: ReturnType<typeof createSignalingClient>,
  * @param options persisted device
  *   preferences that influence call setup (see `useAppSettings`).
  */
-export default function useCallFlow({ speakerEnabledByDefault = false }: { speakerEnabledByDefault?: boolean; } = {}) {
+export default function useCallFlow({
+  speakerEnabledByDefault = false,
+  iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
+}: {
+  speakerEnabledByDefault?: boolean;
+  iceTransportPolicy?: IceTransportPolicy;
+} = {}) {
+  const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   // ─── Connection config ────────────────────────────────────────────────────
   const [signalingUrl, setSignalingUrl] = useState(DEFAULT_SIGNALING_URL);
   const [calleeId, setCalleeId] = useState('');
@@ -347,6 +360,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
       totalBytesReceived: 0,
     } as { timestampMs: number | null, totalBytesReceived: number }),
   );
+  const selectedCandidatePairRef = useRef((null as string | null));
   const isInCallRef = useRef(false);
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
@@ -721,14 +735,16 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
         signalingUrl,
         sessionId: sessionIdRef.current,
       });
-      pc.setConfiguration?.({ iceServers });
+      pc.setConfiguration?.({ iceServers, iceTransportPolicy: activeIceTransportPolicy });
       return pc;
     },
-    [signalingUrl, sessionIdRef],
+    [activeIceTransportPolicy, signalingUrl, sessionIdRef],
   );
 
   const createPeerConnection = useCallback(async () => {
-    logInfo('[CallFlow] Creating RTCPeerConnection');
+    logInfo('[CallFlow] Creating RTCPeerConnection', {
+      iceTransportPolicy: activeIceTransportPolicy,
+    });
     // ICE servers must be known *before* construction: gathering starts as soon
     // as the connection is used, so applying relay servers afterwards can leave
     // relay candidates ungathered. getIceServersForCall never throws — it
@@ -737,7 +753,10 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
       signalingUrl,
       sessionId: sessionIdRef.current,
     });
-    const pc = (new RTCPeerConnection({ iceServers }) as PeerConnection);
+    const pc = (new RTCPeerConnection({
+      iceServers,
+      iceTransportPolicy: activeIceTransportPolicy,
+    }) as PeerConnection);
 
     const currentLocalStream = localStreamRef.current;
     if (currentLocalStream) {
@@ -845,6 +864,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
     peerConnectionRef.current = pc;
     return pc;
   }, [
+    activeIceTransportPolicy,
     configurePeerConnection,
     markCallConnected,
     reportCallConnected,
@@ -2708,6 +2728,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
     if (!isInCall) {
       setConnectionQuality({ bars: 0, label: 'No link' });
       connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
+      selectedCandidatePairRef.current = null;
       return undefined;
     }
 
@@ -2724,6 +2745,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
         let totalPacketsLost = 0;
         let totalPacketsReceived = 0;
         let totalBytesReceived = 0;
+        let selectedCandidatePair: any = null;
 
         report.forEach(/** @param stat */ (stat: any) => {
           if (
@@ -2731,6 +2753,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
             stat.state === 'succeeded' &&
             (stat.nominated || stat.selected)
           ) {
+            selectedCandidatePair = stat;
             if (typeof stat.currentRoundTripTime === 'number') {
               rttMs = stat.currentRoundTripTime * 1000;
             }
@@ -2745,6 +2768,22 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
             totalBytesReceived += Number(stat.bytesReceived || 0);
           }
         });
+
+        if (selectedCandidatePair) {
+          const localCandidate = report.get?.(selectedCandidatePair.localCandidateId);
+          const remoteCandidate = report.get?.(selectedCandidatePair.remoteCandidateId);
+          const localCandidateType = localCandidate?.candidateType ?? 'unknown';
+          const remoteCandidateType = remoteCandidate?.candidateType ?? 'unknown';
+          const candidatePairKey = `${localCandidateType}:${remoteCandidateType}`;
+          if (candidatePairKey !== selectedCandidatePairRef.current) {
+            selectedCandidatePairRef.current = candidatePairKey;
+            logInfo('[CallFlow] Selected ICE candidate pair', {
+              localCandidateType,
+              remoteCandidateType,
+              iceTransportPolicy: activeIceTransportPolicy,
+            });
+          }
+        }
 
         const now = Date.now();
         const previous = connectionStatsRef.current;
@@ -2787,7 +2826,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [isInCall, updateStatus]);
+  }, [activeIceTransportPolicy, isInCall, updateStatus]);
 
   // ─── Audio session & device routing ──────────────────────────────────────
 
@@ -2985,6 +3024,7 @@ export default function useCallFlow({ speakerEnabledByDefault = false }: { speak
     audioDevices,
     connectionQuality,
     isReconnecting,
+    iceTransportPolicy: activeIceTransportPolicy,
 
     // Call actions
     placeCall,
