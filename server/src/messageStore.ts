@@ -59,12 +59,28 @@
  */
 
 import { randomUUID } from 'crypto';
+import { MongoClient, MongoParseError } from 'mongodb';
 
 /**
  * @returns the error message, or a stringified fallback.
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether `error` came from the driver rejecting the connection string itself.
+ *
+ * The connection-string parser ships its own `MongoParseError` class (from
+ * `mongodb-connection-string-url`), so an `instanceof` check alone misses some
+ * URI errors — the error name is checked as well.
+ */
+function isMongoUriError(error: unknown): boolean {
+  if (error instanceof MongoParseError) return true;
+  return (
+    error instanceof Error &&
+    (error.name === 'MongoParseError' || error.name === 'MongoInvalidArgumentError')
+  );
 }
 // Maximum accepted message body length, in characters: part of the wire
 // contract, so it is owned by the shared package and enforced identically by
@@ -491,7 +507,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
       clientPromise = (async () => {
         const mongoClient =
           client ??
-          new (require('mongodb').MongoClient)((uri as string), {
+          new MongoClient((uri as string), {
             serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
           });
         if (typeof mongoClient.connect === 'function') {
@@ -786,19 +802,27 @@ function createMessageStore(opts: { messageStore?: MessageStore; } = {}): Messag
     return createMemoryMessageStore();
   }
 
+  let client;
   try {
-    const client = new (require('mongodb').MongoClient)(uri, {
+    client = new MongoClient(uri, {
       serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
     });
-    return createMongoMessageStore({
-      uri,
-      dbName: process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME,
-      collectionName: process.env.MONGODB_MESSAGES_COLLECTION?.trim() || DEFAULT_COLLECTION_NAME,
-      client,
-    });
   } catch (error) {
-    throw new Error(`Invalid MONGODB_URI: ${errorMessage(error)}`);
+    // Only the driver's own parse/validation errors say anything about the
+    // URI; anything else (a broken driver import, an out-of-memory failure, …)
+    // must keep its own context instead of being blamed on configuration.
+    if (isMongoUriError(error)) {
+      throw new Error(`Invalid MONGODB_URI: ${errorMessage(error)}`);
+    }
+    throw new Error(`Failed to create the MongoDB client: ${errorMessage(error)}`);
   }
+
+  return createMongoMessageStore({
+    uri,
+    dbName: process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME,
+    collectionName: process.env.MONGODB_MESSAGES_COLLECTION?.trim() || DEFAULT_COLLECTION_NAME,
+    client,
+  });
 }
 
 export {

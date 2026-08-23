@@ -202,6 +202,41 @@ test('createCache falls back to the memory backend when Redis cannot be opened',
   await cache.close();
 });
 
+// Regression: the non-injected branch used to call CommonJS `require('redis')`,
+// which throws `ReferenceError: require is not defined` under this ESM package.
+// The `redis` module itself is mocked so no live server is needed, but the
+// module-resolution path inside `createCache` is exercised for real.
+test('createCache loads the redis module when no client factory is injected', async (t) => {
+  const created: { url?: string; }[] = [];
+  t.mock.module('redis', {
+    namedExports: {
+      createClient(options: { url?: string; }) {
+        created.push(options);
+        return createFakeRedisClient();
+      },
+    },
+  });
+
+  const errors: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.join(' '));
+  };
+  try {
+    const cache = await createCache({ redisUrl: 'redis://127.0.0.1:6379' });
+    assert.deepEqual(
+      errors.filter((line) => line.includes('[cache]')),
+      [],
+      'the Redis backend opened without falling back'
+    );
+    assert.equal(cache.type, 'redis');
+    assert.deepEqual(created, [{ url: 'redis://127.0.0.1:6379' }]);
+    await cache.close();
+  } finally {
+    console.error = originalError;
+  }
+});
+
 // ─── Invalidation over the bus ────────────────────────────────────────────────
 
 test('invalidateCache evicts locally and publishes the prefixes on the bus', async () => {

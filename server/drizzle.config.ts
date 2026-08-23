@@ -12,13 +12,10 @@
  */
 
 // Load .env when present so local `npm run db:*` picks up DATABASE_URL_DIRECT.
-// dotenv is a dev dependency; ignore if it isn't installed (e.g. prod runtime).
-try {
-  const dotenv = await import('dotenv');
-  dotenv.default.config();
-} catch {
-  /* dotenv optional */
-}
+// A static import is required: drizzle-kit bundles this config to CommonJS,
+// where top-level `await import(...)` cannot be transformed.  Only drizzle-kit
+// (a dev dependency itself) ever loads this file, so dotenv is always present.
+import 'dotenv/config';
 
 export default {
   schema: './db/schema.ts',
