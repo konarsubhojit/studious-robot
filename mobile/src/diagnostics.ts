@@ -9,6 +9,8 @@ export type IceCandidatePairSummary = {
   protocol: string;
   relayProtocol?: string;
   usingTurn: boolean;
+  /** Which side of the pair is a relay, when the call traverses TURN. */
+  relaySide?: 'local' | 'remote' | 'both';
 };
 
 /**

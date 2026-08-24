@@ -62,6 +62,7 @@ import { SIGNALING_VERSION } from '../socketProtocol';
 import {
   ICE_TRANSPORT_POLICIES,
   getIceServersForCall,
+  getTurnServerEndpoints,
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
   resetIceServersForCallCache,
@@ -123,30 +124,6 @@ const STATS_POLL_INTERVAL_MS = 7000;
  * must never stall the call itself.
  */
 const ICE_SESSION_WAIT_MS = 5000;
-
-function getTurnServerEndpoints(iceServers: unknown): string[] {
-  if (!Array.isArray(iceServers)) return [];
-
-  const endpoints = new Set<string>();
-  iceServers.forEach(server => {
-    if (!server || typeof server !== 'object') return;
-    const urls = Array.isArray((server as { urls?: unknown }).urls)
-      ? (server as { urls: unknown[] }).urls
-      : [(server as { urls?: unknown }).urls];
-    urls.forEach(value => {
-      if (typeof value !== 'string') return;
-      const match = value.trim().match(/^(turns?):(?:\/\/)?(.*)$/i);
-      if (!match) return;
-      try {
-        const parsed = new URL(`${match[1].toLowerCase()}://${match[2]}`);
-        if (parsed.hostname) endpoints.add(`${match[1].toLowerCase()}:${parsed.hostname}`);
-      } catch {
-        // Ignore malformed URLs; getIceServersForCall owns ICE validation.
-      }
-    });
-  });
-  return [...endpoints];
-}
 
 /**
  * How long to wait for the signaling socket to connect before answering a call
@@ -3323,12 +3300,26 @@ export default function useCallFlow({
             typeof localCandidate?.relayProtocol === 'string'
               ? localCandidate.relayProtocol
               : undefined;
+          // A relay on *either* side means the media traverses TURN: the pair
+          // used to be judged by the local candidate alone, so a
+          // srflx→relay pair was logged as a direct call. Which side relays is
+          // logged too, since that is the side paying the relay bandwidth.
+          const localRelay = localCandidateType === 'relay';
+          const remoteRelay = remoteCandidateType === 'relay';
+          const relaySide = localRelay
+            ? remoteRelay
+              ? 'both'
+              : 'local'
+            : remoteRelay
+            ? 'remote'
+            : undefined;
           const summary: IceCandidatePairSummary = {
             local: localCandidateType,
             remote: remoteCandidateType,
             protocol,
             ...(relayProtocol ? { relayProtocol } : {}),
-            usingTurn: localCandidateType === 'relay',
+            usingTurn: localRelay || remoteRelay,
+            ...(relaySide ? { relaySide } : {}),
           };
           const candidatePairKey = JSON.stringify([
             succeededCandidatePair.id,

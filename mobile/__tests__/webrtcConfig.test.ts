@@ -5,6 +5,7 @@ import {
   getIceServers,
   getIceServersForCall,
   getTurnDiagnostics,
+  getTurnServerEndpoints,
   normalizeIceTransportPolicy,
   resetIceServersForCallCache,
 } from '../src/webrtcConfig';
@@ -317,8 +318,78 @@ describe('getIceServers', () => {
         expect(logError).not.toHaveBeenCalled();
       });
 
-      test('logs an error when the final list has no TURN server at all', async () => {
+      test('detects a TLS relay in an array of urls', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(
+          response(
+            [
+              { urls: ['stun:relay.example.com:3478'] },
+              {
+                urls: ['turn:relay.example.com:3478', 'turns:relay.example.com:5349?transport=tcp'],
+                username: 'minted',
+                credential: 'secret',
+              },
+            ],
+            new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          ),
+        );
+
         await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(logInfo).toHaveBeenCalledWith(
+          '[WebRTC] ICE servers fetched',
+          expect.objectContaining({
+            turnServers: ['turn:relay.example.com', 'turns:relay.example.com'],
+          }),
+        );
+        expect(logError).not.toHaveBeenCalled();
+      });
+
+      test('detects a relay given as a single urls string', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(
+          response(
+            [{ urls: 'turns:relay.example.com:5349', username: 'minted', credential: 'secret' }],
+            new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          ),
+        );
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(logInfo).toHaveBeenCalledWith(
+          '[WebRTC] ICE servers fetched',
+          expect.objectContaining({ turnServers: ['turns:relay.example.com'] }),
+        );
+        expect(logError).not.toHaveBeenCalled();
+      });
+
+      test('still errors on a genuinely STUN-only fetched list', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(
+          response(
+            [{ urls: ['stun:stun.l.google.com:19302'] }],
+            new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          ),
+        );
+
+        await getIceServersForCall({
+          signalingUrl: 'https://signal.example',
+          sessionId: 'session-id',
+          fetchImpl,
+        });
+
+        expect(logError).toHaveBeenCalledWith(
+          '[WebRTC] ICE server list contains no TURN server',
+          expect.objectContaining({ tier: 'fetched' }),
+        );
+      });
+
+      test('logs an error when the final list has no TURN server at all', async () => {        await getIceServersForCall({
           signalingUrl: 'https://signal.example',
           sessionId: null,
           fetchImpl: jest.fn(),
@@ -502,5 +573,56 @@ describe('applyBitrateConstraints', () => {
     };
     const pc = { getSenders: () => [sender] };
     await expect(applyBitrateConstraints((pc as any))).resolves.toBeUndefined();
+  });
+});
+
+describe('getTurnServerEndpoints', () => {
+  test('reads urls as a string or an array, for turn: and turns:', () => {
+    expect(
+      getTurnServerEndpoints([
+        { urls: 'turns:relay.example.com:5349?transport=tcp' },
+        { urls: ['stun:relay.example.com:3478', 'turn://relay.example.com:3478'] },
+        { urls: ['turn:user@other.example.com:3478'] },
+      ]),
+    ).toEqual(['turns:relay.example.com', 'turn:relay.example.com', 'turn:other.example.com']);
+  });
+
+  test('ignores non-relay and malformed entries', () => {
+    expect(
+      getTurnServerEndpoints([
+        { urls: ['stun:stun.l.google.com:19302'] },
+        { urls: ['turn:'] },
+        { urls: [42] },
+        null,
+        'not-a-server',
+      ]),
+    ).toEqual([]);
+    expect(getTurnServerEndpoints(undefined)).toEqual([]);
+  });
+
+  test('does not depend on URL parsing non-http schemes', () => {
+    // React Native's URL polyfill only understands `http(s):` — its `hostname`
+    // getter matches `^https?://` — which is what made a working TURN list look
+    // empty on device while every test passed under Node's WHATWG URL.
+    const RealUrl = globalThis.URL;
+    class ReactNativeUrl {
+      _url: string;
+
+      constructor(url: string) {
+        this._url = url;
+      }
+
+      get hostname() {
+        return this._url.match(/^https?:\/\/(?:[^@]+@)?([^:/?#]+)/)?.[1] ?? '';
+      }
+    }
+    (globalThis as any).URL = ReactNativeUrl;
+    try {
+      expect(getTurnServerEndpoints([{ urls: ['turns:relay.example.com:5349'] }])).toEqual([
+        'turns:relay.example.com',
+      ]);
+    } finally {
+      (globalThis as any).URL = RealUrl;
+    }
   });
 });

@@ -128,6 +128,9 @@ jest.mock('../../src/webrtcConfig', () => ({
   ICE_TRANSPORT_POLICIES: { ALL: 'all', RELAY: 'relay' },
   getIceServers: jest.fn(() => []),
   getIceServersForCall: jest.fn(async () => []),
+  // The real parser: the point of these tests is that the TURN summary the
+  // call logs matches the list handed to RTCPeerConnection.
+  getTurnServerEndpoints: jest.requireActual('../../src/webrtcConfig').getTurnServerEndpoints,
   applyBitrateConstraints: jest.fn(async () => {}),
   normalizeIceTransportPolicy: jest.fn(value => (value === 'relay' ? 'relay' : 'all')),
   resetIceServersForCallCache: jest.fn(),
@@ -3316,6 +3319,33 @@ describe('useCallFlow chat', () => {
     });
   });
 
+  test('detects a TLS relay given as a string urls and does not warn', async () => {
+    const { getIceServersForCall } = require('../../src/webrtcConfig');
+    const { logInfo, logWarn } = require('../../src/appLogger');
+    const relayServers = [
+      { urls: 'turns:relay.example.com:5349?transport=tcp', username: 'u', credential: 'c' },
+    ];
+    (getIceServersForCall as jest.Mock).mockResolvedValueOnce(relayServers);
+
+    await acceptCallWithPeerConnection('call-turns-relay', { iceTransportPolicy: 'relay' });
+
+    const { RTCPeerConnection } = require('react-native-webrtc');
+    expect(RTCPeerConnection).toHaveBeenCalledWith({
+      iceServers: relayServers,
+      iceTransportPolicy: 'relay',
+    });
+    // The logged summary must describe the very list the connection was given.
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] Creating RTCPeerConnection', {
+      iceTransportPolicy: 'relay',
+      hasTurnServer: true,
+      turnServers: ['turns:relay.example.com'],
+    });
+    expect(logWarn).not.toHaveBeenCalledWith(
+      '[CallFlow] Relay ICE policy configured without a TURN server',
+      expect.anything(),
+    );
+  });
+
 
   // ── Mid-call recovery ─────────────────────────────────────────────────────
   //
@@ -3528,6 +3558,7 @@ describe('useCallFlow chat', () => {
       protocol: 'udp',
       relayProtocol: 'udp',
       usingTurn: true,
+      relaySide: 'local',
     });
     expect(
       logInfo.mock.calls.filter(([message]: any[]) =>
@@ -3552,6 +3583,44 @@ describe('useCallFlow chat', () => {
       remote: 'srflx',
       protocol: 'udp',
       usingTurn: false,
+    });
+  });
+
+  test('reports TURN usage when only the remote candidate is a relay', async () => {
+    const { logInfo } = require('../../src/appLogger');
+    const { peerConnection } = await acceptCallWithPeerConnection('call-remote-relay-pair');
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'srflx', remoteType: 'relay' }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-remote-relay-pair');
+
+    // The remote peer relaying means the media still traverses TURN; judging
+    // the pair by the local candidate alone reported such a call as direct.
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] ICE candidate pair selected', {
+      local: 'srflx',
+      remote: 'relay',
+      protocol: 'udp',
+      usingTurn: true,
+      relaySide: 'remote',
+    });
+  });
+
+  test('reports both sides relaying when the whole pair is relay', async () => {
+    const { logInfo } = require('../../src/appLogger');
+    const { peerConnection } = await acceptCallWithPeerConnection('call-both-relay-pair');
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'relay', remoteType: 'relay' }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-both-relay-pair');
+
+    expect(logInfo).toHaveBeenCalledWith('[CallFlow] ICE candidate pair selected', {
+      local: 'relay',
+      remote: 'relay',
+      protocol: 'udp',
+      usingTurn: true,
+      relaySide: 'both',
     });
   });
 
