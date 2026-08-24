@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { AppState } from 'react-native';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 
@@ -29,6 +30,9 @@ jest.mock('socket.io-client', () => ({
     on: jest.fn(),
     once: jest.fn(),
     emit: jest.fn(),
+    // The Engine.IO manager. Its `ping` event is the timer-free clock the call
+    // heartbeat falls back on while the OS has the JS timer queue suspended.
+    io: { on: jest.fn(), off: jest.fn() },
   })),
 }));
 
@@ -2985,6 +2989,263 @@ describe('useCallFlow chat', () => {
         callId: 'call-connected-2',
         mediaState: { isScreenSharing: false, heartbeat: true },
       });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // ── Heartbeat lifetime ────────────────────────────────────────────────────
+  //
+  // Android suspends the JS timer queue whenever the activity is paused, which
+  // Picture-in-Picture does: the `setInterval` fires once and then nothing,
+  // the server stops seeing beats, and it force-ends a perfectly healthy call
+  // after `CALL_HEARTBEAT_TIMEOUT_MS`.  The heartbeat therefore has to keep
+  // beating from event-driven wake-ups, and must be tied to the call alone —
+  // never to view state, an effect, or a callback identity.
+
+  /** Handler registered on the Engine.IO manager (`socket.io.on(event)`). */
+  function getManagerHandler(event: any) {
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]?.value;
+    const call = socketMock?.io?.on?.mock.calls.find(([e]: any) => e === event);
+    return call?.[1];
+  }
+
+  function heartbeatEmits(emits: any[]) {
+    return emits.filter(
+      (entry: any) => entry.event === 'call.media-state' && entry.payload?.mediaState?.heartbeat,
+    );
+  }
+
+  /** Simulate the app entering (or leaving) Picture-in-Picture / compact view. */
+  function setCompactView(tree: any, resultRef: any, isCompactView: boolean) {
+    (useCompactCallView as jest.Mock).mockImplementation(() => ({
+      isCompactView,
+      setIsCompactView: jest.fn(),
+    }));
+    if (!tree) return;
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+  }
+
+  test('keeps beating across Picture-in-Picture entry, over several intervals', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection, emits } =
+        await acceptCallWithPeerConnection('call-pip-1');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      const before = heartbeatEmits(emits).length;
+
+      setCompactView(tree, resultRef, true);
+
+      for (let expected = 1; expected <= 3; expected += 1) {
+        await act(async () => {
+          jest.advanceTimersByTime(30000);
+        });
+        expect(heartbeatEmits(emits)).toHaveLength(before + expected);
+      }
+    } finally {
+      setCompactView(null, null, false);
+      jest.useRealTimers();
+    }
+  });
+
+  test('keeps beating in Picture-in-Picture even while the OS suspends JS timers', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection, emits } =
+        await acceptCallWithPeerConnection('call-pip-2');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      const before = heartbeatEmits(emits).length;
+
+      setCompactView(tree, resultRef, true);
+
+      const onPing = getManagerHandler('ping');
+      expect(onPing).toEqual(expect.any(Function));
+
+      // The clock moves but the timer queue never runs — exactly what a paused
+      // activity looks like.  The server's own ping is what keeps this alive.
+      for (let expected = 1; expected <= 3; expected += 1) {
+        await act(async () => {
+          jest.setSystemTime(Date.now() + 31000);
+          onPing();
+          await Promise.resolve();
+        });
+        expect(heartbeatEmits(emits)).toHaveLength(before + expected);
+      }
+
+      // A ping that arrives before a beat is due must not emit an extra one.
+      await act(async () => {
+        onPing();
+        await Promise.resolve();
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(before + 3);
+    } finally {
+      setCompactView(null, null, false);
+      jest.useRealTimers();
+    }
+  });
+
+  test('keeps beating across an AppState background/foreground transition', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-bg-1');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      const before = heartbeatEmits(emits).length;
+
+      // React Native's Jest preset already records every AppState listener,
+      // so the registered handlers can be replayed without re-mocking it.
+      const appStateListeners = (AppState.addEventListener as jest.Mock).mock.calls
+        .filter(([event]: any) => event === 'change')
+        .map(([, listener]: any) => listener);
+      expect(appStateListeners.length).toBeGreaterThan(0);
+
+      const notifyAppState = async (nextState: string) => {
+        await act(async () => {
+          appStateListeners.forEach(listener => listener(nextState));
+          await Promise.resolve();
+        });
+      };
+
+      // Backgrounded with the timer queue suspended: coming back to the
+      // foreground beats immediately instead of waiting a further full period.
+      await notifyAppState('background');
+      await act(async () => {
+        jest.setSystemTime(Date.now() + 45000);
+      });
+      await notifyAppState('active');
+      expect(heartbeatEmits(emits)).toHaveLength(before + 1);
+
+      // …and the ordinary interval is still running afterwards.
+      await act(async () => {
+        jest.advanceTimersByTime(30000);
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(before + 2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('survives a socket reconnect mid-call', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-reconnect-1');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      const before = heartbeatEmits(emits).length;
+
+      const disconnectHandler = getSocketHandler('disconnect');
+      const connectHandler = getSocketHandler('connect');
+      await act(async () => {
+        disconnectHandler?.('transport error');
+        await Promise.resolve();
+      });
+
+      // A beat that fell due while the socket was down is sent as soon as it
+      // comes back, rather than being lost with the reconnect.
+      await act(async () => {
+        jest.setSystemTime(Date.now() + 31000);
+        await connectHandler?.();
+        await Promise.resolve();
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(before + 1);
+
+      await act(async () => {
+        jest.advanceTimersByTime(30000);
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(before + 2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('stops exactly once when the call ends, leaking no interval', async () => {
+    jest.useFakeTimers();
+    try {
+      const { logInfo } = require('../../src/appLogger');
+      const { resultRef, tree, peerConnection, emits } =
+        await acceptCallWithPeerConnection('call-hb-end-1');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      expect(
+        (logInfo as jest.Mock).mock.calls.filter(
+          ([message]: any) => message === '[CallFlow] Call heartbeat started',
+        ),
+      ).toHaveLength(1);
+
+      await act(async () => {
+        jest.advanceTimersByTime(30000);
+      });
+      const beforeEnd = heartbeatEmits(emits).length;
+      expect(beforeEnd).toBeGreaterThan(0);
+
+      await act(async () => {
+        await resultRef.current.handleEndCall();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+
+      const stops = (logInfo as jest.Mock).mock.calls.filter(
+        ([message]: any) => message === '[CallFlow] Call heartbeat stopped',
+      );
+      expect(stops).toHaveLength(1);
+      expect(stops[0][1]).toEqual(expect.objectContaining({ reason: expect.any(String) }));
+
+      // No leaked interval, and no wake-up source can revive a dead heartbeat.
+      const onPing = getManagerHandler('ping');
+      await act(async () => {
+        jest.setSystemTime(Date.now() + 120000);
+        jest.advanceTimersByTime(120000);
+        onPing?.();
+        await Promise.resolve();
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(beforeEnd);
+      expect(
+        (logInfo as jest.Mock).mock.calls.filter(
+          ([message]: any) => message === '[CallFlow] Call heartbeat stopped',
+        ),
+      ).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('detaches its Engine.IO ping listener when the socket is torn down', async () => {
+    jest.useFakeTimers();
+    try {
+      const { tree } = await acceptCallWithPeerConnection('call-hb-detach-1');
+      const { io } = require('socket.io-client');
+      const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]
+        .value;
+      const onPing = getManagerHandler('ping');
+
+      act(() => {
+        tree.unmount();
+      });
+
+      // The manager is shared between sockets for the same URL, so a listener
+      // left behind would pile up (and pin this hook) on every reconnect.
+      expect(socketMock.io.off).toHaveBeenCalledWith('ping', onPing);
     } finally {
       jest.useRealTimers();
     }

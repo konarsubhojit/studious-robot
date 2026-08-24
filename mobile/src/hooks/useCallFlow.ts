@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -179,6 +180,19 @@ const TERMINAL_CALL_STATUSES = new Set([
  * call only after several consecutive beats are missed.
  */
 const CALL_HEARTBEAT_INTERVAL_MS = 30000;
+
+/**
+ * How long since the last beat before another one is due.
+ *
+ * The heartbeat is *time*-driven rather than tick-driven: any wake-up source
+ * (the interval, an inbound socket packet, an AppState change) asks whether a
+ * beat is due instead of emitting one unconditionally, so extra wake-ups are
+ * free and a missed tick is caught up by whichever source fires next.
+ *
+ * Slightly under the interval so a timer that fires a few milliseconds early
+ * still counts as due, rather than slipping a whole period.
+ */
+const CALL_HEARTBEAT_DUE_MS = CALL_HEARTBEAT_INTERVAL_MS - 1000;
 
 /**
  * How long a peer connection may stay `disconnected`/`failed` before the loss
@@ -422,7 +436,20 @@ export default function useCallFlow({
   // and connection-state callbacks fire, often more than once).
   const connectedReportedCallIdRef = useRef((null as string | null));
   // Periodic in-call liveness report to the server (see CALL_HEARTBEAT_INTERVAL_MS).
-  const heartbeatTimerRef = useRef((null as ReturnType<typeof setInterval> | null));
+  // `active` is what ties the heartbeat's lifetime to the call (not to any view
+  // or effect), and `lastBeatAtMs` is what lets any wake-up source emit a beat
+  // that the suspended interval could not.
+  const heartbeatRef = useRef({
+    timer: (null as ReturnType<typeof setInterval> | null),
+    lastBeatAtMs: 0,
+    active: false,
+  });
+  // Ref-forwarded wake-up so socket listeners registered once (and the AppState
+  // listener) can nudge the heartbeat without being re-registered.
+  const wakeCallHeartbeatRef = useRef((null as ((trigger: string) => void) | null));
+  // Removes this hook's `ping` listener from the (URL-shared, socket-outliving)
+  // Engine.IO manager.
+  const detachManagerPingRef = useRef((null as (() => void) | null));
   // Pending "media is gone" report, cancelled if ICE recovers in time.
   const iceFailureTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
@@ -669,13 +696,67 @@ export default function useCallFlow({
   // silent for users who asked for reduced motion.
   useEffect(() => initHaptics(), []);
 
-  /** Stop the in-call liveness heartbeat (idempotent). */
-  const stopCallHeartbeat = useCallback(() => {
-    if (heartbeatTimerRef.current) {
-      clearInterval(heartbeatTimerRef.current);
-      heartbeatTimerRef.current = null;
+  /**
+   * Stop the in-call liveness heartbeat (idempotent).
+   *
+   * @param reason - why the heartbeat is stopping, recorded in the log so a
+   *   heartbeat that dies for the wrong reason is visible in an export.
+   */
+  const stopCallHeartbeat = useCallback((reason: string = 'call-ended') => {
+    const heartbeat = heartbeatRef.current;
+    if (heartbeat.timer) {
+      clearInterval(heartbeat.timer);
+      heartbeat.timer = null;
     }
+    if (!heartbeat.active) return;
+    heartbeat.active = false;
+    heartbeat.lastBeatAtMs = 0;
+    logInfo('[CallFlow] Call heartbeat stopped', {
+      callId: activeCallIdRef.current,
+      reason,
+    });
   }, []);
+
+  /**
+   * Emit one liveness beat, but only if one is due.
+   *
+   * Called by every wake-up source rather than by the interval alone, because
+   * Android suspends the JS timer queue whenever the activity is paused — which
+   * includes Picture-in-Picture, where the call is still very much alive. A
+   * `setInterval` therefore cannot be trusted to keep the call proven live; the
+   * check is against wall-clock time so whichever source does fire (an inbound
+   * server ping, the peer's own relayed beat, an AppState change, a socket
+   * reconnect) catches up the beats the timer missed.
+   *
+   * A beat that cannot be sent (socket down) deliberately does not advance
+   * `lastBeatAtMs`, so the next wake-up retries immediately.
+   *
+   * @param trigger - which wake-up source asked, for diagnosis.
+   */
+  const beatCallHeartbeatIfDue = useCallback((trigger: string) => {
+    const heartbeat = heartbeatRef.current;
+    if (!heartbeat.active) return;
+    const callId = activeCallIdRef.current;
+    if (!callId) return;
+    const now = Date.now();
+    if (heartbeat.lastBeatAtMs && now - heartbeat.lastBeatAtMs < CALL_HEARTBEAT_DUE_MS) return;
+    if (!socketRef.current?.connected) return;
+    heartbeat.lastBeatAtMs = now;
+    logVerbose('[CallFlow] Call heartbeat beat', { callId, trigger });
+    signalingRef.current
+      ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
+        version: SIGNALING_VERSION,
+        callId,
+        mediaState: { isScreenSharing: isScreenSharingRef.current, heartbeat: true },
+      })
+      .catch(error => {
+        logWarn('[CallFlow] call heartbeat failed', { message: errorMessage(error) });
+      });
+  }, []);
+
+  useEffect(() => {
+    wakeCallHeartbeatRef.current = beatCallHeartbeatIfDue;
+  }, [beatCallHeartbeatIfDue]);
 
   /**
    * Report call liveness to the server every `CALL_HEARTBEAT_INTERVAL_MS`.
@@ -683,22 +764,42 @@ export default function useCallFlow({
    * Reuses the existing `call.media-state` relay: the server stamps the call
    * on every inbound frame, which is how it tells a long healthy conversation
    * apart from one both devices silently abandoned.
+   *
+   * The interval lives in a ref and is started/stopped by call lifecycle alone,
+   * never by an effect — no view state (compact/Picture-in-Picture) or callback
+   * identity may recreate or cancel it. It is only the *fast path*: see
+   * `beatCallHeartbeatIfDue` for the wake-up sources that keep beating while the
+   * OS has the timer queue suspended.
+   *
+   * @param reason - what started the heartbeat, recorded in the log.
    */
-  const startCallHeartbeat = useCallback(() => {
-    if (heartbeatTimerRef.current) return;
-    heartbeatTimerRef.current = setInterval(() => {
-      const callId = activeCallIdRef.current;
-      if (!callId || !socketRef.current?.connected) return;
-      signalingRef.current
-        ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
-          version: SIGNALING_VERSION,
-          callId,
-          mediaState: { isScreenSharing: isScreenSharingRef.current, heartbeat: true },
-        })
-        .catch(error => {
-          logWarn('[CallFlow] call heartbeat failed', { message: errorMessage(error) });
-        });
-    }, CALL_HEARTBEAT_INTERVAL_MS);
+  const startCallHeartbeat = useCallback(
+    (reason: string = 'media-connected') => {
+      const heartbeat = heartbeatRef.current;
+      if (heartbeat.active) return;
+      heartbeat.active = true;
+      heartbeat.lastBeatAtMs = Date.now();
+      heartbeat.timer = setInterval(
+        () => beatCallHeartbeatIfDue('interval'),
+        CALL_HEARTBEAT_INTERVAL_MS,
+      );
+      logInfo('[CallFlow] Call heartbeat started', {
+        callId: activeCallIdRef.current,
+        intervalMs: CALL_HEARTBEAT_INTERVAL_MS,
+        reason,
+      });
+    },
+    [beatCallHeartbeatIfDue],
+  );
+
+  // Beat on every foreground/background transition too: entering Picture-in-
+  // Picture (or plain backgrounding) suspends the interval, and returning from
+  // it must not wait a further full period to prove the call is still alive.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      wakeCallHeartbeatRef.current?.(`app-state:${nextState}`);
+    });
+    return () => subscription.remove();
   }, []);
 
   /** Cancel a pending "media is gone" report because ICE recovered. */
@@ -724,7 +825,7 @@ export default function useCallFlow({
       const callId = activeCallIdRef.current;
       if (!callId) return;
       clearMediaFailureReport();
-      startCallHeartbeat();
+      startCallHeartbeat(`media-connected:${iceState}`);
       if (connectedReportedCallIdRef.current === callId) return;
       connectedReportedCallIdRef.current = callId;
       logInfo('[CallFlow] Media connected; reporting call.connected', { callId, iceState });
@@ -1433,7 +1534,7 @@ export default function useCallFlow({
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
-      stopCallHeartbeat();
+      stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       clearMediaFailureReport();
       cancelIceRestartsRef.current?.('call-ended');
       connectedReportedCallIdRef.current = null;
@@ -1478,6 +1579,10 @@ export default function useCallFlow({
    * until the userId or signalingUrl changes.
    */
   const disconnectSocket = useCallback(() => {
+    // The Engine.IO manager is shared between sockets created for the same URL,
+    // so its listener outlives `socket.off()` and must be removed by hand.
+    detachManagerPingRef.current?.();
+    detachManagerPingRef.current = null;
     if (socketRef.current) {
       logInfo('[CallFlow] Disconnecting socket');
       socketRef.current.off(); // remove all listeners before disconnect
@@ -1526,6 +1631,22 @@ export default function useCallFlow({
       socketRef.current = socket;
       const signaling = createSignalingClient(socket);
       signalingRef.current = signaling;
+
+      // The Engine.IO manager emits `ping` for every server heartbeat packet
+      // (every `SOCKET_PING_INTERVAL_MS`, ~10s). Those arrive over the native
+      // networking bridge, not the JS timer queue, so they keep beating while
+      // the OS has that queue suspended — which is the whole reason a call in
+      // Picture-in-Picture stopped proving itself live.
+      type ManagerEvents = {
+        on?: (event: string, listener: () => void) => void;
+        off?: (event: string, listener: () => void) => void;
+      };
+      const manager = (socket as { io?: ManagerEvents }).io;
+      const onManagerPing = () => {
+        wakeCallHeartbeatRef.current?.('socket-ping');
+      };
+      manager?.on?.('ping', onManagerPing);
+      detachManagerPingRef.current = () => manager?.off?.('ping', onManagerPing);
 
       // ── Incoming call ──────────────────────────────────────────────────
       signaling.on(SERVER_EVENTS.CALL_INCOMING, ({ call }) => {
@@ -1823,6 +1944,8 @@ export default function useCallFlow({
       // ── In-call screen-share relay ──────────────────────────────────────
       signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
         if (callId !== activeCallIdRef.current) return;
+        // The peer's own relayed beat is another timer-free wake-up source.
+        wakeCallHeartbeatRef.current?.('peer-media-state');
         // A liveness heartbeat that carries no sharing flag must not clear the
         // "they are presenting" banner.
         if (!mediaState || !('isScreenSharing' in mediaState)) return;
@@ -1851,6 +1974,11 @@ export default function useCallFlow({
         // Flush any chat message queued while the socket was down (including
         // one composed in a previous run of the app).
         handleSocketConnected();
+        // A reconnect may have swallowed one or more beats (they are dropped
+        // while the socket is down), so prove liveness again straight away.
+        // Before the `isInCall` guard on purpose: the heartbeat's own `active`
+        // flag is the authority on whether a beat is owed.
+        wakeCallHeartbeatRef.current?.('socket-connect');
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -2224,7 +2352,7 @@ export default function useCallFlow({
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
-      stopCallHeartbeat();
+      stopCallHeartbeat('unmount');
       clearMediaFailureReport();
       stopCallService();
     };
