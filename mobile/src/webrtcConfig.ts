@@ -121,10 +121,32 @@ export type IceFallbackReason =
   | 'malformed-response';
 
 /**
+ * The `scheme:host` of a single TURN URI, or `null` when it is not one.
+ *
+ * Parsed by hand rather than with `URL`: React Native's `URL` polyfill only
+ * recognises `http(s):` (its `hostname` getter matches `^https?://`), so every
+ * `turn:`/`turns:` URI came back host-less and a perfectly good relay list was
+ * reported as having no TURN server at all. The optional `//`, the userinfo
+ * some providers embed, a bracketed IPv6 host, the port and the
+ * `?transport=` suffix are all handled here.
+ */
+function turnEndpoint(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const match = value
+    .trim()
+    .match(/^(turns?):(?:\/\/)?(?:[^@/?#]*@)?(\[[^\]]+\]|[^:/?#]+)/i);
+  return match ? `${match[1].toLowerCase()}:${match[2]}` : null;
+}
+
+/**
  * The TURN endpoints in an ICE server list, as `scheme:host` — never the
  * username or credential that comes with them.
+ *
+ * `urls` is accepted both as a string and as an array of strings, which is
+ * what `RTCPeerConnection` itself accepts, so this summary can never disagree
+ * with the list the connection was actually given.
  */
-function summarizeTurnEndpoints(iceServers: unknown): string[] {
+export function getTurnServerEndpoints(iceServers: unknown): string[] {
   if (!Array.isArray(iceServers)) return [];
   const endpoints = new Set<string>();
   iceServers.forEach(server => {
@@ -132,16 +154,8 @@ function summarizeTurnEndpoints(iceServers: unknown): string[] {
     const rawUrls = (server as { urls?: unknown }).urls;
     const urls = Array.isArray(rawUrls) ? rawUrls : [rawUrls];
     urls.forEach(value => {
-      if (typeof value !== 'string') return;
-      const match = value.trim().match(/^(turns?):(?:\/\/)?(.*)$/i);
-      if (!match) return;
-      const scheme = match[1].toLowerCase();
-      try {
-        const parsed = new URL(`${scheme}://${match[2]}`);
-        if (parsed.hostname) endpoints.add(`${scheme}:${parsed.hostname}`);
-      } catch {
-        // A malformed URL cannot relay anything, so it is not an endpoint.
-      }
+      const endpoint = turnEndpoint(value);
+      if (endpoint) endpoints.add(endpoint);
     });
   });
   return [...endpoints];
@@ -186,7 +200,7 @@ class IceFetchError extends Error {
  * logs. Credentials are never included; only `scheme:host`.
  */
 function reportIceServers(iceServers: IceServer[], tier: IceServerTier, metadata: Record<string, unknown> = {}): IceServer[] {
-  const turnServers = summarizeTurnEndpoints(iceServers);
+  const turnServers = getTurnServerEndpoints(iceServers);
   if (tier === 'fetched') {
     logInfo('[WebRTC] ICE servers fetched', { tier, turnServers, ...metadata });
   } else if (tier === 'cache') {

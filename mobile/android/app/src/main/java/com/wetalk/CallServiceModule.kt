@@ -1,12 +1,9 @@
 package com.wetalk
 
-import android.app.Activity
-import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
-import android.util.Rational
 import com.facebook.react.ReactApplication
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -69,24 +66,37 @@ class CallServiceModule(
     refreshPictureInPictureParams()
   }
 
+  /**
+   * Ask the activity to enter Picture-in-Picture, resolving whether it did.
+   *
+   * Deliberately never rejects: the request used to be issued from a JS
+   * `AppState` background transition, by which point the activity is no longer
+   * resumed and Android throws
+   * `IllegalStateException: Activity must be resumed to enter picture-in-picture`.
+   * PiP is now entered natively from `MainActivity.onUserLeaveHint()` (and by
+   * Android 12+ auto-enter); this method remains for explicit requests and
+   * reports the reason it could not be honoured instead of failing the call.
+   */
   @ReactMethod
   fun enterPictureInPictureMode(promise: Promise) {
-    val activity: Activity? = reactApplicationContext.currentActivity
-    if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+    val activity = reactApplicationContext.currentActivity as? MainActivity
+    if (activity == null) {
+      Log.w(TAG, "Picture-in-Picture request skipped reason=no-activity")
       promise.resolve(false)
       return
     }
 
-    try {
-      val params =
-        PictureInPictureParams
-          .Builder()
-          .setAspectRatio(Rational(PIP_ASPECT_RATIO_WIDTH, PIP_ASPECT_RATIO_HEIGHT))
-          .build()
-      val entered = activity.enterPictureInPictureMode(params)
-      promise.resolve(entered)
-    } catch (error: Exception) {
-      promise.reject("PIP_ERROR", error)
+    activity.runOnUiThread {
+      val reason =
+        try {
+          activity.requestPictureInPicture()
+        } catch (error: Exception) {
+          error.message ?: error.javaClass.simpleName
+        }
+      if (reason != null) {
+        Log.w(TAG, "Picture-in-Picture request skipped reason=$reason")
+      }
+      promise.resolve(reason == null)
     }
   }
 

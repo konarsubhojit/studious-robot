@@ -370,6 +370,26 @@ class MainActivity : ReactActivity() {
       false
     }
 
+  /**
+   * Enter Picture-in-Picture on behalf of JavaScript.
+   *
+   * Android refuses — and on some builds throws
+   * `IllegalStateException: Activity must be resumed to enter picture-in-picture` —
+   * once the activity has left the resumed state, which is exactly where a JS
+   * `AppState` "background" transition lands. Every precondition is therefore
+   * checked here and the reason is returned rather than thrown, so a request
+   * that cannot be honoured is a warning with a cause instead of a crash.
+   *
+   * @return null when PiP is (already) active, otherwise the reason it was not entered.
+   */
+  fun requestPictureInPicture(): String? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return "unsupported-os-version"
+    if (!supportsPictureInPicture()) return "picture-in-picture-unsupported"
+    if (isInPictureInPictureMode) return null
+    if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return "activity-not-resumed"
+    return if (enterPipSafely()) null else "refused-by-activity"
+  }
+
   companion object {
     private const val TAG = "WeTalkMainActivity"
 

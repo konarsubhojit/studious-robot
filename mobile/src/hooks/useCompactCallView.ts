@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { logInfo, logWarn } from '../appLogger';
+import { logInfo, logVerbose, logWarn } from '../appLogger';
 import {
-  enterPictureInPicture,
   exitPictureInPicture,
   setPictureInPictureMuted,
   subscribePictureInPictureAction,
@@ -12,7 +11,13 @@ import {
 /**
  * Manages the compact (Picture-in-Picture) view state for the call screen on
  * Android.  When the app goes to the background or becomes inactive while a
- * call is in progress, it enters compact view and requests native PiP.
+ * call is in progress, it switches to the compact view.
+ *
+ * Entering PiP itself is the activity's job, not this hook's: Android only
+ * grants PiP to a *resumed* activity, so `MainActivity.onUserLeaveHint()` (and
+ * Android 12+ auto-enter for the Back gesture) makes the request while the
+ * activity still qualifies. Requesting it from the AppState `background`
+ * transition, as this hook used to, is always too late and is refused.
  *
  * The authoritative PiP state comes from the activity itself
  * (`onPictureInPictureModeChanged`): AppState alone desyncs whenever the system
@@ -66,8 +71,18 @@ export default function useCompactCallView(isInRoomRef: React.MutableRefObject<b
       setIsCompactView(shouldUseCompactView);
 
       if (shouldUseCompactView) {
-        logInfo('App backgrounded during call; requesting Picture-in-Picture', { nextState });
-        enterPictureInPicture();
+        // PiP is *not* requested here: by the time AppState reports
+        // `background` the activity has already left the resumed state, and
+        // Android answers `enterPictureInPictureMode()` with
+        // "Activity must be resumed to enter picture-in-picture". The request
+        // is made natively from `MainActivity.onUserLeaveHint()` — which fires
+        // while the activity is still resumed — and by Android 12+ auto-enter
+        // for the Back gesture. This listener only tracks the resulting view
+        // state; the authoritative one arrives via
+        // `subscribePictureInPictureMode`.
+        logVerbose('App backgrounded during call; Picture-in-Picture is entered by the activity', {
+          nextState,
+        });
       }
     });
 

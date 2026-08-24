@@ -37,23 +37,41 @@ const FRAME_CHECK_INTERVAL_MS = 500;
 
 /**
  * @returns the error message, when there is one.
+ *
+ * `getDisplayMedia` rejects with a plain object on Android (its `message` is
+ * often just the DOM exception *name*, e.g. `NotAllowedError`), so an
+ * `instanceof Error` check alone produced the useless "Unknown error".
  */
 function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
+  if (typeof error === 'string') return error || undefined;
+  if (error instanceof Error) return error.message || undefined;
+  const candidate = (error as { message?: unknown; name?: unknown })?.message ??
+    (error as { name?: unknown })?.name;
+  return typeof candidate === 'string' && candidate ? candidate : undefined;
 }
 
-/** @param error */
+/**
+ * Whether `error` means the user (or the platform) refused consent rather than
+ * a genuine capture failure.
+ *
+ * The name and the message are matched together: react-native-webrtc reports
+ * a denial as a plain object whose *message* is `NotAllowedError` and whose
+ * `name` is absent, which used to be classified as a failure and shown as
+ * "Unable to start screen sharing: Unknown error".
+ *
+ * @param error
+ */
 function isPermissionDeniedError(error: any) {
-  const name = error?.name;
-  const message = String(error?.message || '').toLowerCase();
-  return (
-    name === 'NotAllowedError' ||
-    name === 'SecurityError' ||
-    message.includes('permission') ||
-    message.includes('denied') ||
-    message.includes('cancel') ||
-    message.includes('user did not grant')
-  );
+  const signal = `${String(error?.name || '')} ${String(error?.message || '')}`.toLowerCase();
+  return [
+    'notallowederror',
+    'not allowed',
+    'securityerror',
+    'permission',
+    'denied',
+    'cancel',
+    'user did not grant',
+  ].some(marker => signal.includes(marker));
 }
 
 /**
@@ -100,19 +118,24 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
       audio: Boolean(withAudio),
     });
   } catch (error) {
-    if (withAudio) {
+    if (withAudio && !isPermissionDeniedError(error)) {
       // Some platforms reject the whole request when screen audio is asked for
-      // but unavailable; retry video-only before giving up.
+      // but unavailable; retry video-only before giving up. A refused consent
+      // is never retried: the MediaProjection token is consumed by the prompt,
+      // so retrying only re-asks a user who has already said no.
       logWarn('Screen capture with audio failed; retrying video only', {
         message: errorMessage(error),
       });
       try {
         stream = await (mediaDevices as any).getDisplayMedia({ video: true });
       } catch (retryError) {
-        logError('Screen capture failed; MediaProjection did not start', retryError);
+        const denied = isPermissionDeniedError(retryError);
+        if (!denied) {
+          logError('Screen capture failed; MediaProjection did not start', retryError);
+        }
         return {
           ok: false,
-          reason: isPermissionDeniedError(retryError) ? SCREEN_SHARE_CANCELLED : 'failed',
+          reason: denied ? SCREEN_SHARE_CANCELLED : 'failed',
           message: getScreenShareErrorMessage(retryError),
           error: retryError,
         };
