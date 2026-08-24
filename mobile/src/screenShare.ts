@@ -43,6 +43,7 @@ const FRAME_CHECK_INTERVAL_MS = 500;
  * `instanceof Error` check alone produced the useless "Unknown error".
  */
 function errorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error || undefined;
   if (error instanceof Error) return error.message || undefined;
   const candidate = (error as { message?: unknown; name?: unknown })?.message ??
     (error as { name?: unknown })?.name;

@@ -26,6 +26,8 @@ export function startCallService() {
 
   try {
     module.startService();
+    // A new call must never inherit the previous call's request window.
+    resetPictureInPictureRequestThrottle();
     logInfo('Foreground call service started');
     return true;
   } catch (error) {
