@@ -55,20 +55,56 @@ export function stopCallService() {
   }
 }
 
+/**
+ * How long an explicit Picture-in-Picture request suppresses the next one.
+ *
+ * A single backgrounding used to fire two requests ~200 ms apart (one per
+ * AppState transition), so the second could only ever be refused — and each
+ * refusal was logged as if it said something new about the call.
+ */
+const PIP_REQUEST_DEDUPE_MS = 1000;
+
+let lastPictureInPictureRequestAt = 0;
+
+/** Forget the last request time, so a new call is never throttled by an old one. */
+export function resetPictureInPictureRequestThrottle() {
+  lastPictureInPictureRequestAt = 0;
+}
+
+/**
+ * Ask the activity to enter Picture-in-Picture.
+ *
+ * Android only grants PiP while the activity is still resumed, so the app
+ * relies primarily on the native user-leave path (`onUserLeaveHint`, plus
+ * Android 12+ auto-enter). This explicit request stays available for callers
+ * that know the activity is still in the foreground; the native side reports
+ * the reason rather than throwing when it is not.
+ */
 export async function enterPictureInPicture() {
   const module = getNativeModule();
   if (!isCallServiceAvailable() || typeof module.enterPictureInPictureMode !== 'function') {
+    logWarn('Picture-in-Picture request skipped', { reason: 'unsupported' });
     return false;
   }
+
+  const now = Date.now();
+  if (now - lastPictureInPictureRequestAt < PIP_REQUEST_DEDUPE_MS) {
+    logWarn('Picture-in-Picture request skipped', {
+      reason: 'duplicate-request',
+      sinceLastRequestMs: now - lastPictureInPictureRequestAt,
+    });
+    return false;
+  }
+  lastPictureInPictureRequestAt = now;
 
   try {
     const entered = await module.enterPictureInPictureMode();
     if (entered) {
       logInfo('Picture-in-Picture mode entered');
     } else {
-      // The activity refused PiP (OEM restriction, permission off, or no
-      // foreground activity). The call keeps running with no visible window,
-      // which is exactly the symptom users report — so it is not an INFO.
+      // The activity declined (not resumed, OEM restriction, or PiP turned
+      // off in settings) and named the reason in the native log. The call
+      // keeps running, just without a window.
       logWarn('Picture-in-Picture mode was refused by the activity');
     }
     return Boolean(entered);

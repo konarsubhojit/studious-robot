@@ -3,7 +3,11 @@ import renderer, { act } from 'react-test-renderer';
 import { AppState, Platform } from 'react-native';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 
-jest.mock('../../src/appLogger', () => ({ logInfo: jest.fn(), logWarn: jest.fn() }));
+jest.mock('../../src/appLogger', () => ({
+  logInfo: jest.fn(),
+  logVerbose: jest.fn(),
+  logWarn: jest.fn(),
+}));
 jest.mock('../../src/callService', () => ({
   enterPictureInPicture: jest.fn(),
   exitPictureInPicture: jest.fn(() => Promise.resolve(true)),
@@ -112,7 +116,9 @@ describe('useCompactCallView', () => {
     });
 
     expect(resultRef.current.isCompactView).toBe(true);
-    expect(enterPictureInPicture).toHaveBeenCalledTimes(1);
+    // PiP is requested by the activity's user-leave path, not from here: an
+    // AppState "background" transition is already too late to be granted.
+    expect(enterPictureInPicture).not.toHaveBeenCalled();
   });
 
   test('sets compact view true when inactive while in room', () => {
@@ -129,7 +135,9 @@ describe('useCompactCallView', () => {
     });
 
     expect(resultRef.current.isCompactView).toBe(true);
-    expect(enterPictureInPicture).toHaveBeenCalledTimes(1);
+    // PiP is requested by the activity's user-leave path, not from here: an
+    // AppState "background" transition is already too late to be granted.
+    expect(enterPictureInPicture).not.toHaveBeenCalled();
   });
 
   test('does not set compact view when backgrounded while not in room', () => {

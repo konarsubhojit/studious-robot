@@ -128,6 +128,28 @@ describe('startScreenCapture', () => {
     expect(result.message).toBe('Screen sharing permission denied');
   });
 
+  test('reports a bare NotAllowedError rejection as a denial, not an unknown failure', async () => {
+    // react-native-webrtc rejects with a plain object whose message is the DOM
+    // exception name; that used to surface as "Unknown error".
+    mediaDevices.getDisplayMedia.mockRejectedValue({ message: 'NotAllowedError' });
+
+    const result = expectNotOk(await startScreenCapture());
+
+    expect(result.reason).toBe(SCREEN_SHARE_CANCELLED);
+    expect(result.message).toBe('Screen sharing permission denied');
+  });
+
+  test('does not re-prompt for consent after a denial of the audio request', async () => {
+    mediaDevices.getDisplayMedia.mockRejectedValue({ message: 'NotAllowedError' });
+
+    const result = expectNotOk(await startScreenCapture({ withAudio: true }));
+
+    // The consent token is consumed by the prompt, so the video-only retry
+    // could only ask a user who has already said no.
+    expect(mediaDevices.getDisplayMedia).toHaveBeenCalledTimes(1);
+    expect(result.reason).toBe(SCREEN_SHARE_CANCELLED);
+  });
+
   test('fails when no video track is returned and releases the stream', async () => {
     const audioTrack = makeTrack('audio');
     mediaDevices.getDisplayMedia.mockResolvedValue(makeStream({ audio: [audioTrack] }));
@@ -171,6 +193,19 @@ describe('getScreenShareErrorMessage', () => {
   test('describes permission denials', () => {
     const error = new Error('User denied screen capture');
     expect(getScreenShareErrorMessage(error)).toBe('Screen sharing permission denied');
+  });
+
+  test('names a non-Error rejection instead of calling it unknown', () => {
+    const { Platform } = require('react-native');
+    const originalOS = Platform.OS;
+    Platform.OS = 'android';
+    try {
+      expect(getScreenShareErrorMessage({ message: 'MediaProjection stopped' })).toBe(
+        'Unable to start screen sharing: MediaProjection stopped',
+      );
+    } finally {
+      Platform.OS = originalOS;
+    }
   });
 
   test('describes generic failures', () => {

@@ -225,7 +225,13 @@ foreground service and the system Picture-in-Picture (PiP) window:
 - **Picture-in-Picture** — pressing Home (or otherwise leaving the app) while a
   call is active shrinks the call into a small floating PiP window so you can
   keep watching while using other apps. PiP requires Android 8.0 (API 26) or
-  newer. Ending a call closes the PiP window (`exitPictureInPictureMode`) and
+  newer. The window is requested by the activity itself — from
+  `onUserLeaveHint()`, which fires while it is still resumed, plus
+  `setAutoEnterEnabled` on Android 12+ (API 31) for the Back gesture. JS never
+  asks for PiP on an `AppState` background transition: by then the activity has
+  left the resumed state and Android refuses with
+  `Activity must be resumed to enter picture-in-picture`. Ending a call closes
+  the PiP window (`exitPictureInPictureMode`) and
   releases the local stream so no frozen frame is left on screen, and closing
   the PiP window ends the call — the activity reports every PiP transition to
   JS through `MainActivity.onPictureInPictureModeChanged`.

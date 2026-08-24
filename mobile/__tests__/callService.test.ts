@@ -1,6 +1,7 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   enterPictureInPicture,
+  resetPictureInPictureRequestThrottle,
   exitPictureInPicture,
   isCallServiceAvailable,
   setPictureInPictureMuted,
@@ -9,6 +10,15 @@ import {
   subscribePictureInPictureAction,
   subscribePictureInPictureMode,
 } from '../src/callService';
+
+jest.mock('../src/appLogger', () => ({
+  logError: jest.fn(),
+  logInfo: jest.fn(),
+  logVerbose: jest.fn(),
+  logWarn: jest.fn(),
+}));
+
+const { logWarn } = require('../src/appLogger');
 
 const originalPlatform = Platform.OS;
 
@@ -21,6 +31,10 @@ function setCallServiceModule(module: any) {
 }
 
 describe('callService', () => {
+  beforeEach(() => {
+    resetPictureInPictureRequestThrottle();
+  });
+
   afterEach(() => {
     Platform.OS = originalPlatform;
     setCallServiceModule(null);
@@ -79,6 +93,34 @@ describe('callService', () => {
     Platform.OS = 'ios';
     setCallServiceModule(null);
     await expect(enterPictureInPicture()).resolves.toBe(false);
+    expect(logWarn).toHaveBeenCalledWith('Picture-in-Picture request skipped', {
+      reason: 'unsupported',
+    });
+  });
+
+  test('enterPictureInPicture suppresses a duplicate request in the same window', async () => {
+    Platform.OS = 'android';
+    const enterPictureInPictureMode = jest.fn().mockResolvedValue(true);
+    setCallServiceModule({ enterPictureInPictureMode });
+
+    await expect(enterPictureInPicture()).resolves.toBe(true);
+    // Backgrounding fires more than one transition, and only the first request
+    // can ever be granted; the rest just filled the log with refusals.
+    await expect(enterPictureInPicture()).resolves.toBe(false);
+    expect(enterPictureInPictureMode).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith(
+      'Picture-in-Picture request skipped',
+      expect.objectContaining({ reason: 'duplicate-request' }),
+    );
+  });
+
+  test('enterPictureInPicture warns instead of throwing when the activity refuses', async () => {
+    Platform.OS = 'android';
+    const enterPictureInPictureMode = jest.fn().mockResolvedValue(false);
+    setCallServiceModule({ enterPictureInPictureMode });
+
+    await expect(enterPictureInPicture()).resolves.toBe(false);
+    expect(logWarn).toHaveBeenCalledWith('Picture-in-Picture mode was refused by the activity');
   });
 
   test('stopCallService also leaves Picture-in-Picture so no frozen frame remains', () => {
