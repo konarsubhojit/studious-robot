@@ -24,6 +24,12 @@ export type NetworkSnapshot = {
   isConnected: boolean;
 };
 
+/** Optional extra callbacks for {@link subscribeNetworkChanges}. */
+export type NetworkChangeOptions = {
+  /** Called when the transport reports it is no longer usable. */
+  onConnectivityLost?: (snapshot: NetworkSnapshot) => void;
+};
+
 type NetInfoModule = {
   addEventListener: (listener: (state: unknown) => void) => (() => void) | undefined;
 };
@@ -69,12 +75,20 @@ function toSnapshot(state: unknown): NetworkSnapshot {
  *
  * Only *transitions* are reported: NetInfo re-emits its current state on
  * subscribe and on unrelated detail changes (signal strength, IP details),
- * none of which mean the media path moved. Losing connectivity is not
- * reported either — there is nothing to restart onto until it comes back.
+ * none of which mean the media path moved.
+ *
+ * Losing connectivity is reported separately through
+ * `options.onConnectivityLost`. There is still nothing to restart onto until it
+ * comes back — but it is the one moment a caller's recovery budget should stop
+ * running, because recovery is impossible until connectivity returns. This
+ * signal used to be logged and dropped.
  *
  * @returns an unsubscribe function; safe to call when nothing was subscribed.
  */
-export function subscribeNetworkChanges(listener: (change: { from: NetworkSnapshot | null; to: NetworkSnapshot; }) => void): () => void {
+export function subscribeNetworkChanges(
+  listener: (change: { from: NetworkSnapshot | null; to: NetworkSnapshot; }) => void,
+  options: NetworkChangeOptions = {}
+): () => void {
   const netInfo = loadNetInfo();
   if (!netInfo) return () => {};
 
@@ -90,6 +104,13 @@ export function subscribeNetworkChanges(listener: (change: { from: NetworkSnapsh
       if (last.type === next.type && last.isConnected === next.isConnected) return;
       if (!next.isConnected) {
         logInfo('[Network] connectivity lost', { from: last.type });
+        try {
+          options.onConnectivityLost?.(next);
+        } catch (error) {
+          logWarn('[Network] connectivity-lost listener threw', {
+            message: describeError(error),
+          });
+        }
         return;
       }
       logInfo('[Network] connectivity changed', { from: last.type, to: next.type });

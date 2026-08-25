@@ -74,6 +74,13 @@ const TRANSPORT_EVENTS = Object.freeze({
   CONNECT: 'connect',
   CONNECT_ERROR: 'connect_error',
   DISCONNECT: 'disconnect',
+  /**
+   * Emitted by the Engine.IO *manager* (not the socket) once its reconnection
+   * ladder is exhausted. Nothing listened for it, so an outage longer than the
+   * ladder left the call permanently unrecoverable until the user tapped
+   * Retry.
+   */
+  RECONNECT_FAILED: 'reconnect_failed',
 });
 
 /** Canonical acknowledgement error codes. */

@@ -46,6 +46,24 @@ export default function TabShell() {
     handleExportLogs,
   } = useCall();
   const chat = useChat();
+  // Context methods are pulled out rather than invoked as `chat.sendMessage(…)`
+  // or `callFlow.placeCall(…)`: `react-hooks/exhaustive-deps` treats a method
+  // *call* as a use of the whole container, which is precisely the whole-object
+  // dependency that would defeat the memoised renderers below (and the
+  // `screenRenderers` memo in `AppNavigator` that depends on them).
+  const {
+    cancelRecordingVoiceNote,
+    deleteMessage,
+    isUserBlocked,
+    pickAndSendAttachment,
+    reactToMessage,
+    retryMessage,
+    sendMessage,
+    sendTypingIndicator,
+    startRecordingVoiceNote,
+    stopRecordingVoiceNoteAndSend,
+  } = chat;
+  const { placeCall, unregisterUser, updateStatus } = callFlow;
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
 
@@ -59,11 +77,11 @@ export default function TabShell() {
         messages={chat.messagesByPeer[peerId] ?? []}
         highlightMessageId={messageId ?? null}
         onOpenProfile={() => openPeerProfile(peerId)}
-        onSendMessage={(body, options) => chat.sendMessage(peerId, body, options)}
-        onRetryMessage={message => chat.retryMessage(peerId, message.messageId)}
-        onDeleteMessage={message => chat.deleteMessage(peerId, message.messageId)}
+        onSendMessage={(body, options) => sendMessage(peerId, body, options)}
+        onRetryMessage={message => retryMessage(peerId, message.messageId)}
+        onDeleteMessage={message => deleteMessage(peerId, message.messageId)}
         onReactToMessage={(message, emoji, action) =>
-          chat.reactToMessage(peerId, message.messageId, emoji, action)
+          reactToMessage(peerId, message.messageId, emoji, action)
         }
         onDownloadAttachment={async message => {
           const result = await downloadAttachment({
@@ -71,7 +89,7 @@ export default function TabShell() {
             name: message?.attachment?.name,
             mimeType: message?.attachment?.mimeType,
           });
-          callFlow.updateStatus(
+          updateStatus(
             describeAttachmentDownloadResult(result),
             result.success ? 'success' : 'error',
           );
@@ -89,19 +107,46 @@ export default function TabShell() {
         isStartingCall={callFlow.isPlacingCall}
         isPeerTyping={Boolean(chat.typingByPeer[peerId])}
         isLoadingMessages={chat.isLoadingMessages}
-        onPickAttachment={kind => chat.pickAndSendAttachment(peerId, kind)}
-        onStartVoiceNote={() => chat.startRecordingVoiceNote()}
-        onStopVoiceNote={() => chat.stopRecordingVoiceNoteAndSend(peerId)}
-        onCancelVoiceNote={() => chat.cancelRecordingVoiceNote()}
+        onPickAttachment={kind => pickAndSendAttachment(peerId, kind)}
+        onStartVoiceNote={() => startRecordingVoiceNote()}
+        onStopVoiceNote={() => stopRecordingVoiceNoteAndSend(peerId)}
+        onCancelVoiceNote={() => cancelRecordingVoiceNote()}
         isUploadingAttachment={chat.isUploadingAttachment}
         attachmentUploadProgress={chat.attachmentUploadProgress}
         isRecordingVoiceNote={chat.isRecordingVoiceNote}
         attachmentsAvailable={chat.attachmentsAvailable}
         isVoiceNoteSupported={chat.isVoiceNoteSupported}
-        onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
+        onTypingChange={isTyping => sendTypingIndicator(peerId, isTyping)}
       />
     );
-  }, [callFlow, chat, insets.top, startAudioCallWith, startVideoCallWith]);
+  }, [
+    callFlow.isPlacingCall,
+    cancelRecordingVoiceNote,
+    chat.attachmentUploadProgress,
+    chat.attachmentsAvailable,
+    chat.currentUserId,
+    chat.handleLoadOlderMessages,
+    chat.isChatOffline,
+    chat.isLoadingMessages,
+    chat.isRecordingVoiceNote,
+    chat.isUploadingAttachment,
+    chat.isVoiceNoteSupported,
+    chat.messagesByPeer,
+    chat.peerPresence,
+    chat.typingByPeer,
+    deleteMessage,
+    insets.top,
+    pickAndSendAttachment,
+    reactToMessage,
+    retryMessage,
+    sendMessage,
+    sendTypingIndicator,
+    startAudioCallWith,
+    startRecordingVoiceNote,
+    startVideoCallWith,
+    stopRecordingVoiceNoteAndSend,
+    updateStatus,
+  ]);
 
   const renderChatList = useCallback(() => (
     <ChatListScreen
@@ -159,7 +204,7 @@ export default function TabShell() {
       <PeerProfileScreen
         peerId={peerId}
         presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
-        isBlocked={Boolean(chat.isUserBlocked?.(peerId))}
+        isBlocked={Boolean(isUserBlocked?.(peerId))}
         callHistory={callFlow.callHistory}
         currentUserId={chat.currentUserId}
         onBack={goBack}
@@ -170,7 +215,17 @@ export default function TabShell() {
         onUnblock={chat.unblockPeer}
       />
     );
-  }, [callFlow.callHistory, chat, startAudioCallWith, startVideoCallWith]);
+  }, [
+    callFlow.callHistory,
+    chat.blockPeer,
+    chat.chatPeerId,
+    chat.currentUserId,
+    chat.peerPresence,
+    chat.unblockPeer,
+    isUserBlocked,
+    startAudioCallWith,
+    startVideoCallWith,
+  ]);
 
   const renderCalls = useCallback(() => (
     <Lobby
@@ -179,7 +234,7 @@ export default function TabShell() {
       calleeId={callFlow.calleeId}
       onChangeCalleeId={callFlow.setCalleeId}
       onCall={() => {
-        callFlow.placeCall().catch(error => {
+        placeCall().catch(error => {
           logError('placeCall unhandled rejection', error);
         });
       }}
@@ -206,11 +261,25 @@ export default function TabShell() {
       onRedial={startVideoCallWith}
     />
   ), [
-    callFlow,
+    callFlow.callHistory,
+    callFlow.calleeId,
+    callFlow.calleePresence,
+    callFlow.callSummary,
+    callFlow.dismissCallSummary,
+    callFlow.editUserId,
+    callFlow.isServerUnreachable,
+    callFlow.markMissedCallsRead,
+    callFlow.missedCallCount,
+    callFlow.retryPresenceConnect,
+    callFlow.searchUsers,
+    callFlow.setCalleeId,
+    callFlow.status,
+    callFlow.userId,
     handleAutoLightingToggle,
     handleExportLogs,
     handleSpeakerDefaultToggle,
     isSettingsPanelVisible,
+    placeCall,
     setIsSettingsPanelVisible,
     settings,
     startVideoCallWith,
@@ -229,7 +298,7 @@ export default function TabShell() {
         // signed-out user's open conversation.
         resetNavigation();
         clearNavigationState();
-        callFlow.unregisterUser().catch(error => {
+        unregisterUser().catch(error => {
           logError('unregisterUser failed', error);
         });
       }}
@@ -241,12 +310,17 @@ export default function TabShell() {
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
     />
   ), [
-    callFlow,
+    callFlow.setSignalingUrl,
+    callFlow.signalingUrl,
+    callFlow.status,
+    callFlow.updateUserId,
+    callFlow.userId,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleIceTransportPolicyChange,
     settings.developerModeEnabled,
     settings.iceTransportPolicy,
+    unregisterUser,
   ]);
 
   return (

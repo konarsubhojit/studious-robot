@@ -506,6 +506,45 @@ test('call.connected: an unrecovered ICE failure ends the call without waiting f
   }
 });
 
+test('call.connected: each report is resolved from its own payload, not a shared binding', async () => {
+  // `iceState` used to be smuggled from `resolveTransition` to `onSuccess`
+  // through a mutable binding in the enclosing module scope. Two interleaved
+  // reports shared that binding, so the value one call logged could be the one
+  // the other call reported. It now travels on the `CallTransition` itself.
+  const { url, getCall, teardown } = await startServer({ callRateLimit: 100 });
+  let caller;
+  let carol;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    const carolSession = await createSession(url, 'user-carol');
+    const daveSession = await createSession(url, 'user-dave');
+    caller = await connect(url, { sessionId: callerSession });
+    carol = await connect(url, { sessionId: carolSession });
+
+    const healthyId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    const created = await postJson(url, '/calls', { calleeId: 'user-dave' }, carolSession);
+    const failingId = created.body.callId;
+    await postJson(url, `/calls/${failingId}/accept`, {}, daveSession);
+
+    // Interleaved: the failing report is resolved between the healthy one being
+    // resolved and its outcome being recorded, as far as the event loop allows.
+    const [healthyAck, failingAck] = await Promise.all([
+      emitWithAck(caller, 'call.connected', { version: 1, callId: healthyId, iceState: 'connected' }),
+      emitWithAck(carol, 'call.connected', { version: 1, callId: failingId, iceState: 'disconnected' }),
+    ]);
+    assert.equal(healthyAck.ok, true);
+    assert.equal(failingAck.ok, true);
+
+    assert.equal(getCall(healthyId)?.status, CONNECTED_CALL_STATUS);
+    assert.equal(getCall(healthyId)?.endReason, null);
+    assert.equal(getCall(failingId)?.status, 'ended');
+    assert.equal(getCall(failingId)?.endReason, 'media_failed');
+  } finally {
+    await teardown(caller, carol);
+  }
+});
+
 test('call.connected: an unvalidated iceState never picks the destination status', async () => {
   const { url, getCall, teardown } = await startServer();
   let caller;

@@ -46,14 +46,21 @@ export type SignalingClient = {
   ) => boolean;
   request: (event: string, payload: object) => Promise<any>;
   flushQueue: () => number;
+  dropQueuedEvents: (predicate: (item: QueuedEvent) => boolean) => number;
   getQueuedEventCount: () => number;
+};
+
+/** A fire-and-forget emit held for the next connection. */
+export type QueuedEvent = {
+  event: string;
+  payload: object;
 };
 
 /**
  * Create a typed client for an existing Socket.IO connection.
  */
 export function createSignalingClient(socket: Socket): SignalingClient {
-  const queue: { event: string; payload: object; }[] = [];
+  const queue: QueuedEvent[] = [];
 
   /**
    * Register a handler for a server event, validating the payload first.
@@ -153,12 +160,36 @@ export function createSignalingClient(socket: Socket): SignalingClient {
     return pending.length;
   }
 
+  /**
+   * Drop queued events that have been invalidated since they were queued.
+   *
+   * The queue is replayed wholesale on reconnect, which is fine for state
+   * reports but catastrophic for an event whose meaning has expired: a "my
+   * media failed" report queued during an outage would be replayed the moment
+   * the socket came back and end the very call the reconnect had just saved.
+   * The owner of the queued event is the only thing that knows it is stale, so
+   * it gets to say so.
+   *
+   * @returns how many events were dropped
+   */
+  function dropQueuedEvents(predicate: (item: QueuedEvent) => boolean): number {
+    let dropped = 0;
+    for (let index = queue.length - 1; index >= 0; index--) {
+      if (!predicate(queue[index])) continue;
+      const [removed] = queue.splice(index, 1);
+      dropped++;
+      logInfo('[Signaling] Dropped invalidated queued event', { event: removed.event });
+    }
+    return dropped;
+  }
+
   return {
     socket,
     on,
     emit,
     request,
     flushQueue,
+    dropQueuedEvents,
     getQueuedEventCount: () => queue.length,
   };
 }

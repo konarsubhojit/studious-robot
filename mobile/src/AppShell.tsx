@@ -197,6 +197,7 @@ function ActiveCallScreen() {
       connectionQuality={callFlow.connectionQuality}
       participantLabel={participantLabel}
       isReconnecting={callFlow.isReconnecting}
+      recoveryStatus={callFlow.recoveryStatus}
       onRetry={callFlow.handleRetryReconnect}
       onStageLayout={handleCallStageLayout}
       mainStreamUrl={streams.mainStreamUrl}

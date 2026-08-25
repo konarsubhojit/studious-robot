@@ -13,6 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
+import { parseNonNegativeNumber } from '../src/lib/env.ts';
 import { listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -166,4 +167,67 @@ test('retention: recent history is still served by GET /calls', async () => {
   } finally {
     await teardown();
   }
+});
+
+// ─── Environment parsing ─────────────────────────────────────────────────────
+//
+// Both windows document `0` as "skip this bound on this pass", but they were
+// read with `Number(env) || DEFAULT`, in which `0` is falsy: an operator who
+// disabled a bound silently got the default instead, and a typo that parsed to
+// `NaN` was indistinguishable from an unset variable.
+
+test('retention: CALL_RETENTION_MS=0 disables age eviction instead of defaulting', async () => {
+  const previous = process.env.CALL_RETENTION_MS;
+  process.env.CALL_RETENTION_MS = '0';
+  try {
+    const { url, getCall, pruneTerminalCalls, teardown } = await startServer();
+    try {
+      const callerSession = await createSession(url, 'user-alice');
+      const calleeSession = await createSession(url, 'user-bob');
+      const callId = await completeCall(url, callerSession, calleeSession);
+
+      // Far beyond the 24h default: with `0` swallowed as falsy this call would
+      // have been evicted.
+      assert.equal(pruneTerminalCalls(Date.now() + 1000 * HOUR_MS), 0);
+      assert.ok(getCall(callId) !== null);
+    } finally {
+      await teardown();
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CALL_RETENTION_MS;
+    else process.env.CALL_RETENTION_MS = previous;
+  }
+});
+
+test('retention: MAX_RETAINED_CALLS=0 disables the ceiling instead of defaulting', async () => {
+  const previous = process.env.MAX_RETAINED_CALLS;
+  process.env.MAX_RETAINED_CALLS = '0';
+  try {
+    const { url, getCall, pruneTerminalCalls, teardown } = await startServer({ callRateLimit: 100 });
+    try {
+      const callerSession = await createSession(url, 'user-alice');
+      const calleeSession = await createSession(url, 'user-bob');
+      const callIds: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        callIds.push(await completeCall(url, callerSession, calleeSession));
+      }
+
+      assert.equal(pruneTerminalCalls(Date.now()), 0);
+      assert.equal(callIds.filter((id) => getCall(id) !== null).length, 6);
+    } finally {
+      await teardown();
+    }
+  } finally {
+    if (previous === undefined) delete process.env.MAX_RETAINED_CALLS;
+    else process.env.MAX_RETAINED_CALLS = previous;
+  }
+});
+
+test('retention: a malformed window falls back to the default rather than to zero', () => {
+  assert.equal(parseNonNegativeNumber('0', 42), 0);
+  assert.equal(parseNonNegativeNumber('not-a-number', 42), 42);
+  assert.equal(parseNonNegativeNumber('-1', 42), 42);
+  assert.equal(parseNonNegativeNumber('', 42), 42);
+  assert.equal(parseNonNegativeNumber(undefined, 42), 42);
+  assert.equal(parseNonNegativeNumber('1500', 42), 1500);
 });

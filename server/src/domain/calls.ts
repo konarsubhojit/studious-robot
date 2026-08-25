@@ -310,6 +310,21 @@ function endCallsForDisconnectedParticipant(
 }
 
 /**
+ * Bounds applied by {@link pruneTerminalCalls}.
+ *
+ * Named rather than written inline so the declaration stays inside the
+ * `declaration-formatting` guard, which only matches `type`/`interface` lines.
+ *
+ * `0` means "skip this bound on this pass" for both windows, so a deployment
+ * can disable age-based or count-based eviction without disabling the other.
+ */
+type PruneTerminalCallsOptions = {
+  maxAgeMs?: number;
+  maxRetainedCalls?: number;
+  now?: number;
+};
+
+/**
  * Drop terminal calls from the in-memory map once they are older than the
  * retention window, and enforce a hard ceiling on how many are retained.
  *
@@ -328,7 +343,14 @@ function endCallsForDisconnectedParticipant(
  *
  * @returns Number of calls evicted.
  */
-function pruneTerminalCalls(state: ServerState, { maxAgeMs = DEFAULT_CALL_RETENTION_MS, maxRetainedCalls = DEFAULT_MAX_RETAINED_CALLS, now = Date.now() }: { maxAgeMs?: number; maxRetainedCalls?: number; now?: number; } = {}): number {
+function pruneTerminalCalls(
+  state: ServerState,
+  {
+    maxAgeMs = DEFAULT_CALL_RETENTION_MS,
+    maxRetainedCalls = DEFAULT_MAX_RETAINED_CALLS,
+    now = Date.now(),
+  }: PruneTerminalCallsOptions = {}
+): number {
   const retained: { callId: string; endedAtMs: number; }[] = [];
   let evicted = 0;
 
