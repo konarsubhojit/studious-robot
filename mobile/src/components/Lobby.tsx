@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -195,7 +195,7 @@ export type LobbyProps = {
  * screens.  The developer tools (diagnostic log export and the media settings
  * panel) are shown only when `developerMode` is enabled in Settings.
  */
-export default function Lobby({
+function Lobby({
   // ── Server-authoritative call flow ──────────────────────────────────────
   userId,
   onChangeUserId,
@@ -706,3 +706,9 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: 1,
     },
   });
+
+/**
+ * Memoized: the calls tab re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(Lobby);

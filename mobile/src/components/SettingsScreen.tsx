@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -92,7 +92,7 @@ export type SettingsScreenProps = {
  * state is committed only when the user presses the matching "Save" button so
  * an in-progress edit never mutates the live identity.
  */
-export default function SettingsScreen({
+function SettingsScreen({
   userId,
   onSaveUserId,
   signalingUrl,
@@ -454,3 +454,9 @@ const createStyles = (colors: ThemeColors) =>
       opacity: 0.78,
     },
   });
+
+/**
+ * Memoized: the settings screen re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(SettingsScreen);

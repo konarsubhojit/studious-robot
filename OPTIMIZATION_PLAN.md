@@ -33,10 +33,10 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 | ID | Task | Status |
 | -- | ---- | ------ |
-| P1.1a | Memoize `ScreenRenderersContext` value; `useCallback` the `TabShell` renderers | ⬜ |
-| P1.1b | Move `elapsedCallSeconds` out of the shared hook into `useCallElapsedSeconds` | ⬜ |
-| P1.1c | `React.memo` the leaf screens | ⬜ |
-| P1.1d | Render-count regression test under fake timers | ⬜ |
+| P1.1a | Memoize `ScreenRenderersContext` value; `useCallback` the `TabShell` renderers | ✅ |
+| P1.1b | Move `elapsedCallSeconds` out of the shared hook into `useCallElapsedSeconds` | ✅ |
+| P1.1c | `React.memo` the leaf screens | ✅ |
+| P1.1d | Render-count regression test under fake timers | ✅ |
 
 ### Phase 3 — Startup / bundle
 
@@ -91,3 +91,28 @@ The server's heartbeat timeout was the literal `150_000`; it is now derived as
 (`30_000 * 5`), which is the same number. `heartbeat-timing.test.ts` pins the
 values so the move cannot have changed behaviour and the two edges cannot drift
 apart again.
+
+### P1.1: what actually changed
+
+The root cause was that `useCallFlow` returns a fresh object on every render and
+ticked `elapsedCallSeconds` once a second. That made the `CallProvider` context
+identity change every second, which changed the `ChatProvider` context derived
+from it, which re-rendered every mounted screen — including an open conversation
+and all of its message bubbles — for the entire duration of every call.
+
+The fix inverts the direction of the data: `useCallFlow` now publishes
+`callConnectedAtMs`, a value that changes exactly twice per call, and the two or
+three components that display a duration derive the seconds locally through
+`useCallElapsedSeconds`. The timer no longer crosses a provider boundary at all.
+
+`callTimerRenderIsolation.test.tsx` locks this in. It asserts both halves of the
+property — that five seconds of call time advance the banner while leaving the
+tab shell's render count untouched, *and* that a genuine state change still
+re-renders the shell, so the first assertion cannot silently degrade into
+"nothing is being counted".
+
+Note on P1.1c: `React.memo` on the leaf screens is defence in depth rather than
+the main win. Because the screens are reached through the `render*` indirection,
+the effective guard is that those renderers are now stable, so the route
+components do not re-render and the elements are never recreated. The `memo`
+wrappers matter for the paths where a parent re-renders for an unrelated reason.

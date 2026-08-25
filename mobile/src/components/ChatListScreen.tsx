@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -182,7 +182,7 @@ export type ChatListScreenProps = {
  * Teams/Slack-style chat list: a searchable contact directory that swaps to
  * the conversation list once the search query is cleared.
  */
-export default function ChatListScreen({
+function ChatListScreen({
   conversations = [],
   onOpenConversation,
   onSearchUsers,
@@ -589,3 +589,9 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: spacing.lg,
     },
   });
+
+/**
+ * Memoized: the conversation / contact list re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(ChatListScreen);

@@ -5,6 +5,7 @@ import { announceForAccessibility, describeCallState } from './accessibilityAnno
 import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
 import { useCall } from './call/CallProvider';
+import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
 import CallScreen from './components/CallScreen';
 import ErrorState from './components/ErrorState';
 import FloatingCallBubble from './components/FloatingCallBubble';
@@ -186,10 +187,13 @@ function ActiveCallScreen() {
     minimizeCall,
     endCall,
   } = useCall();
+  // Ticked here rather than in the call flow, so the per-second update
+  // re-renders only this screen instead of every mounted screen in the app.
+  const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
 
   return (
     <CallScreen
-      elapsedCallSeconds={callFlow.elapsedCallSeconds}
+      elapsedCallSeconds={elapsedCallSeconds}
       connectionQuality={callFlow.connectionQuality}
       participantLabel={participantLabel}
       isReconnecting={callFlow.isReconnecting}
@@ -231,11 +235,12 @@ function ActiveCallScreen() {
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {
   const { callFlow, participantLabel, expandCall } = useCall();
+  const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
 
   return (
     <InCallBanner
       participantLabel={participantLabel}
-      elapsedCallSeconds={callFlow.elapsedCallSeconds}
+      elapsedCallSeconds={elapsedCallSeconds}
       onExpand={expandCall}
     />
   );
@@ -244,11 +249,12 @@ function MinimizedCallBanner() {
 /** Draggable bubble overlaying the tab shell while a call is minimized. */
 function MinimizedCallBubble() {
   const { callFlow, participantLabel, expandCall, endCall, dismissBubble } = useCall();
+  const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
 
   return (
     <FloatingCallBubble
       participantLabel={participantLabel}
-      elapsedCallSeconds={callFlow.elapsedCallSeconds}
+      elapsedCallSeconds={elapsedCallSeconds}
       isMuted={callFlow.isMuted}
       isScreenSharing={callFlow.isScreenSharing}
       onExpand={expandCall}

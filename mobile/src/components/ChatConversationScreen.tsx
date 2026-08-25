@@ -711,7 +711,7 @@ export type ChatConversationScreenProps = {
  * separators and sender/time grouping, and a composer with a typing
  * indicator.
  */
-export default function ChatConversationScreen({
+function ChatConversationScreen({
   peerId,
   messages = [],
   highlightMessageId = null,
@@ -1751,3 +1751,9 @@ const createStyles = (colors: ThemeColors) =>
       elevation: 2,
     },
   });
+
+/**
+ * Memoized: an open conversation re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(ChatConversationScreen);

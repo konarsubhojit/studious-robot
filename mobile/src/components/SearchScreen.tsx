@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -144,7 +144,7 @@ export type SearchScreenProps = {
  * aborted on every new keystroke, so a fast typist issues one request and can
  * never see the results of a stale query.
  */
-export default function SearchScreen({
+function SearchScreen({
   onSearchContacts,
   onSearchMessages,
   conversations = [],
@@ -578,3 +578,9 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.accent,
     },
   });
+
+/**
+ * Memoized: the search screen re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(SearchScreen);

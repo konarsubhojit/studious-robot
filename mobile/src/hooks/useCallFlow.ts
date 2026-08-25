@@ -360,7 +360,15 @@ export default function useCallFlow({
   const manualAudioRouteRef = useRef((null as string | null));
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
-  const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
+  /**
+   * Epoch milliseconds at which the current call connected, or `null`.
+   *
+   * Published instead of a ticking `elapsedCallSeconds` so this hook's result —
+   * and therefore the call/chat context identity derived from it — changes
+   * exactly twice per call rather than once per second. Components that show a
+   * duration derive it locally with `useCallElapsedSeconds`.
+   */
+  const [callConnectedAtMs, setCallConnectedAtMs] = useState((null as number | null));
   const [audioDevices, setAudioDevices] = useState(
     ({
       available: [],
@@ -392,7 +400,6 @@ export default function useCallFlow({
   // (rapid double-tap) without waiting for the state update to flush.
   const isPlacingCallRef = useRef(false);
   const callConnectedAtRef = useRef((null as number | null));
-  const elapsedTimerRef = useRef((null as ReturnType<typeof setInterval> | null));
   // Guards against re-emitting `call.connected` for the same call (both ICE
   // and connection-state callbacks fire, often more than once).
   const connectedReportedCallIdRef = useRef((null as string | null));
@@ -835,11 +842,7 @@ export default function useCallFlow({
     if (activeCallIdRef.current) {
       Telemetry.trackCallConnected(activeCallIdRef.current);
     }
-    setElapsedCallSeconds(0);
-    elapsedTimerRef.current = setInterval(() => {
-      if (!callConnectedAtRef.current) return;
-      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
-    }, 1000);
+    setCallConnectedAtMs(callConnectedAtRef.current);
 
     // Apply bitrate caps now that media is flowing; best-effort.
     const pc = peerConnectionRef.current;
@@ -1491,10 +1494,7 @@ export default function useCallFlow({
       }
 
       callConnectedAtRef.current = null;
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
-      }
+      setCallConnectedAtMs(null);
       stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       clearMediaFailureReport();
       cancelIceRestartsRef.current?.('call-ended');
@@ -1509,7 +1509,7 @@ export default function useCallFlow({
       setActiveCall(null);
       setIncomingCall(null);
       setIsReconnecting(false);
-      setElapsedCallSeconds(0);
+      setCallConnectedAtMs(null);
       setIsCompactView(false);
       setIsLocalPrimary(false);
       setAudioDevices({ available: [], selected: null });
@@ -2308,10 +2308,6 @@ export default function useCallFlow({
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
-      }
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
       }
       stopCallHeartbeat('unmount');
       clearMediaFailureReport();
@@ -3568,7 +3564,7 @@ export default function useCallFlow({
     isCompactView,
     isLocalPrimary,
     isFrontCamera,
-    elapsedCallSeconds,
+    callConnectedAtMs,
     audioDevices,
     connectionQuality,
     selectedCandidatePair,
