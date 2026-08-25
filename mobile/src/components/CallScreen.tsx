@@ -10,6 +10,7 @@ import ErrorState from './ErrorState';
 import ReconnectBanner from './ReconnectBanner';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
+import type { CallRecoveryStatus } from '../hooks/useCallFlow';
 import type { MutableRefObject } from 'react';
 import type { ThemeColors } from '../theme';
 
@@ -29,6 +30,7 @@ export default function CallScreen({
   participantLabel = null,
   iceTransportPolicy,
   isReconnecting,
+  recoveryStatus = null,
   onRetry,
   onStageLayout,
   mainStreamUrl,
@@ -67,8 +69,12 @@ export default function CallScreen({
         status?: CallStatus;
         onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
         isReconnecting?: boolean;
+        recoveryStatus?: CallRecoveryStatus | null;
     }) {
   const styles = useThemedStyles(createStyles);
+  // A media-only failure (ICE down, socket up) is a recovery too: gating the
+  // banner on socket loss alone left the most common failure case invisible.
+  const isRecovering = Boolean(isReconnecting || recoveryStatus);
 
   const [visibleStatus, setVisibleStatus] = useState(
     (null as CallStatus | null),
@@ -95,7 +101,7 @@ export default function CallScreen({
     const message = status?.message?.trim();
     const severity = status?.severity || 'info';
 
-    if (isCompact || isReconnecting || !message) {
+    if (isCompact || isRecovering || !message) {
       setVisibleStatus(null);
       return undefined;
     }
@@ -112,7 +118,7 @@ export default function CallScreen({
     }, STATUS_AUTO_HIDE_MS);
 
     return () => clearTimeout(timeout);
-  }, [isCompact, isReconnecting, status?.message, status?.severity]);
+  }, [isCompact, isRecovering, status?.message, status?.severity]);
 
   // Leaving compact mode (Picture-in-Picture / minimised call) must bring the
   // chrome back: the overlay was force-hidden on the way in, and without this
@@ -191,7 +197,9 @@ export default function CallScreen({
               iceTransportPolicy={iceTransportPolicy}
               onMinimize={onMinimize}
             />
-            {isReconnecting ? <ReconnectBanner onRetry={onRetry} /> : null}
+            {isRecovering ? (
+              <ReconnectBanner onRetry={onRetry} recovery={recoveryStatus} />
+            ) : null}
             {visibleStatus?.severity === 'error' ? (
               <ErrorState
                 title="Call problem"

@@ -55,8 +55,60 @@ const DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS =
  */
 const CALL_HEARTBEAT_DUE_MS = CALL_HEARTBEAT_INTERVAL_MS - 1_000;
 
+/**
+ * How long a client keeps trying to recover a call whose media path broke
+ * before it gives up and reports the failure.
+ *
+ * This is the *client's* budget, and it is the number that decides when a call
+ * that hit a Wi-Fi⇄cellular handoff ends. It lives here for the same reason
+ * the heartbeat pair does: the server's own disconnect grace has to stay
+ * outside it, and two independent literals in two packages is exactly how that
+ * ordering silently drifts.
+ *
+ * The budget is spent on *attempts*, not on waiting — a client pauses it while
+ * recovery is impossible (no connectivity, no socket) — so 30s here means 30s
+ * of actually trying.
+ */
+const CALL_RECOVERY_BUDGET_MS = 30_000;
+
+/**
+ * Absolute ceiling on one recovery episode, however many times a flapping
+ * interface extends it.
+ *
+ * A genuine new network transition extends the budget rather than being
+ * swallowed, which without a ceiling would let an interface that flaps forever
+ * keep a dead call alive forever.
+ */
+const CALL_RECOVERY_MAX_EPISODE_MS = CALL_RECOVERY_BUDGET_MS * 3;
+
+/**
+ * Allowance for how long the server takes to *notice* a socket is gone.
+ *
+ * With `pingInterval` 10s and `pingTimeout` 8s the server can take ~18s to
+ * declare a socket dead, and only then does the disconnect grace start. Without
+ * this allowance a grace period equal to the client budget would still expire
+ * first, and the server — not the client's own decision — would be what ends
+ * the call.
+ */
+const PARTICIPANT_DISCONNECT_DETECTION_ALLOWANCE_MS = 20_000;
+
+/**
+ * Grace period after a socket disconnect before an in-progress call whose
+ * participants have no sockets left is ended with `participant_disconnected`.
+ *
+ * Derived so the server is always the *outer* bound: client budget < server
+ * grace < heartbeat timeout. `server/test/heartbeat-timing.test.ts` asserts
+ * that ordering so it cannot regress.
+ */
+const DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS =
+  CALL_RECOVERY_BUDGET_MS + PARTICIPANT_DISCONNECT_DETECTION_ALLOWANCE_MS;
+
 export {
   CALL_HEARTBEAT_INTERVAL_MS,
+  CALL_RECOVERY_BUDGET_MS,
+  CALL_RECOVERY_MAX_EPISODE_MS,
+  PARTICIPANT_DISCONNECT_DETECTION_ALLOWANCE_MS,
+  DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   CALL_HEARTBEAT_MISSED_BEAT_ALLOWANCE,
   CALL_HEARTBEAT_DUE_MS,
   DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,

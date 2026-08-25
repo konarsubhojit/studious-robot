@@ -8,7 +8,9 @@
 
 import {
   CALL_HEARTBEAT_INTERVAL_MS,
+  CALL_RECOVERY_BUDGET_MS,
   DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+  DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   SIGNALING_VERSION,
 } from '../../shared/index.ts';
 
@@ -119,9 +121,13 @@ const DEFAULT_MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
 /**
  * Grace period after a socket disconnect before an in-progress call whose
  * participants have no sockets left is ended with `participant_disconnected`.
- * Long enough to absorb an ordinary Socket.IO reconnect.
+ *
+ * Re-exported from `shared/signaling/timing.ts`, where it is derived from the
+ * client's recovery budget plus the ping-timeout detection lag, rather than
+ * redeclared here as a literal: it used to be 15s, which is *below* the window
+ * in which a client is still actively recovering, so the server ended calls
+ * the client would have saved.
  */
-const DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS = 15_000;
 
 /**
  * Socket.IO heartbeat tuning.
@@ -255,6 +261,7 @@ export {
   DEFAULT_MAX_CALL_DURATION_MS,
   DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
   CALL_HEARTBEAT_INTERVAL_MS,
+  CALL_RECOVERY_BUDGET_MS,
   DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   DEFAULT_SOCKET_PING_INTERVAL_MS,
   DEFAULT_SOCKET_PING_TIMEOUT_MS,
