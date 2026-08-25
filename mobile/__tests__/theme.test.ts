@@ -45,6 +45,15 @@ const FOREGROUNDS = [
   'danger',
   'success',
   'warning',
+  // Semantic aliases layered over the raw palette. They point at the tokens
+  // above today, but the pairing has to be asserted independently or a future
+  // retune of, say, `positive` could silently break contrast everywhere the
+  // alias is used.
+  'onSurface',
+  'onSurfaceVariant',
+  'positive',
+  'negative',
+  'notice',
 ];
 
 describe('theme palettes', () => {
@@ -92,6 +101,20 @@ describe('theme palettes', () => {
     const colors = palettes[(scheme as 'light'|'dark')];
     expect(contrast(colors.border, colors.surface)).toBeGreaterThanOrEqual(3);
     expect(contrast(colors.border, colors.background)).toBeGreaterThanOrEqual(3);
+    // `outline` is the semantic alias screens now reach for; it has to clear
+    // the same bar as the raw token it fronts.
+    expect(contrast(colors.outline, colors.surface)).toBeGreaterThanOrEqual(3);
+    expect(contrast(colors.outline, colors.background)).toBeGreaterThanOrEqual(3);
+  });
+
+  test.each(['light', 'dark'])('%s audio-call canvas keeps its content legible', scheme => {
+    const colors = palettes[(scheme as 'light'|'dark')];
+    // `ambient` backs the audio-call canvas and, like `stage`, stays dark in
+    // both schemes — so its foreground is `onOverlay`, never `textPrimary`.
+    expect(contrast(colors.onOverlay, colors.ambient)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(colors.onOverlay, colors.ambient)).toBeGreaterThan(
+      contrast(palettes.light.textPrimary, colors.ambient),
+    );
   });
 });
 

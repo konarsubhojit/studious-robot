@@ -20,10 +20,18 @@ const COMPONENTS_DIR = path.join(__dirname, '..', '..', 'src', 'components');
 /** `#abc` / `#aabbcc` / `#aabbccdd`, and `rgb()` / `rgba()` / `hsl()`. */
 const COLOR_LITERAL = /(#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\()/;
 
-function componentFiles(): string[] {
-  return readdirSync(COMPONENTS_DIR)
-    .filter(name => name.endsWith('.tsx') || name.endsWith('.ts'))
-    .map(name => path.join(COMPONENTS_DIR, name));
+/**
+ * Every component file, including the shared primitives in
+ * `components/primitives/`. The walk is recursive because the primitives are
+ * exactly the files that must not spell a colour — they are the ones every
+ * screen now paints with.
+ */
+function componentFiles(dir: string = COMPONENTS_DIR): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return componentFiles(full);
+    return entry.name.endsWith('.tsx') || entry.name.endsWith('.ts') ? [full] : [];
+  });
 }
 
 describe('design tokens', () => {

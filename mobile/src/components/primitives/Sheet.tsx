@@ -1,0 +1,105 @@
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useThemedStyles } from '../../ThemeContext';
+import { elevation, overlay, radius, spacing, typography } from '../../theme';
+import type { ReactNode } from 'react';
+import type { ThemeColors } from '../../theme';
+
+export type SheetProps = {
+  visible: boolean;
+  onClose: () => void;
+  /** Heading shown above the content, and the sheet's accessible name. */
+  title: string;
+  /** Optional one-line explanation under the title. */
+  subtitle?: string;
+  children: ReactNode;
+  testID?: string;
+};
+
+/**
+ * Bottom-sheet container: scrim, rounded top corners, grabber, safe-area
+ * bottom padding.
+ *
+ * `AttachSheet` and `AudioOutputMenu` each carried their own copy of this
+ * modal/backdrop/scrim arrangement, at two different corner radii and with
+ * only one of them padding the home-indicator inset. The People picker and the
+ * in-call More menu are the third and fourth callers, so it is a primitive.
+ *
+ * The scrim is a labelled `Pressable`, so dismissing by tapping outside is
+ * reachable without sight; `onRequestClose` covers Android's back gesture.
+ */
+export default function Sheet({
+  visible,
+  onClose,
+  title,
+  subtitle,
+  children,
+  testID,
+}: SheetProps) {
+  const styles = useThemedStyles(createStyles);
+  const insets = useSafeAreaInsets();
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable
+        style={styles.backdrop}
+        accessibilityRole="button"
+        accessibilityLabel={`Close ${title}`}
+        onPress={onClose}
+        testID={testID ? `${testID}-backdrop` : undefined}>
+        {/* Swallow taps on the sheet itself so they never reach the scrim. */}
+        <Pressable
+          style={[styles.sheet, { paddingBottom: spacing.md + Math.max(insets.bottom, 0) }]}
+          accessibilityViewIsModal
+          onPress={() => {}}
+          testID={testID}>
+          <View style={styles.grabber} accessibilityElementsHidden importantForAccessibility="no" />
+          <Text style={styles.title} accessibilityRole="header">
+            {title}
+          </Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {children}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** @param colors */
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      flex: 1,
+      backgroundColor: overlay.scrimSoft,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
+      backgroundColor: colors.surfaceRaised,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      gap: spacing.xs,
+      maxHeight: '80%',
+      ...elevation(colors.shadow).high,
+    },
+    grabber: {
+      alignSelf: 'center',
+      width: 36,
+      height: 4,
+      borderRadius: radius.pill,
+      backgroundColor: colors.outlineVariant,
+      marginBottom: spacing.sm,
+    },
+    title: {
+      ...typography.headline,
+      color: colors.onSurface,
+    },
+    subtitle: {
+      ...typography.body,
+      color: colors.onSurfaceVariant,
+      marginBottom: spacing.xs,
+    },
+  });
