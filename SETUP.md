@@ -60,7 +60,8 @@ npm start          # production mode
 The server listens on `PORT` (default **4173**) and exposes:
 
 - `GET /health` — liveness probe
-- `GET /metrics` — call funnel counters + latency histograms
+- `GET /metrics` — call funnel counters, latency histograms, and per-operation
+  SQL/Mongo/Redis query timings (see *Query timing* below)
 - `POST /session` — create / refresh a session token
 - WebSocket (Socket.IO) signaling on the same port
 
@@ -136,6 +137,15 @@ R2_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 R2_PUBLIC_BASE_URL=https://media.example.com   # bucket's public/CDN origin
 # R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com  # optional override
 R2_PRESIGN_TTL_SECONDS=300     # optional, default shown (max 3600)
+
+# ── Query timing (SQL / Mongo / Redis) ──────────────────────────────────────
+# Every datastore round trip is timed, counted per operation on GET /metrics,
+# and logged to the console. Queries at/over the slow threshold are logged as
+# warnings; the rest are logged only when VERBOSE_LOGGING / LOG_LEVEL=debug.
+DB_QUERY_TIMING=true           # optional, default shown (false disables timing)
+DB_SLOW_QUERY_MS=100           # Postgres slow-query threshold, default shown
+MONGO_SLOW_QUERY_MS=100        # MongoDB slow-query threshold, default shown
+REDIS_SLOW_QUERY_MS=100        # Redis cache slow-query threshold, default shown
 ```
 
 > **Tip:** APNs and Notification Hub variables are optional.
@@ -154,6 +164,37 @@ npx drizzle-kit migrate
 ```
 
 The schema lives in `server/db/schema.ts`; migrations are in `server/db/migrations/`.
+
+### Query timing
+
+Every Postgres, MongoDB and Redis round trip is measured and reported in two
+places:
+
+- **Server console.** A query at or over the slow threshold (default **100 ms**)
+  logs `[db-timing] SLOW backend=… op=… kind=read|write target=… durationMs=…`,
+  as does every failed query. Set `VERBOSE_LOGGING=true` (or `LOG_LEVEL=debug`)
+  to log *every* query through the redacting verbose logger instead of only the
+  slow ones. Only the shape of a query is ever logged — never statement
+  parameters, filter documents or message bodies.
+- **`GET /metrics`.** `counters.db_*` give the totals (queries, reads, writes,
+  slow, errors), `histograms.{pg,mongo,redis}_query_duration_ms` give the
+  latency distribution, and `dbQueries` lists every operation sorted by total
+  time spent — so the costliest operation is the first row:
+
+```json
+{
+  "dbQueries": [
+    { "backend": "mongo", "operation": "listConversations", "kind": "read",
+      "count": 42, "errors": 0, "slow": 3, "totalMs": 5120, "meanMs": 121.9, "maxMs": 480.2 },
+    { "backend": "pg", "operation": "insert", "kind": "write",
+      "count": 190, "errors": 0, "slow": 0, "totalMs": 812, "meanMs": 4.27, "maxMs": 31.5 }
+  ]
+}
+```
+
+The Android app pulls the same snapshot into its **Export Logs** file, so the
+exported `wetalk-logs-*.txt` ends with a `--- server query timings ---` table
+(and says why when the server is unreachable).
 
 ### Redis
 
