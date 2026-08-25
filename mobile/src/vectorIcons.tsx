@@ -133,6 +133,7 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
 
   // ── Conversation states ──────────────────────────────────────────────────
   messageQueued: { icon: 'clock-outline', emoji: '🕘' },
+  messageReply: { icon: 'reply-outline', emoji: '↩' },
   messageSent: { icon: 'check', emoji: '✓' },
   messageDelivered: { icon: 'check-all', emoji: '✓✓' },
   messageRead: { icon: 'check-all', emoji: '✓✓' },

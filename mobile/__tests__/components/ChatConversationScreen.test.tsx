@@ -199,6 +199,60 @@ describe('ChatConversationScreen', () => {
     expect(onSendMessage).toHaveBeenCalledWith('oops');
   });
 
+  test('every delivery state renders in the same footer slot', () => {
+    // Ticks used to appear only at the end of a group, while "Sending…" and
+    // "Failed to send" hung below the bubble in two other places, so a message
+    // changed shape as it progressed.
+    const footerOf = (message: any) => {
+      const tree = render({
+        peerId: 'user-bob',
+        messages: [message],
+        onSendMessage: jest.fn(),
+        onBack: jest.fn(),
+        currentUserId: 'user-alice',
+      });
+      return ['chat-message-pending', 'chat-message-failed', 'chat-message-tick'].filter(
+        id => findByTestId(tree, id) !== null,
+      );
+    };
+
+    expect(footerOf(makeMessage({ senderId: 'user-alice', pending: true }))).toEqual([
+      'chat-message-pending',
+    ]);
+    expect(footerOf(makeMessage({ senderId: 'user-alice', failed: true }))).toEqual([
+      'chat-message-failed',
+    ]);
+    expect(footerOf(makeMessage({ senderId: 'user-alice' }))).toEqual(['chat-message-tick']);
+  });
+
+  test("a pending message says 'Queued' rather than 'Sending…' while offline", () => {
+    const pending = makeMessage({ senderId: 'user-alice', pending: true });
+    const props = {
+      peerId: 'user-bob',
+      messages: [pending],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    };
+
+    expect(findByTestId(render(props), 'chat-message-pending').props.children).toBe('Sending…');
+    expect(
+      findByTestId(render({ ...props, isOffline: true }), 'chat-message-pending').props.children,
+    ).toBe('Queued');
+  });
+
+  test("a peer's message never shows a delivery state — it isn't ours to report", () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-tick')).toBeNull();
+    expect(findByTestId(tree, 'chat-message-pending')).toBeNull();
+  });
+
   test('swiping an own message exposes delete, and retry for failed sends', () => {
     const onDeleteMessage = jest.fn();
     const onRetryMessage = jest.fn();
@@ -237,7 +291,7 @@ describe('ChatConversationScreen', () => {
     expect(onRetryMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
   });
 
-  test('shows the offline banner only while offline', () => {
+  test('shows the offline notice only while offline', () => {
     const props = {
       peerId: 'user-bob',
       messages: [makeMessage()],
@@ -247,10 +301,15 @@ describe('ChatConversationScreen', () => {
     };
 
     const online = render(props);
-    expect(findByTestId(online, 'status-banner')).toBeNull();
+    expect(findByTestId(online, 'chat-offline-notice')).toBeNull();
 
+    // Offline is now one of the four notices in the stack above the composer,
+    // in the same geometry as the rest, rather than a `StatusBanner` wedged
+    // between the header and the list.
     const offline = render({ ...props, isOffline: true });
-    expect(findByTestId(offline, 'status-banner').props.children).toContain('Offline');
+    const notice = findByTestId(offline, 'chat-offline-notice');
+    const text = notice.findAll((n: any) => typeof n.props?.children === 'string');
+    expect(text.some((n: any) => n.props.children.includes('Offline'))).toBe(true);
   });
 
   test('scrolling to the top calls onLoadOlder', () => {
@@ -1240,8 +1299,10 @@ describe('ChatConversationScreen attachments', () => {
 
     const notice = findByTestId(tree, 'chat-attachment-upload-progress');
     expect(notice).not.toBeNull();
-    const text = notice.findAll((n: any) => typeof n.props?.children === 'string')[0];
-    expect(text.props.children).toContain('42%');
+    const text = notice
+      .findAll((n: any) => typeof n.props?.children === 'string')
+      .map((n: any) => n.props.children);
+    expect(text.some((value: string) => value.includes('42%'))).toBe(true);
   });
 
   test('shows a download action for sent file attachments', () => {

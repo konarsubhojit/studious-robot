@@ -23,17 +23,16 @@ import { logWarn } from '../appLogger';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { isAudioMimeType, isVideoMimeType } from '../videoPlayback';
-import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AttachSheet from './AttachSheet';
 import AudioAttachmentPlayer from './AudioAttachmentPlayer';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
 import MediaViewer from './MediaViewer';
-import { Icon } from './primitives';
-import StatusBanner from './StatusBanner';
+import { Avatar, Chip, FAB, Icon, Skeleton } from './primitives';
 import SwipeableRow from './SwipeableRow';
 
 import type { CallActivity, ChatMessage } from '../hooks/useMessaging';
+import type { ReactNode } from 'react';
 import type { MediaViewerItem } from './MediaViewer';
 import type { ThemeColors } from '../theme';
 import type { PeerPresence } from '../types/directory';
@@ -99,6 +98,9 @@ const ATTACHMENTS_UNAVAILABLE_NOTICE_MS = 4000;
 /** Rendered height of an inline image attachment. */
 const ATTACHMENT_IMAGE_HEIGHT = 180;
 
+/** Where one of the current user's own messages has got to. */
+export type MessageStatus = 'sending' | 'failed' | 'sent' | 'delivered' | 'read';
+
 /**
  * Lifecycle state of one of the current user's own messages.
  *
@@ -113,7 +115,7 @@ const ATTACHMENT_IMAGE_HEIGHT = 180;
 function getMessageStatus(message: {
         pending?: boolean; failed?: boolean; readAt?: string | null;
         deliveredTo?: string[]; recipientId?: string;
-    }): 'sending' | 'failed' | 'sent' | 'delivered' | 'read' {
+    }): MessageStatus {
   if (message?.failed) return 'failed';
   if (message?.pending) return 'sending';
   if (message?.readAt) return 'read';
@@ -279,6 +281,19 @@ function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
  *
  * @param props
  */
+/**
+ * The inside of a bubble, for every message type there is.
+ *
+ * One geometry: an optional media block, then the body text, then an optional
+ * attachment action — in that order, at that spacing, whatever the type. The
+ * seven types used to disagree: three returned a bare `Text` (so they sat at a
+ * different offset from the ones wrapped in a `View`), the image branch put its
+ * caption below the picture while the file branch put its label above, and only
+ * some of them left room for a download link. A bubble should look like a
+ * bubble before you have read what is in it.
+ *
+ * @param props
+ */
 function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMedia }: {
         message: ChatMessage; isOwn: boolean; styles: ChatStyles;
         onDownloadAttachment?: (message: ChatMessage) => void;
@@ -306,105 +321,106 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMe
       </Text>
     ) : null;
 
+  /** Every branch ends here, so every bubble is laid out the same way. */
+  const body = (media: ReactNode, text: ReactNode, action: ReactNode = downloadButton) => (
+    <View style={styles.bubbleContent}>
+      {media}
+      {text}
+      {action}
+    </View>
+  );
+
   if (message.deletedAt) {
-    return (
+    return body(
+      null,
       <Text style={[textStyle, styles.placeholderText]} testID="chat-message-deleted">
         Message deleted
-      </Text>
+      </Text>,
+      null,
     );
   }
 
   if (!isSupportedMessageType(type)) {
-    return (
+    return body(
+      null,
       <Text style={[textStyle, styles.placeholderText]} testID="chat-message-unsupported">
         {describeMessagePreview(message)}
-      </Text>
+      </Text>,
+      null,
     );
   }
 
   if (type === MESSAGE_TYPES.IMAGE && message.attachment?.url) {
-    return (
-      <View>
-        <Pressable
-          onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
-          accessibilityRole={onOpenMedia ? 'button' : undefined}
-          accessibilityLabel={onOpenMedia ? 'Open photo' : undefined}
-          accessibilityHint={onOpenMedia ? 'Opens the photo fullscreen' : undefined}
-          testID="chat-message-image-open">
-          <Image
-            source={{ uri: message.attachment.thumbnailUrl || message.attachment.url }}
-            style={styles.attachmentImage}
-            resizeMode="cover"
-            accessibilityLabel={message.body || 'Photo'}
-            testID="chat-message-image"
-          />
-        </Pressable>
-        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
-        {downloadButton}
-      </View>
+    return body(
+      <Pressable
+        onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
+        accessibilityRole={onOpenMedia ? 'button' : undefined}
+        accessibilityLabel={onOpenMedia ? 'Open photo' : undefined}
+        accessibilityHint={onOpenMedia ? 'Opens the photo fullscreen' : undefined}
+        testID="chat-message-image-open">
+        <Image
+          source={{ uri: message.attachment.thumbnailUrl || message.attachment.url }}
+          style={styles.attachmentImage}
+          resizeMode="cover"
+          accessibilityLabel={message.body || 'Photo'}
+          testID="chat-message-image"
+        />
+      </Pressable>,
+      message.body ? <Text style={textStyle}>{message.body}</Text> : null,
     );
   }
 
   // A video arrives as a `file` message (`video/mp4` is on the file MIME
   // allowlist), so it is recognised by its MIME type rather than its type.
   if (type === MESSAGE_TYPES.FILE && isVideoMimeType(message.attachment?.mimeType) && attachmentUrl) {
-    return (
-      <View>
-        <Pressable
-          onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
-          accessibilityRole={onOpenMedia ? 'button' : undefined}
-          accessibilityLabel={onOpenMedia ? 'Play video' : undefined}
-          accessibilityHint={onOpenMedia ? 'Opens the video fullscreen' : undefined}
-          style={styles.attachmentVideo}
-          testID="chat-message-video">
-          {message.attachment?.thumbnailUrl ? (
-            <Image
-              source={{ uri: message.attachment.thumbnailUrl }}
-              style={styles.attachmentImage}
-              resizeMode="cover"
-              accessibilityLabel={message.attachment?.name || 'Video'}
-              testID="chat-message-video-thumbnail"
-            />
-          ) : (
-            <View style={[styles.attachmentImage, styles.attachmentVideoPlaceholder]} />
-          )}
-          <View style={styles.attachmentVideoBadge} pointerEvents="none">
-            <Text style={styles.attachmentVideoBadgeText}>▶</Text>
-          </View>
-        </Pressable>
-        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
-        {downloadButton}
-      </View>
+    return body(
+      <Pressable
+        onPress={onOpenMedia ? () => onOpenMedia(message) : undefined}
+        accessibilityRole={onOpenMedia ? 'button' : undefined}
+        accessibilityLabel={onOpenMedia ? 'Play video' : undefined}
+        accessibilityHint={onOpenMedia ? 'Opens the video fullscreen' : undefined}
+        style={styles.attachmentVideo}
+        testID="chat-message-video">
+        {message.attachment?.thumbnailUrl ? (
+          <Image
+            source={{ uri: message.attachment.thumbnailUrl }}
+            style={styles.attachmentImage}
+            resizeMode="cover"
+            accessibilityLabel={message.attachment?.name || 'Video'}
+            testID="chat-message-video-thumbnail"
+          />
+        ) : (
+          <View style={[styles.attachmentImage, styles.attachmentVideoPlaceholder]} />
+        )}
+        <View style={styles.attachmentVideoBadge} pointerEvents="none">
+          <Text style={styles.attachmentVideoBadgeText}>▶</Text>
+        </View>
+      </Pressable>,
+      message.body ? <Text style={textStyle}>{message.body}</Text> : null,
     );
   }
 
   if (type === MESSAGE_TYPES.VOICE || isAudioMimeType(message.attachment?.mimeType)) {
-    return (
-      <View>
-        <AudioAttachmentPlayer
-          uri={attachmentUrl}
-          durationMs={message.attachment?.durationMs ?? 0}
-          isOwn={isOwn}
-        />
-        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
-        {downloadButton}
-      </View>
+    return body(
+      <AudioAttachmentPlayer
+        uri={attachmentUrl}
+        durationMs={message.attachment?.durationMs ?? 0}
+        isOwn={isOwn}
+      />,
+      message.body ? <Text style={textStyle}>{message.body}</Text> : null,
     );
   }
 
   if (type === MESSAGE_TYPES.VOICE || type === MESSAGE_TYPES.FILE) {
-    return (
-      <View>
-        <Text style={textStyle} testID="chat-message-attachment">
-          {describeMessagePreview(message)}
-        </Text>
-        {message.body ? <Text style={textStyle}>{message.body}</Text> : null}
-        {downloadButton}
-      </View>
+    return body(
+      <Text style={textStyle} testID="chat-message-attachment">
+        {describeMessagePreview(message)}
+      </Text>,
+      message.body ? <Text style={textStyle}>{message.body}</Text> : null,
     );
   }
 
-  return <Text style={textStyle}>{message.body}</Text>;
+  return body(null, <Text style={textStyle}>{message.body}</Text>, null);
 }
 
 /**
@@ -454,18 +470,67 @@ function ReactionChips({ reactions, currentUserId, onToggle, styles }: {
       {entries.map(([emoji, userIds]) => {
         const mine = userIds.includes(currentUserId);
         return (
-          <Pressable
+          <Chip
             key={emoji}
+            label={`${emoji} ${userIds.length}`}
+            variant="reaction"
+            selected={mine}
             onPress={() => onToggle?.(emoji, mine ? 'remove' : 'add')}
-            accessibilityRole="button"
             accessibilityLabel={`${emoji} ${userIds.length}${mine ? ', reacted by you' : ''}`}
-            hitSlop={touchSlop(16)}
-            style={[styles.reactionChip, mine && styles.reactionChipMine]}>
-            <Text style={styles.reactionChipText}>{`${emoji} ${userIds.length}`}</Text>
-          </Pressable>
+          />
         );
       })}
     </View>
+  );
+}
+
+/**
+ * Where a message got to, in one place.
+ *
+ * Three separate affordances used to live at three different offsets under a
+ * bubble — a tick row that appeared only at the end of a group, an italic
+ * "Sending…" line, and a red "Failed to send" line — so a message changed shape
+ * as it progressed. They are now one slot in the footer that renders exactly
+ * one of the five states.
+ *
+ * `queued` is what `sending` looks like while the device is offline: the
+ * message is not in flight, it is waiting, and saying "Sending…" would be a
+ * lie.
+ *
+ * @param props
+ */
+function DeliveryState({ status, isQueued, styles, onRetry }: {
+        status: MessageStatus; isQueued: boolean; styles: ChatStyles; onRetry?: () => void;
+    }) {
+  if (status === 'failed') {
+    return (
+      <Pressable
+        onPress={onRetry}
+        accessibilityRole="button"
+        accessibilityLabel="Retry sending message"
+        accessibilityHint="Sends this message again"
+        hitSlop={touchSlop(20)}
+        testID="chat-message-failed">
+        <Text style={styles.failedText}>Failed · tap to retry</Text>
+      </Pressable>
+    );
+  }
+
+  if (status === 'sending') {
+    return (
+      <Text style={styles.pendingText} testID="chat-message-pending">
+        {isQueued ? 'Queued' : 'Sending…'}
+      </Text>
+    );
+  }
+
+  return (
+    <Text
+      style={[styles.tick, status === 'read' && styles.tickRead]}
+      testID="chat-message-tick"
+      accessibilityLabel={STATUS_LABELS[status]}>
+      {status === 'sent' ? '✓' : '✓✓'}
+    </Text>
   );
 }
 
@@ -482,6 +547,8 @@ export type MessageRowProps = {
   isGroupEnd: boolean;
   isOwn: boolean;
   isHighlighted: boolean;
+  /** Nothing can leave the device right now, so a pending send is queued. */
+  isQueued?: boolean;
   currentUserId: string;
   onRetry?: MessageAction;
   onDelete?: MessageAction;
@@ -499,6 +566,7 @@ const MessageRow = memo(
   isGroupEnd,
   isOwn,
   isHighlighted,
+  isQueued = false,
   currentUserId,
   onRetry,
   onDelete,
@@ -510,7 +578,7 @@ const MessageRow = memo(
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
-  const isTicked = isOwn && (status === 'sent' || status === 'delivered' || status === 'read');
+  const isPendingOrFailed = isOwn && (status === 'sending' || status === 'failed');
   // Long-press opens the reaction bar for this bubble only; it closes as soon
   // as an emoji is chosen or the bubble is pressed again.
   const [isReactionBarOpen, setIsReactionBarOpen] = useState(false);
@@ -607,31 +675,20 @@ const MessageRow = memo(
         onToggle={onReact ? (emoji, action) => onReact(message, emoji, action) : undefined}
         styles={styles}
       />
-      {isGroupEnd ? (
+      {isGroupEnd || isPendingOrFailed ? (
         <View style={styles.messageFooter}>
           <Text style={[styles.timestamp, isOwn && styles.timestampOwn]}>
             {formatMessageTimestamp(message.createdAt)}
           </Text>
-          {isTicked ? (
-            <Text
-              style={[styles.tick, status === 'read' && styles.tickRead]}
-              testID="chat-message-tick"
-              accessibilityLabel={STATUS_LABELS[status]}>
-              {status === 'sent' ? '✓' : '✓✓'}
-            </Text>
+          {isOwn ? (
+            <DeliveryState
+              status={status}
+              isQueued={isQueued}
+              styles={styles}
+              onRetry={onRetry ? () => onRetry(message) : undefined}
+            />
           ) : null}
         </View>
-      ) : null}
-      {status === 'sending' ? <Text style={styles.pendingText}>Sending…</Text> : null}
-      {status === 'failed' ? (
-        <Pressable
-          onPress={() => onRetry?.(message)}
-          accessibilityRole="button"
-          accessibilityLabel="Retry sending message"
-          accessibilityHint="Sends this message again"
-          hitSlop={touchSlop(20)}>
-          <Text style={styles.failedText}>Failed to send · tap to retry, swipe to delete</Text>
-        </Pressable>
       ) : null}
     </View>
   );
@@ -640,6 +697,63 @@ const MessageRow = memo(
   },
 );
 
+/**
+ * One inline banner, used for every persistent conversation-level message.
+ *
+ * @param props
+ */
+function Notice({
+  icon,
+  message,
+  styles,
+  tone = 'neutral',
+  onDismiss,
+  dismissLabel,
+  dismissTestID,
+  accessibilityRole = 'text',
+  accessibilityValue,
+  testID,
+}: {
+  icon: string;
+  message: string;
+  styles: ChatStyles;
+  tone?: 'neutral' | 'warning' | 'accent';
+  onDismiss?: () => void;
+  dismissLabel?: string;
+  dismissTestID?: string;
+  accessibilityRole?: 'text' | 'alert' | 'progressbar';
+  accessibilityValue?: { now: number; min: number; max: number };
+  testID?: string;
+}) {
+  const toneStyle =
+    tone === 'warning' ? styles.noticeWarning : tone === 'accent' ? styles.noticeAccent : null;
+  const textStyle = tone === 'warning' ? styles.noticeTextWarning : styles.noticeText;
+
+  return (
+    <View
+      style={[styles.notice, toneStyle]}
+      accessibilityLiveRegion="polite"
+      accessibilityRole={accessibilityRole}
+      accessibilityValue={accessibilityValue}
+      testID={testID}>
+      <Icon name={icon} size={14} color={StyleSheet.flatten(textStyle).color} />
+      <Text numberOfLines={2} style={[textStyle, styles.noticeMessage]}>
+        {message}
+      </Text>
+      {onDismiss ? (
+        <Pressable
+          onPress={onDismiss}
+          accessibilityRole="button"
+          accessibilityLabel={dismissLabel}
+          hitSlop={touchSlop(20)}
+          testID={dismissTestID}>
+          <Icon name="dismiss" size={18} color={StyleSheet.flatten(textStyle).color} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 /** Placeholder bubbles shown while the first page of history is still loading. */
 function MessageSkeleton() {
   const styles = useThemedStyles(createStyles);
@@ -647,13 +761,13 @@ function MessageSkeleton() {
   return (
     <View style={styles.skeletonList} testID="chat-message-skeleton">
       {Array.from({ length: SKELETON_BUBBLE_COUNT }, (_unused, index) => (
-        <View
+        <Skeleton
           key={`skeleton-${index}`}
+          width={index % 3 === 0 ? '40%' : '60%'}
+          height={36}
           style={[
-            styles.messageRow,
-            index % 2 === 0 ? styles.messageRowPeer : styles.messageRowOwn,
             styles.skeletonBubble,
-            index % 3 === 0 ? styles.skeletonBubbleShort : null,
+            index % 2 === 0 ? styles.messageRowPeer : styles.messageRowOwn,
           ]}
         />
       ))}
@@ -1107,6 +1221,7 @@ function ChatConversationScreen({
           }
           isGroupEnd={item.isGroupEnd}
           isOwn={item.message.senderId === currentUserId}
+          isQueued={isOffline}
           isHighlighted={
             Boolean(activeHighlightId) && item.message.messageId === activeHighlightId
           }
@@ -1131,6 +1246,7 @@ function ChatConversationScreen({
       handleOpenMedia,
       handleReply,
       handleRetry,
+      isOffline,
       messagesById,
       onCallBack,
       onDeleteMessage,
@@ -1164,10 +1280,6 @@ function ChatConversationScreen({
   // moment the peer's real status changes. Show it as a hint, but don't use
   // it to block placing a call — only an in-flight call attempt should.
   const isCallDisabled = isStartingCall;
-  const MCIcon = loadVectorIcons();
-  const presenceIconDef = peerPresence
-    ? ICONS[peerPresence.online ? 'presenceOnline' : 'presenceOffline']
-    : null;
   const presenceColor = peerPresence?.online ? colors.success : colors.textMuted;
 
   return (
@@ -1197,25 +1309,26 @@ function ChatConversationScreen({
               onOpenProfile ? 'Opens contact details, calls and privacy options' : undefined
             }
             testID="chat-open-profile">
-            <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
-              {peerId}
-            </Text>
+            <Avatar id={peerId} size="sm" online={peerPresence?.online} />
+            <View style={styles.headerTextColumn}>
+              <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
+                {peerId}
+              </Text>
             {isPeerTyping ? (
               <Text style={styles.headerSubtitle} testID="chat-typing-indicator">
                 typing…
               </Text>
             ) : presenceLabel ? (
               <View style={styles.presenceRow} testID="chat-presence-row">
-                {presenceIconDef && MCIcon ? (
-                  <MCIcon name={presenceIconDef.icon} size={8} color={presenceColor} />
-                ) : (
-                  <Text style={[styles.presenceDotText, { color: presenceColor }]}>
-                    {presenceIconDef?.emoji ?? '●'}
-                  </Text>
-                )}
+                <Icon
+                  name={peerPresence?.online ? 'presenceOnline' : 'presenceOffline'}
+                  size={8}
+                  color={presenceColor}
+                />
                 <Text style={styles.headerSubtitle}>{presenceLabel}</Text>
               </View>
             ) : null}
+            </View>
           </Pressable>
 
           {onStartAudioCall ? (
@@ -1241,16 +1354,6 @@ function ChatConversationScreen({
             />
           ) : null}
         </View>
-
-        {isOffline ? (
-          <StatusBanner
-            status={{
-              message: "Offline — messages will send when you're back",
-              severity: 'warning',
-            }}
-            style={styles.offlineBanner}
-          />
-        ) : null}
 
         <View style={styles.listContainer}>
           <FlatList
@@ -1285,61 +1388,73 @@ function ChatConversationScreen({
             </View>
           ) : null}
           {showScrollToBottom ? (
-            <Pressable
+            <FAB
+              icon="scrollToBottom"
               onPress={handleScrollToBottomPress}
-              accessibilityRole="button"
               accessibilityLabel="Scroll to newest message"
-              hitSlop={touchSlop(36)}
+              accessibilityHint={
+                newMessageCount > 0 ? 'Jumps to the messages you have not seen' : undefined
+              }
+              badgeCount={newMessageCount}
+              tone="surface"
+              size="sm"
+              style={styles.scrollToBottomFab}
               testID="chat-scroll-to-bottom"
-              style={styles.scrollToBottomFab}>
-              <Text style={styles.scrollToBottomIcon}>↓</Text>
-              {newMessageCount > 0 ? (
-                <Text style={styles.scrollToBottomText} testID="chat-scroll-to-bottom-count">
-                  {newMessageCount > 9 ? '9+' : newMessageCount} new
-                </Text>
-              ) : null}
-            </Pressable>
+            />
           ) : null}
         </View>
 
-        {replyTarget ? (
-          <View style={styles.replyPreview} testID="chat-reply-preview">
-            <Text numberOfLines={1} style={styles.replyPreviewText}>
-              {`Replying to: ${describeMessagePreview(replyTarget) || 'message'}`}
-            </Text>
-            <Pressable
-              onPress={() => setReplyTarget(null)}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel reply"
-              hitSlop={touchSlop(20)}
-              testID="chat-reply-cancel">
-              <Icon name="dismiss" size={18} color={colors.onSurfaceVariant} />
-            </Pressable>
-          </View>
-        ) : null}
-
-        {isUploadingAttachment ? (
-          <View
-            style={styles.uploadNotice}
-            testID="chat-attachment-upload-progress"
-            accessibilityLiveRegion="polite"
-            accessibilityRole="progressbar"
-            accessibilityValue={{ now: Math.round(attachmentUploadProgress * 100), min: 0, max: 100 }}>
-            <Text style={styles.uploadNoticeText}>
-              {`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
-            </Text>
-          </View>
-        ) : null}
-
-        {showAttachmentsUnavailable ? (
-          <View
-            style={styles.uploadNotice}
-            testID="chat-attachments-unavailable-notice"
-            accessibilityLiveRegion="polite"
-            accessibilityRole="alert">
-            <Text style={styles.uploadNoticeText}>Attachments aren't available on this server</Text>
-          </View>
-        ) : null}
+        {/* One stack, one geometry. These four used to be four bespoke rows in
+            three different places: the offline banner above the list, the reply
+            preview and two notices below it, each with its own padding, colour
+            and icon convention. */}
+        <View style={styles.noticeStack}>
+          {isOffline ? (
+            <Notice
+              icon="offline"
+              tone="warning"
+              message="Offline — messages will send when you're back"
+              styles={styles}
+              testID="chat-offline-notice"
+            />
+          ) : null}
+          {showAttachmentsUnavailable ? (
+            <Notice
+              icon="messageFailed"
+              tone="warning"
+              message="Attachments aren't available on this server"
+              styles={styles}
+              accessibilityRole="alert"
+              testID="chat-attachments-unavailable-notice"
+            />
+          ) : null}
+          {isUploadingAttachment ? (
+            <Notice
+              icon="attachmentAttach"
+              message={`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
+              styles={styles}
+              accessibilityRole="progressbar"
+              accessibilityValue={{
+                now: Math.round(attachmentUploadProgress * 100),
+                min: 0,
+                max: 100,
+              }}
+              testID="chat-attachment-upload-progress"
+            />
+          ) : null}
+          {replyTarget ? (
+            <Notice
+              icon="messageReply"
+              tone="accent"
+              message={`Replying to: ${describeMessagePreview(replyTarget) || 'message'}`}
+              styles={styles}
+              onDismiss={() => setReplyTarget(null)}
+              dismissLabel="Cancel reply"
+              dismissTestID="chat-reply-cancel"
+              testID="chat-reply-preview"
+            />
+          ) : null}
+        </View>
 
         <View style={[styles.composer, isComposerFocused && styles.composerFocused]}>
           <IconButton
@@ -1456,6 +1571,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     headerText: {
       flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    headerTextColumn: {
+      flex: 1,
     },
     headerTitle: {
       ...typography.sectionTitle,
@@ -1471,13 +1592,6 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       gap: 4,
       marginTop: 1,
-    },
-    presenceDotText: {
-      fontSize: 8,
-    },
-    offlineBanner: {
-      marginHorizontal: spacing.md,
-      marginBottom: spacing.xs,
     },
     listContainer: {
       flex: 1,
@@ -1510,14 +1624,7 @@ const createStyles = (colors: ThemeColors) =>
       gap: spacing.sm,
     },
     skeletonBubble: {
-      height: 36,
-      width: '60%',
       borderRadius: radius.lg,
-      backgroundColor: colors.surfaceRaised,
-      opacity: 0.6,
-    },
-    skeletonBubbleShort: {
-      width: '40%',
     },
     messageRow: {
       marginBottom: spacing.sm,
@@ -1557,6 +1664,9 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceRaised,
       borderWidth: 1,
       borderColor: colors.border,
+    },
+    bubbleContent: {
+      gap: spacing.xs,
     },
     bubbleTextOwn: {
       color: colors.textOnAccent,
@@ -1622,21 +1732,6 @@ const createStyles = (colors: ThemeColors) =>
       gap: 4,
       marginTop: 2,
     },
-    reactionChip: {
-      backgroundColor: colors.surfaceRaised,
-      borderColor: colors.border,
-      borderWidth: 1,
-      borderRadius: radius.lg,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 2,
-    },
-    reactionChipMine: {
-      borderColor: colors.accent,
-    },
-    reactionChipText: {
-      ...typography.hint,
-      color: colors.textPrimary,
-    },
     reactionBar: {
       flexDirection: 'row',
       gap: spacing.xs,
@@ -1654,30 +1749,36 @@ const createStyles = (colors: ThemeColors) =>
     reactionBarEmoji: {
       fontSize: 20,
     },
-    replyPreview: {
+    noticeStack: {
+      paddingHorizontal: spacing.md,
+      gap: spacing.xs,
+    },
+    notice: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
       gap: spacing.sm,
-      paddingHorizontal: spacing.md,
+      paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
+      borderRadius: radius.sm,
+      backgroundColor: colors.surfaceRaised,
+    },
+    noticeWarning: {
+      backgroundColor: colors.tintWarning,
+    },
+    noticeAccent: {
       borderLeftWidth: 3,
       borderLeftColor: colors.accent,
-      backgroundColor: colors.surfaceRaised,
     },
-    replyPreviewText: {
+    noticeMessage: {
+      flex: 1,
+    },
+    noticeText: {
       ...typography.hint,
       color: colors.textSecondary,
-      flexShrink: 1,
     },
-    uploadNotice: {
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
-      backgroundColor: colors.surfaceRaised,
-    },
-    uploadNoticeText: {
+    noticeTextWarning: {
       ...typography.hint,
-      color: colors.textSecondary,
+      color: colors.warning,
     },
     messageFooter: {
       flexDirection: 'row',
@@ -1713,30 +1814,6 @@ const createStyles = (colors: ThemeColors) =>
       position: 'absolute',
       right: spacing.md,
       bottom: spacing.md,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      backgroundColor: colors.surfaceControl,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.pill,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-      shadowColor: colors.shadow,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.3,
-      shadowRadius: 4,
-      elevation: 4,
-    },
-    scrollToBottomIcon: {
-      color: colors.textPrimary,
-      fontSize: 16,
-      lineHeight: 18,
-    },
-    scrollToBottomText: {
-      ...typography.hint,
-      color: colors.textPrimary,
-      fontWeight: '600',
     },
     composer: {
       flexDirection: 'row',
