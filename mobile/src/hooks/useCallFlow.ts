@@ -78,6 +78,7 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { MediaStream } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
+import { errorMessage } from '../errors';
 import {
   bringAppToForeground,
   clearPendingAnswer,
@@ -105,12 +106,6 @@ export type { CallRecord };
 export type AnswerError = Error & { answerFailureReason?: string; };
 export type { CallStatus };
 
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 /**
  * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
  * properties it supports at runtime but omits from its published types.

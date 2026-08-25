@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import type { PeerPresence } from '../types/directory';
+import { errorMessage } from '../errors';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
@@ -78,7 +79,7 @@ export default function usePresenceSearch({
         return { status: data.status, online: Boolean(data.online) };
       } catch (error) {
         logWarn('[PresenceSearch] checkPresence failed', {
-          message: error instanceof Error ? error.message : undefined,
+          message: errorMessage(error),
         });
         return null;
       }
@@ -122,7 +123,7 @@ export default function usePresenceSearch({
         // An aborted request is the expected outcome of a newer keystroke.
         if (!(error instanceof Error) || error.name !== 'AbortError') {
           logWarn('[PresenceSearch] searchUsers failed', {
-            message: error instanceof Error ? error.message : undefined,
+            message: errorMessage(error),
           });
         }
         return [];

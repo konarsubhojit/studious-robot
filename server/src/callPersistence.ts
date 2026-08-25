@@ -1,13 +1,7 @@
 import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 /**
  * @returns the driver error code, when the error carries one.
@@ -31,7 +25,7 @@ function invalidateCallHistoryCache(state: import('./stores/contracts.ts').Serve
   const prefixes = userIds.filter(Boolean).map((userId) => callHistoryCachePrefix(userId));
   if (prefixes.length === 0) return;
   invalidateCache(state, ...prefixes).catch((error: unknown) => {
-    console.error(`[calls] call history cache invalidation failed: ${errorMessage(error)}`);
+    console.error(`[calls] call history cache invalidation failed: ${describeError(error)}`);
   });
 }
 
@@ -85,7 +79,7 @@ function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRe
       // reproducing it, instead of the bare message alone.
       console.error(
         `[calls] failed to persist call to DB: callId=${call.callId}` +
-          ` code=${errorCode(error)} ${errorMessage(error)}`
+          ` code=${errorCode(error)} ${describeError(error)}`
       );
     });
 }
@@ -115,7 +109,7 @@ function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEv
       console.error(
         `[calls] failed to persist call event to DB: eventId=${event.eventId}` +
           ` callId=${event.callId} event=${event.event}` +
-          ` code=${errorCode(error)} ${errorMessage(error)}`
+          ` code=${errorCode(error)} ${describeError(error)}`
       );
     });
 }
@@ -154,7 +148,7 @@ async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/cont
     }
     console.log(`[signaling] hydrated ${rows.length} call record(s) from DB`);
   } catch (err) {
-    console.error('[signaling] failed to hydrate calls from DB:', errorMessage(err));
+    console.error('[signaling] failed to hydrate calls from DB:', describeError(err));
   }
 
   try {
@@ -181,7 +175,7 @@ async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/cont
     }
     console.log(`[signaling] hydrated ${rows.length} call event(s) from DB`);
   } catch (err) {
-    console.error('[signaling] failed to hydrate call events from DB:', errorMessage(err));
+    console.error('[signaling] failed to hydrate call events from DB:', describeError(err));
   }
 }
 

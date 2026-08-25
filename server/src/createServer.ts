@@ -16,13 +16,7 @@ import { loadPersistedStateFromDb, pruneStaleDevices } from './lib/persistence.t
 import { mountRoutes } from './routes/index.ts';
 import { registerSocketHandlers } from './signaling/index.ts';
 import { isVerboseLoggingEnabled, verboseLog } from './lib/verbose.ts';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 export type CreateServerOptions = {
   verifyIdToken?: (idToken: string) => Promise<{
@@ -228,7 +222,7 @@ function createServer(opts: CreateServerOptions = {}) {
   };
   // Drop locally cached entries when another instance reports a write.
   subscribeToCacheInvalidations(state).catch((error: unknown) => {
-    console.error(`[cache] failed to subscribe to invalidations: ${errorMessage(error)}`);
+    console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
   });
 
   if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
@@ -239,7 +233,7 @@ function createServer(opts: CreateServerOptions = {}) {
       .catch((error: unknown) => {
         state.messageStoreStatus = 'unavailable';
         console.error(
-          `[messages] Mongo message store health check failed: ${errorMessage(error)}`
+          `[messages] Mongo message store health check failed: ${describeError(error)}`
         );
       });
   }

@@ -12,23 +12,49 @@ import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
  */
 
 /**
+ * Where a transition should take the call, and why.
+ *
+ * Most events know this statically (`call.decline` always ends the call). The
+ * ones that do not derive it from the request through `resolveTransition`.
+ */
+type CallTransition = {
+  nextStatus: string;
+  reason?: string | null;
+};
+
+type SocketCallTransitionOptions = {
+  state: import('../stores/contracts.ts').ServerState;
+  io: any;
+  eventName: string;
+  /**
+   * Destination for events whose transition never depends on the request.
+   * Exactly one of this and `resolveTransition` must be supplied.
+   */
+  nextStatus?: string;
+  reason?: string | null;
+  /**
+   * Destination derived from the request. Called with the *schema-validated*
+   * payload, so a handler never has to read raw input to decide where the
+   * call is going.
+   */
+  resolveTransition?: (parsed: Record<string, any>) => CallTransition;
+  authorize: (
+    call: import('../stores/contracts.ts').CallRecord,
+    userId: string
+  ) => string | null;
+  onSuccess?: (
+    call: import('../stores/contracts.ts').CallRecord,
+    transition: CallTransition
+  ) => void;
+};
+
+/**
  * Handle an authenticated call-state transition requested over the socket
  * (`call.accept`, `call.decline`, `call.cancel`, `call.end`).
  *
  * @param options
  */
-function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
-        state: import('../stores/contracts.ts').ServerState;
-        io: any;
-        eventName: string;
-        nextStatus: string;
-        reason?: string | null;
-        authorize: (
-            call: import('../stores/contracts.ts').CallRecord,
-            userId: string
-        ) => string | null;
-        onSuccess?: (call: import('../stores/contracts.ts').CallRecord) => void;
-    }) {
+function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: SocketCallTransitionOptions) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
     return;
   }
@@ -70,9 +96,13 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
   }
 
   const previousStatus = call.status;
-  const result = transitionCall(options.state, callId, options.nextStatus, {
+  // Resolved from the validated payload, never from the raw request.
+  const transition: CallTransition = options.resolveTransition
+    ? options.resolveTransition(parsed)
+    : { nextStatus: (options.nextStatus as string), reason: options.reason ?? null };
+  const result = transitionCall(options.state, callId, transition.nextStatus, {
     actor: socket.data.identity.userId,
-    reason: options.reason ?? null,
+    reason: transition.reason ?? null,
   });
   if (!result.ok) {
     acknowledgeError(
@@ -90,10 +120,10 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
     notifyCallTransition(options.io, options.state, result.call, {
       previousStatus,
       actor: socket.data.identity.userId,
-      reason: options.reason ?? null,
+      reason: transition.reason ?? null,
     });
   }
-  options.onSuccess?.(result.call);
+  options.onSuccess?.(result.call, transition);
   acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
 }
 
@@ -233,25 +263,27 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
  * instead of leaving it to a sweep.
  */
 function handleCallConnected(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: { state: import('../stores/contracts.ts').ServerState; io: any; }) {
-  // Read before validation only to pick the destination status; the payload is
-  // still validated (and rejected) by `handleSocketCallTransition` below, and a
-  // non-string never reaches the transition.
-  const rawIceState = ((payload ?? {}) as Record<string, unknown>).iceState;
-  const iceState = typeof rawIceState === 'string' ? rawIceState : 'connected';
-  const isFailure = iceState === 'disconnected' || iceState === 'failed';
+  // `iceState` is read out of the validated payload rather than the raw
+  // request, so the destination status can never be chosen from input the
+  // schema has not accepted yet.
+  let iceState = 'connected';
 
   handleSocketCallTransition(socket, ack, payload, {
     state: options.state,
     io: options.io,
     eventName: CLIENT_EVENTS.CALL_CONNECTED,
-    nextStatus: isFailure ? 'ended' : CONNECTED_CALL_STATUS,
-    reason: isFailure ? 'media_failed' : null,
+    resolveTransition: (parsed) => {
+      iceState = typeof parsed.iceState === 'string' ? parsed.iceState : 'connected';
+      return iceState === 'disconnected' || iceState === 'failed'
+        ? { nextStatus: 'ended', reason: 'media_failed' }
+        : { nextStatus: CONNECTED_CALL_STATUS, reason: null };
+    },
     authorize: (call, userId) =>
       call.callerId === userId || call.calleeId === userId
         ? null
         : 'not a participant in this call',
-    onSuccess: (call) => {
-      if (!isFailure) {
+    onSuccess: (call, transition) => {
+      if (transition.reason !== 'media_failed') {
         recordCallHeartbeat(options.state, call.callId);
       }
       console.log(

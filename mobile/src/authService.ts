@@ -1,5 +1,6 @@
 import auth from '@react-native-firebase/auth';
 import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import { errorMessage } from './errors';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
   'Firebase is not configured in this build. Add google-services.json (Android) or GoogleService-Info.plist (iOS).';
@@ -14,7 +15,7 @@ let googleConfigured = false;
 let cachedGoogleSignin: any;
 
 function isFirebaseAppUnavailableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : '';
+  const message = errorMessage(error) ?? '';
   return (
     message.includes("No Firebase App '[DEFAULT]' has been created") ||
     message.toLowerCase().includes('default app has not been created')

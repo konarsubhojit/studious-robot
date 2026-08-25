@@ -1,5 +1,6 @@
 import { NativeModules, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
+import { errorMessage } from './errors';
 
 /**
  * WeTalk's chat-message notification.
@@ -38,13 +39,6 @@ const seenMessageIds: string[] = [];
  * The conversation currently open on screen, or `null`.
  */
 let activeConversation: { peerId: string | null; conversationId: string | null; } | null = null;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 function getNativeModule() {
   if (Platform.OS !== 'android') return null;

@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { mediaDevices } from 'react-native-webrtc';
 import { logError, logInfo, logWarn } from './appLogger';
+import { errorMessage as describeThrowable } from './errors';
 
 /**
  * Screen-sharing capture helpers built on top of `getDisplayMedia`.
@@ -38,16 +39,15 @@ const FRAME_CHECK_INTERVAL_MS = 500;
 /**
  * @returns the error message, when there is one.
  *
- * `getDisplayMedia` rejects with a plain object on Android (its `message` is
- * often just the DOM exception *name*, e.g. `NotAllowedError`), so an
- * `instanceof Error` check alone produced the useless "Unknown error".
+ * Adds a `name` fallback to the shared helper: `getDisplayMedia` rejects with a
+ * plain object whose `message` is sometimes absent and whose DOM exception name
+ * (e.g. `NotAllowedError`) is the only thing worth reporting.
  */
 function errorMessage(error: unknown): string | undefined {
-  if (typeof error === 'string') return error || undefined;
-  if (error instanceof Error) return error.message || undefined;
-  const candidate = (error as { message?: unknown; name?: unknown })?.message ??
-    (error as { name?: unknown })?.name;
-  return typeof candidate === 'string' && candidate ? candidate : undefined;
+  const message = describeThrowable(error);
+  if (message) return message;
+  const name = (error as { name?: unknown })?.name;
+  return typeof name === 'string' && name ? name : undefined;
 }
 
 /**

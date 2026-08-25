@@ -14,6 +14,7 @@ import type { AttachmentRecord, MessageRecord } from '../../../shared/signaling/
 import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
+import { errorMessage } from '../errors';
 
 /**
  * A chat message as persisted by the server, plus the client-only fields an
@@ -89,13 +90,6 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Identity of a timeline entry: a message id, or a call id for the call

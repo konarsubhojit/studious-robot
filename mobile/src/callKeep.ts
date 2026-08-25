@@ -5,6 +5,7 @@ import {
   showIncomingCallNotification,
 } from './incomingCallNotification';
 import { startIncomingRingtone, stopIncomingRingtone } from './ringtone';
+import { errorMessage } from './errors';
 
 /**
  * System-level incoming-call UI for the WeTalk mobile app.
@@ -56,13 +57,6 @@ const CALLKEEP_SETUP_OPTIONS = {
     additionalPermissions: [],
   },
 };
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * The subset of the optional `react-native-callkeep` surface this module uses.

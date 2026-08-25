@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
+import { errorMessage } from '../errors';
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
@@ -25,13 +26,6 @@ export type CallHistoryEntry = {
   durationSeconds?: number | null;
   isRead?: boolean;
 };
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * @param params

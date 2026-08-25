@@ -25,6 +25,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { describeError } from './lib/errors.ts';
 
 export type MessageBusHandler = (message: unknown, channel: string) => void;
 export type MessageBus = {
@@ -36,13 +37,6 @@ export type MessageBus = {
   ) => Promise<() => Promise<void>>;
   close: () => Promise<void>;
 };
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Serialise a message for transport. Objects become JSON; strings are sent
@@ -94,7 +88,7 @@ function createMemoryMessageBus(): MessageBus {
         try {
           handler(decode(payload), channel);
         } catch (error) {
-          console.error(`[messageBus] handler for "${channel}" threw: ${errorMessage(error)}`);
+          console.error(`[messageBus] handler for "${channel}" threw: ${describeError(error)}`);
         }
       };
       emitter.on(channel, listener);
@@ -156,7 +150,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }: { pub: any; su
             try {
               fn(message, channel);
             } catch (error) {
-              console.error(`[messageBus] handler for "${channel}" threw: ${errorMessage(error)}`);
+              console.error(`[messageBus] handler for "${channel}" threw: ${describeError(error)}`);
             }
           }
         });
@@ -173,7 +167,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }: { pub: any; su
             try {
               await sub.unsubscribe(channel);
             } catch (error) {
-              console.error(`[messageBus] unsubscribe "${channel}" failed: ${errorMessage(error)}`);
+              console.error(`[messageBus] unsubscribe "${channel}" failed: ${describeError(error)}`);
             }
           }
         }
@@ -191,7 +185,7 @@ function createRedisMessageBus({ pub, sub, ownsClients = false }: { pub: any; su
           try {
             await sub.unsubscribe(channel);
           } catch (error) {
-            console.error(`[messageBus] unsubscribe "${channel}" failed: ${errorMessage(error)}`);
+            console.error(`[messageBus] unsubscribe "${channel}" failed: ${describeError(error)}`);
           }
         }
       }

@@ -1,6 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import { logError, logInfo, logWarn } from './appLogger';
 import { startIncomingRingtone } from './ringtone';
+import { errorMessage } from './errors';
 
 /** Android's `NotificationManager.IMPORTANCE_HIGH`; below this nothing rings. */
 const IMPORTANCE_HIGH = 4;
@@ -25,13 +26,6 @@ const IMPORTANCE_HIGH = 4;
  * wrapper in this app (`callKeep.js`, `ringtone.js`, `pushNotifications.js`,
  * `callService.js`).
  */
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 function getNativeModule() {
   if (Platform.OS !== 'android') return null;

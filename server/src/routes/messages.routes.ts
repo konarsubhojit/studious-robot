@@ -9,13 +9,7 @@ import { emitToUserSockets } from '../domain/notifications.ts';
 import { getPresenceSnapshot } from '../lib/state.ts';
 import { SIGNALING_VERSION } from '../config.ts';
 import { API_ROUTES, SERVER_EVENTS } from '../../../shared/index.ts';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from '../lib/errors.ts';
 
 /**
  * Text-chat history endpoints.
@@ -97,7 +91,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
             before: before ?? undefined,
           }) as MessageRecord[]);
       } catch (error) {
-        console.error(`[messages] history lookup failed: ${errorMessage(error)}`);
+        console.error(`[messages] history lookup failed: ${describeError(error)}`);
         res.status(503).json({ error: 'message store unavailable' });
         return;
       }
@@ -205,7 +199,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
         before: before ?? undefined,
       });
     } catch (error) {
-      console.error(`[messages] search failed: ${errorMessage(error)}`);
+      console.error(`[messages] search failed: ${describeError(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
     }
@@ -268,7 +262,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       try {
         conversations = (await state.messageStore.listConversations(session.userId) as ConversationSummary[]);
       } catch (error) {
-        console.error(`[messages] conversation summary lookup failed: ${errorMessage(error)}`);
+        console.error(`[messages] conversation summary lookup failed: ${describeError(error)}`);
         res.status(503).json({ error: 'message store unavailable' });
         return;
       }
@@ -331,7 +325,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     try {
       updated = await state.messageStore.markRead(conversationId, session.userId);
     } catch (error) {
-      console.error(`[messages] markRead failed: ${errorMessage(error)}`);
+      console.error(`[messages] markRead failed: ${describeError(error)}`);
       res.status(503).json({ error: 'message store unavailable' });
       return;
     }

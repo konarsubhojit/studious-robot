@@ -23,6 +23,7 @@ import {
 } from './messageNotification';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
+import { errorMessage } from './errors';
 
 /**
  * Push notification helpers for the WeTalk mobile app.
@@ -42,13 +43,6 @@ import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
  * has already retrieved via such a library, and it registers it with the
  * signaling server's POST /devices/register endpoint.
  */
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 // ─── Deep-link helpers ────────────────────────────────────────────────────────
 

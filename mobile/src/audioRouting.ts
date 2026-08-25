@@ -3,13 +3,7 @@ import InCallManager from 'react-native-incall-manager';
 import { logInfo, logWarn } from './appLogger';
 import { setAudioSessionActive } from './audioSessionState';
 import { ensureBluetoothPermission } from './permissions';
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
+import { errorMessage } from './errors';
 
 /**
  * Canonical audio output routes understood by react-native-incall-manager's

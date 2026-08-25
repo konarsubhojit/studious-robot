@@ -8,16 +8,10 @@
  */
 
 import { logWarn } from './appLogger';
+import { errorMessage } from './errors';
 
 let _imagePickerCache: typeof import('react-native-image-picker') | null | undefined;
 let _documentPickerCache: typeof import('@react-native-documents/picker') | null | undefined;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 function loadImagePicker(): typeof import('react-native-image-picker') | null {
   if (_imagePickerCache !== undefined) return _imagePickerCache;

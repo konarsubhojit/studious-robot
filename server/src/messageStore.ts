@@ -60,13 +60,7 @@
 
 import { randomUUID } from 'crypto';
 import { MongoClient, MongoParseError } from 'mongodb';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 /**
  * Whether `error` came from the driver rejecting the connection string itself.
@@ -497,7 +491,7 @@ async function createIndexOrWarn(messages: any, spec: object, options?: object):
     console.error(
       `[messages] DEGRADED: index creation skipped for ${JSON.stringify(spec)}` +
         `${options ? ` ${JSON.stringify(options)}` : ''} — sorted queries and/or ` +
-        `uniqueness guarantees may be affected: ${errorMessage(error)}`
+        `uniqueness guarantees may be affected: ${describeError(error)}`
     );
   }
 }
@@ -822,7 +816,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
         const { mongoClient } = await clientPromise;
         await mongoClient.close();
       } catch (error) {
-        console.warn(`[messages] error while closing Mongo client: ${errorMessage(error)}`);
+        console.warn(`[messages] error while closing Mongo client: ${describeError(error)}`);
       }
     },
   };
@@ -865,9 +859,9 @@ function createMessageStore(opts: { messageStore?: MessageStore; } = {}): Messag
     // URI; anything else (a broken driver import, an out-of-memory failure, …)
     // must keep its own context instead of being blamed on configuration.
     if (isMongoUriError(error)) {
-      throw new Error(`Invalid MONGODB_URI: ${errorMessage(error)}`);
+      throw new Error(`Invalid MONGODB_URI: ${describeError(error)}`);
     }
-    throw new Error(`Failed to create the MongoDB client: ${errorMessage(error)}`);
+    throw new Error(`Failed to create the MongoDB client: ${describeError(error)}`);
   }
 
   return createMongoMessageStore({

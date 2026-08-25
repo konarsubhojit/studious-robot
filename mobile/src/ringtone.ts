@@ -1,4 +1,5 @@
 import { logInfo, logWarn } from './appLogger';
+import { errorMessage } from './errors';
 
 /**
  * JS-layer incoming-call ringtone fallback for the WeTalk mobile app.
@@ -56,13 +57,6 @@ function loadInCallManager(): InCallManager | null {
     }
   }
   return cachedInCallManager;
-}
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
 }
 
 /** Reset cached module state (test hook). */
