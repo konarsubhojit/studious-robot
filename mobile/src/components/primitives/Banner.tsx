@@ -117,7 +117,7 @@ export default function Banner({
         <Pressable
           onPress={onDismiss}
           accessibilityRole="button"
-          accessibilityLabel={dismissLabel}
+          accessibilityLabel={dismissLabel ?? 'Dismiss'}
           hitSlop={touchSlop(20)}
           testID={dismissTestID ?? (testID ? `${testID}-dismiss` : undefined)}>
           <Icon name="dismiss" size={18} color={foreground} />
