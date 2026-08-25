@@ -52,12 +52,14 @@ export default function TabShell() {
   const {
     cancelRecordingVoiceNote,
     deleteMessage,
+    isPeerMuted,
     isUserBlocked,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
     sendMessage,
     sendTypingIndicator,
+    setPeerMuted,
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
   } = chat;
@@ -206,12 +208,14 @@ export default function TabShell() {
         peerId={peerId}
         presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
         isBlocked={Boolean(isUserBlocked?.(peerId))}
+        isMuted={isPeerMuted(peerId)}
         callHistory={callFlow.callHistory}
         currentUserId={chat.currentUserId}
         onBack={goBack}
         onMessage={openChatConversation}
         onAudioCall={startAudioCallWith}
         onVideoCall={startVideoCallWith}
+        onToggleMute={id => setPeerMuted(id, !isPeerMuted(id))}
         onBlock={chat.blockPeer}
         onUnblock={chat.unblockPeer}
       />
@@ -223,7 +227,9 @@ export default function TabShell() {
     chat.currentUserId,
     chat.peerPresence,
     chat.unblockPeer,
+    isPeerMuted,
     isUserBlocked,
+    setPeerMuted,
     startAudioCallWith,
     startVideoCallWith,
   ]);
@@ -283,6 +289,13 @@ export default function TabShell() {
       onToggleAutoLighting={handleAutoLightingToggle}
       iceTransportPolicy={settings.iceTransportPolicy}
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
+      messageNotificationsEnabled={chat.messageNotificationsEnabled}
+      onToggleMessageNotifications={chat.setMessageNotificationsEnabled}
+      mutedPeers={chat.mutedPeers}
+      onUnmutePeer={peerId => setPeerMuted(peerId, false)}
+      blockedUsers={chat.blockedUsers}
+      onUnblockUser={chat.unblockPeer}
+      onOpenProfile={openPeerProfile}
     />
   ), [
     callFlow.setSignalingUrl,
@@ -290,11 +303,17 @@ export default function TabShell() {
     callFlow.status,
     callFlow.updateUserId,
     callFlow.userId,
+    chat.blockedUsers,
+    chat.messageNotificationsEnabled,
+    chat.mutedPeers,
+    chat.setMessageNotificationsEnabled,
+    chat.unblockPeer,
     handleAutoLightingToggle,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleIceTransportPolicyChange,
     handleSpeakerDefaultToggle,
+    setPeerMuted,
     settings.autoCameraLightingEnabled,
     settings.developerModeEnabled,
     settings.iceTransportPolicy,

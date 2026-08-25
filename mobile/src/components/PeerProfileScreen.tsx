@@ -1,29 +1,35 @@
 import { memo, useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, touchSlop, typography } from '../theme';
-import AppButton from './AppButton';
-import { Icon } from './primitives';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  callDirectionIcon,
+  callMediaIcon,
+  describeCallEntryForA11y,
+  describeCallOutcome,
+  formatCallTimeOfDay,
+  groupCallsByDay,
+  isMissedCall,
+} from '../callLog';
+import { formatCallDuration } from '../callUx';
+import { useThemedStyles } from '../ThemeContext';
+import { spacing, typography } from '../theme';
+import { Avatar, Icon, IconAction, ListItem, SectionHeader, Switch } from './primitives';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
 import type { ThemeColors } from '../theme';
 import type { PeerPresence } from '../types/directory';
 
 export type { CallHistoryEntry };
 
-/** How many recent calls with this peer are listed. */
+/** How many recent calls with this peer are listed; the Calls tab has them all. */
 const MAX_RECENT_CALLS = 5;
 
-/**
- * Up to two uppercase initials derived from a userId, for the avatar circle.
- */
-function getInitials(id: string | null | undefined) {
-  const trimmed = (id ?? '').trim();
-  if (!trimmed) return '?';
-  return trimmed.slice(0, 2).toUpperCase();
-}
+/** Diameter of the three primary action buttons. */
+const PRIMARY_ACTION_SIZE = 56;
 
 /**
  * Peer of a call-history entry, relative to the signed-in user.
+ *
+ * Deliberately not `callLog.callPeerId`: that one trusts `direction`, and this
+ * screen must still attribute an entry whose direction the server omitted.
  */
 function callPeerOf(entry: CallHistoryEntry, currentUserId: string | null | undefined) {
   if (entry?.direction === 'outgoing') return entry?.calleeId ?? '';
@@ -31,21 +37,48 @@ function callPeerOf(entry: CallHistoryEntry, currentUserId: string | null | unde
   return entry?.callerId === currentUserId ? (entry?.calleeId ?? '') : (entry?.callerId ?? '');
 }
 
-/** @param entry */
-function describeCall(entry: CallHistoryEntry) {
-  if (entry?.status === 'missed' && entry?.direction === 'incoming') return 'Missed call';
-  return entry?.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
-}
-
-/** @param isoString */
-function formatTimestamp(isoString: string | null | undefined) {
-  if (!isoString) return '';
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  })}`;
+/**
+ * One of the three primary actions: a circular icon button with its label
+ * underneath. The label is hidden from screen readers because the button
+ * already carries the whole sentence.
+ */
+function PrimaryAction({
+  icon,
+  label,
+  accessibilityLabel,
+  accessibilityHint,
+  onPress,
+  disabled,
+  testID,
+}: {
+  icon: string;
+  label: string;
+  accessibilityLabel: string;
+  accessibilityHint: string;
+  onPress?: () => void;
+  disabled?: boolean;
+  testID: string;
+}) {
+  const styles = useThemedStyles(createStyles);
+  return (
+    <View style={styles.primaryAction}>
+      <IconAction
+        icon={icon}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={accessibilityHint}
+        onPress={onPress}
+        disabled={disabled}
+        size={PRIMARY_ACTION_SIZE}
+        testID={testID}
+      />
+      <Text
+        style={[styles.primaryActionLabel, disabled && styles.primaryActionLabelDisabled]}
+        accessibilityElementsHidden
+        importantForAccessibility="no">
+        {label}
+      </Text>
+    </View>
+  );
 }
 
 export type PeerProfileScreenProps = {
@@ -63,18 +96,27 @@ export type PeerProfileScreenProps = {
   onToggleMute?: (peerId: string) => void;
   onBlock?: (peerId: string) => Promise<boolean> | void;
   onUnblock?: (peerId: string) => Promise<boolean> | void;
-  onReport?: (peerId: string) => void;
 };
 
 /**
- * Per-contact screen, reachable from the chat header, a call-log row or a
- * search result.
+ * The person hub: everything the app knows about one person, and every
+ * relationship-level decision about them, in one place.
  *
- * It is where the relationship-level actions live: message, audio/video call,
- * mute notifications, and — for the first time in the UI — block/unblock.
- * Blocking is enforced server-side in both directions (the peer disappears
- * from the directory, the conversation list and search, and can no longer
- * call or message), and the same control reverses it.
+ * Reached from the chat header, a call-log row, a search result and the people
+ * picker — every person-shaped tap in the app routes here rather than to a
+ * screen-specific menu.
+ *
+ * Two controls that used to be decorative are real here. **Mute** silences that
+ * person's message notifications through `notificationPreferences`, which the
+ * headless push handler consults before it rings; the row was previously drawn
+ * only when an `onToggleMute` prop was supplied, and nothing ever supplied one.
+ * **Block** is enforced server-side in both directions (the peer disappears
+ * from the directory, the conversation list and search, and can no longer call
+ * or message), and the same control reverses it.
+ *
+ * There is deliberately no "Report" row: nothing on the server accepts a
+ * report, and the row used to answer with an `Alert` promising that the report
+ * would be reviewed. It comes back when there is somewhere to send it.
  */
 function PeerProfileScreen({
   peerId,
@@ -90,9 +132,7 @@ function PeerProfileScreen({
   onToggleMute,
   onBlock,
   onUnblock,
-  onReport,
 }: PeerProfileScreenProps) {
-  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
 
@@ -103,6 +143,10 @@ function PeerProfileScreen({
         .slice(0, MAX_RECENT_CALLS),
     [callHistory, currentUserId, peerId],
   );
+
+  // The same day grouping the Calls tab uses, so a call reads identically
+  // wherever it is listed.
+  const sections = useMemo(() => groupCallsByDay(recentCalls), [recentCalls]);
 
   const handleBlockPress = useCallback(async () => {
     if (isUpdatingBlock) return;
@@ -118,34 +162,34 @@ function PeerProfileScreen({
     }
   }, [isBlocked, isUpdatingBlock, onBlock, onUnblock, peerId]);
 
-  const handleReportPress = useCallback(() => {
-    if (onReport) {
-      onReport(peerId);
-      return;
-    }
-    Alert.alert('Report user', `Thanks — we'll review reports about ${peerId}.`);
-  }, [onReport, peerId]);
+  const handleToggleMute = useCallback(() => {
+    onToggleMute?.(peerId);
+  }, [onToggleMute, peerId]);
 
   const presenceLabel = presence ? (presence.online ? 'Online' : 'Offline') : 'Presence unknown';
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} testID="peer-profile-root">
       <View style={styles.header}>
-        <Pressable
-          onPress={onBack}
-          accessibilityRole="button"
+        <IconAction
+          icon="back"
+          variant="plain"
           accessibilityLabel="Back"
-          hitSlop={touchSlop(36)}
+          accessibilityHint="Returns to the previous screen"
+          onPress={onBack}
           testID="peer-profile-back"
-          style={styles.backButton}>
-          <Icon name="back" size={26} color={colors.onSurface} />
-        </Pressable>
+        />
       </View>
 
       <View style={styles.identity}>
-        <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{getInitials(peerId)}</Text>
-        </View>
+        <Avatar
+          id={peerId}
+          size="xl"
+          // Omitted rather than `false` when presence is unknown: the dot means
+          // "they are offline", not "we never asked".
+          online={presence ? Boolean(presence.online) : undefined}
+          testID="peer-profile-avatar"
+        />
         <Text style={styles.name} accessibilityRole="header" numberOfLines={1}>
           {peerId}
         </Text>
@@ -155,93 +199,106 @@ function PeerProfileScreen({
       </View>
 
       {isBlocked ? (
-        <Text style={[styles.blockedNote, { color: colors.danger }]} testID="peer-profile-blocked-note">
+        <Text style={styles.blockedNote} testID="peer-profile-blocked-note">
           Blocked — they can't call or message you, and you won't see them in search.
         </Text>
       ) : null}
 
       <View style={styles.actions}>
-        <AppButton
-          title="Message"
-          onPress={() => onMessage?.(peerId)}
+        <PrimaryAction
+          icon="tabChats"
+          label="Message"
+          accessibilityLabel={`Message ${peerId}`}
+          accessibilityHint="Opens the conversation"
+          onPress={onMessage ? () => onMessage(peerId) : undefined}
           disabled={isBlocked || !onMessage}
-          style={styles.actionButton}
           testID="peer-profile-message"
         />
-        <AppButton
-          title="Audio call"
-          onPress={() => onAudioCall?.(peerId)}
+        <PrimaryAction
+          icon="chatAudioCall"
+          label="Audio"
+          accessibilityLabel={`Audio call ${peerId}`}
+          accessibilityHint="Starts an audio call"
+          onPress={onAudioCall ? () => onAudioCall(peerId) : undefined}
           disabled={isBlocked || !onAudioCall}
-          style={styles.actionButton}
           testID="peer-profile-audio-call"
         />
-        <AppButton
-          title="Video call"
-          onPress={() => onVideoCall?.(peerId)}
+        <PrimaryAction
+          icon="chatVideoCall"
+          label="Video"
+          accessibilityLabel={`Video call ${peerId}`}
+          accessibilityHint="Starts a video call"
+          onPress={onVideoCall ? () => onVideoCall(peerId) : undefined}
           disabled={isBlocked || !onVideoCall}
-          style={styles.actionButton}
           testID="peer-profile-video-call"
         />
       </View>
 
-      <Text style={styles.sectionTitle} accessibilityRole="header">
-        Recent calls
-      </Text>
+      <SectionHeader title="Calls" icon="tabCalls" variant="section" />
       {recentCalls.length === 0 ? (
         <Text style={styles.empty} testID="peer-profile-no-calls">
           No calls with {peerId} yet
         </Text>
       ) : (
-        recentCalls.map(entry => (
-          <View key={entry.callId} style={styles.row} testID="peer-profile-call-row">
-            <Text style={styles.rowTitle}>{describeCall(entry)}</Text>
-            <Text style={styles.rowMeta}>{formatTimestamp(entry.createdAt)}</Text>
+        sections.map(section => (
+          <View key={section.key}>
+            <SectionHeader title={section.title} />
+            {section.entries.map(entry => {
+              const durationLabel =
+                entry.durationSeconds != null ? formatCallDuration(entry.durationSeconds) : '';
+              const subtitle = [formatCallTimeOfDay(entry.createdAt), durationLabel]
+                .filter(Boolean)
+                .join(' · ');
+
+              return (
+                <ListItem
+                  key={entry.callId}
+                  title={describeCallOutcome(entry)}
+                  subtitle={subtitle || null}
+                  destructive={isMissedCall(entry)}
+                  icon={callDirectionIcon(entry)}
+                  // Read-only: the primary actions above are how a call starts
+                  // here, so a history row can never dial by surprise.
+                  accessibilityRole="none"
+                  accessibilityLabel={describeCallEntryForA11y(entry, durationLabel)}
+                  trailing={
+                    <Icon name={callMediaIcon(entry)} size={16} color={styles.rowGlyph.color} />
+                  }
+                  testID="peer-profile-call-row"
+                />
+              );
+            })}
           </View>
         ))
       )}
 
-      <Text style={styles.sectionTitle} accessibilityRole="header">
-        Privacy
-      </Text>
-      {onToggleMute ? (
-        <Pressable
-          onPress={() => onToggleMute(peerId)}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: isMuted }}
-          accessibilityLabel={
-            isMuted ? `Unmute notifications from ${peerId}` : `Mute notifications from ${peerId}`
-          }
-          style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-          testID="peer-profile-mute">
-          <Text style={styles.rowTitle}>Mute notifications</Text>
-          <Text style={styles.rowMeta}>{isMuted ? 'On' : 'Off'}</Text>
-        </Pressable>
-      ) : null}
-
-      <AppButton
+      <SectionHeader title="Privacy" icon="settingsPrivacy" variant="section" />
+      <Switch
+        label="Mute notifications"
+        hint={`Messages from ${peerId} arrive silently. Calls still ring.`}
+        value={isMuted}
+        onValueChange={handleToggleMute}
+        accessibilityLabel={
+          isMuted ? `Unmute notifications from ${peerId}` : `Mute notifications from ${peerId}`
+        }
+        testID="peer-profile-mute"
+      />
+      <ListItem
         title={isBlocked ? 'Unblock' : 'Block'}
-        onPress={handleBlockPress}
-        disabled={isUpdatingBlock}
-        // `active` paints the button in the danger colour: blocking is a
-        // destructive action, and an applied block stays visibly "on".
-        active={!isBlocked}
-        style={styles.actionButton}
-        accessibilityLabel={isBlocked ? `Unblock ${peerId}` : `Block ${peerId}`}
-        accessibilityHint={
+        subtitle={
           isBlocked
             ? `Lets ${peerId} call and message you again`
             : `Stops ${peerId} from calling or messaging you`
         }
+        icon="block"
+        // An applied block is a state, not a destructive action to repeat; the
+        // negative colour belongs on the control that would apply one.
+        destructive={!isBlocked}
+        disabled={isUpdatingBlock}
+        onPress={handleBlockPress}
+        accessibilityLabel={isBlocked ? `Unblock ${peerId}` : `Block ${peerId}`}
         testID="peer-profile-block"
       />
-      <Pressable
-        onPress={handleReportPress}
-        accessibilityRole="button"
-        accessibilityLabel={`Report ${peerId}`}
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        testID="peer-profile-report">
-        <Text style={styles.rowTitle}>Report</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -255,83 +312,56 @@ const createStyles = (colors: ThemeColors) =>
     content: {
       padding: spacing.lg,
       paddingBottom: spacing.xl,
-      gap: spacing.sm,
     },
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-    },
-    backButton: {
-      height: 36,
-      width: 36,
-      alignItems: 'center',
-      justifyContent: 'center',
     },
     identity: {
       alignItems: 'center',
       gap: spacing.xs,
       marginBottom: spacing.md,
     },
-    avatarCircle: {
-      height: 88,
-      width: 88,
-      borderRadius: 44,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceControl,
-    },
-    avatarText: {
-      ...typography.title,
-      color: colors.textPrimary,
-    },
     name: {
-      ...typography.sectionTitle,
-      color: colors.textPrimary,
+      ...typography.title,
+      color: colors.onSurface,
     },
     presence: {
-      ...typography.hint,
-      color: colors.textSecondary,
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
     },
     blockedNote: {
-      ...typography.hint,
+      ...typography.caption,
+      color: colors.negative,
       textAlign: 'center',
+      marginBottom: spacing.sm,
     },
     actions: {
-      gap: spacing.sm,
-    },
-    // `AppButton` stretches by default (it is designed for rows); in this
-    // stacked layout each button keeps its own height instead.
-    actionButton: {
-      flex: 0,
-    },
-    sectionTitle: {
-      ...typography.sectionTitle,
-      color: colors.textSecondary,
-      marginTop: spacing.lg,
-    },
-    row: {
       flexDirection: 'row',
+      justifyContent: 'center',
+      gap: spacing.xl,
+      marginBottom: spacing.sm,
+    },
+    primaryAction: {
       alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-      borderRadius: radius.sm,
-      backgroundColor: colors.surface,
+      gap: spacing.xs,
     },
-    rowPressed: {
-      opacity: 0.6,
+    primaryActionLabel: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
     },
-    rowTitle: {
-      ...typography.body,
-      color: colors.textPrimary,
+    primaryActionLabelDisabled: {
+      opacity: 0.55,
     },
-    rowMeta: {
-      ...typography.hint,
-      color: colors.textMuted,
+    // Read back by the trailing modality glyph: `designTokens.test.ts` forbids
+    // a colour literal anywhere under `src/components`.
+    rowGlyph: {
+      color: colors.onSurfaceVariant,
     },
     empty: {
-      ...typography.hint,
-      color: colors.textSecondary,
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
+      paddingHorizontal: spacing.md,
     },
   });
 

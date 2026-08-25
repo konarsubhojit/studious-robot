@@ -21,6 +21,9 @@ import type { NotificationPrefs } from './settingsStorage';
 
 let cache: NotificationPrefs = { ...DEFAULT_NOTIFICATION_PREFS };
 let hydration: Promise<NotificationPrefs> | null = null;
+// Bumped by every write and by the test reset, so a read that is still in
+// flight can tell that its result is already stale.
+let epoch = 0;
 const listeners = new Set<(prefs: NotificationPrefs) => void>();
 
 function notify() {
@@ -41,9 +44,15 @@ function normalizePeerId(peerId: string | null | undefined): string {
  */
 export function ensureNotificationPrefsLoaded(): Promise<NotificationPrefs> {
   if (!hydration) {
+    const startedAt = ++epoch;
     hydration = loadNotificationPrefs().then(loaded => {
-      cache = loaded;
-      notify();
+      // Only adopt the file if nothing was changed while it was being read: a
+      // mute applied in the meantime is newer than the file it was reading, and
+      // overwriting it here would silently un-mute the person.
+      if (startedAt === epoch) {
+        cache = loaded;
+        notify();
+      }
       return getNotificationPrefs();
     });
   }
@@ -71,6 +80,7 @@ async function persist(next: NotificationPrefs): Promise<boolean> {
   cache = next;
   // Anything already awaiting hydration should see the new value, not the file
   // it was reading when the user changed their mind.
+  epoch += 1;
   hydration = Promise.resolve(getNotificationPrefs());
   notify();
   return saveNotificationPrefs(next);
@@ -114,5 +124,7 @@ export function subscribeToNotificationPrefs(
 export function resetNotificationPrefsForTests() {
   cache = { ...DEFAULT_NOTIFICATION_PREFS };
   hydration = null;
+  // A read left in flight by the previous test must not land in this one.
+  epoch += 1;
   listeners.clear();
 }

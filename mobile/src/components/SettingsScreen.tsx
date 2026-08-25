@@ -12,38 +12,11 @@ import {
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
-import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
-import { Icon, Switch } from './primitives';
+import { Avatar, Divider, IconAction, ListItem, SectionHeader, Switch } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
-import type { ReactNode } from 'react';
 import type { ThemeColors } from '../theme';
-
-/**
- * Small uppercase group label used to introduce each settings section,
- * optionally preceded by a semantic icon from `vectorIcons.js` so section
- * headers read consistently with the rest of the app's icon usage.
- *
- * @param props.icon - Semantic icon key from ICONS map.
- */
-function SectionLabel({ icon, children }: { icon?: string; children: ReactNode; }) {
-  const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
-
-  const MCIcon = loadVectorIcons();
-  const iconDef = icon ? ICONS[icon] : null;
-  return (
-    <View style={styles.sectionLabelRow} accessibilityRole="header">
-      {iconDef && MCIcon ? (
-        <MCIcon name={iconDef.icon} size={14} color={colors.textSecondary} />
-      ) : iconDef ? (
-        <Text style={styles.sectionLabelEmoji}>{iconDef.emoji}</Text>
-      ) : null}
-      <Text style={styles.sectionTitle}>{children}</Text>
-    </View>
-  );
-}
 
 const APPEARANCE_OPTIONS = [
   { mode: THEME_MODES.SYSTEM, label: 'System', testID: 'settings-theme-system' },
@@ -87,15 +60,37 @@ export type SettingsScreenProps = {
   iceTransportPolicy?: string;
   /** Persist the WebRTC ICE transport policy used for new calls. */
   onChangeIceTransportPolicy?: (policy: string) => void;
+  /** Master switch for chat-message notifications. */
+  messageNotificationsEnabled?: boolean;
+  /** Turn chat-message notifications on or off. */
+  onToggleMessageNotifications?: (next: boolean) => void;
+  /** People whose message notifications are silenced, newest first. */
+  mutedPeers?: string[];
+  /** Unmute one person, in place. */
+  onUnmutePeer?: (peerId: string) => void;
+  /** People blocked server-side. */
+  blockedUsers?: string[];
+  /** Unblock one person, in place. */
+  onUnblockUser?: (peerId: string) => void;
+  /** Open the person hub; every person-shaped row routes there. */
+  onOpenProfile?: (peerId: string) => void;
   status?: CallStatus;
 };
 
 /**
- * Account & connection settings.
+ * Account, notification, privacy and connection settings.
  *
- * Lets a registered user change the username other people call them by, point
- * the app at a different signaling server, and sign out (which clears the
- * persisted identity and returns to the RegistrationScreen).
+ * Grouped rather than stacked: the screen used to be a single column of bare
+ * "TextInput + Save" pairs and toggles in the order they happened to be added.
+ * It now opens with who you are signed in as, then **Account · Notifications ·
+ * Calls & media · Appearance · Privacy · Advanced**, with sign-out last and
+ * separated from the rest so a destructive action is never adjacent to a
+ * routine one.
+ *
+ * The Notifications and Privacy groups are the two lists the app previously had
+ * no way to inspect at all: muting and blocking could be applied from a person's
+ * hub, but nothing anywhere showed *who* was muted or blocked, which made both
+ * effectively irreversible for anyone who forgot.
  *
  * Purely presentational – all behaviour is supplied via props.  Local input
  * state is committed only when the user presses the matching "Save" button so
@@ -117,6 +112,13 @@ function SettingsScreen({
   onToggleAutoLighting,
   iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
   onChangeIceTransportPolicy,
+  messageNotificationsEnabled = true,
+  onToggleMessageNotifications,
+  mutedPeers = [],
+  onUnmutePeer,
+  blockedUsers = [],
+  onUnblockUser,
+  onOpenProfile,
   status,
 }: SettingsScreenProps) {
   const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
@@ -140,23 +142,31 @@ function SettingsScreen({
 
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <View style={styles.headerRow}>
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
+          <IconAction
+            icon="back"
             accessibilityLabel="Back"
             accessibilityHint="Returns to the previous screen"
-            hitSlop={touchSlop(44)}
+            onPress={onClose}
             testID="settings-back"
-            style={styles.backButton}>
-            <Icon name="back" size={26} color={colors.onSurface} />
-          </Pressable>
+          />
           <Text style={styles.title} accessibilityRole="header">
             Settings
           </Text>
         </View>
 
-        {/* ── Username ────────────────────────────────────────────────────── */}
-        <SectionLabel icon="settingsUsername">Username</SectionLabel>
+        {/* ── Who you are signed in as ────────────────────────────────────── */}
+        <View style={styles.identity} testID="settings-identity">
+          <Avatar id={userId} size="lg" />
+          <View style={styles.identityText}>
+            <Text style={styles.identityName} numberOfLines={1}>
+              {userId || 'Not signed in'}
+            </Text>
+            <Text style={styles.hint}>Signed in on this device</Text>
+          </View>
+        </View>
+
+        {/* ── Account ─────────────────────────────────────────────────────── */}
+        <SectionHeader title="Account" icon="settingsUsername" />
         <Text style={styles.hint}>Other people will call you by this name.</Text>
         <TextInput
           value={name}
@@ -178,34 +188,55 @@ function SettingsScreen({
           style={styles.saveButton}
         />
 
-        {/* ── Signaling server ────────────────────────────────────────────── */}
-        <SectionLabel icon="settingsServer">Signaling server</SectionLabel>
-        <Text style={styles.hint}>The server that routes your calls.</Text>
-        <TextInput
-          value={url}
-          onChangeText={setUrl}
-          placeholder="https://signaling.example.com"
-          placeholderTextColor={colors.textSecondary}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          style={styles.input}
-          accessibilityLabel="Signaling server URL"
-          accessibilityHint="The address of the server that routes your calls"
-          testID="settings-signaling-input"
-        />
-        <AppButton
-          title="Save server"
-          onPress={() => onSaveSignalingUrl(trimmedUrl)}
-          disabled={!urlDirty}
-          testID="settings-save-signaling"
-          style={styles.saveButton}
-        />
+        {/* ── Notifications ───────────────────────────────────────────────── */}
+        <SectionHeader title="Notifications" icon="settingsNotifications" />
+        {onToggleMessageNotifications ? (
+          <Switch
+            label="Message notifications"
+            hint="Notify me about new messages. Calls always ring."
+            value={Boolean(messageNotificationsEnabled)}
+            onValueChange={onToggleMessageNotifications}
+            testID="settings-message-notifications"
+          />
+        ) : null}
+        <Text style={styles.groupCaption}>Muted people</Text>
+        {mutedPeers.length === 0 ? (
+          <Text style={styles.hint} testID="settings-muted-empty">
+            No one is muted. Mute someone from their profile to silence their messages.
+          </Text>
+        ) : (
+          <View testID="settings-muted-people">
+            {mutedPeers.map(peer => (
+              <ListItem
+                key={peer}
+                title={peer}
+                subtitle="Messages arrive silently"
+                leading={<Avatar id={peer} size="sm" />}
+                onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+                accessibilityLabel={`${peer}, muted`}
+                accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
+                trailing={
+                  onUnmutePeer ? (
+                    <IconAction
+                      icon="unmuteNotifications"
+                      accessibilityLabel={`Unmute ${peer}`}
+                      accessibilityHint="Lets their messages notify you again"
+                      onPress={() => onUnmutePeer(peer)}
+                      size={40}
+                      testID="settings-unmute"
+                    />
+                  ) : null
+                }
+                testID="settings-muted-row"
+              />
+            ))}
+          </View>
+        )}
 
         {/* ── Calls & media ───────────────────────────────────────────────── */}
         {onToggleSpeakerDefault || onToggleAutoLighting ? (
           <>
-            <SectionLabel icon="settingsCalls">Calls &amp; media</SectionLabel>
+            <SectionHeader title="Calls &amp; media" icon="settingsCalls" />
             {/* These two used to live inside the Lobby's developer-tools panel,
                 which meant an ordinary user could not reach them at all. */}
             {onToggleSpeakerDefault ? (
@@ -230,7 +261,7 @@ function SettingsScreen({
         ) : null}
 
         {/* ── Appearance ──────────────────────────────────────────────────── */}
-        <SectionLabel icon="settingsAppearance">Appearance</SectionLabel>
+        <SectionHeader title="Appearance" icon="settingsAppearance" />
         <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
         <View
           style={styles.segmentedRow}
@@ -259,27 +290,76 @@ function SettingsScreen({
           })}
         </View>
 
-        {/* ── Developer ───────────────────────────────────────────────────── */}
+        {/* ── Privacy ─────────────────────────────────────────────────────── */}
+        <SectionHeader title="Privacy" icon="settingsPrivacy" />
+        <Text style={styles.groupCaption}>Blocked people</Text>
+        {blockedUsers.length === 0 ? (
+          <Text style={styles.hint} testID="settings-blocked-empty">
+            No one is blocked. Blocking someone stops their calls and messages both ways.
+          </Text>
+        ) : (
+          <View testID="settings-blocked-people">
+            {blockedUsers.map(peer => (
+              <ListItem
+                key={peer}
+                title={peer}
+                subtitle="Can't call or message you"
+                leading={<Avatar id={peer} size="sm" />}
+                onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+                accessibilityLabel={`${peer}, blocked`}
+                accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
+                trailing={
+                  onUnblockUser ? (
+                    <AppButton
+                      title="Unblock"
+                      onPress={() => onUnblockUser(peer)}
+                      style={styles.inlineButton}
+                      accessibilityLabel={`Unblock ${peer}`}
+                      accessibilityHint="Lets them call and message you again"
+                      testID="settings-unblock"
+                    />
+                  ) : null
+                }
+                testID="settings-blocked-row"
+              />
+            ))}
+          </View>
+        )}
+
+        {/* ── Advanced ────────────────────────────────────────────────────── */}
+        <SectionHeader title="Advanced" icon="settingsDeveloper" />
+        <Text style={styles.toggleLabel}>Signaling server</Text>
+        <Text style={styles.hint}>The server that routes your calls.</Text>
+        <TextInput
+          value={url}
+          onChangeText={setUrl}
+          placeholder="https://signaling.example.com"
+          placeholderTextColor={colors.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={styles.input}
+          accessibilityLabel="Signaling server URL"
+          accessibilityHint="The address of the server that routes your calls"
+          testID="settings-signaling-input"
+        />
+        <AppButton
+          title="Save server"
+          onPress={() => onSaveSignalingUrl(trimmedUrl)}
+          disabled={!urlDirty}
+          testID="settings-save-signaling"
+          style={styles.saveButton}
+        />
         {onToggleDeveloperMode ? (
           <>
-            <SectionLabel icon="settingsDeveloper">Developer</SectionLabel>
-            <Pressable
-              onPress={onToggleDeveloperMode}
-              accessibilityRole="switch"
-              accessibilityLabel="Developer mode"
-              accessibilityHint="Shows extra diagnostic tools"
-              accessibilityState={{ checked: Boolean(developerModeEnabled) }}
+            <Switch
+              label="Developer mode"
+              hint="Show extra diagnostic tools, such as the ICE transport policy."
+              value={Boolean(developerModeEnabled)}
+              onValueChange={onToggleDeveloperMode}
               testID="settings-developer-mode"
-              style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}>
-              <View style={styles.toggleTextWrap}>
-                <Text style={styles.toggleLabel}>Developer mode</Text>
-                <Text style={styles.hint}>
-                  Show extra diagnostic tools, such as the ICE transport policy below.
-                </Text>
-              </View>
-              <Text style={styles.toggleValue}>{developerModeEnabled ? 'On' : 'Off'}</Text>
-            </Pressable>
-            {onChangeIceTransportPolicy ? (
+            />
+            {onChangeIceTransportPolicy && developerModeEnabled ? (
               <>
                 <Text style={styles.toggleLabel}>ICE transport policy</Text>
                 <Text style={styles.hint}>Force TURN relay for diagnostics, or use the default ICE path.</Text>
@@ -314,9 +394,6 @@ function SettingsScreen({
             ) : null}
           </>
         ) : null}
-
-        {/* ── Account actions ─────────────────────────────────────────────── */}
-        <SectionLabel icon="settingsAccountSection">Account</SectionLabel>
         {onExportLogs ? (
           <AppButton
             title="Export logs"
@@ -325,11 +402,15 @@ function SettingsScreen({
             style={styles.saveButton}
           />
         ) : null}
+
+        {/* ── Sign out ────────────────────────────────────────────────────── */}
+        <Divider style={styles.signOutDivider} />
         <Pressable
           onPress={onSignOut}
           accessibilityRole="button"
           accessibilityLabel="Sign out"
           accessibilityHint="Clears your identity on this device and returns to registration"
+          hitSlop={touchSlop(sizes.minTouchTarget)}
           testID="settings-sign-out"
           style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}>
           <Text style={styles.signOutText}>Sign out</Text>
@@ -361,34 +442,33 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
-      marginBottom: spacing.lg,
-    },
-    backButton: {
-      height: 44,
-      width: 44,
-      borderRadius: 22,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceControl,
+      marginBottom: spacing.md,
     },
     title: {
       ...typography.title,
       color: colors.textPrimary,
     },
-    sectionLabelRow: {
+    identity: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 6,
-      marginTop: spacing.lg,
+      gap: spacing.md,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+    },
+    identityText: {
+      flex: 1,
+      gap: 2,
+    },
+    identityName: {
+      ...typography.subtitle,
+      color: colors.textPrimary,
+    },
+    groupCaption: {
+      ...typography.label,
+      color: colors.textPrimary,
+      marginTop: spacing.sm,
       marginBottom: spacing.xs,
-    },
-    sectionLabelEmoji: {
-      fontSize: 12,
-      lineHeight: 14,
-    },
-    sectionTitle: {
-      ...typography.groupLabel,
-      color: colors.textSecondary,
     },
     hint: {
       ...typography.hint,
@@ -408,6 +488,16 @@ const createStyles = (colors: ThemeColors) =>
     saveButton: {
       marginBottom: spacing.sm,
     },
+    // `AppButton` stretches to fill its row by default; inside a `ListItem`'s
+    // trailing slot it must stay the width of its own label.
+    inlineButton: {
+      flex: 0,
+      minHeight: sizes.minTouchTarget,
+    },
+    signOutDivider: {
+      marginTop: spacing.xl,
+      marginBottom: spacing.lg,
+    },
     signOutButton: {
       minHeight: sizes.minTouchTarget,
       borderRadius: radius.pill,
@@ -426,20 +516,6 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
       fontSize: 12,
       marginTop: spacing.sm,
-    },
-    toggleRow: {
-      minHeight: sizes.minTouchTarget,
-      borderRadius: radius.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-      marginBottom: spacing.sm,
     },
     segmentedRow: {
       flexDirection: 'row',
@@ -470,19 +546,10 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textOnAccent,
       fontWeight: '700',
     },
-    toggleTextWrap: {
-      flexShrink: 1,
-    },
     toggleLabel: {
       color: colors.textPrimary,
       fontWeight: '600',
       marginBottom: 2,
-    },
-    toggleValue: {
-      color: colors.accentValue,
-      fontWeight: '700',
-      minWidth: 28,
-      textAlign: 'right',
     },
     pressed: {
       opacity: 0.78,
