@@ -7,7 +7,7 @@ import { createRateLimiter, createAuditLog } from './security.ts';
 import { createStores } from './stores/index.ts';
 import { createMessageStore } from './messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from './cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from './lib/state.ts';
 import { waitForSocketsToDrain } from './lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls } from './domain/calls.ts';
@@ -15,7 +15,7 @@ import { notifyCallTransition } from './domain/notifications.ts';
 import { loadPersistedStateFromDb, pruneStaleDevices } from './lib/persistence.ts';
 import { mountRoutes } from './routes/index.ts';
 import { registerSocketHandlers } from './signaling/index.ts';
-import { verboseLog } from './lib/verbose.ts';
+import { isVerboseLoggingEnabled, verboseLog } from './lib/verbose.ts';
 
 /**
  * @returns the error message, or a stringified fallback.
@@ -41,8 +41,16 @@ function createServer(opts: CreateServerOptions = {}) {
     throw new Error('createServer requires verifyIdToken outside the Node test runner');
   }
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || DEFAULT_JSON_BODY_LIMIT }));
   app.use((req, res, next) => {
+    // Bail before touching the request when verbose logging is off, which is
+    // the production default. Building the metadata object (and enumerating
+    // the query keys) on every request paid an allocation for a string that
+    // was then thrown away inside `verboseLog`.
+    if (!isVerboseLoggingEnabled()) {
+      next();
+      return;
+    }
     const startedAt = Date.now();
     verboseLog('http', 'request.start', {
       method: req.method,
@@ -234,6 +242,8 @@ function createServer(opts: CreateServerOptions = {}) {
     cors: { origin: corsOrigin },
     pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS) || DEFAULT_SOCKET_PING_INTERVAL_MS,
     pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS) || DEFAULT_SOCKET_PING_TIMEOUT_MS,
+    maxHttpBufferSize:
+      Number(process.env.SOCKET_MAX_BUFFER_BYTES) || DEFAULT_SOCKET_MAX_BUFFER_BYTES,
   });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis

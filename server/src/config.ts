@@ -6,7 +6,11 @@
  * call domain) can import the same canonical definitions.
  */
 
-import { SIGNALING_VERSION } from '../../shared/index.ts';
+import {
+  CALL_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+  SIGNALING_VERSION,
+} from '../../shared/index.ts';
 
 const MAX_ROOM_SIZE = 2;
 const PUSH_PROVIDERS = new Set(['apns', 'fcm']);
@@ -104,21 +108,13 @@ const DEFAULT_MEDIA_CONNECT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
 
 /**
- * How long a connected (`in_call`) call may go without a client heartbeat
- * before it is considered abandoned and ended with `heartbeat_timeout`.
+ * Call-liveness timing.
  *
- * Clients report liveness every `CALL_HEARTBEAT_INTERVAL_MS` over the existing
- * `call.media-state` relay once media is connected. Five missed beats is a
- * deliberately forgiving margin for a phone that briefly loses its network.
- *
- * A call that has *never* sent a heartbeat is never aged out by it: an older
- * client that does not implement heartbeats stays bounded by the absolute
- * duration cap instead of being hung up on mid-conversation.
+ * Both values are re-exported from `shared/signaling/timing.ts` rather than
+ * redeclared here: the client interval and this timeout are two halves of one
+ * protocol contract, and they were previously two independent literals in two
+ * packages that only a comment asked you to keep in step.
  */
-const DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS = 150_000;
-
-/** How often a connected client reports call liveness. */
-const CALL_HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Grace period after a socket disconnect before an in-progress call whose
@@ -142,6 +138,30 @@ const DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS = 15_000;
  */
 const DEFAULT_SOCKET_PING_INTERVAL_MS = 10_000;
 const DEFAULT_SOCKET_PING_TIMEOUT_MS = 8_000;
+
+/**
+ * Largest accepted Socket.IO frame, in bytes.
+ *
+ * Engine.IO defaults to 1 MB. Nothing this server relays comes close: the
+ * biggest frames are SDP offers/answers (a few KB) and chat messages, which the
+ * shared schema already caps at {@link MAX_MESSAGE_BODY_LENGTH} characters.
+ * Attachments never travel over the socket — they are uploaded straight to
+ * object storage through a presigned URL — so a tighter cap costs nothing and
+ * bounds what a single connection can force the process to buffer.
+ * Override with `SOCKET_MAX_BUFFER_BYTES`.
+ */
+const DEFAULT_SOCKET_MAX_BUFFER_BYTES = 256 * 1024;
+
+/**
+ * Largest accepted JSON request body, in bytes.
+ *
+ * Express defaults to 100 KB; this makes the limit explicit and slightly
+ * tighter. The largest legitimate body is a chat message send, bounded by
+ * `MAX_MESSAGE_BODY_LENGTH` (4000 characters) plus envelope. Attachment bytes
+ * go direct to object storage, so no upload path depends on this.
+ * Override with `JSON_BODY_LIMIT`.
+ */
+const DEFAULT_JSON_BODY_LIMIT = '64kb';
 
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;
@@ -212,6 +232,8 @@ export {
   DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   DEFAULT_SOCKET_PING_INTERVAL_MS,
   DEFAULT_SOCKET_PING_TIMEOUT_MS,
+  DEFAULT_SOCKET_MAX_BUFFER_BYTES,
+  DEFAULT_JSON_BODY_LIMIT,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   SHUTDOWN_DRAIN_POLL_MS,

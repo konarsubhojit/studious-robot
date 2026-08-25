@@ -50,7 +50,11 @@ import {
   sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
-import { API_ROUTES } from '../../../shared';
+import {
+  API_ROUTES,
+  CALL_HEARTBEAT_DUE_MS,
+  CALL_HEARTBEAT_INTERVAL_MS,
+} from '../../../shared';
 import { getSocketOptions } from '../socketConfig';
 import {
   CLIENT_EVENTS,
@@ -150,26 +154,6 @@ const TERMINAL_CALL_STATUSES = new Set([
   'unreachable',
 ]);
 
-/**
- * How often a connected client reports call liveness to the server.
- *
- * Mirrors `CALL_HEARTBEAT_INTERVAL_MS` on the server, which ends a connected
- * call only after several consecutive beats are missed.
- */
-const CALL_HEARTBEAT_INTERVAL_MS = 30000;
-
-/**
- * How long since the last beat before another one is due.
- *
- * The heartbeat is *time*-driven rather than tick-driven: any wake-up source
- * (the interval, an inbound socket packet, an AppState change) asks whether a
- * beat is due instead of emitting one unconditionally, so extra wake-ups are
- * free and a missed tick is caught up by whichever source fires next.
- *
- * Slightly under the interval so a timer that fires a few milliseconds early
- * still counts as due, rather than slipping a whole period.
- */
-const CALL_HEARTBEAT_DUE_MS = CALL_HEARTBEAT_INTERVAL_MS - 1000;
 
 /**
  * How long a peer connection may stay `disconnected`/`failed` before the loss
