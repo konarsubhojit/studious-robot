@@ -47,7 +47,11 @@ export type { ConversationSummary };
 export type { ChatMessage };
 export type { OutboxItem };
 
-export type ChatSnapshot = { conversations: ConversationSummary[]; messagesByPeer: Record<string, ChatMessage[]>; outbox: OutboxItem[]; };
+export type ChatSnapshot = {
+  conversations: ConversationSummary[];
+  messagesByPeer: Record<string, ChatMessage[]>;
+  outbox: OutboxItem[];
+};
 
 function emptySnapshot(): ChatSnapshot {
   return { conversations: [], messagesByPeer: {}, outbox: [] };

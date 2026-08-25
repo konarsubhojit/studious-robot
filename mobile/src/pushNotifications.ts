@@ -286,7 +286,10 @@ export async function unregisterPushToken({ sessionId, signalingUrl }: { session
 // still builds and runs.  This mirrors the server's env-gated push delivery,
 // which simply skips when the APNs/FCM credentials are absent.
 
-export type MessagingHandle = { instance: FirebaseMessagingTypes.Module; api: typeof import('@react-native-firebase/messaging'); };
+export type MessagingHandle = {
+  instance: FirebaseMessagingTypes.Module;
+  api: typeof import('@react-native-firebase/messaging');
+};
 
 /**
  * Cached result of the optional native messaging module lookup.

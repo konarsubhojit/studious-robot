@@ -33,7 +33,12 @@ function errorMessage(error: unknown): string {
  * another user's conversation is a 403.
  */
 export type MessageRecord = import('../stores/contracts.ts').MessageRecord;
-export type ConversationSummary = { conversationId: string; peerId: string; lastMessage: Record<string, any> | null; unreadCount: number; };
+export type ConversationSummary = {
+  conversationId: string;
+  peerId: string;
+  lastMessage: Record<string, any> | null;
+  unreadCount: number;
+};
 function createMessagesRouter({ state, io }: { state: import('../stores/contracts.ts').ServerState; io: any; }): import('express').Router {
   const router = express.Router();
 

@@ -14,6 +14,10 @@ test('GET /health returns ok status', async () => {
     assert.equal(body.status, 'ok');
     assert.equal(body.service, 'wetalk-signaling');
     assert.deepEqual(body.messageStore, { type: 'memory', status: 'ready' });
+    // Sessions/calls/presence are per-process maps, so a deployment must pin a
+    // client to one instance. Asserted here so the guarantee is not quietly
+    // dropped from the probe payload deployments read it from.
+    assert.equal(body.stateAffinity, 'sticky');
     assert.equal(typeof body.uptime, 'number');
     assert.equal(typeof body.timestamp, 'string');
   } finally {

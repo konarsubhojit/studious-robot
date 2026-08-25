@@ -14,7 +14,17 @@ const MAX_CALL_HISTORY = 50;
  * calls `addToHistory` from its own call-teardown logic.
  */
 
-export type CallHistoryEntry = { callId: string; callerId: string; calleeId: string; direction: 'incoming' | 'outgoing'; status?: string; endReason?: string | null; createdAt?: string; durationSeconds?: number | null; isRead?: boolean; };
+export type CallHistoryEntry = {
+  callId: string;
+  callerId: string;
+  calleeId: string;
+  direction: 'incoming' | 'outgoing';
+  status?: string;
+  endReason?: string | null;
+  createdAt?: string;
+  durationSeconds?: number | null;
+  isRead?: boolean;
+};
 
 /**
  * @returns the error message, when there is one.

@@ -59,7 +59,21 @@ export type AttachmentKind = 'photo' | 'camera' | 'file';
 /**
  * One rendered row: a date separator, a bubble, or a collapsed run of calls.
  */
-export type ListItem = { key: string; type: 'date'; label: string; } | { key: string; type: 'message'; message: ChatMessage; isGroupEnd: boolean; dateLabel: string | null; } | { key: string; type: 'call'; entries: CallActivity[]; dateLabel: string | null; };
+export type ListItem =
+  | { key: string; type: 'date'; label: string }
+  | {
+      key: string;
+      type: 'message';
+      message: ChatMessage;
+      isGroupEnd: boolean;
+      dateLabel: string | null;
+    }
+  | {
+      key: string;
+      type: 'call';
+      entries: CallActivity[];
+      dateLabel: string | null;
+    };
 
 /** Consecutive own-sender messages within this many minutes are grouped
  * (only the last bubble in the group shows a timestamp/tick). */

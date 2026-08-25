@@ -27,7 +27,15 @@
 import { EventEmitter } from 'events';
 
 export type MessageBusHandler = (message: unknown, channel: string) => void;
-export type MessageBus = { type: 'memory' | 'redis'; publish: (channel: string, message: unknown) => Promise<void>; subscribe: (channel: string, handler: MessageBusHandler) => Promise<() => Promise<void>>; close: () => Promise<void>; };
+export type MessageBus = {
+  type: 'memory' | 'redis';
+  publish: (channel: string, message: unknown) => Promise<void>;
+  subscribe: (
+    channel: string,
+    handler: MessageBusHandler
+  ) => Promise<() => Promise<void>>;
+  close: () => Promise<void>;
+};
 
 /**
  * @returns the error message, or a stringified fallback.

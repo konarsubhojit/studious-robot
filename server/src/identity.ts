@@ -1,6 +1,17 @@
-export type User = { userId: string; authUid: string; email?: string | null; authProvider?: string | null; createdAt: string | null; verifiedAt: string | null; };
+export type User = {
+  userId: string;
+  authUid: string;
+  email?: string | null;
+  authProvider?: string | null;
+  createdAt: string | null;
+  verifiedAt: string | null;
+};
 export type IdentityClaimGranted = { ok: true; verified: true; claimed?: true; user: User; };
-export type IdentityClaimDenied = { ok: false; reason: 'account_already_bound' | 'username_required' | 'identity_claimed'; user?: User; };
+export type IdentityClaimDenied = {
+  ok: false;
+  reason: 'account_already_bound' | 'username_required' | 'identity_claimed';
+  user?: User;
+};
 export type IdentityClaim = IdentityClaimGranted | IdentityClaimDenied;
 
 /**

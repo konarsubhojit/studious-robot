@@ -91,9 +91,62 @@ import { DEFAULT_MESSAGE_TYPE, MAX_MESSAGE_BODY_LENGTH, isSupportedMessageType }
 
 /** Default page size for {@link listMessages}. */
 export type MessageRecord = import('./stores/contracts.ts').MessageRecord;
-export type StoredMessage = MessageRecord & { type: string; attachment: object | null; replyTo: string | null; reactions: Record<string, string[]>; deletedAt: string | null; deliveredTo: string[]; readAt: string | null; };
-export type ConversationSummary = { conversationId: string; peerId: string; lastMessage: StoredMessage; unreadCount: number; };
-export type MessageStore = { type: 'memory' | 'mongo'; saveMessage: (message: Partial<MessageRecord> & { senderId: string, recipientId: string, body: string, }) => Promise<StoredMessage>; listMessages: (opts?: { conversationId?: string, limit?: unknown, before?: string }) => Promise<StoredMessage[]>; searchMessages: (opts?: { userId?: string, query?: unknown, limit?: unknown, before?: string }) => Promise<StoredMessage[]>; markDelivered: (messageId: string, userId: string) => Promise<StoredMessage|null>; listConversations: (userId: string) => Promise<ConversationSummary[]>; markRead: (conversationId: string, userId: string) => Promise<number>; deleteMessage: (conversationId: string, messageId: string, userId: string) => Promise<StoredMessage|null>; reactToMessage: (opts?: { conversationId?: string, messageId?: string, userId?: string, emoji?: string, action?: 'add'|'remove', }) => Promise<StoredMessage|null>; close?: () => Promise<void>; ready?: () => Promise<unknown>; };
+export type StoredMessage = MessageRecord & {
+  type: string;
+  attachment: object | null;
+  replyTo: string | null;
+  reactions: Record<string, string[]>;
+  deletedAt: string | null;
+  deliveredTo: string[];
+  readAt: string | null;
+};
+export type ConversationSummary = {
+  conversationId: string;
+  peerId: string;
+  lastMessage: StoredMessage;
+  unreadCount: number;
+};
+export type MessageStore = {
+  type: 'memory' | 'mongo';
+  saveMessage: (
+    message: Partial<MessageRecord> & {
+      senderId: string;
+      recipientId: string;
+      body: string;
+    }
+  ) => Promise<StoredMessage>;
+  listMessages: (opts?: {
+    conversationId?: string;
+    limit?: unknown;
+    before?: string;
+  }) => Promise<StoredMessage[]>;
+  searchMessages: (opts?: {
+    userId?: string;
+    query?: unknown;
+    limit?: unknown;
+    before?: string;
+  }) => Promise<StoredMessage[]>;
+  markDelivered: (
+    messageId: string,
+    userId: string
+  ) => Promise<StoredMessage | null>;
+  listConversations: (userId: string) => Promise<ConversationSummary[]>;
+  markRead: (conversationId: string, userId: string) => Promise<number>;
+  deleteMessage: (
+    conversationId: string,
+    messageId: string,
+    userId: string
+  ) => Promise<StoredMessage | null>;
+  reactToMessage: (opts?: {
+    conversationId?: string;
+    messageId?: string;
+    userId?: string;
+    emoji?: string;
+    action?: 'add' | 'remove';
+  }) => Promise<StoredMessage | null>;
+  close?: () => Promise<void>;
+  ready?: () => Promise<unknown>;
+};
 
 const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for {@link listMessages}. */

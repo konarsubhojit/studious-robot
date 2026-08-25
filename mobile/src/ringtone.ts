@@ -24,7 +24,11 @@ import { logInfo, logWarn } from './appLogger';
  * uses. Every member is optional because older versions of the package (and the
  * test doubles) expose only part of it, which the call sites already probe for.
  */
-export type InCallManager = { start?: (options: { media: boolean, ringback?: string }) => void; stop?: () => void; stopRingback?: () => void; };
+export type InCallManager = {
+  start?: (options: { media: boolean; ringback?: string }) => void;
+  stop?: () => void;
+  stopRingback?: () => void;
+};
 
 /**
  * Cached result of the optional native InCallManager module lookup.

@@ -15,7 +15,35 @@ export type AppSettings = ReturnType<typeof useAppSettings>;
 export type PipView = ReturnType<typeof usePictureInPicturePip>;
 export type CallInitiation = ReturnType<typeof useCallInitiation>;
 
-export type CallContextValue = { callFlow: CallFlow; settings: AppSettings['settings']; isSettingsPanelVisible: AppSettings['isSettingsVisible']; setIsSettingsPanelVisible: AppSettings['setIsSettingsVisible']; handleAutoLightingToggle: AppSettings['handleAutoLightingToggle']; handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle']; handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle']; handleIceTransportPolicyChange: AppSettings['handleIceTransportPolicyChange']; callState: CallFlow['callPhase']; isCallActive: boolean; isCallConnected: boolean; isCompact: CallFlow['isCompactView']; participantLabel: string | null; streams: ReturnType<typeof deriveCallStreams>; isCallMinimized: boolean; isBubbleDismissed: boolean; dismissBubble: () => void; minimizeCall: () => void; expandCall: () => void; minimizeCallOnNavigate: () => void; handleCallStageLayout: PipView['handleCallStageLayout']; pipGesture: PipView['pipGesture']; animatedPipStyle: PipView['animatedPipStyle']; startVideoCallWith: CallInitiation['startVideoCallWith']; startAudioCallWith: CallInitiation['startAudioCallWith']; endCall: () => void; handleExportLogs: () => Promise<void>; };
+export type CallContextValue = {
+  callFlow: CallFlow;
+  settings: AppSettings['settings'];
+  isSettingsPanelVisible: AppSettings['isSettingsVisible'];
+  setIsSettingsPanelVisible: AppSettings['setIsSettingsVisible'];
+  handleAutoLightingToggle: AppSettings['handleAutoLightingToggle'];
+  handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle'];
+  handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle'];
+  handleIceTransportPolicyChange: AppSettings['handleIceTransportPolicyChange'];
+  callState: CallFlow['callPhase'];
+  isCallActive: boolean;
+  isCallConnected: boolean;
+  isCompact: CallFlow['isCompactView'];
+  participantLabel: string | null;
+  streams: ReturnType<typeof deriveCallStreams>;
+  isCallMinimized: boolean;
+  isBubbleDismissed: boolean;
+  dismissBubble: () => void;
+  minimizeCall: () => void;
+  expandCall: () => void;
+  minimizeCallOnNavigate: () => void;
+  handleCallStageLayout: PipView['handleCallStageLayout'];
+  pipGesture: PipView['pipGesture'];
+  animatedPipStyle: PipView['animatedPipStyle'];
+  startVideoCallWith: CallInitiation['startVideoCallWith'];
+  startAudioCallWith: CallInitiation['startAudioCallWith'];
+  endCall: () => void;
+  handleExportLogs: () => Promise<void>;
+};
 
 const CallContext = createContext((null as CallContextValue | null));
 

@@ -55,9 +55,9 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 | ID | Task | Status |
 | -- | ---- | ------ |
-| P3.1 | Document the single-instance requirement + surface it at startup and in `/health` | ⬜ |
+| P3.1 | Document the single-instance requirement + surface it at startup and in `/health` | ✅ |
 | P1.4 | Directory / boot-hydration scaling | ⏸️ descoped — premature at ~10 concurrent users |
-| P3.2 | Reformat single-line wide type declarations | ⬜ |
+| P3.2 | Reformat single-line wide type declarations + guard against regression | ✅ |
 
 ### Deferred beyond this pass
 
@@ -139,3 +139,37 @@ a leak fix rather than a behaviour change. **If deeper call history is wanted
 later, the fix is to move the `GET /calls` read path onto the durable `calls`
 table (already written by `callPersistence.ts`) rather than to raise the
 retention window.**
+
+### P3.1: documented, not re-architected
+
+Given a single instance today, this is a documentation and observability task
+rather than the Redis state refactor the original plan sketched as option (b).
+Three things now state the constraint instead of leaving it to be rediscovered
+from intermittent 401s:
+
+- `README.md` has a "Deployment topology" section explaining that `REDIS_URL`
+  shares the Socket.IO adapter and message bus but *not* sessions, calls,
+  presence, or connections.
+- `/health` reports `stateAffinity: "sticky"`, so a deployment can assert on it.
+- The server logs a warning at startup when `REDIS_URL` is set, since that is
+  the configuration that implies multi-instance intent.
+
+Moving session and active-call lookups into Redis remains the way to lift the
+constraint. It is a contained refactor — all access already goes through
+`lib/state.ts` — but it requires making those reads async, which is not worth
+doing before a second instance actually exists.
+
+### P3.2: scoped to declarations only
+
+Reformatting used `prettier` on the individual declaration lines rather than on
+whole files, so the diff contains no unrelated reformatting. Regression guards
+differ by package because their tooling does:
+
+- **Mobile** uses an `eslint` `max-len` rule whose `ignorePattern` inverts the
+  usual sense of the rule — every line that is *not* a type or interface
+  declaration is exempt. This deliberately avoids imposing a general
+  line-length style on the codebase.
+- **Server** has no linter, and adding one for a single rule was not worth the
+  dependency, so `declaration-formatting.test.ts` performs the same check in
+  the existing node test runner. It was verified to fail on a deliberately
+  over-wide declaration, so it cannot silently pass.

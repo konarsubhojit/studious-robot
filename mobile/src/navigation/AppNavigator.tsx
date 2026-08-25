@@ -28,7 +28,17 @@ import type { ThemeColors } from '../theme';
  * components stable across renders — inline components would remount, and with
  * them lose scroll position and local state, on every state update.
  */
-export type ScreenRenderers = { renderChatList?: () => ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => ReactNode; renderSearch?: () => ReactNode; renderPeerProfile?: (peerId: string | null) => ReactNode; renderCalls?: () => ReactNode; renderSettings?: () => ReactNode; };
+export type ScreenRenderers = {
+  renderChatList?: () => ReactNode;
+  renderChatConversation?: (
+    peerId: string | null,
+    options: { messageId: string | null }
+  ) => ReactNode;
+  renderSearch?: () => ReactNode;
+  renderPeerProfile?: (peerId: string | null) => ReactNode;
+  renderCalls?: () => ReactNode;
+  renderSettings?: () => ReactNode;
+};
 
 const ScreenRenderersContext: Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
 

@@ -448,7 +448,14 @@ const FCM_PRIORITY_HIGH = 'HIGH';
 /**
  * Transport-neutral description of a push notification.
  */
-export type PushEnvelope = { type: string; title: string; body: string; deepLink: string; data: Record<string, string>; ttlSeconds?: number; };
+export type PushEnvelope = {
+  type: string;
+  title: string;
+  body: string;
+  deepLink: string;
+  data: Record<string, string>;
+  ttlSeconds?: number;
+};
 
 /**
  * Derive the push time-to-live from the time left in the ring window.

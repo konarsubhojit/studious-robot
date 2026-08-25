@@ -81,9 +81,19 @@ function callHistoryCachePrefix(userId: string): string {
   return `callhist::${userId}::`;
 }
 
-export type Cache = { type: 'memory' | 'redis'; get: (key: string) => Promise<any|undefined>; set: (key: string, value: unknown, ttlMs?: number) => Promise<void>; delByPrefix: (prefix: string) => Promise<void>; close: () => Promise<void>; };
+export type Cache = {
+  type: 'memory' | 'redis';
+  get: (key: string) => Promise<any | undefined>;
+  set: (key: string, value: unknown, ttlMs?: number) => Promise<void>;
+  delByPrefix: (prefix: string) => Promise<void>;
+  close: () => Promise<void>;
+};
 
-export type CacheableState = { cache?: Cache; telemetry?: import('./telemetry.ts').Telemetry; messageBus?: import('./messageBus.ts').MessageBus | null; };
+export type CacheableState = {
+  cache?: Cache;
+  telemetry?: import('./telemetry.ts').Telemetry;
+  messageBus?: import('./messageBus.ts').MessageBus | null;
+};
 
 /**
  * @returns the error message, or a stringified fallback.

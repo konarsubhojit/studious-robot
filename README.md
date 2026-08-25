@@ -51,6 +51,25 @@ In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
 `/health` from a browser.
 
+### Deployment topology: one instance, or sticky routing
+
+The signaling server keeps sessions, active calls, presence, and socket
+connections in **per-process maps**. Setting `REDIS_URL` shares the Socket.IO
+adapter and the message bus — so room fanout crosses instances — but it does
+**not** share that state.
+
+Consequently, running more than one instance behind a round-robin load balancer
+fails in ways that look intermittent rather than obvious: a session issued by
+instance A is rejected by instance B, and a call created on A is invisible to
+B's HTTP handlers.
+
+Either run a single instance (the current deployment), or configure **sticky
+sessions** so a client always reaches the instance that issued its session. The
+requirement is advertised at runtime as `stateAffinity: "sticky"` in the
+`/health` payload, and the server logs a warning at startup when `REDIS_URL` is
+set. Lifting it would mean moving session and active-call lookups into Redis
+behind the existing store contract in `server/src/stores/`.
+
 ## Run the mobile app
 
 ```bash

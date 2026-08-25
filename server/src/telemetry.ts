@@ -15,11 +15,37 @@
 
 export type Histogram = { count: number; sum: number; min: number; max: number; buckets: Record<string, number>; };
 
-export type HistogramSnapshot = { count: number; sum: number; mean: number | null; min: number | null; max: number | null; buckets: Record<string, number>; };
+export type HistogramSnapshot = {
+  count: number;
+  sum: number;
+  mean: number | null;
+  min: number | null;
+  max: number | null;
+  buckets: Record<string, number>;
+};
 
-export type MetricsSnapshot = { collectedAt: string; counters: Record<string, number>; histograms: Record<string, HistogramSnapshot>; derived: Record<string, number | null>; };
+export type MetricsSnapshot = {
+  collectedAt: string;
+  counters: Record<string, number>;
+  histograms: Record<string, HistogramSnapshot>;
+  derived: Record<string, number | null>;
+};
 
-export type Telemetry = { recordCallCreated: (call: { callId: string, status: string, createdAt: string }) => void; recordCallTransition: (call: { callId: string, status: string, endReason?: string|null }, previousStatus: string) => void; recordSignalingError: (code?: string) => void; recordCacheHit: () => void; recordCacheMiss: () => void; getSnapshot: () => MetricsSnapshot; };
+export type Telemetry = {
+  recordCallCreated: (call: {
+    callId: string;
+    status: string;
+    createdAt: string;
+  }) => void;
+  recordCallTransition: (
+    call: { callId: string; status: string; endReason?: string | null },
+    previousStatus: string
+  ) => void;
+  recordSignalingError: (code?: string) => void;
+  recordCacheHit: () => void;
+  recordCacheMiss: () => void;
+  getSnapshot: () => MetricsSnapshot;
+};
 
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];

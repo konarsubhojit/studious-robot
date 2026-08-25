@@ -19,7 +19,15 @@ function errorMessage(error: unknown): string {
 
 const MAX_AUDIT_LOG_SIZE = 1000;
 
-export type AuditEntry = { auditId: string; timestamp: string; event: string; actor: string | null; target: string | null; outcome: string; details: object; };
+export type AuditEntry = {
+  auditId: string;
+  timestamp: string;
+  event: string;
+  actor: string | null;
+  target: string | null;
+  outcome: string;
+  details: object;
+};
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 

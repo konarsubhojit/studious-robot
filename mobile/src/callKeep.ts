@@ -69,7 +69,25 @@ function errorMessage(error: unknown): string | undefined {
  * Every member is optional because the package (and the test doubles) may only
  * implement part of it, which the call sites already probe for.
  */
-export type CallKeep = { setup?: (options: object) => Promise<unknown>; setAvailable?: (available: boolean) => void; hasPhoneAccount?: () => Promise<boolean>; checkPhoneAccountEnabled?: () => Promise<boolean>; displayIncomingCall?: (callId: string, handle: string, name?: string, handleType?: string, hasVideo?: boolean) => void; setCurrentCallActive?: (callId: string) => void; backToForeground?: () => void; endCall?: (callId: string) => void; endAllCalls?: () => void; addEventListener?: (event: string, handler: (payload: any) => void) => void; removeEventListener?: (event: string) => void; };
+export type CallKeep = {
+  setup?: (options: object) => Promise<unknown>;
+  setAvailable?: (available: boolean) => void;
+  hasPhoneAccount?: () => Promise<boolean>;
+  checkPhoneAccountEnabled?: () => Promise<boolean>;
+  displayIncomingCall?: (
+    callId: string,
+    handle: string,
+    name?: string,
+    handleType?: string,
+    hasVideo?: boolean
+  ) => void;
+  setCurrentCallActive?: (callId: string) => void;
+  backToForeground?: () => void;
+  endCall?: (callId: string) => void;
+  endAllCalls?: () => void;
+  addEventListener?: (event: string, handler: (payload: any) => void) => void;
+  removeEventListener?: (event: string) => void;
+};
 
 /**
  * Cached result of the optional native CallKeep module lookup.

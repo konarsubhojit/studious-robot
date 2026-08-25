@@ -13,7 +13,14 @@
 export type ParseSuccess = { success: true; data: any; };
 export type ParseFailure = { success: false; error: { message: string; path: string; }; };
 export type ParseResult = ParseSuccess | ParseFailure;
-export type Schema = { isOptional: boolean; _parse: (value: unknown, path: string) => ParseResult; safeParse: (value: unknown) => ParseResult; parse: (value: unknown) => any; optional: () => Schema; nullable: () => Schema; };
+export type Schema = {
+  isOptional: boolean;
+  _parse: (value: unknown, path: string) => ParseResult;
+  safeParse: (value: unknown) => ParseResult;
+  parse: (value: unknown) => any;
+  optional: () => Schema;
+  nullable: () => Schema;
+};
 
 function fail(path: string, message: string): ParseFailure {
   return {

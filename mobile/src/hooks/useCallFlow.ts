@@ -115,7 +115,12 @@ function errorMessage(error: unknown): string | undefined {
  * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
  * properties it supports at runtime but omits from its published types.
  */
-export type PeerConnection = RTCPeerConnection & { onicecandidate: ((event: any) => void) | null; ontrack: ((event: any) => void) | null; oniceconnectionstatechange: ((event: any) => void) | null; onconnectionstatechange: ((event: any) => void) | null; };
+export type PeerConnection = RTCPeerConnection & {
+  onicecandidate: ((event: any) => void) | null;
+  ontrack: ((event: any) => void) | null;
+  oniceconnectionstatechange: ((event: any) => void) | null;
+  onconnectionstatechange: ((event: any) => void) | null;
+};
 export type WebrtcMediaStream = MediaStream;
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';

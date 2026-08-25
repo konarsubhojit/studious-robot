@@ -28,7 +28,12 @@ const LEVEL_LOGGERS: Record<string, (message: unknown, metadata?: unknown) => st
 };
 
 export type ObservabilityEvent = { level: string; name: string; [key: string]: any; };
-export type ObservabilityInitResult = { correlationId: string; backgroundPushRegistered: boolean; callActionsRegistered: boolean; incomingCallUiRegistered: boolean; };
+export type ObservabilityInitResult = {
+  correlationId: string;
+  backgroundPushRegistered: boolean;
+  callActionsRegistered: boolean;
+  incomingCallUiRegistered: boolean;
+};
 
 /**
  * Sinks that receive every structured event.

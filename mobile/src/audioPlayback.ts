@@ -43,7 +43,14 @@ export type AudioPlaybackState = {
 /** Why a playback request could not be honoured. */
 export type AudioPlaybackReason = 'unavailable' | 'missing-uri' | 'call-active' | 'failed';
 
-export type AudioPlaybackResult = { ok: true; } | { ok: false; reason: AudioPlaybackReason; message: string; error?: unknown; };
+export type AudioPlaybackResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: AudioPlaybackReason;
+      message: string;
+      error?: unknown;
+    };
 
 const IDLE_STATE: AudioPlaybackState = Object.freeze({
   uri: null,

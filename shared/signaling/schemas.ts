@@ -35,7 +35,15 @@ const opaqueObject = s.opaque();
 /**
  * A persisted call row as broadcast to participants.
  */
-export type CallRecord = { callId: string; callerId: string; calleeId: string; status: string; ringTimeoutAt?: string | null; endReason?: string | null; createdAt?: string; };
+export type CallRecord = {
+  callId: string;
+  callerId: string;
+  calleeId: string;
+  status: string;
+  ringTimeoutAt?: string | null;
+  endReason?: string | null;
+  createdAt?: string;
+};
 const callRecord = s.object(
   {
     callId: idField,
@@ -52,7 +60,16 @@ const callRecord = s.object(
  * Only `url` and `mimeType` are required: the optional dimensions/duration are
  * rendering hints the sender supplies when it knows them.
  */
-export type AttachmentRecord = { url: string; mimeType: string; sizeBytes?: number; name?: string | null; width?: number | null; height?: number | null; durationMs?: number | null; thumbnailUrl?: string | null; };
+export type AttachmentRecord = {
+  url: string;
+  mimeType: string;
+  sizeBytes?: number;
+  name?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  thumbnailUrl?: string | null;
+};
 const attachmentRecord = s.object(
   {
     url: s.string({ min: 1, max: 2048, trim: true }),
@@ -75,7 +92,19 @@ const attachmentRecord = s.object(
  * placeholder) instead of dropping the event. Legacy rows carry no `type` at
  * all, which readers default to `"text"`.
  */
-export type MessageRecord = { messageId: string; conversationId: string; senderId: string; recipientId: string; body: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; reactions?: Record<string, string[]> | null; deletedAt?: string | null; createdAt?: string; };
+export type MessageRecord = {
+  messageId: string;
+  conversationId: string;
+  senderId: string;
+  recipientId: string;
+  body: string;
+  type?: string;
+  attachment?: AttachmentRecord | null;
+  replyTo?: string | null;
+  reactions?: Record<string, string[]> | null;
+  deletedAt?: string | null;
+  createdAt?: string;
+};
 const messageRecord = s.object(
   {
     messageId: idField,
