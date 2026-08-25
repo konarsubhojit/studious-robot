@@ -75,6 +75,9 @@ jest.mock('../../src/hooks/useCompactCallView', () =>
 );
 
 jest.mock('../../src/callUx', () => ({
+  // Only the quality grading is stubbed; the candidate-pair summary is pure
+  // and is exactly what these ICE tests are asserting on.
+  ...jest.requireActual('../../src/callUx'),
   getConnectionQuality: jest.fn(() => ({ bars: 3, label: 'Strong' })),
 }));
 

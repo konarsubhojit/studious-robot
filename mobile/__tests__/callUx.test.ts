@@ -3,6 +3,8 @@ import {
   formatCallDuration,
   formatRingCountdown,
   getConnectionQuality,
+  collectCallStats,
+  summarizeCandidatePair,
 } from '../src/callUx';
 
 describe('callUx', () => {
@@ -41,6 +43,137 @@ describe('callUx', () => {
     expect(getConnectionQuality({ rttMs: 700, packetLossRatio: 0.14, bitrateKbps: 80 })).toEqual({
       bars: 0,
       label: 'Poor',
+    });
+  });
+
+  describe('summarizeCandidatePair', () => {
+    const lookupFrom = (entries: Record<string, any>) => (id: unknown) => entries[String(id)];
+    const pair = { localCandidateId: 'lc', remoteCandidateId: 'rc' };
+
+    test('reports a direct pair as not using TURN', () => {
+      const summary = summarizeCandidatePair(
+        pair,
+        lookupFrom({
+          lc: { candidateType: 'host', protocol: 'udp' },
+          rc: { candidateType: 'srflx', protocol: 'udp' },
+        }),
+      );
+
+      expect(summary).toEqual({
+        local: 'host',
+        remote: 'srflx',
+        protocol: 'udp',
+        usingTurn: false,
+      });
+    });
+
+    test.each([
+      ['local', 'relay', 'srflx'],
+      ['remote', 'srflx', 'relay'],
+      ['both', 'relay', 'relay'],
+    ])('reports %s as the relaying side', (relaySide, local, remote) => {
+      // Judging the pair by the local candidate alone reported a
+      // srflx->relay pair as a direct call, so both sides are inspected.
+      const summary = summarizeCandidatePair(
+        pair,
+        lookupFrom({
+          lc: { candidateType: local, protocol: 'udp' },
+          rc: { candidateType: remote, protocol: 'udp' },
+        }),
+      );
+
+      expect(summary.usingTurn).toBe(true);
+      expect(summary.relaySide).toBe(relaySide);
+    });
+
+    test('falls back through the remote candidate and the pair for the protocol', () => {
+      expect(
+        summarizeCandidatePair(
+          { ...pair, protocol: 'tcp' },
+          lookupFrom({ lc: { candidateType: 'host' }, rc: { candidateType: 'srflx' } }),
+        ).protocol,
+      ).toBe('tcp');
+
+      expect(
+        summarizeCandidatePair(
+          pair,
+          lookupFrom({ lc: { candidateType: 'host' }, rc: { candidateType: 'srflx' } }),
+        ).protocol,
+      ).toBe('unknown');
+    });
+
+    test('describes an unresolvable pair rather than throwing', () => {
+      expect(summarizeCandidatePair(pair, () => undefined)).toEqual({
+        local: 'unknown',
+        remote: 'unknown',
+        protocol: 'unknown',
+        usingTurn: false,
+      });
+    });
+
+    test('records the relay protocol only when the local candidate reports one', () => {
+      const withRelay = summarizeCandidatePair(
+        pair,
+        lookupFrom({
+          lc: { candidateType: 'relay', protocol: 'udp', relayProtocol: 'tls' },
+          rc: { candidateType: 'host', protocol: 'udp' },
+        }),
+      );
+      expect(withRelay.relayProtocol).toBe('tls');
+
+      expect(
+        summarizeCandidatePair(
+          pair,
+          lookupFrom({
+            lc: { candidateType: 'relay', protocol: 'udp' },
+            rc: { candidateType: 'host', protocol: 'udp' },
+          }),
+        ),
+      ).not.toHaveProperty('relayProtocol');
+    });
+  });
+
+  describe('collectCallStats', () => {
+    const report = (stats: any[]) => ({ forEach: (fn: (stat: any) => void) => stats.forEach(fn) });
+
+    test('sums inbound video and ignores audio and remote-side reports', () => {
+      // Audio survives conditions that have already destroyed the video, so
+      // folding it in would flatter a call the user can see is broken.
+      const sample = collectCallStats(
+        report([
+          { type: 'inbound-rtp', kind: 'video', packetsLost: 5, packetsReceived: 100, bytesReceived: 900 },
+          { type: 'inbound-rtp', mediaType: 'video', packetsLost: 2, packetsReceived: 50, bytesReceived: 100 },
+          { type: 'inbound-rtp', kind: 'audio', packetsLost: 99, packetsReceived: 99, bytesReceived: 99 },
+          { type: 'inbound-rtp', kind: 'video', isRemote: true, packetsLost: 77 },
+        ]),
+      );
+
+      expect(sample).toMatchObject({
+        totalPacketsLost: 7,
+        totalPacketsReceived: 150,
+        totalBytesReceived: 1000,
+      });
+    });
+
+    test('prefers a nominated candidate pair over an earlier succeeded one', () => {
+      const sample = collectCallStats(
+        report([
+          { type: 'candidate-pair', state: 'succeeded', id: 'first', currentRoundTripTime: 0.2 },
+          { type: 'candidate-pair', state: 'succeeded', id: 'nominated', nominated: true, currentRoundTripTime: 0.05 },
+        ]),
+      );
+
+      expect(sample.candidatePair.id).toBe('nominated');
+      expect(sample.rttMs).toBe(50);
+    });
+
+    test('ignores candidate pairs that never succeeded', () => {
+      const sample = collectCallStats(
+        report([{ type: 'candidate-pair', state: 'failed', id: 'dead' }, null, 'garbage']),
+      );
+
+      expect(sample.candidatePair).toBeNull();
+      expect(sample.rttMs).toBeUndefined();
     });
   });
 });

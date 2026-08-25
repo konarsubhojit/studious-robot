@@ -35,7 +35,7 @@ import useMessaging from './useMessaging';
 import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
-import { getConnectionQuality } from '../callUx';
+import { collectCallStats, getConnectionQuality, summarizeCandidatePair } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import type { IceCandidatePairSummary } from '../diagnostics';
 import { initHaptics, triggerHaptic } from '../haptics';
@@ -3223,84 +3223,19 @@ export default function useCallFlow({
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
 
-        let rttMs;
-        let totalPacketsLost = 0;
-        let totalPacketsReceived = 0;
-        let totalBytesReceived = 0;
-        let succeededCandidatePair: any = null;
-
-        report.forEach(/** @param stat */ (stat: any) => {
-          if (
-            stat &&
-            typeof stat === 'object' &&
-            stat.type === 'candidate-pair' &&
-            stat.state === 'succeeded' &&
-            (!succeededCandidatePair || stat.nominated || stat.selected)
-          ) {
-            succeededCandidatePair = stat;
-            if (typeof stat.currentRoundTripTime === 'number') {
-              rttMs = stat.currentRoundTripTime * 1000;
-            }
-          }
-          if (
-            stat &&
-            typeof stat === 'object' &&
-            stat.type === 'inbound-rtp' &&
-            !stat.isRemote &&
-            (stat.kind === 'video' || stat.mediaType === 'video')
-          ) {
-            totalPacketsLost += Number(stat.packetsLost || 0);
-            totalPacketsReceived += Number(stat.packetsReceived || 0);
-            totalBytesReceived += Number(stat.bytesReceived || 0);
-          }
-        });
+        const {
+          rttMs,
+          totalPacketsLost,
+          totalPacketsReceived,
+          totalBytesReceived,
+          candidatePair: succeededCandidatePair,
+        } = collectCallStats(report);
 
         if (succeededCandidatePair) {
           const getReportStat =
             typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
-          const localCandidate = getReportStat(succeededCandidatePair.localCandidateId);
-          const remoteCandidate = getReportStat(succeededCandidatePair.remoteCandidateId);
-          const localCandidateType =
-            typeof localCandidate?.candidateType === 'string'
-              ? localCandidate.candidateType
-              : 'unknown';
-          const remoteCandidateType =
-            typeof remoteCandidate?.candidateType === 'string'
-              ? remoteCandidate.candidateType
-              : 'unknown';
-          const protocol =
-            typeof localCandidate?.protocol === 'string'
-              ? localCandidate.protocol
-              : typeof remoteCandidate?.protocol === 'string'
-              ? remoteCandidate.protocol
-              : typeof succeededCandidatePair.protocol === 'string'
-              ? succeededCandidatePair.protocol
-              : 'unknown';
-          const relayProtocol =
-            typeof localCandidate?.relayProtocol === 'string'
-              ? localCandidate.relayProtocol
-              : undefined;
-          // A relay on *either* side means the media traverses TURN: the pair
-          // used to be judged by the local candidate alone, so a
-          // srflx→relay pair was logged as a direct call. Which side relays is
-          // logged too, since that is the side paying the relay bandwidth.
-          const localRelay = localCandidateType === 'relay';
-          const remoteRelay = remoteCandidateType === 'relay';
-          const relaySide = localRelay
-            ? remoteRelay
-              ? 'both'
-              : 'local'
-            : remoteRelay
-            ? 'remote'
-            : undefined;
-          const summary: IceCandidatePairSummary = {
-            local: localCandidateType,
-            remote: remoteCandidateType,
-            protocol,
-            ...(relayProtocol ? { relayProtocol } : {}),
-            usingTurn: localRelay || remoteRelay,
-            ...(relaySide ? { relaySide } : {}),
-          };
+          const summary = summarizeCandidatePair(succeededCandidatePair, getReportStat);
+          const localCandidateType = summary.local;
           const candidatePairKey = JSON.stringify([
             succeededCandidatePair.id,
             succeededCandidatePair.localCandidateId,
