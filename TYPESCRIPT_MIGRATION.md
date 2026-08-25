@@ -60,3 +60,16 @@ It happened in two steps:
   presence and directory rows in `mobile/src/types/directory.ts`, wire
   contracts in `shared/` — and are re-exported (`export type { X };`) from the
   modules that used to declare their own copy.
+- **Mocked modules are aliased at the call site.** A jest-mocked import is
+  reached through an inline `(imported as jest.Mock)` cast where it is used
+  (`__tests__/ThemeProvider.test.tsx`), rather than through a module-level
+  `const fooMock = …` alias. Both type-check; the inline form is the
+  convention here because the mocked binding keeps its real name — and
+  therefore its real type — everywhere else in the file, so a rename or a
+  signature change still shows up as a type error at every call site instead
+  of only at the single alias.
+- **Errors are read, never narrowed.** Use `errorMessage()` / `describeError()`
+  from `mobile/src/errors.ts` or `server/src/lib/errors.ts` instead of
+  `error instanceof Error ? error.message : …`: the native bridge and several
+  database drivers reject with plain objects that carry a `message`, and the
+  `instanceof` form silently discards it.

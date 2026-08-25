@@ -3,13 +3,14 @@ import type { ConversationSummary } from '../hooks/useMessaging';
 /**
  * Presence snapshot for a peer, as returned by the directory endpoint.
  *
- * `online` is optional because a screen may render before presence has been
- * fetched; `unknown` marks a peer the server has never heard of (a 404), which
- * reads differently from a peer that is merely offline.
+ * "Not fetched yet" is modelled by the *absence* of a snapshot (`null`), never
+ * by a missing `online`, so `presence.online === false` reliably means offline.
+ * `unknown` marks a peer the server has never heard of (a 404), which reads
+ * differently from a peer that is merely offline.
  */
 export type PeerPresence = {
   status?: string;
-  online?: boolean;
+  online: boolean;
   unknown?: boolean;
 };
 

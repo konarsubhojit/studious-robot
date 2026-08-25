@@ -68,8 +68,8 @@ function normaliseImageAsset(asset: any): { uri: string; mimeType: string; sizeB
 /**
  * Launch the photo library picker.
  *
- * @returns `null` when the
- *   module isn't linked, the user cancelled, or the picker errored.
+ * @returns `null` when the module isn't linked, the user cancelled, or the
+ *   picker errored.
  */
 export async function pickPhoto(): Promise<{
     uri: string; mimeType: string; sizeBytes: number;

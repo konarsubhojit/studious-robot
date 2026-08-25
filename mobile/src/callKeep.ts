@@ -474,8 +474,8 @@ export function endAllCalls() {
  * tests); ordinary consumers should use `setCallActionHandlers` instead of
  * calling this more than once.
  *
- * @returns unsubscribe function, tagged
- *   with whether the native listener was registered
+ * @returns unsubscribe function, tagged with whether the native listener was
+ *   registered.
  */
 export function registerCallActionListeners(): (() => void) & { registered: boolean; } {
   const callKeep = loadCallKeep();
@@ -560,8 +560,8 @@ export function registerCallActionListeners(): (() => void) & { registered: bool
  *
  * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
  *
- * @returns unsubscribe function, tagged
- *   with whether the native listener was registered
+ * @returns unsubscribe function, tagged with whether the native listener was
+ *   registered.
  */
 export function registerShowIncomingCallUiListener(): (() => void) & { registered: boolean; } {
   const callKeep = loadCallKeep();
@@ -617,9 +617,9 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
  * synchronously to `onAnswer` here rather than lost.
  *
  * @param handlers
- * @returns detach function; only clears this call's handlers if
- *   they are still the active ones (a later `setCallActionHandlers` call
- *   already having taken over is left untouched).
+ * @returns detach function; only clears this call's handlers if they are still
+ *   the active ones (a later `setCallActionHandlers` call already having taken
+ *   over is left untouched).
  */
 export function setCallActionHandlers({ onAnswer, onEnd }: {
     onAnswer?: (callId: string) => void;

@@ -26,9 +26,6 @@ const MAX_ROWS_PER_SECTION = 8;
 /** Contacts, conversations, messages and calls. */
 const SECTION_COUNT = 4;
 
-/** Contact returned by the server-side user search. */
-export type ContactResult = ContactRow;
-
 /**
  * Message returned by the server-side message search.
  */
@@ -114,7 +111,7 @@ function formatTimestamp(isoString: string | null | undefined): string {
 }
 
 export type SearchScreenProps = {
-  onSearchContacts?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<ContactResult[]>;
+  onSearchContacts?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<ContactRow[]>;
   onSearchMessages?: (query: string, options?: { limit?: number; signal?: AbortSignal; }) => Promise<MessageResult[]>;
   conversations?: ConversationRow[];
   callHistory?: CallRow[];
@@ -163,7 +160,7 @@ function SearchScreen({
   const styles = useThemedStyles(createStyles);
 
   const [query, setQuery] = useState('');
-  const [contacts, setContacts] = useState(([] as ContactResult[]));
+  const [contacts, setContacts] = useState(([] as ContactRow[]));
   const [messages, setMessages] = useState(([] as MessageResult[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
