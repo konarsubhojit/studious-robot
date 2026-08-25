@@ -2,7 +2,7 @@ import { memo, useCallback, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
-import { ICONS, loadVectorIcons } from '../vectorIcons';
+import { Icon } from './primitives';
 import type { AlertButton } from 'react-native';
 import type { ThemeColors } from '../theme';
 
@@ -168,20 +168,16 @@ const CallTimelineRow = memo(
     }, [isExpanded, isGroup, offerCallBack]);
 
     const visibleEntries = isGroup && !isExpanded ? [entries[entries.length - 1]] : entries;
-    const MCIcon = loadVectorIcons();
 
     return (
       <View style={styles.container} testID="chat-call-timeline-row">
         {visibleEntries.map((entry, index) => {
           const isMissed = isMissedCallEntry(entry);
-          const iconDef =
-            ICONS[
-              isMissed
-                ? 'callMissed'
-                : entry.direction === 'outgoing'
-                ? 'callOutgoing'
-                : 'callIncoming'
-            ];
+          const iconName = isMissed
+            ? 'callMissed'
+            : entry.direction === 'outgoing'
+            ? 'callOutgoing'
+            : 'callIncoming';
           const iconColor = isMissed ? colors.danger : colors.textSecondary;
           const label =
             isGroup && !isExpanded ? formatCallGroupLabel(entries) : formatCallEntryLabel(entry);
@@ -198,13 +194,7 @@ const CallTimelineRow = memo(
               hitSlop={touchSlop(24)}
               testID={index === 0 ? 'chat-call-entry' : `chat-call-entry-${index}`}
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
-              {iconDef && MCIcon ? (
-                <MCIcon name={iconDef.icon} size={14} color={iconColor} />
-              ) : (
-                <Text style={[styles.iconFallback, { color: iconColor }]}>
-                  {iconDef?.emoji ?? '📞'}
-                </Text>
-              )}
+              <Icon name={iconName} size={14} color={iconColor} />
               <Text style={[styles.label, isMissed && styles.labelMissed]} numberOfLines={1}>
                 {label}
               </Text>
@@ -236,9 +226,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     rowPressed: {
       opacity: 0.7,
-    },
-    iconFallback: {
-      fontSize: typography.hint.fontSize,
     },
     label: {
       color: colors.textSecondary,

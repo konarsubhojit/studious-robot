@@ -29,6 +29,7 @@ import AudioAttachmentPlayer from './AudioAttachmentPlayer';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
 import MediaViewer from './MediaViewer';
+import { Icon } from './primitives';
 import StatusBanner from './StatusBanner';
 import SwipeableRow from './SwipeableRow';
 
@@ -1183,7 +1184,7 @@ function ChatConversationScreen({
             hitSlop={touchSlop(36)}
             testID="chat-back"
             style={styles.backButton}>
-            <Text style={styles.backButtonText}>‹</Text>
+            <Icon name="back" size={26} color={colors.onSurface} />
           </Pressable>
 
           <Pressable
@@ -1312,7 +1313,7 @@ function ChatConversationScreen({
               accessibilityLabel="Cancel reply"
               hitSlop={touchSlop(20)}
               testID="chat-reply-cancel">
-              <Text style={styles.replyPreviewText}>✕</Text>
+              <Icon name="dismiss" size={18} color={colors.onSurfaceVariant} />
             </Pressable>
           </View>
         ) : null}
@@ -1452,11 +1453,6 @@ const createStyles = (colors: ThemeColors) =>
       height: 36,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    backButtonText: {
-      color: colors.textPrimary,
-      fontSize: 28,
-      lineHeight: 28,
     },
     headerText: {
       flex: 1,

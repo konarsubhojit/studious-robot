@@ -1,7 +1,8 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { formatCallDuration } from '../callUx';
-import { useThemedStyles } from '../ThemeContext';
+import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
+import { Icon } from './primitives';
 import type { ThemeColors } from '../theme';
 
 export type InCallBannerProps = {
@@ -25,6 +26,7 @@ export default function InCallBanner({
   elapsedCallSeconds = 0,
   onExpand,
 }: InCallBannerProps) {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -34,7 +36,7 @@ export default function InCallBanner({
       accessibilityLabel={`Return to call${participantLabel ? `: ${participantLabel}` : ''}`}
       testID="in-call-banner"
       style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
-      <Text style={styles.glyph}>📞</Text>
+      <Icon name="callActive" size={18} color={colors.textOnAccent} />
       <Text style={styles.text} numberOfLines={1}>
         {participantLabel || 'Call in progress'}
       </Text>
@@ -56,9 +58,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     pressed: {
       opacity: 0.85,
-    },
-    glyph: {
-      fontSize: 14,
     },
     text: {
       ...typography.hint,

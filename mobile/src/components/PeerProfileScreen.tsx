@@ -3,6 +3,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import AppButton from './AppButton';
+import { Icon } from './primitives';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
 import type { ThemeColors } from '../theme';
 import type { PeerPresence } from '../types/directory';
@@ -137,7 +138,7 @@ function PeerProfileScreen({
           hitSlop={touchSlop(36)}
           testID="peer-profile-back"
           style={styles.backButton}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Icon name="back" size={26} color={colors.onSurface} />
         </Pressable>
       </View>
 
@@ -265,10 +266,6 @@ const createStyles = (colors: ThemeColors) =>
       width: 36,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    backButtonText: {
-      ...typography.title,
-      color: colors.textPrimary,
     },
     identity: {
       alignItems: 'center',

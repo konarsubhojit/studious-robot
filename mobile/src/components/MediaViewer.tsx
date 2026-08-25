@@ -17,10 +17,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { logInfo, logVerbose, logWarn } from '../appLogger';
 import { isAudioSessionActive } from '../audioSessionState';
-import { useThemedStyles } from '../ThemeContext';
+import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { loadVideoComponent } from '../videoPlayback';
 import IconButton from './IconButton';
+import { Icon } from './primitives';
 import type { ThemeColors } from '../theme';
 
 /** Zoom applied by a double tap, and the ceiling for a pinch. */
@@ -91,6 +92,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
         onDownload?: (item: MediaViewerItem) => void;
         testID?: string;
     }) {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(initialIndex);
@@ -341,7 +343,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
               hitSlop={touchSlop(24)}
               style={[styles.pageButton, index === 0 && styles.pageButtonDisabled]}
               testID={`${testID}-previous`}>
-              <Text style={styles.pageButtonText}>‹</Text>
+              <Icon name="back" size={22} color={colors.onOverlay} />
             </Pressable>
             <Text style={styles.counter} testID={`${testID}-counter`}>
               {`${index + 1} / ${items.length}`}
@@ -355,7 +357,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
               hitSlop={touchSlop(24)}
               style={[styles.pageButton, index === items.length - 1 && styles.pageButtonDisabled]}
               testID={`${testID}-next`}>
-              <Text style={styles.pageButtonText}>›</Text>
+              <Icon name="forward" size={22} color={colors.onOverlay} />
             </Pressable>
           </View>
         ) : null}
@@ -414,10 +416,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     pageButtonDisabled: {
       opacity: 0.4,
-    },
-    pageButtonText: {
-      ...typography.title,
-      color: colors.textPrimary,
     },
     counter: {
       ...typography.hint,

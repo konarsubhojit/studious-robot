@@ -14,6 +14,7 @@ import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../t
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
+import { Icon } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
 import type { ReactNode } from 'react';
@@ -135,7 +136,7 @@ function SettingsScreen({
             hitSlop={touchSlop(44)}
             testID="settings-back"
             style={styles.backButton}>
-            <Text style={styles.backIcon}>‹</Text>
+            <Icon name="back" size={26} color={colors.onSurface} />
           </Pressable>
           <Text style={styles.title} accessibilityRole="header">
             Settings
@@ -330,12 +331,6 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.surfaceControl,
-    },
-    backIcon: {
-      color: colors.textPrimary,
-      fontSize: 26,
-      lineHeight: 28,
-      marginTop: -2,
     },
     title: {
       ...typography.title,

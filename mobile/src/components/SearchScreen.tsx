@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import ErrorState from './ErrorState';
+import { Icon } from './primitives';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
@@ -416,7 +417,7 @@ function SearchScreen({
           hitSlop={touchSlop(36)}
           testID="search-back"
           style={styles.backButton}>
-          <Text style={styles.backButtonText}>‹</Text>
+          <Icon name="back" size={26} color={colors.onSurface} />
         </Pressable>
         <TextInput
           value={query}
@@ -505,10 +506,6 @@ const createStyles = (colors: ThemeColors) =>
       width: 36,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    backButtonText: {
-      ...typography.title,
-      color: colors.textPrimary,
     },
     input: {
       flex: 1,

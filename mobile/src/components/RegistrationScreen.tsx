@@ -4,6 +4,7 @@ import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing } from '../theme';
 import AppButton from './AppButton';
 import ErrorState from './ErrorState';
+import { Logotype } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
 import type { ThemeColors } from '../theme';
@@ -71,10 +72,7 @@ export default function RegistrationScreen({
       <View style={styles.content}>
         {/* ── Brand / hero section ───────────────────────────────────────── */}
         <View style={styles.hero}>
-          <Text style={styles.logoGlyph}>📞</Text>
-          <Text style={styles.appName} accessibilityRole="header">
-            WeTalk
-          </Text>
+          <Logotype testID="registration-logo" />
           <Text style={styles.tagline}>Simple, warm one-to-one video calls</Text>
         </View>
 
@@ -200,14 +198,6 @@ const createStyles = (colors: ThemeColors) =>
     hero: {
       alignItems: 'center',
       gap: spacing.sm,
-    },
-    logoGlyph: {
-      fontSize: 60,
-    },
-    appName: {
-      fontSize: 36,
-      fontWeight: '700',
-      color: colors.textPrimary,
     },
     tagline: {
       color: colors.textSecondary,
