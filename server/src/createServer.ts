@@ -17,6 +17,7 @@ import { mountRoutes } from './routes/index.ts';
 import { registerSocketHandlers } from './signaling/index.ts';
 import { isVerboseLoggingEnabled, verboseLog } from './lib/verbose.ts';
 import { describeError } from './lib/errors.ts';
+import { parseNonNegativeNumber } from './lib/env.ts';
 import { setQueryTimingSink } from './lib/queryTiming.ts';
 
 export type CreateServerOptions = {
@@ -105,10 +106,15 @@ function createServer(opts: CreateServerOptions = {}) {
     heartbeatTimeoutMs:
       Number(process.env.CALL_HEARTBEAT_TIMEOUT_MS) || DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
   };
+  // Parsed rather than `Number(env) || DEFAULT` so `0` reaches the scheduler
+  // as "end the call as soon as the sockets are gone" instead of being read as
+  // "unset" — see `lib/env.ts`.
   const participantDisconnectGraceMs =
     opts.participantDisconnectGraceMs ??
-    (Number(process.env.PARTICIPANT_DISCONNECT_GRACE_MS) ||
-      DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS);
+    parseNonNegativeNumber(
+      process.env.PARTICIPANT_DISCONNECT_GRACE_MS,
+      DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS
+    );
 
   // ── Session TTL ──────────────────────────────────────────────────────────
   // When non-zero, sessions expire after this many milliseconds.  Pass via
@@ -305,10 +311,14 @@ function createServer(opts: CreateServerOptions = {}) {
 
   // Background worker: advance stale ringing calls to `missed` and force-end
   // calls stranded in `accepted` / `connecting_media` / `in_call`.
+  // `0` disables the corresponding bound in `pruneTerminalCalls`, so it must
+  // survive parsing rather than being swallowed as falsy.
   const callRetentionMs =
-    opts.callRetentionMs ?? (Number(process.env.CALL_RETENTION_MS) || DEFAULT_CALL_RETENTION_MS);
+    opts.callRetentionMs ??
+    parseNonNegativeNumber(process.env.CALL_RETENTION_MS, DEFAULT_CALL_RETENTION_MS);
   const maxRetainedCalls =
-    opts.maxRetainedCalls ?? (Number(process.env.MAX_RETAINED_CALLS) || DEFAULT_MAX_RETAINED_CALLS);
+    opts.maxRetainedCalls ??
+    parseNonNegativeNumber(process.env.MAX_RETAINED_CALLS, DEFAULT_MAX_RETAINED_CALLS);
   const pollTimer = setInterval(() => {
     const now = Date.now();
     tickRingingTimeouts(

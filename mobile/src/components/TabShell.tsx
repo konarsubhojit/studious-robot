@@ -101,7 +101,34 @@ export default function TabShell() {
         onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
       />
     );
-  }, [callFlow, chat, insets.top, startAudioCallWith, startVideoCallWith]);
+  }, [
+    callFlow.isPlacingCall,
+    callFlow.updateStatus,
+    chat.attachmentUploadProgress,
+    chat.attachmentsAvailable,
+    chat.cancelRecordingVoiceNote,
+    chat.currentUserId,
+    chat.deleteMessage,
+    chat.handleLoadOlderMessages,
+    chat.isChatOffline,
+    chat.isLoadingMessages,
+    chat.isRecordingVoiceNote,
+    chat.isUploadingAttachment,
+    chat.isVoiceNoteSupported,
+    chat.messagesByPeer,
+    chat.peerPresence,
+    chat.pickAndSendAttachment,
+    chat.reactToMessage,
+    chat.retryMessage,
+    chat.sendMessage,
+    chat.sendTypingIndicator,
+    chat.startRecordingVoiceNote,
+    chat.stopRecordingVoiceNoteAndSend,
+    chat.typingByPeer,
+    insets.top,
+    startAudioCallWith,
+    startVideoCallWith,
+  ]);
 
   const renderChatList = useCallback(() => (
     <ChatListScreen
@@ -170,7 +197,17 @@ export default function TabShell() {
         onUnblock={chat.unblockPeer}
       />
     );
-  }, [callFlow.callHistory, chat, startAudioCallWith, startVideoCallWith]);
+  }, [
+    callFlow.callHistory,
+    chat.blockPeer,
+    chat.chatPeerId,
+    chat.currentUserId,
+    chat.isUserBlocked,
+    chat.peerPresence,
+    chat.unblockPeer,
+    startAudioCallWith,
+    startVideoCallWith,
+  ]);
 
   const renderCalls = useCallback(() => (
     <Lobby
@@ -206,7 +243,21 @@ export default function TabShell() {
       onRedial={startVideoCallWith}
     />
   ), [
-    callFlow,
+    callFlow.callHistory,
+    callFlow.calleeId,
+    callFlow.calleePresence,
+    callFlow.callSummary,
+    callFlow.dismissCallSummary,
+    callFlow.editUserId,
+    callFlow.isServerUnreachable,
+    callFlow.markMissedCallsRead,
+    callFlow.missedCallCount,
+    callFlow.placeCall,
+    callFlow.retryPresenceConnect,
+    callFlow.searchUsers,
+    callFlow.setCalleeId,
+    callFlow.status,
+    callFlow.userId,
     handleAutoLightingToggle,
     handleExportLogs,
     handleSpeakerDefaultToggle,
@@ -241,7 +292,12 @@ export default function TabShell() {
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
     />
   ), [
-    callFlow,
+    callFlow.setSignalingUrl,
+    callFlow.signalingUrl,
+    callFlow.status,
+    callFlow.unregisterUser,
+    callFlow.updateUserId,
+    callFlow.userId,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleIceTransportPolicyChange,

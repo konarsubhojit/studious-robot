@@ -20,6 +20,15 @@ import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 type CallTransition = {
   nextStatus: string;
   reason?: string | null;
+  /**
+   * ICE state the transition was derived from, when the event carries one.
+   *
+   * Returned on the transition rather than smuggled out through a mutable
+   * binding in the enclosing scope: `onSuccess` already receives the
+   * transition, so the value reaches it by the same path as the destination it
+   * was derived from.
+   */
+  iceState?: string;
 };
 
 type SocketCallTransitionBase = {
@@ -276,20 +285,18 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
  * instead of leaving it to a sweep.
  */
 function handleCallConnected(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: { state: import('../stores/contracts.ts').ServerState; io: any; }) {
-  // `iceState` is read out of the validated payload rather than the raw
-  // request, so the destination status can never be chosen from input the
-  // schema has not accepted yet.
-  let iceState = 'connected';
-
   handleSocketCallTransition(socket, ack, payload, {
     state: options.state,
     io: options.io,
     eventName: CLIENT_EVENTS.CALL_CONNECTED,
+    // `iceState` is read out of the validated payload rather than the raw
+    // request, so the destination status can never be chosen from input the
+    // schema has not accepted yet.
     resolveTransition: (parsed) => {
-      iceState = typeof parsed.iceState === 'string' ? parsed.iceState : 'connected';
+      const iceState = typeof parsed.iceState === 'string' ? parsed.iceState : 'connected';
       return iceState === 'disconnected' || iceState === 'failed'
-        ? { nextStatus: 'ended', reason: 'media_failed' }
-        : { nextStatus: CONNECTED_CALL_STATUS, reason: null };
+        ? { nextStatus: 'ended', reason: 'media_failed', iceState }
+        : { nextStatus: CONNECTED_CALL_STATUS, reason: null, iceState };
     },
     authorize: (call, userId) =>
       call.callerId === userId || call.calleeId === userId
@@ -300,7 +307,7 @@ function handleCallConnected(socket: import('socket.io').Socket, ack: Function |
         recordCallHeartbeat(options.state, call.callId);
       }
       console.log(
-        `[calls] call.connected callId=${call.callId} iceState=${iceState}` +
+        `[calls] call.connected callId=${call.callId} iceState=${transition.iceState ?? 'connected'}` +
           ` status=${call.status} actor=${socket.data.identity.userId}`
       );
     },
