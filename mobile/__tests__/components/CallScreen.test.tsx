@@ -305,4 +305,82 @@ describe('CallScreen', () => {
     expect(onRetry).toHaveBeenCalled();
     expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
   });
+
+  test('never auto-hides the chrome on an audio call, which has nothing underneath', () => {
+    jest.useFakeTimers();
+
+    act(() => {
+      tree = renderer.create(
+        <CallScreen {...createProps({ isAudioOnly: true, status: undefined })} />,
+      );
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(10000);
+    });
+
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+    expect(tree.root.findAllByType('CallTopBar')).toHaveLength(1);
+  });
+
+  test('restores chrome dismissed by a tap once the call becomes audio-only', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps()} />);
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'call-screen-root' }).props.onPress();
+    });
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(0);
+
+    act(() => {
+      tree.update(<CallScreen {...createProps({ isAudioOnly: true })} />);
+    });
+
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+  });
+
+  test('never auto-hides the chrome while a recovery is in flight', () => {
+    jest.useFakeTimers();
+
+    act(() => {
+      tree = renderer.create(
+        <CallScreen {...createProps({ isReconnecting: true, status: undefined })} />,
+      );
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(10000);
+    });
+
+    expect(tree.root.findAllByType('ReconnectBanner')).toHaveLength(1);
+    expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
+  });
+
+  test('forwards isAudioOnly to the stage and the control deck', () => {
+    act(() => {
+      tree = renderer.create(<CallScreen {...createProps({ isAudioOnly: true })} />);
+    });
+
+    expect(tree.root.findAllByType('CallStage')[0].props.isAudioOnly).toBe(true);
+    expect(tree.root.findAllByType('CallControls')[0].props.isAudioOnly).toBe(true);
+  });
+
+  test('labels the ambient stage with the running duration, or the recovery state', () => {
+    act(() => {
+      tree = renderer.create(
+        <CallScreen {...createProps({ isAudioOnly: true, elapsedCallSeconds: 65 })} />,
+      );
+    });
+    expect(tree.root.findAllByType('CallStage')[0].props.audioStatusLabel).toBe('01:05');
+
+    act(() => {
+      tree.update(
+        <CallScreen
+          {...createProps({ isAudioOnly: true, elapsedCallSeconds: 65, isReconnecting: true })}
+        />,
+      );
+    });
+    expect(tree.root.findAllByType('CallStage')[0].props.audioStatusLabel).toBe('Reconnecting…');
+  });
 });

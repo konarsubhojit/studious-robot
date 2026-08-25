@@ -85,7 +85,7 @@ describe('accessibility contracts', () => {
       expect(findByTestId(controls(), 'control-video').props.selected).toBe(false);
     });
 
-    test('reports the engaged state of the screen-share toggles', () => {
+    test('reports the engaged state of the screen-share rows in the More sheet', () => {
       const tree = controls({
         onScreenShareToggle: () => {},
         onScreenAudioToggle: () => {},
@@ -93,8 +93,21 @@ describe('accessibility contracts', () => {
         isScreenAudioEnabled: true,
       });
 
-      expect(findByTestId(tree, 'control-screen-share').props.selected).toBe(true);
-      expect(findByTestId(tree, 'control-screen-audio').props.selected).toBe(true);
+      // Screen sharing lives behind "More"; the affordance itself must report
+      // that something inside it is engaged, or an active share is invisible.
+      const more = findByTestId(tree, 'control-more');
+      expect(more.props.selected).toBe(true);
+
+      act(() => {
+        more.props.onPress();
+      });
+
+      expect(findByTestId(tree, 'control-screen-share').props.accessibilityState.checked).toBe(
+        true,
+      );
+      expect(findByTestId(tree, 'control-screen-audio').props.accessibilityState.checked).toBe(
+        true,
+      );
     });
   });
 

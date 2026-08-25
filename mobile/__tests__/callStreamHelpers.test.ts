@@ -22,6 +22,14 @@ function makeStream(url: string) {
   return { toURL: () => url };
 }
 
+function makeVideoStream(url: string) {
+  return { toURL: () => url, getVideoTracks: () => [{ id: 'v1' }] };
+}
+
+function makeAudioOnlyStream(url: string) {
+  return { toURL: () => url, getVideoTracks: () => [] };
+}
+
 describe('deriveCallStreams', () => {
   test('when isLocalPrimary is true, local is main and remote is pip', () => {
     const localStream = makeStream('local://1');
@@ -109,5 +117,77 @@ describe('deriveCallStreams', () => {
     });
     expect(result.mainStreamUrl).toBeNull();
     expect(result.pipStreamUrl).toBeNull();
+  });
+});
+
+describe('deriveCallStreams mainHasVideo', () => {
+  const base = {
+    isLocalPrimary: false,
+    isFrontCamera: false,
+    mainLabel: 'main',
+    pipLabel: 'pip',
+  };
+
+  test('is true when the main stream carries a video track', () => {
+    const result = deriveCallStreams({
+      ...base,
+      localStream: null,
+      remoteStream: makeVideoStream('remote://1'),
+    });
+
+    expect(result.mainHasVideo).toBe(true);
+  });
+
+  test('is false for an audio-only stream, even though it has a URL', () => {
+    const result = deriveCallStreams({
+      ...base,
+      localStream: null,
+      remoteStream: makeAudioOnlyStream('remote://1'),
+    });
+
+    expect(result.mainStreamUrl).toBe('remote://1');
+    expect(result.mainHasVideo).toBe(false);
+  });
+
+  test('is false when there is no main stream at all', () => {
+    const result = deriveCallStreams({ ...base, localStream: null, remoteStream: null });
+
+    expect(result.mainHasVideo).toBe(false);
+  });
+
+  test('is false for a stream object that does not implement getVideoTracks', () => {
+    const result = deriveCallStreams({
+      ...base,
+      localStream: null,
+      remoteStream: makeStream('remote://1'),
+    });
+
+    expect(result.mainHasVideo).toBe(false);
+  });
+
+  test('reports the local stream when the local side is primary', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: true,
+      localStream: makeVideoStream('local://1'),
+      remoteStream: makeAudioOnlyStream('remote://1'),
+    });
+
+    expect(result.mainHasVideo).toBe(true);
+  });
+
+  test('survives a stream whose getVideoTracks throws', () => {
+    const result = deriveCallStreams({
+      ...base,
+      localStream: null,
+      remoteStream: {
+        toURL: () => 'remote://1',
+        getVideoTracks: () => {
+          throw new Error('stream released');
+        },
+      },
+    });
+
+    expect(result.mainHasVideo).toBe(false);
   });
 });

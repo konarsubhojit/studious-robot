@@ -3,6 +3,7 @@ import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';
 import { overlay, radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
+import { Avatar } from './primitives';
 import type { Gesture } from 'react-native-gesture-handler';
 import type { ThemeColors } from '../theme';
 
@@ -28,10 +29,26 @@ export type CallStageProps = {
   isRemoteScreenSharing?: boolean;
   /** Remote participant name/id, used in the "they are presenting" banner. */
   participantLabel?: string | null;
+  /**
+   * No video will ever appear on this stage — an audio call, or a peer whose
+   * camera is off. Draws the ambient canvas instead of a black rectangle.
+   */
+  isAudioOnly?: boolean;
+  /** Sub-heading under the avatar on the ambient canvas ("Ringing…", "02:14"). */
+  audioStatusLabel?: string | null;
 };
 
 /**
- * The full-screen video stage: primary stream plus optional PiP self-view.
+ * The call canvas: the primary stream plus an optional PiP self-view, or — when
+ * there is no picture to show — a large avatar on the ambient background.
+ *
+ * An audio call used to land here as an empty black rectangle reading "Waiting
+ * for someone to join…" for its entire duration, because the stage only asked
+ * whether a *stream* existed, and an audio call has one. It now asks whether
+ * there is a *picture*, and when there isn't it shows who you are talking to.
+ *
+ * `ambient` is fixed-dark in both schemes (like `stage`), so its foreground is
+ * `onOverlay` rather than the scheme's `onSurface`.
  */
 export default function CallStage({
   onLayout,
@@ -49,6 +66,8 @@ export default function CallStage({
   isScreenSharing = false,
   isRemoteScreenSharing = false,
   participantLabel = null,
+  isAudioOnly = false,
+  audioStatusLabel = null,
 }: CallStageProps) {
   const styles = useThemedStyles(createStyles);
 
@@ -70,7 +89,19 @@ export default function CallStage({
         isLandscape && styles.callStageLandscape,
       ]}
       onLayout={onLayout}>
-      {hasMainStream ? (
+      {isAudioOnly ? (
+        <View style={styles.ambientStage} testID="call-stage-ambient">
+          <Avatar id={participantLabel || ''} size={isCompact ? 'lg' : 'xl'} />
+          <Text style={styles.ambientName} numberOfLines={1} accessibilityRole="header">
+            {participantLabel || 'Unknown'}
+          </Text>
+          {audioStatusLabel ? (
+            <Text style={styles.ambientStatus} testID="call-stage-ambient-status">
+              {audioStatusLabel}
+            </Text>
+          ) : null}
+        </View>
+      ) : hasMainStream ? (
         <SafeRTCView
           fallbackLabel="Call video unavailable"
           style={styles.remoteStream}
@@ -99,7 +130,7 @@ export default function CallStage({
         </View>
       ) : null}
 
-      {!isCompact && hasPipStream ? (
+      {!isCompact && !isAudioOnly && hasPipStream ? (
         <DraggablePip
           gesture={pipGesture}
           animatedStyle={animatedPipStyle}
@@ -137,6 +168,27 @@ const createStyles = (colors: ThemeColors) =>
     remoteStream: {
       flex: 1,
       backgroundColor: colors.stageDark,
+    },
+    ambientStage: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.md,
+      paddingHorizontal: spacing.lg,
+      backgroundColor: colors.ambient,
+    },
+    ambientName: {
+      ...typography.display,
+      color: colors.onOverlay,
+      textAlign: 'center',
+    },
+    ambientStatus: {
+      ...typography.body,
+      // Full-strength `onOverlay` like every other label over a dark surface:
+      // hierarchy here comes from the type scale, not from a faded colour that
+      // would drop below AA against `ambient`.
+      color: colors.onOverlay,
+      textAlign: 'center',
     },
     remotePlaceholder: {
       flex: 1,

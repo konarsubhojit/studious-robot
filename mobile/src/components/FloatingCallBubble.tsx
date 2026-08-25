@@ -12,10 +12,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { formatCallDuration } from '../callUx';
 import { triggerHaptic } from '../haptics';
-import { useTheme, useThemedStyles } from '../ThemeContext';
+import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
-import { Icon } from './primitives';
+import { Avatar } from './primitives';
 import type { ThemeColors } from '../theme';
 
 const BUBBLE_WIDTH = 180;
@@ -72,7 +72,6 @@ export default function FloatingCallBubble({
   onStopScreenShare,
   onDismiss,
 }: FloatingCallBubbleProps) {
-  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   const { width, height } = useWindowDimensions();
@@ -178,7 +177,7 @@ export default function FloatingCallBubble({
           accessibilityRole="button"
           accessibilityLabel="Expand call"
           testID="floating-call-bubble-expand">
-          <Icon name="callActive" size={20} color={colors.positive} />
+          <Avatar id={participantLabel || ''} size="xs" online />
           <View style={styles.textWrap}>
             <Text style={styles.label} numberOfLines={1}>
               {participantLabel || 'Call in progress'}

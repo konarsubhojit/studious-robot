@@ -33,6 +33,10 @@ function createProps(overrides = {}): any {
   };
 }
 
+function findByTestId(tree: any, testID: string) {
+  return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
+}
+
 describe('CallStage', () => {
   test('renders main stream and DraggablePip in normal mode', () => {
     let tree: any;
@@ -120,5 +124,64 @@ describe('CallStage', () => {
 
     const rtcView = tree.root.findAllByType('SafeRTCView')[0];
     expect(rtcView.props.mirror).toBe(false);
+  });
+
+  test('draws the ambient canvas instead of video when the call is audio-only', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <CallStage
+          {...createProps({ isAudioOnly: true, participantLabel: 'user-bob' })}
+        />,
+      );
+    });
+
+    expect(findByTestId(tree, 'call-stage-ambient')).not.toBeNull();
+    expect(tree.root.findAllByType('SafeRTCView').length).toBe(0);
+    expect(
+      tree.root.findAll((n: any) => n.props?.children === 'user-bob').length,
+    ).toBeGreaterThan(0);
+  });
+
+  test('shows the audio status label under the name', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <CallStage {...createProps({ isAudioOnly: true, audioStatusLabel: '02:14' })} />,
+      );
+    });
+
+    expect(findByTestId(tree, 'call-stage-ambient-status').props.children).toBe('02:14');
+  });
+
+  test('omits the status line when no label is given', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ isAudioOnly: true })} />);
+    });
+
+    expect(findByTestId(tree, 'call-stage-ambient-status')).toBeNull();
+  });
+
+  test('hides the self-view PiP on an audio call', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(<CallStage {...createProps({ isAudioOnly: true })} />);
+    });
+
+    expect(tree.root.findAllByType('DraggablePip').length).toBe(0);
+  });
+
+  test('falls back to Unknown when there is no participant label', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <CallStage {...createProps({ isAudioOnly: true, participantLabel: null })} />,
+      );
+    });
+
+    expect(
+      tree.root.findAll((n: any) => n.props?.children === 'Unknown').length,
+    ).toBeGreaterThan(0);
   });
 });

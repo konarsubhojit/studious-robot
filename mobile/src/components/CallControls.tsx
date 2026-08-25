@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
-import { spacing } from '../theme';
+import { spacing, typography } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
+import { ListItem, Sheet } from './primitives';
 import type { ThemeColors } from '../theme';
 
 export type CallControlsProps = {
@@ -22,14 +24,20 @@ export type CallControlsProps = {
   onScreenShareToggle?: () => void;
   onScreenAudioToggle?: () => void;
   onLeave: () => void;
+  /** Audio call: the camera controls have nothing to act on. */
+  isAudioOnly?: boolean;
 };
 
 /**
- * In-call control deck: mute, camera on/off, audio-output picker, camera swap,
- * screen sharing (with an optional screen-audio toggle) and leave.
+ * In-call control deck: one primary row, a "More" sheet, and Leave.
  *
- * All action buttons use icon-only circular IconButton components for a clean,
- * professional look.  The leave button is visually distinct (danger variant).
+ * The deck used to be a flat list of up to seven equally-weighted circles
+ * across two rows, which made "share my screen" as prominent as "mute" and
+ * pushed Leave around as the second row appeared and disappeared. The four
+ * controls people reach for mid-call (mute, camera, audio output, flip) stay
+ * on the surface; the occasional ones move behind `more`. Leave keeps its own
+ * row and its danger variant, and is never inside the sheet — ending a call
+ * must never be two taps deep.
  */
 export default function CallControls({
   isMuted,
@@ -48,8 +56,11 @@ export default function CallControls({
   onScreenShareToggle,
   onScreenAudioToggle,
   onLeave,
+  isAudioOnly = false,
 }: CallControlsProps) {
   const styles = useThemedStyles(createStyles);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const hasMoreActions = Boolean(onScreenShareToggle);
 
   return (
     <View style={styles.controls}>
@@ -86,43 +97,24 @@ export default function CallControls({
           icon="cameraSwitch"
           onPress={onCameraSwitch}
           variant="default"
-          disabled={!hasLocalStream || isScreenSharing}
+          disabled={!hasLocalStream || isScreenSharing || isAudioOnly}
           size={56}
           accessibilityLabel="Switch between front and back camera"
           testID="control-swap-camera"
         />
-      </View>
-
-      {onScreenShareToggle ? (
-        <View style={styles.mediaRow}>
+        {hasMoreActions ? (
           <IconButton
-            icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
-            onPress={onScreenShareToggle}
+            icon="more"
+            onPress={() => setIsMoreOpen(true)}
             variant={isScreenSharing ? 'active' : 'default'}
             selected={isScreenSharing}
-            disabled={!isScreenShareSupported}
             size={56}
-            accessibilityLabel={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
-            testID="control-screen-share"
+            accessibilityLabel="More call options"
+            accessibilityHint="Opens screen sharing options"
+            testID="control-more"
           />
-          {onScreenAudioToggle ? (
-            <IconButton
-              icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
-              onPress={onScreenAudioToggle}
-              variant={isScreenAudioEnabled ? 'active' : 'default'}
-            selected={isScreenAudioEnabled}
-              disabled={!isScreenShareSupported}
-              size={56}
-              accessibilityLabel={
-                isScreenAudioEnabled
-                  ? 'Do not include screen audio when sharing'
-                  : 'Include screen audio when sharing'
-              }
-              testID="control-screen-audio"
-            />
-          ) : null}
-        </View>
-      ) : null}
+        ) : null}
+      </View>
 
       {isScreenSharing ? (
         <Text style={styles.sharingLabel} testID="screen-share-indicator">
@@ -139,6 +131,49 @@ export default function CallControls({
         accessibilityLabel="Leave the call"
         testID="control-leave"
       />
+
+      {hasMoreActions ? (
+        <Sheet
+          visible={isMoreOpen}
+          onClose={() => setIsMoreOpen(false)}
+          title="More options"
+          testID="call-more-sheet">
+          <ListItem
+            title={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
+            subtitle={
+              isScreenShareSupported ? null : 'Not supported on this device'
+            }
+            icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
+            disabled={!isScreenShareSupported}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: isScreenSharing, disabled: !isScreenShareSupported }}
+            onPress={() => {
+              setIsMoreOpen(false);
+              onScreenShareToggle?.();
+            }}
+            testID="control-screen-share"
+          />
+          {onScreenAudioToggle ? (
+            <ListItem
+              title="Include screen audio"
+              subtitle={
+                isScreenShareSupported
+                  ? 'Shares what your device is playing while you present'
+                  : 'Not supported on this device'
+              }
+              icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
+              disabled={!isScreenShareSupported}
+              accessibilityRole="switch"
+              accessibilityState={{
+                checked: isScreenAudioEnabled,
+                disabled: !isScreenShareSupported,
+              }}
+              onPress={onScreenAudioToggle}
+              testID="control-screen-audio"
+            />
+          ) : null}
+        </Sheet>
+      ) : null}
     </View>
   );
 }
@@ -152,9 +187,8 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
     },
     sharingLabel: {
+      ...typography.label,
       color: colors.textPrimary,
-      fontSize: 13,
-      fontWeight: '600',
     },
     mediaRow: {
       flexDirection: 'row',

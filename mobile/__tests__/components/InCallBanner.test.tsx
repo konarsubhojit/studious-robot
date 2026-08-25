@@ -6,6 +6,16 @@ function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
+function pressByTestID(tree: any, testID: string) {
+  const node = tree.root.findAll(
+    (n: any) => n.props?.testID === testID && typeof n.props?.onPress === 'function',
+  )[0];
+  if (!node) throw new Error(`No pressable node with testID "${testID}"`);
+  act(() => {
+    node.props.onPress();
+  });
+}
+
 function render(props?: any): any {
   let tree: any;
   act(() => {
@@ -55,5 +65,35 @@ describe('InCallBanner', () => {
     const tree = render({ participantLabel: null });
     const banner = findByTestId(tree, 'in-call-banner');
     expect(banner.props.accessibilityLabel).toBe('Return to call');
+  });
+
+  test('omits mute and end when no handlers are given', () => {
+    const tree = render();
+
+    expect(findByTestId(tree, 'in-call-banner-mute')).toBeNull();
+    expect(findByTestId(tree, 'in-call-banner-end')).toBeNull();
+  });
+
+  test('offers mute and end without expanding the call, like the bubble does', () => {
+    const onMuteToggle = jest.fn();
+    const onEndCall = jest.fn();
+    const tree = render({ onMuteToggle, onEndCall });
+
+    pressByTestID(tree, 'in-call-banner-mute');
+    pressByTestID(tree, 'in-call-banner-end');
+
+    expect(onMuteToggle).toHaveBeenCalledTimes(1);
+    expect(onEndCall).toHaveBeenCalledTimes(1);
+  });
+
+  test('the mute control names the action it will perform', () => {
+    expect(
+      findByTestId(render({ onMuteToggle: jest.fn() }), 'in-call-banner-mute').props
+        .accessibilityLabel,
+    ).toBe('Mute microphone');
+    expect(
+      findByTestId(render({ onMuteToggle: jest.fn(), isMuted: true }), 'in-call-banner-mute')
+        .props.accessibilityLabel,
+    ).toBe('Unmute microphone');
   });
 });

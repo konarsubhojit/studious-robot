@@ -202,6 +202,10 @@ function ActiveCallScreen() {
       onStageLayout={handleCallStageLayout}
       mainStreamUrl={streams.mainStreamUrl}
       hasMainStream={Boolean(streams.mainStream)}
+      // Audio call, or a peer with their camera off: a stream exists and has a
+      // URL, but there is no picture in it, so the stage draws the ambient
+      // canvas rather than a black rectangle.
+      isAudioOnly={Boolean(streams.mainStream) && !streams.mainHasVideo}
       pipStreamUrl={streams.pipStreamUrl}
       hasPipStream={Boolean(streams.pipStream)}
       mirrorPip={streams.mirrorPip}
@@ -235,7 +239,7 @@ function ActiveCallScreen() {
 
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {
-  const { callFlow, participantLabel, expandCall } = useCall();
+  const { callFlow, participantLabel, expandCall, endCall } = useCall();
   const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
 
   return (
@@ -243,6 +247,9 @@ function MinimizedCallBanner() {
       participantLabel={participantLabel}
       elapsedCallSeconds={elapsedCallSeconds}
       onExpand={expandCall}
+      isMuted={callFlow.isMuted}
+      onMuteToggle={callFlow.handleMuteToggle}
+      onEndCall={endCall}
     />
   );
 }
