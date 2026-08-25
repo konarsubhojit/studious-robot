@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AUDIO_ROUTES, getAudioRouteLabel } from '../audioRouting';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing } from '../theme';
+import { overlay, radius, spacing } from '../theme';
 import IconButton from './IconButton';
 import type { ThemeColors } from '../theme';
 
@@ -130,7 +130,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     backdrop: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
+      backgroundColor: overlay.scrimSoft,
       alignItems: 'center',
       justifyContent: 'center',
       padding: spacing.lg,

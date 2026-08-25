@@ -497,7 +497,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 6,
     },
     missedBadgeText: {
-      color: '#fff',
+      color: colors.textOnAccent,
       fontSize: 12,
       fontWeight: '700',
     },

@@ -1,6 +1,6 @@
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing } from '../theme';
+import { overlay, radius, spacing } from '../theme';
 import type { ThemeColors } from '../theme';
 
 /**
@@ -54,7 +54,7 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     backdrop: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
+      backgroundColor: overlay.scrimSoft,
       justifyContent: 'flex-end',
     },
     sheet: {

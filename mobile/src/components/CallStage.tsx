@@ -1,7 +1,7 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { overlay, radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
 import type { Gesture } from 'react-native-gesture-handler';
 import type { ThemeColors } from '../theme';
@@ -147,7 +147,7 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
-      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      backgroundColor: overlay.scrimMedium,
     },
     presenterBannerText: {
       color: colors.accent,

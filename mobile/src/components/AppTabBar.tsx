@@ -135,7 +135,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 4,
     },
     badgeText: {
-      color: '#fff',
+      color: colors.textOnAccent,
       fontSize: 10,
       fontWeight: '700',
     },

@@ -519,7 +519,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 6,
     },
     unreadBadgeText: {
-      color: '#fff',
+      color: colors.textOnAccent,
       fontSize: 11,
       fontWeight: '700',
     },

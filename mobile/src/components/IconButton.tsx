@@ -112,8 +112,8 @@ const variantColor = (colors: ThemeColors, variant: string) =>
 const iconColor = (colors: ThemeColors, variant: string) =>
   ({
     default: colors.textPrimary,
-    danger: '#fff',
-    success: '#fff',
+    danger: colors.textOnAccent,
+    success: colors.textOnAccent,
     active: colors.textOnAccent,
     muted: colors.textSecondary,
   }[variant] ?? colors.textPrimary);

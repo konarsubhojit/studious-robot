@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing } from '../theme';
+import { overlay, radius, spacing } from '../theme';
 import { ICE_TRANSPORT_POLICIES } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import type { ThemeColors } from '../theme';
@@ -100,7 +100,7 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
-      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      backgroundColor: overlay.scrimSoft,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -117,22 +117,22 @@ const createStyles = (colors: ThemeColors) =>
       gap: spacing.sm,
     },
     participantLabel: {
-      color: '#fff',
+      color: colors.onOverlay,
       fontWeight: '600',
       flexShrink: 1,
     },
     timerText: {
-      color: '#fff',
+      color: colors.onOverlay,
       fontWeight: '700',
     },
     policyBadge: {
-      color: '#fff',
+      color: colors.onOverlay,
       fontSize: 12,
       fontWeight: '700',
       paddingHorizontal: spacing.sm,
       paddingVertical: 3,
       borderRadius: radius.pill,
-      backgroundColor: 'rgba(255, 210, 122, 0.28)',
+      backgroundColor: overlay.warningTint,
       overflow: 'hidden',
     },
     qualityContainer: {
@@ -147,7 +147,7 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     minimizeIconText: {
-      color: colors.textPrimary,
+      color: colors.onOverlay,
       fontSize: 16,
     },
     signalBars: {
@@ -158,7 +158,7 @@ const createStyles = (colors: ThemeColors) =>
     signalBar: {
       width: 6,
       borderRadius: 4,
-      backgroundColor: 'rgba(255, 255, 255, 0.35)',
+      backgroundColor: overlay.inactiveTrack,
     },
     signalBar0: {
       height: 8,
