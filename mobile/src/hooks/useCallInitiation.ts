@@ -14,28 +14,30 @@ import { logError } from '../appLogger';
  *
  * @param params
  */
-export default function useCallInitiation({ isInCall, setCalleeId, placeCall, handleVideoToggle }: {
+export default function useCallInitiation({ isInCall, setCalleeId, placeCall, handleVideoToggle, setOutgoingCallMediaType }: {
         isInCall: boolean;
         setCalleeId: (peerId: string) => void;
         placeCall: (peerId?: string) => Promise<void>;
         handleVideoToggle: () => void;
+        setOutgoingCallMediaType: (mediaType: 'audio' | 'video') => void;
     }) {
   // Set by startAudioCallWith; consumed by the effect below once the call
   // connects, since there is no dedicated audio-only call type server-side.
   const pendingAudioOnlyCallRef = useRef(false);
 
   /**
-   * Start a video call with `peerId` (used by both the Lobby redial action and
-   * the Chats tab's video-call header button).
+   * Start a video call with `peerId` (used by the call log's redial action, the
+   * People picker and the Chats tab's video-call header button).
    */
   const startVideoCallWith = useCallback(
     (peerId: string) => {
+      setOutgoingCallMediaType('video');
       setCalleeId(peerId);
       placeCall(peerId).catch(error => {
         logError('placeCall (video) failed', error);
       });
     },
-    [setCalleeId, placeCall],
+    [setCalleeId, placeCall, setOutgoingCallMediaType],
   );
 
   /**
@@ -45,12 +47,13 @@ export default function useCallInitiation({ isInCall, setCalleeId, placeCall, ha
   const startAudioCallWith = useCallback(
     (peerId: string) => {
       pendingAudioOnlyCallRef.current = true;
+      setOutgoingCallMediaType('audio');
       setCalleeId(peerId);
       placeCall(peerId).catch(error => {
         logError('placeCall (audio) failed', error);
       });
     },
-    [setCalleeId, placeCall],
+    [setCalleeId, placeCall, setOutgoingCallMediaType],
   );
 
   useEffect(() => {

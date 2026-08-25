@@ -28,14 +28,19 @@ import {
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useBlocks from './useBlocks';
-import useCallHistory from './useCallHistory';
+import useCallHistory, { DEFAULT_CALL_MEDIA_TYPE } from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
 import useIdentity from './useIdentity';
 import useMessaging from './useMessaging';
 import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
-import { collectCallStats, getConnectionQuality, summarizeCandidatePair } from '../callUx';
+import {
+  CALL_END_REASON_LABELS,
+  collectCallStats,
+  getConnectionQuality,
+  summarizeCandidatePair,
+} from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import type { IceCandidatePairSummary } from '../diagnostics';
 import { initHaptics, triggerHaptic } from '../haptics';
@@ -79,6 +84,7 @@ import type {
   RecoveryTrigger,
 } from '../call/recoveryEpisode';
 import useScreenShare from './useScreenShare';
+import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { MediaStream } from 'react-native-webrtc';
@@ -255,7 +261,7 @@ const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
  * machine's `CALL_STATES` (see `src/call/callStateMachine`), kept under the
  * historical name for the hook's consumers.
  *
- * idle             – no active call; show Lobby
+ * idle             – no active call; show the tabs
  * outgoing_ringing – caller placed a call, waiting for callee to answer
  * incoming_ringing – callee received a call, waiting for user action
  * in_call          – call accepted and media connected
@@ -266,21 +272,10 @@ export const CALL_PHASES = CALL_STATES;
 /**
  * English display strings for server-side `endReason` codes.
  *
- * Each key mirrors a value that can appear in `call.endReason` from the
- * server.  The mapped string is the default English label shown in the UI.
- * Applications that support multiple languages should use these as fallback
- * defaults and provide translated overrides keyed by the same reason code.
+ * Re-exported from `callUx` so existing importers keep working; it lives there
+ * because the call log's pure helpers need it without the WebRTC stack.
  */
-export const CALL_END_REASON_LABELS: Record<string, string> = {
-  ended: 'Call ended',
-  declined: 'Call declined',
-  cancelled: 'Call cancelled',
-  timeout: 'Missed call',
-  missed: 'Missed call',
-  busy: 'Line was busy',
-  unreachable: 'User unavailable',
-  failed: 'Call failed',
-};
+export { CALL_END_REASON_LABELS };
 
 /** ICE states the server reads as "this call is over". */
 const TERMINAL_ICE_STATES = new Set(['disconnected', 'failed']);
@@ -408,7 +403,7 @@ export default function useCallFlow({
   const [status, setStatus] = useState(
     ({ message: '', severity: 'info' } as CallStatus),
   );
-  // Summary of the last connected call, shown once in the Lobby.
+  // Summary of the last connected call, surfaced by the conversation timeline.
   const [callSummary, setCallSummary] = useState(
     (null as { durationSeconds: number | null, quality: string } | null),
   );
@@ -616,6 +611,20 @@ export default function useCallFlow({
   const { fetchBlocks } = blocks;
   const { addToHistory } = callHistory;
 
+  /**
+   * Modality the local user asked for when placing the *next* outgoing call.
+   *
+   * There is no audio-only call type on the wire, so this intent is the only
+   * place the distinction exists; it is stamped onto the history entry at
+   * teardown so the call log can show the right type icon and redial in the
+   * same modality. Incoming calls keep the default, since the local user never
+   * chose one.
+   */
+  const outgoingCallMediaTypeRef = useRef((DEFAULT_CALL_MEDIA_TYPE as CallMediaType));
+  const setOutgoingCallMediaType = useCallback((mediaType: CallMediaType) => {
+    outgoingCallMediaTypeRef.current = mediaType;
+  }, []);
+
   const presenceSearch = usePresenceSearch({
     signalingUrl,
     authedFetchRef,
@@ -751,7 +760,7 @@ export default function useCallFlow({
 
   // `ended` is the machine's terminal state; `endActiveCall` has already run
   // the teardown by the time it is entered, so acknowledge it immediately and
-  // return the machine to `idle` (which is what the lobby renders from).
+  // return the machine to `idle` (which is what the tab shell renders from).
   useEffect(() => {
     if (callPhase === CALL_STATES.ENDED) {
       dispatchCallEvent(CALL_EVENTS.RESET);
@@ -1857,6 +1866,7 @@ export default function useCallFlow({
           createdAt: callRecord.createdAt,
           durationSeconds,
           isRead: !isMissed,
+          mediaType: isCaller ? outgoingCallMediaTypeRef.current : DEFAULT_CALL_MEDIA_TYPE,
         });
       }
 
@@ -2608,7 +2618,7 @@ export default function useCallFlow({
 
   // ─── Presence: auto-connect when userId + signalingUrl are set ────────────
   // Keeps a persistent socket open so the user can receive incoming calls even
-  // while on the Lobby screen.
+  // while the user is anywhere in the tabs.
 
   useEffect(() => {
     const trimmedUserId = userId.trim();
@@ -3902,6 +3912,7 @@ export default function useCallFlow({
     missedCallCount: callHistory.missedCallCount,
     markMissedCallsRead: callHistory.markMissedCallsRead,
     fetchCallHistory: callHistory.fetchCallHistory,
+    setOutgoingCallMediaType,
 
     // Chat
     conversations: messaging.conversations,

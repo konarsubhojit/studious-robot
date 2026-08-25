@@ -230,3 +230,66 @@ export async function loadDeviceId(): Promise<string> {
 }
 
 export const DEVICE_FILE_PATH = DEVICE_FILE;
+
+// ─── Call modality log ────────────────────────────────────────────────────────
+// The signaling server has no notion of an "audio call": `startAudioCallWith`
+// places an ordinary call and turns the local camera off once it connects, so
+// the call record the server returns cannot say which of the two the user
+// actually placed.  Without that, the call log can't show an audio-vs-video
+// type icon and redial always starts a video call — the exact complaint that
+// "redialling a voice call starts a video call".  Remembering the modality per
+// call id locally is enough, and keeps the change out of the wire protocol.
+
+const CALL_MEDIA_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-call-media.json`;
+
+/** Cap on remembered call ids; the call log itself holds at most 50 entries. */
+const MAX_CALL_MEDIA_ENTRIES = 200;
+
+export type CallMediaType = 'audio' | 'video';
+
+/** Ordered `callId -> modality` map; most recently recorded first. */
+export type CallMediaTypeMap = Record<string, CallMediaType>;
+
+/**
+ * Load the remembered per-call modality map.  Unreadable or corrupt files
+ * yield an empty map rather than throwing: a missing entry only means the log
+ * falls back to the default modality for that row.
+ */
+export async function loadCallMediaTypes(): Promise<CallMediaTypeMap> {
+  try {
+    const exists = await RNFS.exists(CALL_MEDIA_FILE);
+    if (!exists) return {};
+    const content = await RNFS.readFile(CALL_MEDIA_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const entries = Object.entries((parsed as Record<string, unknown>)).filter(
+      ([callId, value]) => callId && (value === 'audio' || value === 'video'),
+    );
+    return (Object.fromEntries(entries.slice(0, MAX_CALL_MEDIA_ENTRIES)) as CallMediaTypeMap);
+  } catch (error) {
+    logError('Failed to load call modality log; ignoring it', {
+      message: errorMessage(error),
+    });
+    return {};
+  }
+}
+
+/**
+ * Persist the per-call modality map, trimmed to the most recent entries.
+ * Failures are logged but never thrown so a write error can't break the call
+ * teardown that triggered it.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveCallMediaTypes(map: CallMediaTypeMap): Promise<boolean> {
+  try {
+    const trimmed = Object.fromEntries(Object.entries(map).slice(0, MAX_CALL_MEDIA_ENTRIES));
+    await RNFS.writeFile(CALL_MEDIA_FILE, JSON.stringify(trimmed), 'utf8');
+    return true;
+  } catch (error) {
+    logError('Failed to persist call modality log', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const CALL_MEDIA_FILE_PATH = CALL_MEDIA_FILE;

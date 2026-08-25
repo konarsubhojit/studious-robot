@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { sizes, spacing } from '../theme';
-import { ICONS, loadVectorIcons } from '../vectorIcons';
+import { sizes, spacing, typography } from '../theme';
+import { Badge, Icon } from './primitives';
 import type { ThemeColors } from '../theme';
 
 export type TabKey = 'chats' | 'calls' | 'settings';
@@ -42,8 +42,10 @@ const MIN_TAB_HEIGHT = sizes.minTouchTarget;
 /**
  * Bottom tab bar for the post-registration app shell: Chats / Calls / Settings.
  *
- * A small pill badge (mirroring Lobby's missed-call badge style) is shown on
- * the Chats tab when `unreadCount` is greater than zero.
+ * Both counts that matter are badged here: unread messages on Chats and missed
+ * calls on Calls. Missed calls used to badge only the *title* of the old lobby,
+ * so the one place the user could see them was the one place they had to
+ * already be looking.
  *
  * Pads its own bottom edge by `bottomInset` (the device's safe-area/gesture-
  * navigation inset) so the bar's background reaches the true screen edge
@@ -53,10 +55,16 @@ const MIN_TAB_HEIGHT = sizes.minTouchTarget;
  * @param props.bottomInset - Safe-area inset (e.g. from
  *   `useSafeAreaInsets().bottom`) to add as extra bottom padding.
  */
-export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bottomInset = 0 }: { activeTab: TabKey; onChangeTab: (tab: TabKey) => void; unreadCount?: number; bottomInset?: number; }) {
-  const MCIcon = loadVectorIcons();
+export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, missedCallCount = 0, bottomInset = 0 }: { activeTab: TabKey; onChangeTab: (tab: TabKey) => void; unreadCount?: number; missedCallCount?: number; bottomInset?: number; }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+
+  /** Badge count for a tab; tabs without a count return 0. */
+  const badgeCountFor = (key: TabKey) => {
+    if (key === 'chats') return unreadCount;
+    if (key === 'calls') return missedCallCount;
+    return 0;
+  };
 
   return (
     <View
@@ -64,31 +72,30 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
       testID="app-tab-bar">
       {TABS.map(tab => {
         const isActive = tab.key === activeTab;
-        const iconDef = ICONS[isActive ? tab.iconActive : tab.icon];
-        const iconColor = isActive ? colors.textPrimary : colors.textSecondary;
+        const iconColor = isActive ? colors.onSurface : colors.onSurfaceVariant;
+        const badgeCount = badgeCountFor(tab.key);
         return (
           <Pressable
             key={tab.key}
             onPress={() => onChangeTab(tab.key)}
             accessibilityRole="button"
             accessibilityLabel={
-              tab.key === 'chats' && unreadCount > 0
-                ? `${tab.label}, ${unreadCount} unread`
+              badgeCount > 0
+                ? `${tab.label}, ${badgeCount} ${tab.key === 'chats' ? 'unread' : 'missed'}`
                 : tab.label
             }
             accessibilityState={{ selected: isActive }}
             testID={tab.testID}
             style={styles.tab}>
-            {iconDef && MCIcon ? (
-              <MCIcon name={iconDef.icon} size={24} color={iconColor} />
-            ) : iconDef ? (
-              <Text style={styles.tabEmoji}>{iconDef.emoji}</Text>
-            ) : null}
+            <Icon name={isActive ? tab.iconActive : tab.icon} size={24} color={iconColor} />
             <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
-            {tab.key === 'chats' && unreadCount > 0 ? (
-              <View style={styles.badge} testID="app-tab-chats-badge">
-                <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-              </View>
+            {badgeCount > 0 ? (
+              <Badge
+                count={badgeCount}
+                size="sm"
+                style={styles.badge}
+                testID={`${tab.testID}-badge`}
+              />
             ) : null}
           </Pressable>
         );
@@ -114,33 +121,17 @@ const createStyles = (colors: ThemeColors) =>
       gap: 2,
       paddingVertical: spacing.sm,
     },
-    tabEmoji: {
-      fontSize: 20,
-      lineHeight: 24,
-    },
     tabLabel: {
-      color: colors.textSecondary,
-      fontSize: 12,
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
       fontWeight: '600',
     },
     tabLabelActive: {
-      color: colors.textPrimary,
+      color: colors.onSurface,
     },
     badge: {
       position: 'absolute',
       top: 4,
       right: '28%',
-      backgroundColor: colors.danger,
-      borderRadius: 12,
-      minWidth: 18,
-      height: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 4,
-    },
-    badgeText: {
-      color: colors.textOnAccent,
-      fontSize: 10,
-      fontWeight: '700',
     },
   });

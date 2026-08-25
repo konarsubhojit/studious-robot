@@ -1,5 +1,6 @@
+import { useContext } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { useThemedStyles } from '../../ThemeContext';
 import { elevation, overlay, radius, spacing, typography } from '../../theme';
 import type { ReactNode } from 'react';
@@ -37,7 +38,12 @@ export default function Sheet({
   testID,
 }: SheetProps) {
   const styles = useThemedStyles(createStyles);
-  const insets = useSafeAreaInsets();
+  // Read the context directly rather than through `useSafeAreaInsets()`: that
+  // hook throws when no provider is mounted, and a sheet can legitimately be
+  // rendered outside one (in a modal host, or under test). No provider simply
+  // means no home-indicator inset to avoid.
+  const insets = useContext(SafeAreaInsetsContext);
+  const bottomInset = Math.max(insets?.bottom ?? 0, 0);
 
   if (!visible) return null;
 
@@ -51,7 +57,7 @@ export default function Sheet({
         testID={testID ? `${testID}-backdrop` : undefined}>
         {/* Swallow taps on the sheet itself so they never reach the scrim. */}
         <Pressable
-          style={[styles.sheet, { paddingBottom: spacing.md + Math.max(insets.bottom, 0) }]}
+          style={[styles.sheet, { paddingBottom: spacing.md + bottomInset }]}
           accessibilityViewIsModal
           onPress={() => {}}
           testID={testID}>

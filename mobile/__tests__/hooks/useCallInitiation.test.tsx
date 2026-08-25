@@ -22,6 +22,7 @@ function setup(overrides = {}) {
     setCalleeId: jest.fn(),
     placeCall: jest.fn(async () => {}),
     handleVideoToggle: jest.fn(),
+    setOutgoingCallMediaType: jest.fn(),
     ...overrides,
   };
   const resultRef: { current: any; } = { current: null };
@@ -45,6 +46,9 @@ describe('useCallInitiation', () => {
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
     expect(params.placeCall).toHaveBeenCalledWith('bob');
+    // The call log has no other way to know which kind of call this was, so
+    // redial would otherwise always start a video call.
+    expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('video');
   });
 
   test('startVideoCallWith logs an error when placeCall rejects', async () => {
@@ -71,6 +75,7 @@ describe('useCallInitiation', () => {
     });
     expect(params.setCalleeId).toHaveBeenCalledWith('bob');
     expect(params.placeCall).toHaveBeenCalledWith('bob');
+    expect(params.setOutgoingCallMediaType).toHaveBeenCalledWith('audio');
     expect(params.handleVideoToggle).not.toHaveBeenCalled();
 
     act(() => {

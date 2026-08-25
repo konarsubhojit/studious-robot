@@ -14,7 +14,7 @@ import type { ThemeColors } from '../theme';
  *
  * Asks the user to choose a username (userId) that identifies them on the
  * signaling server.  The userId is persisted in local storage so this screen
- * is only shown once; subsequent launches go directly to the Lobby.
+ * is only shown once; subsequent launches go directly to the tabs.
  *
  * Purely presentational – all behaviour is supplied via props.
  *

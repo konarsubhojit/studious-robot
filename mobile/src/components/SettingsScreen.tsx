@@ -14,7 +14,7 @@ import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../t
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import AppButton from './AppButton';
-import { Icon } from './primitives';
+import { Icon, Switch } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
 import type { ReactNode } from 'react';
@@ -67,14 +67,22 @@ export type SettingsScreenProps = {
   onSaveSignalingUrl: (url: string) => void;
   /** Clear the identity and return to registration. */
   onSignOut: () => void;
-  /** Dismiss the screen (back to Lobby). */
+  /** Dismiss the screen and return to the tabs. */
   onClose: () => void;
   /** Optional: export diagnostic logs. */
   onExportLogs?: () => void;
-  /** Whether the legacy room-join developer tools are shown in the Lobby. */
+  /** Whether the extra diagnostic tools are shown. */
   developerModeEnabled?: boolean;
   /** Toggle developer mode on/off. */
   onToggleDeveloperMode?: () => void;
+  /** Route call audio to the loudspeaker as soon as a call connects. */
+  speakerDefaultEnabled?: boolean;
+  /** Toggle speaker-by-default. */
+  onToggleSpeakerDefault?: () => void;
+  /** Let the app raise camera brightness in poor light. */
+  autoLightingEnabled?: boolean;
+  /** Toggle automatic camera lighting. */
+  onToggleAutoLighting?: () => void;
   /** Current WebRTC ICE transport policy. */
   iceTransportPolicy?: string;
   /** Persist the WebRTC ICE transport policy used for new calls. */
@@ -103,6 +111,10 @@ function SettingsScreen({
   onExportLogs,
   developerModeEnabled,
   onToggleDeveloperMode,
+  speakerDefaultEnabled,
+  onToggleSpeakerDefault,
+  autoLightingEnabled,
+  onToggleAutoLighting,
   iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
   onChangeIceTransportPolicy,
   status,
@@ -190,6 +202,33 @@ function SettingsScreen({
           style={styles.saveButton}
         />
 
+        {/* ── Calls & media ───────────────────────────────────────────────── */}
+        {onToggleSpeakerDefault || onToggleAutoLighting ? (
+          <>
+            <SectionLabel icon="settingsCalls">Calls &amp; media</SectionLabel>
+            {/* These two used to live inside the Lobby's developer-tools panel,
+                which meant an ordinary user could not reach them at all. */}
+            {onToggleSpeakerDefault ? (
+              <Switch
+                label="Speaker by default"
+                hint="Start calls on the loudspeaker instead of the earpiece."
+                value={Boolean(speakerDefaultEnabled)}
+                onValueChange={onToggleSpeakerDefault}
+                testID="settings-speaker-default"
+              />
+            ) : null}
+            {onToggleAutoLighting ? (
+              <Switch
+                label="Auto camera lighting"
+                hint="Brighten the camera automatically when the light is poor."
+                value={Boolean(autoLightingEnabled)}
+                onValueChange={onToggleAutoLighting}
+                testID="settings-auto-lighting"
+              />
+            ) : null}
+          </>
+        ) : null}
+
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionLabel icon="settingsAppearance">Appearance</SectionLabel>
         <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
@@ -228,14 +267,14 @@ function SettingsScreen({
               onPress={onToggleDeveloperMode}
               accessibilityRole="switch"
               accessibilityLabel="Developer mode"
-              accessibilityHint="Shows the legacy room-join tools in the lobby"
+              accessibilityHint="Shows extra diagnostic tools"
               accessibilityState={{ checked: Boolean(developerModeEnabled) }}
               testID="settings-developer-mode"
               style={({ pressed }) => [styles.toggleRow, pressed && styles.pressed]}>
               <View style={styles.toggleTextWrap}>
                 <Text style={styles.toggleLabel}>Developer mode</Text>
                 <Text style={styles.hint}>
-                  Show the legacy Join Room tools (signaling URL, room ID) in the lobby.
+                  Show extra diagnostic tools, such as the ICE transport policy below.
                 </Text>
               </View>
               <Text style={styles.toggleValue}>{developerModeEnabled ? 'On' : 'Off'}</Text>

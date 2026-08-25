@@ -228,6 +228,8 @@ jest.mock('../../src/settingsStorage', () => ({
   loadDeviceId: jest.fn(async () => 'device-test-1'),
   loadSettings: jest.fn(async defaults => ({ ...defaults })),
   saveSettings: jest.fn(async () => true),
+  loadCallMediaTypes: jest.fn(async () => ({})),
+  saveCallMediaTypes: jest.fn(async () => true),
 }));
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────

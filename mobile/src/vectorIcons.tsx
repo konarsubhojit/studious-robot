@@ -128,6 +128,8 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   // ── Call-log row types ───────────────────────────────────────────────────
   callTypeAudio: { icon: 'phone', emoji: '📞' },
   callTypeVideo: { icon: 'video-outline', emoji: '📹' },
+  /** A call that is live right now (minimized banner / floating bubble). */
+  callActive: { icon: 'phone-in-talk', emoji: '📞' },
 
   // ── Conversation states ──────────────────────────────────────────────────
   messageQueued: { icon: 'clock-outline', emoji: '🕘' },
@@ -137,5 +139,10 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   messageFailed: { icon: 'alert-circle-outline', emoji: '⚠️' },
   offline: { icon: 'wifi-off', emoji: '⚠️' },
   reconnecting: { icon: 'sync', emoji: '⟳' },
+
+  // ── Empty states ─────────────────────────────────────────────────────────
+  emptyChats: { icon: 'chat-plus-outline', emoji: '💬' },
+  emptyCalls: { icon: 'phone-plus-outline', emoji: '📞' },
+  emptySearch: { icon: 'magnify', emoji: '🔍' },
 };
 
