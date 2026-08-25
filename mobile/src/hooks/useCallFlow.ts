@@ -1036,6 +1036,17 @@ export default function useCallFlow({
     });
     armRecoveryDeadlineRef.current?.();
     publishRecoveryStatus();
+    // The ladder stops while the episode is paused, because nothing can be
+    // negotiated with no connectivity or no socket. Re-entering it here is what
+    // makes that a pause rather than an abandonment: the rung that could not
+    // run is retried the moment recovery is possible again, without having been
+    // counted against the budget.
+    if (!activeCallIdRef.current || !peerConnectionRef.current) return;
+    if (isPeerConnectionRecovered(peerConnectionRef.current)) return;
+    scheduleIceRestartRef.current?.(
+      episode.snapshot()?.trigger ?? 'network-change',
+      { consumeAttempt: false },
+    );
   }, [publishRecoveryStatus]);
 
   /**

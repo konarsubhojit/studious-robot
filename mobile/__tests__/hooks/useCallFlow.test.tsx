@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
+import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -117,12 +118,19 @@ jest.mock('../../src/socketConfig', () => ({
 }));
 
 const mockNetworkListeners: any[] = [];
+// The options bag carries `onConnectivityLost`, which is what pauses the
+// recovery budget while no attempt could possibly succeed.
+const mockNetworkOptions: any[] = [];
 jest.mock('../../src/networkMonitor', () => ({
-  subscribeNetworkChanges: (listener: any) => {
+  subscribeNetworkChanges: (listener: any, options: any) => {
     mockNetworkListeners.push(listener);
+    mockNetworkOptions.push(options ?? {});
     return () => {
       const index = mockNetworkListeners.indexOf(listener);
-      if (index >= 0) mockNetworkListeners.splice(index, 1);
+      if (index >= 0) {
+        mockNetworkListeners.splice(index, 1);
+        mockNetworkOptions.splice(index, 1);
+      }
     };
   },
 }));
@@ -3429,6 +3437,196 @@ describe('useCallFlow chat', () => {
 
       // ICE still says "connected" here — that lag is exactly the audio gap
       // this restart exists to avoid.
+      expect(peerConnection.createOffer).toHaveBeenCalledWith({ iceRestart: true });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // ── Recovery budget ───────────────────────────────────────────────────────
+  //
+  // The call used to end 12s into any outage: the "grace period" armed a report
+  // of `iceState: 'disconnected' | 'failed'`, which the server maps straight to
+  // `{ status: 'ended', reason: 'media_failed' }`. A Wi-Fi⇄cellular handoff
+  // routinely takes longer than that, so the client was hanging up on itself.
+
+  test('an ICE dip is not reported as a failure until the whole budget is spent', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-budget-1');
+      emits.length = 0;
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'disconnected';
+        peerConnection.oniceconnectionstatechange?.();
+        await Promise.resolve();
+      });
+
+      // Well past the old 12s fuse, and comfortably inside a handoff.
+      await act(async () => {
+        jest.advanceTimersByTime(CALL_RECOVERY_BUDGET_MS - 1000);
+        await Promise.resolve();
+      });
+      expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(0);
+
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+      expect(
+        emits.filter((entry: any) => entry.payload?.iceState === 'disconnected'),
+      ).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('media that comes back mid-episode cancels the report entirely', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection, emits } =
+        await acceptCallWithPeerConnection('call-budget-2');
+      emits.length = 0;
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'disconnected';
+        peerConnection.oniceconnectionstatechange?.();
+        jest.advanceTimersByTime(10_000);
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'connected';
+        peerConnection.oniceconnectionstatechange?.();
+        jest.advanceTimersByTime(CALL_RECOVERY_BUDGET_MS * 2);
+        await Promise.resolve();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+
+      expect(emits.filter((entry: any) => entry.payload?.iceState === 'disconnected')).toHaveLength(0);
+      expect(resultRef.current.recoveryStatus).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('the budget is paused while there is no connectivity to recover over', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection, emits } =
+        await acceptCallWithPeerConnection('call-budget-3');
+      emits.length = 0;
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'disconnected';
+        peerConnection.oniceconnectionstatechange?.();
+        await Promise.resolve();
+      });
+
+      const onConnectivityLost = mockNetworkOptions[mockNetworkOptions.length - 1]?.onConnectivityLost;
+      expect(onConnectivityLost).toEqual(expect.any(Function));
+      await act(async () => {
+        onConnectivityLost({ type: 'none', isConnected: false });
+        await Promise.resolve();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+      expect(resultRef.current.recoveryStatus).toMatchObject({
+        isPaused: true,
+        pauseReason: 'no-connectivity',
+      });
+
+      // The airplane-mode window: the old fuse burned right through it, so the
+      // budget was spent waiting rather than on any attempt.
+      await act(async () => {
+        jest.advanceTimersByTime(CALL_RECOVERY_BUDGET_MS * 3);
+        await Promise.resolve();
+      });
+      expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a terminal report is never emitted while the socket is down', async () => {
+    jest.useFakeTimers();
+    try {
+      const { peerConnection, emits } = await acceptCallWithPeerConnection('call-budget-4');
+      const { io } = require('socket.io-client');
+      const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+      emits.length = 0;
+      socketMock.connected = false;
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'failed';
+        peerConnection.oniceconnectionstatechange?.();
+        jest.advanceTimersByTime(CALL_RECOVERY_BUDGET_MS * 3);
+        await Promise.resolve();
+      });
+
+      // An ack-less emit would have been queued and replayed on reconnect — and
+      // the first thing the client did after a handoff was tell the server its
+      // media had failed, which ended the very call it was recovering.
+      expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(0);
+
+      socketMock.connected = true;
+      const connectHandler = getSocketHandler('connect');
+      await act(async () => {
+        await connectHandler?.();
+        jest.advanceTimersByTime(1000);
+        await Promise.resolve();
+      });
+
+      expect(emits.filter((entry: any) => entry.payload?.iceState === 'failed')).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a restart blocked by an offline socket retries instead of consuming a rung', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection } = await acceptCallWithPeerConnection('call-budget-5');
+      const { io } = require('socket.io-client');
+      const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+        await Promise.resolve();
+      });
+      peerConnection.createOffer.mockClear();
+      socketMock.connected = false;
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'failed';
+        peerConnection.oniceconnectionstatechange?.();
+        await Promise.resolve();
+      });
+      await act(async () => {});
+
+      // Nothing can be negotiated with no socket, and a handoff drops the
+      // socket for far longer than the debounce that scheduled this rung.
+      expect(peerConnection.createOffer).not.toHaveBeenCalled();
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+      // The budget is paused rather than laddering against a dead interface,
+      // so no rung is spent while the socket is down.
+      expect(resultRef.current.recoveryStatus).toMatchObject({ attempts: 0, isPaused: true });
+
+      socketMock.connected = true;
+      const connectHandler = getSocketHandler('connect');
+      await act(async () => {
+        await connectHandler?.();
+        jest.advanceTimersByTime(5000);
+        await Promise.resolve();
+      });
+      await act(async () => {});
+
+      // The rung was not spent doing nothing: the restart still happens.
       expect(peerConnection.createOffer).toHaveBeenCalledWith({ iceRestart: true });
     } finally {
       jest.useRealTimers();
