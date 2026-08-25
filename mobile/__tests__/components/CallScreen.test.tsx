@@ -172,6 +172,56 @@ describe('CallScreen', () => {
   });
 
 
+  test('shows the recovery banner for a media-only failure, not just socket loss', () => {
+    // ICE down, socket up — the common TURN-path case. The banner used to be
+    // gated on `isReconnecting`, which is set only on socket disconnect, so the
+    // user watched a frozen picture with no indication anything was wrong.
+    act(() => {
+      tree = renderer.create(
+        <CallScreen
+          {...createProps({
+            isReconnecting: false,
+            recoveryStatus: {
+              trigger: 'ice-disconnected',
+              attempts: 2,
+              remainingMs: 18_000,
+              isPaused: false,
+              pauseReason: null,
+            },
+          })}
+        />,
+      );
+    });
+
+    const banners = tree.root.findAllByType('ReconnectBanner');
+    expect(banners).toHaveLength(1);
+    expect(banners[0].props.recovery).toMatchObject({ trigger: 'ice-disconnected', attempts: 2 });
+  });
+
+  test('hides the recovery banner once the episode closes', () => {
+    act(() => {
+      tree = renderer.create(
+        <CallScreen
+          {...createProps({
+            recoveryStatus: {
+              trigger: 'network-change',
+              attempts: 1,
+              remainingMs: 25_000,
+              isPaused: true,
+              pauseReason: 'no-connectivity',
+            },
+          })}
+        />,
+      );
+    });
+    expect(tree.root.findAllByType('ReconnectBanner')).toHaveLength(1);
+
+    act(() => {
+      tree.update(<CallScreen {...createProps({ recoveryStatus: null })} />);
+    });
+    expect(tree.root.findAllByType('ReconnectBanner')).toHaveLength(0);
+  });
+
   test('forwards the ICE transport policy to the top bar', () => {
     act(() => {
       tree = renderer.create(<CallScreen {...createProps({ iceTransportPolicy: 'relay' })} />);

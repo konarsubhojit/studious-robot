@@ -164,10 +164,10 @@ export function createRecoveryEpisode(options: RecoveryEpisodeOptions = {}): Rec
     }
     if (!EXTENDING_TRIGGERS.has(trigger)) return 'ignored';
 
-    // The ceiling moves with paused time for the same reason the deadline
-    // does: time in which recovery was impossible was never the call's to
-    // spend.
-    const ceiling = episode.ceilingAtMs + episode.pausedMs;
+    // The ceiling has already been moved by every `resume`, for the same
+    // reason the deadline is: time in which recovery was impossible was never
+    // the call's to spend.
+    const ceiling = episode.ceilingAtMs;
     const base = episode.pausedAtMs ?? at;
     const extended = Math.min(base + budgetMs, ceiling);
     if (extended <= episode.deadlineAtMs) return 'ignored';

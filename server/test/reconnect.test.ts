@@ -19,7 +19,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
+import {
+  CALL_RECOVERY_BUDGET_MS,
+  DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
+  DEFAULT_RINGING_TIMEOUT_MS,
+} from '../src/config.ts';
 import { getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -437,5 +441,82 @@ test('offline callee: call enters ringing state and HTTP polling can poll its st
     assert.equal(call?.status, 'accepted');
   } finally {
     await teardown(caller);
+  }
+});
+
+// ─── 8. Disconnect grace is derived from the shared recovery budget ──────────
+
+test('disconnect grace: PARTICIPANT_DISCONNECT_GRACE_MS=0 is honoured, not read as unset', async () => {
+  // `Number(env) || DEFAULT` swallowed `0` as falsy, so an operator asking for
+  // no grace at all silently got the default one. That mattered little at 15s;
+  // it matters a great deal now the default is derived from the client's 30s
+  // recovery budget and is therefore much longer.
+  const previous = process.env.PARTICIPANT_DISCONNECT_GRACE_MS;
+  process.env.PARTICIPANT_DISCONNECT_GRACE_MS = '0';
+  try {
+    const { url, getCall, teardown } = await startServer();
+    let caller;
+    let callee;
+    try {
+      const callerSession = await createSession(url, 'user-alice');
+      const calleeSession = await createSession(url, 'user-bob');
+      caller = await connect(url, { sessionId: callerSession });
+      callee = await connect(url, { sessionId: calleeSession });
+
+      const incoming = waitFor(callee, 'call.incoming');
+      const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+      const callId = ack.call.callId;
+      await incoming;
+      await emitWithAck(callee, 'call.accept', { version: 1, callId });
+
+      caller.disconnect();
+      callee.disconnect();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // With the default (recovery-budget-derived) grace this call would still
+      // be `accepted` for another fifty seconds.
+      const call = getCall(callId);
+      assert.equal(call?.status, 'ended');
+      assert.equal(call?.endReason, 'participant_disconnected');
+    } finally {
+      await teardown(caller, callee);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PARTICIPANT_DISCONNECT_GRACE_MS;
+    else process.env.PARTICIPANT_DISCONNECT_GRACE_MS = previous;
+  }
+});
+
+test('disconnect grace: a call outlives a disconnect far longer than the old 15s window', async () => {
+  // The old grace was a 15s literal — inside the window in which the client is
+  // still actively restarting ICE — so the server ended calls its own client
+  // would have saved. The default is now derived from the shared budget; this
+  // asserts the behaviour that derivation buys, without waiting it out.
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  let callee;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+    callee = await connect(url, { sessionId: calleeSession });
+
+    const incoming = waitFor(callee, 'call.incoming');
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    const callId = ack.call.callId;
+    await incoming;
+    await emitWithAck(callee, 'call.accept', { version: 1, callId });
+
+    caller.disconnect();
+    callee.disconnect();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(getCall(callId)?.status, 'accepted');
+    assert.ok(
+      DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS > CALL_RECOVERY_BUDGET_MS,
+      'the server must not end a call the client is still recovering'
+    );
+  } finally {
+    await teardown(caller, callee);
   }
 });

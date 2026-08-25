@@ -61,3 +61,29 @@ test('type declarations are wrapped rather than written as one wide line', () =>
     `Wrap these declarations across multiple lines so diffs and blame stay readable:\n${offenders.join('\n')}`
   );
 });
+
+/**
+ * The guard above only sees lines that *begin* a `type`/`interface`
+ * declaration, which is exactly how `pruneTerminalCalls` came to carry a
+ * 235-character signature: its options were an inline object literal on a
+ * `function` line, so no named declaration existed for the scan to catch.
+ * Naming the type is what brings it back inside the guard.
+ */
+test('pruneTerminalCalls declares its options as a named, wrapped type', () => {
+  const file = 'server/src/domain/calls.ts';
+  const lines = readFileSync(path.join(REPO_ROOT, file), 'utf8').split('\n');
+
+  const optionsType = lines.findIndex((line) => DECLARATION.test(line) && line.includes('PruneTerminalCallsOptions'));
+  assert.notEqual(optionsType, -1, 'expected a named PruneTerminalCallsOptions type');
+
+  const signature = lines.findIndex((line) => line.includes('function pruneTerminalCalls'));
+  assert.notEqual(signature, -1);
+  assert.ok(
+    lines[signature].length <= MAX_DECLARATION_LINE_LENGTH,
+    `pruneTerminalCalls signature is ${lines[signature].length} chars`
+  );
+  assert.ok(
+    lines.slice(signature, signature + 10).some((line) => line.includes('PruneTerminalCallsOptions')),
+    'expected the signature to reference the named options type'
+  );
+});
