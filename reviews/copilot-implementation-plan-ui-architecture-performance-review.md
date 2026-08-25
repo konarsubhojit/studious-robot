@@ -2,6 +2,19 @@
 
 _Reviewed 760e230..717eadb, 118 files changed (+3951 / −1131)._
 
+## Resolution status
+
+All four Low findings below were fixed in follow-up commits on this branch:
+the `TabShell` renderers now depend on the specific context members they read,
+`iceState` travels on the returned `CallTransition` instead of a mutable outer
+binding, `pruneTerminalCalls` takes a named `PruneTerminalCallsOptions` type
+(which the existing `declaration-formatting` guard therefore covers), and the
+retention/grace windows are parsed with `parseNonNegativeNumber`, so `0` means
+"disable" and a malformed value falls back loudly rather than silently. Both
+Nits were reviewed and knowingly left as-is, as they recommend. Verified
+afterwards: `server npm test` (445 tests) and `npm run typecheck`; `mobile npx
+jest` (1104 tests), `npm run typecheck` and `npm run lint`.
+
 ## Summary
 
 Mergeable. This is a large branch — five optimization phases plus the deferred

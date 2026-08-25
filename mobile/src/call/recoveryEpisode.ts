@@ -218,7 +218,7 @@ export function createRecoveryEpisode(options: RecoveryEpisodeOptions = {}): Rec
       return episode.attempts;
     },
     isOpen: () => episode !== null,
-    isPaused: () => episode?.pausedAtMs !== null && episode !== null,
+    isPaused: () => episode !== null && episode.pausedAtMs !== null,
     remainingMs: () => (episode ? remainingFor(episode, now()) : 0),
     hasExpired: () => {
       if (!episode) return false;
