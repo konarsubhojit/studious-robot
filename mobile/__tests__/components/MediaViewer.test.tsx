@@ -1,4 +1,5 @@
 import React from 'react';
+import { Gesture } from 'react-native-gesture-handler';
 import renderer, { act } from 'react-test-renderer';
 import MediaViewer, { resolveMediaGesture } from '../../src/components/MediaViewer';
 import { setAudioSessionActive } from '../../src/audioSessionState';
@@ -33,12 +34,44 @@ function findByTestId(tree: any, testID: string) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
+/**
+ * Captures the gesture builders the viewer composes, so a drag, a pinch or a
+ * double tap can be driven without synthesising a touch stream.
+ */
+const captured: { pan?: any; pinch?: any; tap?: any; } = {};
+const realGestures = { Pan: Gesture.Pan, Pinch: Gesture.Pinch, Tap: Gesture.Tap };
+beforeAll(() => {
+  for (const [name, key] of [['Pan', 'pan'], ['Pinch', 'pinch'], ['Tap', 'tap']] as const) {
+    (Gesture as any)[name] = () => {
+      captured[key] = (realGestures as any)[name]();
+      return captured[key];
+    };
+  }
+});
+afterAll(() => {
+  Object.assign(Gesture, realGestures);
+});
+
 function render(props: any) {
+  const element = () => <MediaViewer {...props} />;
   let tree: any;
   act(() => {
-    tree = renderer.create(<MediaViewer {...props} />);
+    tree = renderer.create(element());
   });
+  // Shared values live outside React state, so the tree has to be re-rendered
+  // (from a fresh element, or React bails out) to publish the latest
+  // `useAnimatedStyle` output — the UI thread's job on a device.
+  tree.rerender = () => act(() => tree.update(element()));
   return tree;
+}
+
+/** Reads the transform currently applied to the media wrapper. */
+function readTransform(tree: any) {
+  tree.rerender();
+  const wrapper = findByTestId(tree, 'media-viewer-image').parent;
+  const entries = ([] as any[]).concat(wrapper.props.style).flat();
+  const transform = entries.find(entry => entry?.transform)?.transform ?? [];
+  return Object.assign({}, ...transform);
 }
 
 describe('MediaViewer', () => {
@@ -94,26 +127,85 @@ describe('MediaViewer', () => {
 
   test('a double tap zooms in, and a second double tap zooms back out', () => {
     const tree = render({ items: [IMAGE], visible: true });
-    const pannable = tree.root.findAll((node: any) => typeof node.props?.onMoveShouldSetResponder === 'function')[0];
-    const scaleOf = (node: any) =>
-      []
-        .concat(node.props.style)
-        .flat()
-        .map((entry: any) => entry?.transform?.find?.((item: any) => 'scale' in item)?.scale)
-        .find((value: any) => typeof value === 'number');
 
-    const tap = () =>
-      act(() => {
-        pannable.props.onResponderRelease({ nativeEvent: { touches: [] } }, { dx: 0, dy: 0 });
-      });
+    expect(readTransform(tree).scale).toBe(1);
 
-    expect(scaleOf(pannable)).toBe(1);
-    tap();
-    tap();
-    expect(scaleOf(pannable)).toBeGreaterThan(1);
-    tap();
-    tap();
-    expect(scaleOf(pannable)).toBe(1);
+    act(() => captured.tap.handlers.onEnd());
+    expect(readTransform(tree).scale).toBeGreaterThan(1);
+
+    act(() => captured.tap.handlers.onEnd());
+    expect(readTransform(tree).scale).toBe(1);
+  });
+
+  test('a pinch scales the media and stays inside its zoom limits', () => {
+    const tree = render({ items: [IMAGE], visible: true });
+
+    act(() => {
+      captured.pinch.handlers.onStart();
+      captured.pinch.handlers.onUpdate({ scale: 2 });
+    });
+    expect(readTransform(tree).scale).toBe(2);
+
+    // Neither a runaway zoom-in nor a pinch below the natural size is allowed.
+    act(() => captured.pinch.handlers.onUpdate({ scale: 100 }));
+    expect(readTransform(tree).scale).toBe(4);
+    act(() => captured.pinch.handlers.onUpdate({ scale: 0.01 }));
+    expect(readTransform(tree).scale).toBe(1);
+  });
+
+  test('pinching back out re-centres the media instead of stranding it off-screen', () => {
+    const tree = render({ items: [IMAGE], visible: true });
+
+    act(() => {
+      captured.pinch.handlers.onStart();
+      captured.pinch.handlers.onUpdate({ scale: 3 });
+      captured.pan.handlers.onStart();
+      captured.pan.handlers.onUpdate({ translationX: -120, translationY: -80 });
+      captured.pan.handlers.onEnd({ translationX: -120, translationY: -80 });
+    });
+    expect(readTransform(tree).translateX).toBe(-120);
+
+    act(() => {
+      captured.pinch.handlers.onUpdate({ scale: 0.1 });
+      captured.pinch.handlers.onEnd();
+    });
+    expect(readTransform(tree)).toMatchObject({ translateX: 0, translateY: 0, scale: 1 });
+  });
+
+  test('a drag that means nothing springs the media back to where it started', () => {
+    const tree = render({ items: [IMAGE], visible: true });
+
+    act(() => {
+      captured.pan.handlers.onStart();
+      captured.pan.handlers.onUpdate({ translationX: -20, translationY: 0 });
+      captured.pan.handlers.onEnd({ translationX: -20, translationY: 0 });
+    });
+
+    expect(readTransform(tree).translateX).toBe(0);
+  });
+
+  test('a downward drag dismisses the viewer', () => {
+    const onClose = jest.fn();
+    const tree = render({ items: [IMAGE], visible: true, onClose });
+
+    act(() => {
+      captured.pan.handlers.onStart();
+      captured.pan.handlers.onEnd({ translationX: 0, translationY: 300 });
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(readTransform(tree)).toMatchObject({ translateX: 0, translateY: 0, scale: 1 });
+  });
+
+  test('a long horizontal drag pages to the next item', () => {
+    const tree = render({ items: [IMAGE, SECOND_IMAGE], initialIndex: 0, visible: true });
+
+    act(() => {
+      captured.pan.handlers.onStart();
+      captured.pan.handlers.onEnd({ translationX: -900, translationY: 0 });
+    });
+
+    expect(findByTestId(tree, 'media-viewer-counter').props.children).toBe('2 / 2');
   });
 
   test('reports an attachment that can no longer be loaded instead of showing a blank frame', () => {

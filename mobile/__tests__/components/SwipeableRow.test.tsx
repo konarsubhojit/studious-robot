@@ -1,21 +1,63 @@
 import React from 'react';
 import { Text } from 'react-native';
+import { Gesture } from 'react-native-gesture-handler';
 import renderer, { act } from 'react-test-renderer';
 import SwipeableRow from '../../src/components/SwipeableRow';
+import { triggerHaptic } from '../../src/haptics';
 
 jest.mock('../../src/haptics', () => ({
   triggerHaptic: jest.fn(),
 }));
 
+/**
+ * Captures the pan gesture the component builds so a swipe can be driven
+ * without a real touch stream.  The shared gesture-handler mock records each
+ * callback on the builder it returns.
+ */
+let lastPan: any;
+const realPan = Gesture.Pan;
+beforeEach(() => {
+  jest.clearAllMocks();
+  (Gesture as any).Pan = () => {
+    lastPan = realPan();
+    return lastPan;
+  };
+});
+afterAll(() => {
+  (Gesture as any).Pan = realPan;
+});
+
+/** Reads the translateX currently applied to the animated row. */
+function readTranslate(tree: any) {
+  tree.rerender();
+  const styles = ([] as any[]).concat(findActionableRow(tree).props.style);
+  return styles.find(style => style?.transform)?.transform[0].translateX;
+}
+
+function swipe(distance: number) {
+  act(() => {
+    lastPan.handlers.onStart();
+    lastPan.handlers.onUpdate({ translationX: distance });
+    lastPan.handlers.onEnd();
+  });
+}
+
 function render(actions: any) {
+  const element = () => (
+    <SwipeableRow actions={actions}>
+      <Text>row content</Text>
+    </SwipeableRow>
+  );
   let tree: any;
   act(() => {
-    tree = renderer.create(
-      <SwipeableRow actions={actions}>
-        <Text>row content</Text>
-      </SwipeableRow>,
-    );
+    tree = renderer.create(element());
   });
+  // Shared values live outside React state, so a re-render is what publishes
+  // the latest `useAnimatedStyle` output to the test renderer's tree — on a
+  // device that job belongs to the UI thread instead.  The element has to be
+  // rebuilt each time: React skips a re-render of a referentially identical
+  // element, which would keep the stale transform on screen.
+  tree.rerender = () => act(() => tree.update(element()));
   return tree;
 }
 
@@ -59,4 +101,64 @@ describe('SwipeableRow', () => {
     expect(onPress).not.toHaveBeenCalled();
   });
 
+  test('latches the tray open past the halfway point and confirms with a tap', () => {
+    // One action means an 84dp tray, so the halfway point is 42dp.
+    const tree = render([{ key: 'delete', label: 'Delete', onPress: jest.fn() }]);
+
+    swipe(-60);
+
+    expect(readTranslate(tree)).toBe(-84);
+    expect(triggerHaptic).toHaveBeenCalledWith('tap');
+  });
+
+  test('springs shut when the drag stops short of the halfway point', () => {
+    const tree = render([{ key: 'delete', label: 'Delete', onPress: jest.fn() }]);
+
+    swipe(-20);
+
+    expect(readTranslate(tree)).toBe(0);
+    expect(triggerHaptic).not.toHaveBeenCalled();
+  });
+
+  test('clamps the drag to the tray so the row cannot be pulled off its actions', () => {
+    const tree = render([{ key: 'delete', label: 'Delete', onPress: jest.fn() }]);
+
+    act(() => {
+      lastPan.handlers.onStart();
+      lastPan.handlers.onUpdate({ translationX: -400 });
+    });
+    expect(readTranslate(tree)).toBe(-84);
+
+    // A rightward drag past the closed position must not lift the row either.
+    act(() => {
+      lastPan.handlers.onUpdate({ translationX: 400 });
+    });
+    expect(readTranslate(tree)).toBe(0);
+  });
+
+  test('does not re-tick the haptic when an already-open tray is swiped again', () => {
+    render([{ key: 'delete', label: 'Delete', onPress: jest.fn() }]);
+
+    swipe(-60);
+    expect(triggerHaptic).toHaveBeenCalledTimes(1);
+
+    // Starting from the open position and staying open is not a new latch.
+    swipe(-10);
+    expect(triggerHaptic).toHaveBeenCalledTimes(1);
+  });
+
+  test('closes the tray when an action is pressed', () => {
+    const onPress = jest.fn();
+    const tree = render([{ key: 'delete', label: 'Delete', testID: 'row-delete', onPress }]);
+
+    swipe(-60);
+    expect(readTranslate(tree)).toBe(-84);
+
+    act(() => {
+      tree.root.findAll((node: any) => node.props?.testID === 'row-delete')[0].props.onPress();
+    });
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(readTranslate(tree)).toBe(0);
+  });
 });
