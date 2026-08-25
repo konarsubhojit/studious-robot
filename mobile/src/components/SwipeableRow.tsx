@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -53,23 +53,27 @@ export default function SwipeableRow({ actions = [], children }: {
   // without the user having to look away from the list.
   const notifyOpened = useCallback(() => triggerHaptic('tap'), []);
 
-  const panGesture = Gesture.Pan()
-    .enabled(trayWidth > 0)
-    .activeOffsetX([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
-    .failOffsetY([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
-    .onStart(() => {
-      startX.value = translateX.value;
-    })
-    .onUpdate(event => {
-      translateX.value = Math.min(0, Math.max(-trayWidth, startX.value + event.translationX));
-    })
-    .onEnd(() => {
-      const shouldOpen = translateX.value < -trayWidth * OPEN_THRESHOLD;
-      if (shouldOpen && startX.value !== -trayWidth) {
-        runOnJS(notifyOpened)();
-      }
-      translateX.value = withSpring(shouldOpen ? -trayWidth : 0, SETTLE_SPRING);
-    });
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(trayWidth > 0)
+        .activeOffsetX([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
+        .failOffsetY([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
+        .onStart(() => {
+          startX.value = translateX.value;
+        })
+        .onUpdate(event => {
+          translateX.value = Math.min(0, Math.max(-trayWidth, startX.value + event.translationX));
+        })
+        .onEnd(() => {
+          const shouldOpen = translateX.value < -trayWidth * OPEN_THRESHOLD;
+          if (shouldOpen && startX.value !== -trayWidth) {
+            runOnJS(notifyOpened)();
+          }
+          translateX.value = withSpring(shouldOpen ? -trayWidth : 0, SETTLE_SPRING);
+        }),
+    [notifyOpened, startX, trayWidth, translateX],
+  );
 
   const animatedRowStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],

@@ -72,6 +72,7 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
   const [results, setResults] = useState(([] as ContactRow[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
@@ -82,16 +83,20 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
       requestIdRef.current = requestId;
       setIsSearching(true);
       let users: ContactRow[] = [];
+      let failed = false;
       try {
         users = await onSearchUsers(term);
       } catch {
-        users = [];
+        // A directory we could not reach is not a directory without matches;
+        // "No matching contacts" here would be a confident lie.
+        failed = true;
       }
       // Ignore stale responses that resolved out of order.
       if (requestIdRef.current !== requestId) return;
-      setResults(Array.isArray(users) ? users : []);
+      setResults(failed || !Array.isArray(users) ? [] : users);
       setIsSearching(false);
       setHasSearched(true);
+      setSearchFailed(failed);
     },
     [onSearchUsers],
   );
@@ -148,7 +153,12 @@ function ContactDirectory({ onSearchUsers, onSelectContact }: { onSearchUsers?: 
             </Pressable>
           ))
         : null}
-      {!isSearching && hasSearched && results.length === 0 ? (
+      {!isSearching && hasSearched && searchFailed ? (
+        <Text style={styles.contactEmpty} accessibilityLiveRegion="polite" testID="contact-error">
+          Couldn't reach the contact directory. Check your connection and try again.
+        </Text>
+      ) : null}
+      {!isSearching && hasSearched && !searchFailed && results.length === 0 ? (
         <Text style={styles.contactEmpty} testID="contact-empty">
           No matching contacts
         </Text>

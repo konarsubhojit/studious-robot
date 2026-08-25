@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Image,
   Modal,
@@ -41,11 +41,17 @@ const SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.5 };
  * Kept as a pure function so the decision thresholds are testable without
  * synthesising a touch stream.
  *
+ * Marked as a worklet because the pan gesture's `onEnd` — which the Reanimated
+ * Babel plugin compiles to run on the UI thread — calls it directly. Without
+ * the directive the function does not exist in the UI runtime and the call
+ * throws the moment a drag ends.
+ *
  * @param gesture the completed drag, plus the current zoom and screen width.
  */
 export function resolveMediaGesture({ dx = 0, dy = 0, scale = 1, width = 0 }: {
         dx?: number; dy?: number; scale?: number; width?: number;
     }): 'tap' | 'pan' | 'next' | 'previous' | 'dismiss' | 'none' {
+  'worklet';
   if (Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return 'tap';
   // Zoomed in, the drag panned the media rather than the gallery.
   if (scale > 1) return 'pan';
@@ -146,69 +152,80 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
 
   // A pinch and a drag can run together; a double tap races them so the zoom
   // toggle is not swallowed by the pan's slop.
-  const pinchGesture = Gesture.Pinch()
-    .onStart(() => {
-      startScale.value = scale.value;
-    })
-    .onUpdate(event => {
-      scale.value = Math.min(MAX_SCALE, Math.max(1, startScale.value * event.scale));
-    })
-    .onEnd(() => {
-      if (scale.value <= 1) {
-        // Fully zoomed out, so any pan offset would strand the media off-centre.
-        translateX.value = withSpring(0, SETTLE_SPRING);
-        translateY.value = withSpring(0, SETTLE_SPRING);
-      }
-    });
-
-  const panGesture = Gesture.Pan()
-    .minDistance(DRAG_SLOP)
-    .onStart(() => {
-      startX.value = translateX.value;
-      startY.value = translateY.value;
-    })
-    .onUpdate(event => {
-      translateX.value = startX.value + event.translationX;
-      translateY.value = startY.value + event.translationY;
-    })
-    .onEnd(event => {
-      const outcome = resolveMediaGesture({
-        dx: event.translationX,
-        dy: event.translationY,
-        scale: scale.value,
-        width,
+  const mediaGesture = useMemo(() => {
+    const pinchGesture = Gesture.Pinch()
+      .onStart(() => {
+        startScale.value = scale.value;
+      })
+      .onUpdate(event => {
+        scale.value = Math.min(MAX_SCALE, Math.max(1, startScale.value * event.scale));
+      })
+      .onEnd(() => {
+        if (scale.value <= 1) {
+          // Fully zoomed out, so any pan offset would strand the media off-centre.
+          translateX.value = withSpring(0, SETTLE_SPRING);
+          translateY.value = withSpring(0, SETTLE_SPRING);
+        }
       });
 
-      // Zoomed in, the drag panned the media, so the new offset stands.
-      if (outcome === 'pan') return;
+    const panGesture = Gesture.Pan()
+      .minDistance(DRAG_SLOP)
+      .onStart(() => {
+        startX.value = translateX.value;
+        startY.value = translateY.value;
+      })
+      .onUpdate(event => {
+        translateX.value = startX.value + event.translationX;
+        translateY.value = startY.value + event.translationY;
+      })
+      .onEnd(event => {
+        const outcome = resolveMediaGesture({
+          dx: event.translationX,
+          dy: event.translationY,
+          scale: scale.value,
+          width,
+        });
 
-      if (outcome === 'dismiss') {
-        runOnJS(handleClose)();
-        return;
-      }
-      if (outcome === 'next') {
-        runOnJS(goTo)(index + 1);
-        return;
-      }
-      if (outcome === 'previous') {
-        runOnJS(goTo)(index - 1);
-        return;
-      }
-      // Too small to mean anything: put the media back where it started.
-      translateX.value = withSpring(startX.value, SETTLE_SPRING);
-      translateY.value = withSpring(startY.value, SETTLE_SPRING);
-    });
+        // Zoomed in, the drag panned the media, so the new offset stands.
+        if (outcome === 'pan') return;
 
-  const doubleTapGesture = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => {
-      runOnJS(toggleZoom)();
-    });
+        if (outcome === 'dismiss') {
+          runOnJS(handleClose)();
+          return;
+        }
+        if (outcome === 'next') {
+          runOnJS(goTo)(index + 1);
+          return;
+        }
+        if (outcome === 'previous') {
+          runOnJS(goTo)(index - 1);
+          return;
+        }
+        // Too small to mean anything: put the media back where it started.
+        translateX.value = withSpring(startX.value, SETTLE_SPRING);
+        translateY.value = withSpring(startY.value, SETTLE_SPRING);
+      });
 
-  const mediaGesture = Gesture.Race(
-    doubleTapGesture,
-    Gesture.Simultaneous(pinchGesture, panGesture),
-  );
+    const doubleTapGesture = Gesture.Tap()
+      .numberOfTaps(2)
+      .onEnd(() => {
+        runOnJS(toggleZoom)();
+      });
+
+    return Gesture.Race(doubleTapGesture, Gesture.Simultaneous(pinchGesture, panGesture));
+  }, [
+    goTo,
+    handleClose,
+    index,
+    scale,
+    startScale,
+    startX,
+    startY,
+    toggleZoom,
+    translateX,
+    translateY,
+    width,
+  ]);
 
   const animatedMediaStyle = useAnimatedStyle(() => ({
     transform: [

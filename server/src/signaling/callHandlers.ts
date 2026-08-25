@@ -22,22 +22,10 @@ type CallTransition = {
   reason?: string | null;
 };
 
-type SocketCallTransitionOptions = {
+type SocketCallTransitionBase = {
   state: import('../stores/contracts.ts').ServerState;
   io: any;
   eventName: string;
-  /**
-   * Destination for events whose transition never depends on the request.
-   * Exactly one of this and `resolveTransition` must be supplied.
-   */
-  nextStatus?: string;
-  reason?: string | null;
-  /**
-   * Destination derived from the request. Called with the *schema-validated*
-   * payload, so a handler never has to read raw input to decide where the
-   * call is going.
-   */
-  resolveTransition?: (parsed: Record<string, any>) => CallTransition;
   authorize: (
     call: import('../stores/contracts.ts').CallRecord,
     userId: string
@@ -47,6 +35,31 @@ type SocketCallTransitionOptions = {
     transition: CallTransition
   ) => void;
 };
+
+/**
+ * Exactly one of the two ways to say where a transition is going, expressed as
+ * a union so the compiler rejects supplying both — or neither — rather than a
+ * comment asking callers not to.
+ */
+type SocketCallTransitionOptions = SocketCallTransitionBase &
+  (
+    | {
+        /** Destination for events whose transition never depends on the request. */
+        nextStatus: string;
+        reason?: string | null;
+        resolveTransition?: never;
+      }
+    | {
+        nextStatus?: never;
+        reason?: never;
+        /**
+         * Destination derived from the request. Called with the
+         * *schema-validated* payload, so a handler never has to read raw input
+         * to decide where the call is going.
+         */
+        resolveTransition: (parsed: Record<string, any>) => CallTransition;
+      }
+  );
 
 /**
  * Handle an authenticated call-state transition requested over the socket
@@ -99,7 +112,7 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
   // Resolved from the validated payload, never from the raw request.
   const transition: CallTransition = options.resolveTransition
     ? options.resolveTransition(parsed)
-    : { nextStatus: (options.nextStatus as string), reason: options.reason ?? null };
+    : { nextStatus: options.nextStatus, reason: options.reason ?? null };
   const result = transitionCall(options.state, callId, transition.nextStatus, {
     actor: socket.data.identity.userId,
     reason: transition.reason ?? null,
