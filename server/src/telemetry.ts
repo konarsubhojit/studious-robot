@@ -24,11 +24,28 @@ export type HistogramSnapshot = {
   buckets: Record<string, number>;
 };
 
+export type QueryOperationSnapshot = {
+  backend: string;
+  operation: string;
+  kind: 'read' | 'write';
+  count: number;
+  errors: number;
+  slow: number;
+  totalMs: number;
+  meanMs: number;
+  maxMs: number;
+};
+
 export type MetricsSnapshot = {
   collectedAt: string;
   counters: Record<string, number>;
   histograms: Record<string, HistogramSnapshot>;
   derived: Record<string, number | null>;
+  /**
+   * Per-operation datastore timing breakdown, slowest total time first, so the
+   * operation costing the most is the first row of the table.
+   */
+  dbQueries: QueryOperationSnapshot[];
 };
 
 export type Telemetry = {
@@ -44,11 +61,34 @@ export type Telemetry = {
   recordSignalingError: (code?: string) => void;
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
+  recordDbQuery: (record: import('./lib/queryTiming.ts').QueryTimingRecord) => void;
   getSnapshot: () => MetricsSnapshot;
 };
 
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
+
+/**
+ * Query latencies live one to two orders of magnitude below call latencies, so
+ * they need their own, much finer buckets: the call buckets start at 100 ms,
+ * which is already the slow-query threshold.
+ */
+const QUERY_LATENCY_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, Infinity];
+
+/**
+ * Upper bound on distinct `backend:kind:operation` keys tracked.  Every key
+ * beyond it is folded into an `other` bucket (per backend *and* kind, so the
+ * overflow row never averages reads together with writes) — a pathological
+ * label set can then never grow the snapshot without limit.
+ */
+const MAX_TRACKED_QUERY_OPERATIONS = 100;
+
+/**
+ * Running totals for one `backend:kind:operation`.  Separate from the wire
+ * type: `meanMs` is derived at snapshot time, so keeping a field for it here
+ * would only ever hold a stale zero.
+ */
+type QueryOperationTotals = Omit<QueryOperationSnapshot, 'meanMs'>;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -111,6 +151,11 @@ function createTelemetry(): Telemetry {
     signaling_errors: 0, // acknowledgeError / error ack responses
     cache_hits: 0, // read served from the shared read cache
     cache_misses: 0, // read that fell through to the store
+    db_queries_total: 0, // every timed datastore round trip
+    db_query_errors_total: 0, // timed round trips that threw
+    db_slow_queries_total: 0, // round trips at/over the slow threshold
+    db_reads_total: 0, // timed round trips that only read
+    db_writes_total: 0, // timed round trips that mutate
   };
 
   // ── Latency histograms ────────────────────────────────────────────────────
@@ -123,7 +168,20 @@ function createTelemetry(): Telemetry {
     call_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Time spent ringing before a terminal outcome (for unanswered calls). */
     call_ring_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
+    /** Postgres round-trip duration, in ms. */
+    pg_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
+    /** MongoDB round-trip duration, in ms. */
+    mongo_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
+    /** Redis cache round-trip duration, in ms. */
+    redis_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
   };
+
+  /**
+   * `backend:kind:operation` → running totals, so `/metrics` can answer "which
+   * operation costs the most time" without keeping per-query rows.  `kind` is
+   * part of the key so a row can never mix read and write cost.
+   */
+  const queryOperations: Map<string, QueryOperationTotals> = new Map();
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, { createdMs: number; ringingMs: number | null; acceptedMs: number | null; inCallMs: number | null; endedMs: number | null; }> = new Map();
@@ -250,6 +308,57 @@ function createTelemetry(): Telemetry {
   }
 
   /**
+   * Record one timed datastore round trip (see `lib/queryTiming.ts`).
+   */
+  function recordDbQuery(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
+    if (!record || !Number.isFinite(record.durationMs)) return;
+
+    counters.db_queries_total += 1;
+    if (!record.ok) counters.db_query_errors_total += 1;
+    if (record.slow) counters.db_slow_queries_total += 1;
+    if (record.kind === 'read') counters.db_reads_total += 1;
+    else counters.db_writes_total += 1;
+
+    const histogram =
+      record.backend === 'pg'
+        ? histograms.pg_query_duration_ms
+        : record.backend === 'mongo'
+          ? histograms.mongo_query_duration_ms
+          : histograms.redis_query_duration_ms;
+    if (histogram) observeHistogram(histogram, record.durationMs);
+
+    const preferredKey = `${record.backend}:${record.kind}:${record.operation}`;
+    // Fold anything past the cap into a per-backend, per-kind overflow row
+    // rather than growing the map without bound.  `kind` stays part of the key
+    // so the overflow row can never average read cost together with write cost.
+    const key =
+      queryOperations.has(preferredKey) || queryOperations.size < MAX_TRACKED_QUERY_OPERATIONS
+        ? preferredKey
+        : `${record.backend}:${record.kind}:other`;
+
+    let entry = queryOperations.get(key);
+    if (!entry) {
+      entry = {
+        backend: record.backend,
+        operation: key === preferredKey ? record.operation : 'other',
+        kind: record.kind,
+        count: 0,
+        errors: 0,
+        slow: 0,
+        totalMs: 0,
+        maxMs: 0,
+      };
+      queryOperations.set(key, entry);
+    }
+
+    entry.count += 1;
+    if (!record.ok) entry.errors += 1;
+    if (record.slow) entry.slow += 1;
+    entry.totalMs += record.durationMs;
+    if (record.durationMs > entry.maxMs) entry.maxMs = record.durationMs;
+  }
+
+  /**
    * Return a point-in-time snapshot of all metrics.
    *
    * The shape is intentionally flat and JSON-serialisable so it can be
@@ -261,6 +370,7 @@ function createTelemetry(): Telemetry {
       counters: { ...counters },
       histograms: {},
       derived: {},
+      dbQueries: [],
     } as MetricsSnapshot);
 
     for (const [name, h] of Object.entries(histograms)) {
@@ -273,6 +383,22 @@ function createTelemetry(): Telemetry {
       calls_initiated > 0 ? Number((calls_in_call / calls_initiated).toFixed(4)) : null;
     snap.derived.call_completion_rate =
       calls_in_call > 0 ? Number((calls_ended / calls_in_call).toFixed(4)) : null;
+
+    // Per-operation datastore breakdown, most expensive (by total time) first.
+    snap.dbQueries = [...queryOperations.values()]
+      .map((entry) => ({
+        ...entry,
+        totalMs: Math.round(entry.totalMs),
+        meanMs: entry.count > 0 ? Number((entry.totalMs / entry.count).toFixed(2)) : 0,
+        maxMs: Number(entry.maxMs.toFixed(2)),
+      }))
+      .sort((a, b) => b.totalMs - a.totalMs);
+
+    const { db_queries_total, db_query_errors_total, db_slow_queries_total } = snap.counters;
+    snap.derived.db_slow_query_rate =
+      db_queries_total > 0 ? Number((db_slow_queries_total / db_queries_total).toFixed(4)) : null;
+    snap.derived.db_query_error_rate =
+      db_queries_total > 0 ? Number((db_query_errors_total / db_queries_total).toFixed(4)) : null;
 
     // Cache effectiveness: null until the first cacheable read is served.
     const { cache_hits, cache_misses } = snap.counters;
@@ -289,6 +415,7 @@ function createTelemetry(): Telemetry {
     recordSignalingError,
     recordCacheHit,
     recordCacheMiss,
+    recordDbQuery,
     getSnapshot,
   };
 }
