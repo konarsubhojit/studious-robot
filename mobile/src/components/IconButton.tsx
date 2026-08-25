@@ -10,6 +10,12 @@ export type IconButtonProps = {
   /** Omitted for a decorative button; the press is then a no-op. */
   onPress?: () => void;
   variant?: 'default' | 'danger' | 'success' | 'active' | 'muted';
+  /**
+   * Marks a toggle button as currently engaged.  Assistive technologies
+   * announce this as "selected"; without it a screen-reader user can only
+   * hear the *next* action ("Unmute microphone") and never the current state.
+   */
+  selected?: boolean;
   disabled?: boolean;
   loading?: boolean;
   size?: number;
@@ -34,6 +40,7 @@ export default function IconButton({
   label,
   onPress,
   variant = 'default',
+  selected,
   disabled = false,
   loading = false,
   size = 64,
@@ -75,7 +82,7 @@ export default function IconButton({
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel ?? label ?? icon}
         accessibilityHint={accessibilityHint}
-        accessibilityState={{ disabled: isDisabled, busy: loading }}
+        accessibilityState={{ disabled: isDisabled, busy: loading, selected }}
         testID={testID}
         style={({ pressed }) => [
           styles.circle,
@@ -86,7 +93,11 @@ export default function IconButton({
         {iconContent}
       </Pressable>
       {label ? (
-        <Text style={styles.label} numberOfLines={1}>
+        <Text
+          style={styles.label}
+          numberOfLines={1}
+          importantForAccessibility="no"
+          accessibilityElementsHidden>
           {label}
         </Text>
       ) : null}

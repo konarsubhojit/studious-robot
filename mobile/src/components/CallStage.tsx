@@ -80,13 +80,21 @@ export default function CallStage({
           zOrder={0}
         />
       ) : (
-        <View style={styles.remotePlaceholder}>
+        <View
+          style={styles.remotePlaceholder}
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert">
           <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
         </View>
       )}
 
       {!isCompact && presenterBannerText ? (
-        <View style={styles.presenterBanner} testID="presenter-banner" pointerEvents="none">
+        <View
+          style={styles.presenterBanner}
+          testID="presenter-banner"
+          pointerEvents="none"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert">
           <Text style={styles.presenterBannerText}>{presenterBannerText}</Text>
         </View>
       ) : null}

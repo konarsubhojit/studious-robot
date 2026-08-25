@@ -280,7 +280,12 @@ function ChatListScreen({
           <Pressable
             onPress={() => onOpenConversation?.(conversation.peerId)}
             accessibilityRole="button"
-            accessibilityLabel={`Open conversation with ${conversation.peerId}`}
+            accessibilityLabel={
+              hasUnread
+                ? `Open conversation with ${conversation.peerId}, ` +
+                  `${conversation.unreadCount} unread`
+                : `Open conversation with ${conversation.peerId}`
+            }
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
             testID="chat-list-row">
             <Avatar

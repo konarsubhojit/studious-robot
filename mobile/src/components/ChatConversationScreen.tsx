@@ -1318,7 +1318,12 @@ function ChatConversationScreen({
         ) : null}
 
         {isUploadingAttachment ? (
-          <View style={styles.uploadNotice} testID="chat-attachment-upload-progress">
+          <View
+            style={styles.uploadNotice}
+            testID="chat-attachment-upload-progress"
+            accessibilityLiveRegion="polite"
+            accessibilityRole="progressbar"
+            accessibilityValue={{ now: Math.round(attachmentUploadProgress * 100), min: 0, max: 100 }}>
             <Text style={styles.uploadNoticeText}>
               {`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
             </Text>
@@ -1326,7 +1331,11 @@ function ChatConversationScreen({
         ) : null}
 
         {showAttachmentsUnavailable ? (
-          <View style={styles.uploadNotice} testID="chat-attachments-unavailable-notice">
+          <View
+            style={styles.uploadNotice}
+            testID="chat-attachments-unavailable-notice"
+            accessibilityLiveRegion="polite"
+            accessibilityRole="alert">
             <Text style={styles.uploadNoticeText}>Attachments aren't available on this server</Text>
           </View>
         ) : null}
