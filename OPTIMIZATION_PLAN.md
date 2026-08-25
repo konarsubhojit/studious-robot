@@ -59,17 +59,117 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P1.4 | Directory / boot-hydration scaling | ⏸️ descoped — premature at ~10 concurrent users |
 | P3.2 | Reformat single-line wide type declarations + guard against regression | ✅ |
 
-### Deferred beyond this pass
+### Previously deferred, done in this pass
+
+| ID | Task | Status |
+| -- | ---- | ------ |
+| P2.1 | Port `MediaViewer` / `SwipeableRow` to Reanimated worklets | ✅ |
+| P2.3 | Accessibility sweep | ✅ |
+| P2.4 | State completeness | ✅ |
+| P2.5 | Design-system consolidation | ✅ |
+| P1.2 | Decompose `useCallFlow` | ◧ partial — the pure stats logic is extracted and directly tested; the structural split still wants its own PR |
+| P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test |
+
+### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Decompose `useCallFlow` (3.6k lines) | Large structural refactor; wants its own PR and its own review. P1.1b removes the timer that made it a *performance* problem, leaving it a pure maintainability item |
-| P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK |
-| P1.7 | Swap `chatDb` JSON document for SQLite | Bound at 200 messages × 100 conversations, so defensible today. Flagged so the bound is not raised casually |
-| P2.1 | Port `MediaViewer` / `SwipeableRow` to Reanimated worklets | Behavioural gesture rewrite; wants device QA |
-| P2.3–P2.5 | Accessibility sweep, state completeness, design-system consolidation | Broad UI surface; sequenced after the perf work that changes how those screens render |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining ~3.5k lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery. Cutting them apart is a behavioural risk that wants its own PR, its own review and device QA — not a rider on a UI pass |
+| P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
+| P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
 ## Notes and deviations
+
+### P2.5: two real bugs, not just token hygiene
+Replacing the colour literals was supposed to be cosmetic. It uncovered two
+defects that the literals had been hiding.
+
+`'#fff'` was hardcoded as the text colour on `colors.danger` and
+`colors.success` badges. The dark palette's `danger: '#ff7b8a'` and
+`success: '#5be2a2'` are bright, so white text on them failed WCAG AA. The
+correct token, `textOnAccent`, is dark navy in the dark scheme, and
+`theme.test.ts` had *already* been asserting
+`contrast(textOnAccent, danger) >= 4.5` — the components simply were not using
+it.
+
+`colors.textPrimary` was used on the fixed-dark video scrims in
+`DraggablePip` and `CallTopBar`. `textPrimary` inverts to near-black in the
+light scheme, so that content was invisible over a 72%-black scrim for every
+light-mode user. Those now use `colors.onOverlay`.
+
+The `overlay` tokens deliberately live *outside* the two palettes: the video
+stage is dark in both schemes, so putting scrims into `createStyles(colors)` is
+what invites the second bug back. Two opacities were normalised on the way
+(`0.55` and `0.65` both became `scrimMedium`, `0.6`); contrast against
+`onOverlay` stays far above AA at either value.
+
+### P2.3: the accessibility gaps were all "state conveyed by pixels"
+Every finding had the same shape — something the sighted user reads off the
+screen that was never in the accessibility tree.
+
+The unread badges were the sharpest case. They render *inside* a `Pressable`
+that already carries an `accessibilityLabel`, so React Native collapses the
+subtree into one node and the badge text is simply never spoken. The count is
+now part of the tab's and the row's accessible name.
+
+The call-control toggles named only the *next* action ("Unmute microphone"),
+which is a fine label but leaves no way to learn the *current* state, so
+`IconButton` grew a `selected` prop. Its visual caption is now hidden from
+assistive tech, since the button's own name already says the same words.
+
+### P2.4: the missing state was error, not loading or empty
+The screens already had loading skeletons and empty states. What they did not
+have was any way to *reach* an error state, because `searchUsers` swallowed
+both a non-OK response and a network error and returned `[]`. An unreachable
+directory therefore rendered as a confident "No matching contacts" — a claim
+the app had no basis for and the user could not act on.
+
+`searchUsers` now rejects with a `DirectorySearchError`, keeping `[]` only for
+the two cases that genuinely are not failures: no session yet, and a request
+aborted by a newer keystroke. `SearchScreen` renders the retry banner *above*
+the list rather than as `ListEmptyComponent`, because the contact lookup can
+fail while local message and call results still arrive — an empty-component
+banner would vanish exactly when the failure was partial.
+
+### P2.1: what the port actually bought
+Beyond moving the drag off the JS thread, both components lost hand-rolled
+logic to the gesture system. `SwipeableRow`'s horizontal-vs-vertical
+arbitration was a `Math.abs(dx) > Math.abs(dy)` comparison inside
+`onMoveShouldSetPanResponder`; it is now `activeOffsetX`/`failOffsetY`, which
+is the native gesture system's job and behaves correctly when the parent list
+is also competing for the touch. `MediaViewer` deleted its two-touch distance
+maths and its double-tap timestamp bookkeeping in favour of composed
+`Pinch`/`Pan`/`Tap` gestures. `resolveMediaGesture` was left exactly as it was.
+
+The jest mocks for both libraries moved into `mobile/__mocks__/`. They had been
+copy-pasted into each test that touched an animated component, and every new
+one needed them again.
+
+### P1.2: a slice, not the split
+The honest status is partial. What came out is the WebRTC stats handling —
+`collectCallStats` and `summarizeCandidatePair`, now in `callUx` beside the
+`getConnectionQuality` they feed. That was the largest remaining block of
+genuinely pure logic in the hook, and it was previously reachable only by
+mounting the hook and driving a fake peer connection, which is why its
+relay-side matrix and protocol fallbacks had no direct tests.
+
+Extracting it also surfaced that `useCallFlow.test.tsx` replaced the whole
+`callUx` module with a single stub, so any new export from that module would
+silently be `undefined` there. It now spreads the real module and stubs only
+`getConnectionQuality`.
+
+What is left in `useCallFlow` is call lifecycle, WebRTC negotiation and ICE
+recovery, all coordinated through shared refs. Splitting that is a behavioural
+change to the call path and belongs in its own PR with device QA, exactly as
+the original deferral said.
+
+### P1.7: the bound is now pinned
+The JSON document is only defensible *because* the store is bounded — every
+read and write serialises the whole file, so the cost is a direct function of
+`MAX_MESSAGES_PER_CONVERSATION × MAX_CONVERSATIONS`. `chatDb.test.ts` now
+asserts those two constants, so raising them is a deliberate act that fails a
+test and forces the SQLite conversation, rather than a one-line drift.
+
 
 ### P3.4 was already fixed
 The finding in `reviews/copilot-master-review.md` is stale. `handleRtcRelay`

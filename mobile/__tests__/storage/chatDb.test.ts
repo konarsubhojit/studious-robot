@@ -13,6 +13,7 @@ jest.mock('../../src/appLogger', () => ({
 import RNFS from 'react-native-fs';
 import {
   CHAT_DB_FILE_PATH,
+  MAX_CONVERSATIONS,
   MAX_MESSAGES_PER_CONVERSATION,
   clearChatDb,
   flushChatDb,
@@ -150,6 +151,19 @@ describe('chatDb', () => {
       conversations: [],
       messagesByPeer: {},
       outbox: [],
+    });
+  });
+
+  describe('retention bounds', () => {
+    // The JSON document is only a defensible medium for this store *because*
+    // it is bounded: every read and write serialises the whole file, so the
+    // cost grows with these two numbers. Raising them is the point at which
+    // the store has to move to SQLite (see OPTIMIZATION_PLAN.md, P1.7), so
+    // they are pinned here rather than left to drift.
+    test('keeps the document small enough for whole-file reads and writes', () => {
+      expect(MAX_MESSAGES_PER_CONVERSATION).toBe(200);
+      expect(MAX_CONVERSATIONS).toBe(100);
+      expect(MAX_MESSAGES_PER_CONVERSATION * MAX_CONVERSATIONS).toBeLessThanOrEqual(20_000);
     });
   });
 });
