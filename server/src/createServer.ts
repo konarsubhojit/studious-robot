@@ -7,10 +7,10 @@ import { createRateLimiter, createAuditLog } from './security.ts';
 import { createStores } from './stores/index.ts';
 import { createMessageStore } from './messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from './cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from './lib/state.ts';
 import { waitForSocketsToDrain } from './lib/lifecycle.ts';
-import { tickRingingTimeouts, sanitizeHydratedCalls } from './domain/calls.ts';
+import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from './domain/calls.ts';
 import { notifyCallTransition } from './domain/notifications.ts';
 import { loadPersistedStateFromDb, pruneStaleDevices } from './lib/persistence.ts';
 import { mountRoutes } from './routes/index.ts';
@@ -24,7 +24,38 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export type CreateServerOptions = { verifyIdToken?: (idToken: string) => Promise<{ authUid: string, email?: string|null, authProvider?: string|null, }>; stores?: any; db?: any; messageStore?: any; cache?: import('./cache.ts').Cache; messageBus?: import('./messageBus.ts').MessageBus | null; sessionTtlMs?: number; participantDisconnectGraceMs?: number; callRateLimit?: number; callRateWindowMs?: number; rtcRateLimit?: number; rtcRateWindowMs?: number; turnRateLimit?: number; turnRateWindowMs?: number; messageRateLimit?: number; messageRateWindowMs?: number; messageSearchRateLimit?: number; messageSearchRateWindowMs?: number; shutdownDrainMs?: number; staleDeviceMaxAgeMs?: number; turnFetch?: typeof fetch; turnEnv?: NodeJS.ProcessEnv; };
+export type CreateServerOptions = {
+  verifyIdToken?: (idToken: string) => Promise<{
+    authUid: string;
+    email?: string | null;
+    authProvider?: string | null;
+  }>;
+  stores?: any;
+  db?: any;
+  messageStore?: any;
+  cache?: import('./cache.ts').Cache;
+  messageBus?: import('./messageBus.ts').MessageBus | null;
+  sessionTtlMs?: number;
+  participantDisconnectGraceMs?: number;
+  callRateLimit?: number;
+  callRateWindowMs?: number;
+  rtcRateLimit?: number;
+  rtcRateWindowMs?: number;
+  turnRateLimit?: number;
+  turnRateWindowMs?: number;
+  messageRateLimit?: number;
+  messageRateWindowMs?: number;
+  messageSearchRateLimit?: number;
+  messageSearchRateWindowMs?: number;
+  shutdownDrainMs?: number;
+  staleDeviceMaxAgeMs?: number;
+  /** How long a terminal call is retained in the in-memory map. */
+  callRetentionMs?: number;
+  /** Hard ceiling on retained terminal calls, applied after the age pass. */
+  maxRetainedCalls?: number;
+  turnFetch?: typeof fetch;
+  turnEnv?: NodeJS.ProcessEnv;
+};
 
 /**
  * Build the Express app and HTTP/Socket.IO server.
@@ -271,22 +302,28 @@ function createServer(opts: CreateServerOptions = {}) {
 
   // Background worker: advance stale ringing calls to `missed` and force-end
   // calls stranded in `accepted` / `connecting_media` / `in_call`.
-  const pollTimer = setInterval(
-    () =>
-      tickRingingTimeouts(
-        state,
-        Date.now(),
-        (call, previousStatus, reason) => {
-          notifyCallTransition(io, state, call, {
-            previousStatus,
-            actor: null,
-            reason,
-          });
-        },
-        callTimeouts
-      ),
-    RINGING_POLL_MS
-  );
+  const callRetentionMs =
+    opts.callRetentionMs ?? (Number(process.env.CALL_RETENTION_MS) || DEFAULT_CALL_RETENTION_MS);
+  const maxRetainedCalls =
+    opts.maxRetainedCalls ?? (Number(process.env.MAX_RETAINED_CALLS) || DEFAULT_MAX_RETAINED_CALLS);
+  const pollTimer = setInterval(() => {
+    const now = Date.now();
+    tickRingingTimeouts(
+      state,
+      now,
+      (call, previousStatus, reason) => {
+        notifyCallTransition(io, state, call, {
+          previousStatus,
+          actor: null,
+          reason,
+        });
+      },
+      callTimeouts
+    );
+    // Bound the in-memory history the sweep above just added to, so neither it
+    // nor `GET /calls` iterates a map that only ever grows.
+    pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now });
+  }, RINGING_POLL_MS);
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
@@ -392,6 +429,8 @@ function createServer(opts: CreateServerOptions = {}) {
      */
     tickRingingTimeouts: (now: number = Date.now()): number =>
       tickRingingTimeouts(state, now, undefined, callTimeouts),
+    pruneTerminalCalls: (now: number = Date.now()): number =>
+      pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now }),
     /**
      * Populate the in-memory state from the Neon database.
      *

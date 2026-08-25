@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
+import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
 import { resolveReachableChannels, hasKnownUser } from '../lib/state.ts';
 import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from '../callPersistence.ts';
 
@@ -310,6 +310,66 @@ function endCallsForDisconnectedParticipant(
 }
 
 /**
+ * Drop terminal calls from the in-memory map once they are older than the
+ * retention window, and enforce a hard ceiling on how many are retained.
+ *
+ * `state.calls` is the read path for `GET /calls`, and nothing ever deleted
+ * from it: a long-lived process accumulated every call it had ever seen, so
+ * both the history route and the sweep below iterated a set that only ever
+ * grew.
+ *
+ * Only calls in a terminal state are ever evicted — an in-progress call is
+ * live state, not history, and is bounded instead by the timeout sweep. The
+ * call's event log is dropped alongside it, since it is keyed by the same id
+ * and is only ever read for a call still present in the map.
+ *
+ * Where Postgres is configured the durable record in the `calls` table is
+ * unaffected; this only bounds the in-memory copy.
+ *
+ * @returns Number of calls evicted.
+ */
+function pruneTerminalCalls(state: ServerState, { maxAgeMs = DEFAULT_CALL_RETENTION_MS, maxRetainedCalls = DEFAULT_MAX_RETAINED_CALLS, now = Date.now() }: { maxAgeMs?: number; maxRetainedCalls?: number; now?: number; } = {}): number {
+  const retained: { callId: string; endedAtMs: number; }[] = [];
+  let evicted = 0;
+
+  for (const call of state.calls.values()) {
+    if (!TERMINAL_CALL_STATES.has(call.status)) continue;
+
+    // `updatedAt` is stamped at the moment the call reached its terminal
+    // state, so it is the call's end time. Fall back to `createdAt` for a
+    // record hydrated from an older row that never carried one.
+    const endedAtMs = toTimestamp(call.updatedAt ?? call.createdAt, now);
+
+    if (maxAgeMs > 0 && now - endedAtMs >= maxAgeMs) {
+      evictCall(state, call.callId);
+      evicted++;
+      continue;
+    }
+    retained.push({ callId: call.callId, endedAtMs });
+  }
+
+  // Age alone bounds a steady workload; the ceiling bounds a burst that lands
+  // entirely inside one retention window.
+  if (maxRetainedCalls > 0 && retained.length > maxRetainedCalls) {
+    retained.sort((a, b) => a.endedAtMs - b.endedAtMs);
+    for (const { callId } of retained.slice(0, retained.length - maxRetainedCalls)) {
+      evictCall(state, callId);
+      evicted++;
+    }
+  }
+
+  return evicted;
+}
+
+/**
+ * Remove a call and its event log from the in-memory stores.
+ */
+function evictCall(state: ServerState, callId: string): void {
+  state.calls.delete(callId);
+  state.callEvents.delete(callId);
+}
+
+/**
  * Close out every non-terminal call that was restored from the database but is
  * already older than its state's timeout window.
  *
@@ -490,6 +550,7 @@ export {
   isCalleeUnreachable,
   isSingleInstanceMode,
   recordCallHeartbeat,
+  pruneTerminalCalls,
   // Exported for the state-machine invariant test, which asserts every
   // non-terminal status has a bounded — and appropriate — timeout.
   getCallExpiry,

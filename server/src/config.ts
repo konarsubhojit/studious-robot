@@ -163,6 +163,32 @@ const DEFAULT_SOCKET_MAX_BUFFER_BYTES = 256 * 1024;
  */
 const DEFAULT_JSON_BODY_LIMIT = '64kb';
 
+/**
+ * How long a **terminal** call is kept in the in-memory `state.calls` map after
+ * it ends.
+ *
+ * The map is the read path for `GET /calls`, so history has to survive in it for
+ * a while — but nothing ever removed a call from it, so a long-lived process
+ * grew without bound and every history request and every sweep tick iterated
+ * more entries than the last. Terminal calls older than this are dropped;
+ * non-terminal calls are never touched by the sweep, whatever their age.
+ *
+ * A day comfortably covers what a client asks for (`GET /calls` caps out at 100
+ * rows) and, where Postgres is configured, the durable record in the `calls`
+ * table outlives the in-memory copy regardless.
+ * Override with `CALL_RETENTION_MS`.
+ */
+const DEFAULT_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Hard ceiling on retained terminal calls, applied after the age-based pass.
+ *
+ * Age alone bounds a *steady* workload; this bounds a burst, so the map cannot
+ * balloon within a single retention window. The oldest are dropped first.
+ * Override with `MAX_RETAINED_CALLS`.
+ */
+const DEFAULT_MAX_RETAINED_CALLS = 500;
+
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;
 
@@ -234,6 +260,8 @@ export {
   DEFAULT_SOCKET_PING_TIMEOUT_MS,
   DEFAULT_SOCKET_MAX_BUFFER_BYTES,
   DEFAULT_JSON_BODY_LIMIT,
+  DEFAULT_CALL_RETENTION_MS,
+  DEFAULT_MAX_RETAINED_CALLS,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   SHUTDOWN_DRAIN_POLL_MS,

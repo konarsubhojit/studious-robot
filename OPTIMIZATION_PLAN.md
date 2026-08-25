@@ -42,14 +42,14 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 | ID | Task | Status |
 | -- | ---- | ------ |
-| P1.6a | Metro `inlineRequires` | ⬜ |
-| P1.6b | `useThemedStyles` module-level style cache | ⬜ |
+| P1.6a | Metro `inlineRequires` | ✅ |
+| P1.6b | `useThemedStyles` module-level style cache | ✅ |
 
 ### Phase 4 — Server memory
 
 | ID | Task | Status |
 | -- | ---- | ------ |
-| P1.3 | Evict terminal calls from the hot `state.calls` map after a retention window | ⬜ |
+| P1.3 | Evict terminal calls from the hot `state.calls` map after a retention window | ✅ |
 
 ### Phase 5 — Architecture & docs
 
@@ -116,3 +116,26 @@ the main win. Because the screens are reached through the `render*` indirection,
 the effective guard is that those renderers are now stable, so the route
 components do not re-render and the elements are never recreated. The `memo`
 wrappers matter for the paths where a parent re-renders for an unrelated reason.
+
+### P1.3: retention is also the history horizon
+
+`GET /calls` reads history straight out of the in-memory `state.calls` map
+rather than out of Postgres, so the retention window is not purely an internal
+memory bound — it is also how far back that endpoint can see. Eviction is
+therefore deliberately conservative:
+
+- Only calls in a terminal state are ever evicted. A live call is state, not
+  history, and stays until the existing timeout sweep closes it.
+- The age pass uses `updatedAt`, which is stamped at the moment the call reached
+  its terminal state, and defaults to a 24h window.
+- A count ceiling (500, oldest-first) catches a burst that lands entirely inside
+  one window, so the map is bounded on both axes.
+- `state.callEvents` is evicted in step with `state.calls`; otherwise the leak
+  just moves from one map to the other.
+
+Both bounds are configurable (`CALL_RETENTION_MS`, `MAX_RETAINED_CALLS`). At the
+target of ~10 concurrent users neither will realistically be reached, so this is
+a leak fix rather than a behaviour change. **If deeper call history is wanted
+later, the fix is to move the `GET /calls` read path onto the durable `calls`
+table (already written by `callPersistence.ts`) rather than to raise the
+retention window.**
