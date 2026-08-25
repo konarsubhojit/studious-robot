@@ -100,6 +100,40 @@ describe('ChatListScreen', () => {
     expect(findByTestId(tree, 'chat-list-mark-read')).toBeNull();
   });
 
+  test('a failed contact search offers a retry instead of claiming there are no matches', async () => {
+    jest.useFakeTimers();
+    const onSearchUsers = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('directory unreachable'))
+      .mockResolvedValueOnce([{ userId: 'user-dave', online: true }]);
+    const tree = render({ conversations: [makeConversation()], onSearchUsers });
+
+    const input = findByTestId(tree, 'chat-list-search-input');
+    await act(async () => {
+      input.props.onChangeText('dave');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // "No matching contacts" would be a confident lie about a directory we
+    // never actually reached.
+    expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
+    expect(findByTestId(tree, 'chat-list-search-error')).not.toBeNull();
+
+    await act(async () => {
+      findByTestId(tree, 'chat-list-search-error-action').props.onPress();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSearchUsers).toHaveBeenCalledTimes(2);
+    expect(findByTestId(tree, 'chat-list-search-error')).toBeNull();
+    expect(findByTestId(tree, 'chat-list-contact-row')).not.toBeNull();
+  });
+
   test('searching swaps to contact results and tapping a result opens a conversation', async () => {
     jest.useFakeTimers();
     const onOpenConversation = jest.fn();

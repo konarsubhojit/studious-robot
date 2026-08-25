@@ -121,20 +121,39 @@ describe('usePresenceSearch', () => {
     );
   });
 
-  test('searchUsers returns an empty array on a failed response or network error', async () => {
+  test('searchUsers rejects on a failed response or network error', async () => {
     const { resultRef, params } = setup();
-    params.authedFetchRef.current.mockResolvedValue({ ok: false });
+    params.authedFetchRef.current.mockResolvedValue({ ok: false, status: 503 });
+
+    // Resolving to [] here would render an unreachable directory as a
+    // confident "no matching contacts", which the caller cannot recover from.
+    let rejection: any;
+    await act(async () => {
+      rejection = await resultRef.current.searchUsers().catch((error: unknown) => error);
+    });
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection.name).toBe('DirectorySearchError');
+
+    params.authedFetchRef.current.mockRejectedValue(new Error('boom'));
+    await act(async () => {
+      rejection = await resultRef.current.searchUsers().catch((error: unknown) => error);
+    });
+    expect(rejection).toBeInstanceOf(Error);
+    expect(rejection.name).toBe('DirectorySearchError');
+  });
+
+  test('searchUsers resolves to an empty array when a newer keystroke aborts it', async () => {
+    const { resultRef, params } = setup();
+    const aborted = new Error('aborted');
+    aborted.name = 'AbortError';
+    params.authedFetchRef.current.mockRejectedValue(aborted);
 
     let users;
     await act(async () => {
       users = await resultRef.current.searchUsers();
     });
-    expect(users).toEqual([]);
-
-    params.authedFetchRef.current.mockRejectedValue(new Error('boom'));
-    await act(async () => {
-      users = await resultRef.current.searchUsers();
-    });
+    // The caller discards a superseded result anyway, so an abort is not a
+    // failure worth surfacing.
     expect(users).toEqual([]);
   });
 

@@ -12,6 +12,7 @@ import {
 import { describeMessagePreview } from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
+import ErrorState from './ErrorState';
 import SwipeableRow from './SwipeableRow';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
@@ -200,6 +201,7 @@ function ChatListScreen({
   const [results, setResults] = useState(([] as ContactRow[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
@@ -210,21 +212,26 @@ function ChatListScreen({
         setResults([]);
         setHasSearched(false);
         setIsSearching(false);
+        setSearchFailed(false);
         return;
       }
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
       let users: ContactRow[] = [];
+      let failed = false;
       try {
         users = await onSearchUsers(term);
       } catch {
-        users = [];
+        // A directory we could not reach is not a directory without matches;
+        // saying "no matching contacts" here would be a confident lie.
+        failed = true;
       }
       if (requestIdRef.current !== requestId) return;
-      setResults(Array.isArray(users) ? users : []);
+      setResults(failed || !Array.isArray(users) ? [] : users);
       setIsSearching(false);
       setHasSearched(true);
+      setSearchFailed(failed);
     },
     [onSearchUsers],
   );
@@ -326,12 +333,26 @@ function ChatListScreen({
 
   let emptyComponent = null;
   if (isSearchMode) {
-    emptyComponent =
-      !isSearching && hasSearched ? (
+    if (isSearching || !hasSearched) {
+      emptyComponent = null;
+    } else if (searchFailed) {
+      emptyComponent = (
+        <ErrorState
+          title="Can't search contacts"
+          description="We couldn't reach the directory. Check your connection and try again."
+          actionLabel="Retry"
+          actionHint="Runs the contact search again"
+          onAction={() => runSearch(query.trim())}
+          testID="chat-list-search-error"
+        />
+      );
+    } else {
+      emptyComponent = (
         <Text style={styles.empty} testID="chat-list-empty">
           No matching contacts
         </Text>
-      ) : null;
+      );
+    }
   } else if (isLoading) {
     emptyComponent = <ConversationSkeleton />;
   } else {

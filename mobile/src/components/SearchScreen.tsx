@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import ErrorState from './ErrorState';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
@@ -164,6 +165,9 @@ function SearchScreen({
   const [messages, setMessages] = useState(([] as MessageResult[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [contactsFailed, setContactsFailed] = useState(false);
+  // Bumped to re-run the debounced effect without changing the search term.
+  const [retryToken, setRetryToken] = useState(0);
   const abortRef = useRef((null as AbortController | null));
 
   const term = query.trim();
@@ -180,6 +184,7 @@ function SearchScreen({
       setMessages([]);
       setIsSearching(false);
       setHasSearched(false);
+      setContactsFailed(false);
       return undefined;
     }
 
@@ -189,8 +194,14 @@ function SearchScreen({
     abortRef.current = controller;
 
     const timer = setTimeout(async () => {
+      // Contacts come from the network and can genuinely fail; messages are
+      // read from the local store, so only the former gets a failure state.
+      let contactsRejected = false;
       const [foundContacts, foundMessages] = await Promise.all([
-        Promise.resolve(onSearchContacts?.(term, { signal: controller.signal })).catch(() => []),
+        Promise.resolve(onSearchContacts?.(term, { signal: controller.signal })).catch(() => {
+          contactsRejected = true;
+          return [];
+        }),
         Promise.resolve(onSearchMessages?.(term, { signal: controller.signal })).catch(() => []),
       ]);
       if (cancelled || controller.signal.aborted) return;
@@ -198,6 +209,7 @@ function SearchScreen({
       setMessages(Array.isArray(foundMessages) ? foundMessages : []);
       setIsSearching(false);
       setHasSearched(true);
+      setContactsFailed(contactsRejected);
     }, SEARCH_DEBOUNCE_MS);
 
     return () => {
@@ -205,7 +217,7 @@ function SearchScreen({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [term, onSearchContacts, onSearchMessages]);
+  }, [term, onSearchContacts, onSearchMessages, retryToken]);
 
   // A term is only worth remembering once the user acts on one of its results:
   // recording every debounced query instead would fill the (short) history with
@@ -386,7 +398,7 @@ function SearchScreen({
         ) : null}
       </View>
     );
-  } else if (!isSearching && hasSearched) {
+  } else if (!isSearching && hasSearched && !contactsFailed) {
     emptyComponent = (
       <Text style={styles.empty} testID="search-no-results">
         No results for “{term}”
@@ -444,12 +456,27 @@ function SearchScreen({
         keyboardShouldPersistTaps="handled"
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={
-          isSearching ? (
-            <View style={styles.statusRow} testID="search-searching">
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={styles.statusText}>Searching…</Text>
-            </View>
-          ) : null
+          <>
+            {isSearching ? (
+              <View style={styles.statusRow} testID="search-searching">
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+                <Text style={styles.statusText}>Searching…</Text>
+              </View>
+            ) : null}
+            {!isSearching && contactsFailed ? (
+              <ErrorState
+                title="Can't search contacts"
+                description={
+                  'We couldn\u2019t reach the directory, so people are missing from these ' +
+                  'results. Messages and calls below come from this device.'
+                }
+                actionLabel="Retry"
+                actionHint="Runs the search again"
+                onAction={() => setRetryToken(token => token + 1)}
+                testID="search-contacts-error"
+              />
+            ) : null}
+          </>
         }
         ListEmptyComponent={emptyComponent}
       />
