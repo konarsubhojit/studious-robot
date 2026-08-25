@@ -1,6 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import appConfig from '../app.json';
+import { API_ROUTES } from '../../shared';
 import { getLogsForExport, logError, logInfo } from './appLogger';
 import { errorMessage } from './errors';
 
@@ -243,6 +244,103 @@ export async function writeLogsFile(content: string): Promise<{ success: boolean
   return { success: false, error: firstError };
 }
 
+
+/** How long the export waits for the server's metrics snapshot. */
+const QUERY_TIMINGS_TIMEOUT_MS = 5000;
+
+/** Per-operation rows kept in the export, slowest first. */
+const MAX_EXPORTED_QUERY_ROWS = 25;
+
+export type ServerQueryTiming = {
+  backend?: string;
+  operation?: string;
+  kind?: string;
+  count?: number;
+  errors?: number;
+  slow?: number;
+  totalMs?: number;
+  meanMs?: number;
+  maxMs?: number;
+};
+
+/**
+ * Render the server's per-operation query timings as fixed-width text.
+ *
+ * Rows arrive sorted by total time (see the server's `/metrics` handler), so
+ * the operation costing the most is the first line — which is the question the
+ * export exists to answer.
+ */
+export function formatQueryTimings(
+  snapshot: { counters?: Record<string, number>; dbQueries?: ServerQueryTiming[] } | null | undefined,
+): string {
+  const rows = Array.isArray(snapshot?.dbQueries) ? snapshot.dbQueries : [];
+  const counters = snapshot?.counters ?? {};
+  const lines = [
+    '',
+    '--- server query timings (slowest total first) ---',
+    `totalQueries: ${counters.db_queries_total ?? 0}` +
+      ` reads: ${counters.db_reads_total ?? 0}` +
+      ` writes: ${counters.db_writes_total ?? 0}` +
+      ` slow: ${counters.db_slow_queries_total ?? 0}` +
+      ` errors: ${counters.db_query_errors_total ?? 0}`,
+  ];
+
+  if (rows.length === 0) {
+    lines.push('(no queries recorded yet)');
+    return lines.join('\n');
+  }
+
+  lines.push('backend  kind   operation                  count   totalMs    meanMs     maxMs  slow');
+  for (const row of rows.slice(0, MAX_EXPORTED_QUERY_ROWS)) {
+    lines.push(
+      [
+        String(row.backend ?? '?').padEnd(8),
+        String(row.kind ?? '?').padEnd(6),
+        String(row.operation ?? '?').slice(0, 24).padEnd(25),
+        String(row.count ?? 0).padStart(5),
+        String(row.totalMs ?? 0).padStart(9),
+        String(row.meanMs ?? 0).padStart(9),
+        String(row.maxMs ?? 0).padStart(9),
+        String(row.slow ?? 0).padStart(5),
+      ].join(' '),
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Best-effort fetch of the server's query-timing snapshot for the export file.
+ *
+ * Never throws and never blocks the export for long: an unreachable or
+ * out-of-date server simply yields an explanatory line instead of timings.
+ */
+export async function fetchServerQueryTimings(signalingUrl?: string): Promise<string> {
+  const baseUrl = (signalingUrl ?? '').trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    return '\n--- server query timings (slowest total first) ---\n(no signaling URL configured)';
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUERY_TIMINGS_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}${API_ROUTES.METRICS}`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return `\n--- server query timings (slowest total first) ---\n(metrics unavailable: HTTP ${response.status})`;
+    }
+    return formatQueryTimings(await response.json());
+  } catch (error) {
+    return (
+      '\n--- server query timings (slowest total first) ---\n' +
+      `(metrics unavailable: ${errorMessage(error) || 'unknown error'})`
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Collect the in-memory log buffer, prepend a diagnostic header and write it
  * to disk.  Shared by every "Export logs" affordance; the caller only has to
@@ -263,11 +361,15 @@ export async function exportDiagnosticLogs(context: {
 } = {}): Promise<{ ok: boolean; message: string; }> {
   try {
     logInfo('Export Logs button press');
-    const header = buildExportHeader({
-      ...context,
-      signalingUrl: (context.signalingUrl ?? '').trim(),
-    });
-    const result = await writeLogsFile(`${header}\n${await getLogsForExport()}\n`);
+    const signalingUrl = (context.signalingUrl ?? '').trim();
+    const header = buildExportHeader({ ...context, signalingUrl });
+    // The server keeps the SQL/Mongo/Redis query timings in-process, so the
+    // export pulls them in: the written file is then the single artefact that
+    // answers "which query is slow?" without shell access to the server.
+    const queryTimings = await fetchServerQueryTimings(signalingUrl);
+    const result = await writeLogsFile(
+      `${header}\n${await getLogsForExport()}\n${queryTimings}\n`,
+    );
 
     if (!result.success) {
       logError('Failed to export logs', result.error);
