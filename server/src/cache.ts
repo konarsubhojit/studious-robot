@@ -1,4 +1,5 @@
 import { describeError } from './lib/errors.ts';
+import { timeQuery } from './lib/queryTiming.ts';
 
 /**
  * Read-through cache for hot, repeatedly-issued queries.
@@ -195,7 +196,11 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
 
     async get(key: string) {
       if (closed) return undefined;
-      const raw = await client.get(keyPrefix + key);
+      // Only the Redis backend is timed: the memory backend does no I/O, so a
+      // timing for it would say nothing about datastore cost.
+      const raw = await timeQuery({ backend: 'redis', operation: 'get', kind: 'read', target: 'cache' }, () =>
+        client.get(keyPrefix + key)
+      );
       if (raw === null || raw === undefined) return undefined;
       try {
         return JSON.parse(raw);
@@ -210,22 +215,31 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
       ttlMs = DEFAULT_TTL_MS
     ) {
       if (closed) return;
-      await client.set(keyPrefix + key, JSON.stringify(value), { PX: Math.max(1, ttlMs) });
+      await timeQuery({ backend: 'redis', operation: 'set', kind: 'write', target: 'cache' }, () =>
+        client.set(keyPrefix + key, JSON.stringify(value), { PX: Math.max(1, ttlMs) })
+      );
     },
 
     async delByPrefix(prefix: string) {
       if (closed) return;
       // Escape glob metacharacters so ids can never widen the match pattern.
       const pattern = `${keyPrefix}${prefix}`.replace(/([[\]?*\\])/g, '\\$1') + '*';
-      let batch: string[] = [];
-      for await (const key of scanKeys(client, pattern)) {
-        batch.push(key);
-        if (batch.length >= 100) {
-          await client.del(batch);
-          batch = [];
+      // One timing for the whole scan+delete sweep: it is a single logical
+      // invalidation, however many round trips it takes.
+      await timeQuery(
+        { backend: 'redis', operation: 'delByPrefix', kind: 'write', target: 'cache' },
+        async () => {
+          let batch: string[] = [];
+          for await (const key of scanKeys(client, pattern)) {
+            batch.push(key);
+            if (batch.length >= 100) {
+              await client.del(batch);
+              batch = [];
+            }
+          }
+          if (batch.length > 0) await client.del(batch);
         }
-      }
-      if (batch.length > 0) await client.del(batch);
+      );
     },
 
     async close() {

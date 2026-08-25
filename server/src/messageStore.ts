@@ -61,6 +61,7 @@
 import { randomUUID } from 'crypto';
 import { MongoClient, MongoParseError } from 'mongodb';
 import { describeError } from './lib/errors.ts';
+import { timeQuery } from './lib/queryTiming.ts';
 
 /**
  * Whether `error` came from the driver rejecting the connection string itself.
@@ -496,6 +497,51 @@ async function createIndexOrWarn(messages: any, spec: object, options?: object):
   }
 }
 
+
+/**
+ * Which store methods read and which mutate, used to label their timings so
+ * `/metrics` can separate read cost from write cost.
+ */
+const MONGO_OPERATION_KINDS: Record<string, 'read' | 'write'> = {
+  saveMessage: 'write',
+  listMessages: 'read',
+  searchMessages: 'read',
+  markDelivered: 'write',
+  listConversations: 'read',
+  markRead: 'write',
+  deleteMessage: 'write',
+  reactToMessage: 'write',
+};
+
+/**
+ * Wrap every query-issuing method of a Mongo store so its duration is measured
+ * and reported (see `lib/queryTiming.ts`).
+ *
+ * Wrapping the *store methods* rather than the driver keeps the labels
+ * business-meaningful: `listConversations` (a cross-partition fan-out) is
+ * distinguishable from a point lookup, and a method that issues two round trips
+ * (`saveMessage`'s upsert plus its replay `findOne`) reports the total cost the
+ * caller actually paid.
+ *
+ * `ensureReady` is awaited *before* the timer starts so the one-time connect
+ * and index creation — seconds, on a throttled Cosmos endpoint — never lands in
+ * the latency of whichever query happened to be first.
+ */
+function instrumentMongoStore(store: MessageStore, { collection, ensureReady }: { collection: string; ensureReady: () => Promise<unknown>; }): MessageStore {
+  const instrumented = (store as unknown) as Record<string, any>;
+  for (const [operation, kind] of Object.entries(MONGO_OPERATION_KINDS)) {
+    const original = instrumented[operation];
+    if (typeof original !== 'function') continue;
+    instrumented[operation] = async function timedOperation(...args: unknown[]) {
+      await ensureReady();
+      return timeQuery({ backend: 'mongo', operation, kind, target: collection }, () =>
+        original.apply(store, args)
+      );
+    };
+  }
+  return store;
+}
+
 /**
  * Best-effort extraction of the Mongo host(s) for startup logging, without
  * ever logging credentials embedded in the connection string.
@@ -619,7 +665,7 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
     return clientPromise;
   }
 
-  return {
+  const store: MessageStore = {
     type: 'mongo',
 
     ready: connect,
@@ -820,6 +866,8 @@ function createMongoMessageStore({ uri, dbName, collectionName, client }: { uri?
       }
     },
   };
+
+  return instrumentMongoStore(store, { collection, ensureReady: connect });
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
