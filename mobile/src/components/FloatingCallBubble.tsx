@@ -12,6 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { formatCallDuration } from '../callUx';
 import { triggerHaptic } from '../haptics';
+import useReducedMotion from '../hooks/useReducedMotion';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
@@ -73,6 +74,7 @@ export default function FloatingCallBubble({
   onDismiss,
 }: FloatingCallBubbleProps) {
   const styles = useThemedStyles(createStyles);
+  const reduceMotion = useReducedMotion();
 
   const { width, height } = useWindowDimensions();
 
@@ -92,6 +94,13 @@ export default function FloatingCallBubble({
   // Readable from the drag worklet, which must not dismiss the bubble when no
   // caller is listening (it would animate away with no way to bring it back).
   const canDismiss = useSharedValue(Boolean(onDismiss));
+  // Also a shared value: the snap runs on the UI thread and cannot read a
+  // plain JS boolean captured from render.
+  const snapWithoutMotion = useSharedValue(reduceMotion);
+
+  useEffect(() => {
+    snapWithoutMotion.value = reduceMotion;
+  }, [reduceMotion, snapWithoutMotion]);
 
   useEffect(() => {
     boundMaxX.value = maxX;
@@ -144,14 +153,20 @@ export default function FloatingCallBubble({
         return;
       }
 
-      // Otherwise settle against whichever horizontal edge is closest.
+      // Otherwise settle against whichever horizontal edge is closest. Under
+      // "reduce motion" the bubble still has to end up at the edge — that is
+      // layout, not decoration — so it is placed there outright instead of
+      // being sprung, which is the part that overshoots and oscillates.
       const snapTarget =
         translateX.value < (BUBBLE_MARGIN + boundMaxX.value) / 2 ? BUBBLE_MARGIN : boundMaxX.value;
+      const settledY = Math.min(Math.max(translateY.value, BUBBLE_MARGIN), boundMaxY.value);
+      if (snapWithoutMotion.value) {
+        translateX.value = snapTarget;
+        translateY.value = settledY;
+        return;
+      }
       translateX.value = withSpring(snapTarget, SNAP_SPRING);
-      translateY.value = withSpring(
-        Math.min(Math.max(translateY.value, BUBBLE_MARGIN), boundMaxY.value),
-        SNAP_SPRING,
-      );
+      translateY.value = withSpring(settledY, SNAP_SPRING);
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -167,8 +182,8 @@ export default function FloatingCallBubble({
   return (
     <GestureDetector gesture={gesture}>
       <Animated.View
-        entering={ZoomIn.springify()}
-        exiting={ZoomOut}
+        entering={reduceMotion ? undefined : ZoomIn.springify()}
+        exiting={reduceMotion ? undefined : ZoomOut}
         style={[styles.bubble, animatedStyle]}
         testID="floating-call-bubble">
         <Pressable

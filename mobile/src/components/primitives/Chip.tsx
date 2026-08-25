@@ -23,6 +23,14 @@ export type ChipProps = {
 const CHIP_HEIGHT = 32;
 
 /**
+ * Reaction chips are deliberately smaller — they sit under a bubble, several to
+ * a row — so their `hitSlop` has to be computed from *their* height, not the
+ * filter chip's. Sizing the slop from `CHIP_HEIGHT` left a reaction chip with a
+ * 50dp effective target against a 56dp minimum.
+ */
+const REACTION_CHIP_HEIGHT = 26;
+
+/**
  * Small pill: a reaction count, an attachment type, a quick filter.
  *
  * Reaction chips in the conversation and the attach sheet's type pills were two
@@ -83,7 +91,7 @@ export default function Chip({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ selected, checked: selected }}
-      hitSlop={touchSlop(CHIP_HEIGHT)}
+      hitSlop={touchSlop(variant === 'reaction' ? REACTION_CHIP_HEIGHT : CHIP_HEIGHT)}
       style={({ pressed }) => [...chipStyle, pressed && styles.pressed]}
       testID={testID}>
       {body}
@@ -106,7 +114,7 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surface,
     },
     chipReaction: {
-      minHeight: 26,
+      minHeight: REACTION_CHIP_HEIGHT,
       paddingHorizontal: spacing.sm,
     },
     chipSelected: {

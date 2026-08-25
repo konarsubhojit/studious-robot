@@ -9,7 +9,8 @@ import {
   View,
 } from 'react-native';
 import ErrorState from './ErrorState';
-import { Icon } from './primitives';
+import { Banner, Icon } from './primitives';
+import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../connectivityUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
@@ -435,9 +436,13 @@ function SearchScreen({
       </View>
 
       {isServerUnreachable ? (
-        <Text style={styles.degradedNote} testID="search-degraded-note">
-          Offline — showing conversations and calls stored on this device.
-        </Text>
+        <Banner
+          tone="warning"
+          icon={OFFLINE_ICON}
+          message={describeOffline(OFFLINE_CONSEQUENCE.search)}
+          style={styles.degradedNote}
+          testID="search-degraded-note"
+        />
       ) : null}
 
       <SectionList

@@ -1,13 +1,17 @@
 import { useEffect, useRef } from 'react';
 import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { announceForAccessibility, describeCallState } from './accessibilityAnnouncer';
+import {
+  announceForAccessibility,
+  describeCallState,
+  describeRecoveryState,
+} from './accessibilityAnnouncer';
 import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
 import { useCall } from './call/CallProvider';
 import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
 import CallScreen from './components/CallScreen';
-import ErrorState from './components/ErrorState';
+import { Banner } from './components/primitives';
 import FloatingCallBubble from './components/FloatingCallBubble';
 import InCallBanner from './components/InCallBanner';
 import IncomingCallScreen from './components/IncomingCallScreen';
@@ -40,6 +44,10 @@ export default function AppShell() {
   const startupIssues = getDegradations();
 
   useCallStateAnnouncements(callState, callFlow.incomingCall?.callerId, callFlow.calleeId);
+  useRecoveryAnnouncements(
+    callState === CALL_STATES.IN_CALL,
+    Boolean(callFlow.isReconnecting || callFlow.recoveryStatus),
+  );
 
   // OS PiP always short-circuits to the compact CallScreen, taking precedence
   // over the in-app minimize state.
@@ -121,17 +129,20 @@ export default function AppShell() {
 
   return (
     <View style={[styles.container, rootContainerStyle]}>
+      {/* A *persistent condition*, not a blocking failure: the app works, and
+          the user can keep using it, so this is a banner rather than the
+          full-screen `ErrorState` card it used to be. */}
       {startupIssues.length > 0 ? (
-        <ErrorState
-          title="Calling may not work reliably"
-          description={`${startupIssues
+        <Banner
+          tone="warning"
+          icon="settingsNotifications"
+          message={`Calling may not work reliably: ${startupIssues
             .map(issue => issue.message)
-            .join(
-              '; ',
-            )}. Incoming calls can be missed until this is fixed — check that WeTalk is allowed to show notifications and manage calls, then restart the app.`}
-          actionLabel="Open device settings"
+            .join('; ')}`}
+          actionLabel="Fix"
           actionHint="Opens WeTalk's permissions in the device settings app"
           onAction={openDeviceSettings}
+          accessibilityRole="alert"
           style={styles.degradedBanner}
           testID="startup-degraded-banner"
         />
@@ -164,6 +175,27 @@ function useCallStateAnnouncements(callState: string, callerId: string | null | 
     // the state stays put must not re-announce the same transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callState]);
+}
+
+/**
+ * Announce the start and end of a recovery episode.
+ *
+ * Only while a call is up: the recovery flags can settle after the call has
+ * already ended, and "Reconnected" after "Call ended" is a lie.
+ */
+function useRecoveryAnnouncements(isInCall: boolean, isRecovering: boolean) {
+  const wasRecoveringRef = useRef(false);
+
+  useEffect(() => {
+    if (!isInCall) {
+      wasRecoveringRef.current = false;
+      return;
+    }
+    if (wasRecoveringRef.current === isRecovering) return;
+    wasRecoveringRef.current = isRecovering;
+    const message = describeRecoveryState(isRecovering);
+    if (message) announceForAccessibility(message);
+  }, [isInCall, isRecovering]);
 }
 
 /** Open the OS settings page for the app so the user can grant what's missing. */

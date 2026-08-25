@@ -42,3 +42,37 @@ export function describeCallState(callState: string, { callerId, calleeId }: { c
       return null;
   }
 }
+
+/**
+ * Sentence announced when a call's recovery state changes.
+ *
+ * A reconnect is otherwise conveyed only by a banner appearing and vanishing
+ * over the video, which a screen-reader user never sees — so the most alarming
+ * moment of a call (audio has stopped and nobody has said why) was silent.
+ *
+ * @param isRecovering - Whether a recovery episode is currently in flight.
+ * @returns the announcement, or `null` when there is nothing new to say.
+ */
+export function describeRecoveryState(isRecovering: boolean): string | null {
+  return isRecovering ? 'Connection lost, reconnecting' : 'Reconnected';
+}
+
+/**
+ * Sentence announced when a sent message reaches a terminal delivery state.
+ *
+ * Delivery is shown as a tick glyph in the bubble footer, which conveys nothing
+ * unless the row happens to be re-read.
+ *
+ * @param status - The message's delivery state.
+ * @returns the announcement, or `null` for states still in progress.
+ */
+export function describeMessageDelivery(status: string): string | null {
+  switch (status) {
+    case 'failed':
+      return 'Message failed to send';
+    case 'sent':
+      return 'Message sent';
+    default:
+      return null;
+  }
+}

@@ -1,6 +1,38 @@
 import { AccessibilityInfo } from 'react-native';
-import { announceForAccessibility, describeCallState } from '../src/accessibilityAnnouncer';
+import {
+  announceForAccessibility,
+  describeCallState,
+  describeMessageDelivery,
+  describeRecoveryState,
+} from '../src/accessibilityAnnouncer';
 import { CALL_STATES } from '../src/call/callStateMachine';
+
+describe('describeRecoveryState', () => {
+  test('names the start of a recovery episode', () => {
+    expect(describeRecoveryState(true)).toBe('Connection lost, reconnecting');
+  });
+
+  test('names the end of one', () => {
+    expect(describeRecoveryState(false)).toBe('Reconnected');
+  });
+});
+
+describe('describeMessageDelivery', () => {
+  test('announces a failed send, which is the one the user must act on', () => {
+    expect(describeMessageDelivery('failed')).toBe('Message failed to send');
+  });
+
+  test('announces a completed send', () => {
+    expect(describeMessageDelivery('sent')).toBe('Message sent');
+  });
+
+  test('says nothing for states that are still in progress or already implied', () => {
+    expect(describeMessageDelivery('sending')).toBeNull();
+    expect(describeMessageDelivery('delivered')).toBeNull();
+    expect(describeMessageDelivery('read')).toBeNull();
+    expect(describeMessageDelivery('unknown')).toBeNull();
+  });
+});
 
 describe('describeCallState', () => {
   test('names the caller for an incoming call', () => {

@@ -13,6 +13,7 @@
  */
 export { default as Avatar, initialsOf } from './Avatar';
 export { default as Badge } from './Badge';
+export { default as Banner } from './Banner';
 export { default as Chip } from './Chip';
 export { default as Divider } from './Divider';
 export { default as EmptyState } from './EmptyState';
@@ -30,6 +31,7 @@ export { default as Toast, TOAST_DURATION_MS } from './Toast';
 
 export type { AvatarProps, AvatarSize } from './Avatar';
 export type { BadgeProps } from './Badge';
+export type { BannerProps, BannerTone } from './Banner';
 export type { ChipProps } from './Chip';
 export type { DividerProps } from './Divider';
 export type { EmptyStateProps } from './EmptyState';

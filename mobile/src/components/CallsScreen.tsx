@@ -14,14 +14,15 @@ import {
   isMissedCall,
 } from '../callLog';
 import { formatCallDuration } from '../callUx';
+import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../connectivityUx';
 import { announceForAccessibility } from '../accessibilityAnnouncer';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
-import ErrorState from './ErrorState';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import StatusBanner from './StatusBanner';
 import {
   Avatar,
+  Banner,
   EmptyState,
   FAB,
   Icon,
@@ -183,17 +184,20 @@ export default function CallsScreen({
         />
       </View>
 
+      {/* The same condition, worded the same way and weighted the same way, as
+          the one Search and the conversation show. */}
       {isServerUnreachable ? (
-        <View style={styles.bannerWrap}>
-          <ErrorState
-            title="Server unreachable"
-            description="Calls can't be placed until the app reconnects. Check your internet connection, or the signaling server address in Settings."
-            actionLabel="Retry"
-            actionHint="Tries to reconnect to the signaling server"
-            onAction={onRetryConnect}
-            testID="offline-banner"
-          />
-        </View>
+        <Banner
+          tone="warning"
+          message={describeOffline(OFFLINE_CONSEQUENCE.calls)}
+          icon={OFFLINE_ICON}
+          actionLabel="Retry"
+          actionHint="Tries to reconnect to the signaling server"
+          onAction={onRetryConnect}
+          accessibilityRole="alert"
+          style={styles.bannerWrap}
+          testID="offline-banner"
+        />
       ) : null}
 
       <StatusBanner status={status} style={styles.bannerWrap} />

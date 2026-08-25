@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import SearchScreen, { SEARCH_DEBOUNCE_MS } from '../../src/components/SearchScreen';
+import { describeOffline, OFFLINE_CONSEQUENCE } from '../../src/connectivityUx';
 
 function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
@@ -185,7 +186,18 @@ describe('SearchScreen', () => {
     await advanceDebounce();
 
     expect(findAllByTestId(tree, 'search-conversation-row')).toHaveLength(1);
+
+    // The same banner, with the same weight and lead, as Calls and the
+    // conversation show — not a line of grey body text.
     expect(findByTestId(tree, 'search-degraded-note')).not.toBeNull();
+    const texts = (tree as any).root
+      .findAll((n: any) => typeof n.type === 'string')
+      .flatMap((n: any) =>
+        (Array.isArray(n.props?.children) ? n.props.children : [n.props?.children]).filter(
+          (child: unknown) => typeof child === 'string',
+        ),
+      );
+    expect(texts).toContain(describeOffline(OFFLINE_CONSEQUENCE.search));
   });
 
   test('opens the conversation at the matched message', async () => {

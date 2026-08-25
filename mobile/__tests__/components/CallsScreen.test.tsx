@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import CallsScreen from '../../src/components/CallsScreen';
+import { describeOffline, OFFLINE_CONSEQUENCE } from '../../src/connectivityUx';
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
@@ -299,5 +300,18 @@ describe('CallsScreen – server unreachable', () => {
   test('hides the banner while the server is reachable', () => {
     const tree = render();
     expect(byTestID(tree, 'offline-banner')).toHaveLength(0);
+  });
+
+  test('uses the shared offline sentence rather than its own wording', () => {
+    const tree = render({ isServerUnreachable: true, onRetryConnect: jest.fn() });
+
+    const texts = tree.root
+      .findAll((n: any) => typeof n.type === 'string')
+      .flatMap((n: any) =>
+        (Array.isArray(n.props?.children) ? n.props.children : [n.props?.children]).filter(
+          (child: unknown) => typeof child === 'string',
+        ),
+      );
+    expect(texts).toContain(describeOffline(OFFLINE_CONSEQUENCE.calls));
   });
 });

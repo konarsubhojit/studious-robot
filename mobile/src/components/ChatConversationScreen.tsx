@@ -28,7 +28,9 @@ import AudioAttachmentPlayer from './AudioAttachmentPlayer';
 import CallTimelineRow from './CallTimelineRow';
 import IconButton from './IconButton';
 import MediaViewer from './MediaViewer';
-import { Avatar, Chip, FAB, Icon, Skeleton } from './primitives';
+import { Avatar, Banner, Chip, FAB, Icon, Skeleton } from './primitives';
+import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../connectivityUx';
+import { announceForAccessibility, describeMessageDelivery } from '../accessibilityAnnouncer';
 import SwipeableRow from './SwipeableRow';
 
 import type { CallActivity, ChatMessage } from '../hooks/useMessaging';
@@ -697,63 +699,6 @@ const MessageRow = memo(
   },
 );
 
-/**
- * One inline banner, used for every persistent conversation-level message.
- *
- * @param props
- */
-function Notice({
-  icon,
-  message,
-  styles,
-  tone = 'neutral',
-  onDismiss,
-  dismissLabel,
-  dismissTestID,
-  accessibilityRole = 'text',
-  accessibilityValue,
-  testID,
-}: {
-  icon: string;
-  message: string;
-  styles: ChatStyles;
-  tone?: 'neutral' | 'warning' | 'accent';
-  onDismiss?: () => void;
-  dismissLabel?: string;
-  dismissTestID?: string;
-  accessibilityRole?: 'text' | 'alert' | 'progressbar';
-  accessibilityValue?: { now: number; min: number; max: number };
-  testID?: string;
-}) {
-  const toneStyle =
-    tone === 'warning' ? styles.noticeWarning : tone === 'accent' ? styles.noticeAccent : null;
-  const textStyle = tone === 'warning' ? styles.noticeTextWarning : styles.noticeText;
-
-  return (
-    <View
-      style={[styles.notice, toneStyle]}
-      accessibilityLiveRegion="polite"
-      accessibilityRole={accessibilityRole}
-      accessibilityValue={accessibilityValue}
-      testID={testID}>
-      <Icon name={icon} size={14} color={StyleSheet.flatten(textStyle).color} />
-      <Text numberOfLines={2} style={[textStyle, styles.noticeMessage]}>
-        {message}
-      </Text>
-      {onDismiss ? (
-        <Pressable
-          onPress={onDismiss}
-          accessibilityRole="button"
-          accessibilityLabel={dismissLabel}
-          hitSlop={touchSlop(20)}
-          testID={dismissTestID}>
-          <Icon name="dismiss" size={18} color={StyleSheet.flatten(textStyle).color} />
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 /** Placeholder bubbles shown while the first page of history is still loading. */
 function MessageSkeleton() {
   const styles = useThemedStyles(createStyles);
@@ -948,6 +893,32 @@ function ChatConversationScreen({
   }, [messages]);
 
   const activeHighlightId = quotedHighlightId ?? highlightMessageId;
+
+  // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
+  // only by a tick glyph in the bubble footer, which a screen-reader user has
+  // no reason to go back and re-read — so "did that send?" had no spoken
+  // answer. Only terminal states are announced, and only for messages that
+  // have changed state since the last render, so opening a conversation full
+  // of already-sent messages says nothing.
+  const announcedStatusRef = useRef((new Map() as Map<string, MessageStatus>));
+  useEffect(() => {
+    const seen = (new Set() as Set<string>);
+    messages.forEach(entry => {
+      if (isCallEntry(entry) || entry.senderId !== currentUserId || !entry.messageId) return;
+      seen.add(entry.messageId);
+      const status = getMessageStatus(entry);
+      const previous = announcedStatusRef.current.get(entry.messageId);
+      announcedStatusRef.current.set(entry.messageId, status);
+      // No previous status means this message arrived already in its final
+      // state (a page of history), not a send that just completed.
+      if (previous === undefined || previous === status) return;
+      const message = describeMessageDelivery(status);
+      if (message) announceForAccessibility(message);
+    });
+    announcedStatusRef.current.forEach((_status, messageId) => {
+      if (!seen.has(messageId)) announcedStatusRef.current.delete(messageId);
+    });
+  }, [messages, currentUserId]);
 
   // Keep the newest message in view: scroll to the bottom whenever the
   // newest message changes (a message was sent or received) and the user is
@@ -1410,29 +1381,26 @@ function ChatConversationScreen({
             and icon convention. */}
         <View style={styles.noticeStack}>
           {isOffline ? (
-            <Notice
-              icon="offline"
+            <Banner
+              icon={OFFLINE_ICON}
               tone="warning"
-              message="Offline — messages will send when you're back"
-              styles={styles}
+              message={describeOffline(OFFLINE_CONSEQUENCE.conversation)}
               testID="chat-offline-notice"
             />
           ) : null}
           {showAttachmentsUnavailable ? (
-            <Notice
+            <Banner
               icon="messageFailed"
               tone="warning"
               message="Attachments aren't available on this server"
-              styles={styles}
               accessibilityRole="alert"
               testID="chat-attachments-unavailable-notice"
             />
           ) : null}
           {isUploadingAttachment ? (
-            <Notice
+            <Banner
               icon="attachmentAttach"
               message={`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
-              styles={styles}
               accessibilityRole="progressbar"
               accessibilityValue={{
                 now: Math.round(attachmentUploadProgress * 100),
@@ -1443,11 +1411,10 @@ function ChatConversationScreen({
             />
           ) : null}
           {replyTarget ? (
-            <Notice
+            <Banner
               icon="messageReply"
               tone="accent"
               message={`Replying to: ${describeMessagePreview(replyTarget) || 'message'}`}
-              styles={styles}
               onDismiss={() => setReplyTarget(null)}
               dismissLabel="Cancel reply"
               dismissTestID="chat-reply-cancel"
@@ -1752,33 +1719,6 @@ const createStyles = (colors: ThemeColors) =>
     noticeStack: {
       paddingHorizontal: spacing.md,
       gap: spacing.xs,
-    },
-    notice: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.xs,
-      borderRadius: radius.sm,
-      backgroundColor: colors.surfaceRaised,
-    },
-    noticeWarning: {
-      backgroundColor: colors.tintWarning,
-    },
-    noticeAccent: {
-      borderLeftWidth: 3,
-      borderLeftColor: colors.accent,
-    },
-    noticeMessage: {
-      flex: 1,
-    },
-    noticeText: {
-      ...typography.hint,
-      color: colors.textSecondary,
-    },
-    noticeTextWarning: {
-      ...typography.hint,
-      color: colors.warning,
     },
     messageFooter: {
       flexDirection: 'row',

@@ -355,6 +355,64 @@ describe('AppShell accessibility and error states', () => {
     expect(announce).not.toHaveBeenCalled();
   });
 
+  test('announces the start and the end of a mid-call recovery', async () => {
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true }),
+    );
+    const tree = await renderShell();
+
+    expect(announce).not.toHaveBeenCalledWith('Connection lost, reconnecting');
+
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({ callPhase: CALL_STATES.IN_CALL, isInCall: true, isReconnecting: true }),
+    );
+    await act(async () => {
+      tree.update(
+        <SafeAreaProvider
+          initialMetrics={{
+            frame: { x: 0, y: 0, width: 320, height: 640 },
+            insets: { top: 0, left: 0, right: 0, bottom: 0 },
+          }}>
+          <CallProvider>
+            <ChatProvider>
+              <CallProbe />
+              <AppShell />
+            </ChatProvider>
+          </CallProvider>
+        </SafeAreaProvider>,
+      );
+    });
+
+    expect(announce).toHaveBeenCalledWith('Connection lost, reconnecting');
+  });
+
+  test('never announces a recovery outside a call, where "Reconnected" would be a lie', async () => {
+    useCallFlowMock.mockReturnValue(makeCallFlow({ isReconnecting: true }));
+    await renderShell();
+
+    expect(announce).not.toHaveBeenCalledWith('Connection lost, reconnecting');
+    expect(announce).not.toHaveBeenCalledWith('Reconnected');
+  });
+
+  test('states the startup degradation as a persistent condition, not a blocking failure', async () => {
+    getDegradationsMock.mockReturnValue([
+      { source: 'backgroundPush', message: 'Background push handler unavailable' },
+    ]);
+    useCallFlowMock.mockReturnValue(makeCallFlow());
+    const tree = await renderShell();
+
+    const texts = tree.root
+      .findAll((node: any) => typeof node.type === 'string')
+      .flatMap((node: any) =>
+        (Array.isArray(node.props?.children) ? node.props.children : [node.props?.children]).filter(
+          (child: unknown) => typeof child === 'string',
+        ),
+      );
+    expect(texts).toContain(
+      'Calling may not work reliably: Background push handler unavailable',
+    );
+  });
+
   test('offers a recovery action for startup degradations', async () => {
     const openSettings = jest
       .spyOn(Linking, 'openSettings')

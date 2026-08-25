@@ -140,6 +140,7 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   messageFailed: { icon: 'alert-circle-outline', emoji: '⚠️' },
   offline: { icon: 'wifi-off', emoji: '⚠️' },
   reconnecting: { icon: 'sync', emoji: '⟳' },
+  info: { icon: 'information-outline', emoji: 'ℹ️' },
 
   // ── Empty states ─────────────────────────────────────────────────────────
   emptyChats: { icon: 'chat-plus-outline', emoji: '💬' },

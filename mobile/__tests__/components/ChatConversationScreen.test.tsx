@@ -2,6 +2,12 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
+import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
+
+jest.mock('../../src/accessibilityAnnouncer', () => ({
+  ...jest.requireActual('../../src/accessibilityAnnouncer'),
+  announceForAccessibility: jest.fn(),
+}));
 
 jest.mock(
   '../../src/components/IconButton',
@@ -1438,5 +1444,93 @@ describe('ChatConversationScreen attachments', () => {
 
     expect(findAllByTestId(tree, 'chat-attachment-download')).toHaveLength(0);
     expect(findByTestId(tree, 'chat-attachment-uploading')).not.toBeNull();
+  });
+
+  describe('delivery announcements', () => {
+    const announce = announceForAccessibility as jest.Mock;
+
+    beforeEach(() => {
+      announce.mockClear();
+    });
+
+    function baseProps(overrides: any = {}) {
+      return {
+        peerId: 'user-bob',
+        onSendMessage: jest.fn(),
+        onBack: jest.fn(),
+        currentUserId: 'user-alice',
+        ...overrides,
+      };
+    }
+
+    test('says nothing when a page of already-sent history loads', () => {
+      render(
+        baseProps({
+          messages: [makeMessage({ senderId: 'user-alice', deliveredTo: ['user-bob'] })],
+        }),
+      );
+
+      expect(announce).not.toHaveBeenCalledWith('Message sent');
+    });
+
+    test('announces a send that completes while the conversation is open', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...pending, pending: false }] })}
+          />,
+        );
+      });
+
+      expect(announce).toHaveBeenCalledWith('Message sent');
+    });
+
+    test('announces a failure, which is the outcome the user must act on', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...pending, pending: false, failed: true }] })}
+          />,
+        );
+      });
+
+      expect(announce).toHaveBeenCalledWith('Message failed to send');
+    });
+
+    test("never announces the peer's messages", () => {
+      const peerMessage = makeMessage({ senderId: 'user-bob', pending: true });
+      const tree = render(baseProps({ messages: [peerMessage] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...peerMessage, pending: false }] })}
+          />,
+        );
+      });
+
+      expect(announce).not.toHaveBeenCalledWith('Message sent');
+    });
+
+    test('does not repeat itself when the same state re-renders', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const sent = { ...pending, pending: false };
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(<ChatConversationScreen {...baseProps({ messages: [sent] })} />);
+      });
+      act(() => {
+        tree.update(<ChatConversationScreen {...baseProps({ messages: [{ ...sent }] })} />);
+      });
+
+      expect(announce.mock.calls.filter(([text]) => text === 'Message sent')).toHaveLength(1);
+    });
   });
 });
