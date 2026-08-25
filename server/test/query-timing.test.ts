@@ -23,11 +23,11 @@ import { createTelemetry } from '../src/telemetry.ts';
  */
 async function withSink(run: () => Promise<void>) {
   const records: any[] = [];
-  setQueryTimingSink((record) => records.push(record));
+  const release = setQueryTimingSink((record) => records.push(record));
   try {
     await run();
   } finally {
-    setQueryTimingSink(null);
+    release();
   }
   return records;
 }
@@ -149,7 +149,7 @@ test('timeQuery labels a blank operation as "other" and a missing target as null
 });
 
 test('a throwing sink never breaks the query it measures', async () => {
-  setQueryTimingSink(() => {
+  const release = setQueryTimingSink(() => {
     throw new Error('sink exploded');
   });
   try {
@@ -159,7 +159,28 @@ test('a throwing sink never breaks the query it measures', async () => {
     );
     assert.equal(result, 'value');
   } finally {
-    setQueryTimingSink(null);
+    release();
+  }
+});
+
+test('releasing a superseded sink leaves the current one installed', async () => {
+  const first: any[] = [];
+  const second: any[] = [];
+  const releaseFirst = setQueryTimingSink((record) => first.push(record));
+  const releaseSecond = setQueryTimingSink((record) => second.push(record));
+
+  try {
+    // A server torn down after another took the sink over must not blind it.
+    releaseFirst();
+    await timeQuery({ backend: 'pg', operation: 'select', kind: 'read' }, async () => undefined);
+    assert.equal(first.length, 0);
+    assert.equal(second.length, 1);
+
+    releaseSecond();
+    await timeQuery({ backend: 'pg', operation: 'select', kind: 'read' }, async () => undefined);
+    assert.equal(second.length, 1);
+  } finally {
+    releaseSecond();
   }
 });
 
@@ -288,6 +309,34 @@ test('the per-operation breakdown is bounded, folding overflow into "other"', ()
   const rows = telemetry.getSnapshot().dbQueries;
   assert.ok(rows.length <= 101, `unexpected row count ${rows.length}`);
   assert.ok(rows.some((row) => row.operation === 'other'));
+});
+
+test('the overflow row never mixes read cost with write cost', () => {
+  const telemetry = createTelemetry();
+  // Fill the map, then push both a read and a write past the cap.
+  for (let i = 0; i < 100; i++) {
+    telemetry.recordDbQuery(record({ operation: `op_${i}` }));
+  }
+  telemetry.recordDbQuery(record({ operation: 'overflow_read', kind: 'read', durationMs: 7 }));
+  telemetry.recordDbQuery(record({ operation: 'overflow_write', kind: 'write', durationMs: 9 }));
+
+  const overflow = telemetry
+    .getSnapshot()
+    .dbQueries.filter((row) => row.operation === 'other');
+  assert.equal(overflow.length, 2);
+  assert.equal(overflow.find((row) => row.kind === 'read')?.totalMs, 7);
+  assert.equal(overflow.find((row) => row.kind === 'write')?.totalMs, 9);
+});
+
+test('the same operation is tracked separately per kind', () => {
+  const telemetry = createTelemetry();
+  telemetry.recordDbQuery(record({ backend: 'pg', operation: 'with', kind: 'read', durationMs: 4 }));
+  telemetry.recordDbQuery(record({ backend: 'pg', operation: 'with', kind: 'write', durationMs: 6 }));
+
+  const rows = telemetry.getSnapshot().dbQueries;
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.kind === 'read')?.totalMs, 4);
+  assert.equal(rows.find((row) => row.kind === 'write')?.totalMs, 6);
 });
 
 test('a non-finite duration is ignored rather than corrupting the totals', () => {

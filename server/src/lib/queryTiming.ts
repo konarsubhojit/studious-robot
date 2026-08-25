@@ -66,16 +66,28 @@ let sink: QueryTimingSink = noopSink;
 
 /**
  * Install the sink that receives every timing record.  Called by
- * `createServer()` with a telemetry-backed reporter, and with `null` on
- * shutdown so a torn-down instance stops accumulating.
+ * `createServer()` with a telemetry-backed reporter.
+ *
+ * @returns a disposer that uninstalls *this* sink, and only this sink: a
+ *   process can hold several servers (the test suite builds dozens), and
+ *   tearing one down must not silently stop the timings of the ones still
+ *   running — which a blind reset to the no-op sink would do.
  */
-function setQueryTimingSink(next: QueryTimingSink | null): void {
-  sink = next ?? noopSink;
+function setQueryTimingSink(next: QueryTimingSink | null): () => void {
+  const installed = next ?? noopSink;
+  sink = installed;
+  return () => {
+    if (sink === installed) sink = noopSink;
+  };
 }
 
 /**
  * @returns whether query timing is enabled (default on; set
  *   `DB_QUERY_TIMING=false` to make every wrapper a pass-through).
+ *
+ * Deliberately read per query rather than cached at module load: the cost is a
+ * property read plus a short string compare, and reading it live means an
+ * operator (or a test) can flip the flag without restarting the process.
  */
 function isQueryTimingEnabled(): boolean {
   const flag = process.env.DB_QUERY_TIMING?.trim().toLowerCase();
@@ -84,6 +96,9 @@ function isQueryTimingEnabled(): boolean {
 
 /**
  * @returns the slow-query threshold in ms for `backend`.
+ *
+ * Read live for the same reason as {@link isQueryTimingEnabled}: a threshold
+ * that can only be changed by a restart is a threshold nobody tunes.
  */
 function slowQueryThresholdMs(backend: QueryBackend): number {
   const raw =
@@ -127,13 +142,16 @@ function report(record: QueryTimingRecord): void {
     // A broken sink must never fail the query it was measuring.
   }
 
-  const detail =
-    `backend=${record.backend} op=${record.operation} kind=${record.kind}` +
-    ` target=${record.target ?? 'unknown'} durationMs=${record.durationMs.toFixed(1)}` +
-    `${record.ok ? '' : ` error=${record.errorCode}`}`;
-
   if (record.slow || !record.ok) {
-    console.warn(`[db-timing] SLOW ${detail}`);
+    const detail =
+      `backend=${record.backend} op=${record.operation} kind=${record.kind}` +
+      ` target=${record.target ?? 'unknown'} durationMs=${record.durationMs.toFixed(1)}` +
+      `${record.ok ? '' : ` error=${record.errorCode}`}`;
+    // A fast query that threw is a failure, not a slow query: labelling both
+    // `SLOW` would bury the actual latency evidence under failed queries when
+    // someone greps for it during an incident.
+    const label = record.slow ? (record.ok ? 'SLOW' : 'SLOW+FAILED') : 'FAILED';
+    console.warn(`[db-timing] ${label} ${detail}`);
     return;
   }
   verboseLog('db-timing', 'query', {
@@ -204,6 +222,10 @@ const SQL_READ_VERBS = new Set(['select', 'with', 'show', 'explain']);
  *
  * Deliberately text-only and parameter-free: the statement's *shape* is all
  * that is recorded, never a bound value.
+ *
+ * An unrecognised statement is classified as a write: over-reporting mutation
+ * cost is the safe error, since a write miscounted as a read would understate
+ * exactly the number this instrumentation exists to surface.
  */
 function describeSqlStatement(sql: unknown): { operation: string; kind: QueryKind; target: string | null; } {
   if (typeof sql !== 'string' || !sql.trim()) {

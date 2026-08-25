@@ -148,10 +148,11 @@ function createServer(opts: CreateServerOptions = {}) {
 
   // Route every timed datastore round trip (`lib/queryTiming.ts`) into this
   // instance's telemetry, so `GET /metrics` reports query cost per operation.
-  // The sink is global because the instrumented modules (`db/client.ts`,
-  // `messageStore.ts`, `cache.ts`) are constructed without a `state` handle;
-  // the last server built owns it, and `shutdown()` clears it.
-  setQueryTimingSink((record) => telemetry.recordDbQuery(record));
+  // The sink is process-global because the instrumented modules
+  // (`db/client.ts`, `messageStore.ts`, `cache.ts`) are constructed without a
+  // `state` handle; the last server built owns it, and `shutdown()` releases
+  // only its own so tearing one instance down cannot blind the others.
+  const releaseQueryTimingSink = setQueryTimingSink((record) => telemetry.recordDbQuery(record));
 
   // ── Persistence stores ───────────────────────────────────────────────────
   // Keyed runtime collections (rooms, sessions, calls, …) are obtained from a
@@ -406,8 +407,9 @@ function createServer(opts: CreateServerOptions = {}) {
         await cache.close();
       }
 
-      // Stop feeding query timings into a torn-down instance's telemetry.
-      setQueryTimingSink(null);
+      // Stop feeding query timings into a torn-down instance's telemetry
+      // (a no-op when another server has since taken the sink over).
+      releaseQueryTimingSink();
     })();
 
     return shutdownPromise;

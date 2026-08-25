@@ -245,8 +245,15 @@ export async function writeLogsFile(content: string): Promise<{ success: boolean
 }
 
 
-/** How long the export waits for the server's metrics snapshot. */
-const QUERY_TIMINGS_TIMEOUT_MS = 5000;
+/**
+ * How long the export waits for the server's metrics snapshot.
+ *
+ * Kept short on purpose: the export is used precisely when something is
+ * broken, which is when the signaling server is most likely unreachable, and
+ * the user is staring at an unchanged screen for the whole timeout.  Better a
+ * log file that says "metrics unavailable" quickly than one that arrives late.
+ */
+const QUERY_TIMINGS_TIMEOUT_MS = 2500;
 
 /** Per-operation rows kept in the export, slowest first. */
 const MAX_EXPORTED_QUERY_ROWS = 25;
@@ -366,6 +373,9 @@ export async function exportDiagnosticLogs(context: {
     // The server keeps the SQL/Mongo/Redis query timings in-process, so the
     // export pulls them in: the written file is then the single artefact that
     // answers "which query is slow?" without shell access to the server.
+    // This deliberately blocks the export for up to
+    // `QUERY_TIMINGS_TIMEOUT_MS`; it never rejects, so the file is always
+    // written, with or without the timings.
     const queryTimings = await fetchServerQueryTimings(signalingUrl);
     const result = await writeLogsFile(
       `${header}\n${await getLogsForExport()}\n${queryTimings}\n`,

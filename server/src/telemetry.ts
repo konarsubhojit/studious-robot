@@ -76,11 +76,19 @@ const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infin
 const QUERY_LATENCY_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, Infinity];
 
 /**
- * Upper bound on distinct `backend:operation` keys tracked.  Every key beyond
- * it is folded into an `other` bucket so a pathological label set can never
- * grow the snapshot without limit.
+ * Upper bound on distinct `backend:kind:operation` keys tracked.  Every key
+ * beyond it is folded into an `other` bucket (per backend *and* kind, so the
+ * overflow row never averages reads together with writes) — a pathological
+ * label set can then never grow the snapshot without limit.
  */
 const MAX_TRACKED_QUERY_OPERATIONS = 100;
+
+/**
+ * Running totals for one `backend:kind:operation`.  Separate from the wire
+ * type: `meanMs` is derived at snapshot time, so keeping a field for it here
+ * would only ever hold a stale zero.
+ */
+type QueryOperationTotals = Omit<QueryOperationSnapshot, 'meanMs'>;
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -169,10 +177,11 @@ function createTelemetry(): Telemetry {
   };
 
   /**
-   * `backend:operation` → running totals, so `/metrics` can answer "which
-   * operation costs the most time" without keeping per-query rows.
+   * `backend:kind:operation` → running totals, so `/metrics` can answer "which
+   * operation costs the most time" without keeping per-query rows.  `kind` is
+   * part of the key so a row can never mix read and write cost.
    */
-  const queryOperations: Map<string, QueryOperationSnapshot> = new Map();
+  const queryOperations: Map<string, QueryOperationTotals> = new Map();
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, { createdMs: number; ringingMs: number | null; acceptedMs: number | null; inCallMs: number | null; endedMs: number | null; }> = new Map();
@@ -318,25 +327,25 @@ function createTelemetry(): Telemetry {
           : histograms.redis_query_duration_ms;
     if (histogram) observeHistogram(histogram, record.durationMs);
 
-    const preferredKey = `${record.backend}:${record.operation}`;
-    // Fold anything past the cap into a single overflow row rather than
-    // growing the map without bound.
+    const preferredKey = `${record.backend}:${record.kind}:${record.operation}`;
+    // Fold anything past the cap into a per-backend, per-kind overflow row
+    // rather than growing the map without bound.  `kind` stays part of the key
+    // so the overflow row can never average read cost together with write cost.
     const key =
       queryOperations.has(preferredKey) || queryOperations.size < MAX_TRACKED_QUERY_OPERATIONS
         ? preferredKey
-        : `${record.backend}:other`;
+        : `${record.backend}:${record.kind}:other`;
 
     let entry = queryOperations.get(key);
     if (!entry) {
       entry = {
         backend: record.backend,
-        operation: key.slice(record.backend.length + 1),
+        operation: key === preferredKey ? record.operation : 'other',
         kind: record.kind,
         count: 0,
         errors: 0,
         slow: 0,
         totalMs: 0,
-        meanMs: 0,
         maxMs: 0,
       };
       queryOperations.set(key, entry);

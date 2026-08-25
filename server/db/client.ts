@@ -19,6 +19,9 @@ import { describeSqlStatement, sqlTextOf, timeQuery } from '../src/lib/queryTimi
 /** Maximum app-side pool size; keep small since Neon pools server-side too. */
 const DEFAULT_POOL_MAX = 10;
 
+/** Marks an already-wrapped pool/client, see {@link instrumentQuery}. */
+const INSTRUMENTED = Symbol('queryTimingInstrumented');
+
 /**
  * Wrap a `query` method so every statement it runs is timed.
  *
@@ -31,8 +34,6 @@ const DEFAULT_POOL_MAX = 10;
  * promise form is used in this codebase, so a callback call is passed straight
  * through untimed rather than being wrapped incorrectly.
  */
-const INSTRUMENTED = Symbol('queryTimingInstrumented');
-
 function instrumentQuery<T extends { query: Function }>(target: T): T {
   // Pooled clients are checked out repeatedly; wrapping one twice would nest
   // the timers and double-count every statement it runs.

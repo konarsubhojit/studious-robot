@@ -497,7 +497,6 @@ async function createIndexOrWarn(messages: any, spec: object, options?: object):
   }
 }
 
-
 /**
  * Which store methods read and which mutate, used to label their timings so
  * `/metrics` can separate read cost from write cost.
