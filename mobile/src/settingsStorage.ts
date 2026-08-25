@@ -293,3 +293,83 @@ export async function saveCallMediaTypes(map: CallMediaTypeMap): Promise<boolean
 }
 
 export const CALL_MEDIA_FILE_PATH = CALL_MEDIA_FILE;
+
+// ─── Notification preferences ─────────────────────────────────────────────────
+// Kept in their own file rather than in `wetalk-settings.json`: the message-push
+// handler runs headless, before React (and therefore `useAppSettings`) exists,
+// so it needs to read these without booting the app's settings machinery.
+
+const NOTIFICATION_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-notifications.json`;
+
+/** Cap on remembered muted people, so the file cannot grow without limit. */
+const MAX_MUTED_PEERS = 500;
+
+export type NotificationPrefs = {
+  /** Master switch for chat-message notifications. */
+  messageNotificationsEnabled: boolean;
+  /** People whose message notifications are silenced, newest first. */
+  mutedPeers: string[];
+};
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  messageNotificationsEnabled: true,
+  mutedPeers: [],
+};
+
+/**
+ * Load the notification preferences.  An unreadable or corrupt file yields the
+ * defaults rather than throwing: failing open (notifications on) is the safe
+ * direction — silently swallowing every message would look like the app is
+ * broken.
+ */
+export async function loadNotificationPrefs(): Promise<NotificationPrefs> {
+  try {
+    const exists = await RNFS.exists(NOTIFICATION_FILE);
+    if (!exists) return { ...DEFAULT_NOTIFICATION_PREFS };
+    const content = await RNFS.readFile(NOTIFICATION_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_NOTIFICATION_PREFS };
+    const raw = (parsed as Partial<NotificationPrefs>);
+    const mutedPeers = Array.isArray(raw.mutedPeers)
+      ? raw.mutedPeers
+          .filter((peerId): peerId is string => typeof peerId === 'string' && peerId.length > 0)
+          .slice(0, MAX_MUTED_PEERS)
+      : [];
+    return {
+      messageNotificationsEnabled:
+        typeof raw.messageNotificationsEnabled === 'boolean'
+          ? raw.messageNotificationsEnabled
+          : DEFAULT_NOTIFICATION_PREFS.messageNotificationsEnabled,
+      mutedPeers,
+    };
+  } catch (error) {
+    logError('Failed to load notification preferences; using defaults', {
+      message: errorMessage(error),
+    });
+    return { ...DEFAULT_NOTIFICATION_PREFS };
+  }
+}
+
+/**
+ * Persist the notification preferences.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<boolean> {
+  try {
+    await RNFS.writeFile(
+      NOTIFICATION_FILE,
+      JSON.stringify({
+        messageNotificationsEnabled: Boolean(prefs.messageNotificationsEnabled),
+        mutedPeers: (prefs.mutedPeers ?? []).slice(0, MAX_MUTED_PEERS),
+      }),
+      'utf8',
+    );
+    return true;
+  } catch (error) {
+    logError('Failed to persist notification preferences', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const NOTIFICATION_FILE_PATH = NOTIFICATION_FILE;
