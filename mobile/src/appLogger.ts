@@ -1,3 +1,5 @@
+import { errorMessage } from './errors';
+
 const LOG_ENTRIES: string[] = [];
 let durableLogQueue: Promise<boolean | void> = Promise.resolve();
 
@@ -101,7 +103,7 @@ function toSafeValue(value: any, key?: string | undefined, seen: WeakSet<object>
     try {
       output[childKey] = toSafeValue(value[childKey], childKey, seen);
     } catch (err) {
-      const message = err instanceof Error ? err.message : '';
+      const message = errorMessage(err);
       output[childKey] = `[Unserializable: ${message || 'unknown'}]`;
     }
   });
@@ -121,8 +123,7 @@ function safeSerialize(metadata: unknown): string | undefined {
     return JSON.stringify(toSafeValue(metadata));
   } catch (err) {
     return JSON.stringify({
-      serializationError:
-        (err instanceof Error ? err.message : '') || 'Unknown serialization error',
+      serializationError: errorMessage(err) || 'Unknown serialization error',
     });
   }
 }

@@ -71,7 +71,11 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, bot
             key={tab.key}
             onPress={() => onChangeTab(tab.key)}
             accessibilityRole="button"
-            accessibilityLabel={tab.label}
+            accessibilityLabel={
+              tab.key === 'chats' && unreadCount > 0
+                ? `${tab.label}, ${unreadCount} unread`
+                : tab.label
+            }
             accessibilityState={{ selected: isActive }}
             testID={tab.testID}
             style={styles.tab}>
@@ -135,7 +139,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 4,
     },
     badgeText: {
-      color: '#fff',
+      color: colors.textOnAccent,
       fontSize: 10,
       fontWeight: '700',
     },

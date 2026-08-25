@@ -10,7 +10,42 @@ export type CallFlow = ReturnType<typeof useCall>['callFlow'];
 export type ChatSync = ReturnType<typeof useChatSync>;
 export type ShellRoute = ReturnType<typeof deriveShellRoute>;
 
-export type ChatContextValue = { chatPeerId: string | null; handleRouteChange: (route: ShellRoute) => void; peerPresence: ChatSync['peerPresence']; isLoadingConversations: boolean; isLoadingMessages: boolean; isRefreshingConversations: boolean; handleRefreshConversations: ChatSync['handleRefreshConversations']; handleLoadOlderMessages: ChatSync['handleLoadOlderMessages']; conversations: CallFlow['conversations']; messagesByPeer: CallFlow['messagesByPeer']; typingByPeer: CallFlow['typingByPeer']; unreadTotal: CallFlow['unreadTotal']; currentUserId: CallFlow['userId']; sendMessage: CallFlow['sendMessage']; retryMessage: CallFlow['retryMessage']; deleteMessage: CallFlow['deleteMessage']; reactToMessage: CallFlow['reactToMessage']; isChatOffline: CallFlow['isChatOffline']; markConversationRead: CallFlow['markConversationRead']; sendTypingIndicator: CallFlow['sendTypingIndicator']; searchUsers: CallFlow['searchUsers']; searchMessages: CallFlow['searchMessages']; isUserBlocked: CallFlow['isUserBlocked']; blockPeer: CallFlow['blockPeer']; unblockPeer: CallFlow['unblockPeer']; pickAndSendAttachment: CallFlow['pickAndSendAttachment']; startRecordingVoiceNote: CallFlow['startRecordingVoiceNote']; stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend']; cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote']; isUploadingAttachment: CallFlow['isUploadingAttachment']; attachmentUploadProgress: CallFlow['attachmentUploadProgress']; isRecordingVoiceNote: CallFlow['isRecordingVoiceNote']; attachmentsAvailable: CallFlow['attachmentsAvailable']; isVoiceNoteSupported: CallFlow['isVoiceNoteSupported']; };
+export type ChatContextValue = {
+  chatPeerId: string | null;
+  handleRouteChange: (route: ShellRoute) => void;
+  peerPresence: ChatSync['peerPresence'];
+  isLoadingConversations: boolean;
+  isLoadingMessages: boolean;
+  isRefreshingConversations: boolean;
+  handleRefreshConversations: ChatSync['handleRefreshConversations'];
+  handleLoadOlderMessages: ChatSync['handleLoadOlderMessages'];
+  conversations: CallFlow['conversations'];
+  messagesByPeer: CallFlow['messagesByPeer'];
+  typingByPeer: CallFlow['typingByPeer'];
+  unreadTotal: CallFlow['unreadTotal'];
+  currentUserId: CallFlow['userId'];
+  sendMessage: CallFlow['sendMessage'];
+  retryMessage: CallFlow['retryMessage'];
+  deleteMessage: CallFlow['deleteMessage'];
+  reactToMessage: CallFlow['reactToMessage'];
+  isChatOffline: CallFlow['isChatOffline'];
+  markConversationRead: CallFlow['markConversationRead'];
+  sendTypingIndicator: CallFlow['sendTypingIndicator'];
+  searchUsers: CallFlow['searchUsers'];
+  searchMessages: CallFlow['searchMessages'];
+  isUserBlocked: CallFlow['isUserBlocked'];
+  blockPeer: CallFlow['blockPeer'];
+  unblockPeer: CallFlow['unblockPeer'];
+  pickAndSendAttachment: CallFlow['pickAndSendAttachment'];
+  startRecordingVoiceNote: CallFlow['startRecordingVoiceNote'];
+  stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
+  cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote'];
+  isUploadingAttachment: CallFlow['isUploadingAttachment'];
+  attachmentUploadProgress: CallFlow['attachmentUploadProgress'];
+  isRecordingVoiceNote: CallFlow['isRecordingVoiceNote'];
+  attachmentsAvailable: CallFlow['attachmentsAvailable'];
+  isVoiceNoteSupported: CallFlow['isVoiceNoteSupported'];
+};
 
 const ChatContext = createContext((null as ChatContextValue | null));
 

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { MESSAGE_TYPES } from '../../../shared';
 import { isAttachmentUploadKnownUnavailable, uploadAttachment } from '../attachmentUpload';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
@@ -133,6 +133,11 @@ export default function useAttachments({
     await stopVoiceRecording().catch(() => {});
   }, []);
 
+  // Memoised for consistency with every other derived value here; the module
+  // load behind it is already cached, so this is about the hook's shape rather
+  // than about cost.
+  const isVoiceNoteSupported = useMemo(() => isVoiceRecorderAvailable(), []);
+
   return {
     pickAndSend,
     startRecordingVoiceNote,
@@ -142,6 +147,6 @@ export default function useAttachments({
     uploadProgress,
     isRecordingVoiceNote,
     attachmentsAvailable,
-    isVoiceNoteSupported: isVoiceRecorderAvailable(),
+    isVoiceNoteSupported,
   };
 }

@@ -1,15 +1,9 @@
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
 import { THEME_MODE_VALUES, THEME_MODES } from './theme';
+import { errorMessage } from './errors';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Merge persisted settings onto the defaults, keeping only known keys with the

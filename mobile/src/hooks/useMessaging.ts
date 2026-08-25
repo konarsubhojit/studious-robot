@@ -14,25 +14,57 @@ import type { AttachmentRecord, MessageRecord } from '../../../shared/signaling/
 import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
+import { errorMessage } from '../errors';
 
 /**
  * A chat message as persisted by the server, plus the client-only fields an
  * optimistic send carries until the server acknowledges it.
  */
-export type ChatMessage = Omit<MessageRecord, 'conversationId'> & { conversationId?: string | null; status?: string; peerId?: string; localId?: string; pending?: boolean; failed?: boolean; syncState?: 'pending' | 'synced' | 'failed'; deliveredTo?: string[]; readAt?: string | null; };
+export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
+  conversationId?: string | null;
+  status?: string;
+  peerId?: string;
+  localId?: string;
+  pending?: boolean;
+  failed?: boolean;
+  syncState?: 'pending' | 'synced' | 'failed';
+  deliveredTo?: string[];
+  readAt?: string | null;
+};
 
 /**
  * A message queued for (re)delivery, with the bookkeeping the outbox drain
  * needs: which peer it belongs to, how many sends have been attempted and why
  * the last one failed.
  */
-export type OutboxItem = { messageId: string; recipientId: string; conversationId?: string | null; body?: string; type?: string; attachment?: AttachmentRecord | null; replyTo?: string | null; createdAt?: string; attempts?: number; lastAttemptAt?: string | null; lastError?: string | null; };
+export type OutboxItem = {
+  messageId: string;
+  recipientId: string;
+  conversationId?: string | null;
+  body?: string;
+  type?: string;
+  attachment?: AttachmentRecord | null;
+  replyTo?: string | null;
+  createdAt?: string;
+  attempts?: number;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+};
 
 /**
  * Newest event of a conversation: either a message or a call, as merged by the
  * server (`lastActivity`).
  */
-export type CallActivity = { type: 'call'; callId: string; conversationId?: string; direction: 'incoming' | 'outgoing'; status: string; endReason?: string | null; durationSeconds?: number | null; createdAt: string; };
+export type CallActivity = {
+  type: 'call';
+  callId: string;
+  conversationId?: string;
+  direction: 'incoming' | 'outgoing';
+  status: string;
+  endReason?: string | null;
+  durationSeconds?: number | null;
+  createdAt: string;
+};
 
 export type ConversationActivity = ChatMessage | CallActivity;
 
@@ -40,7 +72,13 @@ export type ConversationActivity = ChatMessage | CallActivity;
  * One row of the chat list: the peer, the newest message and whether anything
  * in it is still unread.
  */
-export type ConversationSummary = { conversationId?: string; peerId: string; lastMessage?: ChatMessage | null; lastActivity?: ConversationActivity | null; unreadCount?: number; };
+export type ConversationSummary = {
+  conversationId?: string;
+  peerId: string;
+  lastMessage?: ChatMessage | null;
+  lastActivity?: ConversationActivity | null;
+  unreadCount?: number;
+};
 
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
@@ -52,13 +90,6 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Identity of a timeline entry: a message id, or a call id for the call

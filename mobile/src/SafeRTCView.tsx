@@ -29,7 +29,11 @@ import type { StyleProp, ViewStyle } from 'react-native';
  *
  * @extends {React.Component<SafeRTCViewProps, SafeRTCViewState>}
  */
-export type SafeRTCViewProps = Omit<RTCVideoViewProps, 'streamURL'> & { streamURL?: string | null; fallbackLabel?: string; style?: StyleProp<ViewStyle>; };
+export type SafeRTCViewProps = Omit<RTCVideoViewProps, 'streamURL'> & {
+  streamURL?: string | null;
+  fallbackLabel?: string;
+  style?: StyleProp<ViewStyle>;
+};
 export type SafeRTCViewState = { hasError: boolean; };
 export default class SafeRTCView extends React.Component<SafeRTCViewProps, SafeRTCViewState> {
   /** @param props */

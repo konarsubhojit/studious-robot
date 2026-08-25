@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logError, logInfo, logWarn } from '../appLogger';
 import type { CallStatus } from '../components/StatusBanner';
+import { errorMessage } from '../errors';
 import {
   isScreenShareSupported,
   SCREEN_SHARE_CANCELLED,
@@ -89,7 +90,7 @@ export default function useScreenShare({
           pc.removeTrack?.(audioSender);
         } catch (error) {
           logWarn('Failed to remove screen audio sender', {
-            message: error instanceof Error ? error.message : undefined,
+            message: errorMessage(error),
           });
         }
       }
@@ -105,7 +106,7 @@ export default function useScreenShare({
           }
         } catch (error) {
           logWarn('Failed to restore camera track after screen share', {
-            message: error instanceof Error ? error.message : undefined,
+            message: errorMessage(error),
           });
         }
       }
@@ -131,7 +132,7 @@ export default function useScreenShare({
           await renegotiateRef.current?.();
         } catch (error) {
           logWarn('Renegotiation after screen share stop failed', {
-            message: error instanceof Error ? error.message : undefined,
+            message: errorMessage(error),
           });
         }
         setStatus('Screen sharing stopped');
@@ -237,7 +238,7 @@ export default function useScreenShare({
         });
       } catch (error) {
         logWarn('Renegotiation after screen share start failed', {
-          message: error instanceof Error ? error.message : undefined,
+          message: errorMessage(error),
         });
       }
 
@@ -317,7 +318,7 @@ export default function useScreenShare({
   const resetScreenShare = useCallback(() => {
     stopScreenShare({ silent: true }).catch(error => {
       logWarn('Silent screen share stop failed', {
-        message: error instanceof Error ? error.message : undefined,
+        message: errorMessage(error),
       });
     });
   }, [stopScreenShare]);

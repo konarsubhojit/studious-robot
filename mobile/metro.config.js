@@ -13,6 +13,25 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
  */
 const config = {
   watchFolders: [path.resolve(__dirname, '..', 'shared')],
+  transformer: {
+    /**
+     * Defer `require` calls to first use instead of running every module's
+     * top-level body during startup.
+     *
+     * This app is a good fit for it: a large number of modules are thin wrappers
+     * around optional native libraries (CallKeep, Firebase messaging, the
+     * document picker, the voice recorder, `react-native-video`) that most
+     * launches never touch, and they are imported at module scope so that their
+     * absence degrades gracefully. Without inlining, every one of them is
+     * evaluated before the first frame is drawn.
+     */
+    getTransformOptions: async () => ({
+      transform: {
+        experimentalImportSupport: false,
+        inlineRequires: true,
+      },
+    }),
+  },
   resolver: {
     // Modules required from `shared/` (e.g. Babel runtime helpers) resolve
     // against this app's node_modules, which is not an ancestor of that folder.

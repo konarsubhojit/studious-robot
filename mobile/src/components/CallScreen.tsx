@@ -150,6 +150,9 @@ export default function CallScreen({
     <Pressable
       style={[styles.callScreen, isCompact && styles.callScreenCompact]}
       onPress={() => setShowControlsOverlay(prev => !prev)}
+      accessibilityRole="button"
+      accessibilityLabel={showControlsOverlay ? 'Hide call controls' : 'Show call controls'}
+      accessibilityHint="Toggles the in-call control overlay"
       testID="call-screen-root">
       <CallStage
         onLayout={onStageLayout}

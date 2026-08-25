@@ -1,3 +1,5 @@
+import type { IceCandidatePairSummary } from './diagnostics';
+
 export function clamp(value: number, min: number, max: number): number {
   'worklet';
   return Math.min(Math.max(value, min), max);
@@ -91,4 +93,128 @@ export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { 
   }
 
   return { bars: 3, label: 'Strong' };
+}
+
+/**
+ * Which side of a candidate pair is relaying the media.
+ *
+ * Split out of the summary below so the four-way outcome reads as a table
+ * rather than as nested ternaries.
+ */
+function resolveRelaySide(
+  localRelay: boolean,
+  remoteRelay: boolean,
+): IceCandidatePairSummary['relaySide'] {
+  if (localRelay && remoteRelay) return 'both';
+  if (localRelay) return 'local';
+  if (remoteRelay) return 'remote';
+  return undefined;
+}
+
+/** The first of `values` that is a string, or `'unknown'`. */
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string') return value;
+  }
+  return 'unknown';
+}
+
+/**
+ * Describe the candidate pair WebRTC settled on, for diagnostics and TURN
+ * usage reporting.
+ *
+ * A relay on *either* side means the media traverses TURN: judging the pair by
+ * the local candidate alone reported a srflx→relay pair as a direct call.
+ * Which side relays is recorded too, since that is the side paying the relay
+ * bandwidth.
+ *
+ * `lookup` resolves a stats id to its report entry; pass a function that
+ * returns `undefined` when the stats report cannot be indexed.
+ *
+ * @param candidatePair the succeeded `candidate-pair` stat
+ * @param lookup resolves the pair's local/remote candidate ids
+ */
+export function summarizeCandidatePair(
+  candidatePair: any,
+  lookup: (id: unknown) => any,
+): IceCandidatePairSummary {
+  const localCandidate = lookup(candidatePair?.localCandidateId);
+  const remoteCandidate = lookup(candidatePair?.remoteCandidateId);
+  const local = firstString(localCandidate?.candidateType);
+  const remote = firstString(remoteCandidate?.candidateType);
+  const protocol = firstString(
+    localCandidate?.protocol,
+    remoteCandidate?.protocol,
+    candidatePair?.protocol,
+  );
+  const relayProtocol =
+    typeof localCandidate?.relayProtocol === 'string' ? localCandidate.relayProtocol : undefined;
+  const localRelay = local === 'relay';
+  const remoteRelay = remote === 'relay';
+  const relaySide = resolveRelaySide(localRelay, remoteRelay);
+
+  return {
+    local,
+    remote,
+    protocol,
+    ...(relayProtocol ? { relayProtocol } : {}),
+    usingTurn: localRelay || remoteRelay,
+    ...(relaySide ? { relaySide } : {}),
+  };
+}
+
+/** The parts of a WebRTC stats report the call UI actually consumes. */
+export type CallStatsSample = {
+  /** Round-trip time (ms) of the succeeded candidate pair, when reported. */
+  rttMs?: number;
+  totalPacketsLost: number;
+  totalPacketsReceived: number;
+  totalBytesReceived: number;
+  /** The succeeded candidate pair, preferring a nominated/selected one. */
+  candidatePair: any | null;
+};
+
+/**
+ * Reduce a WebRTC stats report to the handful of numbers the call UI grades.
+ *
+ * Only inbound video is counted: audio is far more resilient, so folding it in
+ * flatters a call whose video has already fallen apart.
+ *
+ * @param report the result of `RTCPeerConnection.getStats()`
+ */
+export function collectCallStats(report: { forEach: (fn: (stat: any) => void) => void; }): CallStatsSample {
+  const sample: CallStatsSample = {
+    totalPacketsLost: 0,
+    totalPacketsReceived: 0,
+    totalBytesReceived: 0,
+    candidatePair: null,
+  };
+
+  report.forEach((stat: any) => {
+    if (!stat || typeof stat !== 'object') return;
+
+    if (
+      stat.type === 'candidate-pair' &&
+      stat.state === 'succeeded' &&
+      // A nominated or selected pair supersedes any earlier succeeded one.
+      (!sample.candidatePair || stat.nominated || stat.selected)
+    ) {
+      sample.candidatePair = stat;
+      if (typeof stat.currentRoundTripTime === 'number') {
+        sample.rttMs = stat.currentRoundTripTime * 1000;
+      }
+    }
+
+    if (
+      stat.type === 'inbound-rtp' &&
+      !stat.isRemote &&
+      (stat.kind === 'video' || stat.mediaType === 'video')
+    ) {
+      sample.totalPacketsLost += Number(stat.packetsLost || 0);
+      sample.totalPacketsReceived += Number(stat.packetsReceived || 0);
+      sample.totalBytesReceived += Number(stat.bytesReceived || 0);
+    }
+  });
+
+  return sample;
 }

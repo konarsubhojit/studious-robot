@@ -5,6 +5,7 @@ import {
   showIncomingCallNotification,
 } from './incomingCallNotification';
 import { startIncomingRingtone, stopIncomingRingtone } from './ringtone';
+import { errorMessage } from './errors';
 
 /**
  * System-level incoming-call UI for the WeTalk mobile app.
@@ -58,18 +59,29 @@ const CALLKEEP_SETUP_OPTIONS = {
 };
 
 /**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
-
-/**
  * The subset of the optional `react-native-callkeep` surface this module uses.
  * Every member is optional because the package (and the test doubles) may only
  * implement part of it, which the call sites already probe for.
  */
-export type CallKeep = { setup?: (options: object) => Promise<unknown>; setAvailable?: (available: boolean) => void; hasPhoneAccount?: () => Promise<boolean>; checkPhoneAccountEnabled?: () => Promise<boolean>; displayIncomingCall?: (callId: string, handle: string, name?: string, handleType?: string, hasVideo?: boolean) => void; setCurrentCallActive?: (callId: string) => void; backToForeground?: () => void; endCall?: (callId: string) => void; endAllCalls?: () => void; addEventListener?: (event: string, handler: (payload: any) => void) => void; removeEventListener?: (event: string) => void; };
+export type CallKeep = {
+  setup?: (options: object) => Promise<unknown>;
+  setAvailable?: (available: boolean) => void;
+  hasPhoneAccount?: () => Promise<boolean>;
+  checkPhoneAccountEnabled?: () => Promise<boolean>;
+  displayIncomingCall?: (
+    callId: string,
+    handle: string,
+    name?: string,
+    handleType?: string,
+    hasVideo?: boolean
+  ) => void;
+  setCurrentCallActive?: (callId: string) => void;
+  backToForeground?: () => void;
+  endCall?: (callId: string) => void;
+  endAllCalls?: () => void;
+  addEventListener?: (event: string, handler: (payload: any) => void) => void;
+  removeEventListener?: (event: string) => void;
+};
 
 /**
  * Cached result of the optional native CallKeep module lookup.
@@ -462,8 +474,8 @@ export function endAllCalls() {
  * tests); ordinary consumers should use `setCallActionHandlers` instead of
  * calling this more than once.
  *
- * @returns unsubscribe function, tagged
- *   with whether the native listener was registered
+ * @returns unsubscribe function, tagged with whether the native listener was
+ *   registered.
  */
 export function registerCallActionListeners(): (() => void) & { registered: boolean; } {
   const callKeep = loadCallKeep();
@@ -548,8 +560,8 @@ export function registerCallActionListeners(): (() => void) & { registered: bool
  *
  * No-ops (returning a no-op unsubscribe) when CallKeep is unavailable.
  *
- * @returns unsubscribe function, tagged
- *   with whether the native listener was registered
+ * @returns unsubscribe function, tagged with whether the native listener was
+ *   registered.
  */
 export function registerShowIncomingCallUiListener(): (() => void) & { registered: boolean; } {
   const callKeep = loadCallKeep();
@@ -605,9 +617,9 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
  * synchronously to `onAnswer` here rather than lost.
  *
  * @param handlers
- * @returns detach function; only clears this call's handlers if
- *   they are still the active ones (a later `setCallActionHandlers` call
- *   already having taken over is left untouched).
+ * @returns detach function; only clears this call's handlers if they are still
+ *   the active ones (a later `setCallActionHandlers` call already having taken
+ *   over is left untouched).
  */
 export function setCallActionHandlers({ onAnswer, onEnd }: {
     onAnswer?: (callId: string) => void;

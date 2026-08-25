@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
+import { errorMessage } from '../errors';
 
 /**
  * Locally persisted recent search terms, so re-opening search offers what the
@@ -16,13 +17,6 @@ const RECENT_SEARCHES_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-recent-search
 export const MAX_RECENT_SEARCHES = 8;
 
 let cache: string[] | null = null;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Coerce a parsed file into a list of usable terms, dropping anything

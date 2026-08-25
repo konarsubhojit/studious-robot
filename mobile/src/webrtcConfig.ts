@@ -1,5 +1,6 @@
 import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 import type { RTCPeerConnection } from 'react-native-webrtc';
+import { describeError } from './errors';
 
 const GOOGLE_STUN_URL = 'stun:stun.l.google.com:19302';
 
@@ -265,7 +266,7 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
         });
       } catch (error) {
         throw new IceFetchError(
-          `TURN credentials request could not be sent: ${error instanceof Error ? error.message : String(error)}`,
+          `TURN credentials request could not be sent: ${describeError(error)}`,
           'transport-error',
         );
       }
@@ -281,7 +282,7 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
         iceServers = await response.json();
       } catch (error) {
         throw new IceFetchError(
-          `TURN credentials response could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
+          `TURN credentials response could not be parsed: ${describeError(error)}`,
           'malformed-response',
         );
       }
@@ -313,7 +314,7 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
     const status = error instanceof IceFetchError ? error.status : undefined;
     // The message, never the error object: a serialized error can carry the
     // request it was thrown from, and that request carries the session token.
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     if (cachedServerIceServers && cachedServerIceServersExpiresAt > now) {
       return reportIceServers(cachedServerIceServers, 'stale-cache', {
         host,

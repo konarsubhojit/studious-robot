@@ -33,13 +33,7 @@ import fs from 'fs';
 import http2 from 'http2';
 import https from 'https';
 import { createSign, createHmac } from 'crypto';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -283,7 +277,7 @@ function loadFcmConfig(): { projectId: string; clientEmail: string; privateKey: 
     try {
       json = fs.readFileSync(raw, 'utf8');
     } catch (error) {
-      console.warn(`[push] FCM service account file unreadable: ${errorMessage(error)}`);
+      console.warn(`[push] FCM service account file unreadable: ${describeError(error)}`);
       return null;
     }
   }
@@ -292,7 +286,7 @@ function loadFcmConfig(): { projectId: string; clientEmail: string; privateKey: 
   try {
     parsed = JSON.parse(json);
   } catch (error) {
-    console.warn(`[push] FCM service account JSON is invalid: ${errorMessage(error)}`);
+    console.warn(`[push] FCM service account JSON is invalid: ${describeError(error)}`);
     return null;
   }
 
@@ -448,7 +442,14 @@ const FCM_PRIORITY_HIGH = 'HIGH';
 /**
  * Transport-neutral description of a push notification.
  */
-export type PushEnvelope = { type: string; title: string; body: string; deepLink: string; data: Record<string, string>; ttlSeconds?: number; };
+export type PushEnvelope = {
+  type: string;
+  title: string;
+  body: string;
+  deepLink: string;
+  data: Record<string, string>;
+  ttlSeconds?: number;
+};
 
 /**
  * Derive the push time-to-live from the time left in the ring window.
@@ -970,9 +971,9 @@ async function withRetry(fn: () => Promise<{ ok: boolean; statusCode?: number; r
         `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} failed status=${result.statusCode}`
       );
     } catch (error) {
-      last = { ok: false, reason: errorMessage(error) };
+      last = { ok: false, reason: describeError(error) };
       console.error(
-        `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${errorMessage(error)}`
+        `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${describeError(error)}`
       );
     }
 

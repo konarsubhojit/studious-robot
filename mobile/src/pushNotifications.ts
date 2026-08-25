@@ -23,6 +23,7 @@ import {
 } from './messageNotification';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
+import { errorMessage } from './errors';
 
 /**
  * Push notification helpers for the WeTalk mobile app.
@@ -42,13 +43,6 @@ import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
  * has already retrieved via such a library, and it registers it with the
  * signaling server's POST /devices/register endpoint.
  */
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 // ─── Deep-link helpers ────────────────────────────────────────────────────────
 
@@ -286,7 +280,10 @@ export async function unregisterPushToken({ sessionId, signalingUrl }: { session
 // still builds and runs.  This mirrors the server's env-gated push delivery,
 // which simply skips when the APNs/FCM credentials are absent.
 
-export type MessagingHandle = { instance: FirebaseMessagingTypes.Module; api: typeof import('@react-native-firebase/messaging'); };
+export type MessagingHandle = {
+  instance: FirebaseMessagingTypes.Module;
+  api: typeof import('@react-native-firebase/messaging');
+};
 
 /**
  * Cached result of the optional native messaging module lookup.

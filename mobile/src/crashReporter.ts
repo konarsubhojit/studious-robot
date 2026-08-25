@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
+import { errorMessage } from './errors';
 
 /**
  * @returns `YYYYMMDD-HHMMSS`, safe for use in a file name.
@@ -32,7 +33,7 @@ export async function saveCrashLog(error: Error | unknown, isFatal: boolean, get
     `crashedAt: ${new Date().toISOString()}`,
     `isFatal: ${Boolean(isFatal)}`,
     `error.name: ${details?.name ?? 'unknown'}`,
-    `error.message: ${details?.message ?? String(error ?? 'unknown')}`,
+    `error.message: ${errorMessage(error) ?? String(error ?? 'unknown')}`,
     `error.stack:\n${details?.stack ?? 'unavailable'}`,
     '',
     '--- app logs at time of crash ---',

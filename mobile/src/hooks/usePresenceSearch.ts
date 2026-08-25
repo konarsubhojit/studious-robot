@@ -2,12 +2,26 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import type { PeerPresence } from '../types/directory';
+import { errorMessage } from '../errors';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
  * considered offline and an offline banner is shown.
  */
 const OFFLINE_ERROR_THRESHOLD = 3;
+
+/**
+ * Raised when a contact-directory lookup could not be completed.
+ *
+ * A distinct type keeps the UI honest: "we could not ask" has to render as a
+ * retryable error, whereas "we asked and there was nothing" is an empty state.
+ */
+export class DirectorySearchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DirectorySearchError';
+  }
+}
 
 /**
  * Owns presence lookups (`GET /presence/:userId`), the contact directory
@@ -78,7 +92,7 @@ export default function usePresenceSearch({
         return { status: data.status, online: Boolean(data.online) };
       } catch (error) {
         logWarn('[PresenceSearch] checkPresence failed', {
-          message: error instanceof Error ? error.message : undefined,
+          message: errorMessage(error),
         });
         return null;
       }
@@ -88,9 +102,17 @@ export default function usePresenceSearch({
 
   /**
    * Search the server's contact directory (`GET /users`) for known users whose
-   * userId matches `query` (case-insensitive substring).  Returns an array of
-   * `{ userId, status, online, lastSeen }` entries, or an empty array when the
-   * request fails or no session exists.  Never throws.
+   * userId matches `query` (case-insensitive substring).  Resolves to an array
+   * of `{ userId, status, online, lastSeen }` entries.
+   *
+   * Rejects with a {@link DirectorySearchError} when the lookup genuinely
+   * fails, so a caller can tell "the directory is unreachable" apart from "the
+   * directory holds no match".  Collapsing the two would render an unreachable
+   * server as a confident "no results", which is a lie the user cannot act on.
+   *
+   * An empty array — never a rejection — is returned for the two cases that
+   * are not failures: no session yet, and a request aborted by a newer
+   * keystroke, whose result the caller discards anyway.
    *
    * Pass a `signal` to cancel an in-flight request — the unified search screen
    * aborts the previous lookup on every keystroke.
@@ -115,17 +137,22 @@ export default function usePresenceSearch({
             options: signal ? { signal } : undefined,
           };
         });
-        if (!response?.ok) return [];
+        if (!response?.ok) {
+          throw new DirectorySearchError(
+            `Directory search failed with status ${response?.status ?? 'unknown'}`,
+          );
+        }
         const data = await response.json();
         return Array.isArray(data.users) ? data.users : [];
       } catch (error) {
         // An aborted request is the expected outcome of a newer keystroke.
-        if (!(error instanceof Error) || error.name !== 'AbortError') {
-          logWarn('[PresenceSearch] searchUsers failed', {
-            message: error instanceof Error ? error.message : undefined,
-          });
-        }
-        return [];
+        if (error instanceof Error && error.name === 'AbortError') return [];
+        logWarn('[PresenceSearch] searchUsers failed', {
+          message: errorMessage(error),
+        });
+        throw error instanceof DirectorySearchError
+          ? error
+          : new DirectorySearchError(errorMessage(error) ?? 'Directory search failed');
       }
     },
     [authedFetchRef, sessionIdRef, signalingUrl],

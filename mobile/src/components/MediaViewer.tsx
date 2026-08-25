@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Animated,
   Image,
   Modal,
-  PanResponder,
   Pressable,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import { logInfo, logVerbose, logWarn } from '../appLogger';
 import { isAudioSessionActive } from '../audioSessionState';
 import { useThemedStyles } from '../ThemeContext';
@@ -21,26 +26,32 @@ import type { ThemeColors } from '../theme';
 /** Zoom applied by a double tap, and the ceiling for a pinch. */
 const DOUBLE_TAP_SCALE = 2.5;
 const MAX_SCALE = 4;
-/** Two taps closer together than this (ms) count as a double tap. */
-const DOUBLE_TAP_MS = 280;
 /** Movement (dp) that turns a tap into a drag. */
 const DRAG_SLOP = 8;
 /** Fraction of the screen width a swipe must cover to change media item. */
 const PAGE_THRESHOLD = 0.25;
 /** Downward drag (dp) that dismisses the viewer. */
 const DISMISS_DY = 120;
+/** Spring used whenever the media snaps back to its resting transform. */
+const SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.5 };
 
 /**
  * What a completed drag on the media surface means.
  *
  * Kept as a pure function so the decision thresholds are testable without
- * synthesising `PanResponder` touch histories.
+ * synthesising a touch stream.
+ *
+ * Marked as a worklet because the pan gesture's `onEnd` — which the Reanimated
+ * Babel plugin compiles to run on the UI thread — calls it directly. Without
+ * the directive the function does not exist in the UI runtime and the call
+ * throws the moment a drag ends.
  *
  * @param gesture the completed drag, plus the current zoom and screen width.
  */
 export function resolveMediaGesture({ dx = 0, dy = 0, scale = 1, width = 0 }: {
         dx?: number; dy?: number; scale?: number; width?: number;
     }): 'tap' | 'pan' | 'next' | 'previous' | 'dismiss' | 'none' {
+  'worklet';
   if (Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return 'tap';
   // Zoomed in, the drag panned the media rather than the gallery.
   if (scale > 1) return 'pan';
@@ -63,9 +74,12 @@ export type MediaViewerItem = {
 /**
  * Fullscreen viewer for the images and videos of a conversation.
  *
- * Gestures are built on the core `PanResponder`/`Animated` APIs — the same
- * reasoning as `SwipeableRow`: no extra gesture dependency, and the behaviour
- * stays drivable from tests.
+ * Gestures run on react-native-gesture-handler + react-native-reanimated, so
+ * dragging, pinching and the double-tap zoom are all resolved on the UI thread
+ * and stay smooth while a large image is still decoding.  Pinch and pan are
+ * composed as simultaneous gestures, with the double tap racing them, which
+ * replaces the hand-rolled two-touch distance maths and tap-timestamp
+ * bookkeeping the `PanResponder` version needed.
  *
  * @param props
  */
@@ -80,15 +94,16 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
   const styles = useThemedStyles(createStyles);
   const { width } = useWindowDimensions();
   const [index, setIndex] = useState(initialIndex);
-  const [scale, setScale] = useState(1);
   const [failedKey, setFailedKey] = useState<string | null>(null);
 
-  const translateX = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
-  const scaleRef = useRef(1);
-  const panRef = useRef({ x: 0, y: 0 });
-  const pinchStartRef = useRef(0);
-  const lastTapRef = useRef(0);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const scale = useSharedValue(1);
+  // The transform the active gesture started from, so a pinch or a pan
+  // continues from where the previous one left the media.
+  const startX = useSharedValue(0);
+  const startY = useSharedValue(0);
+  const startScale = useSharedValue(1);
 
   useEffect(() => {
     if (!visible) return;
@@ -101,18 +116,16 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
   const item = items[index] ?? null;
 
   const resetTransform = useCallback(() => {
-    scaleRef.current = 1;
-    panRef.current = { x: 0, y: 0 };
-    setScale(1);
-    translateX.setValue(0);
-    translateY.setValue(0);
-  }, [translateX, translateY]);
+    translateX.value = 0;
+    translateY.value = 0;
+    scale.value = 1;
+  }, [scale, translateX, translateY]);
 
   const goTo = useCallback(
     (nextIndex: number) => {
       if (nextIndex < 0 || nextIndex >= items.length) {
         // Bounce back rather than leaving the item half-swiped off-screen.
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
+        translateX.value = withSpring(0, SETTLE_SPRING);
         return;
       }
       logVerbose('[Media] viewer moved to item', { index: nextIndex });
@@ -129,108 +142,98 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
   }, [onClose, resetTransform]);
 
   const toggleZoom = useCallback(() => {
-    const next = scaleRef.current > 1 ? 1 : DOUBLE_TAP_SCALE;
-    scaleRef.current = next;
-    setScale(next);
+    const next = scale.value > 1 ? 1 : DOUBLE_TAP_SCALE;
+    scale.value = withSpring(next, SETTLE_SPRING);
     if (next === 1) {
-      panRef.current = { x: 0, y: 0 };
-      translateX.setValue(0);
-      translateY.setValue(0);
+      translateX.value = withSpring(0, SETTLE_SPRING);
+      translateY.value = withSpring(0, SETTLE_SPRING);
     }
-  }, [translateX, translateY]);
+  }, [scale, translateX, translateY]);
 
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (event, gesture) =>
-          event.nativeEvent.touches?.length === 2 ||
-          Math.abs(gesture.dx) > DRAG_SLOP ||
-          Math.abs(gesture.dy) > DRAG_SLOP,
-        onPanResponderGrant: () => {
-          pinchStartRef.current = 0;
-        },
-        onPanResponderMove: (event, gesture) => {
-          const touches = event.nativeEvent.touches ?? [];
-          if (touches.length === 2) {
-            const [first, second] = touches;
-            const distance = Math.hypot(
-              (first.pageX ?? 0) - (second.pageX ?? 0),
-              (first.pageY ?? 0) - (second.pageY ?? 0),
-            );
-            if (!pinchStartRef.current) {
-              pinchStartRef.current = distance || 1;
-              return;
-            }
-            const next = Math.min(
-              MAX_SCALE,
-              Math.max(1, (scaleRef.current * distance) / pinchStartRef.current),
-            );
-            setScale(next);
-            return;
-          }
-          translateX.setValue(panRef.current.x + gesture.dx);
-          translateY.setValue(panRef.current.y + gesture.dy);
-        },
-        onPanResponderRelease: (event, gesture) => {
-          if (pinchStartRef.current) {
-            // A pinch just ended: keep the scale it settled at.
-            scaleRef.current = Math.min(MAX_SCALE, Math.max(1, scale));
-            pinchStartRef.current = 0;
-            return;
-          }
+  // A pinch and a drag can run together; a double tap races them so the zoom
+  // toggle is not swallowed by the pan's slop.
+  const mediaGesture = useMemo(() => {
+    const pinchGesture = Gesture.Pinch()
+      .onStart(() => {
+        startScale.value = scale.value;
+      })
+      .onUpdate(event => {
+        scale.value = Math.min(MAX_SCALE, Math.max(1, startScale.value * event.scale));
+      })
+      .onEnd(() => {
+        if (scale.value <= 1) {
+          // Fully zoomed out, so any pan offset would strand the media off-centre.
+          translateX.value = withSpring(0, SETTLE_SPRING);
+          translateY.value = withSpring(0, SETTLE_SPRING);
+        }
+      });
 
-          const outcome = resolveMediaGesture({
-            dx: gesture.dx,
-            dy: gesture.dy,
-            scale: scaleRef.current,
-            width,
-          });
+    const panGesture = Gesture.Pan()
+      .minDistance(DRAG_SLOP)
+      .onStart(() => {
+        startX.value = translateX.value;
+        startY.value = translateY.value;
+      })
+      .onUpdate(event => {
+        translateX.value = startX.value + event.translationX;
+        translateY.value = startY.value + event.translationY;
+      })
+      .onEnd(event => {
+        const outcome = resolveMediaGesture({
+          dx: event.translationX,
+          dy: event.translationY,
+          scale: scale.value,
+          width,
+        });
 
-          if (outcome === 'tap') {
-            const now = Date.now();
-            if (now - lastTapRef.current < DOUBLE_TAP_MS) {
-              lastTapRef.current = 0;
-              toggleZoom();
-            } else {
-              lastTapRef.current = now;
-            }
-            translateX.setValue(panRef.current.x);
-            translateY.setValue(panRef.current.y);
-            return;
-          }
+        // Zoomed in, the drag panned the media, so the new offset stands.
+        if (outcome === 'pan') return;
 
-          if (outcome === 'pan') {
-            panRef.current = {
-              x: panRef.current.x + gesture.dx,
-              y: panRef.current.y + gesture.dy,
-            };
-            return;
-          }
+        if (outcome === 'dismiss') {
+          runOnJS(handleClose)();
+          return;
+        }
+        if (outcome === 'next') {
+          runOnJS(goTo)(index + 1);
+          return;
+        }
+        if (outcome === 'previous') {
+          runOnJS(goTo)(index - 1);
+          return;
+        }
+        // Too small to mean anything: put the media back where it started.
+        translateX.value = withSpring(startX.value, SETTLE_SPRING);
+        translateY.value = withSpring(startY.value, SETTLE_SPRING);
+      });
 
-          if (outcome === 'dismiss') {
-            handleClose();
-            return;
-          }
+    const doubleTapGesture = Gesture.Tap()
+      .numberOfTaps(2)
+      .onEnd(() => {
+        runOnJS(toggleZoom)();
+      });
 
-          if (outcome === 'next') {
-            goTo(index + 1);
-            return;
-          }
-          if (outcome === 'previous') {
-            goTo(index - 1);
-            return;
-          }
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
-          Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
-        },
-        onPanResponderTerminate: () => {
-          translateX.setValue(panRef.current.x);
-          translateY.setValue(panRef.current.y);
-        },
-      }),
-    [goTo, handleClose, index, scale, toggleZoom, translateX, translateY, width],
-  );
+    return Gesture.Race(doubleTapGesture, Gesture.Simultaneous(pinchGesture, panGesture));
+  }, [
+    goTo,
+    handleClose,
+    index,
+    scale,
+    startScale,
+    startX,
+    startY,
+    toggleZoom,
+    translateX,
+    translateY,
+    width,
+  ]);
+
+  const animatedMediaStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
 
   useEffect(() => {
     if (visible && item) {
@@ -310,24 +313,21 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
             </Text>
           )
         ) : (
-          <Animated.View
-            style={[
-              styles.mediaWrapper,
-              { transform: [{ translateX }, { translateY }, { scale }] },
-            ]}
-            {...panResponder.panHandlers}>
-            <Image
-              source={{ uri: item.url }}
-              style={styles.media}
-              resizeMode="contain"
-              accessibilityLabel={item.name || 'Photo'}
-              onError={() => {
-                logWarn('[Media] image could not be loaded', { mimeType: item.mimeType });
-                setFailedKey(item.key);
-              }}
-              testID={`${testID}-image`}
-            />
-          </Animated.View>
+          <GestureDetector gesture={mediaGesture}>
+            <Animated.View style={[styles.mediaWrapper, animatedMediaStyle]}>
+              <Image
+                source={{ uri: item.url }}
+                style={styles.media}
+                resizeMode="contain"
+                accessibilityLabel={item.name || 'Photo'}
+                onError={() => {
+                  logWarn('[Media] image could not be loaded', { mimeType: item.mimeType });
+                  setFailedKey(item.key);
+                }}
+                testID={`${testID}-image`}
+              />
+            </Animated.View>
+          </GestureDetector>
         )}
 
         {items.length > 1 ? (

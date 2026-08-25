@@ -59,6 +59,7 @@ export default function CallControls({
           label={isMuted ? 'Unmute' : 'Mute'}
           onPress={onMuteToggle}
           variant={isMuted ? 'active' : 'default'}
+          selected={isMuted}
           disabled={!hasLocalStream}
           size={56}
           accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
@@ -69,6 +70,7 @@ export default function CallControls({
           label={isVideoEnabled ? 'Stop video' : 'Start video'}
           onPress={onVideoToggle}
           variant={isVideoEnabled ? 'default' : 'active'}
+          selected={!isVideoEnabled}
           disabled={!hasLocalStream || isScreenSharing}
           size={56}
           accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
@@ -97,6 +99,7 @@ export default function CallControls({
             icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
             onPress={onScreenShareToggle}
             variant={isScreenSharing ? 'active' : 'default'}
+            selected={isScreenSharing}
             disabled={!isScreenShareSupported}
             size={56}
             accessibilityLabel={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
@@ -107,6 +110,7 @@ export default function CallControls({
               icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
               onPress={onScreenAudioToggle}
               variant={isScreenAudioEnabled ? 'active' : 'default'}
+            selected={isScreenAudioEnabled}
               disabled={!isScreenShareSupported}
               size={56}
               accessibilityLabel={

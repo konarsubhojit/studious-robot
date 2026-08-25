@@ -5,6 +5,7 @@ import { getIdToken } from '../authService';
 import { loadDeviceId } from '../settingsStorage';
 import { API_ROUTES } from '../../../shared';
 import type { CallStatus } from '../components/StatusBanner';
+import { errorMessage } from '../errors';
 
 /**
  * Owns the server-side session lifecycle: creating/refreshing the
@@ -167,7 +168,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
       return data.sessionId;
     } catch (error) {
       logWarn('[Session] session refresh threw', {
-        message: error instanceof Error ? error.message : undefined,
+        message: errorMessage(error),
       });
       return null;
     }

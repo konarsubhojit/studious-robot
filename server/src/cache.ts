@@ -1,3 +1,5 @@
+import { describeError } from './lib/errors.ts';
+
 /**
  * Read-through cache for hot, repeatedly-issued queries.
  *
@@ -81,16 +83,19 @@ function callHistoryCachePrefix(userId: string): string {
   return `callhist::${userId}::`;
 }
 
-export type Cache = { type: 'memory' | 'redis'; get: (key: string) => Promise<any|undefined>; set: (key: string, value: unknown, ttlMs?: number) => Promise<void>; delByPrefix: (prefix: string) => Promise<void>; close: () => Promise<void>; };
+export type Cache = {
+  type: 'memory' | 'redis';
+  get: (key: string) => Promise<any | undefined>;
+  set: (key: string, value: unknown, ttlMs?: number) => Promise<void>;
+  delByPrefix: (prefix: string) => Promise<void>;
+  close: () => Promise<void>;
+};
 
-export type CacheableState = { cache?: Cache; telemetry?: import('./telemetry.ts').Telemetry; messageBus?: import('./messageBus.ts').MessageBus | null; };
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+export type CacheableState = {
+  cache?: Cache;
+  telemetry?: import('./telemetry.ts').Telemetry;
+  messageBus?: import('./messageBus.ts').MessageBus | null;
+};
 
 // ─── Memory backend ───────────────────────────────────────────────────────────
 
@@ -255,14 +260,14 @@ async function createCache(opts: { redisUrl?: string; createClient?: () => any; 
   try {
     const client = await factory();
     client.on?.('error', (error: unknown) => {
-      console.error(`[cache] redis client error: ${errorMessage(error)}`);
+      console.error(`[cache] redis client error: ${describeError(error)}`);
     });
     await client.connect?.();
     return createRedisCache({ client, ownsClient: true });
   } catch (error) {
     console.error(
       '[cache] failed to initialise Redis cache, falling back to in-process cache: ' +
-        errorMessage(error)
+        describeError(error)
     );
     return createMemoryCache({ maxEntries });
   }
@@ -285,7 +290,7 @@ async function readCached(state: CacheableState, key: string): Promise<any | und
       return value;
     }
   } catch (error) {
-    console.error(`[cache] read failed for "${key}": ${errorMessage(error)}`);
+    console.error(`[cache] read failed for "${key}": ${describeError(error)}`);
   }
   state.telemetry?.recordCacheMiss?.();
   return undefined;
@@ -299,7 +304,7 @@ async function writeCached(state: CacheableState, key: string, value: unknown, t
   try {
     await state.cache.set(key, value, ttlMs);
   } catch (error) {
-    console.error(`[cache] write failed for "${key}": ${errorMessage(error)}`);
+    console.error(`[cache] write failed for "${key}": ${describeError(error)}`);
   }
 }
 
@@ -324,7 +329,7 @@ async function invalidateCache(state: CacheableState, ...prefixes: string[]): Pr
   await Promise.all(
     wanted.map((prefix) =>
       Promise.resolve(cache.delByPrefix(prefix)).catch((error: unknown) => {
-        console.error(`[cache] eviction failed for "${prefix}": ${errorMessage(error)}`);
+        console.error(`[cache] eviction failed for "${prefix}": ${describeError(error)}`);
       })
     )
   );
@@ -333,7 +338,7 @@ async function invalidateCache(state: CacheableState, ...prefixes: string[]): Pr
     try {
       await state.messageBus.publish(CACHE_INVALIDATE_CHANNEL, { prefixes: wanted });
     } catch (error) {
-      console.error(`[cache] invalidation publish failed: ${errorMessage(error)}`);
+      console.error(`[cache] invalidation publish failed: ${describeError(error)}`);
     }
   }
 }
@@ -355,7 +360,7 @@ async function subscribeToCacheInvalidations(state: CacheableState): Promise<(()
     for (const prefix of prefixes) {
       if (typeof prefix !== 'string' || prefix.length === 0) continue;
       Promise.resolve(cache.delByPrefix(prefix)).catch((error: unknown) => {
-        console.error(`[cache] remote eviction failed for "${prefix}": ${errorMessage(error)}`);
+        console.error(`[cache] remote eviction failed for "${prefix}": ${describeError(error)}`);
       });
     }
   });

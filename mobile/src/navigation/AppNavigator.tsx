@@ -28,7 +28,17 @@ import type { ThemeColors } from '../theme';
  * components stable across renders — inline components would remount, and with
  * them lose scroll position and local state, on every state update.
  */
-export type ScreenRenderers = { renderChatList?: () => ReactNode; renderChatConversation?: (peerId: string | null, options: { messageId: string | null }) => ReactNode; renderSearch?: () => ReactNode; renderPeerProfile?: (peerId: string | null) => ReactNode; renderCalls?: () => ReactNode; renderSettings?: () => ReactNode; };
+export type ScreenRenderers = {
+  renderChatList?: () => ReactNode;
+  renderChatConversation?: (
+    peerId: string | null,
+    options: { messageId: string | null }
+  ) => ReactNode;
+  renderSearch?: () => ReactNode;
+  renderPeerProfile?: (peerId: string | null) => ReactNode;
+  renderCalls?: () => ReactNode;
+  renderSettings?: () => ReactNode;
+};
 
 const ScreenRenderersContext: Context<ScreenRenderers> = createContext(({} as ScreenRenderers));
 
@@ -205,6 +215,29 @@ export default function AppNavigator({
     [bottomInset, onTabPress, unreadCount],
   );
 
+  // Memoized so the provider's value keeps its identity while the renderers do.
+  // As an inline object literal this changed on every render of the navigator,
+  // which re-rendered every mounted route — an open conversation and all of its
+  // message bubbles included — even when nothing they display had changed.
+  const screenRenderers = useMemo(
+    () => ({
+      renderChatList,
+      renderChatConversation,
+      renderSearch,
+      renderPeerProfile,
+      renderCalls,
+      renderSettings,
+    }),
+    [
+      renderChatList,
+      renderChatConversation,
+      renderSearch,
+      renderPeerProfile,
+      renderCalls,
+      renderSettings,
+    ],
+  );
+
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -220,15 +253,7 @@ export default function AppNavigator({
   if (isRestoring) return null;
 
   return (
-    <ScreenRenderersContext.Provider
-      value={{
-        renderChatList,
-        renderChatConversation,
-        renderSearch,
-        renderPeerProfile,
-        renderCalls,
-        renderSettings,
-      }}>
+    <ScreenRenderersContext.Provider value={screenRenderers}>
       <NavigationContainer
         ref={navigationRef}
         theme={navigationTheme}

@@ -46,11 +46,46 @@ export function useTheme() {
  * hook re-evaluates whenever the scheme changes.  Module-level factories are
  * stable references, so the memo only recomputes on an actual theme switch.
  *
+ * The results are additionally cached per `(factory, palette)` pair at module
+ * scope. `useMemo` is per component *instance*, so every mount of a list row
+ * re-ran its factory and allocated a fresh stylesheet, and a theme switch re-ran
+ * every factory in the app. Both palettes are long-lived objects and the
+ * factories are module-level constants, so a `WeakMap` keyed on the factory
+ * holds nothing alive that was not already alive and lets the Nth mount reuse
+ * the first mount's stylesheet.
+ *
  * @template T
  */
 export function useThemedStyles<T>(factory: (colors: ThemeColors) => T): T {
   const { colors } = useTheme();
-  return useMemo(() => factory(colors), [factory, colors]);
+  return useMemo(() => getThemedStyles(factory, colors), [factory, colors]);
+}
+
+/**
+ * Cache of built stylesheets, keyed first on the factory and then on the exact
+ * palette object it was built from.
+ *
+ * Keyed on the palette *identity* rather than the scheme name so a caller that
+ * passes a bespoke palette can never be served another palette's styles.
+ */
+const themedStyleCache = new WeakMap<(colors: ThemeColors) => unknown, WeakMap<ThemeColors, unknown>>();
+
+/**
+ * @returns The cached stylesheet for this factory/palette pair, building it on
+ *   first use.
+ */
+function getThemedStyles<T>(factory: (colors: ThemeColors) => T, colors: ThemeColors): T {
+  let byPalette = themedStyleCache.get(factory);
+  if (!byPalette) {
+    byPalette = new WeakMap();
+    themedStyleCache.set(factory, byPalette);
+  }
+
+  if (!byPalette.has(colors)) {
+    byPalette.set(colors, factory(colors));
+  }
+
+  return (byPalette.get(colors) as T);
 }
 
 export default ThemeContext;

@@ -1,7 +1,7 @@
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import SafeRTCView from '../SafeRTCView';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { overlay, radius, spacing, typography } from '../theme';
 import DraggablePip from './DraggablePip';
 import type { Gesture } from 'react-native-gesture-handler';
 import type { ThemeColors } from '../theme';
@@ -80,13 +80,21 @@ export default function CallStage({
           zOrder={0}
         />
       ) : (
-        <View style={styles.remotePlaceholder}>
+        <View
+          style={styles.remotePlaceholder}
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert">
           <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
         </View>
       )}
 
       {!isCompact && presenterBannerText ? (
-        <View style={styles.presenterBanner} testID="presenter-banner" pointerEvents="none">
+        <View
+          style={styles.presenterBanner}
+          testID="presenter-banner"
+          pointerEvents="none"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert">
           <Text style={styles.presenterBannerText}>{presenterBannerText}</Text>
         </View>
       ) : null}
@@ -147,7 +155,7 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
-      backgroundColor: 'rgba(0, 0, 0, 0.55)',
+      backgroundColor: overlay.scrimMedium,
     },
     presenterBannerText: {
       color: colors.accent,

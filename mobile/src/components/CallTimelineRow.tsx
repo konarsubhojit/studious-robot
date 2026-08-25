@@ -9,7 +9,14 @@ import type { ThemeColors } from '../theme';
 /**
  * A single call as stored in a conversation timeline.
  */
-export type CallTimelineEntry = { callId?: string; direction?: string; status?: string; endReason?: string | null; durationSeconds?: number | null; createdAt?: string; };
+export type CallTimelineEntry = {
+  callId?: string;
+  direction?: string;
+  status?: string;
+  endReason?: string | null;
+  durationSeconds?: number | null;
+  createdAt?: string;
+};
 
 /**
  * Human-readable outcome per timeline call status, by direction.
@@ -127,7 +134,12 @@ function formatTimestamp(isoString: string | null | undefined) {
  * bury the messages around it. A single call's tap offers to call the peer
  * back, by audio or video.
  */
-export type CallTimelineRowProps = { entries: CallTimelineEntry[]; peerId: string; onCallBack?: (peerId: string) => void; onVideoCallBack?: (peerId: string) => void; };
+export type CallTimelineRowProps = {
+  entries: CallTimelineEntry[];
+  peerId: string;
+  onCallBack?: (peerId: string) => void;
+  onVideoCallBack?: (peerId: string) => void;
+};
 const CallTimelineRow = memo(
   function CallTimelineRowComponent({ entries, peerId, onCallBack, onVideoCallBack }: CallTimelineRowProps) {
     const { colors } = useTheme();

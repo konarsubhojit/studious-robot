@@ -1,6 +1,7 @@
 import RNFS from 'react-native-fs';
 import { logError, logWarn } from '../appLogger';
 import type { InitialState } from '@react-navigation/native';
+import { errorMessage } from '../errors';
 
 /**
  * Persisted React Navigation state, in the partial shape the container accepts
@@ -9,13 +10,6 @@ import type { InitialState } from '@react-navigation/native';
 export type PersistedNavigationState = InitialState;
 
 const NAVIGATION_STATE_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-navigation-state.json`;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Last known navigation state, kept in memory so remounting the navigator —

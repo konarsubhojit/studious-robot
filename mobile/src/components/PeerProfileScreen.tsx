@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
@@ -75,7 +75,7 @@ export type PeerProfileScreenProps = {
  * from the directory, the conversation list and search, and can no longer
  * call or message), and the same control reverses it.
  */
-export default function PeerProfileScreen({
+function PeerProfileScreen({
   peerId,
   presence = null,
   isBlocked = false,
@@ -337,3 +337,9 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
     },
   });
+
+/**
+ * Memoized: the peer profile screen re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(PeerProfileScreen);

@@ -36,7 +36,18 @@ import type { Socket } from 'socket.io-client';
  */
 export const MAX_QUEUED_EVENTS = 32;
 
-export type SignalingClient = { socket: object; on: (event: string, handler: (...args: any[]) => void) => void; emit: (event: string, payload?: object, ack?: (response: any) => void) => boolean; request: (event: string, payload: object) => Promise<any>; flushQueue: () => number; getQueuedEventCount: () => number; };
+export type SignalingClient = {
+  socket: object;
+  on: (event: string, handler: (...args: any[]) => void) => void;
+  emit: (
+    event: string,
+    payload?: object,
+    ack?: (response: any) => void
+  ) => boolean;
+  request: (event: string, payload: object) => Promise<any>;
+  flushQueue: () => number;
+  getQueuedEventCount: () => number;
+};
 
 /**
  * Create a typed client for an existing Socket.IO connection.

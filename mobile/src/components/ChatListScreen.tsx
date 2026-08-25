@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -12,6 +12,7 @@ import {
 import { describeMessagePreview } from '../../../shared';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
+import ErrorState from './ErrorState';
 import SwipeableRow from './SwipeableRow';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
@@ -182,7 +183,7 @@ export type ChatListScreenProps = {
  * Teams/Slack-style chat list: a searchable contact directory that swaps to
  * the conversation list once the search query is cleared.
  */
-export default function ChatListScreen({
+function ChatListScreen({
   conversations = [],
   onOpenConversation,
   onSearchUsers,
@@ -200,6 +201,7 @@ export default function ChatListScreen({
   const [results, setResults] = useState(([] as ContactRow[]));
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const requestIdRef = useRef(0);
 
   const runSearch = useCallback(
@@ -210,21 +212,26 @@ export default function ChatListScreen({
         setResults([]);
         setHasSearched(false);
         setIsSearching(false);
+        setSearchFailed(false);
         return;
       }
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       setIsSearching(true);
       let users: ContactRow[] = [];
+      let failed = false;
       try {
         users = await onSearchUsers(term);
       } catch {
-        users = [];
+        // A directory we could not reach is not a directory without matches;
+        // saying "no matching contacts" here would be a confident lie.
+        failed = true;
       }
       if (requestIdRef.current !== requestId) return;
-      setResults(Array.isArray(users) ? users : []);
+      setResults(failed || !Array.isArray(users) ? [] : users);
       setIsSearching(false);
       setHasSearched(true);
+      setSearchFailed(failed);
     },
     [onSearchUsers],
   );
@@ -280,7 +287,12 @@ export default function ChatListScreen({
           <Pressable
             onPress={() => onOpenConversation?.(conversation.peerId)}
             accessibilityRole="button"
-            accessibilityLabel={`Open conversation with ${conversation.peerId}`}
+            accessibilityLabel={
+              hasUnread
+                ? `Open conversation with ${conversation.peerId}, ` +
+                  `${conversation.unreadCount} unread`
+                : `Open conversation with ${conversation.peerId}`
+            }
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
             testID="chat-list-row">
             <Avatar
@@ -321,12 +333,26 @@ export default function ChatListScreen({
 
   let emptyComponent = null;
   if (isSearchMode) {
-    emptyComponent =
-      !isSearching && hasSearched ? (
+    if (isSearching || !hasSearched) {
+      emptyComponent = null;
+    } else if (searchFailed) {
+      emptyComponent = (
+        <ErrorState
+          title="Can't search contacts"
+          description="We couldn't reach the directory. Check your connection and try again."
+          actionLabel="Retry"
+          actionHint="Runs the contact search again"
+          onAction={() => runSearch(query.trim())}
+          testID="chat-list-search-error"
+        />
+      );
+    } else {
+      emptyComponent = (
         <Text style={styles.empty} testID="chat-list-empty">
           No matching contacts
         </Text>
-      ) : null;
+      );
+    }
   } else if (isLoading) {
     emptyComponent = <ConversationSkeleton />;
   } else {
@@ -519,7 +545,7 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 6,
     },
     unreadBadgeText: {
-      color: '#fff',
+      color: colors.textOnAccent,
       fontSize: 11,
       fontWeight: '700',
     },
@@ -589,3 +615,9 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: spacing.lg,
     },
   });
+
+/**
+ * Memoized: the conversation / contact list re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(ChatListScreen);

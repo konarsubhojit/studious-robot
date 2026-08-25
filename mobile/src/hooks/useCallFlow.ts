@@ -35,7 +35,7 @@ import useMessaging from './useMessaging';
 import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
-import { getConnectionQuality } from '../callUx';
+import { collectCallStats, getConnectionQuality, summarizeCandidatePair } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import type { IceCandidatePairSummary } from '../diagnostics';
 import { initHaptics, triggerHaptic } from '../haptics';
@@ -50,7 +50,11 @@ import {
   sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
-import { API_ROUTES } from '../../../shared';
+import {
+  API_ROUTES,
+  CALL_HEARTBEAT_DUE_MS,
+  CALL_HEARTBEAT_INTERVAL_MS,
+} from '../../../shared';
 import { getSocketOptions } from '../socketConfig';
 import {
   CLIENT_EVENTS,
@@ -74,6 +78,7 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { MediaStream } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
+import { errorMessage } from '../errors';
 import {
   bringAppToForeground,
   clearPendingAnswer,
@@ -102,16 +107,15 @@ export type AnswerError = Error & { answerFailureReason?: string; };
 export type { CallStatus };
 
 /**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
-/**
  * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
  * properties it supports at runtime but omits from its published types.
  */
-export type PeerConnection = RTCPeerConnection & { onicecandidate: ((event: any) => void) | null; ontrack: ((event: any) => void) | null; oniceconnectionstatechange: ((event: any) => void) | null; onconnectionstatechange: ((event: any) => void) | null; };
+export type PeerConnection = RTCPeerConnection & {
+  onicecandidate: ((event: any) => void) | null;
+  ontrack: ((event: any) => void) | null;
+  oniceconnectionstatechange: ((event: any) => void) | null;
+  onconnectionstatechange: ((event: any) => void) | null;
+};
 export type WebrtcMediaStream = MediaStream;
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
@@ -150,26 +154,6 @@ const TERMINAL_CALL_STATUSES = new Set([
   'unreachable',
 ]);
 
-/**
- * How often a connected client reports call liveness to the server.
- *
- * Mirrors `CALL_HEARTBEAT_INTERVAL_MS` on the server, which ends a connected
- * call only after several consecutive beats are missed.
- */
-const CALL_HEARTBEAT_INTERVAL_MS = 30000;
-
-/**
- * How long since the last beat before another one is due.
- *
- * The heartbeat is *time*-driven rather than tick-driven: any wake-up source
- * (the interval, an inbound socket packet, an AppState change) asks whether a
- * beat is due instead of emitting one unconditionally, so extra wake-ups are
- * free and a missed tick is caught up by whichever source fires next.
- *
- * Slightly under the interval so a timer that fires a few milliseconds early
- * still counts as due, rather than slipping a whole period.
- */
-const CALL_HEARTBEAT_DUE_MS = CALL_HEARTBEAT_INTERVAL_MS - 1000;
 
 /**
  * How long a peer connection may stay `disconnected`/`failed` before the loss
@@ -376,7 +360,15 @@ export default function useCallFlow({
   const manualAudioRouteRef = useRef((null as string | null));
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
-  const [elapsedCallSeconds, setElapsedCallSeconds] = useState(0);
+  /**
+   * Epoch milliseconds at which the current call connected, or `null`.
+   *
+   * Published instead of a ticking `elapsedCallSeconds` so this hook's result —
+   * and therefore the call/chat context identity derived from it — changes
+   * exactly twice per call rather than once per second. Components that show a
+   * duration derive it locally with `useCallElapsedSeconds`.
+   */
+  const [callConnectedAtMs, setCallConnectedAtMs] = useState((null as number | null));
   const [audioDevices, setAudioDevices] = useState(
     ({
       available: [],
@@ -408,7 +400,6 @@ export default function useCallFlow({
   // (rapid double-tap) without waiting for the state update to flush.
   const isPlacingCallRef = useRef(false);
   const callConnectedAtRef = useRef((null as number | null));
-  const elapsedTimerRef = useRef((null as ReturnType<typeof setInterval> | null));
   // Guards against re-emitting `call.connected` for the same call (both ICE
   // and connection-state callbacks fire, often more than once).
   const connectedReportedCallIdRef = useRef((null as string | null));
@@ -851,11 +842,7 @@ export default function useCallFlow({
     if (activeCallIdRef.current) {
       Telemetry.trackCallConnected(activeCallIdRef.current);
     }
-    setElapsedCallSeconds(0);
-    elapsedTimerRef.current = setInterval(() => {
-      if (!callConnectedAtRef.current) return;
-      setElapsedCallSeconds(Math.floor((Date.now() - callConnectedAtRef.current) / 1000));
-    }, 1000);
+    setCallConnectedAtMs(callConnectedAtRef.current);
 
     // Apply bitrate caps now that media is flowing; best-effort.
     const pc = peerConnectionRef.current;
@@ -1507,10 +1494,7 @@ export default function useCallFlow({
       }
 
       callConnectedAtRef.current = null;
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
-      }
+      setCallConnectedAtMs(null);
       stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       clearMediaFailureReport();
       cancelIceRestartsRef.current?.('call-ended');
@@ -1525,7 +1509,7 @@ export default function useCallFlow({
       setActiveCall(null);
       setIncomingCall(null);
       setIsReconnecting(false);
-      setElapsedCallSeconds(0);
+      setCallConnectedAtMs(null);
       setIsCompactView(false);
       setIsLocalPrimary(false);
       setAudioDevices({ available: [], selected: null });
@@ -2324,10 +2308,6 @@ export default function useCallFlow({
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
-      }
-      if (elapsedTimerRef.current) {
-        clearInterval(elapsedTimerRef.current);
-        elapsedTimerRef.current = null;
       }
       stopCallHeartbeat('unmount');
       clearMediaFailureReport();
@@ -3243,84 +3223,19 @@ export default function useCallFlow({
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
 
-        let rttMs;
-        let totalPacketsLost = 0;
-        let totalPacketsReceived = 0;
-        let totalBytesReceived = 0;
-        let succeededCandidatePair: any = null;
-
-        report.forEach(/** @param stat */ (stat: any) => {
-          if (
-            stat &&
-            typeof stat === 'object' &&
-            stat.type === 'candidate-pair' &&
-            stat.state === 'succeeded' &&
-            (!succeededCandidatePair || stat.nominated || stat.selected)
-          ) {
-            succeededCandidatePair = stat;
-            if (typeof stat.currentRoundTripTime === 'number') {
-              rttMs = stat.currentRoundTripTime * 1000;
-            }
-          }
-          if (
-            stat &&
-            typeof stat === 'object' &&
-            stat.type === 'inbound-rtp' &&
-            !stat.isRemote &&
-            (stat.kind === 'video' || stat.mediaType === 'video')
-          ) {
-            totalPacketsLost += Number(stat.packetsLost || 0);
-            totalPacketsReceived += Number(stat.packetsReceived || 0);
-            totalBytesReceived += Number(stat.bytesReceived || 0);
-          }
-        });
+        const {
+          rttMs,
+          totalPacketsLost,
+          totalPacketsReceived,
+          totalBytesReceived,
+          candidatePair: succeededCandidatePair,
+        } = collectCallStats(report);
 
         if (succeededCandidatePair) {
           const getReportStat =
             typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
-          const localCandidate = getReportStat(succeededCandidatePair.localCandidateId);
-          const remoteCandidate = getReportStat(succeededCandidatePair.remoteCandidateId);
-          const localCandidateType =
-            typeof localCandidate?.candidateType === 'string'
-              ? localCandidate.candidateType
-              : 'unknown';
-          const remoteCandidateType =
-            typeof remoteCandidate?.candidateType === 'string'
-              ? remoteCandidate.candidateType
-              : 'unknown';
-          const protocol =
-            typeof localCandidate?.protocol === 'string'
-              ? localCandidate.protocol
-              : typeof remoteCandidate?.protocol === 'string'
-              ? remoteCandidate.protocol
-              : typeof succeededCandidatePair.protocol === 'string'
-              ? succeededCandidatePair.protocol
-              : 'unknown';
-          const relayProtocol =
-            typeof localCandidate?.relayProtocol === 'string'
-              ? localCandidate.relayProtocol
-              : undefined;
-          // A relay on *either* side means the media traverses TURN: the pair
-          // used to be judged by the local candidate alone, so a
-          // srflx→relay pair was logged as a direct call. Which side relays is
-          // logged too, since that is the side paying the relay bandwidth.
-          const localRelay = localCandidateType === 'relay';
-          const remoteRelay = remoteCandidateType === 'relay';
-          const relaySide = localRelay
-            ? remoteRelay
-              ? 'both'
-              : 'local'
-            : remoteRelay
-            ? 'remote'
-            : undefined;
-          const summary: IceCandidatePairSummary = {
-            local: localCandidateType,
-            remote: remoteCandidateType,
-            protocol,
-            ...(relayProtocol ? { relayProtocol } : {}),
-            usingTurn: localRelay || remoteRelay,
-            ...(relaySide ? { relaySide } : {}),
-          };
+          const summary = summarizeCandidatePair(succeededCandidatePair, getReportStat);
+          const localCandidateType = summary.local;
           const candidatePairKey = JSON.stringify([
             succeededCandidatePair.id,
             succeededCandidatePair.localCandidateId,
@@ -3584,7 +3499,7 @@ export default function useCallFlow({
     isCompactView,
     isLocalPrimary,
     isFrontCamera,
-    elapsedCallSeconds,
+    callConnectedAtMs,
     audioDevices,
     connectionQuality,
     selectedCandidatePair,

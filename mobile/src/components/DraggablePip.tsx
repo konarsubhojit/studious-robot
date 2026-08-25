@@ -4,7 +4,7 @@ import Animated from 'react-native-reanimated';
 import SafeRTCView from '../SafeRTCView';
 import { PIP_HEIGHT, PIP_WIDTH } from '../pipConstants';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { overlay, radius, spacing, typography } from '../theme';
 import type { Gesture } from 'react-native-gesture-handler';
 import type { ThemeColors } from '../theme';
 
@@ -93,13 +93,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     videoOffOverlay: {
       ...StyleSheet.absoluteFill,
-      backgroundColor: 'rgba(0,0,0,0.72)',
+      backgroundColor: overlay.scrimStrong,
       alignItems: 'center',
       justifyContent: 'center',
       padding: spacing.xs,
     },
     videoOffText: {
-      color: colors.textPrimary,
+      color: colors.onOverlay,
       ...typography.hint,
       fontWeight: '600',
       textAlign: 'center',
@@ -111,10 +111,10 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: radius.pill,
       paddingHorizontal: spacing.xs + 2,
       paddingVertical: 2,
-      backgroundColor: 'rgba(0,0,0,0.65)',
+      backgroundColor: overlay.scrimMedium,
     },
     muteBadgeText: {
-      color: colors.textPrimary,
+      color: colors.onOverlay,
       fontSize: 11,
       fontWeight: '700',
     },

@@ -41,8 +41,8 @@ export function isVoiceRecorderAvailable() {
 /**
  * Start recording a voice note to a temporary file.
  *
- * @returns `true` once recording has started, `false` when
- *   the native module isn't linked.
+ * @returns `true` once recording has started, `false` when the native module
+ *   isn't linked.
  */
 export async function startVoiceRecording(): Promise<boolean> {
   const recorder = loadRecorderModule();

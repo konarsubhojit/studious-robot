@@ -55,6 +55,10 @@ const darkColors = {
   // Foreground for content drawn on the fixed dark video overlays, which stay
   // dark in both schemes so camera frames are never framed in white.
   onOverlay: '#f6f8ff',
+
+  // Drop shadows. A palette token rather than a literal `'#000'` so the two
+  // schemes can diverge later without hunting through component stylesheets.
+  shadow: '#000000',
 };
 
 const lightColors = {
@@ -96,6 +100,32 @@ const lightColors = {
   tintWarning: 'rgba(138,83,0,0.10)',
 
   onOverlay: '#f6f8ff',
+
+  shadow: '#000000',
+};
+
+/**
+ * Surfaces drawn on top of the video stage, and behind modal sheets.
+ *
+ * Deliberately not part of the palettes: the stage stays dark in both schemes
+ * (see `stage`), so anything layered on it is scheme-independent, and pairing
+ * these with `colors.textPrimary` — which inverts between schemes — is the bug
+ * they exist to prevent. Foreground on any of them is `colors.onOverlay`.
+ *
+ * The scrims are a three-step scale rather than one value per call site, so
+ * the overlay surfaces stay visibly related and can be tuned together.
+ */
+export const overlay = {
+  /** Control chrome over video, and modal backdrops. */
+  scrimSoft: 'rgba(0, 0, 0, 0.45)',
+  /** Banners and badges that must stay legible over bright camera frames. */
+  scrimMedium: 'rgba(0, 0, 0, 0.6)',
+  /** Veils that replace content outright, e.g. the camera-off PiP. */
+  scrimStrong: 'rgba(0, 0, 0, 0.72)',
+  /** Tint behind an advisory badge (e.g. the recording-policy notice). */
+  warningTint: 'rgba(255, 210, 122, 0.28)',
+  /** Unfilled track of a meter, as a faded `onOverlay`. */
+  inactiveTrack: 'rgba(246, 248, 255, 0.35)',
 };
 
 /**

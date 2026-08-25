@@ -8,16 +8,10 @@
  */
 
 import { logWarn } from './appLogger';
+import { errorMessage } from './errors';
 
 let _imagePickerCache: typeof import('react-native-image-picker') | null | undefined;
 let _documentPickerCache: typeof import('@react-native-documents/picker') | null | undefined;
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 function loadImagePicker(): typeof import('react-native-image-picker') | null {
   if (_imagePickerCache !== undefined) return _imagePickerCache;
@@ -74,8 +68,8 @@ function normaliseImageAsset(asset: any): { uri: string; mimeType: string; sizeB
 /**
  * Launch the photo library picker.
  *
- * @returns `null` when the
- *   module isn't linked, the user cancelled, or the picker errored.
+ * @returns `null` when the module isn't linked, the user cancelled, or the
+ *   picker errored.
  */
 export async function pickPhoto(): Promise<{
     uri: string; mimeType: string; sizeBytes: number;

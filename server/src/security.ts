@@ -1,12 +1,6 @@
 import { randomUUID } from 'crypto';
 import { auditLog as auditLogTable } from '../db/schema.ts';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 /**
  * Security utilities for call initiation and signaling hardening.
@@ -19,7 +13,15 @@ function errorMessage(error: unknown): string {
 
 const MAX_AUDIT_LOG_SIZE = 1000;
 
-export type AuditEntry = { auditId: string; timestamp: string; event: string; actor: string | null; target: string | null; outcome: string; details: object; };
+export type AuditEntry = {
+  auditId: string;
+  timestamp: string;
+  event: string;
+  actor: string | null;
+  target: string | null;
+  outcome: string;
+  details: object;
+};
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 
@@ -166,10 +168,10 @@ function createAuditLog({ db = null }: { db?: object | null; } = {}): import('./
           details: entry.details ?? {},
         })
         .catch((err: unknown) => {
-          console.error('[security] failed to persist audit event to DB:', errorMessage(err));
+          console.error('[security] failed to persist audit event to DB:', describeError(err));
         });
     } catch (err) {
-      console.error('[security] failed to persist audit event to DB:', errorMessage(err));
+      console.error('[security] failed to persist audit event to DB:', describeError(err));
     }
   }
 

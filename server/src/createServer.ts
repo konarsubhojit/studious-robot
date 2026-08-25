@@ -7,24 +7,49 @@ import { createRateLimiter, createAuditLog } from './security.ts';
 import { createStores } from './stores/index.ts';
 import { createMessageStore } from './messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from './cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from './config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from './lib/state.ts';
 import { waitForSocketsToDrain } from './lib/lifecycle.ts';
-import { tickRingingTimeouts, sanitizeHydratedCalls } from './domain/calls.ts';
+import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from './domain/calls.ts';
 import { notifyCallTransition } from './domain/notifications.ts';
 import { loadPersistedStateFromDb, pruneStaleDevices } from './lib/persistence.ts';
 import { mountRoutes } from './routes/index.ts';
 import { registerSocketHandlers } from './signaling/index.ts';
-import { verboseLog } from './lib/verbose.ts';
+import { isVerboseLoggingEnabled, verboseLog } from './lib/verbose.ts';
+import { describeError } from './lib/errors.ts';
 
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-export type CreateServerOptions = { verifyIdToken?: (idToken: string) => Promise<{ authUid: string, email?: string|null, authProvider?: string|null, }>; stores?: any; db?: any; messageStore?: any; cache?: import('./cache.ts').Cache; messageBus?: import('./messageBus.ts').MessageBus | null; sessionTtlMs?: number; participantDisconnectGraceMs?: number; callRateLimit?: number; callRateWindowMs?: number; rtcRateLimit?: number; rtcRateWindowMs?: number; turnRateLimit?: number; turnRateWindowMs?: number; messageRateLimit?: number; messageRateWindowMs?: number; messageSearchRateLimit?: number; messageSearchRateWindowMs?: number; shutdownDrainMs?: number; staleDeviceMaxAgeMs?: number; turnFetch?: typeof fetch; turnEnv?: NodeJS.ProcessEnv; };
+export type CreateServerOptions = {
+  verifyIdToken?: (idToken: string) => Promise<{
+    authUid: string;
+    email?: string | null;
+    authProvider?: string | null;
+  }>;
+  stores?: any;
+  db?: any;
+  messageStore?: any;
+  cache?: import('./cache.ts').Cache;
+  messageBus?: import('./messageBus.ts').MessageBus | null;
+  sessionTtlMs?: number;
+  participantDisconnectGraceMs?: number;
+  callRateLimit?: number;
+  callRateWindowMs?: number;
+  rtcRateLimit?: number;
+  rtcRateWindowMs?: number;
+  turnRateLimit?: number;
+  turnRateWindowMs?: number;
+  messageRateLimit?: number;
+  messageRateWindowMs?: number;
+  messageSearchRateLimit?: number;
+  messageSearchRateWindowMs?: number;
+  shutdownDrainMs?: number;
+  staleDeviceMaxAgeMs?: number;
+  /** How long a terminal call is retained in the in-memory map. */
+  callRetentionMs?: number;
+  /** Hard ceiling on retained terminal calls, applied after the age pass. */
+  maxRetainedCalls?: number;
+  turnFetch?: typeof fetch;
+  turnEnv?: NodeJS.ProcessEnv;
+};
 
 /**
  * Build the Express app and HTTP/Socket.IO server.
@@ -41,8 +66,16 @@ function createServer(opts: CreateServerOptions = {}) {
     throw new Error('createServer requires verifyIdToken outside the Node test runner');
   }
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || DEFAULT_JSON_BODY_LIMIT }));
   app.use((req, res, next) => {
+    // Bail before touching the request when verbose logging is off, which is
+    // the production default. Building the metadata object (and enumerating
+    // the query keys) on every request paid an allocation for a string that
+    // was then thrown away inside `verboseLog`.
+    if (!isVerboseLoggingEnabled()) {
+      next();
+      return;
+    }
     const startedAt = Date.now();
     verboseLog('http', 'request.start', {
       method: req.method,
@@ -189,7 +222,7 @@ function createServer(opts: CreateServerOptions = {}) {
   };
   // Drop locally cached entries when another instance reports a write.
   subscribeToCacheInvalidations(state).catch((error: unknown) => {
-    console.error(`[cache] failed to subscribe to invalidations: ${errorMessage(error)}`);
+    console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
   });
 
   if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
@@ -200,7 +233,7 @@ function createServer(opts: CreateServerOptions = {}) {
       .catch((error: unknown) => {
         state.messageStoreStatus = 'unavailable';
         console.error(
-          `[messages] Mongo message store health check failed: ${errorMessage(error)}`
+          `[messages] Mongo message store health check failed: ${describeError(error)}`
         );
       });
   }
@@ -234,6 +267,8 @@ function createServer(opts: CreateServerOptions = {}) {
     cors: { origin: corsOrigin },
     pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS) || DEFAULT_SOCKET_PING_INTERVAL_MS,
     pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS) || DEFAULT_SOCKET_PING_TIMEOUT_MS,
+    maxHttpBufferSize:
+      Number(process.env.SOCKET_MAX_BUFFER_BYTES) || DEFAULT_SOCKET_MAX_BUFFER_BYTES,
   });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
@@ -261,22 +296,28 @@ function createServer(opts: CreateServerOptions = {}) {
 
   // Background worker: advance stale ringing calls to `missed` and force-end
   // calls stranded in `accepted` / `connecting_media` / `in_call`.
-  const pollTimer = setInterval(
-    () =>
-      tickRingingTimeouts(
-        state,
-        Date.now(),
-        (call, previousStatus, reason) => {
-          notifyCallTransition(io, state, call, {
-            previousStatus,
-            actor: null,
-            reason,
-          });
-        },
-        callTimeouts
-      ),
-    RINGING_POLL_MS
-  );
+  const callRetentionMs =
+    opts.callRetentionMs ?? (Number(process.env.CALL_RETENTION_MS) || DEFAULT_CALL_RETENTION_MS);
+  const maxRetainedCalls =
+    opts.maxRetainedCalls ?? (Number(process.env.MAX_RETAINED_CALLS) || DEFAULT_MAX_RETAINED_CALLS);
+  const pollTimer = setInterval(() => {
+    const now = Date.now();
+    tickRingingTimeouts(
+      state,
+      now,
+      (call, previousStatus, reason) => {
+        notifyCallTransition(io, state, call, {
+          previousStatus,
+          actor: null,
+          reason,
+        });
+      },
+      callTimeouts
+    );
+    // Bound the in-memory history the sweep above just added to, so neither it
+    // nor `GET /calls` iterates a map that only ever grows.
+    pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now });
+  }, RINGING_POLL_MS);
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();
 
@@ -382,6 +423,8 @@ function createServer(opts: CreateServerOptions = {}) {
      */
     tickRingingTimeouts: (now: number = Date.now()): number =>
       tickRingingTimeouts(state, now, undefined, callTimeouts),
+    pruneTerminalCalls: (now: number = Date.now()): number =>
+      pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now }),
     /**
      * Populate the in-memory state from the Neon database.
      *

@@ -1,13 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
+import { errorMessage } from '../errors';
 
 /**
  * Owns the authenticated user's blocklist: the ids they have blocked, and the

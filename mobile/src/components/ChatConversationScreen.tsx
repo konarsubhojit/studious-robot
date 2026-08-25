@@ -59,7 +59,21 @@ export type AttachmentKind = 'photo' | 'camera' | 'file';
 /**
  * One rendered row: a date separator, a bubble, or a collapsed run of calls.
  */
-export type ListItem = { key: string; type: 'date'; label: string; } | { key: string; type: 'message'; message: ChatMessage; isGroupEnd: boolean; dateLabel: string | null; } | { key: string; type: 'call'; entries: CallActivity[]; dateLabel: string | null; };
+export type ListItem =
+  | { key: string; type: 'date'; label: string }
+  | {
+      key: string;
+      type: 'message';
+      message: ChatMessage;
+      isGroupEnd: boolean;
+      dateLabel: string | null;
+    }
+  | {
+      key: string;
+      type: 'call';
+      entries: CallActivity[];
+      dateLabel: string | null;
+    };
 
 /** Consecutive own-sender messages within this many minutes are grouped
  * (only the last bubble in the group shows a timestamp/tick). */
@@ -711,7 +725,7 @@ export type ChatConversationScreenProps = {
  * separators and sender/time grouping, and a composer with a typing
  * indicator.
  */
-export default function ChatConversationScreen({
+function ChatConversationScreen({
   peerId,
   messages = [],
   highlightMessageId = null,
@@ -1304,7 +1318,12 @@ export default function ChatConversationScreen({
         ) : null}
 
         {isUploadingAttachment ? (
-          <View style={styles.uploadNotice} testID="chat-attachment-upload-progress">
+          <View
+            style={styles.uploadNotice}
+            testID="chat-attachment-upload-progress"
+            accessibilityLiveRegion="polite"
+            accessibilityRole="progressbar"
+            accessibilityValue={{ now: Math.round(attachmentUploadProgress * 100), min: 0, max: 100 }}>
             <Text style={styles.uploadNoticeText}>
               {`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
             </Text>
@@ -1312,7 +1331,11 @@ export default function ChatConversationScreen({
         ) : null}
 
         {showAttachmentsUnavailable ? (
-          <View style={styles.uploadNotice} testID="chat-attachments-unavailable-notice">
+          <View
+            style={styles.uploadNotice}
+            testID="chat-attachments-unavailable-notice"
+            accessibilityLiveRegion="polite"
+            accessibilityRole="alert">
             <Text style={styles.uploadNoticeText}>Attachments aren't available on this server</Text>
           </View>
         ) : null}
@@ -1524,7 +1547,7 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.accentButton,
       borderWidth: 1,
       borderColor: colors.accent,
-      shadowColor: '#000',
+      shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0.25,
       shadowRadius: 3,
@@ -1703,7 +1726,7 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
-      shadowColor: '#000',
+      shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.3,
       shadowRadius: 4,
@@ -1751,3 +1774,9 @@ const createStyles = (colors: ThemeColors) =>
       elevation: 2,
     },
   });
+
+/**
+ * Memoized: an open conversation re-renders only when its own props change, not merely
+ * because an ancestor re-rendered.
+ */
+export default memo(ChatConversationScreen);

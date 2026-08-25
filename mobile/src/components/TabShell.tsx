@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
@@ -48,7 +49,7 @@ export default function TabShell() {
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
 
-  const renderChatConversation = (peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
+  const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
     // nothing to render (and every handler below would target no peer).
     if (!peerId) return null;
@@ -100,9 +101,9 @@ export default function TabShell() {
         onTypingChange={isTyping => chat.sendTypingIndicator(peerId, isTyping)}
       />
     );
-  };
+  }, [callFlow, chat, insets.top, startAudioCallWith, startVideoCallWith]);
 
-  const renderChatList = () => (
+  const renderChatList = useCallback(() => (
     <ChatListScreen
       conversations={chat.conversations}
       onOpenConversation={openChatConversation}
@@ -114,9 +115,16 @@ export default function TabShell() {
       onOpenSearch={openSearch}
       onOpenSettings={() => openTab(TABS.SETTINGS)}
     />
-  );
+  ), [
+    chat.conversations,
+    chat.handleRefreshConversations,
+    chat.isLoadingConversations,
+    chat.isRefreshingConversations,
+    chat.markConversationRead,
+    chat.searchUsers,
+  ]);
 
-  const renderSearch = () => (
+  const renderSearch = useCallback(() => (
     <SearchScreen
       onSearchContacts={chat.searchUsers}
       onSearchMessages={chat.searchMessages}
@@ -132,10 +140,20 @@ export default function TabShell() {
       onRecordRecentSearch={recordSearch}
       onClearRecentSearches={clearSearches}
     />
-  );
+  ), [
+    callFlow.callHistory,
+    callFlow.isServerUnreachable,
+    chat.conversations,
+    chat.currentUserId,
+    chat.searchMessages,
+    chat.searchUsers,
+    clearSearches,
+    recentSearches,
+    recordSearch,
+  ]);
 
   /** @param peerId */
-  const renderPeerProfile = (peerId: string | null) => {
+  const renderPeerProfile = useCallback((peerId: string | null) => {
     if (!peerId) return null;
     return (
       <PeerProfileScreen
@@ -152,9 +170,9 @@ export default function TabShell() {
         onUnblock={chat.unblockPeer}
       />
     );
-  };
+  }, [callFlow.callHistory, chat, startAudioCallWith, startVideoCallWith]);
 
-  const renderCalls = () => (
+  const renderCalls = useCallback(() => (
     <Lobby
       userId={callFlow.userId}
       onChangeUserId={callFlow.editUserId}
@@ -187,9 +205,18 @@ export default function TabShell() {
       onMarkMissedRead={callFlow.markMissedCallsRead}
       onRedial={startVideoCallWith}
     />
-  );
+  ), [
+    callFlow,
+    handleAutoLightingToggle,
+    handleExportLogs,
+    handleSpeakerDefaultToggle,
+    isSettingsPanelVisible,
+    setIsSettingsPanelVisible,
+    settings,
+    startVideoCallWith,
+  ]);
 
-  const renderSettings = () => (
+  const renderSettings = useCallback(() => (
     <SettingsScreen
       userId={callFlow.userId}
       onSaveUserId={callFlow.updateUserId}
@@ -213,7 +240,14 @@ export default function TabShell() {
       iceTransportPolicy={settings.iceTransportPolicy}
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
     />
-  );
+  ), [
+    callFlow,
+    handleDeveloperModeToggle,
+    handleExportLogs,
+    handleIceTransportPolicyChange,
+    settings.developerModeEnabled,
+    settings.iceTransportPolicy,
+  ]);
 
   return (
     <View style={styles.root} testID="app-tab-shell">

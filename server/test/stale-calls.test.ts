@@ -506,6 +506,30 @@ test('call.connected: an unrecovered ICE failure ends the call without waiting f
   }
 });
 
+test('call.connected: an unvalidated iceState never picks the destination status', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+    // `failed` is spelled in a way the schema rejects. The handler resolves the
+    // transition from the parsed payload, so this is refused outright rather
+    // than being read as a failure and ending the call.
+    const ack = await emitWithAck(caller, 'call.connected', {
+      version: 1,
+      callId,
+      iceState: ['failed'],
+    });
+    assert.equal(ack.ok, false);
+    assert.equal(getCall(callId)?.status, 'accepted');
+  } finally {
+    await teardown(caller);
+  }
+});
+
 test('heartbeat: a connected call is aged out only once its liveness reports stop', async () => {
   const { url, getCall, tickRingingTimeouts, teardown } = await startServer();
   let caller;

@@ -56,6 +56,43 @@ describe('SearchScreen', () => {
     expect(findByTestId(tree, 'search-no-results')).toBeNull();
   });
 
+  test('a failed contact search surfaces a retry rather than "no results"', async () => {
+    const onSearchContacts = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('directory unreachable'))
+      .mockResolvedValueOnce([{ userId: 'user-bob', online: true }]);
+    const tree = render({ onSearchContacts, onSearchMessages: jest.fn().mockResolvedValue([]) });
+
+    type(tree, 'bob');
+    await advanceDebounce();
+
+    expect(findByTestId(tree, 'search-no-results')).toBeNull();
+    expect(findByTestId(tree, 'search-contacts-error')).not.toBeNull();
+
+    await act(async () => {
+      findByTestId(tree, 'search-contacts-error-action').props.onPress();
+    });
+    await advanceDebounce();
+
+    expect(onSearchContacts).toHaveBeenCalledTimes(2);
+    expect(findByTestId(tree, 'search-contacts-error')).toBeNull();
+  });
+
+  test('keeps the failure banner visible alongside local results', async () => {
+    const onSearchContacts = jest.fn().mockRejectedValue(new Error('directory unreachable'));
+    const onSearchMessages = jest
+      .fn()
+      .mockResolvedValue([{ messageId: 'm1', conversationId: 'c1', peerId: 'bob', body: 'bob?' }]);
+    const tree = render({ onSearchContacts, onSearchMessages });
+
+    type(tree, 'bob');
+    await advanceDebounce();
+
+    // A banner rendered as ListEmptyComponent would vanish the moment any
+    // local result arrived, silently hiding the partial failure.
+    expect(findByTestId(tree, 'search-contacts-error')).not.toBeNull();
+  });
+
   test('debounces the server search and only issues one request per pause', async () => {
     const onSearchContacts = jest.fn().mockResolvedValue([]);
     const onSearchMessages = jest.fn().mockResolvedValue([]);

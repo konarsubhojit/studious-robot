@@ -35,8 +35,29 @@
 /** Maximum number of concurrent/recent call entries to keep. */
 const MAX_ENTRIES = 100;
 
-export type CallQoSSummary = { callId: string; sessionId: string | null; setupLatencyMs: number | null; firstFrameLatencyMs: number | null; signalingLatencyMs: number | null; durationMs: number | null; reconnectCount: number; iceRestartCount: number; selectedCandidatePairType: string | null; };
-export type CallTelemetryEntry = { callId: string; sessionId: string | null; startedAtMs: number | null; signalingConnectedAtMs: number | null; connectedAtMs: number | null; firstRemoteFrameAtMs: number | null; endedAtMs: number | null; reconnectCount: number; iceRestartCount: number; selectedCandidatePairType: string | null; };
+export type CallQoSSummary = {
+  callId: string;
+  sessionId: string | null;
+  setupLatencyMs: number | null;
+  firstFrameLatencyMs: number | null;
+  signalingLatencyMs: number | null;
+  durationMs: number | null;
+  reconnectCount: number;
+  iceRestartCount: number;
+  selectedCandidatePairType: string | null;
+};
+export type CallTelemetryEntry = {
+  callId: string;
+  sessionId: string | null;
+  startedAtMs: number | null;
+  signalingConnectedAtMs: number | null;
+  connectedAtMs: number | null;
+  firstRemoteFrameAtMs: number | null;
+  endedAtMs: number | null;
+  reconnectCount: number;
+  iceRestartCount: number;
+  selectedCandidatePairType: string | null;
+};
 
 const entries: Map<string, CallTelemetryEntry> = new Map();
 

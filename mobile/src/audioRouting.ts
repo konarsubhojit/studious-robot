@@ -3,13 +3,7 @@ import InCallManager from 'react-native-incall-manager';
 import { logInfo, logWarn } from './appLogger';
 import { setAudioSessionActive } from './audioSessionState';
 import { ensureBluetoothPermission } from './permissions';
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
+import { errorMessage } from './errors';
 
 /**
  * Canonical audio output routes understood by react-native-incall-manager's
@@ -70,8 +64,7 @@ export function getAudioRouteLabel(route?: string): string {
  * WebRTC/InCallManager) must be prevented by manifest permissions; JS cannot
  * catch a SIGABRT or AndroidRuntime crash after the native thread aborts.
  *
- * @returns a failure
- *   always carries a user-facing message.
+ * @returns a failure always carries a user-facing message.
  */
 export function startAudioSession(): { ok: true; } | { ok: false; error: unknown; message: string; } {
   try {
@@ -90,8 +83,7 @@ export function startAudioSession(): { ok: true; } | { ok: false; error: unknown
  * Stop the in-call audio session.  Releases audio focus, deactivates the
  * proximity sensor override, and allows the screen to turn off normally.
  *
- * @returns a failure
- *   always carries a user-facing message.
+ * @returns a failure always carries a user-facing message.
  */
 export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown; message: string; } {
   setAudioSessionActive(false);

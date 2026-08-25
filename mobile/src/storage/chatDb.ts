@@ -1,6 +1,7 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
 import type { ChatMessage, ConversationSummary, OutboxItem } from '../hooks/useMessaging';
+import { errorMessage } from '../errors';
 
 /**
  * Durable local chat store: the conversation list, per-conversation message
@@ -47,7 +48,11 @@ export type { ConversationSummary };
 export type { ChatMessage };
 export type { OutboxItem };
 
-export type ChatSnapshot = { conversations: ConversationSummary[]; messagesByPeer: Record<string, ChatMessage[]>; outbox: OutboxItem[]; };
+export type ChatSnapshot = {
+  conversations: ConversationSummary[];
+  messagesByPeer: Record<string, ChatMessage[]>;
+  outbox: OutboxItem[];
+};
 
 function emptySnapshot(): ChatSnapshot {
   return { conversations: [], messagesByPeer: {}, outbox: [] };
@@ -61,13 +66,6 @@ let cache: ChatSnapshot | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 /** Resolves once every scheduled write has been flushed. */
 let pendingWrite = Promise.resolve();
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * Timestamp of a timeline entry, used for retention ordering.

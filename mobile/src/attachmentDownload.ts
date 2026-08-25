@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 import { ensureDownloadPermission } from './permissions';
+import { describeError } from './errors';
 
 const EXTENSION_BY_MIME_TYPE = Object.freeze({
   'image/jpeg': 'jpg',
@@ -129,7 +130,7 @@ function classifyFailure({ statusCode, error }: { statusCode?: number; error?: u
     if (statusCode >= 500) return 'server-error';
     return 'server-error';
   }
-  const message = error instanceof Error ? error.message : String(error ?? '');
+  const message = describeError(error);
   if (/permission|EACCES|ENOSPC|EROFS|write/i.test(message)) return 'storage';
   return 'network';
 }

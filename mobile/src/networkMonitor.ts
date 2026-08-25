@@ -1,4 +1,5 @@
 import { logInfo, logVerbose, logWarn } from './appLogger';
+import { describeError } from './errors';
 
 /**
  * Connectivity transitions, for the proactive half of mid-call recovery.
@@ -38,7 +39,7 @@ function loadNetInfo(): NetInfoModule | null {
     if (!_netInfoCache) logWarn('[Network] connectivity module exported no listener API');
   } catch (error) {
     logWarn('[Network] connectivity module is not linked; recovery stays reactive', {
-      message: error instanceof Error ? error.message : String(error),
+      message: describeError(error),
     });
     _netInfoCache = null;
   }
@@ -96,13 +97,13 @@ export function subscribeNetworkChanges(listener: (change: { from: NetworkSnapsh
         listener({ from: last, to: next });
       } catch (error) {
         logWarn('[Network] connectivity listener threw', {
-          message: error instanceof Error ? error.message : String(error),
+          message: describeError(error),
         });
       }
     });
   } catch (error) {
     logWarn('[Network] could not subscribe to connectivity changes', {
-      message: error instanceof Error ? error.message : String(error),
+      message: describeError(error),
     });
     return () => {};
   }
@@ -112,7 +113,7 @@ export function subscribeNetworkChanges(listener: (change: { from: NetworkSnapsh
       unsubscribe?.();
     } catch (error) {
       logWarn('[Network] connectivity unsubscribe failed', {
-        message: error instanceof Error ? error.message : String(error),
+        message: describeError(error),
       });
     }
   };

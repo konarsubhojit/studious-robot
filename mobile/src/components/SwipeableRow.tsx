@@ -1,5 +1,12 @@
-import { useMemo, useRef } from 'react';
-import { Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import { triggerHaptic } from '../haptics';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
@@ -11,14 +18,21 @@ const ACTION_WIDTH = 84;
 const GESTURE_ACTIVATION_DX = 12;
 /** Fraction of the action tray that must be revealed to snap it open. */
 const OPEN_THRESHOLD = 0.5;
+/** Spring used when the tray latches open or springs shut. */
+const SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.5 };
 
 /**
  * A list row that reveals action buttons when dragged to the left, closing
  * again once an action is tapped or the row is dragged back.
  *
- * Built on the core `PanResponder`/`Animated` APIs rather than a gesture
- * library so it works inside the existing virtualized lists (and their tests)
- * without pulling in a new dependency.
+ * The drag runs on react-native-gesture-handler + react-native-reanimated, so
+ * the row tracks the finger entirely on the UI thread.  Under `PanResponder`
+ * every frame crossed the bridge, which is exactly the wrong place for a
+ * gesture that happens while a virtualized list is also busy recycling rows.
+ *
+ * `activeOffsetX` / `failOffsetY` hand the horizontal/vertical arbitration to
+ * the native gesture system instead of the hand-rolled dx-vs-dy comparison the
+ * `PanResponder` version used, so the parent list keeps its vertical scroll.
  *
  * @param [props.actions]
  */
@@ -29,47 +43,45 @@ export default function SwipeableRow({ actions = [], children }: {
         }>; children: React.ReactNode;
     }) {
   const styles = useThemedStyles(createStyles);
-  const translateX = useRef(new Animated.Value(0)).current;
-  const offsetRef = useRef(0);
+  const translateX = useSharedValue(0);
+  // The offset the current drag started from, so a second swipe continues
+  // from wherever the tray was left rather than snapping back to zero.
+  const startX = useSharedValue(0);
   const trayWidth = actions.length * ACTION_WIDTH;
 
-  const panResponder = useMemo(() => {
-    /** @param toValue */
-    const settle = (toValue: number) => {
-      // A short tick when the tray latches open, so the row confirms itself
-      // without the user having to look away from the list.
-      if (toValue !== 0 && offsetRef.current !== toValue) {
-        triggerHaptic('tap');
-      }
-      offsetRef.current = toValue;
-      Animated.spring(translateX, {
-        toValue,
-        useNativeDriver: true,
-        bounciness: 0,
-      }).start();
-    };
+  // A short tick when the tray latches open, so the row confirms itself
+  // without the user having to look away from the list.
+  const notifyOpened = useCallback(() => triggerHaptic('tap'), []);
 
-    return PanResponder.create({
-      onMoveShouldSetPanResponder: (_event, gesture) =>
-        trayWidth > 0 &&
-        Math.abs(gesture.dx) > GESTURE_ACTIVATION_DX &&
-        Math.abs(gesture.dx) > Math.abs(gesture.dy),
-      onPanResponderMove: (_event, gesture) => {
-        const next = Math.min(0, Math.max(-trayWidth, offsetRef.current + gesture.dx));
-        translateX.setValue(next);
-      },
-      onPanResponderRelease: (_event, gesture) => {
-        const next = offsetRef.current + gesture.dx;
-        settle(next < -trayWidth * OPEN_THRESHOLD ? -trayWidth : 0);
-      },
-      onPanResponderTerminate: () => settle(offsetRef.current),
-    });
-  }, [trayWidth, translateX]);
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(trayWidth > 0)
+        .activeOffsetX([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
+        .failOffsetY([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
+        .onStart(() => {
+          startX.value = translateX.value;
+        })
+        .onUpdate(event => {
+          translateX.value = Math.min(0, Math.max(-trayWidth, startX.value + event.translationX));
+        })
+        .onEnd(() => {
+          const shouldOpen = translateX.value < -trayWidth * OPEN_THRESHOLD;
+          if (shouldOpen && startX.value !== -trayWidth) {
+            runOnJS(notifyOpened)();
+          }
+          translateX.value = withSpring(shouldOpen ? -trayWidth : 0, SETTLE_SPRING);
+        }),
+    [notifyOpened, startX, trayWidth, translateX],
+  );
 
-  const close = () => {
-    offsetRef.current = 0;
-    Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
-  };
+  const animatedRowStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const close = useCallback(() => {
+    translateX.value = withSpring(0, SETTLE_SPRING);
+  }, [translateX]);
 
   if (actions.length === 0) {
     return children;
@@ -95,21 +107,22 @@ export default function SwipeableRow({ actions = [], children }: {
       </View>
       {/* Every swipe action is also an accessibility action, so the row is
           fully operable by assistive tech that cannot perform the drag. */}
-      <Animated.View
-        accessibilityActions={actions.map(action => ({
-          name: action.key,
-          label: action.accessibilityLabel ?? action.label,
-        }))}
-        onAccessibilityAction={event => {
-          const action = actions.find(candidate => candidate.key === event.nativeEvent.actionName);
-          if (!action) return;
-          close();
-          action.onPress?.();
-        }}
-        style={[styles.row, { transform: [{ translateX }] }]}
-        {...panResponder.panHandlers}>
-        {children}
-      </Animated.View>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View
+          accessibilityActions={actions.map(action => ({
+            name: action.key,
+            label: action.accessibilityLabel ?? action.label,
+          }))}
+          onAccessibilityAction={event => {
+            const action = actions.find(candidate => candidate.key === event.nativeEvent.actionName);
+            if (!action) return;
+            close();
+            action.onPress?.();
+          }}
+          style={[styles.row, animatedRowStyle]}>
+          {children}
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }

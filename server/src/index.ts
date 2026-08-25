@@ -24,13 +24,7 @@ import { createStores, createRedisPgStores } from './stores/index.ts';
 import { createMemoryMessageBus, createRedisMessageBus } from './messageBus.ts';
 import { createCache } from './cache.ts';
 import { logNotificationHubStartupStatus } from './push.ts';
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { describeError } from './lib/errors.ts';
 
 export {
   createServer,
@@ -68,6 +62,13 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       try {
         const stores = await createRedisPgStores();
         console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
+        // Redis shares the Socket.IO adapter and the message bus, but sessions,
+        // calls, presence, and connections are still per-process maps. Running
+        // more than one instance behind a non-sticky load balancer therefore
+        // fails intermittently rather than obviously, so say so out loud.
+        console.warn(
+          '[signaling] sessions/calls/presence are per-instance: multi-instance deployments require sticky routing (see /health stateAffinity)'
+        );
         // Share the read cache across instances so a cached conversation list
         // is not re-read (and re-throttled) once per instance.
         const cache = await createCache({ redisUrl: process.env.REDIS_URL });
@@ -79,7 +80,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       } catch (err) {
         // Fail closed on an explicitly configured but unreachable Redis so the
         // operator notices rather than silently losing cross-instance state.
-        console.error('[signaling] failed to initialise Redis stores:', errorMessage(err));
+        console.error('[signaling] failed to initialise Redis stores:', describeError(err));
         throw err;
       }
     }
@@ -112,7 +113,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
             Promise.resolve(
               ((stores ?? {}) as { close?: () => Promise<void> }).close?.()
             ).catch((err: unknown) => {
-              console.error('[signaling] error closing Redis stores:', errorMessage(err));
+              console.error('[signaling] error closing Redis stores:', describeError(err));
             })
           )
           .then(() => {

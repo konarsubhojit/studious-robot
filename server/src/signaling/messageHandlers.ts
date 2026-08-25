@@ -10,6 +10,7 @@ import { pushSenders } from '../push.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, DEFAULT_MESSAGE_TYPE, MAX_REACTION_LENGTH, MAX_VOICE_DURATION_MS, MESSAGE_TYPES, describeMessagePreview, isAttachmentMessageType, isSupportedMessageType, parseEventPayload } from '../../../shared/index.ts';
 import { isManagedAttachmentUrl, loadR2Config, validateAttachmentRequest } from '../attachments.ts';
+import { describeError } from '../lib/errors.ts';
 
 /**
  * Text-chat signaling handlers.
@@ -19,13 +20,6 @@ import { isManagedAttachmentUrl, loadR2Config, validateAttachmentRequest } from 
  * event, … }` envelope, and errors reuse the canonical codes (`unauthorized`,
  * `forbidden`, `bad_request`, `unsupported_version`).
  */
-
-/**
- * @returns the error message, or a stringified fallback.
- */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Validate a message body, returning the trimmed text or an error code.
@@ -160,7 +154,7 @@ function deliverMessage(io: import('socket.io').Server, state: import('../stores
       })
       .catch((error) => {
         console.error(
-          `[messages] Unhandled push error for device ${channel.deviceId}: ${errorMessage(error)}`
+          `[messages] Unhandled push error for device ${channel.deviceId}: ${describeError(error)}`
         );
       });
   }
@@ -380,7 +374,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
         messageId: clientMessageId,
       });
     } catch (error) {
-      console.error(`[messages] failed to persist message: ${errorMessage(error)}`);
+      console.error(`[messages] failed to persist message: ${describeError(error)}`);
       acknowledgeError(
         socket,
         ack,
@@ -436,7 +430,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
         // page for this conversation is now stale.
         await invalidateCache(state, messagesCachePrefix(message.conversationId));
       } catch (error) {
-        console.error(`[messages] failed to mark message delivered: ${errorMessage(error)}`);
+        console.error(`[messages] failed to mark message delivered: ${describeError(error)}`);
       }
     }
 
@@ -503,7 +497,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
     try {
       deleted = await state.messageStore.deleteMessage(conversationId, messageId, requesterId);
     } catch (error) {
-      console.error(`[messages] failed to delete message: ${errorMessage(error)}`);
+      console.error(`[messages] failed to delete message: ${describeError(error)}`);
       acknowledgeError(
         socket,
         ack,
@@ -636,7 +630,7 @@ function registerMessageHandlers(socket: import('socket.io').Socket, { io, state
         action: parsed.action,
       });
     } catch (error) {
-      console.error(`[messages] failed to persist reaction: ${errorMessage(error)}`);
+      console.error(`[messages] failed to persist reaction: ${describeError(error)}`);
       acknowledgeError(
         socket,
         ack,

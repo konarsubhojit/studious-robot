@@ -2,6 +2,7 @@ import { NativeModules, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import appConfig from '../app.json';
 import { getLogsForExport, logError, logInfo } from './appLogger';
+import { errorMessage } from './errors';
 
 export type IceCandidatePairSummary = {
   local: string;
@@ -18,13 +19,6 @@ export type IceCandidatePairSummary = {
  * utilities (no React state) used by the call hook for status messages, ICE
  * candidate summaries, and the "Export Logs" feature.
  */
-
-/**
- * @returns the error message, when there is one.
- */
-function errorMessage(error: unknown): string | undefined {
-  return error instanceof Error ? error.message : undefined;
-}
 
 /**
  * @returns `YYYYMMDD-HHmmss`, safe to embed in a file name.

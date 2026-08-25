@@ -140,7 +140,10 @@ export function estimateSceneBrightness(settings: { brightness?: number; exposur
   return null;
 }
 
-export type LightingConstraints = { frameRate: { ideal: number; max?: number; }; advanced: Array<Record<string, unknown>>; };
+export type LightingConstraints = {
+  frameRate: { ideal: number; max?: number };
+  advanced: Array<Record<string, unknown>>;
+};
 
 /**
  * @param brightness normalized to [0, 1].
