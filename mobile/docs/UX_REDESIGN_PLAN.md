@@ -4,10 +4,10 @@ Working document for the multi-phase "Full UX Redesign" of the WeTalk Android
 app. It records **what has shipped**, **where the work stops**, and **exactly
 what the next session should do next**, in order.
 
-All six planned phases (0–5) have now landed. What remains is listed in §3 and
-is deliberately scoped: three feature-sized items that were cut from Phase 5, a
-handful of unfinished Settings groups, and the on-device verification that unit
-tests structurally cannot provide.
+All six planned phases (0–5) have landed, and so has Phase 6 — the four
+deferred items from Phase 5 (Settings completion, permissions primer,
+two-step registration, the dynamic-type and contrast sweep). What remains in §3
+is only what a sandbox structurally cannot do: verification on real hardware.
 
 Read §1 for the shipped state, §2 for the exact stopping point, §3 for the
 ordered next steps, and §4 for the traps that cost time the first time round.
@@ -21,7 +21,7 @@ All commands run from `mobile/`:
 | Task | Command | Notes |
 | --- | --- | --- |
 | Install | `npm install` | `node_modules` is not checked in; required first. |
-| Tests | `npx jest` | ~10 s warm. Current baseline: **95 suites / 1229 tests, all passing**. |
+| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1349 tests, all passing**. |
 | Types | `npx tsc --noEmit -p tsconfig.json` | Must be clean. |
 | Lint | `npx eslint src/ __tests__/` | Must be clean. |
 
@@ -37,7 +37,7 @@ Non-negotiable constraints carried from the original plan:
   as using `obj`, so `TabShell` destructures context methods at component scope
   and lists the *members* in `useCallback` deps. Never depend on a whole context
   object — it reintroduces full-tree re-renders.
-- **testIDs are load-bearing.** ~1229 tests assert on them. When a component
+- **testIDs are load-bearing.** ~1349 tests assert on them. When a component
   survives in recognisable form its testIDs must survive too. Migrate tests
   alongside the component; never delete tests to make a phase green.
 - **No colour literals under `src/components`.** `__tests__/components/designTokens.test.ts`
@@ -128,6 +128,7 @@ Landed out of numeric order because its groundwork was already on disk.
 - **`SettingsScreen` regrouped** into `SectionHeader`-led groups — Account,
   Notifications, Calls & media, Appearance, Privacy, Advanced — with **Sign out
   last and visually separated**. Privacy holds a real blocked-people list.
+  (Storage & data and About were added in Phase 6.)
 
 ### Phase 2 — Chats & conversation ✅
 
@@ -163,7 +164,7 @@ redesign) kept its behaviour and lost its divergences:
 - **Minimized surfaces agree.** `InCallBanner` gained mute/end, so banner, bubble
   and PiP each answer who, how long, and offer mute/end.
 
-### Phase 5 — Polish & cross-cutting ✅ (three items deferred — see §2)
+### Phase 5 — Polish & cross-cutting ✅ (four items deferred — closed by Phase 6)
 
 - **A third status level exists.** `primitives/Banner.tsx` is the *persistent*
   surface between transient `Toast` and blocking `ErrorState`, with tones
@@ -187,65 +188,109 @@ redesign) kept its behaviour and lost its divergences:
 - **Touch targets**: reaction chips derive `hitSlop` from `REACTION_CHIP_HEIGHT`
   rather than a guess, fixing a 50 dp effective target against the 56 dp minimum.
 
+### Phase 6 — The four deferred items ✅
+
+Everything §2 previously listed as knowingly-not-done, except the on-device
+checks.
+
+**Settings is finished.** The identity card now carries the signed-in account
+(`src/accountUx.ts` turns a provider id + email into "Google · a@b.com", falling
+back to "Signed in" when the provider is unknown). Both inline `TextInput`s are
+gone: the username is a **read-only row**, because `useIdentity.updateUserId`
+has always rejected every edit — usernames are bound to the account — so the
+editor was a dead control by §0's rule; the signaling-server field moved into a
+focused `Sheet` behind an Advanced row. Two new groups exist:
+
+- **Storage & data** — `src/storageUsage.ts` walks the RNFS directories
+  (deduplicated, because the platform can point two path constants at the same
+  place) and splits the total into media / logs / data. `measureStorageUsage`
+  distinguishes *unreadable* from *empty* via a `readable` flag, so a permission
+  failure reports "Unavailable" rather than a confident "0 B" — but a single
+  unreadable subdirectory does not poison its parent. `clearCachedMedia` skips
+  files touched within `RECENT_FILE_GRACE_MS` (60 s) as probably in flight.
+- **About** — `src/appInfo.ts` (version, platform) and `src/licenses.ts`, a
+  checked-in table of 26 runtime dependencies with SPDX ids, shown in a `Sheet`.
+  It is checked in rather than generated because the alternative is a build step
+  that cannot run in a test.
+
+**The permissions primer exists.** `PermissionsPrimerScreen` explains
+microphone, camera and notifications *before* the first OS prompt, and
+`wetalk-onboarding.json` records that it was seen so it never runs twice. The
+important part is the sequencing: on Android the primer **owns** the cold
+request, so `useStartupPermissions` is disabled there
+(`{ enabled: !shouldShowPermissionPrimer() }`) — otherwise both would fire and
+the primer would explain a dialog the user had already dismissed. On iOS
+`shouldShowPermissionPrimer()` is `false` and the previous behaviour is
+untouched. The startup `Banner` remains as the post-hoc fallback for a user who
+skips.
+
+**Registration is two steps.** `src/registrationUx.ts` holds the pure rules and
+`RegistrationScreen` walks provider → username. Availability is validated
+**client-side only** (3–32 characters, `[A-Za-z0-9._-]`, must start and end
+alphanumeric): there is no unauthenticated availability endpoint — `GET /users`
+is session-gated and `POST /session` only answers with a 409
+`username_unavailable` on submit — so the screen promises format, not
+uniqueness, and surfaces the collision on submit through the existing
+error/retry affordance.
+
+**Dynamic type and contrast were swept.** Nine texts gained a `fontScaleCap`,
+each with a comment naming the container that cannot grow (a circle that must
+stay circular, a bubble whose width is drag maths, a bottom-pinned deck that
+would push **Leave** off-screen). Five places got *reflow* instead: the ambient
+canvas name and the call-outcome pill wrap to two lines, `ListItem` titles wrap,
+the presenter banner gained a `maxWidth`, and `Banner` dropped its two-line
+clamp outright — a tall warning is a nuisance, a truncated one is a condition
+the user never learns. `theme.ts` needed no new tokens. Contrast is now asserted
+rather than assumed: `theme.test.ts` flattens every `Banner` and `Toast` tone
+over `background` / `surfaceRaised` / `surface` in both palettes and checks 4.5:1
+for text and 3:1 for the accent rule. **No token needed retuning**; the tightest
+pairing is dark `danger` at 4.60:1.
+
 ---
 
 ## 2. The exact stopping point
 
 Everything above is committed on `copilot/ux-improvements-android-app` and green
-at **95 suites / 1229 tests**, with `tsc` and `eslint` clean.
+at **104 suites / 1349 tests**, with `tsc` and `eslint` clean.
 
-Four things are knowingly *not* done. None of them is a half-built control on
-screen; each is either a feature-sized piece of work or a check a unit test
-cannot make.
+**One thing is knowingly not done, and it cannot be done here:** the call
+canvas, PiP and CallKeep paths have never been exercised on real hardware. Unit
+tests cover every derivation around them — `mainHasVideo`, auto-hide gating,
+control-deck structure, the PiP pan clamps — but cannot verify what a real
+`RTCView` draws, what a real PiP transition does, or how a real CallKeep call
+behaves from a locked screen. This is now the *only* remaining category of work,
+and it is the highest-value one precisely because the suite structurally cannot
+reach it.
 
-1. **Registration is still one dense form.** The planned split into (1) choose
-   Google / Microsoft / email and (2) choose a username with live availability
-   feedback was not attempted. It is a flow change with its own auth and
-   validation surface, not a consistency fix.
-2. **There is no first-run permissions primer.** Microphone / camera /
-   notification access is still requested cold, and the only explanation is the
-   startup degradation `Banner` shown *afterwards*. The `Banner` primitive that a
-   primer would fall back to now exists, so the remaining work is the primer
-   screen and its sequencing, not the banner.
-3. **Dynamic type is not verified at 200%.** `fontScaleCaps` exists and the
-   typography scale carries explicit line heights, but no pass has been made over
-   list rows, bubbles and the control deck at maximum system font size. Jest
-   cannot see truncation.
-4. **The call canvas, PiP and CallKeep paths need on-device checks.** Unit tests
-   cover the derivations (`mainHasVideo`, auto-hide gating, control-deck
-   structure) but cannot verify what a real `RTCView`, a real PiP transition or a
-   real CallKeep interaction does.
+Three limits are recorded so they are not mistaken for oversights:
 
-Two smaller gaps, recorded so they are not mistaken for oversights:
-
-- **`SettingsScreen` is regrouped but not finished.** The original target had an
-  identity card with the signed-in email plus focused editors behind `ListItem`
-  rows; today the username and signaling-server fields are still inline
-  `TextInput`s, and the **Storage & data** and **About** groups do not exist.
+- **Username availability is format-only.** The server exposes no
+  unauthenticated availability check, so the registration screen cannot offer
+  live "that name is taken" feedback. Adding it is a *backend* task first; the
+  client-side rules are already in `registrationUx.ts` and would only need a
+  debounced call bolted on.
 - **The Report affordance was removed rather than rebuilt.** There is no server
   report endpoint, so the row could only ever have shown an `Alert` promising an
-  action nobody would take. Restoring it is a *backend* task first.
+  action nobody would take. Also a backend task first.
+- **`Toast` has no call site yet.** Its tones are now contrast-tested anyway, so
+  the first surface to use it starts from a verified palette.
 
 ---
 
 ## 3. Ordered next steps
 
 1. **Verify on a device.** Place an audio call and confirm the ambient canvas
-   (not a black rectangle), background the app mid-call for PiP, and take a call
-   through CallKeep from a locked screen. This is the highest-value remaining
-   work because it is the only category the test suite structurally cannot reach.
-2. **Run the 200% dynamic-type sweep.** Walk the chat list, a conversation with
-   every bubble type, the call deck and Settings. Apply `fontScaleCaps` only
-   where truncation would destroy meaning; prefer reflow over capping.
-3. **Finish Settings**: identity card with the signed-in email, focused editors
-   for the two remaining inline inputs, then the **Storage & data** (cache size,
-   clear media, export logs) and **About** (version, licences) groups.
-4. **Build the permissions primer** as a first-run step before the first request,
-   with the existing startup `Banner` as the post-hoc fallback.
-5. **Split registration into two steps**, keeping the current error/retry
-   affordance intact.
-6. **Re-verify AA contrast** for every semantic pairing introduced since Phase 0,
-   including `ambient`/`onOverlay` on the audio canvas and each `Banner` tone.
+   renders (not a black rectangle); background the app mid-call and watch the
+   PiP transition; take a call through CallKeep from a locked screen. Then walk
+   the same surfaces at 200% system font size to confirm the §1 Phase 6 caps and
+   reflows behave — Jest asserts that a cap is *applied*, not that the result
+   fits.
+2. **Watch the primer's first run on a real Android device.** The ordering
+   (primer explains → primer requests → `useStartupPermissions` stays out of the
+   way) is unit-tested, but the thing worth seeing is whether the OS dialog
+   arrives close enough behind the primer to read as one flow.
+3. **Then, only if the backend grows the endpoints**: live username availability
+   during registration, and the Report affordance.
 
 ---
 
@@ -293,3 +338,24 @@ Two smaller gaps, recorded so they are not mistaken for oversights:
   `useCallFlow.outgoingCallMediaTypeRef` is a ref, read only when recording
   history; making it reactive means surgery on a ~3900-line hook. Derive from
   `mainHasVideo` instead.
+- **A partial `jest.mock` of `src/permissions` breaks the moment a module
+  imports something new from it.** Several suites mock it with an object
+  literal, so `getMissingRuntimePermissions` had to be added to
+  `useCallFlow.test.tsx`'s factory. Extend the mock — never add a defensive
+  `typeof fn === 'function'` guard in production code to satisfy a test.
+- **`useIdentity.updateUserId` always rejects.** Usernames are bound to the
+  account, so anything that looks like a username editor is a dead control.
+- **Filtering `typeof n.type !== 'string'` matches two nodes per row**, because
+  RN's own `View` is also a composite. To find one component instance, match on
+  something only it has (`typeof n.type === 'function' && typeof n.props?.subtitle === 'string'`).
+- **`ListItem` renders a plain `View` when it has no `onPress`.** A read-only
+  row therefore needs its accessibility props applied on that branch too, and
+  the default `button` role mapped to `text` — a row with no handler has no
+  business claiming to be a button.
+- **`Sheet`'s close prop is `onClose`, not `onDismiss`**, and `Icon` names must
+  already exist in `ICONS` in `vectorIcons.tsx` — an unknown key renders
+  nothing rather than failing loudly.
+- **Never `git stash` while another agent writes the same tree.** A stash taken
+  just before an external commit lands leaves the commit missing those changes.
+  Prefer targeted edits over whole-file rewrites on shared files for the same
+  reason.
