@@ -10,7 +10,12 @@ two-step registration, the dynamic-type and contrast sweep). What remains in §3
 is only what a sandbox structurally cannot do: verification on real hardware.
 
 Read §1 for the shipped state, §2 for the exact stopping point, §3 for the
-ordered next steps, and §4 for the traps that cost time the first time round.
+device verification protocol that is now the only outstanding work, and §4 for
+the traps that cost time the first time round.
+
+`UI_REVAMP_TODO.md` in this directory is the older, superseded tracker from the
+round before this one. Its two remaining open items are the same real-device QA
+described in §3; treat §3 as the live list.
 
 ---
 
@@ -21,7 +26,7 @@ All commands run from `mobile/`:
 | Task | Command | Notes |
 | --- | --- | --- |
 | Install | `npm install` | `node_modules` is not checked in; required first. |
-| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1349 tests, all passing**. |
+| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1353 tests, all passing**. |
 | Types | `npx tsc --noEmit -p tsconfig.json` | Must be clean. |
 | Lint | `npx eslint src/ __tests__/` | Must be clean. |
 
@@ -37,7 +42,7 @@ Non-negotiable constraints carried from the original plan:
   as using `obj`, so `TabShell` destructures context methods at component scope
   and lists the *members* in `useCallback` deps. Never depend on a whole context
   object — it reintroduces full-tree re-renders.
-- **testIDs are load-bearing.** ~1349 tests assert on them. When a component
+- **testIDs are load-bearing.** ~1353 tests assert on them. When a component
   survives in recognisable form its testIDs must survive too. Migrate tests
   alongside the component; never delete tests to make a phase green.
 - **No colour literals under `src/components`.** `__tests__/components/designTokens.test.ts`
@@ -246,21 +251,48 @@ over `background` / `surfaceRaised` / `surface` in both palettes and checks 4.5:
 for text and 3:1 for the accent rule. **No token needed retuning**; the tightest
 pairing is dark `danger` at 4.60:1.
 
+### Swipe actions repaired 🐛
+
+Reported from a device after Phase 6: swiping a message bubble would not let you
+reply or delete. Two defects, both found by reading and neither visible to the
+suite:
+
+- **`SwipeableRow` measured its tray wrong.** Tray width was
+  `actions.length * ACTION_WIDTH`, but each button also carries
+  `marginLeft: spacing.xs`, so the row's fully-open translation fell short by
+  4 dp per action and the leftmost button stayed under the row's opaque
+  background. `ACTION_SLOT_WIDTH` is now the single source of truth and is
+  exported so the tests derive from it rather than restating `-84`.
+- **`removeClippedSubviews` was set on both lists that host a swipeable row.**
+  On Android it clips by *layout* bounds and ignores `transform` — which is
+  precisely how the tray is revealed — so a recycled row could become
+  untouchable. Removed from `ChatConversationScreen` and `ChatListScreen`, with
+  a comment at each site saying why it must not come back. The remaining
+  virtualization props carry the performance intent.
+
+Gesture arbitration was examined and deliberately left alone:
+`activeOffsetX` + `failOffsetY` is the correct RNGH v3 mechanism, and adding
+`simultaneousWithExternalGesture` or `blocksExternalGesture` on suspicion would
+have been speculative. §3.6 is the check that closes this out.
+
 ---
 
 ## 2. The exact stopping point
 
 Everything above is committed on `copilot/ux-improvements-android-app` and green
-at **104 suites / 1349 tests**, with `tsc` and `eslint` clean.
+at **104 suites / 1353 tests**, with `tsc` and `eslint` clean.
 
-**One thing is knowingly not done, and it cannot be done here:** the call
-canvas, PiP and CallKeep paths have never been exercised on real hardware. Unit
-tests cover every derivation around them — `mainHasVideo`, auto-hide gating,
-control-deck structure, the PiP pan clamps — but cannot verify what a real
-`RTCView` draws, what a real PiP transition does, or how a real CallKeep call
-behaves from a locked screen. This is now the *only* remaining category of work,
-and it is the highest-value one precisely because the suite structurally cannot
-reach it.
+**One thing is knowingly not done, and it cannot be done here:** nothing in this
+app has been exercised on real hardware. Unit tests cover every derivation —
+`mainHasVideo`, auto-hide gating, control-deck structure, the PiP pan clamps,
+the swipe tray geometry — but cannot verify what a real `RTCView` draws, what a
+real PiP transition does, how a real CallKeep call behaves from a locked screen,
+or whether a finger can reach a button. This is the *only* remaining category of
+work, and §3 is now an executable protocol for it rather than an aspiration.
+
+The swipe bug is the argument for taking §3 seriously: 104 green suites, `tsc`
+and `eslint` all clean, and the feature was still unusable. The suite proved the
+maths and could not have proved the rest.
 
 Three limits are recorded so they are not mistaken for oversights:
 
@@ -277,20 +309,171 @@ Three limits are recorded so they are not mistaken for oversights:
 
 ---
 
-## 3. Ordered next steps
+## 3. The device verification protocol
 
-1. **Verify on a device.** Place an audio call and confirm the ambient canvas
-   renders (not a black rectangle); background the app mid-call and watch the
-   PiP transition; take a call through CallKeep from a locked screen. Then walk
-   the same surfaces at 200% system font size to confirm the §1 Phase 6 caps and
-   reflows behave — Jest asserts that a cap is *applied*, not that the result
-   fits.
-2. **Watch the primer's first run on a real Android device.** The ordering
-   (primer explains → primer requests → `useStartupPermissions` stays out of the
-   way) is unit-tested, but the thing worth seeing is whether the OS dialog
-   arrives close enough behind the primer to read as one flow.
-3. **Then, only if the backend grows the endpoints**: live username availability
-   during registration, and the Report affordance.
+This is the whole of the remaining work. It is written as a protocol rather
+than a wish because "verify on a device" is not a task anybody can pick up: it
+has no pass criterion and leaves no artefact. Each check below names what to
+do, what should happen, and **what evidence proves it happened** — so a
+reviewer who was not holding the phone can still tell the difference between
+"tested" and "looked at".
+
+### 3.0 Capturing evidence
+
+Every path in this section already logs its decisions, and **Settings → Storage
+& data → Export logs** shares the buffer. So the evidence for each check is a
+named log line, not a recollection.
+
+Two things about that buffer decide whether the evidence survives:
+
+- `logInfo` / `logWarn` / `logError` write to an **in-memory ring that dies with
+  the process**. Only `logBackgroundInfo` / `logBackgroundWarn` /
+  `logBackgroundError` append to `wetalk-background.log`.
+  `getLogsForExport()` returns the memory buffer first, then the persisted file
+  under a `--- persisted background logs ---` divider.
+- CallKeep and Picture-in-Picture log through the **in-memory** helpers.
+  **Export the logs before killing the app.** Force-stopping the app after a
+  locked-screen test is the one action that destroys the evidence you just went
+  to the trouble of producing.
+
+Build with `npm run android` from `mobile/`. Two devices (or one device and one
+emulator) are needed for every call check; the emulator can be the peer.
+
+### 3.1 The audio call canvas — `mainHasVideo`
+
+The derivation is unit-tested; what is unverified is that it drives a real
+`RTCView`. An audio call still produces a `MediaStream` with a playable URL, so
+the failure mode is not a crash — it is a **black rectangle** where the ambient
+canvas should be.
+
+1. Place an **audio** call from the Calls tab.
+2. Expect `call-stage-ambient`: a large avatar, the peer's name in
+   `typography.display`, and a status line on the fixed-dark `ambient` token.
+   Expect **no** self-view PiP.
+3. Repeat as a **video** call, then have the remote peer disable their camera
+   mid-call. The canvas must switch to the same ambient treatment rather than
+   freezing on the last decoded frame.
+
+Step 3 is the one worth doing carefully: it is a different code path from step 1
+reaching the same UI, and it is the path a unit test is least able to imitate.
+
+### 3.2 Picture-in-Picture
+
+1. With a video call connected, press Home.
+2. Expect the PiP window, with its **mute** and **hang up** controls.
+   Evidence: `Picture-in-Picture mode entered`.
+3. Tap each PiP control and confirm the call reacts.
+4. Return to the app, then **end the call while still in PiP** (background the
+   app again, then have the peer hang up). The window must disappear with the
+   call. `stopCallService` calls `exitPictureInPicture` for exactly this reason;
+   without it the window survives showing the last decoded frame of a closed
+   peer connection.
+
+Failure evidence to look for: `Picture-in-Picture mode was refused by the
+activity` (the OS declined — check the activity's PiP configuration), or
+`Picture-in-Picture request skipped` with `reason: 'unsupported'` (no native
+module) or a `sinceLastRequestMs` under 1000 (the 1 s dedupe window absorbed a
+duplicate request, which is working as intended and not a fault).
+
+### 3.3 CallKeep from a locked screen
+
+This is the highest-risk check in the document, because it exercises the one
+race the architecture is explicitly built around: an incoming call can be
+**answered before any React component has mounted**. `registerCallActionListeners`
+subscribes at module scope from `initObservability()` in `index.tsx` precisely so
+the listener exists in the headless JS context a push cold-starts, and
+`recordPendingAnswer` queues the tap for replay when no call flow is attached
+yet.
+
+1. Force-stop the app, lock the device.
+2. Call it from the peer. Expect the system call UI.
+3. **Answer from the lock screen.**
+4. Expect the app to come to the foreground already in the connected call — not
+   on the chat list, and not on a ringing screen for a call that was already
+   accepted.
+5. Export the logs **without force-stopping**.
+
+The evidence is a sequence, and which sequence you get tells you which path ran:
+
+- `[CallKeep] answerCall` — the tap reached JS at all.
+- `[CallKeep] answerCall received with no call flow attached; queuing for replay`
+  followed by `[CallKeep] Pending answer drained` — the cold-start race happened
+  **and the queue absorbed it.** This is the good outcome, and the one worth
+  deliberately provoking.
+- `[CallKeep] Pending answer dropped` — the tap was lost. This is the bug this
+  machinery exists to prevent; capture the surrounding lines and the `reason`.
+
+Also confirm the negative case: if the startup `Banner` reports a degradation on
+launch, CallKeep never initialised and the rest of this check is meaningless.
+`callKeepActions` and `callKeepIncomingUi` are the two degradation ids to look
+for, and they are visible in the UI without reading a log at all.
+
+### 3.4 Dynamic type at 200%
+
+Jest asserts that a cap is *applied*; only a screen can show whether the result
+fits. Set the system font size to maximum and walk:
+
+- the chat list, and a conversation containing **every** bubble type (text,
+  image, video, voice, file, deleted, unsupported) plus a reply quote and a
+  reaction row;
+- the call deck — the check that matters is that **`control-leave` is still
+  fully on screen**, since the deck is bottom-pinned and does not scroll;
+- the minimized surfaces: `FloatingCallBubble` must stay draggable and fully
+  on-screen (its width is drag maths, not decoration) and `InCallBanner` must
+  still show who and how long;
+- Settings, including the two `Sheet`s (signaling editor, licences), because a
+  sheet's list is capped at `sizes.sheetListMaxHeight`.
+
+Expect wrapping, never truncation, in running text, and expect capped text to
+stay on one line — `maxFontSizeMultiplier={fontScaleCaps.*}` marks all 17 of
+them, nine of which the Phase 6 sweep added. A capped text that still overflows
+means the cap was applied to the wrong element.
+
+### 3.5 The permissions primer, first run
+
+Only reproducible on a genuinely fresh install, since the outcome is persisted.
+
+1. Uninstall, reinstall, launch, sign in.
+2. Expect the primer **before** any OS dialog.
+3. Accept, and confirm the OS prompts follow immediately enough to read as one
+   flow. This is a judgement only a person can make, and it is the entire reason
+   the primer exists.
+4. Reinstall and repeat, but **skip** the primer. Expect the startup `Banner` to
+   state the consequence afterwards, and expect the primer not to return on the
+   next launch.
+5. Confirm the primer never appears over the sign-in screen or over a ringing
+   call — both are asserted in `AppShell.test.tsx`, so a failure here means the
+   routing changed underneath those tests.
+
+### 3.6 Swipe actions on a message and a conversation row
+
+Added after a user reported being unable to reply to or delete a message on
+device while all 104 suites were green — see the `SwipeableRow` entry in §4.
+Two defects were found by reading and fixed; **neither is reproducible in Jest**,
+so this check is what closes them out.
+
+1. In a conversation, swipe one of **your own** messages left. Expect a tray of
+   **Reply** and **Delete**, both fully revealed — the previous bug left the
+   leftmost action partly under the row, so confirm the whole button is visible
+   and not merely most of it.
+2. Tap **Reply**; the composer must quote that message. Swipe again, tap
+   **Delete**; expect the confirmation, then a tombstone.
+3. Swipe a message from the **peer**. Expect **Reply** only — delete is never
+   offered for someone else's message, because the server refuses it.
+4. Swipe a **failed** own message. Expect **Retry** alongside the others.
+5. Repeat on a tombstone: expect **no** tray at all.
+6. Scroll the list hard, then swipe a row that has just been recycled into view.
+   This is the case `removeClippedSubviews` used to break, so it is the one most
+   worth repeating.
+7. Do the same on the Chats tab: swipe a conversation with unread messages and
+   expect **Mark read**.
+8. With TalkBack on, confirm each action is reachable as an accessibility action
+   without performing the drag.
+
+### 3.7 Then, and only if the backend grows the endpoints
+
+Live username availability during registration, and the Report affordance. Both
+are blocked on server work, not client work — see §2.
 
 ---
 
@@ -338,6 +521,19 @@ Three limits are recorded so they are not mistaken for oversights:
   `useCallFlow.outgoingCallMediaTypeRef` is a ref, read only when recording
   history; making it reactive means surgery on a ~3900-line hook. Derive from
   `mainHasVideo` instead.
+- **A testID can be duplicated into two sections and every suite stays green.**
+  Code review, not Jest, caught an `Export logs` row rendered in *both* Storage
+  & data and Advanced. `findAll` happily returns two nodes and
+  `findAll(...)[0].props.onPress()` still fires, so the assertions passed while
+  the user saw the control twice. When a row is conditional on a prop, assert
+  the host-node **count**, not merely its presence.
+- **A green suite is not evidence for anything gesture-driven.**
+  `mobile/__mocks__/react-native-gesture-handler.js` stubs `GestureDetector` as
+  `({ children }) => children` and only records the gesture callbacks, so tests
+  drive the *maths* of a swipe and never its touch dispatch, layout or
+  arbitration with the parent list. Geometry belongs in a test; whether a finger
+  can reach the button does not. Derive any geometry assertion from the same
+  constant the component uses, or the two drift and the test still passes.
 - **A partial `jest.mock` of `src/permissions` breaks the moment a module
   imports something new from it.** Several suites mock it with an object
   literal, so `getMissingRuntimePermissions` had to be added to

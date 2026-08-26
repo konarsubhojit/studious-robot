@@ -474,7 +474,9 @@ describe('ChatConversationScreen', () => {
     });
     const list = findByTestId(tree, 'chat-message-list');
     expect(list.props.initialNumToRender).toBeLessThan(50);
-    expect(list.props.removeClippedSubviews).toBe(true);
+    // removeClippedSubviews is deliberately omitted — on Android it clips by
+    // layout bounds and ignores transform, breaking SwipeableRow action trays.
+    expect(list.props.removeClippedSubviews).toBeUndefined();
     expect(findAllByTestId(tree, 'chat-message-row').length).toBeLessThan(50);
   });
 

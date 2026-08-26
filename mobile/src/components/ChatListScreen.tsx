@@ -260,7 +260,9 @@ function ChatListScreen({
         keyboardShouldPersistTaps="handled"
         // Virtualization tuning so a long conversation list mounts a bounded
         // number of rows instead of all of them at once.
-        removeClippedSubviews
+        // NOTE: removeClippedSubviews is deliberately omitted — on Android it
+        // clips by layout bounds and ignores `transform`, breaking the
+        // SwipeableRow action tray that translates into view on swipe.
         initialNumToRender={12}
         maxToRenderPerBatch={10}
         windowSize={11}

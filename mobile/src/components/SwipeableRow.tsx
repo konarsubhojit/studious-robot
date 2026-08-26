@@ -12,8 +12,12 @@ import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import type { ThemeColors } from '../theme';
 
-/** Width (dp) of a single revealed action button. */
-const ACTION_WIDTH = 84;
+/** Width (dp) of a single revealed action button (content area only). */
+export const ACTION_WIDTH = 84;
+/** Left margin applied to each action button — must match `styles.action.marginLeft`. */
+export const ACTION_MARGIN_LEFT = spacing.xs;
+/** Total width each action occupies in the tray, including its margin. */
+export const ACTION_SLOT_WIDTH = ACTION_WIDTH + ACTION_MARGIN_LEFT;
 /** Horizontal movement (dp) before the row claims the gesture from the list. */
 const GESTURE_ACTIVATION_DX = 12;
 /** Fraction of the action tray that must be revealed to snap it open. */
@@ -47,7 +51,7 @@ export default function SwipeableRow({ actions = [], children }: {
   // The offset the current drag started from, so a second swipe continues
   // from wherever the tray was left rather than snapping back to zero.
   const startX = useSharedValue(0);
-  const trayWidth = actions.length * ACTION_WIDTH;
+  const trayWidth = actions.length * ACTION_SLOT_WIDTH;
 
   // A short tick when the tray latches open, so the row confirms itself
   // without the user having to look away from the list.

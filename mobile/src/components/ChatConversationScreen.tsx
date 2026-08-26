@@ -1340,7 +1340,9 @@ function ChatConversationScreen({
             // Virtualization tuning: keep a bounded number of bubbles mounted
             // so a long conversation (thousands of messages) scrolls without
             // the frame drops an unbounded, fully-mounted list would cause.
-            removeClippedSubviews
+            // NOTE: removeClippedSubviews is deliberately omitted — on Android
+            // it clips by layout bounds and ignores `transform`, which hides
+            // the SwipeableRow action tray and breaks touch dispatch on swiped rows.
             initialNumToRender={15}
             maxToRenderPerBatch={10}
             updateCellsBatchingPeriod={50}

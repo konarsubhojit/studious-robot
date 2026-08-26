@@ -102,12 +102,12 @@ describe('SwipeableRow', () => {
   });
 
   test('latches the tray open past the halfway point and confirms with a tap', () => {
-    // One action means an 84dp tray, so the halfway point is 42dp.
+    // One action means an 88dp tray (84 + 4 margin), so the halfway point is 44dp.
     const tree = render([{ key: 'delete', label: 'Delete', onPress: jest.fn() }]);
 
     swipe(-60);
 
-    expect(readTranslate(tree)).toBe(-84);
+    expect(readTranslate(tree)).toBe(-88);
     expect(triggerHaptic).toHaveBeenCalledWith('tap');
   });
 
@@ -127,7 +127,7 @@ describe('SwipeableRow', () => {
       lastPan.handlers.onStart();
       lastPan.handlers.onUpdate({ translationX: -400 });
     });
-    expect(readTranslate(tree)).toBe(-84);
+    expect(readTranslate(tree)).toBe(-88);
 
     // A rightward drag past the closed position must not lift the row either.
     act(() => {
@@ -152,7 +152,7 @@ describe('SwipeableRow', () => {
     const tree = render([{ key: 'delete', label: 'Delete', testID: 'row-delete', onPress }]);
 
     swipe(-60);
-    expect(readTranslate(tree)).toBe(-84);
+    expect(readTranslate(tree)).toBe(-88);
 
     act(() => {
       tree.root.findAll((node: any) => node.props?.testID === 'row-delete')[0].props.onPress();
@@ -160,5 +160,54 @@ describe('SwipeableRow', () => {
 
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(readTranslate(tree)).toBe(0);
+  });
+});
+
+describe('SwipeableRow — tray width regression', () => {
+  const { ACTION_SLOT_WIDTH } = require('../../src/components/SwipeableRow');
+
+  test.each([1, 2, 3])(
+    'open translation equals full rendered tray width for %i action(s)',
+    count => {
+      const actions = Array.from({ length: count }, (_, i) => ({
+        key: `action-${i}`,
+        label: `A${i}`,
+        onPress: jest.fn(),
+      }));
+      const tree = render(actions);
+      const expectedTrayWidth = count * ACTION_SLOT_WIDTH;
+
+      // Swipe far enough to latch open
+      swipe(-expectedTrayWidth);
+
+      expect(readTranslate(tree)).toBe(-expectedTrayWidth);
+    },
+  );
+
+  test('every action in a multi-action tray is individually reachable and invokes the right callback', () => {
+    const callbacks = [jest.fn(), jest.fn(), jest.fn()];
+    const actions = callbacks.map((fn, i) => ({
+      key: `act-${i}`,
+      label: `Act ${i}`,
+      testID: `tray-action-${i}`,
+      onPress: fn,
+    }));
+    const tree = render(actions);
+
+    // Open the tray
+    swipe(-actions.length * ACTION_SLOT_WIDTH);
+
+    // Press each action individually
+    for (let i = 0; i < actions.length; i++) {
+      act(() => {
+        tree.root
+          .findAll((node: any) => node.props?.testID === `tray-action-${i}`)[0]
+          .props.onPress();
+      });
+    }
+
+    for (let i = 0; i < callbacks.length; i++) {
+      expect(callbacks[i]).toHaveBeenCalledTimes(1);
+    }
   });
 });
