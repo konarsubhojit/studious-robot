@@ -488,17 +488,6 @@ function SettingsScreen({
             ) : null}
           </>
         ) : null}
-        {onExportLogs ? (
-          <ListItem
-            title="Export logs"
-            subtitle="Share a copy of this device's diagnostic log."
-            icon="settingsDeveloper"
-            onPress={onExportLogs}
-            accessibilityLabel="Export logs"
-            accessibilityHint="Shares a copy of this device's diagnostic log"
-            testID="settings-export-logs"
-          />
-        ) : null}
 
         {/* ── About ───────────────────────────────────────────────────────── */}
         <SectionHeader title="About" icon="settingsAbout" />

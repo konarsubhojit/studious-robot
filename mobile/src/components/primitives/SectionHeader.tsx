@@ -1,8 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { useThemedStyles } from '../../ThemeContext';
+import { useTheme, useThemedStyles } from '../../ThemeContext';
 import { spacing, typography } from '../../theme';
 import Icon from './Icon';
-import { useTheme } from '../../ThemeContext';
 import type { ReactNode } from 'react';
 import type { ThemeColors } from '../../theme';
 

@@ -132,6 +132,12 @@ describe('SettingsScreen', () => {
     act(() => {
       withTree = renderer.create(<SettingsScreen {...baseProps} onExportLogs={onExportLogs} />);
     });
+    // Exactly one row: a testID that appears twice makes every other
+    // assertion about it ambiguous, and the user sees the same control twice.
+    // Host-only, because the composite carries the same testID as a prop.
+    expect(
+      findByTestID(withTree, 'settings-export-logs').filter((n: any) => typeof n.type === 'string'),
+    ).toHaveLength(1);
     pressByTestID(withTree, 'settings-export-logs');
     expect(onExportLogs).toHaveBeenCalled();
   });
