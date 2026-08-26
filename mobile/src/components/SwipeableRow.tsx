@@ -14,7 +14,7 @@ import type { ThemeColors } from '../theme';
 
 /** Width (dp) of a single revealed action button (content area only). */
 export const ACTION_WIDTH = 84;
-/** Left margin applied to each action button — must match `styles.action.marginLeft`. */
+/** Left margin each action button carries; `styles.action` derives from this. */
 export const ACTION_MARGIN_LEFT = spacing.xs;
 /** Total width each action occupies in the tray, including its margin. */
 export const ACTION_SLOT_WIDTH = ACTION_WIDTH + ACTION_MARGIN_LEFT;
@@ -150,7 +150,10 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceControl,
       borderRadius: radius.sm,
       marginVertical: 2,
-      marginLeft: spacing.xs,
+      // Derived, not restated: `trayWidth` is computed from ACTION_SLOT_WIDTH,
+      // so a literal here could drift from the maths and re-hide the leftmost
+      // button — which is exactly the bug this constant was introduced to fix.
+      marginLeft: ACTION_MARGIN_LEFT,
     },
     actionDestructive: {
       backgroundColor: colors.danger,

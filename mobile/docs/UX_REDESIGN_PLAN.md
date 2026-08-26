@@ -26,7 +26,7 @@ All commands run from `mobile/`:
 | Task | Command | Notes |
 | --- | --- | --- |
 | Install | `npm install` | `node_modules` is not checked in; required first. |
-| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1353 tests, all passing**. |
+| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1354 tests, all passing**. |
 | Types | `npx tsc --noEmit -p tsconfig.json` | Must be clean. |
 | Lint | `npx eslint src/ __tests__/` | Must be clean. |
 
@@ -42,7 +42,7 @@ Non-negotiable constraints carried from the original plan:
   as using `obj`, so `TabShell` destructures context methods at component scope
   and lists the *members* in `useCallback` deps. Never depend on a whole context
   object — it reintroduces full-tree re-renders.
-- **testIDs are load-bearing.** ~1353 tests assert on them. When a component
+- **testIDs are load-bearing.** ~1354 tests assert on them. When a component
   survives in recognisable form its testIDs must survive too. Migrate tests
   alongside the component; never delete tests to make a phase green.
 - **No colour literals under `src/components`.** `__tests__/components/designTokens.test.ts`
@@ -259,10 +259,17 @@ suite:
 
 - **`SwipeableRow` measured its tray wrong.** Tray width was
   `actions.length * ACTION_WIDTH`, but each button also carries
-  `marginLeft: spacing.xs`, so the row's fully-open translation fell short by
-  4 dp per action and the leftmost button stayed under the row's opaque
-  background. `ACTION_SLOT_WIDTH` is now the single source of truth and is
-  exported so the tests derive from it rather than restating `-84`.
+  `marginLeft: spacing.xs`, so the open translation fell short by 4 dp per
+  action. With the tray right-aligned, that clips `4 × (n − 1)` dp off the
+  leftmost button's leading edge: nothing at one action, 4 dp at the
+  Reply + Delete pair, 8 dp at three. `ACTION_SLOT_WIDTH` is now the single
+  source of truth and is exported so the tests derive from it rather than
+  restating `-84`.
+
+  Worth being precise about, because it bounds the claim: 4 dp off an 84 dp
+  button is a real misalignment but leaves 80 dp tappable, so **this defect
+  alone does not explain "cannot reply or delete."** It is fixed on its own
+  merits; the item below is the more plausible cause.
 - **`removeClippedSubviews` was set on both lists that host a swipeable row.**
   On Android it clips by *layout* bounds and ignores `transform` — which is
   precisely how the tray is revealed — so a recycled row could become
@@ -280,7 +287,7 @@ have been speculative. §3.6 is the check that closes this out.
 ## 2. The exact stopping point
 
 Everything above is committed on `copilot/ux-improvements-android-app` and green
-at **104 suites / 1353 tests**, with `tsc` and `eslint` clean.
+at **104 suites / 1354 tests**, with `tsc` and `eslint` clean.
 
 **One thing is knowingly not done, and it cannot be done here:** nothing in this
 app has been exercised on real hardware. Unit tests cover every derivation —
@@ -294,8 +301,16 @@ The swipe bug is the argument for taking §3 seriously: 104 green suites, `tsc`
 and `eslint` all clean, and the feature was still unusable. The suite proved the
 maths and could not have proved the rest.
 
-Three limits are recorded so they are not mistaken for oversights:
+Four limits are recorded so they are not mistaken for oversights:
 
+- **The ambient call canvas is unreachable in practice.** `call-stage-ambient`
+  is gated on the main stream having no video *track*, but nothing in the app
+  ever produces that state: an "audio call" is a video call with the local
+  camera toggled off, and `track.enabled = false` neither removes the track nor
+  tells the peer anything. The UI is built, tokenised and unit-tested; the call
+  setup simply never asks for it. Fixing it is a protocol change — camera-state
+  signalling, or track removal plus renegotiation — which is why it is filed
+  here and not in §3. Details and the corrected QA script are in §3.1.
 - **Username availability is format-only.** The server exposes no
   unauthenticated availability check, so the registration screen cannot offer
   live "that name is taken" feedback. Adding it is a *backend* task first; the
@@ -339,23 +354,47 @@ Two things about that buffer decide whether the evidence survives:
 Build with `npm run android` from `mobile/`. Two devices (or one device and one
 emulator) are needed for every call check; the emulator can be the peer.
 
-### 3.1 The audio call canvas — `mainHasVideo`
+### 3.1 The call canvas — `mainHasVideo`
 
 The derivation is unit-tested; what is unverified is that it drives a real
-`RTCView`. An audio call still produces a `MediaStream` with a playable URL, so
-the failure mode is not a crash — it is a **black rectangle** where the ambient
-canvas should be.
+`RTCView`. The failure mode is not a crash — it is a **black rectangle** where a
+picture or the ambient canvas should be.
 
-1. Place an **audio** call from the Calls tab.
-2. Expect `call-stage-ambient`: a large avatar, the peer's name in
-   `typography.display`, and a status line on the fixed-dark `ambient` token.
-   Expect **no** self-view PiP.
-3. Repeat as a **video** call, then have the remote peer disable their camera
-   mid-call. The canvas must switch to the same ambient treatment rather than
-   freezing on the last decoded frame.
+**Read this before writing up a defect.** `call-stage-ambient` is gated on the
+main stream having no video *track*:
+`isAudioOnly = Boolean(mainStream) && !mainHasVideo`, where `mainHasVideo` is
+`getVideoTracks().length > 0` (`callStreamHelpers.ts`). Turning a camera off does
+**not** remove a track — it sets `track.enabled = false`, and a disabled sender
+still transmits, so the receiver keeps a video track. An "audio call" in this app
+is also not audio-only on the wire: `startAudioCallWith` places a normal video
+call and toggles the local camera off once connected (`useCallInitiation.ts`),
+`getUserMedia` always requests video with no audio-only fallback, and the callee
+is never told the call was meant to be audio.
 
-Step 3 is the one worth doing carefully: it is a different code path from step 1
-reaching the same UI, and it is the path a unit test is least able to imitate.
+So on today's code the ambient canvas is **not** reachable by either route, and a
+tester following the obvious script would file a false defect against it. What to
+actually check:
+
+1. Place an **audio** call from the Calls tab. Expect the stage to render video
+   (the peer is still sending it) — *not* `call-stage-ambient`. Confirm it draws
+   a picture rather than a black rectangle: that is the `RTCView` claim this
+   check exists to test.
+2. Have the peer disable their camera mid-call. Expect the stage to hold the last
+   decoded frame or go black — again **not** ambient.
+3. If you can reach ambient at all — a peer on a client that genuinely omits the
+   video track — confirm it renders a large avatar, the peer's name in
+   `typography.display`, a status line on the fixed-dark `ambient` token, and
+   **no** self-view PiP.
+
+**This is a real product gap, not a documentation one**, and it is why §3.1 reads
+oddly: the ambient canvas was built and unit-tested for a state the call setup
+never produces. Closing it means either making `hasVideoTrack` consider
+`track.enabled`/`muted` — which needs camera-state signalling, since `enabled` is
+a local flag the peer cannot observe — or removing the track and renegotiating.
+Both are protocol changes, so both are §2 work rather than a QA fix. The stale
+comments at `AppShell.tsx` (`isAudioOnly`) and `callStreamHelpers.ts`
+(`hasVideoTrack`) both assert the camera-off case works; they were left in place
+so this note and the code disagree loudly rather than quietly.
 
 ### 3.2 Picture-in-Picture
 
@@ -470,6 +509,27 @@ so this check is what closes them out.
 8. With TalkBack on, confirm each action is reachable as an accessibility action
    without performing the drag.
 
+**If it is still broken, do not re-fix the two defects above — they are bounded
+and verified by reading.** Narrow it instead, cheapest first:
+
+- **Does the row move at all?** If the bubble does not track the finger, the
+  gesture never activates and the tray is irrelevant: suspect arbitration with
+  the `FlatList`, not geometry. If the row moves but the buttons do nothing, the
+  gesture is fine and the problem is touch dispatch.
+- If dispatch is the half that fails, the next suspect is Android hit-testing of
+  a *transformed* view: the tray is a static sibling and the row slides over it,
+  so a build that hit-tests the row at its untransformed position would swallow
+  every tap on a revealed button while still animating perfectly. Test it by
+  temporarily giving `styles.row` a translucent background — if the buttons are
+  visible underneath and still dead, it is dispatch, not layout.
+- Only then consider `simultaneousWithExternalGesture` / `blocksExternalGesture`.
+  Note the shared mock in `__mocks__/react-native-gesture-handler.js` implements
+  a fixed method list, so using either one means extending the mock or every
+  suite that renders a row fails at once.
+
+Record which of these it was in §4, because the next person will not be able to
+reproduce it from the suite either.
+
 ### 3.7 Then, and only if the backend grows the endpoints
 
 Live username availability during registration, and the Report affordance. Both
@@ -527,6 +587,22 @@ are blocked on server work, not client work — see §2.
   `findAll(...)[0].props.onPress()` still fires, so the assertions passed while
   the user saw the control twice. When a row is conditional on a prop, assert
   the host-node **count**, not merely its presence.
+- **A test can pass for the bug it is named after and still assert nothing.**
+  The first attempt at a regression test for the swipe tray pressed each action
+  by `testID` and checked its callback fired. It passes identically against the
+  *broken* arithmetic, because pressing a node by testID involves no layout,
+  translation or hit-testing. If a test would pass with the fix reverted, it is
+  documentation, not a test — revert the fix and watch it fail before believing
+  it. What does hold the line here is geometric: `test.each([1,2,3])` deriving
+  the expected translation from `ACTION_SLOT_WIDTH`, plus a check that the
+  rendered style's `width + marginLeft` sums to that same constant.
+- **A unit-tested surface can be unreachable in the running app.** The ambient
+  call canvas is fully built, tokenised and covered, and no call the app can
+  place will ever show it — `mainHasVideo` asks whether a video *track* exists,
+  while "camera off" only sets `track.enabled = false`. Tests pinned the
+  derivation, not the premise, so nothing went red. When a component's gate is
+  fed by a value the tests supply directly, check who supplies it in production
+  before trusting the coverage. See §3.1.
 - **A green suite is not evidence for anything gesture-driven.**
   `mobile/__mocks__/react-native-gesture-handler.js` stubs `GestureDetector` as
   `({ children }) => children` and only records the gesture callbacks, so tests

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
 import renderer, { act } from 'react-test-renderer';
 import SwipeableRow from '../../src/components/SwipeableRow';
@@ -184,7 +184,11 @@ describe('SwipeableRow — tray width regression', () => {
     },
   );
 
-  test('every action in a multi-action tray is individually reachable and invokes the right callback', () => {
+  test('each action invokes its own callback and no other', () => {
+    // NOTE: this asserts wiring, *not* reachability — `GestureDetector` is
+    // stubbed pass-through in `__mocks__/react-native-gesture-handler.js`, so
+    // no test in this file dispatches a real touch. Whether a finger can land
+    // on these buttons is verified on device (UX_REDESIGN_PLAN.md §3.6).
     const callbacks = [jest.fn(), jest.fn(), jest.fn()];
     const actions = callbacks.map((fn, i) => ({
       key: `act-${i}`,
@@ -194,10 +198,8 @@ describe('SwipeableRow — tray width regression', () => {
     }));
     const tree = render(actions);
 
-    // Open the tray
     swipe(-actions.length * ACTION_SLOT_WIDTH);
 
-    // Press each action individually
     for (let i = 0; i < actions.length; i++) {
       act(() => {
         tree.root
@@ -209,5 +211,23 @@ describe('SwipeableRow — tray width regression', () => {
     for (let i = 0; i < callbacks.length; i++) {
       expect(callbacks[i]).toHaveBeenCalledTimes(1);
     }
+  });
+
+  test('rendered action width plus margin equals the slot width the tray is measured with', () => {
+    // The drift guard that the test above cannot be: `trayWidth` is derived
+    // from ACTION_SLOT_WIDTH, so if the stylesheet's width/marginLeft ever stop
+    // summing to it the tray under-reveals again — silently, and identically to
+    // the original bug. Read the style off a rendered host node so the
+    // stylesheet, not a restated literal, is what is being checked.
+    const tree = render([
+      { key: 'a', label: 'A', testID: 'tray-action-a', onPress: jest.fn() },
+    ]);
+
+    const action = tree.root.findAll(
+      (node: any) => typeof node.type === 'string' && node.props?.testID === 'tray-action-a',
+    )[0];
+    const style = StyleSheet.flatten(action.props.style);
+
+    expect(style.width + style.marginLeft).toBe(ACTION_SLOT_WIDTH);
   });
 });
