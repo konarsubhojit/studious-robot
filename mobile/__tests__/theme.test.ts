@@ -36,6 +36,19 @@ function contrast(a: string, b: string) {
 }
 
 const SURFACES = ['background', 'backgroundAlt', 'surface', 'surfaceRaised', 'surfaceControl'];
+
+/**
+ * The surfaces a tinted notice can end up sitting on.
+ *
+ * `Banner`'s warning and negative tones *replace* its own `surfaceRaised` fill
+ * with a translucent tint, so the tint composites over whatever the screen puts
+ * behind it rather than over the banner's base. Today every call site resolves
+ * to `background` — `AppShell` and `CallsScreen` set it explicitly, and
+ * `SearchScreen` and `ChatConversationScreen` have transparent roots that
+ * inherit it — but `surface` and `surfaceRaised` are asserted too so a screen
+ * that raises its own background later cannot silently drop a tone below AA.
+ */
+const TINTED_NOTICE_SURFACES = ['background', 'surface', 'surfaceRaised'];
 const FOREGROUNDS = [
   'textPrimary',
   'textSecondary',
@@ -115,6 +128,66 @@ describe('theme palettes', () => {
     expect(contrast(colors.onOverlay, colors.ambient)).toBeGreaterThan(
       contrast(palettes.light.textPrimary, colors.ambient),
     );
+  });
+
+  test.each(['light', 'dark'])('%s Banner tones stay legible on every surface a banner sits on', scheme => {
+    const colors = palettes[(scheme as 'light'|'dark')];
+    const scale = (colors as Record<string, string>);
+    // Banner copy is `typography.hint` — small, so the bar is the full 4.5:1
+    // rather than the 3:1 large-text allowance. The tightest pairing in the
+    // theme today is dark `danger` over `tintDanger` on `surfaceRaised` at
+    // 4.60:1, so that is where the headroom runs out first if these are retuned.
+    TINTED_NOTICE_SURFACES.forEach(bg => {
+      expect(contrast(colors.warning, composite(colors.tintWarning, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.danger, composite(colors.tintDanger, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+    });
+    // The `neutral` and `accent` tones keep the opaque `surfaceRaised` fill and
+    // the default `textSecondary` copy, so there is nothing to flatten.
+    expect(contrast(colors.textSecondary, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(['light', 'dark'])("%s Banner's accent rule meets the 3:1 non-text ratio", scheme => {
+    const colors = palettes[(scheme as 'light'|'dark')];
+    const scale = (colors as Record<string, string>);
+    // Tone `accent` carries no tint and no icon: the 3dp left border is the
+    // *only* thing marking the banner, which makes it a non-text indicator that
+    // has to clear 3:1 against the banner's own fill…
+    expect(contrast(colors.accent, colors.surfaceRaised)).toBeGreaterThanOrEqual(3);
+    // …and against the surface the banner is drawn on, since the rule runs the
+    // full height of the banner edge and is read against both.
+    TINTED_NOTICE_SURFACES.forEach(bg => {
+      expect(contrast(colors.accent, scale[bg])).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  test.each(['light', 'dark'])('%s Toast tones stay legible over their tint', scheme => {
+    const colors = palettes[(scheme as 'light'|'dark')];
+    const scale = (colors as Record<string, string>);
+    // `Toast` has no call site yet, so there is no single surface to measure
+    // against — it is checked over the same set as `Banner` so the pairing is
+    // already proven whenever a screen does mount one. `tintSuccess` has no
+    // other consumer, and would otherwise ship completely unasserted.
+    TINTED_NOTICE_SURFACES.forEach(bg => {
+      expect(contrast(colors.positive, composite(colors.tintSuccess, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.negative, composite(colors.tintDanger, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      // The optional action label keeps `accentValue` on top of the tone tint.
+      expect(contrast(colors.accentValue, composite(colors.tintSuccess, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.accentValue, composite(colors.tintDanger, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+    });
+    // Tone `info` keeps the untinted fill.
+    expect(contrast(colors.onSurface, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test('notice tints stay translucent so they take the surface behind them', () => {
+    // The assertions above are only meaningful while these are `rgba()`: if a
+    // tint were ever flattened to a hex the composite would be a no-op and the
+    // tone would quietly stop tracking the surface it is drawn on.
+    (['light', 'dark'] as const).forEach(scheme => {
+      const colors = palettes[scheme];
+      [colors.tintWarning, colors.tintDanger, colors.tintSuccess].forEach(tint => {
+        expect(tint).toMatch(/^rgba\(/);
+      });
+    });
   });
 });
 

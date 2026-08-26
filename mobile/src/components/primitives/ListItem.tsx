@@ -105,8 +105,17 @@ export default function ListItem({
   );
 
   if (!onPress && !onLongPress) {
+    // A read-only row is still one thing, not two texts that happen to be
+    // adjacent: given a label, it is announced as a single element, and never
+    // with the `button` role a row without a handler has no business claiming.
     return (
-      <View style={[styles.row, style]} testID={testID}>
+      <View
+        style={[styles.row, style]}
+        accessible={accessibilityLabel ? true : undefined}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={accessibilityLabel ? accessibilityHint : undefined}
+        accessibilityRole={accessibilityRole === 'button' ? 'text' : accessibilityRole}
+        testID={testID}>
         {content}
       </View>
     );

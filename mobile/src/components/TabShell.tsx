@@ -321,11 +321,11 @@ export default function TabShell() {
     callFlow.status,
     callFlow.userId,
     chat.blockedUsers,
-    clearCachedMedia,
     chat.messageNotificationsEnabled,
     chat.mutedPeers,
     chat.setMessageNotificationsEnabled,
     chat.unblockPeer,
+    clearCachedMedia,
     handleAutoLightingToggle,
     handleDeveloperModeToggle,
     handleExportLogs,
@@ -339,6 +339,7 @@ export default function TabShell() {
     settings.developerModeEnabled,
     settings.iceTransportPolicy,
     settings.speakerEnabledByDefault,
+    storageUsage,
     unregisterUser,
   ]);
 

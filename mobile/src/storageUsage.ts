@@ -107,7 +107,9 @@ export function formatBytes(bytes: number): string {
     scaled /= 1024;
     unitIndex += 1;
   }
-  const rounded = scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
+  // One decimal below 100, none above it: "1.4 MB" is informative, "1428.6 MB"
+  // is noise.
+  const rounded = scaled >= 100 ? String(Math.round(scaled)) : scaled.toFixed(1);
   return `${rounded} ${units[unitIndex]}`;
 }
 
@@ -138,17 +140,22 @@ function modifiedAtMs(entry: { mtime?: Date | string | number | null }): number 
 /**
  * Every file under `directory`, depth-limited.
  *
- * Never throws: a directory that does not exist yet (no cache written on a
- * fresh install) and one we are not allowed to read are the same thing here —
- * nothing to account for.
+ * Never throws, but does report whether the read worked: an empty directory
+ * and an unreadable one are both "no files", and only the second one means the
+ * total on screen would be a lie.
  */
-async function listFiles(directory: string, depth = 0): Promise<StoredFile[]> {
-  if (depth > MAX_WALK_DEPTH || typeof RNFS?.readDir !== 'function') return [];
+async function listFiles(
+  directory: string,
+  depth = 0,
+): Promise<{ files: StoredFile[]; readable: boolean }> {
+  if (depth > MAX_WALK_DEPTH || typeof RNFS?.readDir !== 'function') {
+    return { files: [], readable: false };
+  }
   let entries;
   try {
     entries = await RNFS.readDir(directory);
   } catch {
-    return [];
+    return { files: [], readable: false };
   }
 
   const files: StoredFile[] = [];
@@ -156,7 +163,8 @@ async function listFiles(directory: string, depth = 0): Promise<StoredFile[]> {
     const isDirectory =
       typeof entry?.isDirectory === 'function' ? entry.isDirectory() : false;
     if (isDirectory) {
-      files.push(...(await listFiles(entry.path, depth + 1)));
+      // A subdirectory we cannot read does not make its parent unreadable.
+      files.push(...(await listFiles(entry.path, depth + 1)).files);
       continue;
     }
     files.push({
@@ -166,7 +174,7 @@ async function listFiles(directory: string, depth = 0): Promise<StoredFile[]> {
       modifiedAtMs: modifiedAtMs(entry),
     });
   }
-  return files;
+  return { files, readable: true };
 }
 
 /**
@@ -182,14 +190,18 @@ export async function measureStorageUsage(): Promise<StorageUsage> {
     return { ...EMPTY_STORAGE_USAGE };
   }
 
-  const usage: StorageUsage = { ...EMPTY_STORAGE_USAGE, measured: true };
+  const usage: StorageUsage = { ...EMPTY_STORAGE_USAGE };
   // Deduplicated because the platform can point two of these constants at the
   // same place (a cache directory nested inside documents, notably), and a
   // file counted twice reads as the app using twice the space it does.
   const seenPaths = new Set<string>();
 
   for (const directory of directories) {
-    for (const file of await listFiles(directory)) {
+    const { files, readable } = await listFiles(directory);
+    // One readable directory is enough to report a real number; every
+    // directory failing means the device told us nothing.
+    if (readable) usage.measured = true;
+    for (const file of files) {
       if (seenPaths.has(file.path)) continue;
       seenPaths.add(file.path);
 
@@ -230,7 +242,7 @@ export async function clearCachedMedia({
 
   const seenPaths = new Set<string>();
   for (const directory of measurableDirectories()) {
-    for (const file of await listFiles(directory)) {
+    for (const file of (await listFiles(directory)).files) {
       if (seenPaths.has(file.path)) continue;
       seenPaths.add(file.path);
       if (categorizeStoredFile(file.name) !== 'media') continue;
@@ -255,6 +267,11 @@ export async function clearCachedMedia({
   return result;
 }
 
+/** @param count */
+function pluralizeFiles(count: number): string {
+  return `${count} ${count === 1 ? 'file' : 'files'}`;
+}
+
 /**
  * One sentence describing what clearing achieved, for the status line.
  *
@@ -263,8 +280,12 @@ export async function clearCachedMedia({
  */
 export function describeClearMediaResult(result: ClearMediaResult): string {
   if (result.removedFiles > 0) {
-    const skipped = result.skippedFiles > 0 ? `; ${result.skippedFiles} still in use` : '';
-    const failed = result.failedFiles > 0 ? `; ${result.failedFiles} could not be removed` : '';
+    const skipped =
+      result.skippedFiles > 0 ? `; ${pluralizeFiles(result.skippedFiles)} still in use` : '';
+    const failed =
+      result.failedFiles > 0
+        ? `; ${pluralizeFiles(result.failedFiles)} could not be removed`
+        : '';
     return `Freed ${formatBytes(result.freedBytes)}${skipped}${failed}.`;
   }
   if (result.failedFiles > 0) return 'Cached media could not be removed.';

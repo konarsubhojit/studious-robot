@@ -33,6 +33,18 @@ jest.mock('../src/hooks/useChatSync', () => ({
 
 jest.mock('../src/hooks/useChatDeepLink', () => ({ __esModule: true, default: () => {} }));
 
+// The primer's own decision logic is covered by its hook's tests; here the
+// shell only has to route to it.
+jest.mock('../src/hooks/usePermissionsPrimer', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    isPrimerVisible: false,
+    isPrimerResolved: true,
+    acceptPrimer: jest.fn(async () => {}),
+    skipPrimer: jest.fn(async () => {}),
+  })),
+}));
+
 // The draggable self-view is gesture/worklet driven and covered by its own
 // tests; the shell only forwards its handles.
 jest.mock('../src/hooks/usePictureInPicturePip', () => ({
@@ -75,6 +87,10 @@ jest.mock('../src/components/InCallBanner', () => {
   const { Text } = require('react-native');
   return { __esModule: true, default: () => <Text testID="call-banner">banner</Text> };
 });
+jest.mock('../src/components/PermissionsPrimerScreen', () => {
+  const { Text } = require('react-native');
+  return { __esModule: true, default: () => <Text testID="screen-permissions-primer">primer</Text> };
+});
 
 import React from 'react';
 import { AccessibilityInfo, Linking } from 'react-native';
@@ -85,9 +101,21 @@ import { CALL_STATES } from '../src/call/callStateMachine';
 import { CallProvider, useCall } from '../src/call/CallProvider';
 import { ChatProvider } from '../src/chat/ChatProvider';
 import useCallFlow from '../src/hooks/useCallFlow';
+import usePermissionsPrimer from '../src/hooks/usePermissionsPrimer';
 import { getDegradations } from '../src/observability';
 
 const useCallFlowMock = ((useCallFlow) as jest.Mock);
+const usePermissionsPrimerMock = ((usePermissionsPrimer) as jest.Mock);
+
+/** @param isPrimerVisible */
+function mockPrimer(isPrimerVisible: boolean) {
+  usePermissionsPrimerMock.mockReturnValue({
+    isPrimerVisible,
+    isPrimerResolved: true,
+    acceptPrimer: jest.fn(async () => {}),
+    skipPrimer: jest.fn(async () => {}),
+  });
+}
 const getDegradationsMock = ((getDegradations) as jest.Mock);
 
 function makeCallFlow(overrides = {}) {
@@ -156,6 +184,10 @@ function findByTestID(tree: any, testID: string) {
 }
 
 describe('AppShell screen routing', () => {
+  beforeEach(() => {
+    mockPrimer(false);
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
     callRef.current = null;
@@ -179,6 +211,42 @@ describe('AppShell screen routing', () => {
     const tree = await renderShell();
     expect(findByTestID(tree, 'screen-tab-shell')).toHaveLength(1);
     expect(findByTestID(tree, 'call-bubble')).toHaveLength(0);
+  });
+
+  test('renders the permissions primer on first run, ahead of the tab shell', async () => {
+    mockPrimer(true);
+    useCallFlowMock.mockReturnValue(makeCallFlow());
+
+    const tree = await renderShell();
+
+    expect(findByTestID(tree, 'screen-permissions-primer')).toHaveLength(1);
+    expect(findByTestID(tree, 'screen-tab-shell')).toHaveLength(0);
+  });
+
+  test('never covers the sign-in screen with the primer', async () => {
+    mockPrimer(true);
+    useCallFlowMock.mockReturnValue(makeCallFlow({ isRegistered: false }));
+
+    const tree = await renderShell();
+
+    expect(findByTestID(tree, 'screen-registration')).toHaveLength(1);
+    expect(findByTestID(tree, 'screen-permissions-primer')).toHaveLength(0);
+  });
+
+  test('an incoming call outranks the primer', async () => {
+    mockPrimer(true);
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({
+        callPhase: CALL_STATES.INCOMING_RINGING,
+        incomingCall: { callerId: 'bob', callId: 'c1' },
+      }),
+    );
+
+    const tree = await renderShell();
+
+    // A ringing phone is not the moment for an explanation.
+    expect(findByTestID(tree, 'screen-incoming')).toHaveLength(1);
+    expect(findByTestID(tree, 'screen-permissions-primer')).toHaveLength(0);
   });
 
   test('renders the outgoing screen while an outgoing call rings', async () => {
