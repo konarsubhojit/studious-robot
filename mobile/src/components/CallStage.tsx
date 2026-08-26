@@ -92,7 +92,11 @@ export default function CallStage({
       {isAudioOnly ? (
         <View style={styles.ambientStage} testID="call-stage-ambient">
           <Avatar id={participantLabel || ''} size={isCompact ? 'lg' : 'xl'} />
-          <Text style={styles.ambientName} numberOfLines={1} accessibilityRole="header">
+          {/* Reflow, not a cap: the ambient canvas is `flex: 1` and centred, so
+              it has a whole screen of room. Its entire job is to say who you
+              are talking to, and "Alexandr…" is the one truncation that would
+              destroy the surface's meaning, so the name wraps instead. */}
+          <Text style={styles.ambientName} numberOfLines={2} accessibilityRole="header">
             {participantLabel || 'Unknown'}
           </Text>
           {audioStatusLabel ? (
@@ -204,6 +208,11 @@ const createStyles = (colors: ThemeColors) =>
       position: 'absolute',
       top: spacing.sm,
       alignSelf: 'center',
+      // Reflow, not a cap: absolutely positioned and centred, so its width is
+      // content-driven and unbounded, while the stage around it clips
+      // (`overflow: 'hidden'`). Bounding the pill lets "<name> are presenting"
+      // wrap inside it at large font scales rather than running off both edges.
+      maxWidth: '90%',
       borderRadius: radius.pill,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,

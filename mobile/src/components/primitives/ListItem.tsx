@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../../ThemeContext';
-import { radius, sizes, spacing, typography } from '../../theme';
+import { fontScaleCaps, radius, sizes, spacing, typography } from '../../theme';
 import Icon from './Icon';
 import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
@@ -76,7 +76,12 @@ export default function ListItem({
         </View>
       ) : null)}
       <View style={styles.text}>
-        <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={1}>
+        {/* Reflow, not a cap: the row is `minHeight`, not `height`, and this
+            column is `flex: 1`, so it has somewhere to go. A row title is the
+            row's subject — a truncated setting name or peer id is a row you
+            can no longer identify — so it wraps rather than being clipped or
+            shrunk. */}
+        <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={2}>
           {title}
         </Text>
         {subtitle ? (
@@ -86,7 +91,11 @@ export default function ListItem({
         ) : null}
       </View>
       {value ? (
-        <Text style={styles.value} numberOfLines={1}>
+        // Capped: unlike the title, this is boxed into `maxWidth: '40%'` — the
+        // constraint that keeps the title readable — so it is the one text in
+        // the row that cannot be given more width. It is trailing metadata (the
+        // current setting, a timestamp), so a modest cap costs nothing.
+        <Text style={styles.value} maxFontSizeMultiplier={fontScaleCaps.meta} numberOfLines={1}>
           {value}
         </Text>
       ) : null}

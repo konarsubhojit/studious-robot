@@ -295,6 +295,11 @@ export const sizes = {
   },
   /** Floating action button diameter. */
   fab: 56,
+  /**
+   * Ceiling for a scrollable list inside a `Sheet`, so a long list (the
+   * licence roll) scrolls within the sheet instead of pushing it off-screen.
+   */
+  sheetListMaxHeight: 320,
 };
 
 /**

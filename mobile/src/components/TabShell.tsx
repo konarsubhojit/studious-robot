@@ -7,6 +7,7 @@ import { useCall } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
 import useRecentSearches from '../hooks/useRecentSearches';
+import useStorageUsage from '../hooks/useStorageUsage';
 import {
   closeChatConversation,
   goBack,
@@ -66,6 +67,15 @@ export default function TabShell() {
   const { unregisterUser, updateStatus } = callFlow;
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
+  // Storage accounting is owned here rather than by the Settings screen, so the
+  // screen stays presentational like every other one in this shell.
+  const {
+    storageUsage,
+    isMeasuringStorage,
+    isClearingMedia,
+    refreshStorageUsage,
+    clearCachedMedia,
+  } = useStorageUsage({ onStatus: updateStatus });
 
   const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
@@ -265,7 +275,8 @@ export default function TabShell() {
   const renderSettings = useCallback(() => (
     <SettingsScreen
       userId={callFlow.userId}
-      onSaveUserId={callFlow.updateUserId}
+      accountEmail={callFlow.accountEmail}
+      accountProviderId={callFlow.accountProviderId}
       signalingUrl={callFlow.signalingUrl}
       onSaveSignalingUrl={callFlow.setSignalingUrl}
       status={callFlow.status}
@@ -281,6 +292,11 @@ export default function TabShell() {
       }}
       onClose={() => openTab(TABS.CHATS)}
       onExportLogs={handleExportLogs}
+      storageUsage={storageUsage}
+      onRefreshStorage={refreshStorageUsage}
+      onClearCachedMedia={clearCachedMedia}
+      isMeasuringStorage={isMeasuringStorage}
+      isClearingMedia={isClearingMedia}
       developerModeEnabled={settings.developerModeEnabled}
       onToggleDeveloperMode={handleDeveloperModeToggle}
       speakerDefaultEnabled={settings.speakerEnabledByDefault}
@@ -298,12 +314,14 @@ export default function TabShell() {
       onOpenProfile={openPeerProfile}
     />
   ), [
+    callFlow.accountEmail,
+    callFlow.accountProviderId,
     callFlow.setSignalingUrl,
     callFlow.signalingUrl,
     callFlow.status,
-    callFlow.updateUserId,
     callFlow.userId,
     chat.blockedUsers,
+    clearCachedMedia,
     chat.messageNotificationsEnabled,
     chat.mutedPeers,
     chat.setMessageNotificationsEnabled,
@@ -313,6 +331,9 @@ export default function TabShell() {
     handleExportLogs,
     handleIceTransportPolicyChange,
     handleSpeakerDefaultToggle,
+    isClearingMedia,
+    isMeasuringStorage,
+    refreshStorageUsage,
     setPeerMuted,
     settings.autoCameraLightingEnabled,
     settings.developerModeEnabled,

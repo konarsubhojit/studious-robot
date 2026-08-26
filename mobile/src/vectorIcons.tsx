@@ -125,6 +125,9 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   settingsMedia: { icon: 'image-multiple-outline', emoji: '🖼️' },
   signOut: { icon: 'logout', emoji: '⎋' },
 
+  // ── Permission primer ────────────────────────────────────────────────────
+  permissionBluetooth: { icon: 'bluetooth-audio', emoji: '🎧' },
+
   // ── Call-log row types ───────────────────────────────────────────────────
   callTypeAudio: { icon: 'phone', emoji: '📞' },
   callTypeVideo: { icon: 'video-outline', emoji: '📹' },

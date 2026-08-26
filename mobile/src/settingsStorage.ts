@@ -373,3 +373,64 @@ export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<b
 }
 
 export const NOTIFICATION_FILE_PATH = NOTIFICATION_FILE;
+
+// ─── Onboarding state ─────────────────────────────────────────────────────────
+// Its own file for the same reason as the identity and theme: `saveSettings`
+// rewrites the whole app-settings document, and this flag is written from a
+// different part of the app (the first-run flow) than the settings toggles.
+
+const ONBOARDING_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-onboarding.json`;
+
+export type OnboardingState = {
+  /**
+   * Whether the explanation shown before the system permission dialogs has
+   * been answered. Recorded whichever way it was answered: a user who chose
+   * "Not now" has seen it, and re-asking on every launch is nagging.
+   */
+  permissionsPrimerSeen: boolean;
+};
+
+export const DEFAULT_ONBOARDING_STATE: OnboardingState = {
+  permissionsPrimerSeen: false,
+};
+
+/**
+ * Load the first-run flags. An unreadable or corrupt file yields the defaults,
+ * which means the primer is shown again — the safe direction, since showing an
+ * explanation twice is a smaller failure than never explaining at all.
+ */
+export async function loadOnboardingState(): Promise<OnboardingState> {
+  try {
+    const exists = await RNFS.exists(ONBOARDING_FILE);
+    if (!exists) return { ...DEFAULT_ONBOARDING_STATE };
+    const content = await RNFS.readFile(ONBOARDING_FILE, 'utf8');
+    return mergeSettings(DEFAULT_ONBOARDING_STATE, JSON.parse(content));
+  } catch (error) {
+    logError('Failed to load onboarding state; using defaults', {
+      message: errorMessage(error),
+    });
+    return { ...DEFAULT_ONBOARDING_STATE };
+  }
+}
+
+/**
+ * Persist the first-run flags. Failures are logged but never thrown so a write
+ * error can't break the flow that triggered it.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveOnboardingState(state: OnboardingState): Promise<boolean> {
+  try {
+    await RNFS.writeFile(
+      ONBOARDING_FILE,
+      JSON.stringify({ permissionsPrimerSeen: Boolean(state?.permissionsPrimerSeen) }),
+      'utf8',
+    );
+    return true;
+  } catch (error) {
+    logError('Failed to persist onboarding state', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const ONBOARDING_FILE_PATH = ONBOARDING_FILE;

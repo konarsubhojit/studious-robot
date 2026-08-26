@@ -14,7 +14,7 @@ import { formatCallDuration } from '../callUx';
 import { triggerHaptic } from '../haptics';
 import useReducedMotion from '../hooks/useReducedMotion';
 import { useThemedStyles } from '../ThemeContext';
-import { radius, spacing, typography } from '../theme';
+import { fontScaleCaps, radius, spacing, typography } from '../theme';
 import IconButton from './IconButton';
 import { Avatar } from './primitives';
 import type { ThemeColors } from '../theme';
@@ -194,10 +194,22 @@ export default function FloatingCallBubble({
           testID="floating-call-bubble-expand">
           <Avatar id={participantLabel || ''} size="xs" online />
           <View style={styles.textWrap}>
-            <Text style={styles.label} numberOfLines={1}>
+            {/* Capped, both of them: `BUBBLE_WIDTH`/`BUBBLE_HEIGHT` are not
+                styling, they are the drag maths. The pan worklets clamp
+                against `width - BUBBLE_WIDTH - margin` and
+                `height - BUBBLE_HEIGHT - margin`, and the fling exit target is
+                derived from the width too, so a bubble that rendered taller or
+                wider than the constants would settle partly off-screen with no
+                way to drag it back. This box genuinely cannot grow. */}
+            <Text
+              style={styles.label}
+              maxFontSizeMultiplier={fontScaleCaps.control}
+              numberOfLines={1}>
               {participantLabel || 'Call in progress'}
             </Text>
-            <Text style={styles.timer}>{formatCallDuration(elapsedCallSeconds)}</Text>
+            <Text style={styles.timer} maxFontSizeMultiplier={fontScaleCaps.control}>
+              {formatCallDuration(elapsedCallSeconds)}
+            </Text>
           </View>
         </Pressable>
 

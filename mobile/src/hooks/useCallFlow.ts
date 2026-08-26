@@ -47,6 +47,7 @@ import { initHaptics, triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions, getMissingCallPermissions } from '../permissions';
+import { shouldShowPermissionPrimer } from '../permissionsPrimer';
 import {
   addCallLinkListener,
   getInitialCallLink,
@@ -2689,7 +2690,12 @@ export default function useCallFlow({
   // established, instead of only prompting the first time each feature is
   // used. Extracted into its own hook so this startup concern stays isolated
   // from this hook's call-lifecycle/session/WebRTC responsibilities.
-  useStartupPermissions(userId);
+  //
+  // Where a first-run primer applies (Android, which is the only platform with
+  // runtime permission dialogs to explain), the primer performs the request
+  // itself after stating the reasons — see `usePermissionsPrimer`. Requesting
+  // here as well would put the dialogs on screen before the explanation.
+  useStartupPermissions(userId, { enabled: !shouldShowPermissionPrimer() });
 
   // ─── Proactive session refresh ────────────────────────────────────────────
   // Rotate the session token every SESSION_REFRESH_INTERVAL_MS (50 min) while
@@ -3870,6 +3876,11 @@ export default function useCallFlow({
     userId: identity.userId,
     setUserId: identity.setUserId,
     editUserId: identity.editUserId,
+    // Surfaced so Settings can name the account behind the username. Read
+    // straight off the Firebase user rather than persisted, because it is only
+    // ever displayed and must not outlive the session it came from.
+    accountEmail: identity.authUser?.email ?? null,
+    accountProviderId: identity.authUser?.providerData?.[0]?.providerId ?? null,
     isRegistered,
     isLoadingIdentity: identity.isLoadingIdentity,
     isAuthenticating: identity.isAuthenticating,

@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -9,13 +9,18 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { describeAccount } from '../accountUx';
+import { APP_VERSION, describePlatform } from '../appInfo';
+import { THIRD_PARTY_LICENSES, summarizeLicenses } from '../licenses';
+import { EMPTY_STORAGE_USAGE, formatBytes } from '../storageUsage';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import AppButton from './AppButton';
-import { Avatar, Divider, IconAction, ListItem, SectionHeader, Switch } from './primitives';
+import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
+import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 
 const APPEARANCE_OPTIONS = [
@@ -32,8 +37,10 @@ const ICE_TRANSPORT_POLICY_OPTIONS = [
 export type SettingsScreenProps = {
   /** Current username. */
   userId: string;
-  /** Persist a new username. */
-  onSaveUserId: (userId: string) => void;
+  /** Email of the signed-in account, when the provider supplied one. */
+  accountEmail?: string | null;
+  /** Firebase provider id the account signed in with, e.g. `google.com`. */
+  accountProviderId?: string | null;
   /** Current signaling server URL. */
   signalingUrl: string;
   /** Persist a new URL. */
@@ -44,6 +51,16 @@ export type SettingsScreenProps = {
   onClose: () => void;
   /** Optional: export diagnostic logs. */
   onExportLogs?: () => void;
+  /** What the app is storing on this device. */
+  storageUsage?: StorageUsage;
+  /** Measure (or re-measure) on-device usage; called when the screen appears. */
+  onRefreshStorage?: () => void;
+  /** Delete the cached media the app can re-fetch. */
+  onClearCachedMedia?: () => void;
+  /** A measurement is in flight. */
+  isMeasuringStorage?: boolean;
+  /** A clear is in flight. */
+  isClearingMedia?: boolean;
   /** Whether the extra diagnostic tools are shown. */
   developerModeEnabled?: boolean;
   /** Toggle developer mode on/off. */
@@ -78,32 +95,50 @@ export type SettingsScreenProps = {
 };
 
 /**
- * Account, notification, privacy and connection settings.
+ * Account, notification, privacy, storage and connection settings.
  *
  * Grouped rather than stacked: the screen used to be a single column of bare
  * "TextInput + Save" pairs and toggles in the order they happened to be added.
  * It now opens with who you are signed in as, then **Account · Notifications ·
- * Calls & media · Appearance · Privacy · Advanced**, with sign-out last and
- * separated from the rest so a destructive action is never adjacent to a
- * routine one.
+ * Calls & media · Appearance · Privacy · Storage & data · Advanced · About**,
+ * with sign-out last and separated from the rest so a destructive action is
+ * never adjacent to a routine one.
  *
  * The Notifications and Privacy groups are the two lists the app previously had
  * no way to inspect at all: muting and blocking could be applied from a person's
  * hub, but nothing anywhere showed *who* was muted or blocked, which made both
  * effectively irreversible for anyone who forgot.
  *
- * Purely presentational – all behaviour is supplied via props.  Local input
- * state is committed only when the user presses the matching "Save" button so
- * an in-progress edit never mutates the live identity.
+ * Two decisions worth keeping:
+ *
+ * - **The username is shown, not edited.** It is claimed by the account on the
+ *   signaling server (`POST /session` answers 409 for a username bound
+ *   elsewhere), and `useIdentity.updateUserId` accordingly refuses every change
+ *   — so an editor here could only ever produce an error. Stating the rule is
+ *   honest; offering a control that cannot succeed is not.
+ * - **The remaining editable value opens a focused editor.** An inline
+ *   `TextInput` in a settings list invites accidental edits and gives a long
+ *   value (a server URL) a two-character-wide viewport; a sheet gives it the
+ *   whole width and an explicit commit.
+ *
+ * Purely presentational – all behaviour is supplied via props.  Editor state is
+ * committed only when the user presses "Save" so an in-progress edit never
+ * mutates the live configuration.
  */
 function SettingsScreen({
   userId,
-  onSaveUserId,
+  accountEmail,
+  accountProviderId,
   signalingUrl,
   onSaveSignalingUrl,
   onSignOut,
   onClose,
   onExportLogs,
+  storageUsage = EMPTY_STORAGE_USAGE,
+  onRefreshStorage,
+  onClearCachedMedia,
+  isMeasuringStorage = false,
+  isClearingMedia = false,
   developerModeEnabled,
   onToggleDeveloperMode,
   speakerDefaultEnabled,
@@ -124,14 +159,32 @@ function SettingsScreen({
   const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  const [name, setName] = useState(userId ?? '');
   const [url, setUrl] = useState(signalingUrl ?? '');
+  const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
+  const [isShowingLicenses, setIsShowingLicenses] = useState(false);
+
+  // Measured when the screen appears rather than continuously: nothing outside
+  // this screen reads the number, and the crawl is not free.
+  useEffect(() => {
+    onRefreshStorage?.();
+  }, [onRefreshStorage]);
 
   const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
-  const trimmedName = name.trim();
   const trimmedUrl = url.trim();
-  const nameDirty = trimmedName.length > 0 && trimmedName !== (userId ?? '').trim();
   const urlDirty = trimmedUrl.length > 0 && trimmedUrl !== (signalingUrl ?? '').trim();
+  const accountLine = describeAccount({ email: accountEmail, providerId: accountProviderId });
+
+  const openSignalingEditor = () => {
+    // Seeded from the live value on every open, so a cancelled edit cannot
+    // survive as a stale draft the next time the sheet is opened.
+    setUrl(signalingUrl ?? '');
+    setIsEditingSignalingUrl(true);
+  };
+
+  const saveSignalingUrl = () => {
+    onSaveSignalingUrl(trimmedUrl);
+    setIsEditingSignalingUrl(false);
+  };
 
   return (
     <KeyboardAvoidingView
@@ -161,31 +214,26 @@ function SettingsScreen({
             <Text style={styles.identityName} numberOfLines={1}>
               {userId || 'Not signed in'}
             </Text>
-            <Text style={styles.hint}>Signed in on this device</Text>
+            <Text style={styles.identityAccount} numberOfLines={2} testID="settings-account">
+              {accountLine}
+            </Text>
           </View>
         </View>
 
         {/* ── Account ─────────────────────────────────────────────────────── */}
         <SectionHeader title="Account" icon="settingsUsername" />
-        <Text style={styles.hint}>Other people will call you by this name.</Text>
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Your username"
-          placeholderTextColor={colors.textSecondary}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.input}
-          accessibilityLabel="Username"
-          accessibilityHint="Other people will call you by this name"
-          testID="settings-username-input"
+        <ListItem
+          title="Username"
+          subtitle="Other people call you by this name. It is bound to your account and can't be changed here."
+          value={userId || 'Not set'}
+          icon="settingsUsername"
+          testID="settings-username-row"
         />
-        <AppButton
-          title="Save username"
-          onPress={() => onSaveUserId(trimmedName)}
-          disabled={!nameDirty}
-          testID="settings-save-username"
-          style={styles.saveButton}
+        <ListItem
+          title="Signed in with"
+          value={accountLine}
+          icon="settingsPrivacy"
+          testID="settings-account-row"
         />
 
         {/* ── Notifications ───────────────────────────────────────────────── */}
@@ -326,29 +374,75 @@ function SettingsScreen({
           </View>
         )}
 
+        {/* ── Storage & data ──────────────────────────────────────────────── */}
+        <SectionHeader title="Storage & data" icon="settingsStorage" />
+        <ListItem
+          title="On this device"
+          subtitle={
+            isMeasuringStorage
+              ? 'Measuring…'
+              : storageUsage.measured
+                ? `Media ${formatBytes(storageUsage.mediaBytes)} · `
+                  + `Logs ${formatBytes(storageUsage.logBytes)} · `
+                  + `Data ${formatBytes(storageUsage.dataBytes)}`
+                : 'Storage use is unavailable on this device.'
+          }
+          value={
+            isMeasuringStorage || !storageUsage.measured
+              ? '—'
+              : formatBytes(storageUsage.totalBytes)
+          }
+          icon="settingsStorage"
+          accessibilityLabel={
+            isMeasuringStorage
+              ? 'Storage used on this device, measuring'
+              : storageUsage.measured
+                ? `Storage used on this device, ${formatBytes(storageUsage.totalBytes)}`
+                : 'Storage used on this device, unavailable'
+          }
+          testID="settings-storage-usage"
+        />
+        {onClearCachedMedia ? (
+          <ListItem
+            title={isClearingMedia ? 'Clearing…' : 'Clear cached media'}
+            subtitle={
+              storageUsage.measured && storageUsage.mediaFileCount > 0
+                ? `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
+                  + 'Photos and voice notes download again when you open them.'
+                : 'Removes downloaded photos and voice notes. '
+                  + 'They download again when you open them.'
+            }
+            icon="settingsMedia"
+            onPress={isClearingMedia ? undefined : onClearCachedMedia}
+            disabled={isClearingMedia}
+            accessibilityLabel="Clear cached media"
+            accessibilityHint="Removes downloaded photos and voice notes from this device"
+            testID="settings-clear-media"
+          />
+        ) : null}
+        {onExportLogs ? (
+          <ListItem
+            title="Export logs"
+            subtitle="Share a copy of this device's diagnostic log."
+            icon="settingsDeveloper"
+            onPress={onExportLogs}
+            accessibilityLabel="Export logs"
+            accessibilityHint="Shares a copy of this device's diagnostic log"
+            testID="settings-export-logs"
+          />
+        ) : null}
+
         {/* ── Advanced ────────────────────────────────────────────────────── */}
         <SectionHeader title="Advanced" icon="settingsDeveloper" />
-        <Text style={styles.toggleLabel}>Signaling server</Text>
-        <Text style={styles.hint}>The server that routes your calls.</Text>
-        <TextInput
-          value={url}
-          onChangeText={setUrl}
-          placeholder="https://signaling.example.com"
-          placeholderTextColor={colors.textSecondary}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          style={styles.input}
-          accessibilityLabel="Signaling server URL"
-          accessibilityHint="The address of the server that routes your calls"
-          testID="settings-signaling-input"
-        />
-        <AppButton
-          title="Save server"
-          onPress={() => onSaveSignalingUrl(trimmedUrl)}
-          disabled={!urlDirty}
-          testID="settings-save-signaling"
-          style={styles.saveButton}
+        <ListItem
+          title="Signaling server"
+          subtitle="The server that routes your calls."
+          value={signalingUrl || 'Not set'}
+          icon="settingsServer"
+          onPress={openSignalingEditor}
+          accessibilityLabel="Signaling server"
+          accessibilityHint="Opens an editor for the address of the server that routes your calls"
+          testID="settings-signaling-row"
         />
         {onToggleDeveloperMode ? (
           <>
@@ -395,13 +489,36 @@ function SettingsScreen({
           </>
         ) : null}
         {onExportLogs ? (
-          <AppButton
+          <ListItem
             title="Export logs"
+            subtitle="Share a copy of this device's diagnostic log."
+            icon="settingsDeveloper"
             onPress={onExportLogs}
+            accessibilityLabel="Export logs"
+            accessibilityHint="Shares a copy of this device's diagnostic log"
             testID="settings-export-logs"
-            style={styles.saveButton}
           />
         ) : null}
+
+        {/* ── About ───────────────────────────────────────────────────────── */}
+        <SectionHeader title="About" icon="settingsAbout" />
+        <ListItem
+          title="Version"
+          subtitle={describePlatform()}
+          value={APP_VERSION}
+          icon="settingsAbout"
+          accessibilityLabel={`Version ${APP_VERSION}`}
+          testID="settings-version"
+        />
+        <ListItem
+          title="Open-source licenses"
+          subtitle={summarizeLicenses()}
+          icon="settingsAbout"
+          onPress={() => setIsShowingLicenses(true)}
+          accessibilityLabel="Open-source licenses"
+          accessibilityHint="Shows the licenses of the libraries this app is built with"
+          testID="settings-licenses"
+        />
 
         {/* ── Sign out ────────────────────────────────────────────────────── */}
         <Divider style={styles.signOutDivider} />
@@ -420,6 +537,57 @@ function SettingsScreen({
           until you register again.
         </Text>
       </ScrollView>
+
+      {/* The one editable value on this screen gets the full width and an
+          explicit commit, instead of a list-width input that can be edited by
+          accident. */}
+      <Sheet
+        visible={isEditingSignalingUrl}
+        onClose={() => setIsEditingSignalingUrl(false)}
+        title="Signaling server"
+        testID="settings-signaling-sheet">
+        <Text style={styles.hint}>
+          The server that routes your calls. Change this only if you were told to.
+        </Text>
+        <TextInput
+          value={url}
+          onChangeText={setUrl}
+          placeholder="https://signaling.example.com"
+          placeholderTextColor={colors.textSecondary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoFocus
+          keyboardType="url"
+          style={styles.input}
+          accessibilityLabel="Signaling server URL"
+          accessibilityHint="The address of the server that routes your calls"
+          testID="settings-signaling-input"
+        />
+        <AppButton
+          title="Save server"
+          onPress={saveSignalingUrl}
+          disabled={!urlDirty}
+          testID="settings-save-signaling"
+          style={styles.saveButton}
+        />
+      </Sheet>
+
+      <Sheet
+        visible={isShowingLicenses}
+        onClose={() => setIsShowingLicenses(false)}
+        title="Open-source licenses"
+        testID="settings-licenses-sheet">
+        <ScrollView style={styles.licenseList}>
+          {THIRD_PARTY_LICENSES.map(license => (
+            <ListItem
+              key={license.name}
+              title={license.name}
+              value={license.license}
+              testID="settings-license-row"
+            />
+          ))}
+        </ScrollView>
+      </Sheet>
     </KeyboardAvoidingView>
   );
 }
@@ -463,6 +631,15 @@ const createStyles = (colors: ThemeColors) =>
     identityName: {
       ...typography.subtitle,
       color: colors.textPrimary,
+    },
+    identityAccount: {
+      ...typography.hint,
+      color: colors.textSecondary,
+    },
+    // Capped so a long dependency list scrolls inside the sheet instead of
+    // pushing the sheet past the top of the screen.
+    licenseList: {
+      maxHeight: sizes.sheetListMaxHeight,
     },
     groupCaption: {
       ...typography.label,

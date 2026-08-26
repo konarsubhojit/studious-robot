@@ -10,12 +10,14 @@ import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
 import { useCall } from './call/CallProvider';
 import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
+import usePermissionsPrimer from './hooks/usePermissionsPrimer';
 import CallScreen from './components/CallScreen';
 import { Banner } from './components/primitives';
 import FloatingCallBubble from './components/FloatingCallBubble';
 import InCallBanner from './components/InCallBanner';
 import IncomingCallScreen from './components/IncomingCallScreen';
 import OutgoingCallScreen from './components/OutgoingCallScreen';
+import PermissionsPrimerScreen from './components/PermissionsPrimerScreen';
 import RegistrationScreen from './components/RegistrationScreen';
 import TabShell from './components/TabShell';
 import { getDegradations } from './observability';
@@ -42,6 +44,9 @@ export default function AppShell() {
   const { colors, scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
   const startupIssues = getDegradations();
+  const { isPrimerVisible, acceptPrimer, skipPrimer } = usePermissionsPrimer(
+    callFlow.isRegistered && !callFlow.isLoadingIdentity,
+  );
 
   useCallStateAnnouncements(callState, callFlow.incomingCall?.callerId, callFlow.calleeId);
   useRecoveryAnnouncements(
@@ -56,6 +61,9 @@ export default function AppShell() {
     callFlow.isRegistered &&
     !callFlow.isLoadingIdentity &&
     !isCallFullScreen &&
+    // The primer takes the tab shell's place on first run, and unlike the shell
+    // it does not pad its own bottom edge.
+    !isPrimerVisible &&
     callState !== CALL_STATES.OUTGOING_RINGING &&
     callState !== CALL_STATES.INCOMING_RINGING;
   const isCallMinimizedInShell = isTabShellActive && isCallConnected && isCallMinimized;
@@ -80,6 +88,23 @@ export default function AppShell() {
         status={callFlow.status}
         isGoogleSignInAvailable={callFlow.canUseGoogleSignIn}
         isMicrosoftSignInAvailable={callFlow.canUseMicrosoftSignIn}
+      />
+    );
+  } else if (isPrimerVisible && callState === CALL_STATES.IDLE) {
+    // Only from a standing start: a call arriving during first run outranks an
+    // explanation, and the primer would otherwise cover the ringing screen.
+    screenContent = (
+      <PermissionsPrimerScreen
+        onContinue={() => {
+          acceptPrimer().catch(error => {
+            logError('permissions primer accept failed', error);
+          });
+        }}
+        onSkip={() => {
+          skipPrimer().catch(error => {
+            logError('permissions primer skip failed', error);
+          });
+        }}
       />
     );
   } else if (callState === CALL_STATES.OUTGOING_RINGING) {

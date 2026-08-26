@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { sizes, spacing, typography } from '../theme';
+import { fontScaleCaps, sizes, spacing, typography } from '../theme';
 import { Badge, Icon } from './primitives';
 import type { ThemeColors } from '../theme';
 
@@ -88,7 +88,16 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, mis
             testID={tab.testID}
             style={styles.tab}>
             <Icon name={isActive ? tab.iconActive : tab.icon} size={24} color={iconColor} />
-            <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
+            {/* Capped: the bar is one row of three equal columns and can never
+                become two, so a label only ever has a third of the screen's
+                width. At 200% "Settings" wraps in that column and the bar grows
+                upward into the content it is supposed to sit beneath, with no
+                upper bound — the label reflows by making the whole app shorter. */}
+            <Text
+              style={[styles.tabLabel, isActive && styles.tabLabelActive]}
+              maxFontSizeMultiplier={fontScaleCaps.control}>
+              {tab.label}
+            </Text>
             {badgeCount > 0 ? (
               <Badge
                 count={badgeCount}

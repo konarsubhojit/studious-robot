@@ -2,7 +2,7 @@ import { memo, useCallback, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
-import { spacing, typography } from '../theme';
+import { fontScaleCaps, spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import SwipeableRow from './SwipeableRow';
 import {
@@ -164,7 +164,15 @@ function ChatListScreen({
             }
             trailing={
               <View style={styles.meta}>
-                {timestamp ? <Text style={styles.timestamp}>{timestamp}</Text> : null}
+                {/* Capped: the trailing column of a row whose title and preview
+                    are free to grow into the space beside it. A timestamp is a
+                    fixed shape with nothing to reflow into, so left uncapped it
+                    just takes width from the conversation it describes. */}
+                {timestamp ? (
+                  <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
+                    {timestamp}
+                  </Text>
+                ) : null}
                 <View style={styles.metaRow}>
                   {activityIcon ? (
                     <Icon

@@ -99,9 +99,13 @@ export default function Banner({
       accessibilityValue={accessibilityValue}
       testID={testID}>
       <Icon name={icon ?? TONE_ICONS[tone]} size={14} color={foreground} />
-      <Text numberOfLines={2} style={[textStyle, styles.message]}>
-        {message}
-      </Text>
+      {/* Reflow, not a cap: a banner is padding-only and every caller stacks it
+          in a column that grows, so the two-line clamp this used to carry was
+          insurance against a long message that instead became the thing that
+          broke it — at 200% "Calling may not work reliably: Microphone
+          permission is denied" clipped mid-condition. A tall banner is a
+          nuisance; a truncated one is a condition the user never learns. */}
+      <Text style={[textStyle, styles.message]}>{message}</Text>
       {actionLabel && onAction ? (
         <Pressable
           onPress={onAction}

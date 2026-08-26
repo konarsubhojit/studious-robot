@@ -128,4 +128,18 @@ describe('Banner', () => {
       expect(icons[0].props.color).toBeTruthy();
     }
   });
+
+  test('lets its message reflow rather than clipping it at a fixed line count', () => {
+    const message =
+      'Calling may not work reliably: Microphone permission is denied; Notifications are disabled';
+    const tree = render({ message, testID: 'b' });
+
+    // A banner is padding-only and every caller stacks it in a column that
+    // grows, so at 200% the sentence has somewhere to go. The two-line clamp
+    // this used to carry truncated the condition mid-sentence instead.
+    const text = tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === message);
+    expect(text).toHaveLength(1);
+    expect(text[0].props.numberOfLines).toBeUndefined();
+    expect(text[0].props.maxFontSizeMultiplier).toBeUndefined();
+  });
 });

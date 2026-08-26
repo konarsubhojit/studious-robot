@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
-import { spacing, typography } from '../theme';
+import { fontScaleCaps, spacing, typography } from '../theme';
 import { Avatar } from './primitives';
 import IconButton from './IconButton';
 import type { ThemeColors } from '../theme';
@@ -53,7 +53,13 @@ export default function InCallBanner({
       <Text style={styles.text} numberOfLines={1}>
         {participantLabel || 'Call in progress'}
       </Text>
-      <Text style={styles.timer}>{formatCallDuration(elapsedCallSeconds)}</Text>
+      {/* Capped: a fixed-format `mm:ss` readout in a single row whose only
+          flexible member is the participant label (`flex: 1`). The row grows
+          taller happily, but it cannot grow *wider* than the shell, so an
+          uncapped timer takes its extra width straight out of the name. */}
+      <Text style={styles.timer} maxFontSizeMultiplier={fontScaleCaps.control}>
+        {formatCallDuration(elapsedCallSeconds)}
+      </Text>
       {onMuteToggle || onEndCall ? (
         <View style={styles.actions}>
           {onMuteToggle ? (

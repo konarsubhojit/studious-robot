@@ -10,7 +10,6 @@ jest.mock(
 
 const baseProps: any = {
   userId: 'alice',
-  onSaveUserId: jest.fn(),
   signalingUrl: 'https://signal.example.com',
   onSaveSignalingUrl: jest.fn(),
   onSignOut: jest.fn(),
@@ -35,62 +34,75 @@ function pressByTestID(tree: any, id: any) {
 describe('SettingsScreen', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('renders the username and signaling inputs seeded from props', () => {
+  test('shows the username without offering an editor for it', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
-    const usernameInput = findByTestID(tree, 'settings-username-input')[0];
-    const signalingInput = findByTestID(tree, 'settings-signaling-input')[0];
-    expect(usernameInput.props.value).toBe('alice');
-    expect(signalingInput.props.value).toBe('https://signal.example.com');
+
+    // The username is claimed by the account on the signaling server, so an
+    // editor here could only ever fail — the row states the value and the rule.
+    expect(findByTestID(tree, 'settings-username-input')).toHaveLength(0);
+    const row = findByTestID(tree, 'settings-username-row')[0];
+    expect(row.props.value).toBe('alice');
+    expect(row.props.onPress).toBeUndefined();
   });
 
-  test('Save username is disabled until the value changes', () => {
+  test('names the account behind the username', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(<SettingsScreen {...baseProps} />);
+      tree = renderer.create(
+        <SettingsScreen {...baseProps} accountEmail="alice@example.com" accountProviderId="google.com" />,
+      );
     });
-    const saveBtn = tree.root
-      .findAllByType('AppButton')
-      .find((b: any) => b.props.testID === 'settings-save-username');
-    expect(saveBtn.props.disabled).toBe(true);
 
-    act(() => {
-      findByTestID(tree, 'settings-username-input')[0].props.onChangeText('bob');
-    });
-    const saveBtnAfter = tree.root
-      .findAllByType('AppButton')
-      .find((b: any) => b.props.testID === 'settings-save-username');
-    expect(saveBtnAfter.props.disabled).toBe(false);
+    const account = findByTestID(tree, 'settings-account').filter(
+      (n: any) => typeof n.type === 'string',
+    )[0];
+    expect(account.props.children).toContain('alice@example.com');
+    expect(account.props.children).toContain('Google');
   });
 
-  test('saving a new username calls onSaveUserId with the trimmed value', () => {
+  test('the signaling server is edited in a sheet, not inline', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
-    act(() => {
-      findByTestID(tree, 'settings-username-input')[0].props.onChangeText('  bob  ');
-    });
-    act(() => {
-      tree.root
-        .findAllByType('AppButton')
-        .find((b: any) => b.props.testID === 'settings-save-username')
-        .props.onPress();
-    });
-    expect(baseProps.onSaveUserId).toHaveBeenCalledWith('bob');
+
+    // Closed by default: an inline input in a settings list invites accidental
+    // edits to a value almost nobody should change.
+    expect(findByTestID(tree, 'settings-signaling-input')).toHaveLength(0);
+
+    pressByTestID(tree, 'settings-signaling-row');
+    const input = findByTestID(tree, 'settings-signaling-input')[0];
+    expect(input.props.value).toBe('https://signal.example.com');
   });
 
-  test('Save server is disabled until the URL changes', () => {
+  test('Save server is disabled until the URL changes, and commits the trimmed value', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
+    pressByTestID(tree, 'settings-signaling-row');
+
     const saveBtn = tree.root
       .findAllByType('AppButton')
       .find((b: any) => b.props.testID === 'settings-save-signaling');
     expect(saveBtn.props.disabled).toBe(true);
+
+    act(() => {
+      findByTestID(tree, 'settings-signaling-input')[0].props.onChangeText('  https://other.example.com  ');
+    });
+    act(() => {
+      tree.root
+        .findAllByType('AppButton')
+        .find((b: any) => b.props.testID === 'settings-save-signaling')
+        .props.onPress();
+    });
+
+    expect(baseProps.onSaveSignalingUrl).toHaveBeenCalledWith('https://other.example.com');
+    // Committing closes the editor.
+    expect(findByTestID(tree, 'settings-signaling-input')).toHaveLength(0);
   });
 
   test('sign out and back buttons invoke their handlers', () => {
@@ -120,12 +132,7 @@ describe('SettingsScreen', () => {
     act(() => {
       withTree = renderer.create(<SettingsScreen {...baseProps} onExportLogs={onExportLogs} />);
     });
-    act(() => {
-      withTree.root
-        .findAllByType('AppButton')
-        .find((b: any) => b.props.testID === 'settings-export-logs')
-        .props.onPress();
-    });
+    pressByTestID(withTree, 'settings-export-logs');
     expect(onExportLogs).toHaveBeenCalled();
   });
 
@@ -214,7 +221,15 @@ describe('SettingsScreen', () => {
 
     // Grouped by what a person came to do, not by which subsystem owns the
     // value: "Signaling server" and "Developer" were implementation labels.
-    ['Account', 'Notifications', 'Appearance', 'Privacy', 'Advanced'].forEach(label => {
+    [
+      'Account',
+      'Notifications',
+      'Appearance',
+      'Privacy',
+      'Storage & data',
+      'Advanced',
+      'About',
+    ].forEach(label => {
       const match = tree.root.findAll((n: any) => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
     });

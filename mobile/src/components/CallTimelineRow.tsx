@@ -1,7 +1,7 @@
 import { memo, useCallback, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, touchSlop, typography } from '../theme';
+import { fontScaleCaps, radius, spacing, touchSlop, typography } from '../theme';
 import { Icon } from './primitives';
 import type { AlertButton } from 'react-native';
 import type { ThemeColors } from '../theme';
@@ -195,10 +195,21 @@ const CallTimelineRow = memo(
               testID={index === 0 ? 'chat-call-entry' : `chat-call-entry-${index}`}
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
               <Icon name={iconName} size={14} color={iconColor} />
-              <Text style={[styles.label, isMissed && styles.labelMissed]} numberOfLines={1}>
+              {/* Reflow: the pill is padding-only, so it can grow, and the
+                  outcome is the entire content of the row — "3 missed ca…"
+                  would leave nothing. `flexShrink` lets it yield width to the
+                  timestamp and wrap rather than overflow the pill. */}
+              <Text
+                style={[styles.label, isMissed && styles.labelMissed]}
+                numberOfLines={2}>
                 {label}
               </Text>
-              <Text style={styles.timestamp}>{formatTimestamp(entry.createdAt)}</Text>
+              {/* Capped: a timestamp beside a title that is now free to grow.
+                  It has a fixed shape ("09:41") and no useful reflow — every
+                  point it gains is taken from the outcome next to it. */}
+              <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
+                {formatTimestamp(entry.createdAt)}
+              </Text>
             </Pressable>
           );
         })}
@@ -230,6 +241,7 @@ const createStyles = (colors: ThemeColors) =>
     label: {
       color: colors.textSecondary,
       fontSize: typography.hint.fontSize,
+      flexShrink: 1,
     },
     labelMissed: {
       color: colors.danger,

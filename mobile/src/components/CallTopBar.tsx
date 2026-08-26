@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { formatCallDuration } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { overlay, radius, spacing } from '../theme';
+import { fontScaleCaps, overlay, radius, spacing } from '../theme';
 import { ICE_TRANSPORT_POLICIES } from '../webrtcConfig';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import type { ThemeColors } from '../theme';
@@ -42,16 +42,29 @@ export default function CallTopBar({
             {participantLabel}
           </Text>
         ) : null}
+        {/* Capped: the whole call chrome hangs off `CallScreen`'s
+            `StyleSheet.absoluteFill` overlay, so this row is exactly as wide as
+            the screen and nothing in it can push anything anywhere. The timer
+            is the only fixed-width thing here; the participant label beside it
+            is the one element that shrinks, so an uncapped `mm:ss` at 200%
+            takes its width and leaves the name as an ellipsis. */}
         <Text
           style={styles.timerText}
+          maxFontSizeMultiplier={fontScaleCaps.control}
           accessibilityLabel={`Call duration ${formatCallDuration(elapsedCallSeconds)}`}>
           {formatCallDuration(elapsedCallSeconds)}
         </Text>
       </View>
       <View style={styles.rightGroup}>
         {iceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY ? (
+          // Capped: a pill drawn with `overflow: 'hidden'` so its radius clips
+          // on Android — which means it clips its own text too. It is a
+          // two-word diagnostic label in the right-hand group of a row that
+          // also has to hold the signal bars and the minimize button, so every
+          // point it widens comes off the participant's name.
           <Text
             style={styles.policyBadge}
+            maxFontSizeMultiplier={fontScaleCaps.control}
             accessibilityLabel="ICE transport policy: TURN relay forced"
             testID="call-ice-policy-badge">
             TURN relay
@@ -83,7 +96,13 @@ export default function CallTopBar({
             {minimizeIconDef && MCIcon ? (
               <MCIcon name={minimizeIconDef.icon} size={18} color={colors.textPrimary} />
             ) : (
-              <Text style={styles.minimizeIconText}>{minimizeIconDef?.emoji ?? '⌄'}</Text>
+              // Capped: the font-not-linked fallback glyph, drawn inside a
+              // circle whose 28 dp diameter and 14 dp radius are literal dp —
+              // a circle cannot grow and stay a circle, so at 200% a 16 pt
+              // chevron is simply clipped by its own button.
+              <Text style={styles.minimizeIconText} maxFontSizeMultiplier={fontScaleCaps.badge}>
+                {minimizeIconDef?.emoji ?? '⌄'}
+              </Text>
             )}
           </Pressable>
         ) : null}

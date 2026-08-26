@@ -3,6 +3,8 @@ import renderer, { act } from 'react-test-renderer';
 import AppTabBar from '../../src/components/AppTabBar';
 import CallControls from '../../src/components/CallControls';
 import CallStage from '../../src/components/CallStage';
+import { ListItem } from '../../src/components/primitives';
+import { fontScaleCaps } from '../../src/theme';
 
 jest.mock(
   '../../src/components/AudioOutputMenu',
@@ -28,6 +30,17 @@ function render(element: React.ReactElement) {
 
 function findByTestId(tree: any, testID: string) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
+}
+
+/**
+ * Host `Text` nodes only. A composite that takes `numberOfLines` or
+ * `maxFontSizeMultiplier` through to a child would otherwise match first and
+ * carry none of the rendered values.
+ */
+function textNodeWith(tree: any, content: string) {
+  return (
+    tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === content)[0] ?? null
+  );
 }
 
 /**
@@ -135,6 +148,99 @@ describe('accessibility contracts', () => {
       const banner = findByTestId(tree, 'presenter-banner');
       expect(banner.props.accessibilityLiveRegion).toBe('polite');
       expect(banner.props.accessibilityRole).toBe('alert');
+    });
+  });
+
+  /**
+   * The 200% dynamic-type contract.
+   *
+   * A cap is a last resort, applied only where the container is fixed in dp or
+   * is a circle/pill/fixed-width column and would therefore *clip* rather than
+   * reflow. Everything else has to grow. These tests pin both halves of that,
+   * because the failure modes are opposite: a missing cap truncates a control,
+   * and a needless cap makes running text unreadable for the people who turned
+   * the font size up in the first place.
+   */
+  describe('dynamic type', () => {
+    function deck(overrides: Record<string, unknown> = {}) {
+      return render(
+        <CallControls
+          isMuted={false}
+          isVideoEnabled
+          hasLocalStream
+          audioDevices={{ available: [], selected: null }}
+          isSpeakerEnabled
+          onMuteToggle={() => {}}
+          onVideoToggle={() => {}}
+          onChooseAudioOutput={() => {}}
+          onCameraSwitch={() => {}}
+          onLeave={() => {}}
+          {...(overrides as any)}
+        />,
+      );
+    }
+
+    test('caps every tab-bar label: the bar is one row of three fixed columns', () => {
+      const tree = render(<AppTabBar activeTab="chats" onChangeTab={() => {}} />);
+
+      ['Chats', 'Calls', 'Settings'].forEach(label => {
+        expect(textNodeWith(tree, label).props.maxFontSizeMultiplier).toBe(fontScaleCaps.control);
+      });
+    });
+
+    test('caps the control-deck caption, so Leave cannot be pushed off the deck', () => {
+      const tree = deck({ isScreenSharing: true, onScreenShareToggle: () => {} });
+
+      const caption = tree.root.findAll(
+        (n: any) => n.type === 'Text' && n.props?.testID === 'screen-share-indicator',
+      )[0];
+      expect(caption.props.maxFontSizeMultiplier).toBe(fontScaleCaps.control);
+    });
+
+    test('wraps the ambient canvas peer name rather than capping or clipping it', () => {
+      const tree = render(
+        <CallStage
+          onLayout={() => {}}
+          pipGesture={undefined as never}
+          animatedPipStyle={undefined as never}
+          mainStreamUrl={null}
+          hasMainStream={false}
+          pipStreamUrl={null}
+          hasPipStream={false}
+          mirrorPip={false}
+          isCompact={false}
+          isAudioOnly
+          participantLabel="alexandra-fitzwilliam"
+        />,
+      );
+
+      // The canvas is `flex: 1` and centred: it has room, so the name reflows.
+      const name = textNodeWith(tree, 'alexandra-fitzwilliam');
+      expect(name.props.numberOfLines).toBe(2);
+      expect(name.props.maxFontSizeMultiplier).toBeUndefined();
+    });
+
+    test('a list row wraps its title and caps only the boxed value column', () => {
+      const tree = render(<ListItem title="Signaling server" value="wss://example.test" />);
+
+      // `minHeight` row + `flex: 1` text column: the title has somewhere to go.
+      const title = textNodeWith(tree, 'Signaling server');
+      expect(title.props.numberOfLines).toBe(2);
+      expect(title.props.maxFontSizeMultiplier).toBeUndefined();
+      // The value is boxed into `maxWidth: '40%'` and cannot be given more.
+      expect(textNodeWith(tree, 'wss://example.test').props.maxFontSizeMultiplier).toBe(
+        fontScaleCaps.meta,
+      );
+    });
+
+    test('leaves the row subtitle uncapped: it is running text', () => {
+      const tree = render(
+        <ListItem title="Include screen audio" subtitle="Shares what your device is playing" />,
+      );
+
+      expect(
+        textNodeWith(tree, 'Shares what your device is playing').props.maxFontSizeMultiplier,
+      ).toBeUndefined();
     });
   });
 });

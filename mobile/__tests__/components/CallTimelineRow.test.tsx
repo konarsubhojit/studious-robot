@@ -5,6 +5,7 @@ import CallTimelineRow, {
   formatCallDuration,
   formatCallEntryLabel,
 } from '../../src/components/CallTimelineRow';
+import { fontScaleCaps } from '../../src/theme';
 
 function makeCall(overrides = {}) {
   return {
@@ -123,5 +124,36 @@ describe('CallTimelineRow', () => {
       tree.root.findAll((node: any) => node.props?.testID === 'chat-call-entry')[0].props.onPress();
     });
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The outcome is the whole content of this row, so it reflows: the pill is
+   * padding-only and can grow. The timestamp beside it has no reflow of its
+   * own, and every point it gains comes out of the outcome, so that is the one
+   * that is capped.
+   */
+  describe('dynamic type', () => {
+    function textNodeWith(tree: any, content: string) {
+      return (
+        tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === content)[0] ?? null
+      );
+    }
+
+    test('wraps the outcome label instead of truncating it to one line', () => {
+      const tree = render({ entries: [makeCall()], peerId: 'user-bob' });
+
+      const label = textNodeWith(tree, 'Outgoing call · 2:08');
+      expect(label.props.numberOfLines).toBe(2);
+      expect(label.props.maxFontSizeMultiplier).toBeUndefined();
+    });
+
+    test('caps the row timestamp, which sits beside that growing label', () => {
+      const tree = render({ entries: [makeCall()], peerId: 'user-bob' });
+
+      const timestamp = tree.root.findAll(
+        (n: any) => n.type === 'Text' && n.props?.maxFontSizeMultiplier === fontScaleCaps.meta,
+      );
+      expect(timestamp).toHaveLength(1);
+    });
   });
 });

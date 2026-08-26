@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
-import { spacing, typography } from '../theme';
+import { fontScaleCaps, spacing, typography } from '../theme';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
 import { ListItem, Sheet } from './primitives';
@@ -117,7 +117,15 @@ export default function CallControls({
       </View>
 
       {isScreenSharing ? (
-        <Text style={styles.sharingLabel} testID="screen-share-indicator">
+        // Capped: the deck hangs off `CallScreen`'s `StyleSheet.absoluteFill`
+        // overlay, pinned to the bottom edge with no scroll and nothing to
+        // push. This caption sits between the primary row and `control-leave`,
+        // so every line it gains drives Leave toward the screen edge — and
+        // Leave is the one control that must never be hard to hit.
+        <Text
+          style={styles.sharingLabel}
+          maxFontSizeMultiplier={fontScaleCaps.control}
+          testID="screen-share-indicator">
           {isScreenAudioShared ? 'Sharing screen with audio' : 'Sharing screen'}
         </Text>
       ) : null}

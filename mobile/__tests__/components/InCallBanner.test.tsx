@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import InCallBanner from '../../src/components/InCallBanner';
+import { fontScaleCaps } from '../../src/theme';
 
 function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
@@ -95,5 +96,31 @@ describe('InCallBanner', () => {
       findByTestId(render({ onMuteToggle: jest.fn(), isMuted: true }), 'in-call-banner-mute')
         .props.accessibilityLabel,
     ).toBe('Unmute microphone');
+  });
+
+  /**
+   * The banner is a single row across the top of the shell. It grows taller
+   * happily, but it can never grow wider, and the participant label is the only
+   * flexible thing in it — so the fixed-shape readout beside the label is what
+   * gets capped, not the label.
+   */
+  describe('dynamic type', () => {
+    function textNodeWith(tree: any, content: string) {
+      return (
+        tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === content)[0] ?? null
+      );
+    }
+
+    test('caps the elapsed-time readout so it cannot eat the name beside it', () => {
+      expect(textNodeWith(render(), '01:05').props.maxFontSizeMultiplier).toBe(
+        fontScaleCaps.control,
+      );
+    });
+
+    test('leaves the participant label uncapped', () => {
+      expect(
+        textNodeWith(render(), 'Call with user-bob').props.maxFontSizeMultiplier,
+      ).toBeUndefined();
+    });
   });
 });

@@ -110,6 +110,10 @@ jest.mock('../../src/permissions', () => ({
   getMissingCallPermissions: jest.fn(() =>
     Promise.resolve({ camera: false, microphone: false, missing: [], message: null }),
   ),
+  // Read through `permissionsPrimer` to decide whether the first-run primer
+  // owns the upfront request; an empty list means "nothing to prime".
+  getCallRuntimePermissions: jest.fn(() => []),
+  getMissingRuntimePermissions: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../src/socketConfig', () => ({

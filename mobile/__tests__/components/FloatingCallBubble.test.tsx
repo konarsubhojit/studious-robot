@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import FloatingCallBubble from '../../src/components/FloatingCallBubble';
 import { triggerHaptic } from '../../src/haptics';
+import { fontScaleCaps } from '../../src/theme';
 
 /** Pan-gesture callbacks captured from the mocked gesture builder. */
 const mockPanCallbacks: { onStart?: any; onUpdate?: any; onEnd?: any; } = {};
@@ -302,5 +303,30 @@ describe('FloatingCallBubble', () => {
     refresh(tree, { elapsedCallSeconds: 70 });
 
     expect(readBubbleTranslate(tree)).toEqual(afterDrag);
+  });
+
+  /**
+   * `BUBBLE_WIDTH`/`BUBBLE_HEIGHT` are not styling, they are the drag maths:
+   * the pan worklets clamp against them and the fling exit target is derived
+   * from the width. A bubble that rendered larger than its constants would
+   * settle partly off-screen with no way to drag it back — so, uniquely among
+   * the app's chrome, this box really cannot grow, and both of its texts are
+   * capped rather than reflowed.
+   */
+  describe('dynamic type', () => {
+    function textNodeWith(tree: any, content: string) {
+      return (
+        tree.root.findAll((n: any) => n.type === 'Text' && n.props?.children === content)[0] ?? null
+      );
+    }
+
+    test('caps both texts, because the bubble is a fixed box the worklets measure', () => {
+      const tree = render();
+
+      expect(
+        textNodeWith(tree, 'Call with user-bob').props.maxFontSizeMultiplier,
+      ).toBe(fontScaleCaps.control);
+      expect(textNodeWith(tree, '01:05').props.maxFontSizeMultiplier).toBe(fontScaleCaps.control);
+    });
   });
 });

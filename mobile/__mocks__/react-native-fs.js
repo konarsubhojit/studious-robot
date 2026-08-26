@@ -16,11 +16,44 @@
  */
 const files = new Map();
 
+/**
+ * One `ReadDirItem`-shaped entry. `isFile`/`isDirectory` are methods on the
+ * real item, not booleans, and callers branch on them.
+ */
+const dirEntry = (name, path, size, isDirectory) => ({
+  name,
+  path,
+  size,
+  mtime: new Date(0),
+  ctime: new Date(0),
+  isFile: () => !isDirectory,
+  isDirectory: () => isDirectory,
+});
+
 module.exports = {
   DocumentDirectoryPath: '/tmp/wetalk-test-documents',
   CachesDirectoryPath: '/tmp/wetalk-test-caches',
   TemporaryDirectoryPath: '/tmp/wetalk-test-tmp',
   exists: jest.fn(async path => files.has(path)),
+  readDir: jest.fn(async directory => {
+    const prefix = `${directory}/`;
+    const directories = new Set();
+    const entries = [];
+    for (const [path, contents] of files) {
+      if (!path.startsWith(prefix)) continue;
+      const relative = path.slice(prefix.length);
+      const separator = relative.indexOf('/');
+      if (separator === -1) {
+        entries.push(dirEntry(relative, path, String(contents ?? '').length, false));
+        continue;
+      }
+      const name = relative.slice(0, separator);
+      if (directories.has(name)) continue;
+      directories.add(name);
+      entries.push(dirEntry(name, `${prefix}${name}`, 0, true));
+    }
+    return entries;
+  }),
   readFile: jest.fn(async path => {
     if (!files.has(path)) throw new Error(`ENOENT: ${path}`);
     return files.get(path);
