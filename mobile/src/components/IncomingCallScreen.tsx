@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { deriveInitials, formatRingCountdown } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
+import useReducedMotion from '../hooks/useReducedMotion';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
 import StatusBanner from './StatusBanner';
@@ -50,8 +51,16 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   // ── Pulse animation ───────────────────────────────────────────────────────
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const reduceMotion = useReducedMotion();
 
+  // A never-ending pulse is exactly the kind of motion "reduce motion" is asked
+  // to stop, and it is decorative: the ring conveys nothing the caller's name,
+  // the countdown and the answer/decline buttons do not already say.
   useEffect(() => {
+    if (reduceMotion) {
+      pulseAnim.setValue(1);
+      return undefined;
+    }
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -70,7 +79,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
     );
     loop.start();
     return () => loop.stop();
-  }, [pulseAnim]);
+  }, [pulseAnim, reduceMotion]);
 
   // ── Countdown timer ───────────────────────────────────────────────────────
   useEffect(() => {

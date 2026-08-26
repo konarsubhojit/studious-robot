@@ -59,6 +59,20 @@ const darkColors = {
   // Drop shadows. A palette token rather than a literal `'#000'` so the two
   // schemes can diverge later without hunting through component stylesheets.
   shadow: '#000000',
+
+  // ── Semantic aliases ──────────────────────────────────────────────────────
+  // Layered over the raw palette above so components stop choosing between
+  // `accentValue` and `accentButton` by guesswork. Each alias states the *role*
+  // a colour plays; the raw token it points at is an implementation detail.
+  onSurface: '#f6f8ff',
+  onSurfaceVariant: '#b6c5ea',
+  outline: '#5a70a4',
+  outlineVariant: '#4a5f8f',
+  positive: '#5be2a2',
+  negative: '#ff7b8a',
+  notice: '#ffd27a',
+  /** Background of a large audio-call canvas; deliberately calmer than `stage`. */
+  ambient: '#141d38',
 };
 
 const lightColors = {
@@ -102,6 +116,17 @@ const lightColors = {
   onOverlay: '#f6f8ff',
 
   shadow: '#000000',
+
+  // ── Semantic aliases (see the dark palette for the rationale) ─────────────
+  onSurface: '#101a30',
+  onSurfaceVariant: '#44506e',
+  outline: '#7286ab',
+  outlineVariant: '#5d6f95',
+  positive: '#116b45',
+  negative: '#b3261e',
+  notice: '#8a5300',
+  /** Audio-call canvas stays dark in both schemes, like `stage`. */
+  ambient: '#141d38',
 };
 
 /**
@@ -170,6 +195,10 @@ export const spacing = {
   md: 12,
   lg: 16,
   xl: 24,
+  /** Gutters of a large-title header, and the gap between grouped sections. */
+  '2xl': 32,
+  /** Vertical rhythm of a full-screen empty state or an identity card. */
+  '3xl': 48,
 };
 
 export const radius = {
@@ -180,9 +209,97 @@ export const radius = {
   pill: 999,
 };
 
+/**
+ * Drop-shadow tokens as a four-step elevation scale.
+ *
+ * Every card in the app used to hand-roll `shadowOpacity` / `shadowRadius` /
+ * `elevation`, so two surfaces at the same conceptual height rendered at
+ * different depths. Spread one of these into a `StyleSheet.create` entry
+ * instead, passing the palette's `shadow` token as the colour.
+ *
+ * @param shadowColor - `colors.shadow` from the active palette.
+ */
+export function elevation(shadowColor: string) {
+  return {
+    /** Flush with its background: a divider or an inset row. */
+    none: {},
+    /** Resting card, list section, chat bubble. */
+    low: {
+      shadowColor,
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 1 },
+      elevation: 2,
+    },
+    /** Raised affordance that floats over content: FAB, toast, banner. */
+    medium: {
+      shadowColor,
+      shadowOpacity: 0.2,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+    },
+    /** Modal layer: bottom sheets, the draggable call bubble. */
+    high: {
+      shadowColor,
+      shadowOpacity: 0.3,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 12,
+    },
+  };
+}
+
+/**
+ * Motion tokens.
+ *
+ * Durations and easing curves were previously written as literals at each call
+ * site (the 180 ms control fade and the 3000 ms chrome auto-hide in
+ * `CallScreen`, the 220 ms swipe spring in `SwipeableRow`), so two animations
+ * that should have felt identical did not. Anything that animates reads from
+ * here, and gates itself on `useReducedMotion()`.
+ */
+export const motion = {
+  duration: {
+    /** Press feedback, chip selection: barely perceptible. */
+    instant: 90,
+    /** Fades and cross-dissolves — the app's default. */
+    fast: 180,
+    /** Sheet present/dismiss, screen-level transitions. */
+    normal: 240,
+    /** Large surfaces travelling a long distance (the call canvas). */
+    slow: 320,
+  },
+  delay: {
+    /** How long call chrome stays visible before auto-hiding. */
+    autoHide: 3000,
+  },
+  spring: {
+    /** Bubbles, swipe rows, draggable PiP: settles without visible bounce. */
+    gentle: { damping: 20, stiffness: 180, mass: 1 },
+    /** Sheets and the FAB: a little overshoot reads as responsive. */
+    lively: { damping: 15, stiffness: 240, mass: 1 },
+  },
+};
+
 /** Minimum recommended dimensions (dp) for reliable touch targets. */
 export const sizes = {
   minTouchTarget: 56,
+  /** Avatar diameters, keyed by the `Avatar` primitive's `size` prop. */
+  avatar: {
+    xs: 24,
+    sm: 32,
+    md: 44,
+    lg: 64,
+    xl: 112,
+  },
+  /** Floating action button diameter. */
+  fab: 56,
+  /**
+   * Ceiling for a scrollable list inside a `Sheet`, so a long list (the
+   * licence roll) scrolls within the sheet instead of pushing it off-screen.
+   */
+  sheetListMaxHeight: 320,
 };
 
 /**
@@ -200,18 +317,76 @@ export function touchSlop(size: number): number {
 /**
  * Text style tokens. Typed as React Native text styles so spreading a token
  * into a `StyleSheet.create` entry keeps its literal `fontWeight` type.
+ *
+ * The scale is `display → title → headline → subtitle → body → label →
+ * caption`, each with an explicit `lineHeight`. Line heights used to be left to
+ * the platform, which meant a row's height changed under a larger system font
+ * in ways the layout had never been checked against; stating them makes the
+ * vertical rhythm the design's decision, and dynamic-type behaviour testable.
+ *
+ * `title` / `sectionTitle` / `groupLabel` / `emphasis` / `hint` are retained as
+ * aliases onto the scale so existing screens keep their current appearance.
  */
-export const typography: Record<'title' | 'sectionTitle' | 'groupLabel' | 'body' | 'label' | 'emphasis' | 'hint', TextStyle> = {
-  title: { fontSize: 28, fontWeight: '600' },
-  sectionTitle: { fontSize: 16, fontWeight: '700' },
+type TypographyToken =
+  | 'display'
+  | 'title'
+  | 'headline'
+  | 'subtitle'
+  | 'body'
+  | 'bodyStrong'
+  | 'label'
+  | 'caption'
+  // Legacy aliases, kept so no screen has to change to adopt the scale.
+  | 'sectionTitle'
+  | 'groupLabel'
+  | 'emphasis'
+  | 'hint';
+
+export const typography: Record<TypographyToken, TextStyle> = {
+  /** Large-title header ("Chats", "Calls"), and the call canvas' peer name. */
+  display: { fontSize: 32, lineHeight: 38, fontWeight: '700' },
+  /** Screen title. */
+  title: { fontSize: 28, lineHeight: 34, fontWeight: '600' },
+  /** Card / section heading, list-row primary text at emphasis. */
+  headline: { fontSize: 18, lineHeight: 24, fontWeight: '700' },
+  /** List-row primary text. */
+  subtitle: { fontSize: 16, lineHeight: 22, fontWeight: '600' },
+  /** Default running text: message bodies, row secondary text. */
+  body: { fontSize: 14, lineHeight: 20 },
+  /** Body weight-emphasised, for a row that has unread content. */
+  bodyStrong: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  /** Button and control labels. */
+  label: { fontSize: 14, lineHeight: 18, fontWeight: '600' },
+  /** Timestamps, hints, badge counts. */
+  caption: { fontSize: 12, lineHeight: 16 },
+
+  sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
   groupLabel: {
     fontSize: 13,
+    lineHeight: 18,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
-  body: { fontSize: 14 },
-  label: { fontWeight: '600' },
   emphasis: { fontWeight: '700' },
-  hint: { fontSize: 12 },
+  hint: { fontSize: 12, lineHeight: 16 },
 };
+
+/**
+ * Cap on how far the OS font-size setting may scale a given text token.
+ *
+ * Applied as `maxFontSizeMultiplier` on text whose container cannot grow — a
+ * badge count, a tab label, a fixed-height control deck — so 200% system type
+ * degrades to "slightly smaller than requested" rather than to truncated or
+ * clipped text. Running text (message bodies, row titles) is deliberately
+ * absent: it scales without limit.
+ */
+export const fontScaleCaps = {
+  /** Badge counts and other glyph-sized numerals inside a fixed circle. */
+  badge: 1.3,
+  /** Tab-bar labels, segmented-control labels, control-deck captions. */
+  control: 1.4,
+  /** Row timestamps, which sit beside a growing title. */
+  meta: 1.6,
+};
+

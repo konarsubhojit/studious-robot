@@ -119,6 +119,22 @@ export async function getMissingCallPermissions(): Promise<{
 }
 
 /**
+ * Report every runtime permission — required and optional — that has not been
+ * granted, without prompting for any of them.
+ *
+ * `getMissingCallPermissions` deliberately narrows to camera and microphone
+ * because it answers "can this call proceed?". The first-run primer asks a
+ * different question — "is there anything left to explain?" — and must include
+ * the optional ones (Bluetooth routing, notifications) it is about to request.
+ */
+export async function getMissingRuntimePermissions(): Promise<string[]> {
+  if (Platform.OS !== 'android' || !PermissionsAndroid?.check) {
+    return [];
+  }
+  return getMissingPermissions(getCallRuntimePermissions());
+}
+
+/**
  * Request the runtime permissions a call needs.
  *
  * @returns a denial always carries a user-facing message.

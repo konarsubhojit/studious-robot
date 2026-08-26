@@ -2,12 +2,14 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { useCall } from '../call/CallProvider';
 import useChatDeepLink from '../hooks/useChatDeepLink';
 import useChatSync from '../hooks/useChatSync';
+import useNotificationPreferences from '../hooks/useNotificationPreferences';
 import { openChatConversation } from '../navigation/navigationRef';
 import type { ReactNode } from 'react';
 import type { deriveShellRoute } from '../navigation/routes';
 
 export type CallFlow = ReturnType<typeof useCall>['callFlow'];
 export type ChatSync = ReturnType<typeof useChatSync>;
+export type NotificationPreferences = ReturnType<typeof useNotificationPreferences>;
 export type ShellRoute = ReturnType<typeof deriveShellRoute>;
 
 export type ChatContextValue = {
@@ -34,8 +36,16 @@ export type ChatContextValue = {
   searchUsers: CallFlow['searchUsers'];
   searchMessages: CallFlow['searchMessages'];
   isUserBlocked: CallFlow['isUserBlocked'];
+  blockedUsers: CallFlow['blockedUsers'];
   blockPeer: CallFlow['blockPeer'];
   unblockPeer: CallFlow['unblockPeer'];
+  // Mute sits beside block deliberately: both are relationship-level decisions
+  // about one person, and the person hub offers them as one pair.
+  mutedPeers: NotificationPreferences['mutedPeers'];
+  isPeerMuted: NotificationPreferences['isPeerMuted'];
+  setPeerMuted: NotificationPreferences['setPeerMuted'];
+  messageNotificationsEnabled: NotificationPreferences['messageNotificationsEnabled'];
+  setMessageNotificationsEnabled: NotificationPreferences['setMessageNotificationsEnabled'];
   pickAndSendAttachment: CallFlow['pickAndSendAttachment'];
   startRecordingVoiceNote: CallFlow['startRecordingVoiceNote'];
   stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
@@ -94,6 +104,14 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
     onOpenConversation: openChatConversation,
   });
 
+  const {
+    mutedPeers,
+    isPeerMuted,
+    setPeerMuted,
+    messageNotificationsEnabled,
+    setMessageNotificationsEnabled,
+  } = useNotificationPreferences();
+
   const value = useMemo(
     () => ({
       chatPeerId,
@@ -119,8 +137,14 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       searchUsers: callFlow.searchUsers,
       searchMessages: callFlow.searchMessages,
       isUserBlocked: callFlow.isUserBlocked,
+      blockedUsers: callFlow.blockedUsers,
       blockPeer: callFlow.blockPeer,
       unblockPeer: callFlow.unblockPeer,
+      mutedPeers,
+      isPeerMuted,
+      setPeerMuted,
+      messageNotificationsEnabled,
+      setMessageNotificationsEnabled,
       pickAndSendAttachment: callFlow.pickAndSendAttachment,
       startRecordingVoiceNote: callFlow.startRecordingVoiceNote,
       stopRecordingVoiceNoteAndSend: callFlow.stopRecordingVoiceNoteAndSend,
@@ -133,6 +157,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
     }),
     [
       callFlow.blockPeer,
+      callFlow.blockedUsers,
       callFlow.conversations,
       callFlow.isUserBlocked,
       callFlow.searchMessages,
@@ -165,7 +190,12 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       isLoadingConversations,
       isLoadingMessages,
       isRefreshingConversations,
+      messageNotificationsEnabled,
+      mutedPeers,
+      isPeerMuted,
       peerPresence,
+      setMessageNotificationsEnabled,
+      setPeerMuted,
     ],
   );
 

@@ -35,27 +35,75 @@ function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
 }
 
+/**
+ * Presses the composite that owns `onPress` for a testID. Host nodes carry the
+ * testID but not the handler, so the first match is not always pressable.
+ */
+function pressByTestID(tree: any, testID: string) {
+  const node = tree.root.findAll(
+    (n: any) => n.props?.testID === testID && typeof n.props?.onPress === 'function',
+  )[0];
+  if (!node) throw new Error(`No pressable node with testID "${testID}"`);
+  act(() => {
+    node.props.onPress();
+  });
+}
+
+/** Screen sharing now lives behind "More"; open it before asserting on rows. */
+function openMoreSheet(tree: any) {
+  pressByTestID(tree, 'control-more');
+}
+
 describe('CallControls screen sharing', () => {
-  test('hides the screen-share controls when no handler is provided', () => {
+  test('hides the More affordance and its controls when no handler is provided', () => {
     const tree = render(createProps());
 
+    expect(findByTestId(tree, 'control-more')).toBeNull();
     expect(findByTestId(tree, 'control-screen-share')).toBeNull();
     expect(findByTestId(tree, 'control-screen-audio')).toBeNull();
   });
 
-  test('renders screen-share and screen-audio toggles when handlers are provided', () => {
+  test('keeps the screen-share controls behind More until it is opened', () => {
+    const tree = render(
+      createProps({ onScreenShareToggle: jest.fn(), onScreenAudioToggle: jest.fn() }),
+    );
+
+    expect(findByTestId(tree, 'control-more')).not.toBeNull();
+    expect(findByTestId(tree, 'control-screen-share')).toBeNull();
+
+    openMoreSheet(tree);
+
+    expect(findByTestId(tree, 'control-screen-share')).not.toBeNull();
+  });
+
+  test('renders screen-share and screen-audio rows in the More sheet', () => {
     const onScreenShareToggle = jest.fn();
     const onScreenAudioToggle = jest.fn();
     const tree = render(createProps({ onScreenShareToggle, onScreenAudioToggle }));
 
-    const shareButton = findByTestId(tree, 'control-screen-share');
-    const audioButton = findByTestId(tree, 'control-screen-audio');
+    openMoreSheet(tree);
 
-    expect(shareButton.props.accessibilityLabel).toBe('Share your screen');
-    expect(audioButton.props.accessibilityLabel).toBe('Include screen audio when sharing');
+    expect(
+      tree.root.findAll((n: any) => n.props?.children === 'Share your screen').length,
+    ).toBeGreaterThan(0);
+    expect(
+      tree.root.findAll((n: any) => n.props?.children === 'Include screen audio').length,
+    ).toBeGreaterThan(0);
   });
 
-  test('disables the toggles when screen sharing is unsupported', () => {
+  test('closes the sheet and toggles sharing when the share row is pressed', () => {
+    const onScreenShareToggle = jest.fn();
+    const tree = render(createProps({ onScreenShareToggle }));
+
+    openMoreSheet(tree);
+    pressByTestID(tree, 'control-screen-share');
+
+    expect(onScreenShareToggle).toHaveBeenCalledTimes(1);
+    // Sharing has started: the sheet must get out of the way of the call.
+    expect(findByTestId(tree, 'control-screen-share')).toBeNull();
+  });
+
+  test('disables the rows when screen sharing is unsupported', () => {
     const tree = render(
       createProps({
         onScreenShareToggle: jest.fn(),
@@ -64,8 +112,10 @@ describe('CallControls screen sharing', () => {
       }),
     );
 
-    expect(findByTestId(tree, 'control-screen-share').props.disabled).toBe(true);
-    expect(findByTestId(tree, 'control-screen-audio').props.disabled).toBe(true);
+    openMoreSheet(tree);
+
+    expect(findByTestId(tree, 'control-screen-share').props.accessibilityState.disabled).toBe(true);
+    expect(findByTestId(tree, 'control-screen-audio').props.accessibilityState.disabled).toBe(true);
   });
 
   test('shows the sharing indicator and blocks camera switching while sharing', () => {
@@ -81,11 +131,28 @@ describe('CallControls screen sharing', () => {
     expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
       'Sharing screen with audio',
     );
-    expect(findByTestId(tree, 'control-screen-share').props.accessibilityLabel).toBe(
-      'Stop sharing your screen',
-    );
+
+    openMoreSheet(tree);
+
+    expect(
+      tree.root.findAll((n: any) => n.props?.children === 'Stop sharing your screen').length,
+    ).toBeGreaterThan(0);
     expect(findByTestId(tree, 'control-swap-camera').props.disabled).toBe(true);
     expect(findByTestId(tree, 'control-video').props.disabled).toBe(true);
+  });
+
+  test('leave stays on the surface, never inside the More sheet', () => {
+    const tree = render(createProps({ onScreenShareToggle: jest.fn() }));
+
+    expect(findByTestId(tree, 'control-leave')).not.toBeNull();
+  });
+});
+
+describe('CallControls on an audio call', () => {
+  test('disables camera switching when there is no video to flip', () => {
+    const tree = render(createProps({ isAudioOnly: true }));
+
+    expect(findByTestId(tree, 'control-swap-camera').props.disabled).toBe(true);
   });
 });
 

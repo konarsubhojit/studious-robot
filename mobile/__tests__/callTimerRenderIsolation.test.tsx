@@ -130,8 +130,14 @@ function findByTestID(tree: any, testID: string) {
 /** The duration currently shown in the minimized-call banner. */
 function bannerDuration(tree: any): string {
   const banner = findByTestID(tree, 'in-call-banner')[0];
-  const texts = banner.findAll((node: any) => node.type === 'Text');
-  return texts[texts.length - 1].children.join('');
+  // Matched by shape rather than by position: the banner also carries the
+  // avatar's initials and the mute/end glyphs, so "the last Text" is not the
+  // timer.
+  const durations = banner
+    .findAll((node: any) => node.type === 'Text')
+    .map((node: any) => node.children.join(''))
+    .filter((text: string) => /^\d{2}:\d{2}$/.test(text));
+  return durations[durations.length - 1];
 }
 
 describe('the call timer does not re-render the rest of the app', () => {

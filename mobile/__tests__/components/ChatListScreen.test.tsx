@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import ChatListScreen from '../../src/components/ChatListScreen';
+import { fontScaleCaps } from '../../src/theme';
 
 function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
@@ -21,7 +22,7 @@ function makeConversation(overrides = {}) {
 }
 
 function render(props: any) {
-  let tree;
+  let tree: any;
   act(() => {
     tree = renderer.create(<ChatListScreen {...props} />);
   });
@@ -100,83 +101,99 @@ describe('ChatListScreen', () => {
     expect(findByTestId(tree, 'chat-list-mark-read')).toBeNull();
   });
 
-  test('a failed contact search offers a retry instead of claiming there are no matches', async () => {
-    jest.useFakeTimers();
-    const onSearchUsers = jest
-      .fn()
-      .mockRejectedValueOnce(new Error('directory unreachable'))
-      .mockResolvedValueOnce([{ userId: 'user-dave', online: true }]);
-    const tree = render({ conversations: [makeConversation()], onSearchUsers });
-
-    const input = findByTestId(tree, 'chat-list-search-input');
-    await act(async () => {
-      input.props.onChangeText('dave');
-    });
-    await act(async () => {
-      jest.advanceTimersByTime(300);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    // "No matching contacts" would be a confident lie about a directory we
-    // never actually reached.
-    expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
-    expect(findByTestId(tree, 'chat-list-search-error')).not.toBeNull();
-
-    await act(async () => {
-      findByTestId(tree, 'chat-list-search-error-action').props.onPress();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(onSearchUsers).toHaveBeenCalledTimes(2);
-    expect(findByTestId(tree, 'chat-list-search-error')).toBeNull();
-    expect(findByTestId(tree, 'chat-list-contact-row')).not.toBeNull();
-  });
-
-  test('searching swaps to contact results and tapping a result opens a conversation', async () => {
-    jest.useFakeTimers();
-    const onOpenConversation = jest.fn();
-    const onSearchUsers = jest.fn().mockResolvedValue([{ userId: 'user-dave', online: true }]);
+  test('long-pressing a conversation opens the person hub', () => {
+    const onOpenProfile = jest.fn();
     const tree = render({
-      conversations: [makeConversation()],
-      onOpenConversation,
-      onSearchUsers,
+      conversations: [makeConversation({ peerId: 'user-carol' })],
+      onOpenConversation: jest.fn(),
+      onOpenProfile,
     });
-
-    const input = findByTestId(tree, 'chat-list-search-input');
-    await act(async () => {
-      input.props.onChangeText('dave');
-    });
-    await act(async () => {
-      jest.advanceTimersByTime(300);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(onSearchUsers).toHaveBeenCalledWith('dave');
-
-    const contactRow = findByTestId(tree, 'chat-list-contact-row');
-    expect(contactRow).not.toBeNull();
-    // Conversation rows should be hidden while searching.
-    expect(findAllByTestId(tree, 'chat-list-row')).toHaveLength(0);
-
+    const row = findByTestId(tree, 'chat-list-row');
     act(() => {
-      contactRow.props.onPress();
+      row.props.onLongPress();
     });
-    expect(onOpenConversation).toHaveBeenCalledWith('user-dave');
+    expect(onOpenProfile).toHaveBeenCalledWith('user-carol');
   });
 
-  test('renders a settings gear only when onOpenSettings is provided', () => {
-    const withSettings = render({
+  test('offers exactly one search affordance, and no settings gear', () => {
+    const tree = render({
       conversations: [],
       onOpenConversation: jest.fn(),
-      onOpenSettings: jest.fn(),
+      onOpenSearch: jest.fn(),
     });
-    expect(findByTestId(withSettings, 'chat-list-open-settings')).not.toBeNull();
 
-    const withoutSettings = render({ conversations: [], onOpenConversation: jest.fn() });
-    expect(findByTestId(withoutSettings, 'chat-list-open-settings')).toBeNull();
+    // The inline "Search contacts" field and the second gear are gone: search
+    // happens in one place, and Settings is a tab.
+    expect(findByTestId(tree, 'chat-list-search-input')).toBeNull();
+    expect(findByTestId(tree, 'chat-list-open-settings')).toBeNull();
+    expect(findByTestId(tree, 'chat-list-open-search')).not.toBeNull();
+  });
+
+  test('the search action is omitted when there is nowhere to search', () => {
+    const tree = render({ conversations: [], onOpenConversation: jest.fn() });
+    expect(findByTestId(tree, 'chat-list-open-search')).toBeNull();
+  });
+
+  test('the new-chat FAB opens the people picker', () => {
+    const tree = render({
+      conversations: [makeConversation()],
+      onOpenConversation: jest.fn(),
+      onSearchUsers: jest.fn().mockResolvedValue([]),
+    });
+
+    const picker = () =>
+      tree.root.findAll(
+        (n: any) => n.props?.testID === 'chat-list-people-picker' && typeof n.type === 'function',
+      )[0];
+    expect(picker().props.visible).toBe(false);
+
+    const fab = tree.root.findAll(
+      (n: any) => n.props?.testID === 'chat-list-new-chat' && typeof n.props?.onPress === 'function',
+    )[0];
+    act(() => {
+      fab.props.onPress();
+    });
+    expect(picker().props.visible).toBe(true);
+  });
+
+  test('picking someone from the picker starts a chat with them', () => {
+    const onStartChat = jest.fn();
+    const tree = render({
+      conversations: [],
+      onOpenConversation: jest.fn(),
+      onSearchUsers: jest.fn().mockResolvedValue([]),
+      onStartChat,
+    });
+
+    const picker = tree.root.findAll(
+      (n: any) => n.props?.testID === 'chat-list-people-picker' && typeof n.type === 'function',
+    )[0];
+    act(() => {
+      picker.props.onSelect('user-dave');
+    });
+    expect(onStartChat).toHaveBeenCalledWith('user-dave');
+  });
+
+  test('the first-run empty state leads into the people picker', () => {
+    const tree = render({
+      conversations: [],
+      onOpenConversation: jest.fn(),
+      onSearchUsers: jest.fn().mockResolvedValue([]),
+    });
+
+    const empty = tree.root.findAll(
+      (n: any) => n.props?.testID === 'chat-list-empty' && typeof n.type === 'function',
+    )[0];
+    expect(empty.props.actionLabel).toBe('Find someone');
+
+    act(() => {
+      empty.props.onAction();
+    });
+
+    const picker = tree.root.findAll(
+      (n: any) => n.props?.testID === 'chat-list-people-picker' && typeof n.type === 'function',
+    )[0];
+    expect(picker.props.visible).toBe(true);
   });
 
   test('renders an initials avatar with an online-status dot on conversation rows', () => {
@@ -198,5 +215,42 @@ describe('ChatListScreen', () => {
       onOpenConversation: jest.fn(),
     });
     expect(findByTestId(tree, 'chat-list-avatar-status')).toBeNull();
+  });
+
+  /**
+   * A conversation row's title and preview are free to grow — they are the
+   * content. The trailing timestamp is the fixed-shape column beside them, and
+   * is the only text on the row that is capped.
+   */
+  describe('dynamic type', () => {
+    function capsOf(tree: any) {
+      return tree.root
+        .findAll((n: any) => n.type === 'Text')
+        .map((n: any) => n.props.maxFontSizeMultiplier)
+        .filter((cap: unknown) => cap !== undefined);
+    }
+
+    test('caps the row timestamp beside the growing title', () => {
+      const tree = render({
+        conversations: [makeConversation()],
+        onOpenConversation: jest.fn(),
+      });
+
+      expect(capsOf(tree)).toContain(fontScaleCaps.meta);
+    });
+
+    test('leaves the title and the preview uncapped: they are the row', () => {
+      const tree = render({
+        conversations: [makeConversation({ peerId: 'user-bob' })],
+        onOpenConversation: jest.fn(),
+      });
+
+      const running = tree.root.findAll(
+        (n: any) =>
+          n.type === 'Text' && (n.props?.children === 'user-bob' || n.props?.children === 'Hey there!'),
+      );
+      expect(running.length).toBe(2);
+      running.forEach((node: any) => expect(node.props.maxFontSizeMultiplier).toBeUndefined());
+    });
   });
 });

@@ -30,8 +30,6 @@ export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
  */
 export default function useAppSettings({ onStatus }: { onStatus?: (message: string, severity?: 'info' | 'success' | 'error') => void; } = {}) {
   const [settings, setSettings] = useState(DEFAULT_APP_SETTINGS);
-  // Whether the lobby's (developer-mode) settings panel is expanded.
-  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,8 +102,6 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
 
   return {
     settings,
-    isSettingsVisible,
-    setIsSettingsVisible,
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,

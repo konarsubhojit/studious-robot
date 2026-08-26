@@ -95,8 +95,73 @@ describe('PeerProfileScreen', () => {
     expect(onVideoCall).toHaveBeenCalledWith('user-bob');
   });
 
-  test('hides the mute row when no handler is supplied', () => {
-    expect(findByTestId(render({}), 'peer-profile-mute')).toBeNull();
-    expect(findByTestId(render({ onToggleMute: jest.fn() }), 'peer-profile-mute')).not.toBeNull();
+  test('the mute row is always present and reports its state', () => {
+    // It used to render only when an `onToggleMute` prop was supplied, and
+    // nothing ever supplied one — mute existed in the code, never in the app.
+    const muteRow = (tree: any) =>
+      tree.root.findAll(
+        (node: any) => node.props?.testID === 'peer-profile-mute' && typeof node.type === 'string',
+      )[0];
+
+    expect(muteRow(render({}))).not.toBeNull();
+    expect(muteRow(render({ isMuted: true })).props.accessibilityState).toEqual({
+      checked: true,
+      disabled: false,
+    });
+    expect(muteRow(render({ isMuted: false })).props.accessibilityState).toEqual({
+      checked: false,
+      disabled: false,
+    });
+  });
+
+  test('toggling mute reports the peer it applies to', () => {
+    const onToggleMute = jest.fn();
+    press(render({ onToggleMute }), 'peer-profile-mute');
+    expect(onToggleMute).toHaveBeenCalledWith('user-bob');
+  });
+
+  test('does not offer a report control while nothing can receive a report', () => {
+    // The row used to answer with an `Alert` promising the report would be
+    // reviewed; no endpoint exists, so the row is gone until one does.
+    expect(findByTestId(render({}), 'peer-profile-report')).toBeNull();
+  });
+
+  test('primary actions are disabled while the peer is blocked', () => {
+    const tree = render({
+      isBlocked: true,
+      onMessage: jest.fn(),
+      onAudioCall: jest.fn(),
+      onVideoCall: jest.fn(),
+    });
+
+    ['peer-profile-message', 'peer-profile-audio-call', 'peer-profile-video-call'].forEach(id => {
+      const control = tree.root.findAll(
+        (node: any) => node.props?.testID === id && typeof node.type === 'string',
+      )[0];
+      expect(control.props.accessibilityState.disabled).toBe(true);
+    });
+  });
+
+  test('describes a call with the same vocabulary as the call log', () => {
+    const tree = render({
+      currentUserId: 'user-me',
+      callHistory: [
+        {
+          callId: 'call-1',
+          direction: 'incoming',
+          callerId: 'user-bob',
+          status: 'missed',
+          createdAt: '2026-01-01T09:30:00.000Z',
+        },
+      ],
+    });
+
+    const titles = tree.root
+      .findAll((node: any) => node.type === 'Text')
+      .map((node: any) => node.props.children)
+      .filter((child: any) => typeof child === 'string');
+
+    // `describeCallOutcome`, not the screen's own copy of the same phrasing.
+    expect(titles).toContain('Missed call');
   });
 });

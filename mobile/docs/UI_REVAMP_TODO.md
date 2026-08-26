@@ -1,8 +1,15 @@
 # UI Revamp — Next Steps
 
+> **Superseded.** This tracker covers the revamp round *before* the full UX
+> redesign. Everything below is either shipped or has been rewritten since —
+> some of it references files that no longer exist under these names (`App.js`,
+> `CallScreen.js`, `vectorIcons.js` are now `.tsx`, and the shell moved to
+> `AppShell.tsx`). The two open items at the bottom are the same real-device QA
+> now specified as an executable protocol in **`UX_REDESIGN_PLAN.md` §3**.
+> Kept for the rationale it records; do not use it as a checklist.
+
 Tracking document for the WeTalk mobile UI revamp requested alongside the
-safe-area / keyboard / permissions fixes already shipped. Use this as the
-starting checklist for the next session.
+safe-area / keyboard / permissions fixes already shipped.
 
 ## Already done (this round)
 
@@ -64,9 +71,9 @@ starting checklist for the next session.
 - [ ] Real-device QA pass (cold start, locked screen, gesture nav vs.
       3-button nav, various keyboard types/IMEs) — could not be performed
       in this sandboxed environment for either the CallKeep or this UI
-      work; required before shipping. **Still open** after this revamp
-      pass (Phases 1–4 above are code-complete and test-covered, but the
-      in-call safe-area fix and general layout still need a real device).
+      work; required before shipping. **Now specified step by step, with
+      the log line that evidences each check, in `UX_REDESIGN_PLAN.md` §3.**
 - [ ] Confirm no double-padding/layout regressions on tablets or
       split-screen (the safe-area insets change touches the whole app
-      shell). **Still open** for the same reason.
+      shell). **Still open** for the same reason — not yet covered by §3,
+      which walks phone form factors only.

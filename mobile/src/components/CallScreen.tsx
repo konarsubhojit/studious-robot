@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp, FadeOutDown, FadeOutUp } from 'react-native-reanimated';
 import { useThemedStyles } from '../ThemeContext';
-import { spacing } from '../theme';
+import { motion, spacing } from '../theme';
+import useReducedMotion from '../hooks/useReducedMotion';
+import { formatCallDuration } from '../callUx';
 import CallStage from './CallStage';
 import CallControls from './CallControls';
 import CallTopBar from './CallTopBar';
@@ -14,13 +16,15 @@ import type { CallRecoveryStatus } from '../hooks/useCallFlow';
 import type { MutableRefObject } from 'react';
 import type { ThemeColors } from '../theme';
 
-const STATUS_AUTO_HIDE_MS = 3000;
-const CONTROLS_AUTO_HIDE_MS = 3000;
-const OVERLAY_FADE_MS = 180;
-
 /**
  * Full-screen in-call screen whose overlay chrome (top bar + control deck)
  * auto-hides after a few seconds of inactivity and fades back in on tap.
+ *
+ * Auto-hide exists to get chrome out of the way of *video*. It is therefore
+ * suppressed whenever hiding the chrome would only take away information:
+ * on an audio call (nothing underneath to reveal), while a recovery banner or
+ * an error is showing, and when the user has asked for reduced motion — in
+ * which case the fades are dropped too, not merely shortened.
  *
  * @param props
  */
@@ -61,6 +65,7 @@ export default function CallScreen({
   onMinimize,
   status,
   isCompact = false,
+  isAudioOnly = false,
 }: Omit<Parameters<typeof CallStage>[0], 'onLayout'> & Parameters<typeof CallControls>[0] &
     Parameters<typeof CallTopBar>[0] &
     {
@@ -72,6 +77,8 @@ export default function CallScreen({
         recoveryStatus?: CallRecoveryStatus | null;
     }) {
   const styles = useThemedStyles(createStyles);
+  const reduceMotion = useReducedMotion();
+  const overlayFadeMs = reduceMotion ? motion.duration.instant : motion.duration.fast;
   // A media-only failure (ICE down, socket up) is a recovery too: gating the
   // banner on socket loss alone left the most common failure case invisible.
   const isRecovering = Boolean(isReconnecting || recoveryStatus);
@@ -94,7 +101,7 @@ export default function CallScreen({
     controlsAutoHideTimerRef.current = setTimeout(() => {
       setShowControlsOverlay(false);
       controlsAutoHideTimerRef.current = null;
-    }, CONTROLS_AUTO_HIDE_MS);
+    }, motion.delay.autoHide);
   }, [clearControlsAutoHide]);
 
   useEffect(() => {
@@ -115,7 +122,7 @@ export default function CallScreen({
       setVisibleStatus(current =>
         current?.message === message && current?.severity === severity ? null : current,
       );
-    }, STATUS_AUTO_HIDE_MS);
+    }, motion.delay.autoHide);
 
     return () => clearTimeout(timeout);
   }, [isCompact, isRecovering, status?.message, status?.severity]);
@@ -128,6 +135,12 @@ export default function CallScreen({
     if (!isCompact) setShowControlsOverlay(true);
   }, [isCompact]);
 
+  // An audio call has nothing under the chrome, so a deck hidden by a stray tap
+  // (or by a video segment that has since ended) would be unrecoverable-looking.
+  useEffect(() => {
+    if (isAudioOnly && !isCompact) setShowControlsOverlay(true);
+  }, [isAudioOnly, isCompact]);
+
   // Every timer this screen owns is cleared on unmount, so a call that ends
   // mid-animation cannot hide (or re-show) the controls of the *next* call.
   useEffect(() => clearControlsAutoHide, [clearControlsAutoHide]);
@@ -138,7 +151,9 @@ export default function CallScreen({
       setShowControlsOverlay(false);
       return undefined;
     }
-    if (showControlsOverlay && visibleStatus?.severity !== 'error') {
+    const chromeIsTheOnlyContent = isAudioOnly;
+    const hidingWouldSwallowAWarning = isRecovering || visibleStatus?.severity === 'error';
+    if (showControlsOverlay && !chromeIsTheOnlyContent && !hidingWouldSwallowAWarning) {
       scheduleControlsAutoHide();
     } else {
       clearControlsAutoHide();
@@ -146,7 +161,9 @@ export default function CallScreen({
     return clearControlsAutoHide;
   }, [
     clearControlsAutoHide,
+    isAudioOnly,
     isCompact,
+    isRecovering,
     scheduleControlsAutoHide,
     showControlsOverlay,
     visibleStatus?.severity,
@@ -176,6 +193,10 @@ export default function CallScreen({
         isScreenSharing={isScreenSharing}
         isRemoteScreenSharing={isRemoteScreenSharing}
         participantLabel={participantLabel}
+        isAudioOnly={isAudioOnly}
+        audioStatusLabel={
+          isRecovering ? 'Reconnecting…' : formatCallDuration(elapsedCallSeconds)
+        }
       />
 
       {/* The overlay container is a layout-only box with no visuals of its
@@ -186,8 +207,8 @@ export default function CallScreen({
       <View style={styles.overlay} pointerEvents="box-none">
         {!isCompact && showControlsOverlay ? (
           <Animated.View
-            entering={FadeInDown.duration(OVERLAY_FADE_MS)}
-            exiting={FadeOutUp.duration(OVERLAY_FADE_MS)}
+            entering={FadeInDown.duration(overlayFadeMs)}
+            exiting={FadeOutUp.duration(overlayFadeMs)}
             style={styles.topOverlay}
             pointerEvents="box-none">
             <CallTopBar
@@ -227,12 +248,13 @@ export default function CallScreen({
             sit under the system nav bar. */}
         {!isCompact && showControlsOverlay ? (
           <Animated.View
-            entering={FadeInUp.duration(OVERLAY_FADE_MS)}
-            exiting={FadeOutDown.duration(OVERLAY_FADE_MS)}
+            entering={FadeInUp.duration(overlayFadeMs)}
+            exiting={FadeOutDown.duration(overlayFadeMs)}
             style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}
               isVideoEnabled={isVideoEnabled}
+              isAudioOnly={isAudioOnly}
               hasLocalStream={hasLocalStream}
               audioDevices={audioDevices}
               isSpeakerEnabled={isSpeakerEnabled}

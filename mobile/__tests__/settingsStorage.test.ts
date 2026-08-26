@@ -13,10 +13,12 @@ jest.mock('../src/appLogger', () => ({
 import RNFS from 'react-native-fs';
 import {
   loadIdentity,
+  loadOnboardingState,
   loadSettings,
   loadThemeMode,
   mergeSettings,
   saveIdentity,
+  saveOnboardingState,
   saveSettings,
   saveThemeMode,
 } from '../src/settingsStorage';
@@ -201,6 +203,47 @@ describe('settingsStorage', () => {
     test('resolves false on write failure', async () => {
       writeFileMock.mockRejectedValue(new Error('disk full'));
       await expect(saveThemeMode('dark')).resolves.toBe(false);
+    });
+  });
+
+  describe('onboarding state', () => {
+    test('a fresh install has answered nothing', async () => {
+      existsMock.mockResolvedValue(false);
+      await expect(loadOnboardingState()).resolves.toEqual({ permissionsPrimerSeen: false });
+    });
+
+    test('reads the persisted answer', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ permissionsPrimerSeen: true }));
+      await expect(loadOnboardingState()).resolves.toEqual({ permissionsPrimerSeen: true });
+    });
+
+    test('a corrupt file falls back to unanswered rather than throwing', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue('not json');
+      // Showing the explanation one extra time beats never showing it.
+      await expect(loadOnboardingState()).resolves.toEqual({ permissionsPrimerSeen: false });
+    });
+
+    test('ignores a value of the wrong type', async () => {
+      existsMock.mockResolvedValue(true);
+      readFileMock.mockResolvedValue(JSON.stringify({ permissionsPrimerSeen: 'yes' }));
+      await expect(loadOnboardingState()).resolves.toEqual({ permissionsPrimerSeen: false });
+    });
+
+    test('writes to its own file, so a settings write cannot clobber it', async () => {
+      writeFileMock.mockResolvedValue(undefined);
+      await expect(saveOnboardingState({ permissionsPrimerSeen: true })).resolves.toBe(true);
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-onboarding.json',
+        JSON.stringify({ permissionsPrimerSeen: true }),
+        'utf8',
+      );
+    });
+
+    test('resolves false on write failure', async () => {
+      writeFileMock.mockRejectedValue(new Error('disk full'));
+      await expect(saveOnboardingState({ permissionsPrimerSeen: true })).resolves.toBe(false);
     });
   });
 });

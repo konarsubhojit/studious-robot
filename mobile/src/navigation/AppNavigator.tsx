@@ -116,6 +116,8 @@ function ChatsNavigator() {
 
 export type AppNavigatorProps = {
   unreadCount?: number;
+  /** Unacknowledged missed calls, badged on the Calls tab. */
+  missedCallCount?: number;
   bottomInset?: number;
   onTabPress?: (tab: string) => void;
   onRouteChange?: (route: { activeTab: string; chatPeerId: string | null; }) => void;
@@ -148,6 +150,7 @@ export type AppNavigatorProps = {
  */
 export default function AppNavigator({
   unreadCount = 0,
+  missedCallCount = 0,
   bottomInset = 0,
   onTabPress,
   onRouteChange,
@@ -209,10 +212,11 @@ export default function AppNavigator({
           navigation.navigate(tab);
         }}
         unreadCount={unreadCount}
+        missedCallCount={missedCallCount}
         bottomInset={bottomInset}
       />
     ),
-    [bottomInset, onTabPress, unreadCount],
+    [bottomInset, missedCallCount, onTabPress, unreadCount],
   );
 
   // Memoized so the provider's value keeps its identity while the renderers do.

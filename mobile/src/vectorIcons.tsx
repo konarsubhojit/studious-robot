@@ -42,6 +42,12 @@ export function _resetVectorIconsCache() {
 /**
  * Map of semantic icon names used throughout the app to their
  * MaterialCommunityIcons glyph names and emoji fallbacks.
+ *
+ * The emoji are a *fallback* only, used when the native font has not been
+ * linked (CI, a fresh checkout). No component should render one directly: an
+ * emoji is an illustration, not a control glyph, and it neither takes the
+ * palette's colour nor scales with the surrounding type. Route every glyph
+ * through `<Icon name="…" />` (`components/primitives/Icon`) instead.
  */
 export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   settings: { icon: 'cog', emoji: '⚙️' },
@@ -88,4 +94,60 @@ export const ICONS: Record<string, { icon: string; emoji: string; }> = {
   mediaPlay: { icon: 'play', emoji: '▶️' },
   mediaPause: { icon: 'pause', emoji: '⏸️' },
   mediaFullscreen: { icon: 'fullscreen', emoji: '⛶' },
+
+  // ── Navigation and global actions ────────────────────────────────────────
+  back: { icon: 'chevron-left', emoji: '‹' },
+  forward: { icon: 'chevron-right', emoji: '›' },
+  /** Disclosure chevron on a settings/profile row that opens a sub-screen. */
+  disclosure: { icon: 'chevron-right', emoji: '›' },
+  search: { icon: 'magnify', emoji: '🔍' },
+  newChat: { icon: 'message-plus-outline', emoji: '✎' },
+  newCall: { icon: 'phone-plus-outline', emoji: '✆' },
+  filter: { icon: 'filter-variant', emoji: '⚙' },
+  more: { icon: 'dots-horizontal', emoji: '⋯' },
+  check: { icon: 'check', emoji: '✓' },
+  scrollToBottom: { icon: 'chevron-down', emoji: '⌄' },
+
+  // ── People and moderation ────────────────────────────────────────────────
+  person: { icon: 'account-outline', emoji: '👤' },
+  people: { icon: 'account-group-outline', emoji: '👥' },
+  block: { icon: 'account-cancel-outline', emoji: '⃠' },
+  report: { icon: 'flag-outline', emoji: '⚑' },
+  muteNotifications: { icon: 'bell-off-outline', emoji: '🔕' },
+  unmuteNotifications: { icon: 'bell-outline', emoji: '🔔' },
+
+  // ── Settings sections ────────────────────────────────────────────────────
+  settingsNotifications: { icon: 'bell-outline', emoji: '🔔' },
+  settingsCalls: { icon: 'phone-settings-outline', emoji: '📞' },
+  settingsPrivacy: { icon: 'lock-outline', emoji: '🔒' },
+  settingsStorage: { icon: 'database-outline', emoji: '🗄️' },
+  settingsAbout: { icon: 'information-outline', emoji: 'ℹ️' },
+  settingsMedia: { icon: 'image-multiple-outline', emoji: '🖼️' },
+  signOut: { icon: 'logout', emoji: '⎋' },
+
+  // ── Permission primer ────────────────────────────────────────────────────
+  permissionBluetooth: { icon: 'bluetooth-audio', emoji: '🎧' },
+
+  // ── Call-log row types ───────────────────────────────────────────────────
+  callTypeAudio: { icon: 'phone', emoji: '📞' },
+  callTypeVideo: { icon: 'video-outline', emoji: '📹' },
+  /** A call that is live right now (minimized banner / floating bubble). */
+  callActive: { icon: 'phone-in-talk', emoji: '📞' },
+
+  // ── Conversation states ──────────────────────────────────────────────────
+  messageQueued: { icon: 'clock-outline', emoji: '🕘' },
+  messageReply: { icon: 'reply-outline', emoji: '↩' },
+  messageSent: { icon: 'check', emoji: '✓' },
+  messageDelivered: { icon: 'check-all', emoji: '✓✓' },
+  messageRead: { icon: 'check-all', emoji: '✓✓' },
+  messageFailed: { icon: 'alert-circle-outline', emoji: '⚠️' },
+  offline: { icon: 'wifi-off', emoji: '⚠️' },
+  reconnecting: { icon: 'sync', emoji: '⟳' },
+  info: { icon: 'information-outline', emoji: 'ℹ️' },
+
+  // ── Empty states ─────────────────────────────────────────────────────────
+  emptyChats: { icon: 'chat-plus-outline', emoji: '💬' },
+  emptyCalls: { icon: 'phone-plus-outline', emoji: '📞' },
+  emptySearch: { icon: 'magnify', emoji: '🔍' },
 };
+

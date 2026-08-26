@@ -32,6 +32,7 @@ export function deriveCallStreams({
     pipStreamUrl: string | null;
     mirrorPip: boolean;
     mirrorMain: boolean;
+    mainHasVideo: boolean;
 } {
   const mainStream = isLocalPrimary ? localStream : remoteStream;
   const pipStream = isLocalPrimary ? remoteStream : localStream;
@@ -43,5 +44,25 @@ export function deriveCallStreams({
     pipStreamUrl: getStreamUrl(pipStream, pipLabel),
     mirrorPip: !isLocalPrimary && isFrontCamera,
     mirrorMain: isLocalPrimary && isFrontCamera,
+    mainHasVideo: hasVideoTrack(mainStream),
   };
+}
+
+/**
+ * Whether a stream would actually draw something on the video stage.
+ *
+ * An audio call still produces a `MediaStream` with a playable URL, so
+ * "is there a stream" cannot answer "is there a picture" — asking it that way
+ * is why an audio call used to render as a black rectangle with the peer's
+ * video view stretched over it. A stream from a peer whose camera is off, or
+ * from an audio-only call, has no video track.
+ */
+function hasVideoTrack(stream: unknown): boolean {
+  const getVideoTracks = (stream as { getVideoTracks?: () => unknown[] } | null)?.getVideoTracks;
+  if (typeof getVideoTracks !== 'function') return false;
+  try {
+    return (getVideoTracks.call(stream) ?? []).length > 0;
+  } catch {
+    return false;
+  }
 }

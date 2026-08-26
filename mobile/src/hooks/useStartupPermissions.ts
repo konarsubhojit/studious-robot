@@ -15,14 +15,19 @@ import { ensureCallPermissions } from '../permissions';
  *
  * Extracted out of `useCallFlow` so this one-time startup concern stays
  * isolated from that hook's call-lifecycle/session/WebRTC responsibilities.
+ *
+ * @param options.enabled Set `false` where the first-run primer owns the
+ *   request instead (`usePermissionsPrimer`): the primer explains the reasons
+ *   and then asks, so an unconditional request here would fire the same dialogs
+ *   first and make the explanation pointless.
  */
-export default function useStartupPermissions(userId: string) {
+export default function useStartupPermissions(userId: string, { enabled = true }: { enabled?: boolean } = {}) {
   // Guards the one-time upfront permission request, so a fresh identity
   // reconnecting (e.g. after a network blip) doesn't re-prompt every time.
   const hasRequestedRef = useRef(false);
 
   useEffect(() => {
-    if (!userId.trim() || hasRequestedRef.current) return;
+    if (!enabled || !userId.trim() || hasRequestedRef.current) return;
     hasRequestedRef.current = true;
     ensureCallPermissions()
       .then(result => {
@@ -37,5 +42,5 @@ export default function useStartupPermissions(userId: string) {
           message: error?.message,
         });
       });
-  }, [userId]);
+  }, [enabled, userId]);
 }

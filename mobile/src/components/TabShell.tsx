@@ -7,6 +7,7 @@ import { useCall } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
 import useRecentSearches from '../hooks/useRecentSearches';
+import useStorageUsage from '../hooks/useStorageUsage';
 import {
   closeChatConversation,
   goBack,
@@ -18,9 +19,9 @@ import {
 } from '../navigation/navigationRef';
 import { clearNavigationState } from '../navigation/navigationState';
 import { TABS } from '../navigation/routes';
+import CallsScreen from './CallsScreen';
 import ChatConversationScreen from './ChatConversationScreen';
 import ChatListScreen from './ChatListScreen';
-import Lobby from './Lobby';
 import PeerProfileScreen from './PeerProfileScreen';
 import SearchScreen from './SearchScreen';
 import SettingsScreen from './SettingsScreen';
@@ -34,8 +35,6 @@ export default function TabShell() {
   const {
     callFlow,
     settings,
-    isSettingsPanelVisible,
-    setIsSettingsPanelVisible,
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
@@ -54,18 +53,29 @@ export default function TabShell() {
   const {
     cancelRecordingVoiceNote,
     deleteMessage,
+    isPeerMuted,
     isUserBlocked,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
     sendMessage,
     sendTypingIndicator,
+    setPeerMuted,
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
   } = chat;
-  const { placeCall, unregisterUser, updateStatus } = callFlow;
+  const { unregisterUser, updateStatus } = callFlow;
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
+  // Storage accounting is owned here rather than by the Settings screen, so the
+  // screen stays presentational like every other one in this shell.
+  const {
+    storageUsage,
+    isMeasuringStorage,
+    isClearingMedia,
+    refreshStorageUsage,
+    clearCachedMedia,
+  } = useStorageUsage({ onStatus: updateStatus });
 
   const renderChatConversation = useCallback((peerId: string | null, { messageId }: { messageId?: string | null; } = {}) => {
     // A conversation route always carries its peer; without one there is
@@ -158,9 +168,12 @@ export default function TabShell() {
       isLoading={chat.isLoadingConversations}
       onMarkRead={chat.markConversationRead}
       onOpenSearch={openSearch}
-      onOpenSettings={() => openTab(TABS.SETTINGS)}
+      onOpenProfile={openPeerProfile}
+      onStartChat={openChatConversation}
+      currentUserId={chat.currentUserId}
     />
   ), [
+    chat.currentUserId,
     chat.conversations,
     chat.handleRefreshConversations,
     chat.isLoadingConversations,
@@ -205,12 +218,14 @@ export default function TabShell() {
         peerId={peerId}
         presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
         isBlocked={Boolean(isUserBlocked?.(peerId))}
+        isMuted={isPeerMuted(peerId)}
         callHistory={callFlow.callHistory}
         currentUserId={chat.currentUserId}
         onBack={goBack}
         onMessage={openChatConversation}
         onAudioCall={startAudioCallWith}
         onVideoCall={startVideoCallWith}
+        onToggleMute={id => setPeerMuted(id, !isPeerMuted(id))}
         onBlock={chat.blockPeer}
         onUnblock={chat.unblockPeer}
       />
@@ -222,73 +237,46 @@ export default function TabShell() {
     chat.currentUserId,
     chat.peerPresence,
     chat.unblockPeer,
+    isPeerMuted,
     isUserBlocked,
+    setPeerMuted,
     startAudioCallWith,
     startVideoCallWith,
   ]);
 
   const renderCalls = useCallback(() => (
-    <Lobby
-      userId={callFlow.userId}
-      onChangeUserId={callFlow.editUserId}
-      calleeId={callFlow.calleeId}
-      onChangeCalleeId={callFlow.setCalleeId}
-      onCall={() => {
-        placeCall().catch(error => {
-          logError('placeCall unhandled rejection', error);
-        });
-      }}
-      calleePresence={callFlow.calleePresence}
-      onOpenSettings={() => openTab(TABS.SETTINGS)}
-      isServerUnreachable={callFlow.isServerUnreachable}
-      onRetryConnect={callFlow.retryPresenceConnect}
-      onSearchUsers={callFlow.searchUsers}
-      onSelectContact={callFlow.setCalleeId}
-      onOpenSearch={openSearch}
-      developerMode={settings.developerModeEnabled}
-      isSettingsVisible={isSettingsPanelVisible}
-      onToggleSettings={() => setIsSettingsPanelVisible(previous => !previous)}
-      onExportLogs={handleExportLogs}
-      settings={settings}
-      onToggleAutoLighting={handleAutoLightingToggle}
-      onToggleSpeakerDefault={handleSpeakerDefaultToggle}
-      status={callFlow.status}
-      callSummary={callFlow.callSummary}
-      onDismissSummary={callFlow.dismissCallSummary}
+    <CallsScreen
       callHistory={callFlow.callHistory}
       missedCallCount={callFlow.missedCallCount}
       onMarkMissedRead={callFlow.markMissedCallsRead}
-      onRedial={startVideoCallWith}
+      onOpenProfile={openPeerProfile}
+      onAudioCall={startAudioCallWith}
+      onVideoCall={startVideoCallWith}
+      onOpenSearch={openSearch}
+      onSearchUsers={callFlow.searchUsers}
+      conversations={chat.conversations}
+      isServerUnreachable={callFlow.isServerUnreachable}
+      onRetryConnect={callFlow.retryPresenceConnect}
+      status={callFlow.status}
     />
   ), [
     callFlow.callHistory,
-    callFlow.calleeId,
-    callFlow.calleePresence,
-    callFlow.callSummary,
-    callFlow.dismissCallSummary,
-    callFlow.editUserId,
     callFlow.isServerUnreachable,
     callFlow.markMissedCallsRead,
     callFlow.missedCallCount,
     callFlow.retryPresenceConnect,
     callFlow.searchUsers,
-    callFlow.setCalleeId,
     callFlow.status,
-    callFlow.userId,
-    handleAutoLightingToggle,
-    handleExportLogs,
-    handleSpeakerDefaultToggle,
-    isSettingsPanelVisible,
-    placeCall,
-    setIsSettingsPanelVisible,
-    settings,
+    chat.conversations,
+    startAudioCallWith,
     startVideoCallWith,
   ]);
 
   const renderSettings = useCallback(() => (
     <SettingsScreen
       userId={callFlow.userId}
-      onSaveUserId={callFlow.updateUserId}
+      accountEmail={callFlow.accountEmail}
+      accountProviderId={callFlow.accountProviderId}
       signalingUrl={callFlow.signalingUrl}
       onSaveSignalingUrl={callFlow.setSignalingUrl}
       status={callFlow.status}
@@ -304,22 +292,54 @@ export default function TabShell() {
       }}
       onClose={() => openTab(TABS.CHATS)}
       onExportLogs={handleExportLogs}
+      storageUsage={storageUsage}
+      onRefreshStorage={refreshStorageUsage}
+      onClearCachedMedia={clearCachedMedia}
+      isMeasuringStorage={isMeasuringStorage}
+      isClearingMedia={isClearingMedia}
       developerModeEnabled={settings.developerModeEnabled}
       onToggleDeveloperMode={handleDeveloperModeToggle}
+      speakerDefaultEnabled={settings.speakerEnabledByDefault}
+      onToggleSpeakerDefault={handleSpeakerDefaultToggle}
+      autoLightingEnabled={settings.autoCameraLightingEnabled}
+      onToggleAutoLighting={handleAutoLightingToggle}
       iceTransportPolicy={settings.iceTransportPolicy}
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
+      messageNotificationsEnabled={chat.messageNotificationsEnabled}
+      onToggleMessageNotifications={chat.setMessageNotificationsEnabled}
+      mutedPeers={chat.mutedPeers}
+      onUnmutePeer={peerId => setPeerMuted(peerId, false)}
+      blockedUsers={chat.blockedUsers}
+      onUnblockUser={chat.unblockPeer}
+      onOpenProfile={openPeerProfile}
     />
   ), [
+    callFlow.accountEmail,
+    callFlow.accountProviderId,
     callFlow.setSignalingUrl,
     callFlow.signalingUrl,
     callFlow.status,
-    callFlow.updateUserId,
     callFlow.userId,
+    chat.blockedUsers,
+    chat.messageNotificationsEnabled,
+    chat.mutedPeers,
+    chat.setMessageNotificationsEnabled,
+    chat.unblockPeer,
+    clearCachedMedia,
+    handleAutoLightingToggle,
     handleDeveloperModeToggle,
     handleExportLogs,
     handleIceTransportPolicyChange,
+    handleSpeakerDefaultToggle,
+    isClearingMedia,
+    isMeasuringStorage,
+    refreshStorageUsage,
+    setPeerMuted,
+    settings.autoCameraLightingEnabled,
     settings.developerModeEnabled,
     settings.iceTransportPolicy,
+    settings.speakerEnabledByDefault,
+    storageUsage,
     unregisterUser,
   ]);
 
@@ -327,6 +347,7 @@ export default function TabShell() {
     <View style={styles.root} testID="app-tab-shell">
       <AppNavigator
         unreadCount={chat.unreadTotal}
+        missedCallCount={callFlow.missedCallCount}
         bottomInset={insets.bottom}
         onTabPress={minimizeCallOnNavigate}
         onRouteChange={chat.handleRouteChange}

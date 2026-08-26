@@ -1,8 +1,8 @@
 import { memo, useCallback, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, touchSlop, typography } from '../theme';
-import { ICONS, loadVectorIcons } from '../vectorIcons';
+import { fontScaleCaps, radius, spacing, touchSlop, typography } from '../theme';
+import { Icon } from './primitives';
 import type { AlertButton } from 'react-native';
 import type { ThemeColors } from '../theme';
 
@@ -168,20 +168,16 @@ const CallTimelineRow = memo(
     }, [isExpanded, isGroup, offerCallBack]);
 
     const visibleEntries = isGroup && !isExpanded ? [entries[entries.length - 1]] : entries;
-    const MCIcon = loadVectorIcons();
 
     return (
       <View style={styles.container} testID="chat-call-timeline-row">
         {visibleEntries.map((entry, index) => {
           const isMissed = isMissedCallEntry(entry);
-          const iconDef =
-            ICONS[
-              isMissed
-                ? 'callMissed'
-                : entry.direction === 'outgoing'
-                ? 'callOutgoing'
-                : 'callIncoming'
-            ];
+          const iconName = isMissed
+            ? 'callMissed'
+            : entry.direction === 'outgoing'
+            ? 'callOutgoing'
+            : 'callIncoming';
           const iconColor = isMissed ? colors.danger : colors.textSecondary;
           const label =
             isGroup && !isExpanded ? formatCallGroupLabel(entries) : formatCallEntryLabel(entry);
@@ -198,17 +194,22 @@ const CallTimelineRow = memo(
               hitSlop={touchSlop(24)}
               testID={index === 0 ? 'chat-call-entry' : `chat-call-entry-${index}`}
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
-              {iconDef && MCIcon ? (
-                <MCIcon name={iconDef.icon} size={14} color={iconColor} />
-              ) : (
-                <Text style={[styles.iconFallback, { color: iconColor }]}>
-                  {iconDef?.emoji ?? '📞'}
-                </Text>
-              )}
-              <Text style={[styles.label, isMissed && styles.labelMissed]} numberOfLines={1}>
+              <Icon name={iconName} size={14} color={iconColor} />
+              {/* Reflow: the pill is padding-only, so it can grow, and the
+                  outcome is the entire content of the row — "3 missed ca…"
+                  would leave nothing. `flexShrink` lets it yield width to the
+                  timestamp and wrap rather than overflow the pill. */}
+              <Text
+                style={[styles.label, isMissed && styles.labelMissed]}
+                numberOfLines={2}>
                 {label}
               </Text>
-              <Text style={styles.timestamp}>{formatTimestamp(entry.createdAt)}</Text>
+              {/* Capped: a timestamp beside a title that is now free to grow.
+                  It has a fixed shape ("09:41") and no useful reflow — every
+                  point it gains is taken from the outcome next to it. */}
+              <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
+                {formatTimestamp(entry.createdAt)}
+              </Text>
             </Pressable>
           );
         })}
@@ -237,12 +238,10 @@ const createStyles = (colors: ThemeColors) =>
     rowPressed: {
       opacity: 0.7,
     },
-    iconFallback: {
-      fontSize: typography.hint.fontSize,
-    },
     label: {
       color: colors.textSecondary,
       fontSize: typography.hint.fontSize,
+      flexShrink: 1,
     },
     labelMissed: {
       color: colors.danger,

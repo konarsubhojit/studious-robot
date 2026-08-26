@@ -1,19 +1,20 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { memo, useCallback, useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
-import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, touchSlop, typography } from '../theme';
-import ErrorState from './ErrorState';
+import { useThemedStyles } from '../ThemeContext';
+import { fontScaleCaps, spacing, typography } from '../theme';
+import PeoplePickerSheet from './PeoplePickerSheet';
 import SwipeableRow from './SwipeableRow';
+import {
+  Avatar,
+  Badge,
+  EmptyState,
+  FAB,
+  Icon,
+  IconAction,
+  ListItem,
+  SkeletonRow,
+} from './primitives';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
 import type { ContactRow, ConversationRow } from '../types/directory';
@@ -22,38 +23,6 @@ import type { ContactRow, ConversationRow } from '../types/directory';
 const SKELETON_ROW_COUNT = 6;
 
 export type { ContactRow, ConversationRow };
-
-function ClearableInput({ value, onChangeText, placeholder, accessibilityLabel, testID }: { value: string; onChangeText: (value: string) => void; placeholder?: string; accessibilityLabel: string; testID: string; }) {
-  const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
-
-  return (
-    <View style={styles.inputRow}>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        autoCapitalize="none"
-        autoCorrect={false}
-        style={styles.input}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textSecondary}
-        accessibilityLabel={accessibilityLabel}
-        testID={testID}
-      />
-      {value ? (
-        <Pressable
-          onPress={() => onChangeText('')}
-          accessibilityRole="button"
-          accessibilityLabel={`Clear ${accessibilityLabel}`}
-          hitSlop={touchSlop(28)}
-          testID={`${testID}-clear`}
-          style={styles.clearButton}>
-          <Text style={styles.clearButtonText}>✕</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
 
 function formatConversationTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '';
@@ -64,7 +33,9 @@ function formatConversationTimestamp(isoString: string | null | undefined): stri
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
-  return isToday ? date.toLocaleTimeString() : date.toLocaleDateString();
+  return isToday
+    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString();
 }
 
 /**
@@ -85,6 +56,10 @@ function isCallActivity(activity: ConversationActivity): activity is CallActivit
 /**
  * One-line preview of a conversation's newest event, so a row whose latest
  * activity was a call reads as such instead of showing a stale older message.
+ *
+ * Calls no longer prefix themselves with a 📞: the row draws a real direction
+ * glyph in the trailing slot, and two different phone pictures on one row read
+ * as two different things.
  */
 function formatActivityPreview(conversation: ConversationRow): string {
   const activity = lastActivityOf(conversation);
@@ -93,80 +68,23 @@ function formatActivityPreview(conversation: ConversationRow): string {
   // neutral placeholder for a type this build does not know).
   if (!isCallActivity(activity)) return describeMessagePreview(activity) || 'No messages yet';
   if (activity.status === 'missed' && activity.direction === 'incoming') {
-    return '📞 Missed call';
+    return 'Missed call';
   }
-  return activity.direction === 'outgoing' ? '📞 Outgoing call' : '📞 Incoming call';
+  return activity.direction === 'outgoing' ? 'Outgoing call' : 'Incoming call';
 }
 
-/**
- * Up to two uppercase initials derived from a userId, for the avatar circle.
- */
-function getInitials(id: string | null | undefined): string {
-  const trimmed = (id ?? '').trim();
-  if (!trimmed) return '?';
-  return trimmed.slice(0, 2).toUpperCase();
-}
-
-/**
- * Initials avatar with an optional online-status dot, used on both
- * conversation rows and search-result contact rows.
- */
-function Avatar({ id, online, testID }: { id: string; online?: boolean; testID?: string; }) {
-  const styles = useThemedStyles(createStyles);
-
-  return (
-    <View style={styles.avatarWrap} testID={testID}>
-      <View style={styles.avatarCircle}>
-        <Text style={styles.avatarText}>{getInitials(id)}</Text>
-      </View>
-      {typeof online === 'boolean' ? (
-        <View
-          style={[
-            styles.avatarStatusDot,
-            online ? styles.presenceDotOnline : styles.presenceDotOffline,
-          ]}
-          testID={testID ? `${testID}-status` : undefined}
-        />
-      ) : null}
-    </View>
-  );
-}
-
-/** Placeholder rows shown while the conversation list is being fetched. */
-function ConversationSkeleton() {
-  const styles = useThemedStyles(createStyles);
-
-  return (
-    <View testID="chat-list-skeleton">
-      {Array.from({ length: SKELETON_ROW_COUNT }, (_unused, index) => (
-        <View key={`skeleton-${index}`} style={styles.row}>
-          <View style={[styles.avatarCircle, styles.skeletonBlock]} />
-          <View style={styles.rowText}>
-            <View style={[styles.skeletonBlock, styles.skeletonTitle]} />
-            <View style={[styles.skeletonBlock, styles.skeletonSubtitle]} />
-          </View>
-        </View>
-      ))}
-    </View>
-  );
-}
-
-/** Illustrated placeholder shown when the user has no conversations yet. */
-function EmptyConversations() {
-  const styles = useThemedStyles(createStyles);
-
-  return (
-    <View style={styles.emptyState} testID="chat-list-empty">
-      <Text style={styles.emptyIllustration}>💬</Text>
-      <Text style={styles.emptyTitle}>No conversations yet</Text>
-      <Text style={styles.empty}>Search for a contact above to start chatting</Text>
-    </View>
-  );
+/** Semantic icon key for a conversation whose newest event is a call. */
+function activityIconFor(conversation: ConversationRow): string | null {
+  const activity = lastActivityOf(conversation);
+  if (!activity || !isCallActivity(activity)) return null;
+  if (activity.status === 'missed' && activity.direction === 'incoming') return 'callMissed';
+  return activity.direction === 'outgoing' ? 'callOutgoing' : 'callIncoming';
 }
 
 export type ChatListScreenProps = {
   conversations?: ConversationRow[];
   onOpenConversation: (peerId: string) => void;
+  /** Directory lookup, used by the New-chat People picker. */
   onSearchUsers?: (query: string) => Promise<ContactRow[]>;
   onRefresh?: () => void;
   isRefreshing?: boolean;
@@ -174,14 +92,25 @@ export type ChatListScreenProps = {
   isLoading?: boolean;
   /** Swipe action: mark a conversation read without opening it. */
   onMarkRead?: (peerId: string) => void;
-  /** Opens the full-screen unified search (contacts, conversations, messages and calls). */
+  /** Opens the full-screen unified search (people, conversations, messages and calls). */
   onOpenSearch?: () => void;
-  onOpenSettings?: () => void;
+  /** Person hub; reached by long-pressing a row. */
+  onOpenProfile?: (peerId: string) => void;
+  /** Opens (or creates) a conversation with someone picked from the directory. */
+  onStartChat?: (peerId: string) => void;
+  /** The signed-in user, shown as the header avatar. */
+  currentUserId?: string;
 };
 
 /**
- * Teams/Slack-style chat list: a searchable contact directory that swaps to
- * the conversation list once the search query is cleared.
+ * The Chats tab: the conversation list, and nothing else.
+ *
+ * The screen used to carry an inline "Search contacts" field that swapped the
+ * whole list for directory results, *plus* a 🔍 button opening the full-screen
+ * search, *plus* a ⚙️ opening Settings — which is also a tab. Search now
+ * happens in exactly one place (`SearchScreen`, via the header action) and
+ * starting a new conversation happens in exactly one place (the People picker,
+ * via the FAB), so the list itself never turns into something else.
  */
 function ChatListScreen({
   conversations = [],
@@ -192,83 +121,19 @@ function ChatListScreen({
   isLoading = false,
   onMarkRead,
   onOpenSearch,
-  onOpenSettings,
+  onOpenProfile,
+  onStartChat,
+  currentUserId,
 }: ChatListScreenProps) {
-  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  const [isPickerVisible, setIsPickerVisible] = useState(false);
 
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState(([] as ContactRow[]));
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
-  const requestIdRef = useRef(0);
-
-  const runSearch = useCallback(
-    /** @param term */
-    async (term: string) => {
-      if (typeof onSearchUsers !== 'function') return;
-      if (!term) {
-        setResults([]);
-        setHasSearched(false);
-        setIsSearching(false);
-        setSearchFailed(false);
-        return;
-      }
-      const requestId = requestIdRef.current + 1;
-      requestIdRef.current = requestId;
-      setIsSearching(true);
-      let users: ContactRow[] = [];
-      let failed = false;
-      try {
-        users = await onSearchUsers(term);
-      } catch {
-        // A directory we could not reach is not a directory without matches;
-        // saying "no matching contacts" here would be a confident lie.
-        failed = true;
-      }
-      if (requestIdRef.current !== requestId) return;
-      setResults(failed || !Array.isArray(users) ? [] : users);
-      setIsSearching(false);
-      setHasSearched(true);
-      setSearchFailed(failed);
-    },
-    [onSearchUsers],
-  );
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      runSearch(query.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query, runSearch]);
-
-  const isSearchMode = query.trim().length > 0;
-  // While a search request is in flight the previous results are hidden, so
-  // stale matches for an older query are never shown next to the spinner.
-  const listData = isSearchMode ? (isSearching ? [] : results) : conversations;
-
-  const renderContactRow = useCallback(
-      (contact: ContactRow) => (
-      <Pressable
-        onPress={() => onOpenConversation?.(contact.userId)}
-        accessibilityRole="button"
-        accessibilityLabel={`Chat with ${contact.userId}`}
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        testID="chat-list-contact-row">
-        <Avatar id={contact.userId} online={contact.online} testID="chat-list-contact-avatar" />
-        <View style={styles.rowText}>
-          <Text style={styles.rowTitle}>{contact.userId}</Text>
-          <Text style={styles.rowSubtitle}>{contact.online ? 'Online' : 'Offline'}</Text>
-        </View>
-      </Pressable>
-    ),
-    [onOpenConversation, styles],
-  );
+  const startChat = onStartChat ?? onOpenConversation;
 
   const renderConversationRow = useCallback(
-      (conversation: ConversationRow) => {
-      const hasUnread = (conversation.unreadCount ?? 0) > 0;
+    (conversation: ConversationRow) => {
+      const unreadCount = conversation.unreadCount ?? 0;
+      const hasUnread = unreadCount > 0;
       const actions =
         onMarkRead && hasUnread
           ? [
@@ -281,152 +146,152 @@ function ChatListScreen({
               },
             ]
           : [];
+      const activityIcon = activityIconFor(conversation);
+      const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
 
       return (
         <SwipeableRow actions={actions}>
-          <Pressable
+          <ListItem
+            title={conversation.peerId}
+            subtitle={formatActivityPreview(conversation)}
+            leading={
+              <Avatar
+                id={conversation.peerId}
+                size="md"
+                online={conversation.online}
+                testID="chat-list-avatar"
+              />
+            }
+            trailing={
+              <View style={styles.meta}>
+                {/* Capped: the trailing column of a row whose title and preview
+                    are free to grow into the space beside it. A timestamp is a
+                    fixed shape with nothing to reflow into, so left uncapped it
+                    just takes width from the conversation it describes. */}
+                {timestamp ? (
+                  <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
+                    {timestamp}
+                  </Text>
+                ) : null}
+                <View style={styles.metaRow}>
+                  {activityIcon ? (
+                    <Icon
+                      name={activityIcon}
+                      size={14}
+                      color={
+                        activityIcon === 'callMissed'
+                          ? styles.missedGlyph.color
+                          : styles.timestamp.color
+                      }
+                    />
+                  ) : null}
+                  {hasUnread ? (
+                    <Badge count={unreadCount} testID="chat-list-unread-badge" />
+                  ) : null}
+                </View>
+              </View>
+            }
             onPress={() => onOpenConversation?.(conversation.peerId)}
-            accessibilityRole="button"
+            onLongPress={onOpenProfile ? () => onOpenProfile(conversation.peerId) : undefined}
             accessibilityLabel={
               hasUnread
-                ? `Open conversation with ${conversation.peerId}, ` +
-                  `${conversation.unreadCount} unread`
+                ? `Open conversation with ${conversation.peerId}, ${unreadCount} unread`
                 : `Open conversation with ${conversation.peerId}`
             }
-            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            testID="chat-list-row">
-            <Avatar
-              id={conversation.peerId}
-              online={conversation.online}
-              testID="chat-list-avatar"
-            />
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{conversation.peerId}</Text>
-              <Text style={styles.rowSubtitle} numberOfLines={1}>
-                {formatActivityPreview(conversation)}
-              </Text>
-            </View>
-            <View style={styles.rowMeta}>
-              <Text style={styles.rowTimestamp}>
-                {formatConversationTimestamp(
-                  lastActivityOf(conversation)?.createdAt,
-                )}
-              </Text>
-              {hasUnread ? (
-                <View style={styles.unreadBadge} testID="chat-list-unread-badge">
-                  <Text style={styles.unreadBadgeText}>{conversation.unreadCount}</Text>
-                </View>
-              ) : null}
-            </View>
-          </Pressable>
+            accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
+            testID="chat-list-row"
+          />
         </SwipeableRow>
       );
     },
-    [onMarkRead, onOpenConversation, styles],
+    [onMarkRead, onOpenConversation, onOpenProfile, styles],
   );
 
   const renderItem = useCallback(
-    /** @param info */
-    ({ item }: { item: any; }) => (isSearchMode ? renderContactRow(item) : renderConversationRow(item)),
-    [isSearchMode, renderContactRow, renderConversationRow],
+    ({ item }: { item: ConversationRow; }) => renderConversationRow(item),
+    [renderConversationRow],
   );
 
-  let emptyComponent = null;
-  if (isSearchMode) {
-    if (isSearching || !hasSearched) {
-      emptyComponent = null;
-    } else if (searchFailed) {
-      emptyComponent = (
-        <ErrorState
-          title="Can't search contacts"
-          description="We couldn't reach the directory. Check your connection and try again."
-          actionLabel="Retry"
-          actionHint="Runs the contact search again"
-          onAction={() => runSearch(query.trim())}
-          testID="chat-list-search-error"
-        />
-      );
-    } else {
-      emptyComponent = (
-        <Text style={styles.empty} testID="chat-list-empty">
-          No matching contacts
-        </Text>
-      );
-    }
-  } else if (isLoading) {
-    emptyComponent = <ConversationSkeleton />;
-  } else {
-    emptyComponent = <EmptyConversations />;
-  }
+  const emptyComponent = isLoading ? (
+    <View testID="chat-list-skeleton">
+      {Array.from({ length: SKELETON_ROW_COUNT }, (_unused, index) => (
+        <SkeletonRow key={`skeleton-${index}`} />
+      ))}
+    </View>
+  ) : (
+    <EmptyState
+      icon="emptyChats"
+      title="No conversations yet"
+      description="Find someone by their username and say hello."
+      actionLabel={onSearchUsers ? 'Find someone' : undefined}
+      actionHint="Opens the list of people you can message"
+      onAction={onSearchUsers ? () => setIsPickerVisible(true) : undefined}
+      testID="chat-list-empty"
+    />
+  );
 
   return (
     <View style={styles.root} testID="chat-list-root">
       <View style={styles.titleRow}>
+        {/* Identity, not a control: Settings is a tab, and the ⚙️ that used to
+            sit here was a second door into the same room. */}
+        <Avatar id={currentUserId} size="sm" testID="chat-list-self-avatar" />
         <Text style={styles.title} accessibilityRole="header">
           Chats
         </Text>
         <View style={styles.titleSpacer} />
         {onOpenSearch ? (
-          <Pressable
-            onPress={onOpenSearch}
-            accessibilityRole="button"
+          <IconAction
+            icon="search"
             accessibilityLabel="Search"
-            accessibilityHint="Search contacts, conversations, messages and calls"
-            hitSlop={touchSlop(36)}
+            accessibilityHint="Search people, conversations, messages and calls"
+            onPress={onOpenSearch}
             testID="chat-list-open-search"
-            style={styles.gearButton}>
-            <Text style={styles.gearIcon}>🔍</Text>
-          </Pressable>
-        ) : null}
-        {onOpenSettings ? (
-          <Pressable
-            onPress={onOpenSettings}
-            accessibilityRole="button"
-            accessibilityLabel="Settings"
-            accessibilityHint="Opens account and connection settings"
-            hitSlop={touchSlop(36)}
-            testID="chat-list-open-settings"
-            style={styles.gearButton}>
-            <Text style={styles.gearIcon}>⚙️</Text>
-          </Pressable>
+          />
         ) : null}
       </View>
 
-      <ClearableInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search contacts"
-        accessibilityLabel="Search contacts"
-        testID="chat-list-search-input"
-      />
-
       <FlatList
         testID="chat-list"
-        data={listData}
-        keyExtractor={item => (isSearchMode ? item.userId : item.conversationId)}
+        data={conversations}
+        keyExtractor={item => item.conversationId ?? item.peerId}
         renderItem={renderItem}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
-        // Virtualization tuning so a long conversation/contact list mounts a
-        // bounded number of rows instead of all of them at once.
-        removeClippedSubviews
+        // Virtualization tuning so a long conversation list mounts a bounded
+        // number of rows instead of all of them at once.
+        // NOTE: removeClippedSubviews is deliberately omitted — on Android it
+        // clips by layout bounds and ignores `transform`, breaking the
+        // SwipeableRow action tray that translates into view on swipe.
         initialNumToRender={12}
         maxToRenderPerBatch={10}
         windowSize={11}
-        ListHeaderComponent={
-          isSearchMode && isSearching ? (
-            <View style={styles.statusRow} testID="chat-list-searching">
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={styles.statusText}>Searching…</Text>
-            </View>
-          ) : null
-        }
         ListEmptyComponent={emptyComponent}
         refreshControl={
           onRefresh ? (
             <RefreshControl refreshing={Boolean(isRefreshing)} onRefresh={onRefresh} />
           ) : undefined
         }
+      />
+
+      {onSearchUsers ? (
+        <FAB
+          icon="newChat"
+          accessibilityLabel="New chat"
+          accessibilityHint="Opens the list of people you can message"
+          onPress={() => setIsPickerVisible(true)}
+          testID="chat-list-new-chat"
+        />
+      ) : null}
+
+      <PeoplePickerSheet
+        visible={isPickerVisible}
+        onClose={() => setIsPickerVisible(false)}
+        title="New chat"
+        onSearchUsers={onSearchUsers}
+        conversations={conversations}
+        onSelect={startChat}
+        testID="chat-list-people-picker"
       />
     </View>
   );
@@ -437,187 +302,48 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     root: {
       flex: 1,
-      padding: spacing.lg,
+      backgroundColor: colors.background,
     },
     content: {
-      paddingBottom: spacing.xl,
+      paddingBottom: spacing['3xl'] + spacing.xl,
     },
     titleRow: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
-      marginBottom: spacing.md,
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.sm,
     },
     title: {
-      ...typography.title,
-      color: colors.textPrimary,
+      ...typography.display,
+      color: colors.onSurface,
     },
     titleSpacer: {
       flex: 1,
     },
-    gearButton: {
-      height: 36,
-      width: 36,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceControl,
-    },
-    gearIcon: {
-      fontSize: 18,
-    },
-    inputRow: {
-      position: 'relative',
-      justifyContent: 'center',
-      marginBottom: spacing.md,
-    },
-    input: {
-      borderRadius: radius.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      color: colors.textPrimary,
-      paddingHorizontal: spacing.md,
-      paddingVertical: 10,
-      paddingRight: 40,
-    },
-    clearButton: {
-      position: 'absolute',
-      right: spacing.sm,
-      height: 28,
-      width: 28,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    clearButtonText: {
-      color: colors.textSecondary,
-      fontWeight: '700',
-    },
-    statusRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      marginBottom: spacing.sm,
-    },
-    statusText: {
-      color: colors.textSecondary,
-      fontSize: 12,
-    },
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: spacing.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      gap: spacing.sm,
-    },
-    rowPressed: {
-      opacity: 0.6,
-    },
-    rowText: {
-      flex: 1,
-    },
-    rowTitle: {
-      color: colors.textPrimary,
-      fontSize: 15,
-      fontWeight: '600',
-    },
-    rowSubtitle: {
-      color: colors.textSecondary,
-      fontSize: 12,
-      marginTop: 2,
-    },
-    rowMeta: {
+    meta: {
       alignItems: 'flex-end',
       gap: spacing.xs,
     },
-    rowTimestamp: {
-      color: colors.textMuted,
-      fontSize: 11,
-    },
-    unreadBadge: {
-      backgroundColor: colors.danger,
-      borderRadius: 12,
-      minWidth: 20,
-      height: 20,
+    metaRow: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 6,
-    },
-    unreadBadgeText: {
-      color: colors.textOnAccent,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-    avatarWrap: {
-      position: 'relative',
-    },
-    avatarCircle: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceControl,
-    },
-    avatarText: {
-      color: colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    avatarStatusDot: {
-      position: 'absolute',
-      right: -1,
-      bottom: -1,
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-      borderWidth: 2,
-      borderColor: colors.surface,
-    },
-    presenceDotOnline: {
-      backgroundColor: colors.success,
-    },
-    presenceDotOffline: {
-      backgroundColor: colors.textSecondary,
-    },
-    skeletonBlock: {
-      backgroundColor: colors.surfaceControl,
-      borderRadius: radius.sm,
-      opacity: 0.6,
-    },
-    skeletonTitle: {
-      height: 12,
-      width: '45%',
-    },
-    skeletonSubtitle: {
-      height: 10,
-      width: '70%',
-      marginTop: 6,
-    },
-    emptyState: {
-      alignItems: 'center',
-      marginTop: spacing.xl,
       gap: spacing.xs,
     },
-    emptyIllustration: {
-      fontSize: 48,
+    timestamp: {
+      ...typography.caption,
+      color: colors.onSurfaceVariant,
     },
-    emptyTitle: {
-      ...typography.sectionTitle,
-      color: colors.textPrimary,
-    },
-    empty: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      textAlign: 'center',
-      marginTop: spacing.xl,
-      paddingHorizontal: spacing.lg,
+    // Read for its colour when tinting the missed-call glyph, so that red still
+    // comes from the palette rather than being spelled at the call site.
+    missedGlyph: {
+      color: colors.negative,
     },
   });
 
 /**
- * Memoized: the conversation / contact list re-renders only when its own props change, not merely
- * because an ancestor re-rendered.
+ * Memoized: the conversation list re-renders only when its own props change,
+ * not merely because an ancestor re-rendered.
  */
 export default memo(ChatListScreen);

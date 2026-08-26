@@ -162,7 +162,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
 
   /**
    * Update the active userId and persist the new value.
-   * Use this when the user edits their username in the Lobby so the new
+   * Use this when the user edits their username in Settings so the new
    * identity survives app restarts.
    */
   const updateUserId = useCallback(

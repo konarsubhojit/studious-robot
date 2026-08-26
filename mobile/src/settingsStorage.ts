@@ -230,3 +230,207 @@ export async function loadDeviceId(): Promise<string> {
 }
 
 export const DEVICE_FILE_PATH = DEVICE_FILE;
+
+// ─── Call modality log ────────────────────────────────────────────────────────
+// The signaling server has no notion of an "audio call": `startAudioCallWith`
+// places an ordinary call and turns the local camera off once it connects, so
+// the call record the server returns cannot say which of the two the user
+// actually placed.  Without that, the call log can't show an audio-vs-video
+// type icon and redial always starts a video call — the exact complaint that
+// "redialling a voice call starts a video call".  Remembering the modality per
+// call id locally is enough, and keeps the change out of the wire protocol.
+
+const CALL_MEDIA_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-call-media.json`;
+
+/** Cap on remembered call ids; the call log itself holds at most 50 entries. */
+const MAX_CALL_MEDIA_ENTRIES = 200;
+
+export type CallMediaType = 'audio' | 'video';
+
+/** Ordered `callId -> modality` map; most recently recorded first. */
+export type CallMediaTypeMap = Record<string, CallMediaType>;
+
+/**
+ * Load the remembered per-call modality map.  Unreadable or corrupt files
+ * yield an empty map rather than throwing: a missing entry only means the log
+ * falls back to the default modality for that row.
+ */
+export async function loadCallMediaTypes(): Promise<CallMediaTypeMap> {
+  try {
+    const exists = await RNFS.exists(CALL_MEDIA_FILE);
+    if (!exists) return {};
+    const content = await RNFS.readFile(CALL_MEDIA_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const entries = Object.entries((parsed as Record<string, unknown>)).filter(
+      ([callId, value]) => callId && (value === 'audio' || value === 'video'),
+    );
+    return (Object.fromEntries(entries.slice(0, MAX_CALL_MEDIA_ENTRIES)) as CallMediaTypeMap);
+  } catch (error) {
+    logError('Failed to load call modality log; ignoring it', {
+      message: errorMessage(error),
+    });
+    return {};
+  }
+}
+
+/**
+ * Persist the per-call modality map, trimmed to the most recent entries.
+ * Failures are logged but never thrown so a write error can't break the call
+ * teardown that triggered it.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveCallMediaTypes(map: CallMediaTypeMap): Promise<boolean> {
+  try {
+    const trimmed = Object.fromEntries(Object.entries(map).slice(0, MAX_CALL_MEDIA_ENTRIES));
+    await RNFS.writeFile(CALL_MEDIA_FILE, JSON.stringify(trimmed), 'utf8');
+    return true;
+  } catch (error) {
+    logError('Failed to persist call modality log', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const CALL_MEDIA_FILE_PATH = CALL_MEDIA_FILE;
+
+// ─── Notification preferences ─────────────────────────────────────────────────
+// Kept in their own file rather than in `wetalk-settings.json`: the message-push
+// handler runs headless, before React (and therefore `useAppSettings`) exists,
+// so it needs to read these without booting the app's settings machinery.
+
+const NOTIFICATION_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-notifications.json`;
+
+/** Cap on remembered muted people, so the file cannot grow without limit. */
+const MAX_MUTED_PEERS = 500;
+
+export type NotificationPrefs = {
+  /** Master switch for chat-message notifications. */
+  messageNotificationsEnabled: boolean;
+  /** People whose message notifications are silenced, newest first. */
+  mutedPeers: string[];
+};
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  messageNotificationsEnabled: true,
+  mutedPeers: [],
+};
+
+/**
+ * Load the notification preferences.  An unreadable or corrupt file yields the
+ * defaults rather than throwing: failing open (notifications on) is the safe
+ * direction — silently swallowing every message would look like the app is
+ * broken.
+ */
+export async function loadNotificationPrefs(): Promise<NotificationPrefs> {
+  try {
+    const exists = await RNFS.exists(NOTIFICATION_FILE);
+    if (!exists) return { ...DEFAULT_NOTIFICATION_PREFS };
+    const content = await RNFS.readFile(NOTIFICATION_FILE, 'utf8');
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_NOTIFICATION_PREFS };
+    const raw = (parsed as Partial<NotificationPrefs>);
+    const mutedPeers = Array.isArray(raw.mutedPeers)
+      ? raw.mutedPeers
+          .filter((peerId): peerId is string => typeof peerId === 'string' && peerId.length > 0)
+          .slice(0, MAX_MUTED_PEERS)
+      : [];
+    return {
+      messageNotificationsEnabled:
+        typeof raw.messageNotificationsEnabled === 'boolean'
+          ? raw.messageNotificationsEnabled
+          : DEFAULT_NOTIFICATION_PREFS.messageNotificationsEnabled,
+      mutedPeers,
+    };
+  } catch (error) {
+    logError('Failed to load notification preferences; using defaults', {
+      message: errorMessage(error),
+    });
+    return { ...DEFAULT_NOTIFICATION_PREFS };
+  }
+}
+
+/**
+ * Persist the notification preferences.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveNotificationPrefs(prefs: NotificationPrefs): Promise<boolean> {
+  try {
+    await RNFS.writeFile(
+      NOTIFICATION_FILE,
+      JSON.stringify({
+        messageNotificationsEnabled: Boolean(prefs.messageNotificationsEnabled),
+        mutedPeers: (prefs.mutedPeers ?? []).slice(0, MAX_MUTED_PEERS),
+      }),
+      'utf8',
+    );
+    return true;
+  } catch (error) {
+    logError('Failed to persist notification preferences', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const NOTIFICATION_FILE_PATH = NOTIFICATION_FILE;
+
+// ─── Onboarding state ─────────────────────────────────────────────────────────
+// Its own file for the same reason as the identity and theme: `saveSettings`
+// rewrites the whole app-settings document, and this flag is written from a
+// different part of the app (the first-run flow) than the settings toggles.
+
+const ONBOARDING_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-onboarding.json`;
+
+export type OnboardingState = {
+  /**
+   * Whether the explanation shown before the system permission dialogs has
+   * been answered. Recorded whichever way it was answered: a user who chose
+   * "Not now" has seen it, and re-asking on every launch is nagging.
+   */
+  permissionsPrimerSeen: boolean;
+};
+
+export const DEFAULT_ONBOARDING_STATE: OnboardingState = {
+  permissionsPrimerSeen: false,
+};
+
+/**
+ * Load the first-run flags. An unreadable or corrupt file yields the defaults,
+ * which means the primer is shown again — the safe direction, since showing an
+ * explanation twice is a smaller failure than never explaining at all.
+ */
+export async function loadOnboardingState(): Promise<OnboardingState> {
+  try {
+    const exists = await RNFS.exists(ONBOARDING_FILE);
+    if (!exists) return { ...DEFAULT_ONBOARDING_STATE };
+    const content = await RNFS.readFile(ONBOARDING_FILE, 'utf8');
+    return mergeSettings(DEFAULT_ONBOARDING_STATE, JSON.parse(content));
+  } catch (error) {
+    logError('Failed to load onboarding state; using defaults', {
+      message: errorMessage(error),
+    });
+    return { ...DEFAULT_ONBOARDING_STATE };
+  }
+}
+
+/**
+ * Persist the first-run flags. Failures are logged but never thrown so a write
+ * error can't break the flow that triggered it.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveOnboardingState(state: OnboardingState): Promise<boolean> {
+  try {
+    await RNFS.writeFile(
+      ONBOARDING_FILE,
+      JSON.stringify({ permissionsPrimerSeen: Boolean(state?.permissionsPrimerSeen) }),
+      'utf8',
+    );
+    return true;
+  } catch (error) {
+    logError('Failed to persist onboarding state', { message: errorMessage(error) });
+    return false;
+  }
+}
+
+export const ONBOARDING_FILE_PATH = ONBOARDING_FILE;

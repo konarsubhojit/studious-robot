@@ -110,6 +110,10 @@ jest.mock('../../src/permissions', () => ({
   getMissingCallPermissions: jest.fn(() =>
     Promise.resolve({ camera: false, microphone: false, missing: [], message: null }),
   ),
+  // Read through `permissionsPrimer` to decide whether the first-run primer
+  // owns the upfront request; an empty list means "nothing to prime".
+  getCallRuntimePermissions: jest.fn(() => []),
+  getMissingRuntimePermissions: jest.fn(() => Promise.resolve([])),
 }));
 
 jest.mock('../../src/socketConfig', () => ({
@@ -228,6 +232,8 @@ jest.mock('../../src/settingsStorage', () => ({
   loadDeviceId: jest.fn(async () => 'device-test-1'),
   loadSettings: jest.fn(async defaults => ({ ...defaults })),
   saveSettings: jest.fn(async () => true),
+  loadCallMediaTypes: jest.fn(async () => ({})),
+  saveCallMediaTypes: jest.fn(async () => true),
 }));
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────

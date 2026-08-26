@@ -21,6 +21,11 @@ import {
   markMessageSeen,
   showMessageNotification,
 } from './messageNotification';
+import {
+  areMessageNotificationsEnabled,
+  ensureNotificationPrefsLoaded,
+  isPeerMuted,
+} from './notificationPreferences';
 import { loadDeviceId, loadSettings } from './settingsStorage';
 import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
 import { errorMessage } from './errors';
@@ -593,6 +598,32 @@ async function displayMessagePush({ remoteMessage, message }: {
       reason: 'conversation_on_screen',
     });
     return { shown: false, reason: 'conversation_on_screen' };
+  }
+
+  // The user's own choice, and the last thing consulted before ringing: the
+  // preferences live in a file rather than React state precisely so this path —
+  // which runs headless, before React exists — can honour them. `ensure…` is
+  // idempotent, so the cost is one read per process.
+  await ensureNotificationPrefsLoaded();
+
+  if (!areMessageNotificationsEnabled()) {
+    await sendPushReceipt({
+      remoteMessage,
+      messageId: message.messageId,
+      stage: 'notification_suppressed',
+      reason: 'notifications_disabled',
+    });
+    return { shown: false, reason: 'notifications_disabled' };
+  }
+
+  if (isPeerMuted(message.senderId)) {
+    await sendPushReceipt({
+      remoteMessage,
+      messageId: message.messageId,
+      stage: 'notification_suppressed',
+      reason: 'peer_muted',
+    });
+    return { shown: false, reason: 'peer_muted' };
   }
 
   const result = await showMessageNotification(message).catch(error => ({

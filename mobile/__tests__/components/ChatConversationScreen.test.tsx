@@ -2,6 +2,12 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
 import ChatConversationScreen from '../../src/components/ChatConversationScreen';
+import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
+
+jest.mock('../../src/accessibilityAnnouncer', () => ({
+  ...jest.requireActual('../../src/accessibilityAnnouncer'),
+  announceForAccessibility: jest.fn(),
+}));
 
 jest.mock(
   '../../src/components/IconButton',
@@ -199,6 +205,60 @@ describe('ChatConversationScreen', () => {
     expect(onSendMessage).toHaveBeenCalledWith('oops');
   });
 
+  test('every delivery state renders in the same footer slot', () => {
+    // Ticks used to appear only at the end of a group, while "Sending…" and
+    // "Failed to send" hung below the bubble in two other places, so a message
+    // changed shape as it progressed.
+    const footerOf = (message: any) => {
+      const tree = render({
+        peerId: 'user-bob',
+        messages: [message],
+        onSendMessage: jest.fn(),
+        onBack: jest.fn(),
+        currentUserId: 'user-alice',
+      });
+      return ['chat-message-pending', 'chat-message-failed', 'chat-message-tick'].filter(
+        id => findByTestId(tree, id) !== null,
+      );
+    };
+
+    expect(footerOf(makeMessage({ senderId: 'user-alice', pending: true }))).toEqual([
+      'chat-message-pending',
+    ]);
+    expect(footerOf(makeMessage({ senderId: 'user-alice', failed: true }))).toEqual([
+      'chat-message-failed',
+    ]);
+    expect(footerOf(makeMessage({ senderId: 'user-alice' }))).toEqual(['chat-message-tick']);
+  });
+
+  test("a pending message says 'Queued' rather than 'Sending…' while offline", () => {
+    const pending = makeMessage({ senderId: 'user-alice', pending: true });
+    const props = {
+      peerId: 'user-bob',
+      messages: [pending],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    };
+
+    expect(findByTestId(render(props), 'chat-message-pending').props.children).toBe('Sending…');
+    expect(
+      findByTestId(render({ ...props, isOffline: true }), 'chat-message-pending').props.children,
+    ).toBe('Queued');
+  });
+
+  test("a peer's message never shows a delivery state — it isn't ours to report", () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ senderId: 'user-bob' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    expect(findByTestId(tree, 'chat-message-tick')).toBeNull();
+    expect(findByTestId(tree, 'chat-message-pending')).toBeNull();
+  });
+
   test('swiping an own message exposes delete, and retry for failed sends', () => {
     const onDeleteMessage = jest.fn();
     const onRetryMessage = jest.fn();
@@ -237,7 +297,7 @@ describe('ChatConversationScreen', () => {
     expect(onRetryMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'failed-1' }));
   });
 
-  test('shows the offline banner only while offline', () => {
+  test('shows the offline notice only while offline', () => {
     const props = {
       peerId: 'user-bob',
       messages: [makeMessage()],
@@ -247,10 +307,15 @@ describe('ChatConversationScreen', () => {
     };
 
     const online = render(props);
-    expect(findByTestId(online, 'status-banner')).toBeNull();
+    expect(findByTestId(online, 'chat-offline-notice')).toBeNull();
 
+    // Offline is now one of the four notices in the stack above the composer,
+    // in the same geometry as the rest, rather than a `StatusBanner` wedged
+    // between the header and the list.
     const offline = render({ ...props, isOffline: true });
-    expect(findByTestId(offline, 'status-banner').props.children).toContain('Offline');
+    const notice = findByTestId(offline, 'chat-offline-notice');
+    const text = notice.findAll((n: any) => typeof n.props?.children === 'string');
+    expect(text.some((n: any) => n.props.children.includes('Offline'))).toBe(true);
   });
 
   test('scrolling to the top calls onLoadOlder', () => {
@@ -409,7 +474,9 @@ describe('ChatConversationScreen', () => {
     });
     const list = findByTestId(tree, 'chat-message-list');
     expect(list.props.initialNumToRender).toBeLessThan(50);
-    expect(list.props.removeClippedSubviews).toBe(true);
+    // removeClippedSubviews is deliberately omitted — on Android it clips by
+    // layout bounds and ignores transform, breaking SwipeableRow action trays.
+    expect(list.props.removeClippedSubviews).toBeUndefined();
     expect(findAllByTestId(tree, 'chat-message-row').length).toBeLessThan(50);
   });
 
@@ -1240,8 +1307,10 @@ describe('ChatConversationScreen attachments', () => {
 
     const notice = findByTestId(tree, 'chat-attachment-upload-progress');
     expect(notice).not.toBeNull();
-    const text = notice.findAll((n: any) => typeof n.props?.children === 'string')[0];
-    expect(text.props.children).toContain('42%');
+    const text = notice
+      .findAll((n: any) => typeof n.props?.children === 'string')
+      .map((n: any) => n.props.children);
+    expect(text.some((value: string) => value.includes('42%'))).toBe(true);
   });
 
   test('shows a download action for sent file attachments', () => {
@@ -1377,5 +1446,93 @@ describe('ChatConversationScreen attachments', () => {
 
     expect(findAllByTestId(tree, 'chat-attachment-download')).toHaveLength(0);
     expect(findByTestId(tree, 'chat-attachment-uploading')).not.toBeNull();
+  });
+
+  describe('delivery announcements', () => {
+    const announce = announceForAccessibility as jest.Mock;
+
+    beforeEach(() => {
+      announce.mockClear();
+    });
+
+    function baseProps(overrides: any = {}) {
+      return {
+        peerId: 'user-bob',
+        onSendMessage: jest.fn(),
+        onBack: jest.fn(),
+        currentUserId: 'user-alice',
+        ...overrides,
+      };
+    }
+
+    test('says nothing when a page of already-sent history loads', () => {
+      render(
+        baseProps({
+          messages: [makeMessage({ senderId: 'user-alice', deliveredTo: ['user-bob'] })],
+        }),
+      );
+
+      expect(announce).not.toHaveBeenCalledWith('Message sent');
+    });
+
+    test('announces a send that completes while the conversation is open', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...pending, pending: false }] })}
+          />,
+        );
+      });
+
+      expect(announce).toHaveBeenCalledWith('Message sent');
+    });
+
+    test('announces a failure, which is the outcome the user must act on', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...pending, pending: false, failed: true }] })}
+          />,
+        );
+      });
+
+      expect(announce).toHaveBeenCalledWith('Message failed to send');
+    });
+
+    test("never announces the peer's messages", () => {
+      const peerMessage = makeMessage({ senderId: 'user-bob', pending: true });
+      const tree = render(baseProps({ messages: [peerMessage] }));
+
+      act(() => {
+        tree.update(
+          <ChatConversationScreen
+            {...baseProps({ messages: [{ ...peerMessage, pending: false }] })}
+          />,
+        );
+      });
+
+      expect(announce).not.toHaveBeenCalledWith('Message sent');
+    });
+
+    test('does not repeat itself when the same state re-renders', () => {
+      const pending = makeMessage({ senderId: 'user-alice', pending: true });
+      const sent = { ...pending, pending: false };
+      const tree = render(baseProps({ messages: [pending] }));
+
+      act(() => {
+        tree.update(<ChatConversationScreen {...baseProps({ messages: [sent] })} />);
+      });
+      act(() => {
+        tree.update(<ChatConversationScreen {...baseProps({ messages: [{ ...sent }] })} />);
+      });
+
+      expect(announce.mock.calls.filter(([text]) => text === 'Message sent')).toHaveLength(1);
+    });
   });
 });

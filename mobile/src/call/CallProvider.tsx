@@ -18,8 +18,6 @@ export type CallInitiation = ReturnType<typeof useCallInitiation>;
 export type CallContextValue = {
   callFlow: CallFlow;
   settings: AppSettings['settings'];
-  isSettingsPanelVisible: AppSettings['isSettingsVisible'];
-  setIsSettingsPanelVisible: AppSettings['setIsSettingsVisible'];
   handleAutoLightingToggle: AppSettings['handleAutoLightingToggle'];
   handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle'];
   handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle'];
@@ -106,6 +104,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
     setCalleeId: callFlow.setCalleeId,
     placeCall: callFlow.placeCall,
     handleVideoToggle: callFlow.handleVideoToggle,
+    setOutgoingCallMediaType: callFlow.setOutgoingCallMediaType,
   });
 
   const streams = useMemo(
@@ -174,8 +173,6 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       callFlow,
       // Device preferences (see `useAppSettings`)
       settings: appSettings.settings,
-      isSettingsPanelVisible: appSettings.isSettingsVisible,
-      setIsSettingsPanelVisible: appSettings.setIsSettingsVisible,
       handleAutoLightingToggle: appSettings.handleAutoLightingToggle,
       handleSpeakerDefaultToggle: appSettings.handleSpeakerDefaultToggle,
       handleDeveloperModeToggle: appSettings.handleDeveloperModeToggle,

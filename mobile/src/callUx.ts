@@ -1,4 +1,36 @@
 import type { IceCandidatePairSummary } from './diagnostics';
+import type { CallMediaType } from './settingsStorage';
+
+/**
+ * English display strings for server-side `endReason` codes.
+ *
+ * Each key mirrors a value that can appear in `call.endReason` from the
+ * server.  The mapped string is the default English label shown in the UI.
+ * Applications that support multiple languages should use these as fallback
+ * defaults and provide translated overrides keyed by the same reason code.
+ *
+ * Lives here rather than in `useCallFlow` so the call log's pure formatting
+ * helpers can phrase an outcome without pulling in the WebRTC stack.
+ */
+export const CALL_END_REASON_LABELS: Record<string, string> = {
+  ended: 'Call ended',
+  declined: 'Call declined',
+  cancelled: 'Call cancelled',
+  timeout: 'Missed call',
+  missed: 'Missed call',
+  busy: 'Line was busy',
+  unreachable: 'User unavailable',
+  failed: 'Call failed',
+};
+
+/**
+ * Modality assumed for a call this device has no record of.
+ *
+ * Video, because that is what an untagged call actually was: every call placed
+ * before modality was recorded went out as video, and `startAudioCallWith`
+ * still places a video call with the camera off.
+ */
+export const DEFAULT_CALL_MEDIA_TYPE: CallMediaType = 'video';
 
 export function clamp(value: number, min: number, max: number): number {
   'worklet';

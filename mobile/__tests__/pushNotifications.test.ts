@@ -34,6 +34,11 @@ import {
   setActiveConversation,
   showMessageNotification,
 } from '../src/messageNotification';
+import {
+  resetNotificationPrefsForTests,
+  setMessageNotificationsEnabled,
+  setPeerMuted,
+} from '../src/notificationPreferences';
 
 const globalAny = ((global) as any);
 const getInitialURLMock = (Linking.getInitialURL as jest.Mock);
@@ -57,6 +62,13 @@ jest.mock('../src/appLogger', () => ({
 jest.mock('../src/settingsStorage', () => ({
   loadDeviceId: jest.fn(() => Promise.resolve('device-test')),
   loadSettings: jest.fn(() => Promise.resolve({ signalingUrl: 'http://localhost:4173' })),
+  // `notificationPreferences` reads the mute list through these; the push path
+  // consults it before it rings.
+  DEFAULT_NOTIFICATION_PREFS: { messageNotificationsEnabled: true, mutedPeers: [] },
+  loadNotificationPrefs: jest.fn(() =>
+    Promise.resolve({ messageNotificationsEnabled: true, mutedPeers: [] }),
+  ),
+  saveNotificationPrefs: jest.fn(() => Promise.resolve(true)),
 }));
 
 jest.mock('react-native', () => ({
@@ -746,6 +758,7 @@ describe('message push handling', () => {
   beforeEach(() => {
     _resetMessagingCache();
     resetMessageNotificationState();
+    resetNotificationPrefsForTests();
     globalAny.fetch = jest.fn().mockResolvedValue({ ok: true, status: 202 });
     jest.clearAllMocks();
     showMessageNotificationMock.mockImplementation(async () => ({ shown: true }));
@@ -900,8 +913,61 @@ describe('message push handling', () => {
     );
   });
 
-  test('still notifies in the foreground for another conversation', async () => {
-    setActiveConversation({ peerId: 'carol', conversationId: 'bob:carol' });
+  test('suppresses the notification when message notifications are switched off', async () => {
+    await setMessageNotificationsEnabled(false);
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(globalAny.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_suppressed',
+          reason: 'notifications_disabled',
+        }),
+      }),
+    );
+  });
+
+  test('suppresses the notification when the sender is muted', async () => {
+    await setPeerMuted('ALICE', true);
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).not.toHaveBeenCalled();
+    expect(globalAny.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          messageId: 'message-1',
+          stage: 'notification_suppressed',
+          reason: 'peer_muted',
+        }),
+      }),
+    );
+  });
+
+  test('a mute silences only that person', async () => {
+    await setPeerMuted('carol', true);
+
+    await handleBackgroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(showMessageNotification).toHaveBeenCalledTimes(1);
+  });
+
+  test('muting does not mark the message seen, so the socket copy still renders', async () => {
+    await setPeerMuted('alice', true);
+
+    await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
+
+    expect(hasSeenMessage('message-1')).toBe(false);
+  });
+
+  test('still notifies in the foreground for another conversation', async () => {    setActiveConversation({ peerId: 'carol', conversationId: 'bob:carol' });
 
     await handleForegroundPushMessage({ data: SERVER_MESSAGE_DATA });
 

@@ -10,7 +10,6 @@ jest.mock(
 
 const baseProps: any = {
   userId: 'alice',
-  onSaveUserId: jest.fn(),
   signalingUrl: 'https://signal.example.com',
   onSaveSignalingUrl: jest.fn(),
   onSignOut: jest.fn(),
@@ -22,65 +21,88 @@ function findByTestID(tree: any, id: any) {
   return tree.root.findAll((n: any) => n.props.testID === id);
 }
 
+/** Presses the composite that owns the handler, not its host descendants. */
+function pressByTestID(tree: any, id: any) {
+  const pressable = tree.root.findAll(
+    (n: any) => n.props?.testID === id && typeof n.props?.onPress === 'function',
+  )[0];
+  act(() => {
+    pressable.props.onPress();
+  });
+}
+
 describe('SettingsScreen', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('renders the username and signaling inputs seeded from props', () => {
+  test('shows the username without offering an editor for it', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
-    const usernameInput = findByTestID(tree, 'settings-username-input')[0];
-    const signalingInput = findByTestID(tree, 'settings-signaling-input')[0];
-    expect(usernameInput.props.value).toBe('alice');
-    expect(signalingInput.props.value).toBe('https://signal.example.com');
+
+    // The username is claimed by the account on the signaling server, so an
+    // editor here could only ever fail — the row states the value and the rule.
+    expect(findByTestID(tree, 'settings-username-input')).toHaveLength(0);
+    const row = findByTestID(tree, 'settings-username-row')[0];
+    expect(row.props.value).toBe('alice');
+    expect(row.props.onPress).toBeUndefined();
   });
 
-  test('Save username is disabled until the value changes', () => {
+  test('names the account behind the username', () => {
     let tree: any;
     act(() => {
-      tree = renderer.create(<SettingsScreen {...baseProps} />);
+      tree = renderer.create(
+        <SettingsScreen {...baseProps} accountEmail="alice@example.com" accountProviderId="google.com" />,
+      );
     });
-    const saveBtn = tree.root
-      .findAllByType('AppButton')
-      .find((b: any) => b.props.testID === 'settings-save-username');
-    expect(saveBtn.props.disabled).toBe(true);
 
-    act(() => {
-      findByTestID(tree, 'settings-username-input')[0].props.onChangeText('bob');
-    });
-    const saveBtnAfter = tree.root
-      .findAllByType('AppButton')
-      .find((b: any) => b.props.testID === 'settings-save-username');
-    expect(saveBtnAfter.props.disabled).toBe(false);
+    const account = findByTestID(tree, 'settings-account').filter(
+      (n: any) => typeof n.type === 'string',
+    )[0];
+    expect(account.props.children).toContain('alice@example.com');
+    expect(account.props.children).toContain('Google');
   });
 
-  test('saving a new username calls onSaveUserId with the trimmed value', () => {
+  test('the signaling server is edited in a sheet, not inline', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
-    act(() => {
-      findByTestID(tree, 'settings-username-input')[0].props.onChangeText('  bob  ');
-    });
-    act(() => {
-      tree.root
-        .findAllByType('AppButton')
-        .find((b: any) => b.props.testID === 'settings-save-username')
-        .props.onPress();
-    });
-    expect(baseProps.onSaveUserId).toHaveBeenCalledWith('bob');
+
+    // Closed by default: an inline input in a settings list invites accidental
+    // edits to a value almost nobody should change.
+    expect(findByTestID(tree, 'settings-signaling-input')).toHaveLength(0);
+
+    pressByTestID(tree, 'settings-signaling-row');
+    const input = findByTestID(tree, 'settings-signaling-input')[0];
+    expect(input.props.value).toBe('https://signal.example.com');
   });
 
-  test('Save server is disabled until the URL changes', () => {
+  test('Save server is disabled until the URL changes, and commits the trimmed value', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(<SettingsScreen {...baseProps} />);
     });
+    pressByTestID(tree, 'settings-signaling-row');
+
     const saveBtn = tree.root
       .findAllByType('AppButton')
       .find((b: any) => b.props.testID === 'settings-save-signaling');
     expect(saveBtn.props.disabled).toBe(true);
+
+    act(() => {
+      findByTestID(tree, 'settings-signaling-input')[0].props.onChangeText('  https://other.example.com  ');
+    });
+    act(() => {
+      tree.root
+        .findAllByType('AppButton')
+        .find((b: any) => b.props.testID === 'settings-save-signaling')
+        .props.onPress();
+    });
+
+    expect(baseProps.onSaveSignalingUrl).toHaveBeenCalledWith('https://other.example.com');
+    // Committing closes the editor.
+    expect(findByTestID(tree, 'settings-signaling-input')).toHaveLength(0);
   });
 
   test('sign out and back buttons invoke their handlers', () => {
@@ -110,12 +132,13 @@ describe('SettingsScreen', () => {
     act(() => {
       withTree = renderer.create(<SettingsScreen {...baseProps} onExportLogs={onExportLogs} />);
     });
-    act(() => {
-      withTree.root
-        .findAllByType('AppButton')
-        .find((b: any) => b.props.testID === 'settings-export-logs')
-        .props.onPress();
-    });
+    // Exactly one row: a testID that appears twice makes every other
+    // assertion about it ambiguous, and the user sees the same control twice.
+    // Host-only, because the composite carries the same testID as a prop.
+    expect(
+      findByTestID(withTree, 'settings-export-logs').filter((n: any) => typeof n.type === 'string'),
+    ).toHaveLength(1);
+    pressByTestID(withTree, 'settings-export-logs');
     expect(onExportLogs).toHaveBeenCalled();
   });
 
@@ -137,11 +160,11 @@ describe('SettingsScreen', () => {
         />,
       );
     });
-    const toggle = findByTestID(withTree, 'settings-developer-mode')[0];
-    expect(toggle.props.accessibilityState).toEqual({ checked: false });
-    act(() => {
-      toggle.props.onPress();
-    });
+    const toggle = findByTestID(withTree, 'settings-developer-mode').filter(
+      (n: any) => typeof n.type === 'string',
+    )[0];
+    expect(toggle.props.accessibilityState).toEqual({ checked: false, disabled: false });
+    pressByTestID(withTree, 'settings-developer-mode');
     expect(onToggleDeveloperMode).toHaveBeenCalledTimes(1);
   });
 
@@ -152,8 +175,10 @@ describe('SettingsScreen', () => {
         <SettingsScreen {...baseProps} developerModeEnabled onToggleDeveloperMode={jest.fn()} />,
       );
     });
-    const toggle = findByTestID(tree, 'settings-developer-mode')[0];
-    expect(toggle.props.accessibilityState).toEqual({ checked: true });
+    const toggle = findByTestID(tree, 'settings-developer-mode').filter(
+      (n: any) => typeof n.type === 'string',
+    )[0];
+    expect(toggle.props.accessibilityState).toEqual({ checked: true, disabled: false });
   });
 
 
@@ -187,7 +212,7 @@ describe('SettingsScreen', () => {
     expect(onChangeIceTransportPolicy).toHaveBeenCalledWith('all');
   });
 
-  test('renders section labels with the expected text for each visible section', () => {
+  test('groups the settings under the headings the plan calls for', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(
@@ -200,9 +225,123 @@ describe('SettingsScreen', () => {
       );
     });
 
-    ['Username', 'Signaling server', 'Appearance', 'Developer', 'Account'].forEach(label => {
+    // Grouped by what a person came to do, not by which subsystem owns the
+    // value: "Signaling server" and "Developer" were implementation labels.
+    [
+      'Account',
+      'Notifications',
+      'Appearance',
+      'Privacy',
+      'Storage & data',
+      'Advanced',
+      'About',
+    ].forEach(label => {
       const match = tree.root.findAll((n: any) => n.type === 'Text' && n.props.children === label);
       expect(match.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('notifications', () => {
+    test('the message-notifications switch reflects and reports its state', () => {
+      const onToggle = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            messageNotificationsEnabled={false}
+            onToggleMessageNotifications={onToggle}
+          />,
+        );
+      });
+
+      const toggle = findByTestID(tree, 'settings-message-notifications').filter(
+        (n: any) => typeof n.type === 'string',
+      )[0];
+      expect(toggle.props.accessibilityState.checked).toBe(false);
+
+      pressByTestID(tree, 'settings-message-notifications');
+      expect(onToggle).toHaveBeenCalledWith(true);
+    });
+
+    test('shows an empty state when nobody is muted', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(<SettingsScreen {...baseProps} mutedPeers={[]} />);
+      });
+      expect(findByTestID(tree, 'settings-muted-empty').length).toBeGreaterThan(0);
+      expect(findByTestID(tree, 'settings-muted-row')).toHaveLength(0);
+    });
+
+    test('lists muted people and unmutes the one that was tapped', () => {
+      const onUnmutePeer = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            mutedPeers={['user-bob', 'user-carol']}
+            onUnmutePeer={onUnmutePeer}
+          />,
+        );
+      });
+
+      const rows = findByTestID(tree, 'settings-muted-row').filter(
+        (n: any) => typeof n.type === 'string',
+      );
+      expect(rows).toHaveLength(2);
+
+      pressByTestID(tree, 'settings-unmute');
+      expect(onUnmutePeer).toHaveBeenCalledWith('user-bob');
+    });
+  });
+
+  describe('privacy', () => {
+    test('shows an empty state when nobody is blocked', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(<SettingsScreen {...baseProps} blockedUsers={[]} />);
+      });
+      expect(findByTestID(tree, 'settings-blocked-empty').length).toBeGreaterThan(0);
+      expect(findByTestID(tree, 'settings-blocked-row')).toHaveLength(0);
+    });
+
+    test('lists blocked people and unblocks the one that was tapped', () => {
+      const onUnblockUser = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} blockedUsers={['user-bob']} onUnblockUser={onUnblockUser} />,
+        );
+      });
+
+      expect(
+        findByTestID(tree, 'settings-blocked-row').filter((n: any) => typeof n.type === 'string'),
+      ).toHaveLength(1);
+
+      act(() => {
+        findByTestID(tree, 'settings-unblock')
+          .filter((n: any) => typeof n.props?.onPress === 'function')[0]
+          .props.onPress();
+      });
+      expect(onUnblockUser).toHaveBeenCalledWith('user-bob');
+    });
+
+    test('a blocked person routes to their profile, where the rest of the controls are', () => {
+      const onOpenProfile = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            blockedUsers={['user-bob']}
+            onOpenProfile={onOpenProfile}
+          />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-blocked-row');
+      expect(onOpenProfile).toHaveBeenCalledWith('user-bob');
     });
   });
 

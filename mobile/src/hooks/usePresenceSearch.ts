@@ -60,7 +60,7 @@ export default function usePresenceSearch({
   /**
    * `true` when repeated socket connect errors suggest the signaling server is
    * unreachable.  Cleared automatically on a successful connection.  Drives the
-   * persistent offline banner + retry button in the Lobby.
+   * persistent offline banner + retry button on the Calls tab.
    */
   const [isServerUnreachable, setIsServerUnreachable] = useState(false);
 
