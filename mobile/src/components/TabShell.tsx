@@ -130,6 +130,9 @@ export default function TabShell() {
         attachmentsAvailable={chat.attachmentsAvailable}
         isVoiceNoteSupported={chat.isVoiceNoteSupported}
         onTypingChange={isTyping => sendTypingIndicator(peerId, isTyping)}
+        unreadCount={
+          chat.conversations?.find(entry => entry?.peerId === peerId)?.unreadCount ?? 0
+        }
         initialDraft={chat.drafts?.[peerId] ?? null}
         onSaveDraft={(text, replyToId) => saveDraft(peerId, text, replyToId)}
         onClearDraft={() => clearDraft(peerId)}
@@ -140,6 +143,7 @@ export default function TabShell() {
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
     chat.attachmentsAvailable,
+    chat.conversations,
     chat.currentUserId,
     chat.handleLoadOlderMessages,
     chat.isChatOffline,
@@ -181,11 +185,15 @@ export default function TabShell() {
       onStartChat={openChatConversation}
       currentUserId={chat.currentUserId}
       drafts={chat.drafts}
+      isPeerMuted={isPeerMuted}
+      onSetPeerMuted={setPeerMuted}
     />
   ), [
     chat.currentUserId,
     chat.conversations,
     chat.drafts,
+    isPeerMuted,
+    setPeerMuted,
     chat.handleRefreshConversations,
     chat.isLoadingConversations,
     chat.isRefreshingConversations,

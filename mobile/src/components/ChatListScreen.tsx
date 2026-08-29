@@ -85,6 +85,10 @@ export type ChatListScreenProps = {
   conversations?: ConversationRow[];
   /** peerId -> unsent composer text, used to preview drafts on the row. */
   drafts?: Record<string, { text: string } | undefined>;
+  /** Whether this conversation's notifications are silenced. */
+  isPeerMuted?: (peerId: string) => boolean;
+  /** Silence (or unsilence) a conversation's notifications. */
+  onSetPeerMuted?: (peerId: string, muted: boolean) => void;
   onOpenConversation: (peerId: string) => void;
   /** Directory lookup, used by the New-chat People picker. */
   onSearchUsers?: (query: string) => Promise<ContactRow[]>;
@@ -127,6 +131,8 @@ function ChatListScreen({
   onStartChat,
   currentUserId,
   drafts,
+  isPeerMuted,
+  onSetPeerMuted,
 }: ChatListScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
@@ -137,8 +143,9 @@ function ChatListScreen({
     (conversation: ConversationRow) => {
       const unreadCount = conversation.unreadCount ?? 0;
       const hasUnread = unreadCount > 0;
-      const actions =
-        onMarkRead && hasUnread
+      const isMuted = Boolean(isPeerMuted?.(conversation.peerId));
+      const actions = [
+        ...(onMarkRead && hasUnread
           ? [
               {
                 key: 'mark-read',
@@ -148,7 +155,23 @@ function ChatListScreen({
                 onPress: () => onMarkRead(conversation.peerId),
               },
             ]
-          : [];
+          : []),
+        // Muting is otherwise buried in the person hub, which is two taps and a
+        // screen away from the row the notification actually came from.
+        ...(onSetPeerMuted
+          ? [
+              {
+                key: 'mute',
+                label: isMuted ? 'Unmute' : 'Mute',
+                accessibilityLabel: isMuted
+                  ? `Unmute notifications from ${conversation.peerId}`
+                  : `Mute notifications from ${conversation.peerId}`,
+                testID: 'chat-list-mute',
+                onPress: () => onSetPeerMuted(conversation.peerId, !isMuted),
+              },
+            ]
+          : []),
+      ];
       const activityIcon = activityIconFor(conversation);
       // An unsent draft outranks the last event in the preview line: it is the
       // one thing on the row the user still has to act on.
@@ -180,6 +203,14 @@ function ChatListScreen({
                   </Text>
                 ) : null}
                 <View style={styles.metaRow}>
+                  {isMuted ? (
+                    <Icon
+                      name="muteNotifications"
+                      size={14}
+                      color={styles.timestamp.color}
+                      testID="chat-list-muted-glyph"
+                    />
+                  ) : null}
                   {activityIcon ? (
                     <Icon
                       name={activityIcon}
@@ -199,18 +230,28 @@ function ChatListScreen({
             }
             onPress={() => onOpenConversation?.(conversation.peerId)}
             onLongPress={onOpenProfile ? () => onOpenProfile(conversation.peerId) : undefined}
-            accessibilityLabel={
-              hasUnread
-                ? `Open conversation with ${conversation.peerId}, ${unreadCount} unread`
-                : `Open conversation with ${conversation.peerId}`
-            }
+            accessibilityLabel={[
+              `Open conversation with ${conversation.peerId}`,
+              hasUnread ? `${unreadCount} unread` : '',
+              isMuted ? 'muted' : '',
+            ]
+              .filter(Boolean)
+              .join(', ')}
             accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
             testID="chat-list-row"
           />
         </SwipeableRow>
       );
     },
-    [drafts, onMarkRead, onOpenConversation, onOpenProfile, styles],
+    [
+      drafts,
+      isPeerMuted,
+      onMarkRead,
+      onOpenConversation,
+      onOpenProfile,
+      onSetPeerMuted,
+      styles,
+    ],
   );
 
   const renderItem = useCallback(

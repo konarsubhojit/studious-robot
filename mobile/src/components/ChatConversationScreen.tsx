@@ -64,6 +64,7 @@ export type AttachmentKind = 'photo' | 'camera' | 'file';
  */
 export type ListItem =
   | { key: string; type: 'date'; label: string }
+  | { key: string; type: 'unread'; count: number }
   | {
       key: string;
       type: 'message';
@@ -208,9 +209,49 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
  * pinned (sticky) date pill can be derived from whichever item is currently at
  * the top of the viewport without re-scanning the list.
  *
+/**
+ * Key of the message the "N new messages" divider belongs above.
+ *
+ * The anchor is derived from the conversation's unread *count* rather than
+ * from per-message `readAt`, because opening the conversation marks it read
+ * within a round trip — by the time the list renders, the receipts that would
+ * identify the unread run are already gone. Counting back `unreadCount`
+ * incoming messages from the end reproduces the same anchor and survives that
+ * race.
+ *
+ * Calls are skipped: an unread count counts messages, so including call rows
+ * would place the divider too early.
+ *
  * @param orderedEntries oldest-first
+ * @param unreadCount conversation unread count, captured when the screen opened
+ * @param currentUserId so the reader's own messages are never counted
+ * @returns the anchor entry's key, or null when there is nothing to divide
  */
-function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
+export function findUnreadAnchorKey(
+  orderedEntries: TimelineEntry[],
+  unreadCount: number,
+  currentUserId: string | null | undefined,
+): string | null {
+  if (!Array.isArray(orderedEntries) || !(unreadCount > 0)) return null;
+  const incoming = orderedEntries.filter(
+    entry => !isCallEntry(entry) && entry.senderId !== currentUserId,
+  );
+  if (!incoming.length) return null;
+  // A count larger than what is loaded anchors at the oldest loaded message
+  // rather than dropping the divider: "some of this is new" still beats
+  // showing nothing.
+  const anchor = incoming[Math.max(0, incoming.length - unreadCount)];
+  return anchor ? entryKey(anchor) : null;
+}
+
+/**
+ * @param orderedEntries oldest-first
+ * @param unread where to place the "N new messages" divider, if anywhere
+ */
+function buildListItems(
+  orderedEntries: TimelineEntry[],
+  unread: { anchorId: string | null; count: number } = { anchorId: null, count: 0 },
+): ListItem[] {
   const items = ([] as ListItem[]);
   let currentDateLabel = (null as string | null);
   for (let index = 0; index < orderedEntries.length; index++) {
@@ -228,6 +269,13 @@ function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
         type: 'date',
         label: currentDateLabel,
       });
+    }
+
+    // The divider sits *below* the day separator when the first unread
+    // message opens a new day, so the reader still sees which day they are
+    // resuming into.
+    if (unread.anchorId && unread.count > 0 && entryKey(entry) === unread.anchorId) {
+      items.push({ key: 'unread-divider', type: 'unread', count: unread.count });
     }
 
     if (isCallEntry(entry)) {
@@ -775,6 +823,11 @@ export type ChatConversationScreenProps = {
   onOpenProfile?: () => void;
   /** Reports composer typing state. */
   onTypingChange?: (isTyping: boolean) => void;
+  /**
+   * Unread count for this conversation as it stood before the screen opened;
+   * drives the "N new messages" divider. Read once, on mount.
+   */
+  unreadCount?: number;
   /** Composer text (and reply target) restored from the local chat store. */
   initialDraft?: { text: string; replyToId?: string | null } | null;
   /** Persist the composer entry; called when the screen is left, not per key. */
@@ -833,6 +886,7 @@ function ChatConversationScreen({
   isLoadingMessages = false,
   isOffline = false,
   onTypingChange,
+  unreadCount = 0,
   initialDraft = null,
   onSaveDraft,
   onClearDraft,
@@ -886,7 +940,23 @@ function ChatConversationScreen({
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
-  const listItems = useMemo(() => buildListItems([...messages].reverse()), [messages]);
+  // Frozen on mount: opening the conversation marks it read, so reading the
+  // live count would make the divider vanish the moment it appeared.
+  const initialUnreadCountRef = useRef(unreadCount);
+  const orderedEntries = useMemo(() => [...messages].reverse(), [messages]);
+  const unreadAnchorKey = useMemo(
+    () =>
+      findUnreadAnchorKey(orderedEntries, initialUnreadCountRef.current, currentUserId),
+    [currentUserId, orderedEntries],
+  );
+  const listItems = useMemo(
+    () =>
+      buildListItems(orderedEntries, {
+        anchorId: unreadAnchorKey,
+        count: initialUnreadCountRef.current,
+      }),
+    [orderedEntries, unreadAnchorKey],
+  );
 
   // Resolves a reply's `replyTo` to the quoted message, when it is part of the
   // loaded page. A miss renders as "Message deleted" rather than as nothing.
@@ -1235,7 +1305,11 @@ function ChatConversationScreen({
         entry => entry.item?.type === 'message' || entry.item?.type === 'call',
       );
       const item = topItem?.item;
-      setStickyDateLabel(item && item.type !== 'date' ? (item.dateLabel ?? null) : null);
+      setStickyDateLabel(
+        item && (item.type === 'message' || item.type === 'call')
+          ? (item.dateLabel ?? null)
+          : null,
+      );
     },
     [],
   );
@@ -1247,6 +1321,17 @@ function ChatConversationScreen({
         return (
           <View style={styles.dateSeparator} testID="chat-date-separator">
             <Text style={styles.dateSeparatorText}>{item.label}</Text>
+          </View>
+        );
+      }
+      if (item.type === 'unread') {
+        return (
+          <View style={styles.unreadDivider} testID="chat-unread-divider">
+            <View style={styles.unreadDividerRule} />
+            <Text style={styles.unreadDividerText}>
+              {item.count === 1 ? '1 new message' : `${item.count} new messages`}
+            </Text>
+            <View style={styles.unreadDividerRule} />
           </View>
         );
       }
@@ -1657,6 +1742,22 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 2,
       borderRadius: radius.sm,
       overflow: 'hidden',
+    },
+    unreadDivider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    unreadDividerRule: {
+      flex: 1,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.accent,
+    },
+    unreadDividerText: {
+      ...typography.hint,
+      color: colors.accent,
     },
     stickyDate: {
       position: 'absolute',

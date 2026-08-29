@@ -1,7 +1,9 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
-import ChatConversationScreen from '../../src/components/ChatConversationScreen';
+import ChatConversationScreen, {
+  findUnreadAnchorKey,
+} from '../../src/components/ChatConversationScreen';
 import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
 
 jest.mock('../../src/accessibilityAnnouncer', () => ({
@@ -1639,5 +1641,120 @@ describe('ChatConversationScreen drafts', () => {
     });
 
     expect(onSaveDraft).not.toHaveBeenCalledWith('ready to go', null);
+  });
+});
+
+describe('ChatConversationScreen unread divider', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  const incoming = (id: string, minutesAgo: number) =>
+    makeMessage({
+      messageId: id,
+      senderId: 'user-bob',
+      recipientId: 'user-alice',
+      body: id,
+      createdAt: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    });
+
+  test('shows no divider when nothing is unread', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m2', 1), incoming('m1', 2)],
+      unreadCount: 0,
+    });
+
+    expect(tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider')).toHaveLength(
+      0,
+    );
+  });
+
+  test('labels the divider with the unread count', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m3', 1), incoming('m2', 2), incoming('m1', 3)],
+      unreadCount: 2,
+    });
+
+    const divider = tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider');
+    expect(divider.length).toBeGreaterThan(0);
+    const labels = tree.root.findAll(
+      (n: any) => typeof n.props?.children === 'string' && n.props.children === '2 new messages',
+    );
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  test('keeps the divider once the conversation is marked read', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m2', 1), incoming('m1', 2)],
+      unreadCount: 1,
+    });
+
+    // The server acknowledges the read within a round trip; the divider must
+    // not disappear out from under the reader.
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          currentUserId="user-alice"
+          messages={[incoming('m2', 1), incoming('m1', 2)]}
+          unreadCount={0}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+    });
+
+    expect(
+      tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider').length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe('findUnreadAnchorKey', () => {
+  const msg = (messageId: string, senderId: string) => ({
+    messageId,
+    senderId,
+    conversationId: 'c1',
+    recipientId: 'user-alice',
+    body: messageId,
+    createdAt: new Date().toISOString(),
+  });
+
+  test('anchors N incoming messages back from the end', () => {
+    const ordered: any = [
+      msg('m1', 'user-bob'),
+      msg('m2', 'user-alice'),
+      msg('m3', 'user-bob'),
+      msg('m4', 'user-bob'),
+    ];
+    expect(findUnreadAnchorKey(ordered, 2, 'user-alice')).toBe('m3');
+  });
+
+  test('ignores the reader\u2019s own messages', () => {
+    const ordered: any = [msg('m1', 'user-alice'), msg('m2', 'user-alice')];
+    expect(findUnreadAnchorKey(ordered, 2, 'user-alice')).toBeNull();
+  });
+
+  test('anchors at the oldest loaded message when the count exceeds the page', () => {
+    const ordered: any = [msg('m1', 'user-bob'), msg('m2', 'user-bob')];
+    expect(findUnreadAnchorKey(ordered, 50, 'user-alice')).toBe('m1');
+  });
+
+  test('returns null when nothing is unread', () => {
+    const ordered: any = [msg('m1', 'user-bob')];
+    expect(findUnreadAnchorKey(ordered, 0, 'user-alice')).toBeNull();
   });
 });
