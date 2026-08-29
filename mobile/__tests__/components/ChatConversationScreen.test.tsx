@@ -1758,3 +1758,40 @@ describe('findUnreadAnchorKey', () => {
     expect(findUnreadAnchorKey(ordered, 0, 'user-alice')).toBeNull();
   });
 });
+
+describe('ChatConversationScreen upload cancellation', () => {
+  test('offers a cancel control while an attachment is uploading', () => {
+    const onCancelAttachmentUpload = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      isUploadingAttachment: true,
+      attachmentUploadProgress: 0.42,
+      onCancelAttachmentUpload,
+    });
+
+    const cancel = findByTestId(tree, 'chat-attachment-upload-cancel');
+    expect(cancel).not.toBeNull();
+    act(() => {
+      cancel.props.onPress();
+    });
+    expect(onCancelAttachmentUpload).toHaveBeenCalledTimes(1);
+  });
+
+  test('omits the cancel control when cancelling is not wired up', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      isUploadingAttachment: true,
+      attachmentUploadProgress: 0.42,
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-upload-cancel')).toBeNull();
+  });
+});

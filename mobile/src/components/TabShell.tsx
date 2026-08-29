@@ -53,6 +53,7 @@ export default function TabShell() {
   // `screenRenderers` memo in `AppNavigator` that depends on them).
   const {
     cancelRecordingVoiceNote,
+    cancelAttachmentUpload,
     clearDraft,
     deleteMessage,
     isPeerMuted,
@@ -124,6 +125,7 @@ export default function TabShell() {
         onStartVoiceNote={() => startRecordingVoiceNote()}
         onStopVoiceNote={() => stopRecordingVoiceNoteAndSend(peerId)}
         onCancelVoiceNote={() => cancelRecordingVoiceNote()}
+        onCancelAttachmentUpload={cancelAttachmentUpload}
         isUploadingAttachment={chat.isUploadingAttachment}
         attachmentUploadProgress={chat.attachmentUploadProgress}
         isRecordingVoiceNote={chat.isRecordingVoiceNote}
@@ -140,6 +142,7 @@ export default function TabShell() {
     );
   }, [
     callFlow.isPlacingCall,
+    cancelAttachmentUpload,
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
     chat.attachmentsAvailable,

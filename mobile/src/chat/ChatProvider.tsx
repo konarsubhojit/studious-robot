@@ -53,6 +53,7 @@ export type ChatContextValue = {
   startRecordingVoiceNote: CallFlow['startRecordingVoiceNote'];
   stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
   cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote'];
+  cancelAttachmentUpload: CallFlow['cancelAttachmentUpload'];
   isUploadingAttachment: CallFlow['isUploadingAttachment'];
   attachmentUploadProgress: CallFlow['attachmentUploadProgress'];
   isRecordingVoiceNote: CallFlow['isRecordingVoiceNote'];
@@ -155,6 +156,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       startRecordingVoiceNote: callFlow.startRecordingVoiceNote,
       stopRecordingVoiceNoteAndSend: callFlow.stopRecordingVoiceNoteAndSend,
       cancelRecordingVoiceNote: callFlow.cancelRecordingVoiceNote,
+      cancelAttachmentUpload: callFlow.cancelAttachmentUpload,
       isUploadingAttachment: callFlow.isUploadingAttachment,
       attachmentUploadProgress: callFlow.attachmentUploadProgress,
       isRecordingVoiceNote: callFlow.isRecordingVoiceNote,
@@ -187,6 +189,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.startRecordingVoiceNote,
       callFlow.stopRecordingVoiceNoteAndSend,
       callFlow.cancelRecordingVoiceNote,
+      callFlow.cancelAttachmentUpload,
       callFlow.isUploadingAttachment,
       callFlow.attachmentUploadProgress,
       callFlow.isRecordingVoiceNote,

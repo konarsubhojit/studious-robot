@@ -848,6 +848,7 @@ export type ChatConversationScreenProps = {
   isUploadingAttachment?: boolean;
   /** Upload progress, 0–1. */
   attachmentUploadProgress?: number;
+  onCancelAttachmentUpload?: () => void;
   /** A voice note is currently being recorded. */
   isRecordingVoiceNote?: boolean;
   /** Whether this server has attachment uploads configured; the attach control stays visible either way (never silently absent) but is disabled with an explanatory message when this is `false`. */
@@ -897,6 +898,7 @@ function ChatConversationScreen({
   onCancelVoiceNote,
   isUploadingAttachment = false,
   attachmentUploadProgress = 0,
+  onCancelAttachmentUpload,
   isRecordingVoiceNote = false,
   attachmentsAvailable = true,
   isVoiceNoteSupported = false,
@@ -1570,6 +1572,9 @@ function ChatConversationScreen({
                 min: 0,
                 max: 100,
               }}
+              onDismiss={onCancelAttachmentUpload}
+              dismissLabel="Cancel upload"
+              dismissTestID="chat-attachment-upload-cancel"
               testID="chat-attachment-upload-progress"
             />
           ) : null}

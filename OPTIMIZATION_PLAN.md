@@ -90,7 +90,9 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | A3 | Gate WebRTC stats polling on foreground | ✅ polling pauses in `background`, resumes with an immediate sample |
 | A4 | Call-history list cost | ✅ sections are shaped for `SectionList` inside the memo and the renderers are hoisted out of the JSX; server-side paging of `/calls` is not needed at the current log sizes |
 | B1 | Per-conversation drafts | ✅ persisted in the chat snapshot, restored on open (including the reply target), previewed as "Draft: …" in the chat list; written on leave/background rather than per keystroke |
-| B6 | Unread badge cap | ✅ already capped at 99+ by the `Badge` primitive — verified, no change |
+| B3 | Jump-to-latest / unread divider | ✅ the jump-to-latest pill (with a new-message count) and tap-a-quote-to-scroll already existed; this pass added the "N new messages" divider. It is anchored by counting back N *incoming* messages from the frozen mount-time unread count, **not** by `readAt` — see the note below |
+| B4 | Attachment progress ring | 🟡 partial: the screen-level upload banner is now cancellable end to end (`putAttachment` exposes an abort handle → `useAttachments.cancelUpload`), and a cancel is reported as "Upload cancelled", never as a failure. The per-bubble ring is still deferred — see the note below |
+| B6 | Unread badge cap / mute | ✅ the badge was already capped at 99+ by the `Badge` primitive (verified, no change); mute/unmute is now reachable from a chat-list swipe and muted rows carry a glyph |
 | C1 | Quality-indicator hysteresis | ✅ `smoothConnectionQuality`: upgrade immediately, downgrade only after two consecutive worse samples |
 | C2 | Make failures speak | ✅ `setTrackEnabled` reads the track state back so the UI can never claim "muted" while audio still flows, and a manually chosen headset that disconnects announces the hand-over. The plan's PiP-refusal toast has **no trigger**: PiP is only ever entered natively from `onUserLeaveHint`, never from a user-initiated request |
 | C4 | Disable controls during renegotiation | ✅ the screen-share row reports `isTogglingScreenShare` as a busy, disabled "Starting…/Stopping…" state |
@@ -102,8 +104,7 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | -- | ---- | ------ |
 | A1 | Split `CallProvider` into call-state / media-controls / recovery contexts | Real win, but it changes the consumer set of every call screen and is the natural first half of E1. Wants its own PR with render-count assertions, not a rider on this one |
 | B2 | Message editing | Protocol change (`message.edit` / `message.edited`, `editedAt`, a server-enforced edit window). Should land together with D3 behind one schema-compatibility test |
-| B3 | Jump-to-latest / unread divider | Sizeable conversation-screen work; the jump affordance partly exists (`showScrollToBottom`) and the unread divider needs a persisted "last read" anchor |
-| B4 | Attachment progress ring | Needs the byte progress threaded per message rather than the single screen-level `attachmentUploadProgress` that exists today |
+| B4 (remainder) | Per-bubble attachment progress ring | Blocked on optimistic sends: `useAttachments.sendPicked` uploads *before* calling `sendMessage`, so no bubble exists during the upload to hang a ring on. Needs a pending message created up front and reconciled on success |
 | B5 | Presence freshness / last seen | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation |
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
@@ -112,6 +113,15 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | E1–E3 | `useCallFlow` decomposition, SQLite, i18n | Tracked above as P1.2 / P1.7; i18n should precede any further copy growth |
 
 ## Notes and deviations
+
+### B3: the unread divider cannot be derived from read receipts
+Opening a conversation marks it read within a round trip, so by the time the
+list renders, the receipts that would identify the unread run are already
+gone. The divider therefore reads the conversation's unread *count*, frozen at
+mount, and counts back that many incoming messages from the end of the loaded
+page. A count larger than the loaded page anchors at the oldest loaded message
+rather than dropping the divider, and the divider survives `unreadCount`
+dropping to 0 mid-session (there is a regression test for exactly that).
 
 ### P2.5: two real bugs, not just token hygiene
 Replacing the colour literals was supposed to be cosmetic. It uncovered two

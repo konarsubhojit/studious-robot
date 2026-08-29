@@ -4,7 +4,12 @@ import useAttachments from '../../src/hooks/useAttachments';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../../src/attachmentPicker';
 import { ensureAttachmentPermission } from '../../src/permissions';
 import { startVoiceRecording, stopVoiceRecording } from '../../src/voiceRecorder';
-import { _resetAttachmentAvailabilityCache, uploadAttachment } from '../../src/attachmentUpload';
+import {
+  ATTACHMENT_CANCELLED_MESSAGE,
+  AttachmentError,
+  _resetAttachmentAvailabilityCache,
+  uploadAttachment,
+} from '../../src/attachmentUpload';
 import { MESSAGE_TYPES } from '../../../shared';
 
 jest.mock('../../src/attachmentPicker', () => ({
@@ -158,5 +163,43 @@ describe('useAttachments', () => {
       '',
       expect.objectContaining({ type: MESSAGE_TYPES.VOICE }),
     );
+  });
+});
+
+describe('useAttachments cancellation', () => {
+  test('cancelUpload aborts the in-flight upload and reports it as cancelled, not failed', async () => {
+    (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
+
+    (uploadAttachment as jest.Mock).mockImplementation(({ onAbortHandle }: any) => new Promise((_resolve, reject) => {
+      onAbortHandle?.(() => reject(new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE)));
+    }));
+
+    const { resultRef, params } = setup();
+
+    let pending: Promise<void>;
+    act(() => {
+      pending = resultRef.current.pickAndSend('user-bob', 'photo');
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(resultRef.current.isUploading).toBe(true);
+
+    await act(async () => {
+      resultRef.current.cancelUpload();
+      await pending;
+    });
+
+    expect(params.sendMessage).not.toHaveBeenCalled();
+    expect(params.updateStatus).toHaveBeenCalledWith('Upload cancelled', 'info');
+    expect(resultRef.current.isUploading).toBe(false);
+    expect(resultRef.current.attachmentsAvailable).toBe(true);
+  });
+
+  test('cancelUpload is a no-op when nothing is uploading', () => {
+    const { resultRef, params } = setup();
+    expect(() => resultRef.current.cancelUpload()).not.toThrow();
+    expect(params.updateStatus).not.toHaveBeenCalled();
   });
 });

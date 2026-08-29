@@ -1,6 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { MESSAGE_TYPES } from '../../../shared';
-import { isAttachmentUploadKnownUnavailable, uploadAttachment } from '../attachmentUpload';
+import {
+  ATTACHMENT_CANCELLED_MESSAGE,
+  isAttachmentUploadKnownUnavailable,
+  uploadAttachment,
+} from '../attachmentUpload';
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
 import { ensureAttachmentPermission } from '../permissions';
 import type { CallStatus } from '../components/StatusBanner';
@@ -42,6 +46,9 @@ export default function useAttachments({
   const [attachmentsAvailable, setAttachmentsAvailable] = useState(
     () => !isAttachmentUploadKnownUnavailable(),
   );
+  // Set for the lifetime of one `PUT`; calling it aborts the XHR, which
+  // rejects the upload with ATTACHMENT_CANCELLED_MESSAGE.
+  const abortUploadRef = useRef<(() => void) | null>(null);
 
   const authedFetch = useCallback(
     (build: (sessionId: string) => { url: string; options?: object; }) =>
@@ -68,18 +75,36 @@ export default function useAttachments({
           height: picked.height,
           durationMs: picked.durationMs,
           onProgress: setUploadProgress,
+          onAbortHandle: abort => {
+            abortUploadRef.current = abort;
+          },
         });
         await sendMessage(peerId, '', { type, attachment });
       } catch (error) {
         const failure = ((error ?? {}) as { status?: number, message?: string });
-        if (failure.status === 503) setAttachmentsAvailable(false);
-        updateStatus?.(failure.message ?? 'Could not send attachment', 'error');
+        if (failure.message === ATTACHMENT_CANCELLED_MESSAGE) {
+          updateStatus?.('Upload cancelled', 'info');
+        } else {
+          if (failure.status === 503) setAttachmentsAvailable(false);
+          updateStatus?.(failure.message ?? 'Could not send attachment', 'error');
+        }
       } finally {
+        abortUploadRef.current = null;
         setIsUploading(false);
       }
     },
     [authedFetch, signalingUrl, sendMessage, updateStatus],
   );
+
+  /**
+   * Abort the in-flight upload, if there is one. Safe to call at any time: it
+   * is a no-op once the `PUT` has finished or has not started yet.
+   */
+  const cancelUpload = useCallback(() => {
+    const abort = abortUploadRef.current;
+    abortUploadRef.current = null;
+    abort?.();
+  }, []);
 
   /**
    * Run a picker (photo/camera/file) for `peerId` and, once something is
@@ -140,6 +165,7 @@ export default function useAttachments({
 
   return {
     pickAndSend,
+    cancelUpload,
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
     cancelRecordingVoiceNote,

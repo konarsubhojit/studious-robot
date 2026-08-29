@@ -87,6 +87,13 @@ function formatBytes(bytes: number): string {
 /**
  * Turn a failed presign/upload response into the message shown to the user.
  */
+/**
+ * The message carried by the {@link AttachmentError} raised when an upload is
+ * aborted by the user, rather than failing. Callers compare against this to
+ * tell "cancelled" apart from "broken".
+ */
+export const ATTACHMENT_CANCELLED_MESSAGE = 'Upload cancelled';
+
 export function describeAttachmentError({ status, message }: { status?: number; message?: string; } = {}): string {
   if (status === 503) return "Attachments aren't available on this server";
   if (status === 413) return 'That file is too large to send';
@@ -157,11 +164,12 @@ export async function presignAttachment({
  *
  * @param params
  */
-export function putAttachment({ uploadUrl, headers, body, onProgress }: {
+export function putAttachment({ uploadUrl, headers, body, onProgress, onAbortHandle }: {
         uploadUrl: string;
         headers: Record<string, string>;
         body: Blob | { uri: string; type?: string; name?: string; };
         onProgress?: (fraction: number) => void;
+        onAbortHandle?: (abort: () => void) => void;
     }): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -185,7 +193,8 @@ export function putAttachment({ uploadUrl, headers, body, onProgress }: {
       reject(new AttachmentError('Upload was rejected by storage', xhr.status));
     };
     xhr.onerror = () => reject(new AttachmentError('Network problem during upload'));
-    xhr.onabort = () => reject(new AttachmentError('Upload cancelled'));
+    xhr.onabort = () => reject(new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE));
+    onAbortHandle?.(() => xhr.abort());
     xhr.send(body);
   });
 }
@@ -211,6 +220,7 @@ export async function uploadAttachment({
   height,
   durationMs,
   onProgress,
+  onAbortHandle,
 }: {
         authedFetch: (build: (sessionId: string) => { url: string; options?: object; }) => Promise<Response | null>;
         signalingUrl: string;
@@ -224,6 +234,7 @@ export async function uploadAttachment({
         height?: number;
         durationMs?: number;
         onProgress?: (fraction: number) => void;
+        onAbortHandle?: (abort: () => void) => void;
     }): Promise<{
     url: string; mimeType: string; sizeBytes: number;
     name?: string; width?: number; height?: number; durationMs?: number;
@@ -258,9 +269,15 @@ export async function uploadAttachment({
       headers: presigned.headers,
       body: { uri, type: mimeType, name },
       onProgress,
+      onAbortHandle,
     });
   } catch (error) {
     const failure = ((error ?? {}) as { status?: number, message?: string });
+    // A user-initiated abort is not a failure: keep its message intact rather
+    // than letting describeAttachmentError report it as a network problem.
+    if (failure.message === ATTACHMENT_CANCELLED_MESSAGE) {
+      throw new AttachmentError(ATTACHMENT_CANCELLED_MESSAGE);
+    }
     logWarn('[Attachments] upload failed', {
       status: failure.status,
       message: failure.message,

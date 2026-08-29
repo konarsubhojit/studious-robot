@@ -4041,6 +4041,7 @@ export default function useCallFlow({
     startRecordingVoiceNote: attachments.startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend: attachments.stopRecordingVoiceNoteAndSend,
     cancelRecordingVoiceNote: attachments.cancelRecordingVoiceNote,
+    cancelAttachmentUpload: attachments.cancelUpload,
     isUploadingAttachment: attachments.isUploading,
     attachmentUploadProgress: attachments.uploadProgress,
     isRecordingVoiceNote: attachments.isRecordingVoiceNote,
