@@ -261,6 +261,7 @@ export default function TabShell() {
       missedCallCount={callFlow.missedCallCount}
       onMarkMissedRead={callFlow.markMissedCallsRead}
       onOpenProfile={openPeerProfile}
+      onMessage={openChatConversation}
       onAudioCall={startAudioCallWith}
       onVideoCall={startVideoCallWith}
       onOpenSearch={openSearch}

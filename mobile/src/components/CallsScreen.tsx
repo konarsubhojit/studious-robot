@@ -21,6 +21,7 @@ import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import StatusBanner from './StatusBanner';
+import SwipeableRow from './SwipeableRow';
 import {
   Avatar,
   Banner,
@@ -46,6 +47,8 @@ export type CallsScreenProps = {
   onMarkMissedRead?: () => void;
   /** Person-hub navigation; every person-shaped tap routes here. */
   onOpenProfile?: (peerId: string) => void;
+  /** Open the conversation with this person; surfaced as a row swipe action. */
+  onMessage?: (peerId: string) => void;
   onAudioCall?: (peerId: string) => void;
   onVideoCall?: (peerId: string) => void;
   onOpenSearch?: () => void;
@@ -89,6 +92,7 @@ export default function CallsScreen({
   missedCallCount = 0,
   onMarkMissedRead,
   onOpenProfile,
+  onMessage,
   onAudioCall,
   onVideoCall,
   onOpenSearch,
@@ -165,8 +169,23 @@ export default function CallsScreen({
             item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
           const timeLabel = formatCallTimeOfDay(item.createdAt);
           const modality = callMediaType(item);
+          // The reciprocal of the call button in the conversation header: from
+          // a call in the log, reach the conversation with the same person.
+          const actions =
+            onMessage && peerId
+              ? [
+                  {
+                    key: 'message',
+                    label: 'Message',
+                    accessibilityLabel: `Message ${peerId}`,
+                    testID: 'call-history-message',
+                    onPress: () => onMessage(peerId),
+                  },
+                ]
+              : [];
 
           return (
+            <SwipeableRow actions={actions}>
             <ListItem
               title={peerId || 'Unknown contact'}
               subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
@@ -207,9 +226,18 @@ export default function CallsScreen({
               }
               testID="call-history-row"
             />
+            </SwipeableRow>
           );
 },
-    [canCall, colors.negative, colors.onSurfaceVariant, onOpenProfile, redial, styles.trailing],
+    [
+      canCall,
+      colors.negative,
+      colors.onSurfaceVariant,
+      onMessage,
+      onOpenProfile,
+      redial,
+      styles.trailing,
+    ],
   );
 
   const handlePickPerson = useCallback((peerId: string) => {
