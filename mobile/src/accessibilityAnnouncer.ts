@@ -76,3 +76,20 @@ export function describeMessageDelivery(status: string): string | null {
       return null;
   }
 }
+
+/**
+ * Sentence announced when an appearance preference changes.
+ *
+ * An appearance control confirms itself *visually* — the screen recolours, the
+ * type grows — which is exactly the confirmation a screen-reader user does not
+ * get. The selected state is on the control, but nothing repositions focus to
+ * it, so without this a change is entirely silent.
+ *
+ * @param setting - What was changed, e.g. 'Accent colour'.
+ * @param value - What it was changed to, e.g. 'Teal'.
+ * @returns the announcement, or `null` when there is nothing to say.
+ */
+export function describeAppearanceChange(setting: string, value: string): string | null {
+  if (!setting || !value) return null;
+  return `${setting}: ${value}`;
+}

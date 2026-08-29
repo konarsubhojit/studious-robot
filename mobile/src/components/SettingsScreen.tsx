@@ -14,20 +14,15 @@ import { APP_VERSION, describePlatform } from '../appInfo';
 import { THIRD_PARTY_LICENSES, summarizeLicenses } from '../licenses';
 import { EMPTY_STORAGE_USAGE, formatBytes } from '../storageUsage';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, sizes, spacing, THEME_MODES, touchSlop, typography } from '../theme';
+import { radius, sizes, spacing, touchSlop, typography } from '../theme';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import AppButton from './AppButton';
+import AppearanceSettings from './AppearanceSettings';
 import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
-
-const APPEARANCE_OPTIONS = [
-  { mode: THEME_MODES.SYSTEM, label: 'System', testID: 'settings-theme-system' },
-  { mode: THEME_MODES.LIGHT, label: 'Light', testID: 'settings-theme-light' },
-  { mode: THEME_MODES.DARK, label: 'Dark', testID: 'settings-theme-dark' },
-];
 
 const ICE_TRANSPORT_POLICY_OPTIONS = [
   { policy: ICE_TRANSPORT_POLICIES.ALL, label: 'Default', testID: 'settings-ice-policy-all' },
@@ -156,7 +151,7 @@ function SettingsScreen({
   onOpenProfile,
   status,
 }: SettingsScreenProps) {
-  const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   const [url, setUrl] = useState(signalingUrl ?? '');
@@ -310,33 +305,7 @@ function SettingsScreen({
 
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionHeader title="Appearance" icon="settingsAppearance" />
-        <Text style={styles.hint}>Follow the device theme, or pin the app to light or dark.</Text>
-        <View
-          style={styles.segmentedRow}
-          accessibilityRole="radiogroup"
-          testID="settings-theme-mode">
-          {APPEARANCE_OPTIONS.map(option => {
-            const isSelected = option.mode === themeMode;
-            return (
-              <Pressable
-                key={option.mode}
-                onPress={() => setThemeMode(option.mode)}
-                accessibilityRole="radio"
-                accessibilityLabel={`${option.label} theme`}
-                accessibilityState={{ selected: isSelected, checked: isSelected }}
-                testID={option.testID}
-                style={({ pressed }) => [
-                  styles.segment,
-                  isSelected && styles.segmentSelected,
-                  pressed && styles.pressed,
-                ]}>
-                <Text style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <AppearanceSettings />
 
         {/* ── Privacy ─────────────────────────────────────────────────────── */}
         <SectionHeader title="Privacy" icon="settingsPrivacy" />
