@@ -315,3 +315,21 @@ describe('CallsScreen – server unreachable', () => {
     expect(texts).toContain(describeOffline(OFFLINE_CONSEQUENCE.calls));
   });
 });
+
+describe('CallsScreen message action', () => {
+  test('offers a swipe action that opens the conversation with the caller', () => {
+    const onMessage = jest.fn();
+    const tree = render({ callHistory: [call({ mediaType: 'audio' })], onMessage });
+
+    act(() => {
+      pressable(tree, 'call-history-message').props.onPress();
+    });
+
+    expect(onMessage).toHaveBeenCalledWith('user-bob');
+  });
+
+  test('omits the action when there is nowhere to navigate', () => {
+    const tree = render({ callHistory: [call({ mediaType: 'audio' })] });
+    expect(byTestID(tree, 'call-history-message')).toHaveLength(0);
+  });
+});

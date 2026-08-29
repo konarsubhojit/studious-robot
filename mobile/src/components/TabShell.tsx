@@ -53,12 +53,15 @@ export default function TabShell() {
   // `screenRenderers` memo in `AppNavigator` that depends on them).
   const {
     cancelRecordingVoiceNote,
+    cancelAttachmentUpload,
+    clearDraft,
     deleteMessage,
     isPeerMuted,
     isUserBlocked,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
+    saveDraft,
     sendMessage,
     sendTypingIndicator,
     setPeerMuted,
@@ -122,19 +125,28 @@ export default function TabShell() {
         onStartVoiceNote={() => startRecordingVoiceNote()}
         onStopVoiceNote={() => stopRecordingVoiceNoteAndSend(peerId)}
         onCancelVoiceNote={() => cancelRecordingVoiceNote()}
+        onCancelAttachmentUpload={cancelAttachmentUpload}
         isUploadingAttachment={chat.isUploadingAttachment}
         attachmentUploadProgress={chat.attachmentUploadProgress}
         isRecordingVoiceNote={chat.isRecordingVoiceNote}
         attachmentsAvailable={chat.attachmentsAvailable}
         isVoiceNoteSupported={chat.isVoiceNoteSupported}
         onTypingChange={isTyping => sendTypingIndicator(peerId, isTyping)}
+        unreadCount={
+          chat.conversations?.find(entry => entry?.peerId === peerId)?.unreadCount ?? 0
+        }
+        initialDraft={chat.drafts?.[peerId] ?? null}
+        onSaveDraft={(text, replyToId) => saveDraft(peerId, text, replyToId)}
+        onClearDraft={() => clearDraft(peerId)}
       />
     );
   }, [
     callFlow.isPlacingCall,
+    cancelAttachmentUpload,
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
     chat.attachmentsAvailable,
+    chat.conversations,
     chat.currentUserId,
     chat.handleLoadOlderMessages,
     chat.isChatOffline,
@@ -142,14 +154,17 @@ export default function TabShell() {
     chat.isRecordingVoiceNote,
     chat.isUploadingAttachment,
     chat.isVoiceNoteSupported,
+    chat.drafts,
     chat.messagesByPeer,
     chat.peerPresence,
     chat.typingByPeer,
+    clearDraft,
     deleteMessage,
     insets.top,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
+    saveDraft,
     sendMessage,
     sendTypingIndicator,
     startAudioCallWith,
@@ -172,10 +187,16 @@ export default function TabShell() {
       onOpenProfile={openPeerProfile}
       onStartChat={openChatConversation}
       currentUserId={chat.currentUserId}
+      drafts={chat.drafts}
+      isPeerMuted={isPeerMuted}
+      onSetPeerMuted={setPeerMuted}
     />
   ), [
     chat.currentUserId,
     chat.conversations,
+    chat.drafts,
+    isPeerMuted,
+    setPeerMuted,
     chat.handleRefreshConversations,
     chat.isLoadingConversations,
     chat.isRefreshingConversations,
@@ -251,6 +272,7 @@ export default function TabShell() {
       missedCallCount={callFlow.missedCallCount}
       onMarkMissedRead={callFlow.markMissedCallsRead}
       onOpenProfile={openPeerProfile}
+      onMessage={openChatConversation}
       onAudioCall={startAudioCallWith}
       onVideoCall={startVideoCallWith}
       onOpenSearch={openSearch}

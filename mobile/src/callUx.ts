@@ -128,6 +128,44 @@ export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { 
 }
 
 /**
+ * How many consecutive worse samples are needed before the reported grade is
+ * allowed to drop a level. One bad 7-second sample is a blip; two in a row is
+ * a trend, and only a trend should be shown to the user.
+ */
+export const QUALITY_DOWNGRADE_SAMPLES = 2;
+
+export type ConnectionQuality = { bars: number; label: string; };
+
+/**
+ * Smooths the raw per-sample grade so the indicator does not flap.
+ *
+ * Asymmetric on purpose: an improvement is published immediately (the user
+ * should never be told the call is worse than it is), a degradation only after
+ * {@link QUALITY_DOWNGRADE_SAMPLES} consecutive samples agree on it. The state
+ * is carried by the caller so this stays a pure function.
+ *
+ * @param state Previous smoother state; pass `null` to start a call.
+ * @param sample The grade just measured.
+ */
+export function smoothConnectionQuality(
+  state: { reported: ConnectionQuality; pendingWorse: number; } | null,
+  sample: ConnectionQuality,
+): { reported: ConnectionQuality; pendingWorse: number; } {
+  if (!state) return { reported: sample, pendingWorse: 0 };
+
+  if (sample.bars >= state.reported.bars) {
+    // Same or better: publish it, and forget any half-formed downgrade.
+    return { reported: sample, pendingWorse: 0 };
+  }
+
+  const pendingWorse = state.pendingWorse + 1;
+  if (pendingWorse < QUALITY_DOWNGRADE_SAMPLES) {
+    return { reported: state.reported, pendingWorse };
+  }
+  return { reported: sample, pendingWorse: 0 };
+}
+
+/**
  * Which side of a candidate pair is relaying the media.
  *
  * Split out of the summary below so the four-way outcome reads as a table

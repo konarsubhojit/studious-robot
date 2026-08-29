@@ -1,4 +1,5 @@
 import {
+  ATTACHMENT_CANCELLED_MESSAGE,
   _resetAttachmentAvailabilityCache,
   describeAttachmentError,
   isAttachmentUploadKnownUnavailable,
@@ -14,6 +15,8 @@ class FakeXHR {
   static instances: any;
   onerror: () => void;
   onload: () => void;
+  onabort: () => void;
+  aborted: boolean;
   status: number;
   body: undefined;
   url: string;
@@ -29,6 +32,8 @@ class FakeXHR {
     this.status = 0;
     this.onload = (): void => {};
     this.onerror = (): void => {};
+    this.onabort = (): void => {};
+    this.aborted = false;
   }
   open(method: string, url: string) {
     this.method = method;
@@ -36,6 +41,10 @@ class FakeXHR {
   }
   setRequestHeader(name: string, value: string) {
     this.requestHeaders[name] = value;
+  }
+  abort() {
+    this.aborted = true;
+    this.onabort();
   }
   send(body: any) {
     this.body = body;
@@ -232,6 +241,23 @@ describe('attachmentUpload', () => {
       xhr.status = 403;
       xhr.onload();
       await expect(promise).rejects.toMatchObject({ status: 403, message: expect.any(String) });
+    });
+
+    test('hands back an abort handle that cancels the in-flight upload', async () => {
+      let abort: (() => void) | null = null;
+      const promise = putAttachment({
+        uploadUrl: 'https://r2.example/upload',
+        headers: {},
+        body: ({} as any),
+        onAbortHandle: handle => {
+          abort = handle;
+        },
+      });
+
+      expect(typeof abort).toBe('function');
+      abort!();
+      expect(FakeXHR.instances[0].aborted).toBe(true);
+      await expect(promise).rejects.toMatchObject({ message: ATTACHMENT_CANCELLED_MESSAGE });
     });
 
     test('rejects on a network error', async () => {

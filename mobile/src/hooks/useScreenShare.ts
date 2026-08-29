@@ -51,6 +51,11 @@ export default function useScreenShare({
   const screenAudioSenderRef = useRef((null as any));
   const cameraTrackRef = useRef((null as any));
   const isTogglingRef = useRef(false);
+  // Mirrored into state because the control has to *look* busy: the toggle
+  // round-trips through a system capture prompt and (with screen audio) a
+  // renegotiation, and a button that stays enabled through all of it reads as
+  // broken and invites a second tap the guard then silently swallows.
+  const [isTogglingScreenShare, setIsTogglingScreenShare] = useState(false);
 
   const renegotiateRef = useRef(renegotiate);
   useEffect(() => {
@@ -287,6 +292,7 @@ export default function useScreenShare({
   const handleScreenShareToggle = useCallback(async () => {
     if (isTogglingRef.current) return;
     isTogglingRef.current = true;
+    setIsTogglingScreenShare(true);
     try {
       if (screenStreamRef.current) {
         await stopScreenShare();
@@ -295,6 +301,7 @@ export default function useScreenShare({
       }
     } finally {
       isTogglingRef.current = false;
+      setIsTogglingScreenShare(false);
     }
   }, [startScreenShare, stopScreenShare]);
 
@@ -332,6 +339,7 @@ export default function useScreenShare({
   // off the same `call.media-state` relay mechanism.
   return {
     isScreenSharing,
+    isTogglingScreenShare,
     isScreenAudioShared,
     isScreenAudioEnabled,
     isScreenShareSupported: isScreenShareSupported(),

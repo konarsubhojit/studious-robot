@@ -231,3 +231,69 @@ describe('SwipeableRow — tray width regression', () => {
     expect(style.width + style.marginLeft).toBe(ACTION_SLOT_WIDTH);
   });
 });
+
+describe('SwipeableRow gesture arbitration', () => {
+  /** Records the offsets the pan is configured with. */
+  function renderAndCaptureOffsets() {
+    const activeOffsetX = jest.fn();
+    const failOffsetY = jest.fn();
+    (Gesture as any).Pan = () => {
+      lastPan = realPan();
+      const originalActive = lastPan.activeOffsetX.bind(lastPan);
+      const originalFail = lastPan.failOffsetY.bind(lastPan);
+      lastPan.activeOffsetX = (range: any) => {
+        activeOffsetX(range);
+        return originalActive(range);
+      };
+      lastPan.failOffsetY = (range: any) => {
+        failOffsetY(range);
+        return originalFail(range);
+      };
+      return lastPan;
+    };
+    act(() => {
+      renderer.create(
+        <SwipeableRow actions={[{ key: 'reply', label: 'Reply', onPress: jest.fn() }]}>
+          <Text>row content</Text>
+        </SwipeableRow>,
+      );
+    });
+    return { activeOffsetX, failOffsetY };
+  }
+
+  test('activates horizontally before it gives up vertically', () => {
+    const { activeOffsetX, failOffsetY } = renderAndCaptureOffsets();
+
+    const [, activate] = activeOffsetX.mock.calls[0][0];
+    const [, fail] = failOffsetY.mock.calls[0][0];
+    // Equal thresholds let an off-horizontal drag trip both at once and lose
+    // the swipe, which is what made a short target (a chat bubble) unswipeable.
+    expect(activate).toBeLessThan(fail);
+  });
+
+  test('races the long press against the swipe instead of nesting a touch responder', () => {
+    const onLongPress = jest.fn();
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <SwipeableRow actions={[]} onLongPress={onLongPress} longPressLabel="React to message">
+          <Text>row content</Text>
+        </SwipeableRow>,
+      );
+    });
+
+    // Even with no swipe actions the row is still wrapped, because the long
+    // press is now the gesture system's job rather than a Pressable's.
+    const row = tree.root.findAll((node: any) =>
+      Array.isArray(node.props?.accessibilityActions),
+    )[0];
+    expect(row.props.accessibilityActions).toEqual([
+      { name: 'longpress', label: 'React to message' },
+    ]);
+
+    act(() => {
+      row.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } });
+    });
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+});

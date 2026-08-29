@@ -20,7 +20,18 @@ export const ACTION_MARGIN_LEFT = spacing.xs;
 /** Total width each action occupies in the tray, including its margin. */
 export const ACTION_SLOT_WIDTH = ACTION_WIDTH + ACTION_MARGIN_LEFT;
 /** Horizontal movement (dp) before the row claims the gesture from the list. */
-const GESTURE_ACTIVATION_DX = 12;
+const GESTURE_ACTIVATION_DX = 10;
+/**
+ * Vertical movement (dp) that hands the gesture back to the list's scroll.
+ *
+ * It must stay *above* {@link GESTURE_ACTIVATION_DX}: when the two are equal a
+ * drag that is only slightly off-horizontal can cross both thresholds within
+ * the same touch batch, and the pan then loses the arbitration it should have
+ * won.  That is felt most on a short target — a chat bubble, where the drag is
+ * a flick rather than the long sweep a full-width list row invites — as a
+ * swipe that simply does nothing.
+ */
+const GESTURE_FAIL_DY = 24;
 /** Fraction of the action tray that must be revealed to snap it open. */
 const OPEN_THRESHOLD = 0.5;
 /** Spring used when the tray latches open or springs shut. */
@@ -39,13 +50,27 @@ const SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.5 };
  * the native gesture system instead of the hand-rolled dx-vs-dy comparison the
  * `PanResponder` version used, so the parent list keeps its vertical scroll.
  *
+ * A row that also wants a long press must route it through `onLongPress`
+ * rather than wrapping its content in a `Pressable`: RN's own touch responder
+ * and the native gesture system arbitrate poorly against each other, so a
+ * `Pressable` covering the drag surface can hold the touch for its long-press
+ * timer and starve the pan of the movement that would have activated it. Given
+ * to this component the two are one native gesture race instead.
+ *
  * @param [props.actions]
+ * @param [props.onLongPress] Long press on the row surface, raced against the
+ *   swipe so a press-and-drag still swipes.
+ * @param [props.longPressLabel] How assistive technology announces the long
+ *   press, which it performs as an accessibility action rather than a hold.
  */
-export default function SwipeableRow({ actions = [], children }: {
+export default function SwipeableRow({ actions = [], onLongPress, longPressLabel = 'Long press', children }: {
         actions?: Array<{
             key: string; label: string; accessibilityLabel?: string;
             testID?: string; onPress: () => void; destructive?: boolean;
-        }>; children: React.ReactNode;
+        }>;
+        onLongPress?: () => void;
+        longPressLabel?: string;
+        children: React.ReactNode;
     }) {
   const styles = useThemedStyles(createStyles);
   const reduceMotion = useReducedMotion();
@@ -75,7 +100,7 @@ export default function SwipeableRow({ actions = [], children }: {
       Gesture.Pan()
         .enabled(trayWidth > 0)
         .activeOffsetX([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
-        .failOffsetY([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
+        .failOffsetY([-GESTURE_FAIL_DY, GESTURE_FAIL_DY])
         .onStart(() => {
           startX.value = translateX.value;
         })
@@ -92,6 +117,22 @@ export default function SwipeableRow({ actions = [], children }: {
     [notifyOpened, settle, startX, trayWidth, translateX],
   );
 
+  // Raced, not composed simultaneously: whichever of the two the finger
+  // describes first wins outright, so a press that turns into a drag swipes
+  // and a press that stays put opens whatever the long press is bound to.
+  const gesture = useMemo(
+    () =>
+      onLongPress
+        ? Gesture.Race(
+            panGesture,
+            Gesture.LongPress().onStart(() => {
+              runOnJS(onLongPress)();
+            }),
+          )
+        : panGesture,
+    [onLongPress, panGesture],
+  );
+
   const animatedRowStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
   }));
@@ -100,7 +141,7 @@ export default function SwipeableRow({ actions = [], children }: {
     translateX.value = settle(0);
   }, [settle, translateX]);
 
-  if (actions.length === 0) {
+  if (actions.length === 0 && !onLongPress) {
     return children;
   }
 
@@ -124,14 +165,24 @@ export default function SwipeableRow({ actions = [], children }: {
       </View>
       {/* Every swipe action is also an accessibility action, so the row is
           fully operable by assistive tech that cannot perform the drag. */}
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={gesture}>
         <Animated.View
-          accessibilityActions={actions.map(action => ({
-            name: action.key,
-            label: action.accessibilityLabel ?? action.label,
-          }))}
+          accessibilityActions={[
+            ...actions.map(action => ({
+              name: action.key,
+              label: action.accessibilityLabel ?? action.label,
+            })),
+            // Assistive technology performs a long press as a named action,
+            // never as a hold, so the gesture has to be published as one.
+            ...(onLongPress ? [{ name: 'longpress', label: longPressLabel }] : []),
+          ]}
           onAccessibilityAction={event => {
-            const action = actions.find(candidate => candidate.key === event.nativeEvent.actionName);
+            const actionName = event.nativeEvent.actionName;
+            if (actionName === 'longpress' && onLongPress) {
+              onLongPress();
+              return;
+            }
+            const action = actions.find(candidate => candidate.key === actionName);
             if (!action) return;
             close();
             action.onPress?.();

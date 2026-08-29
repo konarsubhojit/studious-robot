@@ -28,7 +28,7 @@ export type ListItemProps = {
   accessibilityLabel?: string;
   accessibilityHint?: string;
   accessibilityRole?: 'button' | 'switch' | 'link' | 'none';
-  accessibilityState?: { checked?: boolean; selected?: boolean; disabled?: boolean };
+  accessibilityState?: { checked?: boolean; selected?: boolean; disabled?: boolean; busy?: boolean };
   style?: StyleProp<ViewStyle>;
   testID?: string;
 };

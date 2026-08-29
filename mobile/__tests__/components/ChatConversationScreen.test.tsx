@@ -1,7 +1,9 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
-import ChatConversationScreen from '../../src/components/ChatConversationScreen';
+import ChatConversationScreen, {
+  findUnreadAnchorKey,
+} from '../../src/components/ChatConversationScreen';
 import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
 
 jest.mock('../../src/accessibilityAnnouncer', () => ({
@@ -20,6 +22,21 @@ function findByTestId(tree: any, testID: any) {
 
 function findAllByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
+}
+
+/**
+ * Performs the message row's long press the way assistive technology does:
+ * through the `longpress` accessibility action the swipeable row publishes.
+ * The gesture itself is native, so there is no touch stream to drive here.
+ */
+function longPressRow(tree: any) {
+  const row = tree.root.findAll(
+    (node: any) =>
+      typeof node.type === 'string' &&
+      node.props?.accessibilityActions?.some((action: any) => action.name === 'longpress'),
+  )[0];
+  if (!row) throw new Error('no row exposes a longpress accessibility action');
+  row.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } });
 }
 
 function makeMessage(overrides = {}) {
@@ -1108,8 +1125,11 @@ describe('ChatConversationScreen deep-linked message', () => {
     });
 
     expect(findAllByTestId(tree, 'chat-message-reaction-bar')).toHaveLength(0);
+    // The long press belongs to the swipeable row's gesture race, not to a
+    // touch responder on the bubble, so it is driven the way assistive
+    // technology drives it.
     act(() => {
-      findByTestId(tree, 'chat-message-bubble').props.onLongPress();
+      longPressRow(tree);
     });
 
     const bar = findByTestId(tree, 'chat-message-reaction-bar');
@@ -1534,5 +1554,244 @@ describe('ChatConversationScreen attachments', () => {
 
       expect(announce.mock.calls.filter(([text]) => text === 'Message sent')).toHaveLength(1);
     });
+  });
+});
+
+describe('ChatConversationScreen drafts', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  test('restores a persisted draft into the composer', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      initialDraft: { text: 'unfinished thought', replyToId: null },
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    expect(input.props.value).toBe('unfinished thought');
+  });
+
+  test('persists the composer text when the screen is left', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSaveDraft,
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    act(() => {
+      input.props.onChangeText('typed but not sent');
+    });
+    // Nothing is written while the user is still typing.
+    expect(onSaveDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      tree.unmount();
+    });
+    expect(onSaveDraft).toHaveBeenCalledWith('typed but not sent', null);
+  });
+
+  test('clears the stored draft once the message is sent', () => {
+    const onClearDraft = jest.fn();
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSendMessage,
+      onClearDraft,
+      initialDraft: { text: 'ready to go', replyToId: null },
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'chat-message-send' }).props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenCalledWith('ready to go', { replyTo: null });
+    expect(onClearDraft).toHaveBeenCalled();
+  });
+
+  test('does not re-save a sent message as a draft when the screen closes', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSendMessage: jest.fn(),
+      onClearDraft: jest.fn(),
+      onSaveDraft,
+      initialDraft: { text: 'ready to go', replyToId: null },
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'chat-message-send' }).props.onPress();
+      tree.unmount();
+    });
+
+    expect(onSaveDraft).not.toHaveBeenCalledWith('ready to go', null);
+  });
+});
+
+describe('ChatConversationScreen unread divider', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  const incoming = (id: string, minutesAgo: number) =>
+    makeMessage({
+      messageId: id,
+      senderId: 'user-bob',
+      recipientId: 'user-alice',
+      body: id,
+      createdAt: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    });
+
+  test('shows no divider when nothing is unread', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m2', 1), incoming('m1', 2)],
+      unreadCount: 0,
+    });
+
+    expect(tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider')).toHaveLength(
+      0,
+    );
+  });
+
+  test('labels the divider with the unread count', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m3', 1), incoming('m2', 2), incoming('m1', 3)],
+      unreadCount: 2,
+    });
+
+    const divider = tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider');
+    expect(divider.length).toBeGreaterThan(0);
+    const labels = tree.root.findAll(
+      (n: any) => typeof n.props?.children === 'string' && n.props.children === '2 new messages',
+    );
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  test('keeps the divider once the conversation is marked read', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      currentUserId: 'user-alice',
+      messages: [incoming('m2', 1), incoming('m1', 2)],
+      unreadCount: 1,
+    });
+
+    // The server acknowledges the read within a round trip; the divider must
+    // not disappear out from under the reader.
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          currentUserId="user-alice"
+          messages={[incoming('m2', 1), incoming('m1', 2)]}
+          unreadCount={0}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+    });
+
+    expect(
+      tree.root.findAll((n: any) => n.props?.testID === 'chat-unread-divider').length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe('findUnreadAnchorKey', () => {
+  const msg = (messageId: string, senderId: string) => ({
+    messageId,
+    senderId,
+    conversationId: 'c1',
+    recipientId: 'user-alice',
+    body: messageId,
+    createdAt: new Date().toISOString(),
+  });
+
+  test('anchors N incoming messages back from the end', () => {
+    const ordered: any = [
+      msg('m1', 'user-bob'),
+      msg('m2', 'user-alice'),
+      msg('m3', 'user-bob'),
+      msg('m4', 'user-bob'),
+    ];
+    expect(findUnreadAnchorKey(ordered, 2, 'user-alice')).toBe('m3');
+  });
+
+  test('ignores the reader\u2019s own messages', () => {
+    const ordered: any = [msg('m1', 'user-alice'), msg('m2', 'user-alice')];
+    expect(findUnreadAnchorKey(ordered, 2, 'user-alice')).toBeNull();
+  });
+
+  test('anchors at the oldest loaded message when the count exceeds the page', () => {
+    const ordered: any = [msg('m1', 'user-bob'), msg('m2', 'user-bob')];
+    expect(findUnreadAnchorKey(ordered, 50, 'user-alice')).toBe('m1');
+  });
+
+  test('returns null when nothing is unread', () => {
+    const ordered: any = [msg('m1', 'user-bob')];
+    expect(findUnreadAnchorKey(ordered, 0, 'user-alice')).toBeNull();
+  });
+});
+
+describe('ChatConversationScreen upload cancellation', () => {
+  test('offers a cancel control while an attachment is uploading', () => {
+    const onCancelAttachmentUpload = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      isUploadingAttachment: true,
+      attachmentUploadProgress: 0.42,
+      onCancelAttachmentUpload,
+    });
+
+    const cancel = findByTestId(tree, 'chat-attachment-upload-cancel');
+    expect(cancel).not.toBeNull();
+    act(() => {
+      cancel.props.onPress();
+    });
+    expect(onCancelAttachmentUpload).toHaveBeenCalledTimes(1);
+  });
+
+  test('omits the cancel control when cancelling is not wired up', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      isUploadingAttachment: true,
+      attachmentUploadProgress: 0.42,
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-upload-cancel')).toBeNull();
   });
 });

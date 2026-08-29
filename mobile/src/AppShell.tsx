@@ -284,6 +284,7 @@ function ActiveCallScreen() {
       audioDevices={callFlow.audioDevices}
       isSpeakerEnabled={callFlow.isSpeakerEnabled}
       isScreenSharing={callFlow.isScreenSharing}
+      isTogglingScreenShare={callFlow.isTogglingScreenShare}
       isScreenAudioEnabled={callFlow.isScreenAudioEnabled}
       isScreenAudioShared={callFlow.isScreenAudioShared}
       isScreenShareSupported={callFlow.isScreenShareSupported}

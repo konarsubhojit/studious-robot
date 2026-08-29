@@ -23,6 +23,9 @@ export type ChatContextValue = {
   handleLoadOlderMessages: ChatSync['handleLoadOlderMessages'];
   conversations: CallFlow['conversations'];
   messagesByPeer: CallFlow['messagesByPeer'];
+  drafts: CallFlow['drafts'];
+  saveDraft: CallFlow['saveDraft'];
+  clearDraft: CallFlow['clearDraft'];
   typingByPeer: CallFlow['typingByPeer'];
   unreadTotal: CallFlow['unreadTotal'];
   currentUserId: CallFlow['userId'];
@@ -50,6 +53,7 @@ export type ChatContextValue = {
   startRecordingVoiceNote: CallFlow['startRecordingVoiceNote'];
   stopRecordingVoiceNoteAndSend: CallFlow['stopRecordingVoiceNoteAndSend'];
   cancelRecordingVoiceNote: CallFlow['cancelRecordingVoiceNote'];
+  cancelAttachmentUpload: CallFlow['cancelAttachmentUpload'];
   isUploadingAttachment: CallFlow['isUploadingAttachment'];
   attachmentUploadProgress: CallFlow['attachmentUploadProgress'];
   isRecordingVoiceNote: CallFlow['isRecordingVoiceNote'];
@@ -124,6 +128,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       handleLoadOlderMessages,
       conversations: callFlow.conversations,
       messagesByPeer: callFlow.messagesByPeer,
+      drafts: callFlow.drafts,
+      saveDraft: callFlow.saveDraft,
+      clearDraft: callFlow.clearDraft,
       typingByPeer: callFlow.typingByPeer,
       unreadTotal: callFlow.unreadTotal,
       currentUserId: callFlow.userId,
@@ -149,6 +156,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       startRecordingVoiceNote: callFlow.startRecordingVoiceNote,
       stopRecordingVoiceNoteAndSend: callFlow.stopRecordingVoiceNoteAndSend,
       cancelRecordingVoiceNote: callFlow.cancelRecordingVoiceNote,
+      cancelAttachmentUpload: callFlow.cancelAttachmentUpload,
       isUploadingAttachment: callFlow.isUploadingAttachment,
       attachmentUploadProgress: callFlow.attachmentUploadProgress,
       isRecordingVoiceNote: callFlow.isRecordingVoiceNote,
@@ -163,6 +171,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.searchMessages,
       callFlow.unblockPeer,
       callFlow.messagesByPeer,
+      callFlow.drafts,
+      callFlow.saveDraft,
+      callFlow.clearDraft,
       callFlow.searchUsers,
       callFlow.markConversationRead,
       callFlow.deleteMessage,
@@ -178,6 +189,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.startRecordingVoiceNote,
       callFlow.stopRecordingVoiceNoteAndSend,
       callFlow.cancelRecordingVoiceNote,
+      callFlow.cancelAttachmentUpload,
       callFlow.isUploadingAttachment,
       callFlow.attachmentUploadProgress,
       callFlow.isRecordingVoiceNote,

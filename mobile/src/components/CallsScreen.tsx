@@ -6,6 +6,7 @@ import {
   callMediaIcon,
   callMediaType,
   callPeerId,
+  CallLogSection,
   describeCallEntryForA11y,
   describeCallOutcome,
   filterCallLog,
@@ -20,6 +21,7 @@ import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import StatusBanner from './StatusBanner';
+import SwipeableRow from './SwipeableRow';
 import {
   Avatar,
   Banner,
@@ -45,6 +47,8 @@ export type CallsScreenProps = {
   onMarkMissedRead?: () => void;
   /** Person-hub navigation; every person-shaped tap routes here. */
   onOpenProfile?: (peerId: string) => void;
+  /** Open the conversation with this person; surfaced as a row swipe action. */
+  onMessage?: (peerId: string) => void;
   onAudioCall?: (peerId: string) => void;
   onVideoCall?: (peerId: string) => void;
   onOpenSearch?: () => void;
@@ -88,6 +92,7 @@ export default function CallsScreen({
   missedCallCount = 0,
   onMarkMissedRead,
   onOpenProfile,
+  onMessage,
   onAudioCall,
   onVideoCall,
   onOpenSearch,
@@ -115,8 +120,16 @@ export default function CallsScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Grouped once per (history, filter) change and already shaped for
+  // SectionList: mapping `entries` -> `data` in the render body would allocate
+  // a fresh array of fresh section objects on every render, which defeats the
+  // list's own bail-outs and re-renders every visible row.
   const sections = useMemo(
-    () => groupCallsByDay(filterCallLog(callHistory, filter)),
+    () =>
+      groupCallsByDay(filterCallLog(callHistory, filter)).map(section => ({
+        ...section,
+        data: section.entries,
+      })),
     [callHistory, filter],
   );
 
@@ -139,6 +152,94 @@ export default function CallsScreen({
     [onAudioCall, onVideoCall],
   );
 
+  const canCall = Boolean(onAudioCall || onVideoCall);
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: CallLogSection }) => <SectionHeader title={section.title} />,
+    [],
+  );
+
+  // Hoisted out of the JSX: an inline renderer is a new function identity on
+  // every render, which forces SectionList to re-render every mounted row.
+  const renderItem = useCallback(
+    ({ item }: { item: CallHistoryEntry }) => {
+          const peerId = callPeerId(item);
+          const missed = isMissedCall(item);
+          const durationLabel =
+            item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
+          const timeLabel = formatCallTimeOfDay(item.createdAt);
+          const modality = callMediaType(item);
+          // The reciprocal of the call button in the conversation header: from
+          // a call in the log, reach the conversation with the same person.
+          const actions =
+            onMessage && peerId
+              ? [
+                  {
+                    key: 'message',
+                    label: 'Message',
+                    accessibilityLabel: `Message ${peerId}`,
+                    testID: 'call-history-message',
+                    onPress: () => onMessage(peerId),
+                  },
+                ]
+              : [];
+
+          return (
+            <SwipeableRow actions={actions}>
+              <ListItem
+                title={peerId || 'Unknown contact'}
+                subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
+                  .filter(Boolean)
+                  .join(' · ')}
+                destructive={missed}
+                leading={<Avatar id={peerId} size="md" />}
+                onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
+                accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
+                accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
+                trailing={
+                  <View style={styles.trailing}>
+                    <Icon
+                      name={callDirectionIcon(item)}
+                      size={16}
+                      color={missed ? colors.negative : colors.onSurfaceVariant}
+                    />
+                    <Icon
+                      name={callMediaIcon(item)}
+                      size={16}
+                      color={colors.onSurfaceVariant}
+                    />
+                    {canCall && peerId ? (
+                      <IconAction
+                        icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
+                        accessibilityLabel={`Call ${peerId} back`}
+                        accessibilityHint={
+                          modality === 'audio'
+                            ? 'Starts an audio call'
+                            : 'Starts a video call'
+                        }
+                        onPress={() => redial(item)}
+                        size={40}
+                        testID="call-history-redial"
+                      />
+                    ) : null}
+                  </View>
+                }
+                testID="call-history-row"
+              />
+            </SwipeableRow>
+          );
+},
+    [
+      canCall,
+      colors.negative,
+      colors.onSurfaceVariant,
+      onMessage,
+      onOpenProfile,
+      redial,
+      styles.trailing,
+    ],
+  );
+
   const handlePickPerson = useCallback((peerId: string) => {
     setPendingPeerId(peerId);
   }, []);
@@ -154,7 +255,6 @@ export default function CallsScreen({
     [onAudioCall, onVideoCall, pendingPeerId],
   );
 
-  const canCall = Boolean(onAudioCall || onVideoCall);
   const hasEntries = sections.length > 0;
 
   return (
@@ -210,63 +310,13 @@ export default function CallsScreen({
         </View>
       ) : hasEntries ? (
         <SectionList
-          sections={sections.map(section => ({ ...section, data: section.entries }))}
+          sections={sections}
           keyExtractor={entry => entry.callId}
           stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
           testID="call-history-section"
-          renderSectionHeader={({ section }) => <SectionHeader title={section.title} />}
-          renderItem={({ item }) => {
-            const peerId = callPeerId(item);
-            const missed = isMissedCall(item);
-            const durationLabel =
-              item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
-            const timeLabel = formatCallTimeOfDay(item.createdAt);
-            const modality = callMediaType(item);
-
-            return (
-              <ListItem
-                title={peerId || 'Unknown contact'}
-                subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
-                  .filter(Boolean)
-                  .join(' · ')}
-                destructive={missed}
-                leading={<Avatar id={peerId} size="md" />}
-                onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
-                accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
-                accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
-                trailing={
-                  <View style={styles.trailing}>
-                    <Icon
-                      name={callDirectionIcon(item)}
-                      size={16}
-                      color={missed ? colors.negative : colors.onSurfaceVariant}
-                    />
-                    <Icon
-                      name={callMediaIcon(item)}
-                      size={16}
-                      color={colors.onSurfaceVariant}
-                    />
-                    {canCall && peerId ? (
-                      <IconAction
-                        icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
-                        accessibilityLabel={`Call ${peerId} back`}
-                        accessibilityHint={
-                          modality === 'audio'
-                            ? 'Starts an audio call'
-                            : 'Starts a video call'
-                        }
-                        onPress={() => redial(item)}
-                        size={40}
-                        testID="call-history-redial"
-                      />
-                    ) : null}
-                  </View>
-                }
-                testID="call-history-row"
-              />
-            );
-          }}
+          renderSectionHeader={renderSectionHeader}
+          renderItem={renderItem}
         />
       ) : (
         <EmptyState

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import {
   Alert,
+  AppState,
   FlatList,
   Image,
   Keyboard,
@@ -63,6 +64,7 @@ export type AttachmentKind = 'photo' | 'camera' | 'file';
  */
 export type ListItem =
   | { key: string; type: 'date'; label: string }
+  | { key: string; type: 'unread'; count: number }
   | {
       key: string;
       type: 'message';
@@ -207,9 +209,49 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
  * pinned (sticky) date pill can be derived from whichever item is currently at
  * the top of the viewport without re-scanning the list.
  *
+/**
+ * Key of the message the "N new messages" divider belongs above.
+ *
+ * The anchor is derived from the conversation's unread *count* rather than
+ * from per-message `readAt`, because opening the conversation marks it read
+ * within a round trip — by the time the list renders, the receipts that would
+ * identify the unread run are already gone. Counting back `unreadCount`
+ * incoming messages from the end reproduces the same anchor and survives that
+ * race.
+ *
+ * Calls are skipped: an unread count counts messages, so including call rows
+ * would place the divider too early.
+ *
  * @param orderedEntries oldest-first
+ * @param unreadCount conversation unread count, captured when the screen opened
+ * @param currentUserId so the reader's own messages are never counted
+ * @returns the anchor entry's key, or null when there is nothing to divide
  */
-function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
+export function findUnreadAnchorKey(
+  orderedEntries: TimelineEntry[],
+  unreadCount: number,
+  currentUserId: string | null | undefined,
+): string | null {
+  if (!Array.isArray(orderedEntries) || !(unreadCount > 0)) return null;
+  const incoming = orderedEntries.filter(
+    entry => !isCallEntry(entry) && entry.senderId !== currentUserId,
+  );
+  if (!incoming.length) return null;
+  // A count larger than what is loaded anchors at the oldest loaded message
+  // rather than dropping the divider: "some of this is new" still beats
+  // showing nothing.
+  const anchor = incoming[Math.max(0, incoming.length - unreadCount)];
+  return anchor ? entryKey(anchor) : null;
+}
+
+/**
+ * @param orderedEntries oldest-first
+ * @param unread where to place the "N new messages" divider, if anywhere
+ */
+function buildListItems(
+  orderedEntries: TimelineEntry[],
+  unread: { anchorId: string | null; count: number } = { anchorId: null, count: 0 },
+): ListItem[] {
   const items = ([] as ListItem[]);
   let currentDateLabel = (null as string | null);
   for (let index = 0; index < orderedEntries.length; index++) {
@@ -227,6 +269,13 @@ function buildListItems(orderedEntries: TimelineEntry[]): ListItem[] {
         type: 'date',
         label: currentDateLabel,
       });
+    }
+
+    // The divider sits *below* the day separator when the first unread
+    // message opens a new day, so the reader still sees which day they are
+    // resuming into.
+    if (unread.anchorId && unread.count > 0 && entryKey(entry) === unread.anchorId) {
+      items.push({ key: 'unread-divider', type: 'unread', count: unread.count });
     }
 
     if (isCallEntry(entry)) {
@@ -618,6 +667,14 @@ const MessageRow = memo(
     });
   }
 
+  const canReact = Boolean(onReact) && !isTombstone;
+  const toggleReactionBar = canReact ? () => setIsReactionBarOpen(open => !open) : undefined;
+
+  // The bubble is a plain view, not a `Pressable`: a touch responder covering
+  // the whole drag surface competes with the swipe gesture for the same touch
+  // (and wins it while its long-press timer runs), which is why a bubble used
+  // to refuse to swipe at all. The long press is handed to `SwipeableRow`
+  // instead, where it is raced against the pan by the native gesture system.
   const row = (
     <View
       testID="chat-message-row"
@@ -626,10 +683,10 @@ const MessageRow = memo(
         isOwn ? styles.messageRowOwn : styles.messageRowPeer,
         !isGroupEnd && styles.messageRowGrouped,
       ]}>
-      <Pressable
-        onLongPress={onReact && !isTombstone ? () => setIsReactionBarOpen(open => !open) : undefined}
-        accessibilityRole={onReact && !isTombstone ? 'button' : undefined}
-        accessibilityHint={onReact && !isTombstone ? 'Long press to react' : undefined}
+      <View
+        accessible
+        accessibilityRole={canReact ? 'button' : undefined}
+        accessibilityHint={canReact ? 'Long press to react' : undefined}
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,
@@ -651,7 +708,7 @@ const MessageRow = memo(
           onDownloadAttachment={onDownloadAttachment}
           onOpenMedia={onOpenMedia}
         />
-      </Pressable>
+      </View>
       {isReactionBarOpen ? (
         <View style={styles.reactionBar} testID="chat-message-reaction-bar">
           {QUICK_REACTIONS.map(emoji => (
@@ -695,7 +752,16 @@ const MessageRow = memo(
     </View>
   );
 
-  return actions.length ? <SwipeableRow actions={actions}>{row}</SwipeableRow> : row;
+  return actions.length || toggleReactionBar ? (
+    <SwipeableRow
+      actions={actions}
+      onLongPress={toggleReactionBar}
+      longPressLabel="React to message">
+      {row}
+    </SwipeableRow>
+  ) : (
+    row
+  );
   },
 );
 
@@ -757,6 +823,17 @@ export type ChatConversationScreenProps = {
   onOpenProfile?: () => void;
   /** Reports composer typing state. */
   onTypingChange?: (isTyping: boolean) => void;
+  /**
+   * Unread count for this conversation as it stood before the screen opened;
+   * drives the "N new messages" divider. Read once, on mount.
+   */
+  unreadCount?: number;
+  /** Composer text (and reply target) restored from the local chat store. */
+  initialDraft?: { text: string; replyToId?: string | null } | null;
+  /** Persist the composer entry; called when the screen is left, not per key. */
+  onSaveDraft?: (text: string, replyToId: string | null) => void;
+  /** Drop the stored composer entry (the message was sent). */
+  onClearDraft?: () => void;
   /** Distance between the true top of the screen and this screen's root view (e.g. the safe-area top inset applied by an ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate parent, not the screen, so without this offset it under-compensates for the keyboard by exactly that amount and the composer stays partly covered. */
   keyboardVerticalOffset?: number;
   /** Runs the named picker, uploads the result, and sends it as an attachment message. */
@@ -771,6 +848,7 @@ export type ChatConversationScreenProps = {
   isUploadingAttachment?: boolean;
   /** Upload progress, 0–1. */
   attachmentUploadProgress?: number;
+  onCancelAttachmentUpload?: () => void;
   /** A voice note is currently being recorded. */
   isRecordingVoiceNote?: boolean;
   /** Whether this server has attachment uploads configured; the attach control stays visible either way (never silently absent) but is disabled with an explanatory message when this is `false`. */
@@ -809,6 +887,10 @@ function ChatConversationScreen({
   isLoadingMessages = false,
   isOffline = false,
   onTypingChange,
+  unreadCount = 0,
+  initialDraft = null,
+  onSaveDraft,
+  onClearDraft,
   keyboardVerticalOffset = 0,
   onPickAttachment,
   onStartVoiceNote,
@@ -816,6 +898,7 @@ function ChatConversationScreen({
   onCancelVoiceNote,
   isUploadingAttachment = false,
   attachmentUploadProgress = 0,
+  onCancelAttachmentUpload,
   isRecordingVoiceNote = false,
   attachmentsAvailable = true,
   isVoiceNoteSupported = false,
@@ -823,7 +906,9 @@ function ChatConversationScreen({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  const [draft, setDraft] = useState('');
+  // Seeded from the persisted draft so re-opening a conversation restores the
+  // half-typed message instead of silently discarding it.
+  const [draft, setDraft] = useState(() => initialDraft?.text ?? '');
   // The message the composer is currently replying to, if any.
   const [replyTarget, setReplyTarget] = useState((null as ChatMessage | null));
   // A bubble briefly emphasised because its quote was tapped; takes precedence
@@ -857,7 +942,23 @@ function ChatConversationScreen({
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
-  const listItems = useMemo(() => buildListItems([...messages].reverse()), [messages]);
+  // Frozen on mount: opening the conversation marks it read, so reading the
+  // live count would make the divider vanish the moment it appeared.
+  const initialUnreadCountRef = useRef(unreadCount);
+  const orderedEntries = useMemo(() => [...messages].reverse(), [messages]);
+  const unreadAnchorKey = useMemo(
+    () =>
+      findUnreadAnchorKey(orderedEntries, initialUnreadCountRef.current, currentUserId),
+    [currentUserId, orderedEntries],
+  );
+  const listItems = useMemo(
+    () =>
+      buildListItems(orderedEntries, {
+        anchorId: unreadAnchorKey,
+        count: initialUnreadCountRef.current,
+      }),
+    [orderedEntries, unreadAnchorKey],
+  );
 
   // Resolves a reply's `replyTo` to the quoted message, when it is part of the
   // loaded page. A miss renders as "Message deleted" rather than as nothing.
@@ -1022,14 +1123,61 @@ function ChatConversationScreen({
     [reportTyping],
   );
 
+  const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed) return;
     onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
     setReplyTarget(null);
+    // Cleared synchronously as well as through the effect below: unmounting in
+    // the same commit as the send would otherwise persist the sent text back.
+    draftStateRef.current = { text: '', replyToId: null };
+    onClearDraft?.();
     reportTyping(false);
-  }, [draft, onSendMessage, replyTarget, reportTyping]);
+  }, [draft, onClearDraft, onSendMessage, replyTarget, reportTyping]);
+
+  // The reply target is restored separately: it is stored by id, and the
+  // message it points at may not have been loaded yet when the screen mounts.
+  const restoredReplyRef = useRef(false);
+  const initialReplyToId = initialDraft?.replyToId ?? null;
+  useEffect(() => {
+    if (restoredReplyRef.current || !initialReplyToId) return;
+    const target = messages.find(
+      entry => (entry as ChatMessage)?.messageId === initialReplyToId,
+    ) as ChatMessage | undefined;
+    if (!target) return;
+    restoredReplyRef.current = true;
+    setReplyTarget(target);
+  }, [initialReplyToId, messages]);
+
+  // The draft is persisted when the user *leaves* (screen closed, app
+  // backgrounded), never per keystroke: writing on every character would push
+  // a state update through the chat provider on each key, re-rendering the
+  // whole conversation.
+  useEffect(() => {
+    draftStateRef.current = { text: draft, replyToId: replyTarget?.messageId ?? null };
+  }, [draft, replyTarget]);
+
+  const onSaveDraftRef = useRef(onSaveDraft);
+  useEffect(() => {
+    onSaveDraftRef.current = onSaveDraft;
+  }, [onSaveDraft]);
+
+  useEffect(() => {
+    const persist = () => {
+      const { text, replyToId } = draftStateRef.current;
+      onSaveDraftRef.current?.(text, replyToId);
+    };
+    const subscription = AppState.addEventListener?.('change', nextState => {
+      if (nextState !== 'active') persist();
+    });
+    return () => {
+      subscription?.remove?.();
+      persist();
+    };
+  }, []);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {
@@ -1159,7 +1307,11 @@ function ChatConversationScreen({
         entry => entry.item?.type === 'message' || entry.item?.type === 'call',
       );
       const item = topItem?.item;
-      setStickyDateLabel(item && item.type !== 'date' ? (item.dateLabel ?? null) : null);
+      setStickyDateLabel(
+        item && (item.type === 'message' || item.type === 'call')
+          ? (item.dateLabel ?? null)
+          : null,
+      );
     },
     [],
   );
@@ -1171,6 +1323,17 @@ function ChatConversationScreen({
         return (
           <View style={styles.dateSeparator} testID="chat-date-separator">
             <Text style={styles.dateSeparatorText}>{item.label}</Text>
+          </View>
+        );
+      }
+      if (item.type === 'unread') {
+        return (
+          <View style={styles.unreadDivider} testID="chat-unread-divider">
+            <View style={styles.unreadDividerRule} />
+            <Text style={styles.unreadDividerText}>
+              {item.count === 1 ? '1 new message' : `${item.count} new messages`}
+            </Text>
+            <View style={styles.unreadDividerRule} />
           </View>
         );
       }
@@ -1409,6 +1572,9 @@ function ChatConversationScreen({
                 min: 0,
                 max: 100,
               }}
+              onDismiss={onCancelAttachmentUpload}
+              dismissLabel="Cancel upload"
+              dismissTestID="chat-attachment-upload-cancel"
               testID="chat-attachment-upload-progress"
             />
           ) : null}
@@ -1581,6 +1747,22 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 2,
       borderRadius: radius.sm,
       overflow: 'hidden',
+    },
+    unreadDivider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    unreadDividerRule: {
+      flex: 1,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.accent,
+    },
+    unreadDividerText: {
+      ...typography.hint,
+      color: colors.accent,
     },
     stickyDate: {
       position: 'absolute',

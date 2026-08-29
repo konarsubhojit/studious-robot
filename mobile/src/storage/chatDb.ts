@@ -48,14 +48,27 @@ export type { ConversationSummary };
 export type { ChatMessage };
 export type { OutboxItem };
 
+/**
+ * An unsent composer entry: the text the user typed and, when they were
+ * replying, the message they were replying to. Kept per peer so switching
+ * conversations (or a process death) never loses typed-but-unsent text.
+ */
+export type ChatDraft = {
+  text: string;
+  replyToId?: string | null;
+  updatedAt?: string;
+};
+
 export type ChatSnapshot = {
   conversations: ConversationSummary[];
   messagesByPeer: Record<string, ChatMessage[]>;
   outbox: OutboxItem[];
+  /** peerId -> draft; a peer with no typed text has no entry at all. */
+  drafts: Record<string, ChatDraft>;
 };
 
 function emptySnapshot(): ChatSnapshot {
-  return { conversations: [], messagesByPeer: {}, outbox: [] };
+  return { conversations: [], messagesByPeer: {}, outbox: [], drafts: {} };
 }
 
 /**
@@ -131,10 +144,27 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
         .map((item: any) => ({ ...item, attempts: Number(item.attempts) || 0 }))
     : [];
 
+  // A draft is only worth keeping while it has text: an empty one is
+  // indistinguishable from having no draft, and storing it would leak a row
+  // per conversation the user merely opened.
+  const drafts: Record<string, ChatDraft> = {};
+  const rawDrafts: Record<string, any> =
+    raw.drafts && typeof raw.drafts === 'object' ? raw.drafts : {};
+  Object.keys(rawDrafts).forEach(peerId => {
+    const entry = rawDrafts[peerId];
+    if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) return;
+    drafts[peerId] = {
+      text: entry.text,
+      replyToId: typeof entry.replyToId === 'string' ? entry.replyToId : null,
+      updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : undefined,
+    };
+  });
+
   return {
     conversations: conversations.slice(0, MAX_CONVERSATIONS),
     messagesByPeer,
     outbox,
+    drafts,
   };
 }
 
@@ -188,6 +218,7 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
     conversations: (partial.conversations ?? base.conversations).slice(0, MAX_CONVERSATIONS),
     messagesByPeer: pruned,
     outbox: partial.outbox ?? base.outbox,
+    drafts: partial.drafts ?? base.drafts ?? {},
   };
 
   if (writeTimer) return;

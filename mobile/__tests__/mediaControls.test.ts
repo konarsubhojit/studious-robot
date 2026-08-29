@@ -38,3 +38,44 @@ describe('mediaControls', () => {
     expect(isTrackEnabled(stream, 'screen')).toBe(false);
   });
 });
+
+describe('setTrackEnabled failure reporting', () => {
+  test('reports failure when a track silently refuses the change', () => {
+    const stubborn = {
+      kind: 'audio',
+      get enabled() {
+        return true;
+      },
+      set enabled(_value) {
+        // A native sender that ignores the write.
+      },
+    };
+    const stream = { getTracks: () => [stubborn] };
+    expect(setTrackEnabled(stream as any, 'audio', false)).toBe(false);
+  });
+
+  test('reports failure when the setter throws instead of muting', () => {
+    const throwing = {
+      kind: 'audio',
+      get enabled() {
+        return true;
+      },
+      set enabled(_value) {
+        throw new Error('track ended');
+      },
+    };
+    const stream = { getTracks: () => [throwing] };
+    expect(setTrackEnabled(stream as any, 'audio', false)).toBe(false);
+  });
+
+  test('reports success once every track of the kind carries the new state', () => {
+    const tracks = [
+      { kind: 'audio', enabled: true },
+      { kind: 'audio', enabled: true },
+      { kind: 'video', enabled: true },
+    ];
+    const stream = { getTracks: () => tracks };
+    expect(setTrackEnabled(stream as any, 'audio', false)).toBe(true);
+    expect(tracks.map(track => track.enabled)).toEqual([false, false, true]);
+  });
+});

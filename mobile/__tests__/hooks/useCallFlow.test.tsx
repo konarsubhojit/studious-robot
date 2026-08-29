@@ -12,6 +12,7 @@ import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 jest.mock('../../src/storage/chatDb', () => ({
   loadChatSnapshot: jest.fn(async () => ({ conversations: [], messagesByPeer: {}, outbox: [] })),
   saveChatSnapshot: jest.fn(),
+  flushChatDb: jest.fn(async () => {}),
 }));
 
 // `voiceRecorder.js` (pulled in via `useAttachments`) imports this directly
@@ -60,6 +61,8 @@ jest.mock('../../src/audioRouting', () => ({
     Promise.resolve({ ok: true, selected: 'earpiece', available: ['earpiece'] }),
   ),
   chooseAudioRoute: jest.fn(),
+  DETACHABLE_AUDIO_ROUTES: ['BLUETOOTH', 'WIRED_HEADSET'],
+  getAudioRouteLabel: jest.fn((route: string) => route),
   restoreInCallAudioSession: jest.fn(async () => ({ ok: true })),
   setAudioRoute: jest.fn(() => ({ ok: true })),
   startAudioSession: jest.fn(() => ({ ok: true })),
@@ -4584,6 +4587,76 @@ describe('useCallFlow answer path', () => {
     });
 
     expect(audioRouting.applyPreferredAudioRoute).not.toHaveBeenCalled();
+  });
+
+  test('announces the hand-over when a manually chosen headset disconnects', async () => {
+    const audioRouting = require('../../src/audioRouting');
+    let deviceChangeHandler: any = null;
+    (audioRouting.subscribeAudioDevices as jest.Mock).mockImplementation(handler => {
+      deviceChangeHandler = handler;
+      return jest.fn();
+    });
+    (audioRouting.applyPreferredAudioRoute as jest.Mock).mockResolvedValue({
+      ok: true,
+      selected: 'BLUETOOTH',
+      available: ['BLUETOOTH', 'EARPIECE'],
+    });
+    (audioRouting.chooseAudioRoute as jest.Mock).mockResolvedValue({
+      ok: true,
+      selected: 'BLUETOOTH',
+      available: ['BLUETOOTH', 'EARPIECE'],
+    });
+
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => []),
+      setRemoteDescription: jest.fn().mockResolvedValue(undefined),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'a' }),
+      addIceCandidate: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'answer', sdp: 'a' },
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    }));
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-bt', callerId: 'pia' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
+      cb?.({ ok: true, call });
+    });
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    const offerHandler = getSocketHandler('rtc.offer');
+    await act(async () => {
+      await offerHandler({ callId: 'call-bt', sdp: { type: 'offer', sdp: 'o' } });
+    });
+
+    await act(async () => {
+      await resultRef.current.chooseAudioOutput('BLUETOOTH');
+    });
+    (audioRouting.applyPreferredAudioRoute as jest.Mock).mockClear();
+
+    // The headset goes away: the automatic route takes over and the user is told.
+    await act(async () => {
+      deviceChangeHandler({ available: ['EARPIECE'], selected: 'EARPIECE' });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.status.message).toMatch(/disconnected/i);
+    expect(audioRouting.applyPreferredAudioRoute).toHaveBeenCalled();
   });
 
   test('unmuting restores the in-call audio session on the selected device', async () => {

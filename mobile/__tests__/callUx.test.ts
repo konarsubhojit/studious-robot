@@ -3,6 +3,7 @@ import {
   formatCallDuration,
   formatRingCountdown,
   getConnectionQuality,
+  smoothConnectionQuality,
   collectCallStats,
   summarizeCandidatePair,
 } from '../src/callUx';
@@ -175,5 +176,48 @@ describe('callUx', () => {
       expect(sample.candidatePair).toBeNull();
       expect(sample.rttMs).toBeUndefined();
     });
+  });
+});
+
+describe('smoothConnectionQuality', () => {
+  const strong = { bars: 3, label: 'Strong' };
+  const fair = { bars: 2, label: 'Fair' };
+  const poor = { bars: 0, label: 'Poor' };
+
+  test('publishes the first sample as-is', () => {
+    expect(smoothConnectionQuality(null, strong)).toEqual({
+      reported: strong,
+      pendingWorse: 0,
+    });
+  });
+
+  test('holds the previous grade through a single worse sample', () => {
+    const first = smoothConnectionQuality(null, strong);
+    const second = smoothConnectionQuality(first, poor);
+    expect(second.reported).toEqual(strong);
+    expect(second.pendingWorse).toBe(1);
+  });
+
+  test('drops only once consecutive samples agree the link got worse', () => {
+    let state = smoothConnectionQuality(null, strong);
+    state = smoothConnectionQuality(state, poor);
+    state = smoothConnectionQuality(state, poor);
+    expect(state.reported).toEqual(poor);
+    expect(state.pendingWorse).toBe(0);
+  });
+
+  test('a recovery between two bad samples cancels the pending downgrade', () => {
+    let state = smoothConnectionQuality(null, strong);
+    state = smoothConnectionQuality(state, poor);
+    state = smoothConnectionQuality(state, strong);
+    state = smoothConnectionQuality(state, poor);
+    expect(state.reported).toEqual(strong);
+    expect(state.pendingWorse).toBe(1);
+  });
+
+  test('an improvement is published immediately', () => {
+    let state = smoothConnectionQuality(null, poor);
+    state = smoothConnectionQuality(state, fair);
+    expect(state.reported).toEqual(fair);
   });
 });

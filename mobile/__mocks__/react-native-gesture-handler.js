@@ -41,6 +41,9 @@ function createGestureBuilder() {
     numberOfTaps() {
       return this;
     },
+    minDuration() {
+      return this;
+    },
     shouldCancelWhenOutside() {
       return this;
     },
@@ -61,6 +64,7 @@ const Gesture = {
   Pan: createGestureBuilder,
   Pinch: createGestureBuilder,
   Tap: createGestureBuilder,
+  LongPress: createGestureBuilder,
   Simultaneous: (...gestures) => ({ handlers: {}, gestures }),
   Race: (...gestures) => ({ handlers: {}, gestures }),
 };

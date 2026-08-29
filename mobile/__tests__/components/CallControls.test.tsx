@@ -172,3 +172,39 @@ describe('CallControls primary action labels', () => {
     expect(tree.root.findAll((n: any) => n.props?.children === 'Start video').length).toBeGreaterThan(0);
   });
 });
+
+describe('CallControls screen-share in flight', () => {
+  test('marks the share row busy and inert while a toggle is in flight', () => {
+    const onScreenShareToggle = jest.fn();
+    const tree = render(
+      createProps({ onScreenShareToggle, isTogglingScreenShare: true }),
+    );
+
+    openMoreSheet(tree);
+
+    const row = tree.root.findAll(
+      (node: any) => node.props?.testID === 'control-screen-share',
+    )[0];
+    expect(row.props.disabled).toBe(true);
+    expect(row.props.accessibilityState.busy).toBe(true);
+    expect(
+      tree.root.findAll((node: any) => node.props?.children === 'Starting\u2026').length,
+    ).toBeGreaterThan(0);
+  });
+
+  test('says it is stopping when the in-flight toggle is turning sharing off', () => {
+    const tree = render(
+      createProps({
+        onScreenShareToggle: jest.fn(),
+        isScreenSharing: true,
+        isTogglingScreenShare: true,
+      }),
+    );
+
+    openMoreSheet(tree);
+
+    expect(
+      tree.root.findAll((node: any) => node.props?.children === 'Stopping\u2026').length,
+    ).toBeGreaterThan(0);
+  });
+});

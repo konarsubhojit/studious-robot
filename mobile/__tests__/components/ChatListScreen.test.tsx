@@ -254,3 +254,46 @@ describe('ChatListScreen', () => {
     });
   });
 });
+
+describe('ChatListScreen mute action', () => {
+  test('mutes an unmuted conversation from the swipe tray', () => {
+    const onSetPeerMuted = jest.fn();
+    const tree = render({
+      conversations: [makeConversation({ peerId: 'user-carol' })],
+      onOpenConversation: jest.fn(),
+      isPeerMuted: () => false,
+      onSetPeerMuted,
+    });
+
+    const action = findByTestId(tree, 'chat-list-mute');
+    expect(action).not.toBeNull();
+    act(() => {
+      action.props.onPress();
+    });
+    expect(onSetPeerMuted).toHaveBeenCalledWith('user-carol', true);
+  });
+
+  test('offers to unmute, and marks the row, when the conversation is muted', () => {
+    const onSetPeerMuted = jest.fn();
+    const tree = render({
+      conversations: [makeConversation({ peerId: 'user-carol' })],
+      onOpenConversation: jest.fn(),
+      isPeerMuted: () => true,
+      onSetPeerMuted,
+    });
+
+    expect(findByTestId(tree, 'chat-list-muted-glyph')).not.toBeNull();
+    act(() => {
+      findByTestId(tree, 'chat-list-mute').props.onPress();
+    });
+    expect(onSetPeerMuted).toHaveBeenCalledWith('user-carol', false);
+  });
+
+  test('omits the action when muting is not wired up', () => {
+    const tree = render({
+      conversations: [makeConversation()],
+      onOpenConversation: jest.fn(),
+    });
+    expect(findByTestId(tree, 'chat-list-mute')).toBeNull();
+  });
+});
