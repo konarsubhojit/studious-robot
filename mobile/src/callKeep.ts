@@ -584,7 +584,7 @@ export function registerShowIncomingCallUiListener(): (() => void) & { registere
       logWarn('[CallKeep] Branded incoming-call UI unavailable; falling back to audible ring', {
         callUUID,
       });
-      startIncomingRingtone();
+      await startIncomingRingtone();
     }
   };
 

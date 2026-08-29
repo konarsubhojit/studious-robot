@@ -22,6 +22,7 @@ import {
   selectPreferredAudioRoute,
   getAudioRouteLabel,
   parseAudioDeviceStatus,
+  restoreInCallAudioSession,
   setAudioRoute,
   startAudioSession,
   stopAudioSession,
@@ -78,6 +79,41 @@ describe('audioRouting', () => {
       });
 
       expect(stopAudioSession()).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('Unable to update in-call audio'),
+      });
+    });
+  });
+
+  describe('restoreInCallAudioSession', () => {
+    beforeEach(() => {
+      // `clearAllMocks` keeps implementations, so drop the throwing `start`
+      // installed by an earlier test.
+      startMock.mockImplementation(() => undefined);
+    });
+
+    test('re-asserts the in-call session so unmuting keeps the echo canceller', async () => {
+      await expect(restoreInCallAudioSession()).resolves.toEqual({ ok: true });
+      expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+      expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+    });
+
+    test('re-selects the device the call is already using', async () => {
+      chooseAudioRouteMock.mockResolvedValue({
+        availableAudioDeviceList: '["EARPIECE"]',
+        selectedAudioDevice: AUDIO_ROUTES.EARPIECE,
+      });
+
+      await expect(restoreInCallAudioSession(AUDIO_ROUTES.EARPIECE)).resolves.toEqual({ ok: true });
+      expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith(AUDIO_ROUTES.EARPIECE);
+    });
+
+    test('reports a failed restore instead of throwing', async () => {
+      startMock.mockImplementation(() => {
+        throw new Error('audio focus denied');
+      });
+
+      await expect(restoreInCallAudioSession()).resolves.toMatchObject({
         ok: false,
         message: expect.stringContaining('Unable to update in-call audio'),
       });

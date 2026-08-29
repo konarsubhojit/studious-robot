@@ -97,6 +97,35 @@ export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown;
 }
 
 /**
+ * Re-assert the in-call audio session and its selected output device.
+ *
+ * Disabling and re-enabling the microphone track re-opens the capture path,
+ * and both platforms can drop the in-call audio mode while it is down: the
+ * session then runs in the ordinary media mode, without the hardware echo
+ * canceller, so each side starts hearing its own voice bounced back by the
+ * other device. Restarting the session (a no-op while it is still up) and
+ * re-selecting the current route puts the call back into in-call mode.
+ *
+ * Never throws; a failure always carries a user-facing message.
+ *
+ * @param selectedRoute - the route currently in use, from {@link AUDIO_ROUTES};
+ *   omit it to only restore the session itself.
+ */
+export async function restoreInCallAudioSession(selectedRoute?: string | null): Promise<{ ok: true; } | { ok: false; error?: unknown; message: string; }> {
+  try {
+    InCallManager.start({ media: 'video' });
+    setAudioSessionActive(true);
+  } catch (error) {
+    return { ok: false, error, message: GENERIC_AUDIO_SESSION_ERROR };
+  }
+
+  if (!selectedRoute) return { ok: true };
+
+  const result = await chooseAudioRoute(selectedRoute, { fallbackToSpeaker: false });
+  return result.ok ? { ok: true } : { ok: false, error: result.error, message: result.message };
+}
+
+/**
  * Switch the audio output route between loudspeaker and earpiece.
  *
  * When a Bluetooth audio device is paired and connected, `speakerEnabled=false`

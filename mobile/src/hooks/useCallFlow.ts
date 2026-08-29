@@ -20,6 +20,7 @@ import {
   applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
+  restoreInCallAudioSession,
   setAudioRoute,
   startAudioSession,
   stopAudioSession,
@@ -104,12 +105,8 @@ import {
   reportCallConnected as reportCallKeepConnected,
   setupCallKeep,
 } from '../callKeep';
-import {
-  startIncomingRingtone,
-  startOutgoingRingback,
-  stopIncomingRingtone,
-  stopOutgoingRingback,
-} from '../ringtone';
+import { startIncomingRingtone, stopIncomingRingtone } from '../ringtone';
+import { shouldVibrateForRing } from '../ringerMode';
 
 export type { CallRecord };
 
@@ -528,6 +525,9 @@ export default function useCallFlow({
   );
   const selectedCandidatePairRef = useRef((null as string | null));
   const isInCallRef = useRef(false);
+  // Mirrors the selected audio output so callbacks can re-apply it without
+  // being re-created every time the device list changes.
+  const selectedAudioRouteRef = useRef((null as string | null));
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
   const iceCandidateBufferRef = useRef(([] as any[]));
@@ -781,6 +781,10 @@ export default function useCallFlow({
   useEffect(() => {
     connectionQualityRef.current = connectionQuality;
   }, [connectionQuality]);
+
+  useEffect(() => {
+    selectedAudioRouteRef.current = audioDevices.selected;
+  }, [audioDevices.selected]);
 
   // Track the OS "reduce motion" accessibility setting so call haptics stay
   // silent for users who asked for reduced motion.
@@ -1764,7 +1768,11 @@ export default function useCallFlow({
     if (displayedIncomingCallIdsRef.current.has(call.callId)) return;
     displayedIncomingCallIdsRef.current.add(call.callId);
 
-    triggerHaptic('incomingRing');
+    // A phone on silent must stay still as well as quiet; vibrate mode still
+    // buzzes.
+    if (await shouldVibrateForRing()) {
+      triggerHaptic('incomingRing');
+    }
 
     logInfo('[CallFlow] Requesting incoming-call UI', {
       callId: call.callId,
@@ -1788,8 +1796,9 @@ export default function useCallFlow({
 
     if (!displayResult.shown) {
       // CallKeep is unavailable – fall back to a JS ringtone so the user still
-      // hears an audible alert in the foreground.
-      startIncomingRingtone();
+      // hears an audible alert in the foreground (unless the device ringer is
+      // silent, which the fallback honours itself).
+      await startIncomingRingtone();
     }
   }, []);
 
@@ -1828,7 +1837,6 @@ export default function useCallFlow({
 
       // Stop any JS-layer fallback ringtone (idempotent).
       stopIncomingRingtone();
-      stopOutgoingRingback();
       logInfo('[CallFlow] Ringing stopped');
 
       const durationSeconds = callConnectedAtRef.current
@@ -2134,7 +2142,6 @@ export default function useCallFlow({
 
           switch (callStatus) {
             case 'accepted': {
-              stopOutgoingRingback();
               updateStatus('Call accepted, connecting media…');
               // Caller is responsible for sending the initial RTC offer.
               if (isCallerRef.current && call) {
@@ -2877,7 +2884,6 @@ export default function useCallFlow({
         setActiveCall(ack.call);
         dispatchCallEvent(CALL_EVENTS.PLACE);
         updateStatus(`Ringing ${trimmedCalleeId}…`);
-        startOutgoingRingback();
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
         emitEvent('info', 'call.started', { callId: ack.call.callId, direction: 'outgoing' });
       } catch (error) {
@@ -3526,6 +3532,21 @@ export default function useCallFlow({
     }
     triggerHaptic('tap');
     setIsMuted(nextMuted);
+
+    // Unmuting re-opens the capture path, which can leave the device out of
+    // in-call audio mode (and therefore without its echo canceller) — that is
+    // what makes the far end hear its own voice for the rest of the call. Put
+    // the session and the selected output device back in place.
+    if (!nextMuted && isInCallRef.current) {
+      restoreInCallAudioSession(selectedAudioRouteRef.current).then(result => {
+        if (!result.ok) {
+          logWarn('[CallFlow] Audio session restore after unmute failed', {
+            message: result.message,
+          });
+        }
+      });
+    }
+
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
   }, [isMuted, updateStatus]);
 
@@ -3865,7 +3886,6 @@ export default function useCallFlow({
   useEffect(() => {
     return () => {
       stopIncomingRingtone();
-      stopOutgoingRingback();
     };
   }, []);
 
