@@ -1769,10 +1769,18 @@ export default function useCallFlow({
     displayedIncomingCallIdsRef.current.add(call.callId);
 
     // A phone on silent must stay still as well as quiet; vibrate mode still
-    // buzzes.
-    if (await shouldVibrateForRing()) {
-      triggerHaptic('incomingRing');
-    }
+    // buzzes.  Reading the ringer state is a native round trip, so it never
+    // gates the incoming-call UI: alerting the user comes first, the haptic
+    // follows as soon as the answer arrives.
+    shouldVibrateForRing()
+      .then(mayVibrate => {
+        if (mayVibrate) triggerHaptic('incomingRing');
+      })
+      .catch(error => {
+        logWarn('[CallFlow] Ringer state unavailable; skipping incoming-call haptic', {
+          message: errorMessage(error),
+        });
+      });
 
     logInfo('[CallFlow] Requesting incoming-call UI', {
       callId: call.callId,
@@ -3538,13 +3546,19 @@ export default function useCallFlow({
     // what makes the far end hear its own voice for the rest of the call. Put
     // the session and the selected output device back in place.
     if (!nextMuted && isInCallRef.current) {
-      restoreInCallAudioSession(selectedAudioRouteRef.current).then(result => {
-        if (!result.ok) {
-          logWarn('[CallFlow] Audio session restore after unmute failed', {
-            message: result.message,
+      restoreInCallAudioSession(selectedAudioRouteRef.current)
+        .then(result => {
+          if (!result.ok) {
+            logWarn('[CallFlow] Audio session restore after unmute failed', {
+              message: result.message,
+            });
+          }
+        })
+        .catch(error => {
+          logWarn('[CallFlow] Audio session restore after unmute threw', {
+            message: errorMessage(error),
           });
-        }
-      });
+        });
     }
 
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');

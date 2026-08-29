@@ -106,7 +106,9 @@ export function stopAudioSession(): { ok: true; } | { ok: false; error: unknown;
  * other device. Restarting the session (a no-op while it is still up) and
  * re-selecting the current route puts the call back into in-call mode.
  *
- * Never throws; a failure always carries a user-facing message.
+ * Never throws; a failure always carries a user-facing message.  `error` is
+ * absent when the route (rather than the session) could not be restored, since
+ * `chooseAudioRoute` reports a refused device without a throwable.
  *
  * @param selectedRoute - the route currently in use, from {@link AUDIO_ROUTES};
  *   omit it to only restore the session itself.
