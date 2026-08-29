@@ -1,0 +1,7 @@
+<resources>
+
+    <!-- Dark counterpart of `values/colors.xml`; see the comment there. Tracks
+         `palettes.dark.background` in `mobile/src/theme.ts`. -->
+    <color name="windowBackground">#0b1020</color>
+
+</resources>

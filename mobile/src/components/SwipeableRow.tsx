@@ -8,6 +8,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { triggerHaptic } from '../haptics';
+import useReducedMotion from '../hooks/useReducedMotion';
 import { useThemedStyles } from '../ThemeContext';
 import { radius, spacing, typography } from '../theme';
 import type { ThemeColors } from '../theme';
@@ -47,6 +48,7 @@ export default function SwipeableRow({ actions = [], children }: {
         }>; children: React.ReactNode;
     }) {
   const styles = useThemedStyles(createStyles);
+  const reduceMotion = useReducedMotion();
   const translateX = useSharedValue(0);
   // The offset the current drag started from, so a second swipe continues
   // from wherever the tray was left rather than snapping back to zero.
@@ -56,6 +58,17 @@ export default function SwipeableRow({ actions = [], children }: {
   // A short tick when the tray latches open, so the row confirms itself
   // without the user having to look away from the list.
   const notifyOpened = useCallback(() => triggerHaptic('tap'), []);
+
+  // Reduced motion takes the row straight to its resting position instead of
+  // springing there. The tray still opens and closes — the state change is
+  // what the gesture means; only the travel is dropped.
+  const settle = useCallback(
+    (toValue: number) => {
+      'worklet';
+      return reduceMotion ? toValue : withSpring(toValue, SETTLE_SPRING);
+    },
+    [reduceMotion],
+  );
 
   const panGesture = useMemo(
     () =>
@@ -74,9 +87,9 @@ export default function SwipeableRow({ actions = [], children }: {
           if (shouldOpen && startX.value !== -trayWidth) {
             runOnJS(notifyOpened)();
           }
-          translateX.value = withSpring(shouldOpen ? -trayWidth : 0, SETTLE_SPRING);
+          translateX.value = settle(shouldOpen ? -trayWidth : 0);
         }),
-    [notifyOpened, startX, trayWidth, translateX],
+    [notifyOpened, settle, startX, trayWidth, translateX],
   );
 
   const animatedRowStyle = useAnimatedStyle(() => ({
@@ -84,8 +97,8 @@ export default function SwipeableRow({ actions = [], children }: {
   }));
 
   const close = useCallback(() => {
-    translateX.value = withSpring(0, SETTLE_SPRING);
-  }, [translateX]);
+    translateX.value = settle(0);
+  }, [settle, translateX]);
 
   if (actions.length === 0) {
     return children;

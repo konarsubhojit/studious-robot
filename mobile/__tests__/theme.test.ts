@@ -1,12 +1,28 @@
 import {
+  baseTypography,
+  buildPalette,
+  DEFAULT_THEME_PREFERENCES,
+  getTextScale,
+  normalizeThemePreferences,
   overlay,
   palettes,
   resolveScheme,
   sizes,
+  resolveContrast,
+  setTextScale,
+  TEXT_SCALE_FACTORS,
+  TEXT_SCALE_VALUES,
+  TEXT_SCALES,
+  THEME_ACCENT_VALUES,
+  THEME_ACCENTS,
+  THEME_CONTRASTS,
   THEME_MODE_VALUES,
   THEME_MODES,
   touchSlop,
+  typography,
 } from '../src/theme';
+import type { ThemeAccent, ThemeColors, TextScale } from '../src/theme';
+import type { ThemeMode } from '../src/theme';
 
 /** Relative luminance of a #rrggbb colour, per WCAG 2.1. */
 function luminance(hex: string) {
@@ -203,7 +219,7 @@ describe('resolveScheme', () => {
   });
 
   test('falls back to dark for unknown modes and an unknown OS scheme', () => {
-    expect(resolveScheme('sepia', 'light')).toBe('light');
+    expect(resolveScheme(('sepia' as ThemeMode), 'light')).toBe('light');
     expect(resolveScheme(THEME_MODES.SYSTEM, null)).toBe('dark');
     expect(resolveScheme(undefined, undefined)).toBe('dark');
   });
@@ -222,5 +238,246 @@ describe('touchSlop', () => {
   test('adds nothing to a control that already meets the target', () => {
     expect(touchSlop(sizes.minTouchTarget)).toBe(0);
     expect(touchSlop(72)).toBe(0);
+  });
+});
+
+/**
+ * Flatten a colour to an opaque `#rrggbb` over a backdrop, whether or not it is
+ * translucent. The cross-product assertions below run over palette variants
+ * that may state a tint either way, so they cannot assume `rgba()`.
+ */
+function flatten(color: string, backdrop: string) {
+  return color.startsWith('rgba') ? composite(color, backdrop) : color;
+}
+
+/** Every palette variant a user can select, as `(label, palette)` pairs. */
+function everyVariant(): Array<[string, ThemeColors]> {
+  const variants: Array<[string, ThemeColors]> = [];
+  (['light', 'dark'] as const).forEach(scheme => {
+    (['standard', 'high'] as const).forEach(contrastLevel => {
+      THEME_ACCENT_VALUES.forEach((accent: ThemeAccent) => {
+        [false, true].forEach(trueBlack => {
+          // True black is a dark-scheme treatment; in light it is a no-op and
+          // would only duplicate the variant above it.
+          if (trueBlack && scheme === 'light') return;
+          variants.push([
+            `${scheme}/${contrastLevel}/${accent}${trueBlack ? '/true-black' : ''}`,
+            buildPalette({ scheme, contrast: contrastLevel, accent, trueBlack }),
+          ]);
+        });
+      });
+    });
+  });
+  return variants;
+}
+
+describe('palette variants', () => {
+  test('there is a variant for every combination a user can select', () => {
+    // 2 schemes x 2 contrasts x 5 accents, plus true black on the dark half.
+    expect(everyVariant()).toHaveLength(30);
+  });
+
+  test('the default variant is the shipped palette itself', () => {
+    // Identity, not equality: `useThemedStyles` caches stylesheets keyed on the
+    // palette object, so a default-preferences user must keep hitting the same
+    // cache entries every isolated component already built.
+    expect(buildPalette({ scheme: 'dark' })).toBe(palettes.dark);
+    expect(buildPalette({ scheme: 'light' })).toBe(palettes.light);
+    expect(
+      buildPalette({ scheme: 'dark', contrast: 'standard', accent: THEME_ACCENTS.DEFAULT }),
+    ).toBe(palettes.dark);
+  });
+
+  test('a variant is built once and thereafter returned by identity', () => {
+    const first = buildPalette({ scheme: 'dark', accent: THEME_ACCENTS.TEAL });
+    expect(buildPalette({ scheme: 'dark', accent: THEME_ACCENTS.TEAL })).toBe(first);
+  });
+
+  test('true black has no effect in the light scheme', () => {
+    expect(buildPalette({ scheme: 'light', trueBlack: true })).toBe(palettes.light);
+  });
+
+  test('true black takes the base surface to black without flattening the stack', () => {
+    const black = buildPalette({ scheme: 'dark', trueBlack: true });
+    expect(black.background).toBe('#000000');
+    // Elevation still has to read: a card and the page behind it are two
+    // things, and collapsing every surface to black erases the difference.
+    const stack = [black.background, black.surface, black.surfaceRaised, black.surfaceControl];
+    expect(new Set(stack).size).toBe(stack.length);
+  });
+
+  test.each(everyVariant())('%s exposes exactly the shipped token set', (_label, colors) => {
+    // A variant that forgot a token would fall back to `undefined` at the call
+    // site, which React Native renders as "no colour" rather than as an error.
+    expect(Object.keys(colors).sort()).toEqual(Object.keys(palettes.dark).sort());
+  });
+
+  test.each(everyVariant())('%s keeps text legible on every surface', (_label, colors) => {
+    const scale = (colors as unknown as Record<string, string>);
+    FOREGROUNDS.forEach(fg => {
+      SURFACES.forEach(bg => {
+        expect(contrast(scale[fg], scale[bg])).toBeGreaterThanOrEqual(4.5);
+      });
+    });
+  });
+
+  test.each(everyVariant())('%s keeps accent controls legible', (_label, colors) => {
+    expect(contrast(colors.textOnAccent, colors.accentButton)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(colors.textOnAccent, colors.danger)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(colors.textOnAccent, colors.success)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(everyVariant())('%s keeps control borders at the 3:1 non-text ratio', (_label, colors) => {
+    [colors.border, colors.outline].forEach(line => {
+      expect(contrast(line, colors.surface)).toBeGreaterThanOrEqual(3);
+      expect(contrast(line, colors.background)).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  test.each(everyVariant())('%s keeps notice tones legible over their tint', (_label, colors) => {
+    const scale = (colors as unknown as Record<string, string>);
+    TINTED_NOTICE_SURFACES.forEach(bg => {
+      expect(contrast(colors.warning, flatten(colors.tintWarning, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.danger, flatten(colors.tintDanger, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.positive, flatten(colors.tintSuccess, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.accentValue, flatten(colors.tintSuccess, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(colors.accentValue, flatten(colors.tintDanger, scale[bg]))).toBeGreaterThanOrEqual(4.5);
+      // The `accent` tone's 3dp rule is the only mark on that banner.
+      expect(contrast(colors.accent, scale[bg])).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  test.each(everyVariant())('%s keeps overlay content legible over the fixed-dark stage', (_label, colors) => {
+    [overlay.scrimSoft, overlay.scrimMedium, overlay.scrimStrong].forEach(scrim => {
+      expect(contrast(colors.onOverlay, composite(scrim, colors.stage))).toBeGreaterThanOrEqual(4.5);
+    });
+    expect(contrast(colors.onOverlay, colors.ambient)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(
+    everyVariant().filter(([label]) => label.includes('/high/')),
+  )('%s clears AAA for body text, which is the point of it', (_label, colors) => {
+    const scale = (colors as unknown as Record<string, string>);
+    // High contrast that only matched the standard palette's 4.5:1 would be a
+    // control that changes nothing.
+    ['textPrimary', 'textSecondary', 'textMuted', 'onSurface', 'onSurfaceVariant'].forEach(fg => {
+      SURFACES.forEach(bg => {
+        expect(contrast(scale[fg], scale[bg])).toBeGreaterThanOrEqual(7);
+      });
+    });
+    // …and its borders clear the text bar rather than the non-text one.
+    [colors.border, colors.outline].forEach(line => {
+      expect(contrast(line, colors.background)).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+});
+
+describe('theme preferences', () => {
+  test('the defaults are the appearance the app shipped with', () => {
+    expect(DEFAULT_THEME_PREFERENCES).toEqual({
+      mode: THEME_MODES.SYSTEM,
+      contrast: THEME_CONTRASTS.SYSTEM,
+      accent: THEME_ACCENTS.DEFAULT,
+      trueBlack: false,
+      textScale: TEXT_SCALES.DEFAULT,
+    });
+    expect(
+      buildPalette({
+        scheme: 'dark',
+        contrast: resolveContrast(DEFAULT_THEME_PREFERENCES.contrast, false),
+        accent: DEFAULT_THEME_PREFERENCES.accent,
+        trueBlack: DEFAULT_THEME_PREFERENCES.trueBlack,
+      }),
+    ).toBe(palettes.dark);
+  });
+
+  test('every field falls back on its own', () => {
+    // A corrupt accent must not also discard a pinned dark mode.
+    expect(
+      normalizeThemePreferences({
+        mode: 'dark',
+        contrast: 'lurid',
+        accent: 'chartreuse',
+        trueBlack: 'yes',
+        textScale: 'large',
+      }),
+    ).toEqual({
+      mode: 'dark',
+      contrast: THEME_CONTRASTS.SYSTEM,
+      accent: THEME_ACCENTS.DEFAULT,
+      trueBlack: false,
+      textScale: TEXT_SCALES.LARGE,
+    });
+  });
+
+  test('a non-object yields the defaults rather than throwing', () => {
+    expect(normalizeThemePreferences(null)).toEqual(DEFAULT_THEME_PREFERENCES);
+    expect(normalizeThemePreferences('nonsense')).toEqual(DEFAULT_THEME_PREFERENCES);
+  });
+});
+
+describe('resolveContrast', () => {
+  test('defers to the OS until the user chooses', () => {
+    expect(resolveContrast(THEME_CONTRASTS.SYSTEM, true)).toBe('high');
+    expect(resolveContrast(THEME_CONTRASTS.SYSTEM, false)).toBe('standard');
+    expect(resolveContrast(undefined, true)).toBe('high');
+  });
+
+  test('an explicit choice outranks the OS setting in both directions', () => {
+    expect(resolveContrast(THEME_CONTRASTS.STANDARD, true)).toBe('standard');
+    expect(resolveContrast(THEME_CONTRASTS.HIGH, false)).toBe('high');
+  });
+});
+
+describe('text size', () => {
+  afterEach(() => {
+    setTextScale(TEXT_SCALES.DEFAULT);
+  });
+
+  test('the default scale leaves the shipped sizes untouched', () => {
+    expect(getTextScale()).toBe(TEXT_SCALES.DEFAULT);
+    expect(typography.body).toEqual(baseTypography.body);
+  });
+
+  test.each(TEXT_SCALE_VALUES)('%s scales font size and line height together', scale => {
+    setTextScale((scale as TextScale));
+    const factor = TEXT_SCALE_FACTORS[(scale as TextScale)];
+
+    (Object.keys(baseTypography) as Array<keyof typeof baseTypography>).forEach(token => {
+      const base = baseTypography[token];
+      const live = typography[token];
+      if (typeof base.fontSize === 'number') {
+        expect(live.fontSize).toBe(Math.round(base.fontSize * factor));
+      }
+      if (typeof base.lineHeight === 'number') {
+        expect(live.lineHeight).toBe(Math.round(base.lineHeight * factor));
+        // A line box that stops growing with its glyphs crowds them; the whole
+        // reason the scale states line heights is that they are a decision.
+        // 1.15 rather than the usual 1.2 because `display` ships at 32/38 —
+        // large type is set tighter on purpose — and rounding at each step can
+        // cost another hundredth.
+        expect(live.lineHeight).toBeGreaterThanOrEqual((live.fontSize as number) * 1.15);
+      }
+    });
+  });
+
+  test('sizes are recomputed from the base, so repeated changes cannot drift', () => {
+    setTextScale(TEXT_SCALES.LARGER);
+    setTextScale(TEXT_SCALES.SMALL);
+    setTextScale(TEXT_SCALES.LARGE);
+    expect(typography.body.fontSize).toBe(
+      Math.round((baseTypography.body.fontSize as number) * TEXT_SCALE_FACTORS.large),
+    );
+  });
+
+  test('reports whether anything changed, so a no-op cannot force a re-render', () => {
+    expect(setTextScale(TEXT_SCALES.LARGE)).toBe(true);
+    expect(setTextScale(TEXT_SCALES.LARGE)).toBe(false);
+  });
+
+  test('an unknown scale falls back to the default rather than mangling the tokens', () => {
+    setTextScale(('gigantic' as TextScale));
+    expect(getTextScale()).toBe(TEXT_SCALES.DEFAULT);
+    expect(typography.body).toEqual(baseTypography.body);
   });
 });

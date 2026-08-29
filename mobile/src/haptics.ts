@@ -1,4 +1,4 @@
-import { AccessibilityInfo, Vibration } from 'react-native';
+import { Vibration } from 'react-native';
 
 /**
  * Named haptic patterns used across the call experience, expressed as
@@ -22,71 +22,45 @@ export const HAPTIC_PATTERNS = {
 };
 
 /**
- * Whether haptics are currently suppressed because the OS accessibility
- * settings ask for reduced motion. Defaults to `false` so haptics still work
- * before the (asynchronous) first accessibility read resolves.
- */
-let reduceMotionEnabled = false;
-
-/**
- * Subscribes to the OS "reduce motion" accessibility setting so haptics stop
- * firing for users who asked for reduced motion, and starts an initial read of
- * the current value.
+ * Whether the user wants haptic feedback. Defaults to `true` so a control tap
+ * still answers before the (asynchronous) settings load resolves.
  *
- * Safe to call more than once; each call returns its own unsubscribe function.
+ * This used to be driven by the OS "reduce motion" setting, which conflated two
+ * different requests: reduce motion asks for less *animation*, usually because
+ * movement causes discomfort or nausea. A vibration is not movement on screen,
+ * and for some users it is the only confirmation a tap registered — silencing
+ * it removed feedback nobody had asked to lose, from a switch that was not
+ * visible anywhere in the app. Motion is now governed by `useReducedMotion`
+ * and haptics by this explicit, user-visible preference.
  */
-export function initHaptics(): () => void {
-  let cancelled = false;
+let hapticsEnabled = true;
 
-  try {
-    const result = AccessibilityInfo.isReduceMotionEnabled?.();
-    if (result?.then) {
-      result
-        .then(enabled => {
-          if (!cancelled) reduceMotionEnabled = Boolean(enabled);
-        })
-        .catch(() => {
-          // best-effort: keep the current preference
-        });
-    }
-  } catch {
-    // best-effort
-  }
-
-  let subscription = null;
-  try {
-    subscription = AccessibilityInfo.addEventListener?.('reduceMotionChanged', enabled => {
-      reduceMotionEnabled = Boolean(enabled);
-    });
-  } catch {
-    // best-effort
-  }
-
-  return () => {
-    cancelled = true;
-    try {
-      subscription?.remove?.();
-    } catch {
-      // best-effort
-    }
-  };
+/**
+ * Applies the user's "Haptic feedback" preference.
+ *
+ * Kept as a module-level setter rather than a hook because `triggerHaptic` is
+ * called from plain functions (call state transitions), not only from
+ * components.
+ */
+export function setHapticsEnabled(enabled: boolean): void {
+  hapticsEnabled = Boolean(enabled);
 }
 
-/** @returns true when haptics are suppressed by accessibility settings. */
+/** @returns true when haptics are currently suppressed. */
 export function areHapticsSuppressed(): boolean {
-  return reduceMotionEnabled;
+  return !hapticsEnabled;
 }
 
 /**
- * Fires the named haptic pattern, unless the OS accessibility settings ask for
- * reduced motion. Never throws.
+ * Fires the named haptic pattern, unless the user turned haptics off. Never
+ * throws.
  *
  * @returns true when a vibration was actually triggered.
  */
 export function triggerHaptic(pattern: keyof typeof HAPTIC_PATTERNS): boolean {
   const durationMs = HAPTIC_PATTERNS[pattern];
   if (!durationMs) return false;
-  if (reduceMotionEnabled) return false;
+  if (!hapticsEnabled) return false;
 
   try {
     Vibration.vibrate(durationMs);
@@ -97,7 +71,7 @@ export function triggerHaptic(pattern: keyof typeof HAPTIC_PATTERNS): boolean {
   }
 }
 
-/** Test-only: resets the cached accessibility preference. */
+/** Test-only: resets the cached preference to its default. */
 export function resetHapticsForTests() {
-  reduceMotionEnabled = false;
+  hapticsEnabled = true;
 }

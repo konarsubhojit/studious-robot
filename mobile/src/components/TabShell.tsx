@@ -38,6 +38,7 @@ export default function TabShell() {
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
+    handleHapticsToggle,
     handleIceTransportPolicyChange,
     minimizeCallOnNavigate,
     startAudioCallWith,
@@ -303,6 +304,8 @@ export default function TabShell() {
       onToggleSpeakerDefault={handleSpeakerDefaultToggle}
       autoLightingEnabled={settings.autoCameraLightingEnabled}
       onToggleAutoLighting={handleAutoLightingToggle}
+      hapticsEnabled={settings.hapticsEnabled}
+      onToggleHaptics={handleHapticsToggle}
       iceTransportPolicy={settings.iceTransportPolicy}
       onChangeIceTransportPolicy={handleIceTransportPolicyChange}
       messageNotificationsEnabled={chat.messageNotificationsEnabled}
@@ -329,6 +332,7 @@ export default function TabShell() {
     handleAutoLightingToggle,
     handleDeveloperModeToggle,
     handleExportLogs,
+    handleHapticsToggle,
     handleIceTransportPolicyChange,
     handleSpeakerDefaultToggle,
     isClearingMedia,
@@ -337,6 +341,7 @@ export default function TabShell() {
     setPeerMuted,
     settings.autoCameraLightingEnabled,
     settings.developerModeEnabled,
+    settings.hapticsEnabled,
     settings.iceTransportPolicy,
     settings.speakerEnabledByDefault,
     storageUsage,

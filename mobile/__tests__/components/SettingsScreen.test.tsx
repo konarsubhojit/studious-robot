@@ -345,6 +345,129 @@ describe('SettingsScreen', () => {
     });
   });
 
+  describe('transient confirmations', () => {
+    /** The rendered toast message, or null when no toast is showing. */
+    function toastMessage(tree: any) {
+      const host = findByTestID(tree, 'settings-toast').filter(
+        (n: any) => typeof n.type !== 'string',
+      )[0];
+      return host?.props?.message ?? null;
+    }
+
+    test('says nothing until something has happened', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(<SettingsScreen {...baseProps} />);
+      });
+      expect(toastMessage(tree)).toBeNull();
+    });
+
+    test('confirms clearing cached media only once the clear has finished', () => {
+      const onClearCachedMedia = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} onClearCachedMedia={onClearCachedMedia} />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-clear-media');
+      expect(onClearCachedMedia).toHaveBeenCalled();
+      // The delete is asynchronous: confirming on the tap would promise an
+      // outcome nobody has observed yet.
+      expect(toastMessage(tree)).toBeNull();
+
+      act(() => {
+        tree.update(
+          <SettingsScreen
+            {...baseProps}
+            onClearCachedMedia={onClearCachedMedia}
+            isClearingMedia
+          />,
+        );
+      });
+      expect(toastMessage(tree)).toBeNull();
+
+      act(() => {
+        tree.update(
+          <SettingsScreen {...baseProps} onClearCachedMedia={onClearCachedMedia} />,
+        );
+      });
+      expect(toastMessage(tree)).toBe('Cached media cleared');
+    });
+
+    test('says nothing when the screen simply opens without a clear in flight', () => {
+      // The transition guard, not just the current value: a screen that mounts
+      // with `isClearingMedia` false must not announce a clear that never ran.
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />,
+        );
+      });
+      act(() => {
+        tree.update(<SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />);
+      });
+      expect(toastMessage(tree)).toBeNull();
+    });
+
+    test('confirms unmuting and unblocking by name', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            mutedPeers={['user-bob']}
+            onUnmutePeer={jest.fn()}
+            blockedUsers={['user-carol']}
+            onUnblockUser={jest.fn()}
+          />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-unmute');
+      expect(toastMessage(tree)).toBe('user-bob unmuted');
+
+      pressByTestID(tree, 'settings-unblock');
+      expect(toastMessage(tree)).toBe('user-carol unblocked');
+    });
+
+    test('a persistent condition stays on the banner, not the toast', () => {
+      // The three-level rule: a condition that is still true occupies layout
+      // until it stops being true; only completed events fade away.
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            status={{ message: 'Server unreachable', severity: 'error' }}
+          />,
+        );
+      });
+
+      expect(toastMessage(tree)).toBeNull();
+      expect(findByTestID(tree, 'status-banner').length).toBeGreaterThan(0);
+    });
+
+    test('clears itself when the toast dismisses', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} mutedPeers={['user-bob']} onUnmutePeer={jest.fn()} />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-unmute');
+      const toast = findByTestID(tree, 'settings-toast').filter(
+        (n: any) => typeof n.type !== 'string',
+      )[0];
+      act(() => {
+        toast.props.onDismiss();
+      });
+      expect(toastMessage(tree)).toBeNull();
+    });
+  });
+
   describe('appearance', () => {
     function renderWithTheme(mode: any, setMode: any) {
       let tree;

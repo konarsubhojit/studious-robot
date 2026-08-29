@@ -1,0 +1,23 @@
+<resources>
+
+    <!--
+        The colour the native window is painted before React Native mounts.
+
+        These two values must track `palettes.light.background` /
+        `palettes.dark.background` in `mobile/src/theme.ts`. They are duplicated
+        here because the Android window exists before any JavaScript runs: with
+        no `windowBackground` the launch drew the platform default (white) and
+        then repainted in the app's own colours, which reads as a flash on every
+        cold start — worst for a dark-scheme user, who saw a full white frame.
+
+        `values-night/` supplies the dark value, selected by the OS
+        (`Theme.AppCompat.DayNight`). A user who has *pinned* the opposite
+        scheme inside the app still gets the OS-appropriate colour for this one
+        pre-mount frame — the app cannot know their preference before it has
+        read it from disk — but that frame is now a plausible background rather
+        than a white flash, and `ThemeProvider` holds the first React frame
+        until the stored preference has resolved.
+    -->
+    <color name="windowBackground">#f4f6fb</color>
+
+</resources>

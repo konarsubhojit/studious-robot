@@ -44,7 +44,7 @@ import {
 } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
 import type { IceCandidatePairSummary } from '../diagnostics';
-import { initHaptics, triggerHaptic } from '../haptics';
+import { triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
 import { ensureCallPermissions, getMissingCallPermissions } from '../permissions';
@@ -785,10 +785,6 @@ export default function useCallFlow({
   useEffect(() => {
     selectedAudioRouteRef.current = audioDevices.selected;
   }, [audioDevices.selected]);
-
-  // Track the OS "reduce motion" accessibility setting so call haptics stay
-  // silent for users who asked for reduced motion.
-  useEffect(() => initHaptics(), []);
 
   /**
    * Stop the in-call liveness heartbeat (idempotent).

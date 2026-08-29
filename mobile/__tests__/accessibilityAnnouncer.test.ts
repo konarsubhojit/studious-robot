@@ -1,6 +1,7 @@
 import { AccessibilityInfo } from 'react-native';
 import {
   announceForAccessibility,
+  describeAppearanceChange,
   describeCallState,
   describeMessageDelivery,
   describeRecoveryState,
@@ -88,5 +89,16 @@ describe('announceForAccessibility', () => {
       throw new Error('no native module');
     });
     expect(() => announceForAccessibility('Call ended')).not.toThrow();
+  });
+});
+
+describe('describeAppearanceChange', () => {
+  test('names the setting and its new value', () => {
+    expect(describeAppearanceChange('Accent colour', 'Teal')).toBe('Accent colour: Teal');
+  });
+
+  test('says nothing when either half is missing', () => {
+    expect(describeAppearanceChange('', 'Teal')).toBeNull();
+    expect(describeAppearanceChange('Accent colour', '')).toBeNull();
   });
 });

@@ -282,6 +282,47 @@ Gesture arbitration was examined and deliberately left alone:
 `simultaneousWithExternalGesture` or `blocksExternalGesture` on suspicion would
 have been speculative. §3.6 is the check that closes this out.
 
+### Theming becomes a personalisation surface ✅
+
+Appearance was three radio buttons for System / Light / Dark, and the theme
+around them was unfinished in ways only a device showed: a white flash on every
+cold start, a status bar that told the truth only by accident, a `Toast`
+primitive with no call site, and haptics silently wired to the OS *reduce
+motion* setting.
+
+- **The model is now preferences, not a mode.** `ThemePreferences`
+  (`mode`, `contrast`, `accent`, `trueBlack`, `textScale`) is persisted per
+  field in the same `wetalk-theme.json`, and a corrupt accent no longer resets
+  the mode. `buildPalette(preferences)` derives every variant from the two base
+  palettes, and is **memoised on the preference set** — `useThemedStyles` caches
+  stylesheets in a `WeakMap` keyed on palette identity, so a freshly allocated
+  palette per render would silently defeat the cache.
+- **Four options ship, each with a real effect**: true black (offered only when
+  the resolved scheme is dark, rather than shown disabled), high contrast
+  (defaulting to the OS signal via `useHighContrast`, and *lowering* tint alpha
+  — a stronger tint is the same hue as the tone on it, so it reduces contrast),
+  five curated accents, and an in-app text scale that composes with the OS font
+  scale instead of replacing it — capped at 1.3 because `fontScaleCaps` does
+  *not* restrain it (that caps `maxFontSizeMultiplier`, and this changes the
+  token's `fontSize` itself), so the fixed-height surfaces are protected only by
+  the factor table staying modest. §3.4 is the check for it.
+- **The guardrail is the cross-product.** `__tests__/theme.test.ts` builds every
+  scheme × contrast × accent × true-black variant and asserts the token set is
+  complete and the 4.5:1 / 3:1 rules hold, so a new accent cannot ship
+  unchecked.
+- **The flash is fixed natively**: `values/` and `values-night/` name a
+  `windowBackground` matching `palettes.*.background`, so the window is already
+  the right colour before React mounts, and `ThemeProvider` holds the first
+  paint until the persisted preference resolves.
+- **`Toast` has its first call site.** Transient settings confirmations (media
+  cleared, server saved, unmuted, unblocked) are toasts; persistent conditions
+  stay on `StatusBanner`, per the three-level rule in `Banner.tsx`.
+- **Haptics left reduce motion.** Vibration is not motion on screen, and for
+  some users it is the only confirmation a tap registered, so it is now an
+  explicit *Haptic feedback* switch (default on) and `useReducedMotion` governs
+  animation only — including the surfaces it had not reached yet (`Sheet`,
+  `SwipeableRow`, `MediaViewer`, the PiP tile).
+
 ---
 
 ## 2. The exact stopping point
@@ -319,8 +360,11 @@ Four limits are recorded so they are not mistaken for oversights:
 - **The Report affordance was removed rather than rebuilt.** There is no server
   report endpoint, so the row could only ever have shown an `Alert` promising an
   action nobody would take. Also a backend task first.
-- **`Toast` has no call site yet.** Its tones are now contrast-tested anyway, so
-  the first surface to use it starts from a verified palette.
+- **The Android navigation bar cannot follow an in-app scheme.** It is tinted
+  per OS scheme from `values-night/`, but React Native core exposes no runtime
+  API for it and this app deliberately carries no navigation-bar dependency, so
+  a user who pins the app to light on a dark phone keeps a dark navigation bar.
+  See §3.7.5.
 
 ---
 
@@ -463,6 +507,13 @@ fits. Set the system font size to maximum and walk:
 - Settings, including the two `Sheet`s (signaling editor, licences), because a
   sheet's list is capped at `sizes.sheetListMaxHeight`.
 
+Then repeat the same walk with **Settings › Appearance › Text size** at
+**Larger**, at both the default and the maximum system font size. This step is
+not redundant: the in-app scale multiplies the token `fontSize`, which
+`maxFontSizeMultiplier` does not bound, so it is the only one of the two that
+can overflow a capped label. The bottom-pinned call deck is again the check
+that matters.
+
 Expect wrapping, never truncation, in running text, and expect capped text to
 stay on one line — `maxFontSizeMultiplier={fontScaleCaps.*}` marks all 17 of
 them, nine of which the Phase 6 sweep added. A capped text that still overflows
@@ -530,7 +581,47 @@ and verified by reading.** Narrow it instead, cheapest first:
 Record which of these it was in §4, because the next person will not be able to
 reproduce it from the suite either.
 
-### 3.7 Then, and only if the backend grows the endpoints
+### 3.7 Theming: the cold-start flash and the system bars
+
+The two defects the theme personalisation work fixed that **no Jest run can
+observe**, because both happen before or outside React. A unit test asserts only
+that the resource files still name the palette colours
+(`__tests__/androidWindowBackground.test.ts`); whether the frame that reaches
+the screen is the right colour is a device question.
+
+1. **The flash.** Put the device in dark mode, force-stop the app, then cold
+   launch it while watching the very first frame — record the screen at 60fps if
+   your eye disagrees with itself twice. Expect the window to come up already
+   dark. A white frame between the launcher and the first React render means
+   `values-night/colors.xml` did not resolve; capture the frame as the evidence.
+2. Repeat in light mode. The complementary failure (a dark flash before a light
+   app) is the one that survives when only the night variant is added.
+3. **The status bar.** In each scheme, confirm the bar is the same colour as the
+   screen behind it and that its icons are legible — expect no visible seam at
+   the top of the chat list.
+4. Turn on **True black** and then **High contrast** in Settings › Appearance.
+   The status bar must follow, because it is driven from the palette rather than
+   from the scheme name. This is also the check that catches a palette variant
+   that forgot a token: log `theme.colors.background` alongside a screenshot.
+5. **The one known limitation:** with the app pinned to a scheme that differs
+   from the OS (light app on a dark phone, or the reverse), the *navigation* bar
+   still follows the OS. React Native core exposes no API for it and this app
+   deliberately carries no navigation-bar dependency, so `values-night/` is the
+   only lever. Record it as observed, not as a regression.
+6. **The full-screen call.** Place a call from a *light*-scheme device. The
+   status bar must go dark for the duration — the video stage is fixed-dark in
+   both schemes, so a light bar would sit on top of black video — and must
+   return to the light background when the call ends.
+7. **Haptics vs. reduced motion.** Turn the OS "Remove animations" setting on.
+   Expect call-control taps to **still** vibrate (they no longer share a switch
+   with animation), and expect Settings › Calls & media › Haptic feedback to be
+   the only thing that silences them. Then check the animated surfaces in the
+   same pass: sheets appear without a fade, a swiped row snaps to its open
+   position, the PiP tile parks against the edge without gliding, and the
+   skeleton stops shimmering — in every case the *end state* must still be
+   reached.
+
+### 3.8 Then, and only if the backend grows the endpoints
 
 Live username availability during registration, and the Report affordance. Both
 are blocked on server work, not client work — see §2.

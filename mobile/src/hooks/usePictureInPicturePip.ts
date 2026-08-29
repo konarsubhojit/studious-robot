@@ -3,6 +3,7 @@ import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { clamp } from '../callUx';
 import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
+import useReducedMotion from './useReducedMotion';
 
 /** Spring used to settle the tile against an edge after a drag or a fling. */
 const PIP_SETTLE_SPRING = { damping: 20, stiffness: 220, mass: 0.6, overshootClamping: true };
@@ -52,6 +53,15 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
   const pipY = useSharedValue(PIP_MARGIN);
   const pipStartX = useSharedValue(PIP_MARGIN);
   const pipStartY = useSharedValue(PIP_MARGIN);
+  const reduceMotion = useReducedMotion();
+  // Read from a shared value rather than a captured closure: the gesture is
+  // memoised on `onTap` alone, so a preference that changed after mount would
+  // otherwise never reach the worklet.
+  const reduceMotionShared = useSharedValue(false);
+  useEffect(() => {
+    reduceMotionShared.value = reduceMotion;
+  }, [reduceMotion, reduceMotionShared]);
+
   // Shared values for drag bounds so they are readable from UI-thread worklets.
   const pipMaxX = useSharedValue(PIP_MARGIN);
   const pipMaxY = useSharedValue(PIP_MARGIN);
@@ -76,9 +86,16 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     // ease it back in rather than teleporting it.
     const clampedX = clamp(pipX.value, PIP_MARGIN, maxX);
     const clampedY = clamp(pipY.value, PIP_MARGIN, maxY);
-    if (clampedX !== pipX.value) pipX.value = withSpring(clampedX, PIP_SETTLE_SPRING);
-    if (clampedY !== pipY.value) pipY.value = withSpring(clampedY, PIP_SETTLE_SPRING);
-  }, [stageSize.width, stageSize.height, pipX, pipY, pipMaxX, pipMaxY]);
+    // Reduced motion still moves the tile back inside the bounds — leaving it
+    // off-screen would be a bug, not a calmer animation — it just arrives in
+    // one step.
+    if (clampedX !== pipX.value) {
+      pipX.value = reduceMotion ? clampedX : withSpring(clampedX, PIP_SETTLE_SPRING);
+    }
+    if (clampedY !== pipY.value) {
+      pipY.value = reduceMotion ? clampedY : withSpring(clampedY, PIP_SETTLE_SPRING);
+    }
+  }, [stageSize.width, stageSize.height, pipX, pipY, pipMaxX, pipMaxY, reduceMotion]);
 
   const handleCallStageLayout = useCallback((event: any) => {
     const { width, height } = event.nativeEvent.layout;
@@ -118,11 +135,16 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
             const restingX =
               projectedX > (PIP_MARGIN + pipMaxX.value) / 2 ? pipMaxX.value : PIP_MARGIN;
 
+            const restingY = clamp(projectedY, PIP_MARGIN, pipMaxY.value);
+            if (reduceMotionShared.value) {
+              // The tile still parks against the nearest edge; only the glide
+              // to it is dropped.
+              pipX.value = restingX;
+              pipY.value = restingY;
+              return;
+            }
             pipX.value = withSpring(restingX, PIP_SETTLE_SPRING);
-            pipY.value = withSpring(
-              clamp(projectedY, PIP_MARGIN, pipMaxY.value),
-              PIP_SETTLE_SPRING,
-            );
+            pipY.value = withSpring(restingY, PIP_SETTLE_SPRING);
           }),
       ),
     // Shared-value references are stable; only onTap needs to trigger recreation.

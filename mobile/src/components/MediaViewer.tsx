@@ -17,6 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { logInfo, logVerbose, logWarn } from '../appLogger';
 import { isAudioSessionActive } from '../audioSessionState';
+import useReducedMotion from '../hooks/useReducedMotion';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { radius, spacing, touchSlop, typography } from '../theme';
 import { loadVideoComponent } from '../videoPlayback';
@@ -98,6 +99,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
   const [index, setIndex] = useState(initialIndex);
   const [failedKey, setFailedKey] = useState<string | null>(null);
 
+  const reduceMotion = useReducedMotion();
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -117,6 +119,17 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
 
   const item = items[index] ?? null;
 
+  // Reduced motion still moves the media to where the gesture says it belongs
+  // — zoom, bounce-back and re-centring all still happen — but arrives there
+  // in one step instead of springing.
+  const settle = useCallback(
+    (toValue: number) => {
+      'worklet';
+      return reduceMotion ? toValue : withSpring(toValue, SETTLE_SPRING);
+    },
+    [reduceMotion],
+  );
+
   const resetTransform = useCallback(() => {
     translateX.value = 0;
     translateY.value = 0;
@@ -127,7 +140,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
     (nextIndex: number) => {
       if (nextIndex < 0 || nextIndex >= items.length) {
         // Bounce back rather than leaving the item half-swiped off-screen.
-        translateX.value = withSpring(0, SETTLE_SPRING);
+        translateX.value = settle(0);
         return;
       }
       logVerbose('[Media] viewer moved to item', { index: nextIndex });
@@ -135,7 +148,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
       setIndex(nextIndex);
       setFailedKey(null);
     },
-    [items.length, resetTransform, translateX],
+    [items.length, resetTransform, settle, translateX],
   );
 
   const handleClose = useCallback(() => {
@@ -145,12 +158,12 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
 
   const toggleZoom = useCallback(() => {
     const next = scale.value > 1 ? 1 : DOUBLE_TAP_SCALE;
-    scale.value = withSpring(next, SETTLE_SPRING);
+    scale.value = settle(next);
     if (next === 1) {
-      translateX.value = withSpring(0, SETTLE_SPRING);
-      translateY.value = withSpring(0, SETTLE_SPRING);
+      translateX.value = settle(0);
+      translateY.value = settle(0);
     }
-  }, [scale, translateX, translateY]);
+  }, [scale, settle, translateX, translateY]);
 
   // A pinch and a drag can run together; a double tap races them so the zoom
   // toggle is not swallowed by the pan's slop.
@@ -165,8 +178,8 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
       .onEnd(() => {
         if (scale.value <= 1) {
           // Fully zoomed out, so any pan offset would strand the media off-centre.
-          translateX.value = withSpring(0, SETTLE_SPRING);
-          translateY.value = withSpring(0, SETTLE_SPRING);
+          translateX.value = settle(0);
+          translateY.value = settle(0);
         }
       });
 
@@ -204,8 +217,8 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
           return;
         }
         // Too small to mean anything: put the media back where it started.
-        translateX.value = withSpring(startX.value, SETTLE_SPRING);
-        translateY.value = withSpring(startY.value, SETTLE_SPRING);
+        translateX.value = settle(startX.value);
+        translateY.value = settle(startY.value);
       });
 
     const doubleTapGesture = Gesture.Tap()
@@ -220,6 +233,7 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
     handleClose,
     index,
     scale,
+    settle,
     startScale,
     startX,
     startY,
