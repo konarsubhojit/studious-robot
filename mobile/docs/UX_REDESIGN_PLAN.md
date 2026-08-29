@@ -302,7 +302,10 @@ motion* setting.
   (defaulting to the OS signal via `useHighContrast`, and *lowering* tint alpha
   — a stronger tint is the same hue as the tone on it, so it reduces contrast),
   five curated accents, and an in-app text scale that composes with the OS font
-  scale instead of replacing it.
+  scale instead of replacing it — capped at 1.3 because `fontScaleCaps` does
+  *not* restrain it (that caps `maxFontSizeMultiplier`, and this changes the
+  token's `fontSize` itself), so the fixed-height surfaces are protected only by
+  the factor table staying modest. §3.4 is the check for it.
 - **The guardrail is the cross-product.** `__tests__/theme.test.ts` builds every
   scheme × contrast × accent × true-black variant and asserts the token set is
   complete and the 4.5:1 / 3:1 rules hold, so a new accent cannot ship
@@ -503,6 +506,13 @@ fits. Set the system font size to maximum and walk:
   still show who and how long;
 - Settings, including the two `Sheet`s (signaling editor, licences), because a
   sheet's list is capped at `sizes.sheetListMaxHeight`.
+
+Then repeat the same walk with **Settings › Appearance › Text size** at
+**Larger**, at both the default and the maximum system font size. This step is
+not redundant: the in-app scale multiplies the token `fontSize`, which
+`maxFontSizeMultiplier` does not bound, so it is the only one of the two that
+can overflow a capped label. The bottom-pinned call deck is again the check
+that matters.
 
 Expect wrapping, never truncation, in running text, and expect capped text to
 stay on one line — `maxFontSizeMultiplier={fontScaleCaps.*}` marks all 17 of

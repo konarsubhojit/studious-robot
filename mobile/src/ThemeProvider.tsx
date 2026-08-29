@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, useColorScheme, View } from 'react-native';
 import { logError } from './appLogger';
 import useHighContrast from './hooks/useHighContrast';
@@ -49,6 +49,12 @@ export default function ThemeProvider({
     mode: initialMode,
   }));
   const [isResolved, setIsResolved] = useState(false);
+  // Mirrors the state so `setPreference` can build the next value — and write
+  // it — outside the state updater. React does not promise to call an updater
+  // exactly once, and an updater that performs I/O would write twice under
+  // StrictMode. Assigned synchronously wherever the state changes, so two
+  // changes in the same tick still compose.
+  const preferencesRef = useRef(preferences);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +64,7 @@ export default function ThemeProvider({
         // The text size mutates the shared typography tokens, so it has to be
         // applied before anything builds a stylesheet from them.
         setTextScale(stored.textScale);
+        preferencesRef.current = stored;
         setPreferences(stored);
       })
       .catch(error => {
@@ -75,13 +82,14 @@ export default function ThemeProvider({
 
   const setPreference = useCallback(
     <K extends keyof ThemePreferences>(key: K, value: ThemePreferences[K]) => {
-      setPreferences(previous => {
-        if (previous[key] === value) return previous;
-        const next = { ...previous, [key]: value };
-        if (key === 'textScale') setTextScale(next.textScale);
-        void saveThemePreferences(next);
-        return next;
-      });
+      const previous = preferencesRef.current;
+      if (previous[key] === value) return;
+
+      const next = { ...previous, [key]: value };
+      preferencesRef.current = next;
+      if (key === 'textScale') setTextScale(next.textScale);
+      setPreferences(next);
+      void saveThemePreferences(next);
     },
     [],
   );

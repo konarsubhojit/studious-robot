@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -172,13 +172,31 @@ function SettingsScreen({
   // no sign the app had heard the tap.
   const [toast, setToast] = useState<{ message: string; tone: ToastTone; } | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
-  const confirm = (message: string) => setToast({ message, tone: 'success' });
+  const confirm = useCallback(
+    (message: string) => setToast({ message, tone: 'success' }),
+    [],
+  );
 
   // Measured when the screen appears rather than continuously: nothing outside
   // this screen reads the number, and the crawl is not free.
   useEffect(() => {
     onRefreshStorage?.();
   }, [onRefreshStorage]);
+
+  // Clearing is asynchronous, so the confirmation is driven off the *end* of
+  // the work rather than off the tap: a toast that fired on intent would claim
+  // "Cached media cleared" before the delete had started, and would say it
+  // again if the delete failed.
+  const wasClearingMedia = useRef(false);
+  useEffect(() => {
+    if (isClearingMedia) {
+      wasClearingMedia.current = true;
+      return;
+    }
+    if (!wasClearingMedia.current) return;
+    wasClearingMedia.current = false;
+    confirm('Cached media cleared');
+  }, [confirm, isClearingMedia]);
 
   const activeIceTransportPolicy = normalizeIceTransportPolicy(iceTransportPolicy);
   const trimmedUrl = url.trim();
@@ -417,14 +435,7 @@ function SettingsScreen({
                   + 'They download again when you open them.'
             }
             icon="settingsMedia"
-            onPress={
-              isClearingMedia
-                ? undefined
-                : () => {
-                    onClearCachedMedia();
-                    confirm('Cached media cleared');
-                  }
-            }
+            onPress={isClearingMedia ? undefined : onClearCachedMedia}
             disabled={isClearingMedia}
             accessibilityLabel="Clear cached media"
             accessibilityHint="Removes downloaded photos and voice notes from this device"

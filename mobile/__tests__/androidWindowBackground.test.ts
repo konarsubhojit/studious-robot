@@ -39,6 +39,9 @@ describe('android window background', () => {
   });
 
   test('every AppTheme variant paints the window and both system bars', () => {
+    // Android replaces the *whole* style for a qualified configuration, so the
+    // `-v27` variants necessarily restate the base theme. Anything added to the
+    // base theme therefore has to be added here too — and to this list.
     // A variant that overrides the theme but forgets one of these reintroduces
     // the flash on exactly the API levels it applies to.
     ['values', 'values-v27', 'values-night-v27'].forEach(dir => {

@@ -82,6 +82,11 @@ export function buildTheme(
  * Default value used when a component renders outside `ThemeProvider` (for
  * example in isolated unit tests): the dark scheme the app shipped with, with
  * no-op setters.
+ *
+ * Built once at module load, so its `typographyRevision` is frozen at whatever
+ * it was then: a component rendered outside the provider does not follow an
+ * in-app text-size change. Nothing in the app renders outside the provider —
+ * only tests do — so this is a stated limit rather than a gap to close.
  */
 export const defaultTheme = buildTheme(DEFAULT_THEME_PREFERENCES.mode, 'dark', () => {});
 

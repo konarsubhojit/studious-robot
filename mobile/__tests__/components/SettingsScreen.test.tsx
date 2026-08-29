@@ -362,7 +362,7 @@ describe('SettingsScreen', () => {
       expect(toastMessage(tree)).toBeNull();
     });
 
-    test('confirms clearing cached media', () => {
+    test('confirms clearing cached media only once the clear has finished', () => {
       const onClearCachedMedia = jest.fn();
       let tree: any;
       act(() => {
@@ -373,7 +373,42 @@ describe('SettingsScreen', () => {
 
       pressByTestID(tree, 'settings-clear-media');
       expect(onClearCachedMedia).toHaveBeenCalled();
+      // The delete is asynchronous: confirming on the tap would promise an
+      // outcome nobody has observed yet.
+      expect(toastMessage(tree)).toBeNull();
+
+      act(() => {
+        tree.update(
+          <SettingsScreen
+            {...baseProps}
+            onClearCachedMedia={onClearCachedMedia}
+            isClearingMedia
+          />,
+        );
+      });
+      expect(toastMessage(tree)).toBeNull();
+
+      act(() => {
+        tree.update(
+          <SettingsScreen {...baseProps} onClearCachedMedia={onClearCachedMedia} />,
+        );
+      });
       expect(toastMessage(tree)).toBe('Cached media cleared');
+    });
+
+    test('says nothing when the screen simply opens without a clear in flight', () => {
+      // The transition guard, not just the current value: a screen that mounts
+      // with `isClearingMedia` false must not announce a clear that never ran.
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />,
+        );
+      });
+      act(() => {
+        tree.update(<SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />);
+      });
+      expect(toastMessage(tree)).toBeNull();
     });
 
     test('confirms unmuting and unblocking by name', () => {
@@ -418,11 +453,11 @@ describe('SettingsScreen', () => {
       let tree: any;
       act(() => {
         tree = renderer.create(
-          <SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />,
+          <SettingsScreen {...baseProps} mutedPeers={['user-bob']} onUnmutePeer={jest.fn()} />,
         );
       });
 
-      pressByTestID(tree, 'settings-clear-media');
+      pressByTestID(tree, 'settings-unmute');
       const toast = findByTestID(tree, 'settings-toast').filter(
         (n: any) => typeof n.type !== 'string',
       )[0];

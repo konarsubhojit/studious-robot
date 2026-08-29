@@ -271,10 +271,17 @@ export const TEXT_SCALE_LABELS: Record<TextScale, string> = {
 /**
  * Multiplier per step.
  *
- * Deliberately gentle: this composes *with* the OS font-size setting rather
- * than replacing it, so a user already at 200% system type who then picks
- * "Larger" gets 260%, and `fontScaleCaps` still protects the containers that
- * cannot grow.
+ * Deliberately gentle, and 1.3 is a ceiling rather than a starting point: this
+ * composes *with* the OS font-size setting rather than replacing it, so a user
+ * already at 200% system type who then picks "Larger" gets 260%.
+ *
+ * Note what does **not** protect the fixed-height surfaces here.
+ * `fontScaleCaps` caps `maxFontSizeMultiplier`, which limits the *OS* scale
+ * applied on top of a token — but this scale changes the token's `fontSize`
+ * itself, so a capped `Text` still grows by the full factor. The bottom-pinned
+ * call deck, the tab bar and anything sized from `sizes` are therefore
+ * protected only by this table staying modest. Raising a factor means
+ * re-walking §3.4 of `docs/UX_REDESIGN_PLAN.md` on a device.
  */
 export const TEXT_SCALE_FACTORS: Record<TextScale, number> = {
   small: 0.9,
@@ -831,8 +838,15 @@ export function getTypographyRevision(): number {
   return typographyRevision;
 }
 
-/** The unscaled token table, for tests and for documenting the scale itself. */
-export const baseTypography: Record<TypographyToken, TextStyle> = BASE_TYPOGRAPHY;
+/**
+ * The unscaled token table, for tests and for documenting the scale itself.
+ *
+ * A copy, not the table {@link setTextScale} recomputes from: handing out the
+ * original by reference would let one stray mutation silently rebase every
+ * later text-size change, and the result would look like a wrong font size
+ * rather than an error.
+ */
+export const baseTypography: Record<TypographyToken, TextStyle> = cloneTypography(BASE_TYPOGRAPHY);
 
 /**
  * Cap on how far the OS font-size setting may scale a given text token.
