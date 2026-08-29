@@ -45,7 +45,7 @@ describe('chatDb', () => {
 
   test('loads an empty snapshot when nothing has been persisted', async () => {
     const snapshot = await loadChatSnapshot();
-    expect(snapshot).toEqual({ conversations: [], messagesByPeer: {}, outbox: [] });
+    expect(snapshot).toEqual({ conversations: [], messagesByPeer: {}, outbox: [], drafts: {} });
     expect(RNFS.readFile).not.toHaveBeenCalled();
   });
 
@@ -74,6 +74,7 @@ describe('chatDb', () => {
       conversations: [],
       messagesByPeer: {},
       outbox: [],
+      drafts: {},
     });
   });
 
@@ -151,6 +152,7 @@ describe('chatDb', () => {
       conversations: [],
       messagesByPeer: {},
       outbox: [],
+      drafts: {},
     });
   });
 
@@ -165,5 +167,34 @@ describe('chatDb', () => {
       expect(MAX_CONVERSATIONS).toBe(100);
       expect(MAX_MESSAGES_PER_CONVERSATION * MAX_CONVERSATIONS).toBeLessThanOrEqual(20_000);
     });
+  });
+});
+
+describe('chatDb drafts', () => {
+  test('round-trips a draft and drops empty ones', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(false);
+    await loadChatSnapshot();
+
+    saveChatSnapshot({
+      drafts: {
+        pia: { text: 'half a thought', replyToId: 'm1' },
+        // An empty draft is indistinguishable from no draft at all.
+        sam: { text: '   ' },
+      },
+    } as any);
+    await flushChatDb();
+
+    const written = JSON.parse((RNFS.writeFile as jest.Mock).mock.calls.at(-1)[1]);
+    resetChatDbCache();
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify(written));
+
+    const snapshot = await loadChatSnapshot();
+    expect(snapshot.drafts.pia).toEqual({
+      text: 'half a thought',
+      replyToId: 'm1',
+      updatedAt: undefined,
+    });
+    expect(snapshot.drafts.sam).toBeUndefined();
   });
 });

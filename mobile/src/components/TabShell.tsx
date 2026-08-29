@@ -53,12 +53,14 @@ export default function TabShell() {
   // `screenRenderers` memo in `AppNavigator` that depends on them).
   const {
     cancelRecordingVoiceNote,
+    clearDraft,
     deleteMessage,
     isPeerMuted,
     isUserBlocked,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
+    saveDraft,
     sendMessage,
     sendTypingIndicator,
     setPeerMuted,
@@ -128,6 +130,9 @@ export default function TabShell() {
         attachmentsAvailable={chat.attachmentsAvailable}
         isVoiceNoteSupported={chat.isVoiceNoteSupported}
         onTypingChange={isTyping => sendTypingIndicator(peerId, isTyping)}
+        initialDraft={chat.drafts?.[peerId] ?? null}
+        onSaveDraft={(text, replyToId) => saveDraft(peerId, text, replyToId)}
+        onClearDraft={() => clearDraft(peerId)}
       />
     );
   }, [
@@ -142,14 +147,17 @@ export default function TabShell() {
     chat.isRecordingVoiceNote,
     chat.isUploadingAttachment,
     chat.isVoiceNoteSupported,
+    chat.drafts,
     chat.messagesByPeer,
     chat.peerPresence,
     chat.typingByPeer,
+    clearDraft,
     deleteMessage,
     insets.top,
     pickAndSendAttachment,
     reactToMessage,
     retryMessage,
+    saveDraft,
     sendMessage,
     sendTypingIndicator,
     startAudioCallWith,
@@ -172,10 +180,12 @@ export default function TabShell() {
       onOpenProfile={openPeerProfile}
       onStartChat={openChatConversation}
       currentUserId={chat.currentUserId}
+      drafts={chat.drafts}
     />
   ), [
     chat.currentUserId,
     chat.conversations,
+    chat.drafts,
     chat.handleRefreshConversations,
     chat.isLoadingConversations,
     chat.isRefreshingConversations,

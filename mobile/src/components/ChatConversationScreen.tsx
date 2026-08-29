@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import {
   Alert,
+  AppState,
   FlatList,
   Image,
   Keyboard,
@@ -774,6 +775,12 @@ export type ChatConversationScreenProps = {
   onOpenProfile?: () => void;
   /** Reports composer typing state. */
   onTypingChange?: (isTyping: boolean) => void;
+  /** Composer text (and reply target) restored from the local chat store. */
+  initialDraft?: { text: string; replyToId?: string | null } | null;
+  /** Persist the composer entry; called when the screen is left, not per key. */
+  onSaveDraft?: (text: string, replyToId: string | null) => void;
+  /** Drop the stored composer entry (the message was sent). */
+  onClearDraft?: () => void;
   /** Distance between the true top of the screen and this screen's root view (e.g. the safe-area top inset applied by an ancestor). `KeyboardAvoidingView` measures its own frame relative to its immediate parent, not the screen, so without this offset it under-compensates for the keyboard by exactly that amount and the composer stays partly covered. */
   keyboardVerticalOffset?: number;
   /** Runs the named picker, uploads the result, and sends it as an attachment message. */
@@ -826,6 +833,9 @@ function ChatConversationScreen({
   isLoadingMessages = false,
   isOffline = false,
   onTypingChange,
+  initialDraft = null,
+  onSaveDraft,
+  onClearDraft,
   keyboardVerticalOffset = 0,
   onPickAttachment,
   onStartVoiceNote,
@@ -840,7 +850,9 @@ function ChatConversationScreen({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  const [draft, setDraft] = useState('');
+  // Seeded from the persisted draft so re-opening a conversation restores the
+  // half-typed message instead of silently discarding it.
+  const [draft, setDraft] = useState(() => initialDraft?.text ?? '');
   // The message the composer is currently replying to, if any.
   const [replyTarget, setReplyTarget] = useState((null as ChatMessage | null));
   // A bubble briefly emphasised because its quote was tapped; takes precedence
@@ -1045,8 +1057,51 @@ function ChatConversationScreen({
     onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
     setReplyTarget(null);
+    onClearDraft?.();
     reportTyping(false);
-  }, [draft, onSendMessage, replyTarget, reportTyping]);
+  }, [draft, onClearDraft, onSendMessage, replyTarget, reportTyping]);
+
+  // The reply target is restored separately: it is stored by id, and the
+  // message it points at may not have been loaded yet when the screen mounts.
+  const restoredReplyRef = useRef(false);
+  const initialReplyToId = initialDraft?.replyToId ?? null;
+  useEffect(() => {
+    if (restoredReplyRef.current || !initialReplyToId) return;
+    const target = messages.find(
+      entry => (entry as ChatMessage)?.messageId === initialReplyToId,
+    ) as ChatMessage | undefined;
+    if (!target) return;
+    restoredReplyRef.current = true;
+    setReplyTarget(target);
+  }, [initialReplyToId, messages]);
+
+  // The draft is persisted when the user *leaves* (screen closed, app
+  // backgrounded), never per keystroke: writing on every character would push
+  // a state update through the chat provider on each key, re-rendering the
+  // whole conversation.
+  const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
+  useEffect(() => {
+    draftStateRef.current = { text: draft, replyToId: replyTarget?.messageId ?? null };
+  }, [draft, replyTarget]);
+
+  const onSaveDraftRef = useRef(onSaveDraft);
+  useEffect(() => {
+    onSaveDraftRef.current = onSaveDraft;
+  }, [onSaveDraft]);
+
+  useEffect(() => {
+    const persist = () => {
+      const { text, replyToId } = draftStateRef.current;
+      onSaveDraftRef.current?.(text, replyToId);
+    };
+    const subscription = AppState.addEventListener?.('change', nextState => {
+      if (nextState !== 'active') persist();
+    });
+    return () => {
+      subscription?.remove?.();
+      persist();
+    };
+  }, []);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {

@@ -83,6 +83,8 @@ function activityIconFor(conversation: ConversationRow): string | null {
 
 export type ChatListScreenProps = {
   conversations?: ConversationRow[];
+  /** peerId -> unsent composer text, used to preview drafts on the row. */
+  drafts?: Record<string, { text: string } | undefined>;
   onOpenConversation: (peerId: string) => void;
   /** Directory lookup, used by the New-chat People picker. */
   onSearchUsers?: (query: string) => Promise<ContactRow[]>;
@@ -124,6 +126,7 @@ function ChatListScreen({
   onOpenProfile,
   onStartChat,
   currentUserId,
+  drafts,
 }: ChatListScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
@@ -147,13 +150,16 @@ function ChatListScreen({
             ]
           : [];
       const activityIcon = activityIconFor(conversation);
+      // An unsent draft outranks the last event in the preview line: it is the
+      // one thing on the row the user still has to act on.
+      const draftText = drafts?.[conversation.peerId]?.text?.trim();
       const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
 
       return (
         <SwipeableRow actions={actions}>
           <ListItem
             title={conversation.peerId}
-            subtitle={formatActivityPreview(conversation)}
+            subtitle={draftText ? `Draft: ${draftText}` : formatActivityPreview(conversation)}
             leading={
               <Avatar
                 id={conversation.peerId}
@@ -204,7 +210,7 @@ function ChatListScreen({
         </SwipeableRow>
       );
     },
-    [onMarkRead, onOpenConversation, onOpenProfile, styles],
+    [drafts, onMarkRead, onOpenConversation, onOpenProfile, styles],
   );
 
   const renderItem = useCallback(

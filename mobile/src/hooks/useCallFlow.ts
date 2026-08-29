@@ -4014,6 +4014,9 @@ export default function useCallFlow({
     // Chat
     conversations: messaging.conversations,
     messagesByPeer: messaging.messagesByPeer,
+    drafts: messaging.drafts,
+    saveDraft: messaging.saveDraft,
+    clearDraft: messaging.clearDraft,
     unreadTotal: messaging.unreadTotal,
     activeChatPeerId,
     setActiveChatPeerId: messaging.setActiveChatPeerId,

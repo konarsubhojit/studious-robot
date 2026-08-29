@@ -7,6 +7,7 @@ import {
   setActiveConversation,
 } from '../messageNotification';
 import { flushChatDb, loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
+import type { ChatDraft } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
@@ -226,6 +227,10 @@ export default function useMessaging({
   const [messagesByPeer, setMessagesByPeer] = useState(
     ({} as Record<string, ChatMessage[]>),
   );
+  // Keyed by peerId → the composer text (and reply target) the user has typed
+  // but not sent. Held here rather than in the composer's own state so it
+  // survives switching conversations, backgrounding and process death.
+  const [drafts, setDrafts] = useState(({} as Record<string, ChatDraft>));
   // peerId of the conversation currently open in the UI, or null. Drives
   // auto-mark-read for incoming messages from that peer.
   const [activeChatPeerId, setActiveChatPeerId] = useState((null as string | null));
@@ -288,6 +293,9 @@ export default function useMessaging({
           const next = { ...snapshot.messagesByPeer, ...prev };
           return next;
         });
+        // Drafts only ever come from disk: nothing else can have typed for the
+        // user between mount and here.
+        setDrafts(snapshot.drafts ?? {});
         hydratedRef.current = true;
         // Anything still queued from a previous run goes out as soon as the
         // socket allows it — this is what makes a force-quit mid-send safe.
@@ -310,7 +318,7 @@ export default function useMessaging({
   // JS thread. A burst therefore costs one prune, and the tail is not at risk
   // because the state is flushed when the app leaves the foreground and when
   // the hook unmounts.
-  const snapshotRef = useRef({ conversations, messagesByPeer });
+  const snapshotRef = useRef({ conversations, messagesByPeer, drafts: {} as Record<string, ChatDraft> });
   const persistTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
   const persistNow = useCallback(() => {
     if (persistTimerRef.current) {
@@ -322,7 +330,7 @@ export default function useMessaging({
   }, []);
 
   useEffect(() => {
-    snapshotRef.current = { conversations, messagesByPeer };
+    snapshotRef.current = { conversations, messagesByPeer, drafts };
     if (!hydratedRef.current) return undefined;
     if (persistTimerRef.current) return undefined;
     persistTimerRef.current = setTimeout(() => {
@@ -330,7 +338,7 @@ export default function useMessaging({
       saveChatSnapshot(snapshotRef.current);
     }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
     return undefined;
-  }, [conversations, messagesByPeer]);
+  }, [conversations, messagesByPeer, drafts]);
 
   // Leaving the foreground is the last moment the process is guaranteed to be
   // alive, so the pending mirror is written out (and pushed to disk) there.
@@ -1149,9 +1157,54 @@ export default function useMessaging({
     setIsSocketConnected(false);
   }, []);
 
+  /**
+   * Record (or clear) the unsent composer entry for a conversation.
+   *
+   * Passing empty text removes the draft outright, so an emptied composer does
+   * not leave a phantom "draft" marker in the conversation list.
+   */
+  const saveDraft = useCallback((peerId: string, text: string, replyToId?: string | null) => {
+    if (!peerId) return;
+    setDrafts(prev => {
+      const trimmed = typeof text === 'string' ? text : '';
+      if (!trimmed.trim()) {
+        if (!prev[peerId]) return prev;
+        const next = { ...prev };
+        delete next[peerId];
+        return next;
+      }
+      const existing = prev[peerId];
+      if (existing?.text === trimmed && (existing.replyToId ?? null) === (replyToId ?? null)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [peerId]: {
+          text: trimmed,
+          replyToId: replyToId ?? null,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    });
+  }, []);
+
+  /** Drop the draft for a conversation (on send, or when it is emptied). */
+  const clearDraft = useCallback((peerId: string) => {
+    if (!peerId) return;
+    setDrafts(prev => {
+      if (!prev[peerId]) return prev;
+      const next = { ...prev };
+      delete next[peerId];
+      return next;
+    });
+  }, []);
+
   return {
     conversations,
     messagesByPeer,
+    drafts,
+    saveDraft,
+    clearDraft,
     activeChatPeerId,
     setActiveChatPeerId,
     typingByPeer,

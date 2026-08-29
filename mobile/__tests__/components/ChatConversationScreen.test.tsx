@@ -1554,3 +1554,70 @@ describe('ChatConversationScreen attachments', () => {
     });
   });
 });
+
+describe('ChatConversationScreen drafts', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  test('restores a persisted draft into the composer', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      initialDraft: { text: 'unfinished thought', replyToId: null },
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    expect(input.props.value).toBe('unfinished thought');
+  });
+
+  test('persists the composer text when the screen is left', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSaveDraft,
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    act(() => {
+      input.props.onChangeText('typed but not sent');
+    });
+    // Nothing is written while the user is still typing.
+    expect(onSaveDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      tree.unmount();
+    });
+    expect(onSaveDraft).toHaveBeenCalledWith('typed but not sent', null);
+  });
+
+  test('clears the stored draft once the message is sent', () => {
+    const onClearDraft = jest.fn();
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSendMessage,
+      onClearDraft,
+      initialDraft: { text: 'ready to go', replyToId: null },
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'chat-message-send' }).props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenCalledWith('ready to go', { replyTo: null });
+    expect(onClearDraft).toHaveBeenCalled();
+  });
+});
