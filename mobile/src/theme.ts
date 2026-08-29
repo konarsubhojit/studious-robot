@@ -165,14 +165,171 @@ export const palettes = {
   light: lightColors,
 };
 
+/** The colour scheme a palette implements. */
+export type ColorScheme = 'light' | 'dark';
+
 /** Selectable appearance modes surfaced in Settings. */
 export const THEME_MODES = {
   SYSTEM: 'system',
   LIGHT: 'light',
   DARK: 'dark',
+} as const;
+
+/** One of {@link THEME_MODES}. */
+export type ThemeMode = (typeof THEME_MODES)[keyof typeof THEME_MODES];
+
+export const THEME_MODE_VALUES: readonly ThemeMode[] = [
+  THEME_MODES.SYSTEM,
+  THEME_MODES.LIGHT,
+  THEME_MODES.DARK,
+];
+
+/**
+ * Contrast preference.
+ *
+ * `SYSTEM` defers to the OS high-contrast accessibility setting, so a user who
+ * has already asked the platform for stronger contrast gets it without finding
+ * a second switch in this app; choosing either explicit value pins it.
+ */
+export const THEME_CONTRASTS = {
+  SYSTEM: 'system',
+  STANDARD: 'standard',
+  HIGH: 'high',
+} as const;
+
+export type ThemeContrast = (typeof THEME_CONTRASTS)[keyof typeof THEME_CONTRASTS];
+
+export const THEME_CONTRAST_VALUES: readonly ThemeContrast[] = [
+  THEME_CONTRASTS.SYSTEM,
+  THEME_CONTRASTS.STANDARD,
+  THEME_CONTRASTS.HIGH,
+];
+
+/** Contrast actually rendered, once the OS setting has been folded in. */
+export type ResolvedContrast = 'standard' | 'high';
+
+/**
+ * Selectable accent colours.
+ *
+ * A fixed set rather than a colour picker: each entry is a *designed triple*
+ * (see {@link accentOverrides}) whose contrast against every surface is
+ * asserted in `__tests__/theme.test.ts`. An arbitrary hue picked from a wheel
+ * cannot carry that guarantee, and an accent that fails contrast is invisible
+ * exactly where it matters most — a disabled-looking primary button.
+ */
+export const THEME_ACCENTS = {
+  DEFAULT: 'default',
+  VIOLET: 'violet',
+  TEAL: 'teal',
+  AMBER: 'amber',
+  ROSE: 'rose',
+} as const;
+
+export type ThemeAccent = (typeof THEME_ACCENTS)[keyof typeof THEME_ACCENTS];
+
+export const THEME_ACCENT_VALUES: readonly ThemeAccent[] = [
+  THEME_ACCENTS.DEFAULT,
+  THEME_ACCENTS.VIOLET,
+  THEME_ACCENTS.TEAL,
+  THEME_ACCENTS.AMBER,
+  THEME_ACCENTS.ROSE,
+];
+
+/** Human-readable accent names, for the Settings control and its a11y label. */
+export const THEME_ACCENT_LABELS: Record<ThemeAccent, string> = {
+  default: 'Blue',
+  violet: 'Violet',
+  teal: 'Teal',
+  amber: 'Amber',
+  rose: 'Rose',
 };
 
-export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_MODES.DARK];
+/** In-app text size steps, multiplied onto the {@link typography} scale. */
+export const TEXT_SCALES = {
+  SMALL: 'small',
+  DEFAULT: 'default',
+  LARGE: 'large',
+  LARGER: 'larger',
+} as const;
+
+export type TextScale = (typeof TEXT_SCALES)[keyof typeof TEXT_SCALES];
+
+export const TEXT_SCALE_VALUES: readonly TextScale[] = [
+  TEXT_SCALES.SMALL,
+  TEXT_SCALES.DEFAULT,
+  TEXT_SCALES.LARGE,
+  TEXT_SCALES.LARGER,
+];
+
+export const TEXT_SCALE_LABELS: Record<TextScale, string> = {
+  small: 'Small',
+  default: 'Default',
+  large: 'Large',
+  larger: 'Larger',
+};
+
+/**
+ * Multiplier per step.
+ *
+ * Deliberately gentle: this composes *with* the OS font-size setting rather
+ * than replacing it, so a user already at 200% system type who then picks
+ * "Larger" gets 260%, and `fontScaleCaps` still protects the containers that
+ * cannot grow.
+ */
+export const TEXT_SCALE_FACTORS: Record<TextScale, number> = {
+  small: 0.9,
+  default: 1,
+  large: 1.15,
+  larger: 1.3,
+};
+
+/**
+ * Everything the user can choose about how the app looks.
+ *
+ * One shape rather than five loose fields, because they are loaded, validated
+ * and persisted together — and because `buildPalette` is memoised on exactly
+ * this tuple.
+ */
+export type ThemePreferences = {
+  mode: ThemeMode;
+  contrast: ThemeContrast;
+  accent: ThemeAccent;
+  trueBlack: boolean;
+  textScale: TextScale;
+};
+
+/** Defaults chosen so an existing install looks exactly as it did before. */
+export const DEFAULT_THEME_PREFERENCES: ThemePreferences = {
+  mode: THEME_MODES.SYSTEM,
+  contrast: THEME_CONTRASTS.SYSTEM,
+  accent: THEME_ACCENTS.DEFAULT,
+  trueBlack: false,
+  textScale: TEXT_SCALES.DEFAULT,
+};
+
+/**
+ * Coerce an arbitrary (persisted, possibly corrupt) value into a usable set of
+ * preferences.
+ *
+ * Each field falls back **independently**: a file whose `accent` was hand-edited
+ * to nonsense must not also throw away the user's pinned dark mode.
+ */
+export function normalizeThemePreferences(raw: unknown): ThemePreferences {
+  const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
+    allowed.includes(value as T) ? (value as T) : fallback;
+
+  return {
+    mode: pick(source.mode, THEME_MODE_VALUES, DEFAULT_THEME_PREFERENCES.mode),
+    contrast: pick(source.contrast, THEME_CONTRAST_VALUES, DEFAULT_THEME_PREFERENCES.contrast),
+    accent: pick(source.accent, THEME_ACCENT_VALUES, DEFAULT_THEME_PREFERENCES.accent),
+    trueBlack:
+      typeof source.trueBlack === 'boolean'
+        ? source.trueBlack
+        : DEFAULT_THEME_PREFERENCES.trueBlack,
+    textScale: pick(source.textScale, TEXT_SCALE_VALUES, DEFAULT_THEME_PREFERENCES.textScale),
+  };
+}
 
 /**
  * Resolve the palette to render with from the user's preference and the OS
@@ -183,10 +340,242 @@ export const THEME_MODE_VALUES = [THEME_MODES.SYSTEM, THEME_MODES.LIGHT, THEME_M
  * @param mode - One of THEME_MODES.
  * @param systemScheme - Value from `useColorScheme()`.
  */
-export function resolveScheme(mode?: string, systemScheme?: string | null): 'light' | 'dark' {
+export function resolveScheme(mode?: ThemeMode, systemScheme?: string | null): ColorScheme {
   if (mode === THEME_MODES.LIGHT) return 'light';
   if (mode === THEME_MODES.DARK) return 'dark';
   return systemScheme === 'light' ? 'light' : 'dark';
+}
+
+/**
+ * Fold the OS high-contrast setting into the stored preference.
+ *
+ * @param contrast - Stored preference.
+ * @param systemHighContrast - Whether the OS asks for higher contrast.
+ */
+export function resolveContrast(
+  contrast: ThemeContrast | undefined,
+  systemHighContrast: boolean,
+): ResolvedContrast {
+  if (contrast === THEME_CONTRASTS.HIGH) return 'high';
+  if (contrast === THEME_CONTRASTS.STANDARD) return 'standard';
+  return systemHighContrast ? 'high' : 'standard';
+}
+
+/**
+ * True-black surface overrides for the dark scheme.
+ *
+ * An OLED panel draws a literal black pixel at zero power, so the point is
+ * `background: '#000000'` — but only the *base* layer goes to black. The raised
+ * surfaces stay a step apart from it, because collapsing them all would erase
+ * the elevation the whole layout depends on: a card and the page behind it must
+ * still read as two things.
+ *
+ * Light has no equivalent, so this is dark-only (see {@link buildPalette}).
+ */
+const trueBlackSurfaces = {
+  background: '#000000',
+  backgroundAlt: '#0a0d14',
+  surface: '#101319',
+  surfaceRaised: '#171b23',
+  surfaceControl: '#20252f',
+  surfaceBanner: '#272d3a',
+};
+
+/**
+ * High-contrast overrides, per scheme.
+ *
+ * Text tokens are pushed past 7:1 on every surface (WCAG AAA for body text)
+ * and borders past 4.5:1 — well above the 3:1 the standard palettes target —
+ * so control outlines survive a glare-lit screen.
+ *
+ * The notice tints go the *other* way and lose alpha, which looks backwards
+ * until you notice that a tint is the same hue as the tone drawn on it: a
+ * stronger `tintDanger` moves the backdrop towards `danger` and makes the
+ * warning text harder to read, not easier (it costs 0.06 of the 4.5:1 the
+ * standard palette clears by). High contrast means a louder foreground and a
+ * quieter background. They stay `rgba()` so a banner keeps compositing over
+ * whatever surface it is drawn on, which is the property its contrast
+ * assertions rely on.
+ */
+const highContrastOverrides = {
+  dark: {
+    textPrimary: '#ffffff',
+    textSecondary: '#e4ebff',
+    textMuted: '#d3ddf7',
+    onSurface: '#ffffff',
+    onSurfaceVariant: '#e4ebff',
+    border: '#a9bcea',
+    borderStage: '#a9bcea',
+    borderInactiveBar: '#9db1e4',
+    outline: '#a9bcea',
+    outlineVariant: '#9db1e4',
+    tintSuccess: 'rgba(91,226,162,0.08)',
+    tintDanger: 'rgba(255,123,138,0.08)',
+    tintWarning: 'rgba(255,210,122,0.08)',
+  },
+  light: {
+    textPrimary: '#000000',
+    textSecondary: '#1b2338',
+    textMuted: '#232c44',
+    onSurface: '#000000',
+    onSurfaceVariant: '#1b2338',
+    border: '#3d4b6b',
+    borderStage: '#3d4b6b',
+    borderInactiveBar: '#333f5c',
+    outline: '#3d4b6b',
+    outlineVariant: '#333f5c',
+    tintSuccess: 'rgba(17,107,69,0.07)',
+    tintDanger: 'rgba(179,38,30,0.07)',
+    tintWarning: 'rgba(138,83,0,0.07)',
+  },
+};
+
+/**
+ * Accent overrides, per scheme.
+ *
+ * Each entry is a designed quadruple — the accent itself, the button fill, the
+ * slightly stronger "value" shade used for accented text, and the foreground
+ * that goes *on* the fill — rather than one hue with the rest computed. The
+ * dark entries are light tints (they sit on dark surfaces) and the light
+ * entries are deep shades (they sit on white); deriving one from the other
+ * automatically is what produces the classic 3:1 "pretty but unreadable"
+ * accent.
+ *
+ * `default` restates the shipped palette so it can be selected explicitly and
+ * so `buildPalette` has nothing to special-case.
+ */
+const accentOverrides: Record<ColorScheme, Record<ThemeAccent, Record<string, string>>> = {
+  dark: {
+    default: {
+      accent: '#7cb4ff',
+      accentButton: '#8eb9ff',
+      accentValue: '#98c2ff',
+      textOnAccent: '#0d1f4a',
+      blob: '#9ec2ff',
+    },
+    violet: {
+      accent: '#c4a8ff',
+      accentButton: '#c9b1ff',
+      accentValue: '#cdb6ff',
+      textOnAccent: '#21103f',
+      blob: '#c9b1ff',
+    },
+    teal: {
+      accent: '#5fd6c4',
+      accentButton: '#68dccb',
+      accentValue: '#77e0d1',
+      textOnAccent: '#04241f',
+      blob: '#68dccb',
+    },
+    amber: {
+      accent: '#f2b95c',
+      accentButton: '#f5c069',
+      accentValue: '#f7c877',
+      textOnAccent: '#2e1c00',
+      blob: '#f5c069',
+    },
+    rose: {
+      accent: '#ff9db4',
+      accentButton: '#ffa8bd',
+      accentValue: '#ffb0c3',
+      textOnAccent: '#3d0a1a',
+      blob: '#ffa8bd',
+    },
+  },
+  light: {
+    default: {
+      accent: '#1d4ed8',
+      accentButton: '#1d4ed8',
+      accentValue: '#1a45c0',
+      textOnAccent: '#ffffff',
+      blob: '#4a7bd6',
+    },
+    violet: {
+      accent: '#6b21a8',
+      accentButton: '#6b21a8',
+      accentValue: '#5b1b90',
+      textOnAccent: '#ffffff',
+      blob: '#8b4fc4',
+    },
+    teal: {
+      accent: '#0f6f66',
+      accentButton: '#0f6f66',
+      accentValue: '#0c5b54',
+      textOnAccent: '#ffffff',
+      blob: '#2f9c91',
+    },
+    amber: {
+      accent: '#8a5300',
+      accentButton: '#8a5300',
+      accentValue: '#734500',
+      textOnAccent: '#ffffff',
+      blob: '#b57400',
+    },
+    rose: {
+      accent: '#a3184f',
+      accentButton: '#a3184f',
+      accentValue: '#8b1443',
+      textOnAccent: '#ffffff',
+      blob: '#c94b7c',
+    },
+  },
+};
+
+/** The palette variant a set of preferences resolves to. */
+export type PaletteVariant = {
+  scheme: ColorScheme;
+  contrast: ResolvedContrast;
+  accent: ThemeAccent;
+  trueBlack: boolean;
+};
+
+/**
+ * Cache of built palettes, keyed on the variant they implement.
+ *
+ * **Load-bearing.** `useThemedStyles` caches built stylesheets in a `WeakMap`
+ * keyed on *palette identity*, so a `buildPalette` that allocated a fresh
+ * object per render would silently defeat that cache and re-run every style
+ * factory in the app on every render. The variant key is a small closed set, so
+ * a plain `Map` holding one palette per combination is bounded.
+ */
+const paletteCache = new Map<string, ThemeColors>();
+
+/**
+ * The palette for a variant, built once and thereafter returned by identity.
+ *
+ * The default variant returns the shipped palette object itself, so nothing
+ * that compares against `palettes.dark` / `palettes.light` has to change.
+ */
+export function buildPalette({
+  scheme,
+  contrast = 'standard',
+  accent = THEME_ACCENTS.DEFAULT,
+  trueBlack = false,
+}: {
+  scheme: ColorScheme;
+  contrast?: ResolvedContrast;
+  accent?: ThemeAccent;
+  trueBlack?: boolean;
+}): ThemeColors {
+  // True black is a dark-scheme treatment; asking for it in light is not an
+  // error, it simply has no effect (and the control is hidden there).
+  const blackened = trueBlack && scheme === 'dark';
+  const isDefault = contrast === 'standard' && accent === THEME_ACCENTS.DEFAULT && !blackened;
+  if (isDefault) return palettes[scheme];
+
+  const key = `${scheme}|${contrast}|${accent}|${blackened}`;
+  const cached = paletteCache.get(key);
+  if (cached) return cached;
+
+  const built = {
+    ...palettes[scheme],
+    ...(blackened ? trueBlackSurfaces : null),
+    ...(contrast === 'high' ? highContrastOverrides[scheme] : null),
+    ...accentOverrides[scheme][accent],
+  } as ThemeColors;
+
+  paletteCache.set(key, built);
+  return built;
 }
 
 export const spacing = {
@@ -342,7 +731,7 @@ type TypographyToken =
   | 'emphasis'
   | 'hint';
 
-export const typography: Record<TypographyToken, TextStyle> = {
+const BASE_TYPOGRAPHY: Record<TypographyToken, TextStyle> = {
   /** Large-title header ("Chats", "Calls"), and the call canvas' peer name. */
   display: { fontSize: 32, lineHeight: 38, fontWeight: '700' },
   /** Screen title. */
@@ -371,6 +760,79 @@ export const typography: Record<TypographyToken, TextStyle> = {
   emphasis: { fontWeight: '700' },
   hint: { fontSize: 12, lineHeight: 16 },
 };
+
+/**
+ * The live text style tokens every stylesheet spreads.
+ *
+ * **This object is mutated in place** by {@link setTextScale}, and that is
+ * deliberate. Roughly a hundred style factories across `src/components` spread
+ * `typography.body` at build time; threading a scaled copy through all of them
+ * would mean touching every one of those call sites, and a text-size control
+ * that only reached the screens that had been migrated would be a half-dead
+ * control. Mutating the single object every factory already reads, and then
+ * invalidating the themed-stylesheet cache (see `ThemeContext`), makes one
+ * setting apply everywhere at once.
+ *
+ * The sizes are always recomputed from {@link BASE_TYPOGRAPHY}, never from the
+ * current values, so repeated changes cannot drift.
+ */
+export const typography: Record<TypographyToken, TextStyle> = cloneTypography(BASE_TYPOGRAPHY);
+
+let activeTextScale: TextScale = TEXT_SCALES.DEFAULT;
+let typographyRevision = 0;
+
+/** Shallow-copy the token table so callers cannot alias `BASE_TYPOGRAPHY`. */
+function cloneTypography(source: Record<TypographyToken, TextStyle>): Record<TypographyToken, TextStyle> {
+  return Object.fromEntries(
+    Object.entries(source).map(([token, style]) => [token, { ...style }]),
+  ) as Record<TypographyToken, TextStyle>;
+}
+
+/**
+ * Apply an in-app text size, rescaling every token's `fontSize` and
+ * `lineHeight` together.
+ *
+ * Line heights are scaled by the same factor rather than left alone, because
+ * the scale states them explicitly so that vertical rhythm is the design's
+ * decision — growing the glyphs inside a fixed line box would just crowd them.
+ *
+ * @returns whether anything changed, so a caller can skip a needless re-render.
+ */
+export function setTextScale(scale: TextScale): boolean {
+  const next = TEXT_SCALE_VALUES.includes(scale) ? scale : TEXT_SCALES.DEFAULT;
+  if (next === activeTextScale) return false;
+
+  const factor = TEXT_SCALE_FACTORS[next];
+  (Object.keys(BASE_TYPOGRAPHY) as TypographyToken[]).forEach(token => {
+    const base = BASE_TYPOGRAPHY[token];
+    const live = typography[token];
+    if (typeof base.fontSize === 'number') live.fontSize = Math.round(base.fontSize * factor);
+    if (typeof base.lineHeight === 'number') live.lineHeight = Math.round(base.lineHeight * factor);
+  });
+
+  activeTextScale = next;
+  typographyRevision += 1;
+  return true;
+}
+
+/** The text size currently applied to {@link typography}. */
+export function getTextScale(): TextScale {
+  return activeTextScale;
+}
+
+/**
+ * Bumped whenever {@link setTextScale} changes the tokens.
+ *
+ * `ThemeContext` keys its stylesheet cache on this, so a text-size change
+ * rebuilds every stylesheet exactly once — a palette-only cache key would
+ * happily serve styles built at the previous size.
+ */
+export function getTypographyRevision(): number {
+  return typographyRevision;
+}
+
+/** The unscaled token table, for tests and for documenting the scale itself. */
+export const baseTypography: Record<TypographyToken, TextStyle> = BASE_TYPOGRAPHY;
 
 /**
  * Cap on how far the OS font-size setting may scale a given text token.

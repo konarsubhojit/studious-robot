@@ -1,6 +1,7 @@
 import RNFS from 'react-native-fs';
 import { logError, logInfo } from './appLogger';
-import { THEME_MODE_VALUES, THEME_MODES } from './theme';
+import { DEFAULT_THEME_PREFERENCES, normalizeThemePreferences } from './theme';
+import type { ThemeMode, ThemePreferences } from './theme';
 import { errorMessage } from './errors';
 
 const SETTINGS_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-settings.json`;
@@ -131,40 +132,70 @@ export const IDENTITY_FILE_PATH = IDENTITY_FILE;
 const THEME_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-theme.json`;
 
 /**
- * Load the persisted appearance mode ('system' | 'light' | 'dark').  Unknown
- * or unreadable values fall back to 'system'.
+ * Load the persisted appearance preferences.
+ *
+ * Every field falls back **independently** (see `normalizeThemePreferences`):
+ * a corrupt accent must not also discard a pinned dark mode. An unreadable or
+ * missing file yields the defaults, which are the appearance the app shipped
+ * with.
  */
-export async function loadThemeMode(): Promise<string> {
+export async function loadThemePreferences(): Promise<ThemePreferences> {
   try {
     const exists = await RNFS.exists(THEME_FILE);
-    if (!exists) return THEME_MODES.SYSTEM;
+    if (!exists) return { ...DEFAULT_THEME_PREFERENCES };
     const content = await RNFS.readFile(THEME_FILE, 'utf8');
-    const parsed = JSON.parse(content);
-    return THEME_MODE_VALUES.includes(parsed?.mode) ? parsed.mode : THEME_MODES.SYSTEM;
+    return normalizeThemePreferences(JSON.parse(content));
   } catch (error) {
-    logError('Failed to load theme mode; using system default', {
+    logError('Failed to load theme preferences; using defaults', {
       message: errorMessage(error),
     });
-    return THEME_MODES.SYSTEM;
+    return { ...DEFAULT_THEME_PREFERENCES };
   }
 }
 
 /**
- * Persist the appearance mode.  Failures are logged but never thrown so a
- * write error can't break the toggle that triggered it.
+ * Persist the appearance preferences.  Failures are logged but never thrown so
+ * a write error can't break the control that triggered it.
+ *
+ * The value is normalized before writing, so a bad value can never reach disk
+ * and be read back as a "valid" preference on the next launch.
  *
  * @returns whether the write succeeded
  */
-export async function saveThemeMode(mode: string): Promise<boolean> {
-  const safeMode = THEME_MODE_VALUES.includes(mode) ? mode : THEME_MODES.SYSTEM;
+export async function saveThemePreferences(preferences: ThemePreferences): Promise<boolean> {
+  const safe = normalizeThemePreferences(preferences);
   try {
-    await RNFS.writeFile(THEME_FILE, JSON.stringify({ mode: safeMode }), 'utf8');
-    logInfo('Theme mode persisted', { mode: safeMode });
+    await RNFS.writeFile(THEME_FILE, JSON.stringify(safe), 'utf8');
+    logInfo('Theme preferences persisted', { mode: safe.mode });
     return true;
   } catch (error) {
-    logError('Failed to persist theme mode', { message: errorMessage(error) });
+    logError('Failed to persist theme preferences', { message: errorMessage(error) });
     return false;
   }
+}
+
+/**
+ * Load just the appearance mode ('system' | 'light' | 'dark').
+ *
+ * A thin wrapper over {@link loadThemePreferences}, kept so callers that only
+ * care about the mode do not have to know the wider shape exists.
+ */
+export async function loadThemeMode(): Promise<ThemeMode> {
+  const preferences = await loadThemePreferences();
+  return preferences.mode;
+}
+
+/**
+ * Persist the appearance mode, leaving the other preferences as they are.
+ *
+ * Read-modify-write rather than a blind overwrite: writing `{ mode }` alone
+ * would silently reset the accent and text size the user had chosen.
+ *
+ * @returns whether the write succeeded
+ */
+export async function saveThemeMode(mode: ThemeMode): Promise<boolean> {
+  const preferences = await loadThemePreferences();
+  return saveThemePreferences({ ...preferences, mode });
 }
 
 export const THEME_FILE_PATH = THEME_FILE;
