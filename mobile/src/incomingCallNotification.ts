@@ -67,6 +67,7 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
       callerId: callerId ?? null,
       channelImportance: result.channelImportance ?? null,
       channelHasSound: result.channelHasSound ?? null,
+      ringerMode: result.ringerMode ?? null,
       connectionLive: result.connectionLive ?? null,
     });
 
@@ -82,7 +83,7 @@ export async function showIncomingCallNotification({ callId, callerId, hasVideo 
         channelImportance: importance ?? null,
         channelHasSound: hasSound ?? null,
       });
-      startIncomingRingtone();
+      await startIncomingRingtone();
     }
     return true;
   } catch (error) {

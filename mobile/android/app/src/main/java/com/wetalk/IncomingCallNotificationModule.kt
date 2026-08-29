@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
@@ -67,6 +68,7 @@ class IncomingCallNotificationModule(
       manager.notify(notificationId(callId), buildNotification(callId, callerName, hasVideo, manager))
 
       val result = channelAudioState(manager)
+      result.putString("ringerMode", ringerMode())
       result.putBoolean("shown", true)
       result.putBoolean("connectionLive", CallConnections.isLive(callId))
       Log.i(
@@ -74,6 +76,7 @@ class IncomingCallNotificationModule(
         "Posted incoming-call notification callId=$callId" +
           " importance=${result.getInt("channelImportance")}" +
           " hasSound=${result.getBoolean("channelHasSound")}" +
+          " ringerMode=${result.getString("ringerMode")}" +
           " connectionLive=${result.getBoolean("connectionLive")}",
       )
       promise.resolve(result)
@@ -81,6 +84,20 @@ class IncomingCallNotificationModule(
       Log.e(TAG, "Failed to post incoming-call notification callId=$callId", error)
       promise.reject("INCOMING_CALL_NOTIFICATION_SHOW_FAILED", error)
     }
+  }
+
+  /**
+   * The device's current ringer setting: `"silent"`, `"vibrate"` or
+   * `"normal"`.
+   *
+   * The JS side (`mobile/src/ringerMode.ts`) uses this so an incoming call
+   * honours the switch the user flicked: its in-app ringtone fallback and the
+   * incoming-call haptic stay quiet on a silenced phone instead of ringing
+   * over the top of the (already suppressed) notification sound.
+   */
+  @ReactMethod
+  fun getRingerMode(promise: Promise) {
+    promise.resolve(ringerMode())
   }
 
   @ReactMethod
@@ -141,6 +158,17 @@ class IncomingCallNotificationModule(
     state.putInt("channelImportance", channel?.importance ?: NotificationManager.IMPORTANCE_NONE)
     state.putBoolean("channelHasSound", channel?.sound != null)
     return state
+  }
+
+  /** Maps `AudioManager`'s ringer mode onto the JS vocabulary. */
+  private fun ringerMode(): String {
+    val audioManager = reactContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    return when (audioManager?.ringerMode) {
+      AudioManager.RINGER_MODE_SILENT -> RINGER_MODE_SILENT
+      AudioManager.RINGER_MODE_VIBRATE -> RINGER_MODE_VIBRATE
+      AudioManager.RINGER_MODE_NORMAL -> RINGER_MODE_NORMAL
+      else -> RINGER_MODE_NORMAL
+    }
   }
 
   private fun notificationManager(): NotificationManager =
@@ -215,13 +243,22 @@ class IncomingCallNotificationModule(
         // others. An Activity PendingIntent is always allowed to launch.
         .addAction(0, "Accept", acceptPendingIntent(callId))
 
+    // The channel bypasses Do Not Disturb so calls behave like the system
+    // dialer's, which would also ring straight through a phone the user has
+    // put on silent. Honour that switch explicitly: a silenced device gets the
+    // notification without the channel's sound or vibration.
+    if (ringerMode() == RINGER_MODE_SILENT) {
+      builder.setSilent(true)
+    }
+
     // Android 14+ restricts full-screen intents to apps the user has granted
     // special "Alarms & reminders"-style access to; a non-exempt app that
     // still calls setFullScreenIntent has it silently downgraded to a normal
     // heads-up notification by the platform. Checking explicitly here just
     // lets this module log the degraded case; either way the channel's sound
-    // and vibration (created above) still ring the device, so incoming calls
-    // are never silent even when the full-screen UI can't be drawn.
+    // and vibration (created above) still ring the device — unless the user
+    // silenced it, which is honoured just above — so incoming calls are never
+    // unexpectedly quiet even when the full-screen UI can't be drawn.
     val canUseFullScreenIntent =
       Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || manager.canUseFullScreenIntent()
     if (canUseFullScreenIntent) {
@@ -303,6 +340,11 @@ class IncomingCallNotificationModule(
     private val OBSOLETE_CHANNEL_IDS = listOf("wetalk_incoming_calls")
 
     private const val TAG = "WeTalkCallNotification"
+
+    /** Ringer modes as named on the JS side (`mobile/src/ringerMode.ts`). */
+    private const val RINGER_MODE_SILENT = "silent"
+    private const val RINGER_MODE_VIBRATE = "vibrate"
+    private const val RINGER_MODE_NORMAL = "normal"
     const val ACTION_ACCEPT = "com.wetalk.action.ACCEPT_CALL"
     const val ACTION_DECLINE = "com.wetalk.action.DECLINE_CALL"
     private val VIBRATION_PATTERN = longArrayOf(0, 1000, 1000)

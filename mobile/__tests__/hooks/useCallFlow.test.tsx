@@ -60,6 +60,7 @@ jest.mock('../../src/audioRouting', () => ({
     Promise.resolve({ ok: true, selected: 'earpiece', available: ['earpiece'] }),
   ),
   chooseAudioRoute: jest.fn(),
+  restoreInCallAudioSession: jest.fn(async () => ({ ok: true })),
   setAudioRoute: jest.fn(() => ({ ok: true })),
   startAudioSession: jest.fn(() => ({ ok: true })),
   stopAudioSession: jest.fn(() => ({ ok: true })),
@@ -195,10 +196,18 @@ jest.mock('../../src/incomingCallNotification', () => ({
 }));
 
 jest.mock('../../src/ringtone', () => ({
-  startIncomingRingtone: jest.fn(),
-  startOutgoingRingback: jest.fn(),
+  startIncomingRingtone: jest.fn(async () => true),
   stopIncomingRingtone: jest.fn(),
-  stopOutgoingRingback: jest.fn(),
+}));
+
+jest.mock('../../src/ringerMode', () => ({
+  shouldRingAudibly: jest.fn(async () => true),
+  shouldVibrateForRing: jest.fn(async () => true),
+}));
+
+jest.mock('../../src/haptics', () => ({
+  initHaptics: jest.fn(() => jest.fn()),
+  triggerHaptic: jest.fn(),
 }));
 
 jest.mock('../../src/pushNotifications', () => ({
@@ -1326,6 +1335,40 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(startIncomingRingtone).toHaveBeenCalledTimes(1);
   });
 
+  test('a silenced phone gets the incoming-call UI without the ring haptic', async () => {
+    const { shouldVibrateForRing } = require('../../src/ringerMode');
+    const { triggerHaptic } = require('../../src/haptics');
+    (shouldVibrateForRing as jest.Mock).mockResolvedValueOnce(false);
+
+    await renderWithSocket();
+    (triggerHaptic as jest.Mock).mockClear();
+
+    const handler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await handler({ call: { callId: 'call-silent', callerId: 'iris' } });
+    });
+    await act(async () => {});
+
+    const { displayIncomingCall } = require('../../src/callKeep');
+    expect(displayIncomingCall).toHaveBeenCalled();
+    expect(triggerHaptic).not.toHaveBeenCalledWith('incomingRing');
+  });
+
+  test('a phone that may vibrate buzzes for an incoming call', async () => {
+    const { triggerHaptic } = require('../../src/haptics');
+
+    await renderWithSocket();
+    (triggerHaptic as jest.Mock).mockClear();
+
+    const handler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await handler({ call: { callId: 'call-buzz', callerId: 'ivan' } });
+    });
+    await act(async () => {});
+
+    expect(triggerHaptic).toHaveBeenCalledWith('incomingRing');
+  });
+
   test('does not start fallback ringtone when CallKeep succeeds', async () => {
     const { displayIncomingCall } = require('../../src/callKeep');
     const { startIncomingRingtone } = require('../../src/ringtone');
@@ -1342,10 +1385,10 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(startIncomingRingtone).not.toHaveBeenCalled();
   });
 
-  // ── Outgoing ringback ─────────────────────────────────────────────────────
+  // ── Outgoing calls never ring locally ─────────────────────────────────────
 
-  test('placeCall starts outgoing ringback after the server reports ringing', async () => {
-    const { startOutgoingRingback } = require('../../src/ringtone');
+  test('placeCall never rings on the caller side', async () => {
+    const { startIncomingRingtone } = require('../../src/ringtone');
     const { mediaDevices } = require('react-native-webrtc');
     (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
       getTracks: () => [],
@@ -1387,11 +1430,10 @@ describe('useCallFlow incoming-call ringing', () => {
 
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.OUTGOING_RINGING);
     expect(resultRef.current.status.message).toBe('Ringing bob…');
-    expect(startOutgoingRingback).toHaveBeenCalledTimes(1);
+    expect(startIncomingRingtone).not.toHaveBeenCalled();
   });
 
-  test('call.state_changed "accepted" stops outgoing ringback and shows connecting status', async () => {
-    const { stopOutgoingRingback } = require('../../src/ringtone');
+  test('call.state_changed "accepted" shows connecting status', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an outgoing ringing call in hook state.
@@ -1445,7 +1487,6 @@ describe('useCallFlow incoming-call ringing', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(stopOutgoingRingback).toHaveBeenCalled();
     expect(resultRef.current.status.message).toBe('Call accepted, connecting media…');
   });
 
@@ -4543,5 +4584,83 @@ describe('useCallFlow answer path', () => {
     });
 
     expect(audioRouting.applyPreferredAudioRoute).not.toHaveBeenCalled();
+  });
+
+  test('unmuting restores the in-call audio session on the selected device', async () => {
+    const audioRouting = require('../../src/audioRouting');
+    (audioRouting.applyPreferredAudioRoute as jest.Mock).mockResolvedValue({
+      ok: true,
+      selected: 'bluetooth',
+      available: ['bluetooth', 'earpiece'],
+    });
+
+    const { setTrackEnabled } = require('../../src/mediaControls');
+    const audioTrack = { kind: 'audio', enabled: true };
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [audioTrack],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [audioTrack],
+    });
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => []),
+      setRemoteDescription: jest.fn().mockResolvedValue(undefined),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'a' }),
+      addIceCandidate: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'answer', sdp: 'a' },
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    }));
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-mute', callerId: 'quinn' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
+      cb?.({ ok: true, call });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    const offerHandler = getSocketHandler('rtc.offer');
+    await act(async () => {
+      await offerHandler({ callId: 'call-mute', sdp: { type: 'offer', sdp: 'o' } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    (audioRouting.restoreInCallAudioSession as jest.Mock).mockClear();
+    (setTrackEnabled as jest.Mock).mockClear();
+
+    await act(async () => {
+      resultRef.current.handleMuteToggle();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // Muting only stops the microphone; the session is left alone.
+    expect(resultRef.current.isMuted).toBe(true);
+    expect(setTrackEnabled).toHaveBeenLastCalledWith(expect.anything(), 'audio', false);
+    expect(audioRouting.restoreInCallAudioSession).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resultRef.current.handleMuteToggle();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // Unmuting re-opens the capture path, so the in-call session (and with it
+    // the echo canceller) is re-asserted on the device already in use.
+    expect(resultRef.current.isMuted).toBe(false);
+    expect(setTrackEnabled).toHaveBeenLastCalledWith(expect.anything(), 'audio', true);
+    expect(audioRouting.restoreInCallAudioSession).toHaveBeenCalledWith('bluetooth');
   });
 });

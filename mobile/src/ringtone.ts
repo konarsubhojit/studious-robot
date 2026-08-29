@@ -1,5 +1,6 @@
 import { logInfo, logWarn } from './appLogger';
 import { errorMessage } from './errors';
+import { shouldRingAudibly } from './ringerMode';
 
 /**
  * JS-layer incoming-call ringtone fallback for the WeTalk mobile app.
@@ -9,13 +10,19 @@ import { errorMessage } from './errors';
  * `react-native-incall-manager` native package, which exposes audio session /
  * ringtone controls for VoIP apps.
  *
+ * Only the *receiving* side ever rings: a caller waiting for the callee to
+ * pick up gets no ringback tone, so placing a call never makes noise on a
+ * device whose owner asked for silence, and the caller's audio session is left
+ * untouched until the call is actually connected.
+ *
  * Behaviour contract
  * ──────────────────
- * - `startIncomingRingtone()` / `startOutgoingRingback()` are idempotent:
- *   calling either while already playing is a safe no-op.
- * - `stopIncomingRingtone()` / `stopOutgoingRingback()` are idempotent: calling
- *   them when not playing, or calling them multiple times, is always safe.
- * - Both helpers return `void` and never throw.
+ * - `startIncomingRingtone()` is idempotent: calling it while already ringing
+ *   is a safe no-op, and it never rings when the device ringer is on silent or
+ *   vibrate.
+ * - `stopIncomingRingtone()` is idempotent: calling it when not playing, or
+ *   calling it multiple times, is always safe.
+ * - Neither helper throws.
  * - When the native module is absent the helpers degrade gracefully to no-ops
  *   so the JS bundle still builds and runs without the native dependency.
  */
@@ -28,7 +35,6 @@ import { errorMessage } from './errors';
 export type InCallManager = {
   start?: (options: { media: boolean; ringback?: string }) => void;
   stop?: () => void;
-  stopRingback?: () => void;
 };
 
 /**
@@ -64,21 +70,46 @@ export function _resetRingtoneCache() {
   cachedInCallManager = undefined;
   hasLoggedMissingInCallManager = false;
   _isRinging = false;
-  _isRingbackPlaying = false;
+  _ringEpoch = 0;
 }
 
 /** Tracks whether the fallback ringtone is currently playing. */
 let _isRinging = false;
-let _isRingbackPlaying = false;
+
+/**
+ * Bumped by every `stopIncomingRingtone()` so a start that is still reading the
+ * (asynchronous) ringer state can tell that the call it was ringing for has
+ * already been answered or cancelled, and stay quiet.
+ */
+let _ringEpoch = 0;
 
 /**
  * Start the incoming-call ringtone via InCallManager if available.
- * No-op when already ringing or when the native module is absent.
+ *
+ * No-op when already ringing, when the device ringer is set to silent or
+ * vibrate, or when the native module is absent.
+ *
+ * @returns whether the ringtone is now playing.
  */
-export function startIncomingRingtone() {
-  if (_isRinging) return;
+export async function startIncomingRingtone(): Promise<boolean> {
+  if (_isRinging) return true;
+  const epoch = _ringEpoch;
+
+  if (!(await shouldRingAudibly())) {
+    logInfo('[Ringtone] Device ringer is silent; skipping fallback ringtone');
+    return false;
+  }
+
+  // The ringer state is read asynchronously, so the call may have been answered
+  // (or another start may have won the race) in the meantime.
+  if (_isRinging) return true;
+  if (epoch !== _ringEpoch) {
+    logInfo('[Ringtone] Ringing was stopped before the ringer state resolved');
+    return false;
+  }
+
   const manager = loadInCallManager();
-  if (!manager) return;
+  if (!manager) return false;
 
   try {
     // `start` with `ringback: '_BUNDLE_'` plays the system ringtone on Android.
@@ -95,6 +126,8 @@ export function startIncomingRingtone() {
   } catch (error) {
     logWarn('[Ringtone] startIncomingRingtone failed', { message: errorMessage(error) });
   }
+
+  return _isRinging;
 }
 
 /**
@@ -102,6 +135,7 @@ export function startIncomingRingtone() {
  * Safe to call multiple times; no-op when not currently ringing.
  */
 export function stopIncomingRingtone() {
+  _ringEpoch += 1;
   if (!_isRinging) return;
   _isRinging = false;
 
@@ -115,54 +149,5 @@ export function stopIncomingRingtone() {
     }
   } catch (error) {
     logWarn('[Ringtone] stopIncomingRingtone failed', { message: errorMessage(error) });
-  }
-}
-
-/**
- * Start an outgoing ringback tone so the caller gets audible feedback while the
- * remote side is ringing.  Uses the same native module as the incoming fallback
- * and degrades to a no-op when unavailable.
- */
-export function startOutgoingRingback() {
-  if (_isRingbackPlaying) return;
-  const manager = loadInCallManager();
-  if (!manager) return;
-
-  try {
-    if (typeof manager.start !== 'function') {
-      logWarn('[Ringtone] startOutgoingRingback unavailable; native module has no start');
-      return;
-    }
-    if (typeof manager.stopRingback !== 'function') {
-      logWarn('[Ringtone] startOutgoingRingback unavailable; native module has no stopRingback');
-      return;
-    }
-    manager.start({ media: false, ringback: '_BUNDLE_' });
-    _isRingbackPlaying = true;
-    logInfo('[Ringtone] Outgoing ringback started');
-  } catch (error) {
-    logWarn('[Ringtone] startOutgoingRingback failed', { message: errorMessage(error) });
-  }
-}
-
-/**
- * Stop the outgoing ringback tone.
- */
-export function stopOutgoingRingback() {
-  if (!_isRingbackPlaying) return;
-  _isRingbackPlaying = false;
-
-  const manager = loadInCallManager();
-  if (!manager) return;
-
-  try {
-    if (typeof manager.stopRingback === 'function') {
-      manager.stopRingback();
-      logInfo('[Ringtone] Outgoing ringback stopped');
-    } else {
-      logWarn('[Ringtone] stopOutgoingRingback unavailable; native module has no stopRingback');
-    }
-  } catch (error) {
-    logWarn('[Ringtone] stopOutgoingRingback failed', { message: errorMessage(error) });
   }
 }
