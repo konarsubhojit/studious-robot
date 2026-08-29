@@ -39,6 +39,18 @@ export const AUDIO_ROUTE_PRIORITY = [
   AUDIO_ROUTES.SPEAKER_PHONE,
 ];
 
+/**
+ * Routes that can physically disappear during a call.
+ *
+ * The earpiece and the loudspeaker are part of the handset and are always
+ * usable, so a device list that omits one of them means the native side simply
+ * did not enumerate it — never that the user lost that route.
+ */
+export const DETACHABLE_AUDIO_ROUTES = [
+  AUDIO_ROUTES.BLUETOOTH,
+  AUDIO_ROUTES.WIRED_HEADSET,
+];
+
 const NATIVE_DEVICE_EVENT = 'onAudioDeviceChanged';
 
 const GENERIC_AUDIO_SESSION_ERROR =

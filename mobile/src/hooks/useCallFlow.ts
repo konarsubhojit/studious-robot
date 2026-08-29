@@ -20,6 +20,8 @@ import {
   applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
+  DETACHABLE_AUDIO_ROUTES,
+  getAudioRouteLabel,
   restoreInCallAudioSession,
   setAudioRoute,
   startAudioSession,
@@ -40,6 +42,7 @@ import {
   CALL_END_REASON_LABELS,
   collectCallStats,
   getConnectionQuality,
+  smoothConnectionQuality,
   summarizeCandidatePair,
 } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
@@ -517,6 +520,12 @@ export default function useCallFlow({
   // without re-creating the timer on every toggle.
   const isScreenSharingRef = useRef(false);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
+  // Hysteresis state for the quality indicator: a single bad sample must not
+  // be allowed to flip the bars, so the smoother remembers how many
+  // consecutive worse samples have been seen. Reset whenever a call ends.
+  const qualitySmootherRef = useRef(
+    (null as { reported: { bars: number; label: string; }; pendingWorse: number; } | null),
+  );
   const connectionStatsRef = useRef(
     ({
       timestampMs: null,
@@ -708,6 +717,7 @@ export default function useCallFlow({
 
   const {
     isScreenSharing,
+    isTogglingScreenShare,
     isScreenAudioShared,
     isScreenAudioEnabled,
     isScreenShareSupported,
@@ -3705,6 +3715,7 @@ export default function useCallFlow({
   useEffect(() => {
     if (!isInCall) {
       setConnectionQuality({ bars: 0, label: 'No link' });
+      qualitySmootherRef.current = null;
       connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
       selectedCandidatePairRef.current = null;
       setSelectedCandidatePair(null);
@@ -3777,11 +3788,16 @@ export default function useCallFlow({
 
         const denominator = totalPacketsReceived + totalPacketsLost;
         const packetLossRatio = denominator > 0 ? totalPacketsLost / denominator : undefined;
-        const nextQuality = getConnectionQuality({
+        const sampledQuality = getConnectionQuality({
           rttMs,
           packetLossRatio,
           bitrateKbps,
         });
+        qualitySmootherRef.current = smoothConnectionQuality(
+          qualitySmootherRef.current,
+          sampledQuality,
+        );
+        const nextQuality = qualitySmootherRef.current.reported;
         setConnectionQuality(nextQuality);
 
         // Surface a status warning when packet loss is severe enough to impair
@@ -3797,11 +3813,33 @@ export default function useCallFlow({
       }
     };
 
-    pollStats();
-    const intervalId = setInterval(pollStats, STATS_POLL_INTERVAL_MS);
+    // Polling is a foreground-only concern: `getStats()` walks the whole
+    // report every 7 seconds, and while the app is backgrounded there is no
+    // indicator on screen to consume the result — only battery to spend on it.
+    // A foreground transition takes a sample straight away so the bars are
+    // current by the time the user can see them.
+    let intervalId = (null as ReturnType<typeof setInterval> | null);
+    const startPolling = () => {
+      if (intervalId) return;
+      pollStats();
+      intervalId = setInterval(pollStats, STATS_POLL_INTERVAL_MS);
+    };
+    const stopPolling = () => {
+      if (!intervalId) return;
+      clearInterval(intervalId);
+      intervalId = null;
+    };
+
+    if (AppState.currentState !== 'background') startPolling();
+    const subscription = AppState.addEventListener?.('change', nextState => {
+      if (nextState === 'background') stopPolling();
+      else startPolling();
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      stopPolling();
+      subscription?.remove?.();
     };
   }, [activeIceTransportPolicy, isInCall, updateStatus]);
 
@@ -3876,9 +3914,27 @@ export default function useCallFlow({
     return subscribeAudioDevices(nextDevices => {
       logInfo('[CallFlow] Audio devices changed', nextDevices);
       setAudioDevices(nextDevices);
+      // A *detachable* device the user picked by hand can vanish mid-call (a
+      // headset runs out of battery, a cable is pulled). The automatic route
+      // silently takes over below, which is right — but saying nothing leaves
+      // the user talking into a phone that is now on speaker in a public
+      // place, so the hand-over is announced and the manual choice released.
+      //
+      // Only the detachable routes are checked: the earpiece and the
+      // loudspeaker are part of the handset and cannot disappear, and a device
+      // list that happens to omit one of them must not be read as an unplug.
+      const manualRoute = manualAudioRouteRef.current;
+      if (
+        manualRoute &&
+        DETACHABLE_AUDIO_ROUTES.includes(manualRoute) &&
+        !nextDevices.available.includes(manualRoute)
+      ) {
+        manualAudioRouteRef.current = null;
+        updateStatus(`${getAudioRouteLabel(manualRoute)} disconnected — switching audio output`);
+      }
       applyAutomaticAudioRoute(nextDevices.available);
     });
-  }, [applyAutomaticAudioRoute, isInCall]);
+  }, [applyAutomaticAudioRoute, isInCall, updateStatus]);
 
   useEffect(() => {
     if (!isInCall || !isSpeakerEnabled) return;
@@ -3996,6 +4052,7 @@ export default function useCallFlow({
     isVideoEnabled,
     isSpeakerEnabled,
     isScreenSharing,
+    isTogglingScreenShare,
     isScreenAudioShared,
     isScreenAudioEnabled,
     isScreenShareSupported,

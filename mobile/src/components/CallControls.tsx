@@ -14,6 +14,8 @@ export type CallControlsProps = {
   audioDevices?: { available?: string[]; selected?: string | null; };
   isSpeakerEnabled: boolean;
   isScreenSharing?: boolean;
+  /** True while a start/stop is in flight (capture prompt, renegotiation). */
+  isTogglingScreenShare?: boolean;
   isScreenAudioEnabled?: boolean;
   isScreenAudioShared?: boolean;
   isScreenShareSupported?: boolean;
@@ -46,6 +48,7 @@ export default function CallControls({
   audioDevices,
   isSpeakerEnabled,
   isScreenSharing = false,
+  isTogglingScreenShare = false,
   isScreenAudioEnabled = false,
   isScreenAudioShared = false,
   isScreenShareSupported = true,
@@ -147,14 +150,29 @@ export default function CallControls({
           title="More options"
           testID="call-more-sheet">
           <ListItem
-            title={isScreenSharing ? 'Stop sharing your screen' : 'Share your screen'}
+            title={
+              isTogglingScreenShare
+                ? isScreenSharing
+                  ? 'Stopping…'
+                  : 'Starting…'
+                : isScreenSharing
+                  ? 'Stop sharing your screen'
+                  : 'Share your screen'
+            }
             subtitle={
               isScreenShareSupported ? null : 'Not supported on this device'
             }
             icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
-            disabled={!isScreenShareSupported}
+            // A toggle already in flight is inert, not silently ignored: the
+            // hook drops the second tap either way, so the control has to say
+            // so rather than looking unresponsive.
+            disabled={!isScreenShareSupported || isTogglingScreenShare}
             accessibilityRole="switch"
-            accessibilityState={{ checked: isScreenSharing, disabled: !isScreenShareSupported }}
+            accessibilityState={{
+              checked: isScreenSharing,
+              disabled: !isScreenShareSupported || isTogglingScreenShare,
+              busy: isTogglingScreenShare,
+            }}
             onPress={() => {
               setIsMoreOpen(false);
               onScreenShareToggle?.();

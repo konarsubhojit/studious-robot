@@ -314,3 +314,37 @@ describe('useScreenShare', () => {
     expect(params.setStatus).toHaveBeenLastCalledWith('Screen sharing produced no video', 'error');
   });
 });
+
+describe('useScreenShare in-flight state', () => {
+  test('reports the toggle as in flight until the capture settles', async () => {
+    let releaseCapture: (value: any) => void = () => {};
+    (screenShare.startScreenCapture as jest.Mock).mockReturnValue(
+      new Promise(resolve => {
+        releaseCapture = resolve;
+      }),
+    );
+    const { resultRef } = setup({ renegotiate: jest.fn(() => Promise.resolve()) });
+
+    expect(resultRef.current.isTogglingScreenShare).toBe(false);
+
+    let toggled: Promise<void>;
+    act(() => {
+      toggled = resultRef.current.handleScreenShareToggle();
+    });
+    expect(resultRef.current.isTogglingScreenShare).toBe(true);
+
+    await act(async () => {
+      releaseCapture({
+        ok: true,
+        stream: { id: 'screen' },
+        videoTrack: makeTrack('video'),
+        audioTrack: null,
+        audioShared: false,
+      });
+      await toggled;
+    });
+
+    expect(resultRef.current.isTogglingScreenShare).toBe(false);
+    expect(resultRef.current.isScreenSharing).toBe(true);
+  });
+});

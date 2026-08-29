@@ -51,6 +51,7 @@ export default function CallScreen({
   audioDevices,
   isSpeakerEnabled,
   isScreenSharing,
+  isTogglingScreenShare,
   isScreenAudioEnabled,
   isScreenAudioShared,
   isScreenShareSupported,
@@ -259,6 +260,7 @@ export default function CallScreen({
               audioDevices={audioDevices}
               isSpeakerEnabled={isSpeakerEnabled}
               isScreenSharing={isScreenSharing}
+              isTogglingScreenShare={isTogglingScreenShare}
               isScreenAudioEnabled={isScreenAudioEnabled}
               isScreenAudioShared={isScreenAudioShared}
               isScreenShareSupported={isScreenShareSupported}
