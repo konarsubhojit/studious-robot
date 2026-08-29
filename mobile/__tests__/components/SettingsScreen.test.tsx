@@ -345,6 +345,94 @@ describe('SettingsScreen', () => {
     });
   });
 
+  describe('transient confirmations', () => {
+    /** The rendered toast message, or null when no toast is showing. */
+    function toastMessage(tree: any) {
+      const host = findByTestID(tree, 'settings-toast').filter(
+        (n: any) => typeof n.type !== 'string',
+      )[0];
+      return host?.props?.message ?? null;
+    }
+
+    test('says nothing until something has happened', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(<SettingsScreen {...baseProps} />);
+      });
+      expect(toastMessage(tree)).toBeNull();
+    });
+
+    test('confirms clearing cached media', () => {
+      const onClearCachedMedia = jest.fn();
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} onClearCachedMedia={onClearCachedMedia} />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-clear-media');
+      expect(onClearCachedMedia).toHaveBeenCalled();
+      expect(toastMessage(tree)).toBe('Cached media cleared');
+    });
+
+    test('confirms unmuting and unblocking by name', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            mutedPeers={['user-bob']}
+            onUnmutePeer={jest.fn()}
+            blockedUsers={['user-carol']}
+            onUnblockUser={jest.fn()}
+          />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-unmute');
+      expect(toastMessage(tree)).toBe('user-bob unmuted');
+
+      pressByTestID(tree, 'settings-unblock');
+      expect(toastMessage(tree)).toBe('user-carol unblocked');
+    });
+
+    test('a persistent condition stays on the banner, not the toast', () => {
+      // The three-level rule: a condition that is still true occupies layout
+      // until it stops being true; only completed events fade away.
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen
+            {...baseProps}
+            status={{ message: 'Server unreachable', severity: 'error' }}
+          />,
+        );
+      });
+
+      expect(toastMessage(tree)).toBeNull();
+      expect(findByTestID(tree, 'status-banner').length).toBeGreaterThan(0);
+    });
+
+    test('clears itself when the toast dismisses', () => {
+      let tree: any;
+      act(() => {
+        tree = renderer.create(
+          <SettingsScreen {...baseProps} onClearCachedMedia={jest.fn()} />,
+        );
+      });
+
+      pressByTestID(tree, 'settings-clear-media');
+      const toast = findByTestID(tree, 'settings-toast').filter(
+        (n: any) => typeof n.type !== 'string',
+      )[0];
+      act(() => {
+        toast.props.onDismiss();
+      });
+      expect(toastMessage(tree)).toBeNull();
+    });
+  });
+
   describe('appearance', () => {
     function renderWithTheme(mode: any, setMode: any) {
       let tree;

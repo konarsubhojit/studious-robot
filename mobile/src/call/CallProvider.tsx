@@ -21,6 +21,7 @@ export type CallContextValue = {
   handleAutoLightingToggle: AppSettings['handleAutoLightingToggle'];
   handleSpeakerDefaultToggle: AppSettings['handleSpeakerDefaultToggle'];
   handleDeveloperModeToggle: AppSettings['handleDeveloperModeToggle'];
+  handleHapticsToggle: AppSettings['handleHapticsToggle'];
   handleIceTransportPolicyChange: AppSettings['handleIceTransportPolicyChange'];
   callState: CallFlow['callPhase'];
   isCallActive: boolean;
@@ -176,6 +177,7 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       handleAutoLightingToggle: appSettings.handleAutoLightingToggle,
       handleSpeakerDefaultToggle: appSettings.handleSpeakerDefaultToggle,
       handleDeveloperModeToggle: appSettings.handleDeveloperModeToggle,
+      handleHapticsToggle: appSettings.handleHapticsToggle,
       handleIceTransportPolicyChange: appSettings.handleIceTransportPolicyChange,
       // Unified call state machine view
       callState,

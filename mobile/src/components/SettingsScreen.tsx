@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -18,11 +18,12 @@ import { radius, sizes, spacing, touchSlop, typography } from '../theme';
 import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcConfig';
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
-import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch } from './primitives';
+import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, Toast } from './primitives';
 import StatusBanner from './StatusBanner';
 import type { CallStatus } from './StatusBanner';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
+import type { ToastTone } from './primitives';
 
 const ICE_TRANSPORT_POLICY_OPTIONS = [
   { policy: ICE_TRANSPORT_POLICIES.ALL, label: 'Default', testID: 'settings-ice-policy-all' },
@@ -68,6 +69,10 @@ export type SettingsScreenProps = {
   autoLightingEnabled?: boolean;
   /** Toggle automatic camera lighting. */
   onToggleAutoLighting?: () => void;
+  /** Vibrate to confirm call controls and state changes. */
+  hapticsEnabled?: boolean;
+  /** Toggle haptic feedback. */
+  onToggleHaptics?: () => void;
   /** Current WebRTC ICE transport policy. */
   iceTransportPolicy?: string;
   /** Persist the WebRTC ICE transport policy used for new calls. */
@@ -140,6 +145,8 @@ function SettingsScreen({
   onToggleSpeakerDefault,
   autoLightingEnabled,
   onToggleAutoLighting,
+  hapticsEnabled = true,
+  onToggleHaptics,
   iceTransportPolicy = ICE_TRANSPORT_POLICIES.ALL,
   onChangeIceTransportPolicy,
   messageNotificationsEnabled = true,
@@ -157,6 +164,15 @@ function SettingsScreen({
   const [url, setUrl] = useState(signalingUrl ?? '');
   const [isEditingSignalingUrl, setIsEditingSignalingUrl] = useState(false);
   const [isShowingLicenses, setIsShowingLicenses] = useState(false);
+  // Transient confirmations, per the three-level rule in `Banner.tsx`: an
+  // *event* that has already happened is a toast, a *condition* that persists
+  // (`status`, below) stays with the banner, and a blocking failure stays with
+  // `ErrorState`. These actions previously confirmed nothing at all — unmuting
+  // someone removed a row, but clearing media or saving a server address gave
+  // no sign the app had heard the tap.
+  const [toast, setToast] = useState<{ message: string; tone: ToastTone; } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
+  const confirm = (message: string) => setToast({ message, tone: 'success' });
 
   // Measured when the screen appears rather than continuously: nothing outside
   // this screen reads the number, and the crawl is not free.
@@ -179,6 +195,7 @@ function SettingsScreen({
   const saveSignalingUrl = () => {
     onSaveSignalingUrl(trimmedUrl);
     setIsEditingSignalingUrl(false);
+    confirm('Signaling server saved');
   };
 
   return (
@@ -264,7 +281,10 @@ function SettingsScreen({
                       icon="unmuteNotifications"
                       accessibilityLabel={`Unmute ${peer}`}
                       accessibilityHint="Lets their messages notify you again"
-                      onPress={() => onUnmutePeer(peer)}
+                      onPress={() => {
+                        onUnmutePeer(peer);
+                        confirm(`${peer} unmuted`);
+                      }}
                       size={40}
                       testID="settings-unmute"
                     />
@@ -277,7 +297,7 @@ function SettingsScreen({
         )}
 
         {/* ── Calls & media ───────────────────────────────────────────────── */}
-        {onToggleSpeakerDefault || onToggleAutoLighting ? (
+        {onToggleSpeakerDefault || onToggleAutoLighting || onToggleHaptics ? (
           <>
             <SectionHeader title="Calls &amp; media" icon="settingsCalls" />
             {/* These two used to live inside the Lobby's developer-tools panel,
@@ -298,6 +318,18 @@ function SettingsScreen({
                 value={Boolean(autoLightingEnabled)}
                 onValueChange={onToggleAutoLighting}
                 testID="settings-auto-lighting"
+              />
+            ) : null}
+            {onToggleHaptics ? (
+              // Deliberately *not* folded into the OS "reduce motion" setting:
+              // that asks for less animation, while a vibration is often the
+              // only confirmation that a tap registered.
+              <Switch
+                label="Haptic feedback"
+                hint="Vibrate to confirm call controls and call state changes."
+                value={Boolean(hapticsEnabled)}
+                onValueChange={onToggleHaptics}
+                testID="settings-haptics"
               />
             ) : null}
           </>
@@ -329,7 +361,10 @@ function SettingsScreen({
                   onUnblockUser ? (
                     <AppButton
                       title="Unblock"
-                      onPress={() => onUnblockUser(peer)}
+                      onPress={() => {
+                        onUnblockUser(peer);
+                        confirm(`${peer} unblocked`);
+                      }}
                       style={styles.inlineButton}
                       accessibilityLabel={`Unblock ${peer}`}
                       accessibilityHint="Lets them call and message you again"
@@ -382,7 +417,14 @@ function SettingsScreen({
                   + 'They download again when you open them.'
             }
             icon="settingsMedia"
-            onPress={isClearingMedia ? undefined : onClearCachedMedia}
+            onPress={
+              isClearingMedia
+                ? undefined
+                : () => {
+                    onClearCachedMedia();
+                    confirm('Cached media cleared');
+                  }
+            }
             disabled={isClearingMedia}
             accessibilityLabel="Clear cached media"
             accessibilityHint="Removes downloaded photos and voice notes from this device"
@@ -546,6 +588,17 @@ function SettingsScreen({
           ))}
         </ScrollView>
       </Sheet>
+
+      {/* Floated above the list rather than inserted into it: a confirmation
+          that pushed the content down would move the row the user just tapped. */}
+      <View style={styles.toastLayer} pointerEvents="box-none">
+        <Toast
+          message={toast?.message}
+          tone={toast?.tone}
+          onDismiss={dismissToast}
+          testID="settings-toast"
+        />
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -563,6 +616,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     statusBanner: {
       marginBottom: spacing.sm,
+    },
+    toastLayer: {
+      position: 'absolute',
+      left: spacing.lg,
+      right: spacing.lg,
+      bottom: spacing.lg,
     },
     headerRow: {
       flexDirection: 'row',

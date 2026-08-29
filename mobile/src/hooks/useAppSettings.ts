@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { setHapticsEnabled } from '../haptics';
 import { loadSettings, saveSettings } from '../settingsStorage';
 import {
   ICE_TRANSPORT_POLICIES,
@@ -12,6 +13,8 @@ export type AppSettingsValues = {
   speakerEnabledByDefault: boolean;
   developerModeEnabled: boolean;
   iceTransportPolicy: IceTransportPolicy;
+  /** Vibrate to confirm call controls and state changes. */
+  hapticsEnabled: boolean;
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
@@ -19,6 +22,7 @@ export const DEFAULT_APP_SETTINGS: AppSettingsValues = {
   speakerEnabledByDefault: true,
   developerModeEnabled: false,
   iceTransportPolicy: ICE_TRANSPORT_POLICIES.ALL,
+  hapticsEnabled: true,
 };
 
 /**
@@ -39,6 +43,10 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
         ...loaded,
         iceTransportPolicy: normalizeIceTransportPolicy(loaded.iceTransportPolicy),
       });
+      // `haptics` is reachable from plain call-state code, not only from
+      // components, so the preference is pushed into the module rather than
+      // read from this hook's state.
+      setHapticsEnabled(loaded.hapticsEnabled);
     });
     return () => {
       cancelled = true;
@@ -84,6 +92,16 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     );
   }, [persistSetting, settings.developerModeEnabled]);
 
+  const handleHapticsToggle = useCallback(() => {
+    const nextValue = !settings.hapticsEnabled;
+    setHapticsEnabled(nextValue);
+    persistSetting(
+      'hapticsEnabled',
+      nextValue,
+      nextValue ? 'Haptic feedback enabled' : 'Haptic feedback disabled',
+    );
+  }, [persistSetting, settings.hapticsEnabled]);
+
   const handleIceTransportPolicyChange = useCallback(
     (policy: string) => {
       const nextPolicy = normalizeIceTransportPolicy(policy);
@@ -105,6 +123,7 @@ export default function useAppSettings({ onStatus }: { onStatus?: (message: stri
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
     handleDeveloperModeToggle,
+    handleHapticsToggle,
     handleIceTransportPolicyChange,
   };
 }
