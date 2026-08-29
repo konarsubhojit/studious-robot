@@ -85,15 +85,15 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Turn a failed presign/upload response into the message shown to the user.
- */
-/**
  * The message carried by the {@link AttachmentError} raised when an upload is
  * aborted by the user, rather than failing. Callers compare against this to
  * tell "cancelled" apart from "broken".
  */
 export const ATTACHMENT_CANCELLED_MESSAGE = 'Upload cancelled';
 
+/**
+ * Turn a failed presign/upload response into the message shown to the user.
+ */
 export function describeAttachmentError({ status, message }: { status?: number; message?: string; } = {}): string {
   if (status === 503) return "Attachments aren't available on this server";
   if (status === 413) return 'That file is too large to send';
