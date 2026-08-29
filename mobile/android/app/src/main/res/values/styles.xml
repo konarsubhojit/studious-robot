@@ -4,6 +4,24 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <!--
+            System chrome, painted before React Native mounts.
+
+            `windowBackground` stops a cold start flashing the platform default
+            (white) before the app's own background is drawn. The status and
+            navigation bars are tinted to the same colour so the whole screen
+            reads as one surface rather than as a light frame around a dark app.
+
+            React Native re-tints the *status* bar from the live palette once it
+            mounts (`AppShell`), which is what makes it follow a scheme the user
+            pinned inside the app. The **navigation bar cannot follow that**: RN
+            core exposes no API for it and this app deliberately carries no
+            navigation-bar dependency, so it tracks the OS scheme only, via the
+            `values-night` variant of this file.
+        -->
+        <item name="android:windowBackground">@color/windowBackground</item>
+        <item name="android:statusBarColor">@color/windowBackground</item>
+        <item name="android:navigationBarColor">@color/windowBackground</item>
     </style>
 
 </resources>

@@ -175,9 +175,18 @@ export default function AppShell() {
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
+      {/* System chrome follows the palette, including the variants: a
+          high-contrast or true-black background reaches the status bar too,
+          because the colour is read from the active palette rather than from
+          the scheme name. A full-screen call is the exception — the video stage
+          is fixed-dark in *both* schemes (see `stage`), so a light-scheme user
+          would otherwise get a white status bar with dark icons sitting on top
+          of black video. This changes only the bar's colour, never the layout:
+          `translucent={false}` keeps it out of the safe-area inset this view
+          already pads for. */}
       <StatusBar
-        barStyle={scheme === 'light' ? 'dark-content' : 'light-content'}
-        backgroundColor={colors.background}
+        barStyle={isCallFullScreen || scheme !== 'light' ? 'light-content' : 'dark-content'}
+        backgroundColor={isCallFullScreen ? colors.stage : colors.background}
         translucent={false}
       />
     </View>

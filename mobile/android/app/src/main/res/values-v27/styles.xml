@@ -1,0 +1,18 @@
+<resources>
+
+    <!-- Dark system-bar icons over the light window background. Both flags need
+         API 27 (`windowLightNavigationBar`), which is why this is a `-v27`
+         variant rather than part of the base theme; `minSdkVersion` is 24, and
+         on 24–26 the bars keep light icons over a light background, so the base
+         theme above deliberately still names a colour a light icon can sit on
+         at the one moment it is visible. -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@color/windowBackground</item>
+        <item name="android:statusBarColor">@color/windowBackground</item>
+        <item name="android:navigationBarColor">@color/windowBackground</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+</resources>
