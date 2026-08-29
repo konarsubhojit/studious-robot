@@ -12,6 +12,7 @@ import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 jest.mock('../../src/storage/chatDb', () => ({
   loadChatSnapshot: jest.fn(async () => ({ conversations: [], messagesByPeer: {}, outbox: [] })),
   saveChatSnapshot: jest.fn(),
+  flushChatDb: jest.fn(async () => {}),
 }));
 
 // `voiceRecorder.js` (pulled in via `useAttachments`) imports this directly

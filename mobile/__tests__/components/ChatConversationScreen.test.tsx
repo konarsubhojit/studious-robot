@@ -22,6 +22,21 @@ function findAllByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
+/**
+ * Performs the message row's long press the way assistive technology does:
+ * through the `longpress` accessibility action the swipeable row publishes.
+ * The gesture itself is native, so there is no touch stream to drive here.
+ */
+function longPressRow(tree: any) {
+  const row = tree.root.findAll(
+    (node: any) =>
+      typeof node.type === 'string' &&
+      node.props?.accessibilityActions?.some((action: any) => action.name === 'longpress'),
+  )[0];
+  if (!row) throw new Error('no row exposes a longpress accessibility action');
+  row.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } });
+}
+
 function makeMessage(overrides = {}) {
   return {
     messageId: 'msg-1',
@@ -1108,8 +1123,11 @@ describe('ChatConversationScreen deep-linked message', () => {
     });
 
     expect(findAllByTestId(tree, 'chat-message-reaction-bar')).toHaveLength(0);
+    // The long press belongs to the swipeable row's gesture race, not to a
+    // touch responder on the bubble, so it is driven the way assistive
+    // technology drives it.
     act(() => {
-      findByTestId(tree, 'chat-message-bubble').props.onLongPress();
+      longPressRow(tree);
     });
 
     const bar = findByTestId(tree, 'chat-message-reaction-bar');

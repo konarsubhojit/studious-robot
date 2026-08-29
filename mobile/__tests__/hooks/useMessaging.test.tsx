@@ -30,6 +30,7 @@ jest.mock('../../src/storage/chatDb', () => {
     __snapshot: snapshot,
     loadChatSnapshot: jest.fn(async () => snapshot),
     saveChatSnapshot: jest.fn(partial => Object.assign(snapshot, partial)),
+    flushChatDb: jest.fn(async () => {}),
   };
 });
 
@@ -1014,5 +1015,82 @@ describe('useMessaging searchMessages', () => {
     expect(resultRef.current.messagesByPeer.bob[0].reactions).toEqual({
       '\u{2764}\u{FE0F}': ['alice', 'bob'],
     });
+  });
+});
+
+describe('useMessaging snapshot persistence', () => {
+  test('coalesces a burst of state changes into a single mirror', async () => {
+    jest.useFakeTimers();
+    const { resultRef } = setup();
+    // Let the hydration promise settle so the persistence gate is open.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    (chatDb.saveChatSnapshot as jest.Mock).mockClear();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-1', conversationId: 'c1', senderId: 'bob', body: 'one',
+      });
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-2', conversationId: 'c1', senderId: 'bob', body: 'two',
+      });
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-3', conversationId: 'c1', senderId: 'bob', body: 'three',
+      });
+    });
+
+    // Nothing written yet: the trailing window has not elapsed.
+    expect(chatDb.saveChatSnapshot).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(750);
+    });
+
+    expect(chatDb.saveChatSnapshot).toHaveBeenCalledTimes(1);
+    expect(
+      (chatDb.saveChatSnapshot as jest.Mock).mock.calls[0][0].messagesByPeer.bob,
+    ).toHaveLength(3);
+    jest.useRealTimers();
+  });
+
+  test('flushes the pending mirror when the app leaves the foreground', async () => {
+    jest.useFakeTimers();
+    const listeners: any[] = [];
+    const spy = jest
+      .spyOn(require('react-native').AppState, 'addEventListener')
+      .mockImplementation(((_event: string, handler: any) => {
+        listeners.push(handler);
+        return { remove: jest.fn() };
+      }) as any);
+
+    const { resultRef } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    (chatDb.saveChatSnapshot as jest.Mock).mockClear();
+
+    act(() => {
+      resultRef.current.handleMessageReceived({
+        messageId: 'm-9', conversationId: 'c1', senderId: 'bob', body: 'tail',
+      });
+    });
+    expect(chatDb.saveChatSnapshot).not.toHaveBeenCalled();
+
+    act(() => {
+      listeners.forEach(handler => handler('background'));
+    });
+
+    expect(chatDb.saveChatSnapshot).toHaveBeenCalledTimes(1);
+    expect(chatDb.flushChatDb).toHaveBeenCalled();
+
+    // The debounce timer was cancelled by the flush, so it cannot write again.
+    act(() => {
+      jest.advanceTimersByTime(750);
+    });
+    expect(chatDb.saveChatSnapshot).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    jest.useRealTimers();
   });
 });

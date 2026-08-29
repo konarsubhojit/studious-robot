@@ -618,6 +618,14 @@ const MessageRow = memo(
     });
   }
 
+  const canReact = Boolean(onReact) && !isTombstone;
+  const toggleReactionBar = canReact ? () => setIsReactionBarOpen(open => !open) : undefined;
+
+  // The bubble is a plain view, not a `Pressable`: a touch responder covering
+  // the whole drag surface competes with the swipe gesture for the same touch
+  // (and wins it while its long-press timer runs), which is why a bubble used
+  // to refuse to swipe at all. The long press is handed to `SwipeableRow`
+  // instead, where it is raced against the pan by the native gesture system.
   const row = (
     <View
       testID="chat-message-row"
@@ -626,10 +634,10 @@ const MessageRow = memo(
         isOwn ? styles.messageRowOwn : styles.messageRowPeer,
         !isGroupEnd && styles.messageRowGrouped,
       ]}>
-      <Pressable
-        onLongPress={onReact && !isTombstone ? () => setIsReactionBarOpen(open => !open) : undefined}
-        accessibilityRole={onReact && !isTombstone ? 'button' : undefined}
-        accessibilityHint={onReact && !isTombstone ? 'Long press to react' : undefined}
+      <View
+        accessible
+        accessibilityRole={canReact ? 'button' : undefined}
+        accessibilityHint={canReact ? 'Long press to react' : undefined}
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,
@@ -651,7 +659,7 @@ const MessageRow = memo(
           onDownloadAttachment={onDownloadAttachment}
           onOpenMedia={onOpenMedia}
         />
-      </Pressable>
+      </View>
       {isReactionBarOpen ? (
         <View style={styles.reactionBar} testID="chat-message-reaction-bar">
           {QUICK_REACTIONS.map(emoji => (
@@ -695,7 +703,16 @@ const MessageRow = memo(
     </View>
   );
 
-  return actions.length ? <SwipeableRow actions={actions}>{row}</SwipeableRow> : row;
+  return actions.length || toggleReactionBar ? (
+    <SwipeableRow
+      actions={actions}
+      onLongPress={toggleReactionBar}
+      longPressLabel="React to message">
+      {row}
+    </SwipeableRow>
+  ) : (
+    row
+  );
   },
 );
 

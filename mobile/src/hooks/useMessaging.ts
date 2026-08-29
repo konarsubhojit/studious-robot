@@ -6,7 +6,7 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
-import { loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
+import { flushChatDb, loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
@@ -90,6 +90,14 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
+
+/**
+ * Trailing window over which chat-state changes are coalesced into a single
+ * mirror into the local store. Sized to be shorter than a user's attention
+ * span but long enough to absorb a burst (a fetched history page, a run of
+ * delivery/read receipts) into one prune-and-write.
+ */
+const SNAPSHOT_PERSIST_DEBOUNCE_MS = 750;
 
 /**
  * Identity of a timeline entry: a message id, or a call id for the call
@@ -295,10 +303,47 @@ export default function useMessaging({
 
   // Mirror the rendered chat state into the local store, so the next launch
   // has something to hydrate from.
-  useEffect(() => {
+  //
+  // The mirror is debounced rather than run per state change: every one of
+  // them (a delivery receipt, a typing-driven re-render, each message of a
+  // fetched page) would otherwise re-prune every conversation's history on the
+  // JS thread. A burst therefore costs one prune, and the tail is not at risk
+  // because the state is flushed when the app leaves the foreground and when
+  // the hook unmounts.
+  const snapshotRef = useRef({ conversations, messagesByPeer });
+  const persistTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
+  const persistNow = useCallback(() => {
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
     if (!hydratedRef.current) return;
-    saveChatSnapshot({ conversations, messagesByPeer });
+    saveChatSnapshot(snapshotRef.current);
+  }, []);
+
+  useEffect(() => {
+    snapshotRef.current = { conversations, messagesByPeer };
+    if (!hydratedRef.current) return undefined;
+    if (persistTimerRef.current) return undefined;
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      saveChatSnapshot(snapshotRef.current);
+    }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
+    return undefined;
   }, [conversations, messagesByPeer]);
+
+  // Leaving the foreground is the last moment the process is guaranteed to be
+  // alive, so the pending mirror is written out (and pushed to disk) there.
+  useEffect(() => {
+    const subscription = AppState.addEventListener?.('change', nextState => {
+      if (nextState === 'active') return;
+      persistNow();
+      flushChatDb();
+    });
+    return () => subscription?.remove?.();
+  }, [persistNow]);
+
+  useEffect(() => () => persistNow(), [persistNow]);
 
   // Mirror the open conversation into the push layer, so a message push for
   // the conversation the user is looking at is suppressed instead of being
