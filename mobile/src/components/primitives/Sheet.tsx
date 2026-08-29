@@ -1,6 +1,7 @@
 import { useContext } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
+import useReducedMotion from '../../hooks/useReducedMotion';
 import { useThemedStyles } from '../../ThemeContext';
 import { elevation, overlay, radius, spacing, typography } from '../../theme';
 import type { ReactNode } from 'react';
@@ -43,12 +44,19 @@ export default function Sheet({
   // rendered outside one (in a modal host, or under test). No provider simply
   // means no home-indicator inset to avoid.
   const insets = useContext(SafeAreaInsetsContext);
+  const reduceMotion = useReducedMotion();
   const bottomInset = Math.max(insets?.bottom ?? 0, 0);
 
   if (!visible) return null;
 
+  // The sheet still appears and still dismisses under reduced motion; it simply
+  // arrives already opaque instead of fading in.
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible
+      transparent
+      animationType={reduceMotion ? 'none' : 'fade'}
+      onRequestClose={onClose}>
       <Pressable
         style={styles.backdrop}
         accessibilityRole="button"
