@@ -1620,4 +1620,24 @@ describe('ChatConversationScreen drafts', () => {
     expect(onSendMessage).toHaveBeenCalledWith('ready to go', { replyTo: null });
     expect(onClearDraft).toHaveBeenCalled();
   });
+
+  test('does not re-save a sent message as a draft when the screen closes', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSendMessage: jest.fn(),
+      onClearDraft: jest.fn(),
+      onSaveDraft,
+      initialDraft: { text: 'ready to go', replyToId: null },
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'chat-message-send' }).props.onPress();
+      tree.unmount();
+    });
+
+    expect(onSaveDraft).not.toHaveBeenCalledWith('ready to go', null);
+  });
 });

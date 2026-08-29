@@ -1051,12 +1051,17 @@ function ChatConversationScreen({
     [reportTyping],
   );
 
+  const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed) return;
     onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
     setReplyTarget(null);
+    // Cleared synchronously as well as through the effect below: unmounting in
+    // the same commit as the send would otherwise persist the sent text back.
+    draftStateRef.current = { text: '', replyToId: null };
     onClearDraft?.();
     reportTyping(false);
   }, [draft, onClearDraft, onSendMessage, replyTarget, reportTyping]);
@@ -1079,7 +1084,6 @@ function ChatConversationScreen({
   // backgrounded), never per keystroke: writing on every character would push
   // a state update through the chat provider on each key, re-rendering the
   // whole conversation.
-  const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
   useEffect(() => {
     draftStateRef.current = { text: draft, replyToId: replyTarget?.messageId ?? null };
   }, [draft, replyTarget]);

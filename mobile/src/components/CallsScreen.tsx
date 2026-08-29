@@ -186,46 +186,46 @@ export default function CallsScreen({
 
           return (
             <SwipeableRow actions={actions}>
-            <ListItem
-              title={peerId || 'Unknown contact'}
-              subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
-                .filter(Boolean)
-                .join(' · ')}
-              destructive={missed}
-              leading={<Avatar id={peerId} size="md" />}
-              onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
-              accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
-              accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
-              trailing={
-                <View style={styles.trailing}>
-                  <Icon
-                    name={callDirectionIcon(item)}
-                    size={16}
-                    color={missed ? colors.negative : colors.onSurfaceVariant}
-                  />
-                  <Icon
-                    name={callMediaIcon(item)}
-                    size={16}
-                    color={colors.onSurfaceVariant}
-                  />
-                  {canCall && peerId ? (
-                    <IconAction
-                      icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
-                      accessibilityLabel={`Call ${peerId} back`}
-                      accessibilityHint={
-                        modality === 'audio'
-                          ? 'Starts an audio call'
-                          : 'Starts a video call'
-                      }
-                      onPress={() => redial(item)}
-                      size={40}
-                      testID="call-history-redial"
+              <ListItem
+                title={peerId || 'Unknown contact'}
+                subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
+                  .filter(Boolean)
+                  .join(' · ')}
+                destructive={missed}
+                leading={<Avatar id={peerId} size="md" />}
+                onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
+                accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
+                accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
+                trailing={
+                  <View style={styles.trailing}>
+                    <Icon
+                      name={callDirectionIcon(item)}
+                      size={16}
+                      color={missed ? colors.negative : colors.onSurfaceVariant}
                     />
-                  ) : null}
-                </View>
-              }
-              testID="call-history-row"
-            />
+                    <Icon
+                      name={callMediaIcon(item)}
+                      size={16}
+                      color={colors.onSurfaceVariant}
+                    />
+                    {canCall && peerId ? (
+                      <IconAction
+                        icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
+                        accessibilityLabel={`Call ${peerId} back`}
+                        accessibilityHint={
+                          modality === 'audio'
+                            ? 'Starts an audio call'
+                            : 'Starts a video call'
+                        }
+                        onPress={() => redial(item)}
+                        size={40}
+                        testID="call-history-redial"
+                      />
+                    ) : null}
+                  </View>
+                }
+                testID="call-history-row"
+              />
             </SwipeableRow>
           );
 },
