@@ -357,6 +357,24 @@ describe('CallScreen', () => {
     expect(tree.root.findAllByType('CallControls')).toHaveLength(1);
   });
 
+  test('reports the height of both chrome groups so the self-view can avoid them', () => {
+    const onTopChromeLayout = jest.fn();
+    const onBottomChromeLayout = jest.fn();
+
+    act(() => {
+      tree = renderer.create(
+        <CallScreen {...createProps({ onTopChromeLayout, onBottomChromeLayout })} />,
+      );
+    });
+
+    expect(
+      tree.root.findAll(node => node.props.onLayout === onTopChromeLayout).length,
+    ).toBeGreaterThan(0);
+    expect(
+      tree.root.findAll(node => node.props.onLayout === onBottomChromeLayout).length,
+    ).toBeGreaterThan(0);
+  });
+
   test('forwards isAudioOnly to the stage and the control deck', () => {
     act(() => {
       tree = renderer.create(<CallScreen {...createProps({ isAudioOnly: true })} />);

@@ -289,6 +289,8 @@ function ActiveCallScreen() {
     participantLabel,
     streams,
     handleCallStageLayout,
+    handleTopChromeLayout,
+    handleBottomChromeLayout,
     pipGesture,
     animatedPipStyle,
     minimizeCall,
@@ -308,6 +310,8 @@ function ActiveCallScreen() {
       isConnectionLost={callFlow.isConnectionLost}
       onRetry={callFlow.handleRetryReconnect}
       onStageLayout={handleCallStageLayout}
+      onTopChromeLayout={handleTopChromeLayout}
+      onBottomChromeLayout={handleBottomChromeLayout}
       mainStreamUrl={streams.mainStreamUrl}
       hasMainStream={Boolean(streams.mainStream)}
       // Audio call, or a peer with their camera off: a stream exists and has a

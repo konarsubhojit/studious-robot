@@ -38,6 +38,8 @@ export default function CallScreen({
   isConnectionLost = false,
   onRetry,
   onStageLayout,
+  onTopChromeLayout,
+  onBottomChromeLayout,
   mainStreamUrl,
   hasMainStream,
   pipStreamUrl,
@@ -75,6 +77,8 @@ export default function CallScreen({
         onLeave: () => void;
         status?: CallStatus;
         onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
+        onTopChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
+        onBottomChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
         isReconnecting?: boolean;
         recoveryStatus?: CallRecoveryStatus | null;
         isConnectionLost?: boolean;
@@ -219,6 +223,7 @@ export default function CallScreen({
             entering={FadeInDown.duration(overlayFadeMs)}
             exiting={FadeOutUp.duration(overlayFadeMs)}
             style={styles.topOverlay}
+            onLayout={onTopChromeLayout}
             pointerEvents="box-none">
             <CallTopBar
               elapsedCallSeconds={elapsedCallSeconds}
@@ -263,6 +268,7 @@ export default function CallScreen({
           <Animated.View
             entering={FadeInUp.duration(overlayFadeMs)}
             exiting={FadeOutDown.duration(overlayFadeMs)}
+            onLayout={onBottomChromeLayout}
             style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}

@@ -36,6 +36,8 @@ export type CallContextValue = {
   expandCall: () => void;
   minimizeCallOnNavigate: () => void;
   handleCallStageLayout: PipView['handleCallStageLayout'];
+  handleTopChromeLayout: PipView['handleTopChromeLayout'];
+  handleBottomChromeLayout: PipView['handleBottomChromeLayout'];
   pipGesture: PipView['pipGesture'];
   animatedPipStyle: PipView['animatedPipStyle'];
   startVideoCallWith: CallInitiation['startVideoCallWith'];
@@ -96,7 +98,13 @@ export function CallProvider({ children }: { children: ReactNode; }) {
     }
   }, [isCallActive, setIsCallMinimized]);
 
-  const { handleCallStageLayout, pipGesture, animatedPipStyle } = usePictureInPicturePip({
+  const {
+    handleCallStageLayout,
+    handleTopChromeLayout,
+    handleBottomChromeLayout,
+    pipGesture,
+    animatedPipStyle,
+  } = usePictureInPicturePip({
     onTap: callFlow.handleSwapStreams,
   });
 
@@ -195,6 +203,8 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       minimizeCallOnNavigate,
       // Picture-in-picture self view
       handleCallStageLayout,
+      handleTopChromeLayout,
+      handleBottomChromeLayout,
       pipGesture,
       animatedPipStyle,
       // Actions
@@ -211,6 +221,8 @@ export function CallProvider({ children }: { children: ReactNode; }) {
       endCall,
       expandCall,
       handleCallStageLayout,
+      handleTopChromeLayout,
+      handleBottomChromeLayout,
       dismissBubble,
       handleExportLogs,
       isBubbleDismissed,
