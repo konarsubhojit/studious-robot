@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decideRoomJoin, normalizeReportedActiveCallIds } from '../src/signaling/connection/state.ts';
+import { decideRoomJoin, normaliseReportedActiveCallIds } from '../src/signaling/connection/state.ts';
 
 test('decideRoomJoin ignores missing session and invalid room ids', () => {
   assert.deepEqual(
@@ -48,13 +48,13 @@ test('decideRoomJoin enforces room capacity and returns prior room transition', 
   );
 });
 
-test('normalizeReportedActiveCallIds preserves reconciliation semantics', () => {
+test('normaliseReportedActiveCallIds preserves reconciliation semantics', () => {
   assert.deepEqual(
-    normalizeReportedActiveCallIds({ activeCallIds: ['abc', ' ', null, 'def'] }),
+    normaliseReportedActiveCallIds({ activeCallIds: ['abc', ' ', null, 'def'] }),
     ['abc', 'def']
   );
   assert.deepEqual(
-    normalizeReportedActiveCallIds({ callId: 'xyz' }),
+    normaliseReportedActiveCallIds({ callId: 'xyz' }),
     ['xyz']
   );
 });

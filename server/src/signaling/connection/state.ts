@@ -24,12 +24,12 @@ function decideRoomJoin({
   return { action: 'join', leaveRoomId: currentRoom };
 }
 
-function normalizeReportedActiveCallIds(parsed: Record<string, any>): string[] {
+function normaliseReportedActiveCallIds(parsed: Record<string, any>): string[] {
   const reported = Array.isArray(parsed.activeCallIds) ? parsed.activeCallIds : [parsed.callId];
   return reported.map((value: unknown) => normaliseId(value)).filter(Boolean) as string[];
 }
 
 export {
   decideRoomJoin,
-  normalizeReportedActiveCallIds,
+  normaliseReportedActiveCallIds,
 };

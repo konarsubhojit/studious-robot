@@ -10,7 +10,7 @@ import { registerMessageHandlers } from '../messageHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, TRANSPORT_EVENTS } from '../../../../shared/index.ts';
 import { verboseLog } from '../../lib/verbose.ts';
-import { decideRoomJoin, normalizeReportedActiveCallIds } from './state.ts';
+import { decideRoomJoin, normaliseReportedActiveCallIds } from './state.ts';
 import { leaveRoom, logCallCorrelation, scheduleParticipantDisconnectCleanup } from './lifecycle.ts';
 
 function registerSocketHandlers(
@@ -359,7 +359,7 @@ function registerSocketHandlers(
       if (!parsed) return;
 
       const userId = socket.data.identity.userId;
-      const activeCallIds = normalizeReportedActiveCallIds(parsed);
+      const activeCallIds = normaliseReportedActiveCallIds(parsed);
       const cleared = reconcileClientCallState(state, userId, activeCallIds, {
         onTransition: (call, previousStatus, reason) =>
           notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),
