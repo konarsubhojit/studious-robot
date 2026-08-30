@@ -288,9 +288,9 @@ VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
 
 > Oracle Cloud Ampere A1 (arm64) + `opc` user + firewalld + Caddy also works
 > and remains documented as an alternative — see
-> [`deploy/README.md`](./deploy/README.md) for both paths.
+> [`deploy/README.md`](../deploy/README.md) for both paths.
 
-**One-time VM setup** is covered in detail in [`deploy/README.md`](./deploy/README.md). The condensed steps for the GCP + Ubuntu path are:
+**One-time VM setup** is covered in detail in [`deploy/README.md`](../deploy/README.md). The condensed steps for the GCP + Ubuntu path are:
 
 1. **Provision** a GCP e2-micro VM (Ubuntu) and note its public IP, or point a **DuckDNS** hostname at it.
 2. **Install Node.js 24** (matching `.nvmrc`) via the NodeSource repo:
@@ -353,7 +353,7 @@ VM on every push to `master` and runs a git-pull + npm-ci + service-restart.
    | `DATABASE_URL_DIRECT` | Neon direct Postgres URL for CI migrations |
    | `FCM_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for FCM push |
 
-See [`deploy/README.md`](./deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and firewall/networking details for both GCP and OCI.
+See [`deploy/README.md`](../deploy/README.md) for the full walkthrough including TLS options, sudoers configuration, Redis setup, and firewall/networking details for both GCP and OCI.
 
 ---
 
