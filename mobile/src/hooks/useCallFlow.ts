@@ -1697,6 +1697,22 @@ export default function useCallFlow({
           // carries an audio track. Letting it replace the primary stream would
           // leave the remote video view with nothing to render (blank screen).
           if (current && stream.id !== current.id && !stream.getVideoTracks?.().length) {
+            // Keep the original A/V stream as the stage source, but merge in any
+            // extra audio tracks (for example screen/system audio) so playback
+            // still includes them.
+            const currentTrackIds = new Set(
+              (current.getTracks?.() ?? [])
+                .map((track: any) => track?.id)
+                .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
+            );
+            const currentTrackRefs = new Set(current.getTracks?.() ?? []);
+            (stream.getAudioTracks?.() ?? []).forEach((audioTrack: any) => {
+              const trackId = typeof audioTrack?.id === 'string' ? audioTrack.id : null;
+              if ((trackId && currentTrackIds.has(trackId)) || currentTrackRefs.has(audioTrack)) return;
+              current.addTrack?.(audioTrack);
+              if (trackId) currentTrackIds.add(trackId);
+              currentTrackRefs.add(audioTrack);
+            });
             return current;
           }
           return stream;

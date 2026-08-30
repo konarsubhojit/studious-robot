@@ -286,7 +286,7 @@ describe('useScreenShare', () => {
     expect(resultRef.current.isScreenSharing).toBe(false);
   });
 
-  test('stops the share and reports an error when no frames reach the peer', async () => {
+  test('keeps sharing and reports unverified delivery when no frames are confirmed yet', async () => {
     const screenVideoTrack = makeTrack('video');
     const stream = { id: 'screen' };
     (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
@@ -308,10 +308,14 @@ describe('useScreenShare', () => {
       await resultRef.current.handleScreenShareToggle();
     });
 
-    expect(resultRef.current.isScreenSharing).toBe(false);
-    expect(screenShare.stopScreenCapture).toHaveBeenCalledWith(stream);
-    expect(sender.replaceTrack).toHaveBeenLastCalledWith(cameraTrack);
-    expect(params.setStatus).toHaveBeenLastCalledWith('Screen sharing produced no video', 'error');
+    expect(resultRef.current.isScreenSharing).toBe(true);
+    expect(resultRef.current.screenShareDelivery).toBe('unverified');
+    expect(screenShare.stopScreenCapture).not.toHaveBeenCalledWith(stream);
+    expect(sender.replaceTrack).not.toHaveBeenLastCalledWith(cameraTrack);
+    expect(params.setStatus).toHaveBeenLastCalledWith(
+      'Screen sharing started, but the remote view is not confirmed yet. Open the app you want to share or minimise WeTalk once.',
+      'warning',
+    );
   });
 });
 
@@ -361,13 +365,13 @@ describe('useScreenShare frame delivery', () => {
     expect(resultRef.current.screenShareDelivery).toBe('idle');
   });
 
-  test('a share that never delivered a frame is not left looking confirmed', async () => {
+  test('a share that never delivered a frame is shown as unverified (not failed)', async () => {
     const { resultRef } = await share({
       ok: false,
       reason: 'no_frames',
       message: 'Screen sharing produced no video',
     });
-    expect(resultRef.current.screenShareDelivery).toBe('idle');
+    expect(resultRef.current.screenShareDelivery).toBe('unverified');
   });
 });
 
