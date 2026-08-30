@@ -6,10 +6,6 @@ const MAX_DURABLE_LOG_LINE_BYTES = 16 * 1024;
 
 const LOG_ENTRIES: string[] = [];
 let durableLogQueue: Promise<boolean | void> = Promise.resolve();
-const textEncoder =
-  typeof (globalThis as any).TextEncoder === 'function'
-    ? new (globalThis as any).TextEncoder()
-    : null;
 
 const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
@@ -139,10 +135,26 @@ function safeSerialize(metadata: unknown): string | undefined {
 }
 
 function utf8ByteLength(value: string): number {
-  if (textEncoder) {
-    return textEncoder.encode(value).length;
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
   }
-  return value.length;
+  return bytes;
 }
 
 function trimToUtf8Bytes(value: string, maxBytes: number): string {
@@ -171,9 +183,9 @@ async function getDurableLogSize(RNFS: any, path: string): Promise<number | null
   try {
     const stat = await RNFS.stat(path);
     const size = Number(stat?.size);
-    return Number.isFinite(size) && size > 0 ? size : 0;
+    return Number.isFinite(size) && size >= 0 ? size : null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -245,8 +257,13 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
         const lineToAppend = `${safeLine}\n`;
         const lineBytes = utf8ByteLength(lineToAppend);
         const currentSize = await getDurableLogSize(RNFS, path);
+        if (currentSize === null) {
+          if (typeof RNFS.writeFile !== 'function') return false;
+          await RNFS.writeFile(path, lineToAppend, 'utf8');
+          return true;
+        }
+
         if (
-          currentSize !== null &&
           currentSize + lineBytes > MAX_DURABLE_LOG_BYTES
         ) {
           if (typeof RNFS.writeFile !== 'function') return false;
