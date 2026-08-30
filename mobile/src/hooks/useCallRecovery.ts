@@ -378,7 +378,7 @@ export default function useCallRecovery({
    * @param iceState - the observed peer-connection/ICE state.
    */
   const reportCallConnected = useCallback(
-      (iceState: string) => {
+     (iceState: string) => {
       const callId = activeCallIdRef.current;
       if (!callId) return;
       closeRecoveryEpisode('recovered');
