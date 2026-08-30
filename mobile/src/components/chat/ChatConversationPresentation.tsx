@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import {
   Alert,
-  AppState,
   FlatList,
   Image,
   Keyboard,
@@ -56,6 +55,8 @@ import type {
   TimelineEntry,
 } from './chatTimelineModel';
 
+import useDraftPersistence from './useDraftPersistence';
+
 export { findUnreadAnchorKey };
 export type { ListItem, MessageStatus, TimelineEntry };
 
@@ -89,8 +90,6 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const QUOTE_HIGHLIGHT_MS = 1600;
 /** How long the "attachments aren't available" notice stays visible. */
 const ATTACHMENTS_UNAVAILABLE_NOTICE_MS = 4000;
-/** Trailing window for persisting a composer draft while the user is typing. */
-const DRAFT_PERSIST_DEBOUNCE_MS = 750;
 /** Rendered height of an inline image attachment. */
 const ATTACHMENT_IMAGE_HEIGHT = 180;
 
@@ -1352,11 +1351,17 @@ function ChatConversationScreen({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  // Seeded from the persisted draft so re-opening a conversation restores the
-  // half-typed message instead of silently discarding it.
-  const [draft, setDraft] = useState(() => initialDraft?.text ?? '');
   // The message the composer is currently replying to, if any.
   const [replyTarget, setReplyTarget] = useState((null as ChatMessage | null));
+
+  // Seeded from the persisted draft so re-opening a conversation restores the
+  // half-typed message instead of silently discarding it. The debounce timer
+  // and the AppState subscription behind it are wholly owned by that hook.
+  const { draft, setDraft, markDraftCleared } = useDraftPersistence({
+    initialText: initialDraft?.text ?? '',
+    replyToId: replyTarget?.messageId ?? null,
+    onSaveDraft,
+  });
   // A bubble briefly emphasised because its quote was tapped; takes precedence
   // over the deep-link highlight the screen may have been opened with.
   const [quotedHighlightId, setQuotedHighlightId] = useState(
@@ -1376,8 +1381,6 @@ function ChatConversationScreen({
   const [stickyDateLabel, setStickyDateLabel] = useState((null as string | null));
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
-  const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
-  const didMountDraftPersistRef = useRef(false);
   const autoScrollFrameRef = useRef((null as number | null));
   const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
@@ -1567,7 +1570,6 @@ function ChatConversationScreen({
     return () => {
       isMountedRef.current = false;
       clearTimeout(typingIdleTimerRef.current);
-      clearTimeout(draftPersistTimerRef.current);
       if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     };
   }, []);
@@ -1588,10 +1590,8 @@ function ChatConversationScreen({
       setDraft(text);
       reportTyping(Boolean(text.trim()));
     },
-    [reportTyping],
+    [reportTyping, setDraft],
   );
-
-  const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
@@ -1599,12 +1599,10 @@ function ChatConversationScreen({
     onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
     setReplyTarget(null);
-    // Cleared synchronously as well as through the effect below: unmounting in
-    // the same commit as the send would otherwise persist the sent text back.
-    draftStateRef.current = { text: '', replyToId: null };
+    markDraftCleared();
     onClearDraft?.();
     reportTyping(false);
-  }, [draft, onClearDraft, onSendMessage, replyTarget, reportTyping]);
+  }, [draft, markDraftCleared, onClearDraft, onSendMessage, replyTarget, reportTyping, setDraft]);
 
   // The reply target is restored separately: it is stored by id, and the
   // message it points at may not have been loaded yet when the screen mounts.
@@ -1619,46 +1617,6 @@ function ChatConversationScreen({
     restoredReplyRef.current = true;
     setReplyTarget(target);
   }, [initialReplyToId, messages]);
-
-  // The draft is persisted when the user *leaves* (screen closed, app
-  // backgrounded), never per keystroke: writing on every character would push
-  // a state update through the chat provider on each key, re-rendering the
-  // whole conversation.
-  useEffect(() => {
-    draftStateRef.current = { text: draft, replyToId: replyTarget?.messageId ?? null };
-  }, [draft, replyTarget]);
-
-  const onSaveDraftRef = useRef(onSaveDraft);
-  useEffect(() => {
-    onSaveDraftRef.current = onSaveDraft;
-  }, [onSaveDraft]);
-
-  const persistDraftNow = useCallback(() => {
-    clearTimeout(draftPersistTimerRef.current);
-    draftPersistTimerRef.current = undefined;
-    const { text, replyToId } = draftStateRef.current;
-    onSaveDraftRef.current?.(text, replyToId);
-  }, []);
-
-  useEffect(() => {
-    if (!didMountDraftPersistRef.current) {
-      didMountDraftPersistRef.current = true;
-      return undefined;
-    }
-    clearTimeout(draftPersistTimerRef.current);
-    draftPersistTimerRef.current = setTimeout(persistDraftNow, DRAFT_PERSIST_DEBOUNCE_MS);
-    return () => clearTimeout(draftPersistTimerRef.current);
-  }, [draft, persistDraftNow, replyTarget]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener?.('change', nextState => {
-      if (nextState !== 'active') persistDraftNow();
-    });
-    return () => {
-      subscription?.remove?.();
-      persistDraftNow();
-    };
-  }, [persistDraftNow]);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {

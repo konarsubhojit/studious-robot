@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
+import { Alert, AppState, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
 import ChatConversationScreen, {
   findUnreadAnchorKey,
 } from '../../src/components/ChatConversationScreen';
@@ -1649,6 +1649,38 @@ describe('ChatConversationScreen drafts', () => {
       tree.unmount();
     });
     expect(onSaveDraft).toHaveBeenCalledWith('typed but not sent', null);
+  });
+
+  test('flushes the draft immediately when the app is backgrounded', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSaveDraft,
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    act(() => {
+      input.props.onChangeText('typed but not sent');
+    });
+    expect(onSaveDraft).not.toHaveBeenCalled();
+
+    // Backgrounding is the one moment the debounce must not be waited out: the
+    // OS may never give the screen another frame in which to flush.
+    const listeners = (AppState.addEventListener as unknown as jest.Mock).mock.calls
+      .filter(([event]: any) => event === 'change')
+      .map(([, listener]: any) => listener);
+    expect(listeners.length).toBeGreaterThan(0);
+    act(() => {
+      listeners.forEach((listener: any) => listener('background'));
+    });
+
+    expect(onSaveDraft).toHaveBeenCalledWith('typed but not sent', null);
+
+    act(() => {
+      tree.unmount();
+    });
   });
 
   test('debounces draft persistence while the user is typing', () => {

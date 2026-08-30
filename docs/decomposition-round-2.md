@@ -28,7 +28,7 @@ would split one is not an improvement, and is recorded in
 | 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ✅ Done |
 | 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ✅ Done |
 | 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ✅ Done |
-| 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ⬜ Not started |
+| 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ✅ Done |
 | 2.2 | [Split the message-bubble subtree](#22-split-the-message-bubble-subtree) | ⬜ Not started |
 | 2.3 | [`useOutboxDrain`](#23-useoutboxdrain) | ⛔ Deferred by design |
 
@@ -263,7 +263,7 @@ cases at `__tests__/hooks/useCallFlow.test.tsx:5044–5110`.
 
 ### 2.1 Extract `useDraftPersistence`
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
 A lifetime **repair**, not merely a split. The chat screen component is ~977
 lines with 10 state, 14 refs, 12 effects, 21 callbacks and 5 memos. The draft
@@ -273,17 +273,38 @@ is the same shape of debounced-timer cluster involved in the fourth defect fixed
 by #263. It is correct today, but its owner is spread across five declarations
 inside a 977-line function, which is exactly how it went wrong before.
 
-Move the whole cluster to `mobile/src/components/chat/useDraftPersistence.ts`,
-returning `{ draft, setDraft, persistDraftNow }`.
+The whole cluster now lives in `mobile/src/components/chat/useDraftPersistence.ts`,
+returning `{ draft, setDraft, persistDraftNow, markDraftCleared }`.
+`replyToId` is passed in, because `replyTarget` is composer UI state that
+several other parts of the screen read and so stays in the component.
 
-**Safety:** this *reduces* fragmentation — creation, debounce cleanup,
-foreground flush and unmount flush all end up in one small file. **All four must
-move together**; leaving the AppState flush behind while moving the timer would
-reproduce defect #4 exactly.
+**Safety:** this *reduced* fragmentation. All four timer touchpoints moved
+together — the `setTimeout`, the debounce effect's own cleanup, the `AppState`
+flush and the unmount flush. **A fifth had to move too:** the aggregate unmount
+effect several hundred lines away also carried a
+`clearTimeout(draftPersistTimerRef.current)`. Leaving that behind would have
+left the timer created in the hook and cleared by the component — the
+`useCallHeartbeat`/`useCallFlow` defect from #263, reproduced exactly. It is
+gone; the hook's own unmount flush clears the timer before saving, so nothing
+scheduled can outlive the screen. The `AppState` subscription is created and
+removed by one effect in the hook.
 
-**Coverage required first:** the chat screen suite must assert that the draft is
-saved once after the debounce, that backgrounding flushes immediately, and that
-unmount flushes. Do not start without the last two.
+`markDraftCleared` replaces the inline `draftStateRef.current = { text: '', … }`
+in the send path, which is load-bearing: unmounting in the same commit as a send
+would otherwise persist the sent text straight back as a draft.
+
+**Coverage required first — all three now exist.** The chat screen suite already
+asserted the debounced save
+(`__tests__/components/ChatConversationScreen.test.tsx`, "debounces draft
+persistence while the user is typing") and the unmount flush ("persists the
+composer text when the screen is left"). The background flush did not exist, so
+**it was written before any code moved**: "flushes the draft immediately when
+the app is backgrounded" drives the real `AppState` `change` listener and
+asserts the save happens without the debounce elapsing.
+
+**Result:** `ChatConversationPresentation.tsx` 2295 → 2247 lines; new hook 109
+lines. Verified with `npm run typecheck`, `npx eslint src/components/chat`, and
+the `ChatConversationScreen` suite (80 tests, including the new one).
 
 ### 2.2 Split the message-bubble subtree
 
