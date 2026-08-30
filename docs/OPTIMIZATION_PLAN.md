@@ -99,6 +99,7 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | D1 | Call from chat / chat from call | ✅ the conversation header already placed calls; call-history rows now swipe to "Message" |
 | — | Screen share confirms success, not only failure | ✅ `verifyScreenShareFrames` already returned `verified`; `useScreenShare` now publishes it as `screenShareDelivery` (`idle`/`checking`/`confirmed`/`unverified`) and the in-call indicator settles on "Sharing — they can see your screen". An unreadable stats report stays `unverified` and keeps the old wording — the UI must not promise a view it could not measure |
 | — | Haptics at the moments that substitute for looking | ✅ connect, end and incoming ring already fired; *message sent* was missing and now fires on the server ack, not on the optimistic bubble. Silent mode is respected through `triggerHapticUnlessSilent`, and only a single-message drain buzzes, so a reconnect replaying a backlog does not rattle once per queued message |
+| C6 | Honest audio-only calls | ✅ camera state is now relayed over the existing `call.media-state` frame, so `mainHasVideo` asks whether there is a *picture* rather than whether there is a *track*, and `call-stage-ambient` is reachable. See the note below — this is deliberately not the `getUserMedia` change the original entry sketched |
 | — | First-run empty states point somewhere | ✅ the empty chat and call lists now offer a low-emphasis "Search for people" link. Deliberately *not* an `actionLabel`: a second filled button in the screen's accent, a couple of hundred pixels from the FAB, makes whichever the user reaches for the wrong one. The "no results" / "we could not check" distinction from P2.4 is untouched |
 
 ### Chat & calling UX pass — deferred
@@ -110,11 +111,48 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | B5 | Presence freshness / last seen | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation |
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
-| C6 | Honest audio-only calls | The fix is at `getUserMedia` time and changes the negotiated media, so it needs device QA on both platforms. Until then `call-stage-ambient` stays unreachable |
 | D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass |
 | E1–E3 | `useCallFlow` decomposition, SQLite, i18n | Tracked above as P1.2 / P1.7; i18n should precede any further copy growth |
 
 ## Notes and deviations
+
+### C6: the ambient canvas was gated on the wrong question
+The canvas was built, tokenised and unit-tested for a state no call this app
+could place would ever produce. `mainHasVideo` asked `getVideoTracks().length >
+0`, and turning a camera off does not remove a track — `setTrackEnabled` sets
+`track.enabled = false`, and a disabled sender keeps transmitting black frames.
+So the receiver counted a track, claimed a picture, and drew a black rectangle.
+The tests pinned the derivation and never the premise, which is why nothing went
+red: every one of them supplied the stream directly.
+
+The fix relays the camera flag rather than changing the negotiated media.
+`enabled` is a purely local flag the peer cannot observe, so each side now sends
+`isVideoEnabled` alongside `isScreenSharing` in the existing `call.media-state`
+frame, and `deriveCallStreams` takes `localVideoEnabled` / `remoteVideoEnabled`
+and answers "is there a picture" as *track ∧ camera on*.
+
+Three things about the shape of it:
+
+- **Both flags travel in one frame**, not two relays, so a peer can never apply
+  half an update. The receiving handler tests for each key independently
+  (`'isVideoEnabled' in mediaState`) for the same reason the screen-share flag
+  always did: a liveness heartbeat carries neither, and silence about a flag is
+  not a claim about it.
+- **The default is `true` on both ends.** A peer running an older build never
+  sends the flag, and is therefore treated exactly as it was before — this is a
+  strictly additive protocol change, and there is a regression test for the
+  silent peer.
+- **The self-view tile follows the same rule.** `pipHasVideo` gates the PiP, so
+  turning your own camera off removes the tile instead of leaving a black square
+  that follows you around the screen.
+
+This is deliberately *not* the `getUserMedia` change the original deferral
+sketched. Negotiating a genuinely audio-only call is a larger, device-QA-shaped
+piece of work; making the UI stop lying about what is on the wire is not, and it
+is the half that was actually broken. An "audio call" is still a video call with
+the camera off — but it now says so, and both ends render the ambient canvas.
+`§3.1` of the UX plan is updated accordingly: it was a script for confirming a
+gap, and is now a script for confirming a fix.
 
 ### B3: the unread divider cannot be derived from read receipts
 Opening a conversation marks it read within a round trip, so by the time the

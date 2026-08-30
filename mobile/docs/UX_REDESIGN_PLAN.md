@@ -26,7 +26,7 @@ All commands run from `mobile/`:
 | Task | Command | Notes |
 | --- | --- | --- |
 | Install | `npm install` | `node_modules` is not checked in; required first. |
-| Tests | `npx jest` | ~10 s warm. Current baseline: **104 suites / 1354 tests, all passing**. |
+| Tests | `npx jest --ci --forceExit` | ~20 s warm. Current baseline: **113 suites / 1791 tests, all passing**. The run leaks handles and hangs without `--forceExit`. |
 | Types | `npx tsc --noEmit -p tsconfig.json` | Must be clean. |
 | Lint | `npx eslint src/ __tests__/` | Must be clean. |
 
@@ -42,7 +42,7 @@ Non-negotiable constraints carried from the original plan:
   as using `obj`, so `TabShell` destructures context methods at component scope
   and lists the *members* in `useCallback` deps. Never depend on a whole context
   object — it reintroduces full-tree re-renders.
-- **testIDs are load-bearing.** ~1354 tests assert on them. When a component
+- **testIDs are load-bearing.** ~1791 tests assert on them. When a component
   survives in recognisable form its testIDs must survive too. Migrate tests
   alongside the component; never delete tests to make a phase green.
 - **No colour literals under `src/components`.** `__tests__/components/designTokens.test.ts`
@@ -151,14 +151,14 @@ redesign) kept its behaviour and lost its divergences:
 
 ### Phase 3 — The call canvas ✅
 
-- **Audio calls have their own canvas.** `deriveCallStreams` now also returns
-  `mainHasVideo` (via a private `hasVideoTrack` that tolerates a missing or
-  throwing `getVideoTracks`), because an audio call still produces a
-  `MediaStream` with a playable URL — "is there a stream" cannot answer "is there
-  a picture". `CallStage` renders `call-stage-ambient`: a large `Avatar`, the
-  peer name in `typography.display`, and a status line, on the fixed-dark
-  `ambient` token. The self-view PiP is suppressed. This also covers a video call
-  where the remote peer turns their camera off.
+- **Audio calls have their own canvas.** `deriveCallStreams` returns
+  `mainHasVideo`, because an audio call still produces a `MediaStream` with a
+  playable URL — "is there a stream" cannot answer "is there a picture".
+  `CallStage` renders `call-stage-ambient`: a large `Avatar`, the peer name in
+  `typography.display`, and a status line, on the fixed-dark `ambient` token.
+  The self-view PiP is suppressed. A video call whose remote peer turns their
+  camera off reaches the same canvas, but only because camera state is relayed
+  — counting video tracks cannot see it. See §3.1.
 - **The control deck has a hierarchy.** Primary row = mute / video / audio output
   / camera flip / **More**; screen share and screen audio moved into
   `call-more-sheet` as `ListItem` rows with `accessibilityRole="switch"`.
@@ -328,7 +328,7 @@ motion* setting.
 ## 2. The exact stopping point
 
 Everything above is committed on `copilot/ux-improvements-android-app` and green
-at **104 suites / 1354 tests**, with `tsc` and `eslint` clean.
+at **113 suites / 1791 tests**, with `tsc` and `eslint` clean.
 
 **One thing is knowingly not done, and it cannot be done here:** nothing in this
 app has been exercised on real hardware. Unit tests cover every derivation —
@@ -338,20 +338,22 @@ real PiP transition does, how a real CallKeep call behaves from a locked screen,
 or whether a finger can reach a button. This is the *only* remaining category of
 work, and §3 is now an executable protocol for it rather than an aspiration.
 
-The swipe bug is the argument for taking §3 seriously: 104 green suites, `tsc`
+The swipe bug is the argument for taking §3 seriously: 113 green suites, `tsc`
 and `eslint` all clean, and the feature was still unusable. The suite proved the
 maths and could not have proved the rest.
 
 Four limits are recorded so they are not mistaken for oversights:
 
-- **The ambient call canvas is unreachable in practice.** `call-stage-ambient`
-  is gated on the main stream having no video *track*, but nothing in the app
-  ever produces that state: an "audio call" is a video call with the local
-  camera toggled off, and `track.enabled = false` neither removes the track nor
-  tells the peer anything. The UI is built, tokenised and unit-tested; the call
-  setup simply never asks for it. Fixing it is a protocol change — camera-state
-  signalling, or track removal plus renegotiation — which is why it is filed
-  here and not in §3. Details and the corrected QA script are in §3.1.
+- **The ambient call canvas is reachable again.** It used to be gated on the
+  main stream having no video *track*, which nothing in the app ever produced:
+  an "audio call" is a video call with the local camera toggled off, and
+  `track.enabled = false` neither removes the track nor tells the peer anything.
+  Both sides now relay `isVideoEnabled` in the existing `call.media-state`
+  frame, and `deriveCallStreams` answers "is there a picture" as *track ∧ camera
+  on*, so a camera-off peer draws `call-stage-ambient` instead of a black
+  rectangle. A peer that never sends the flag defaults to "camera on", so this
+  is additive. §3.1 is now a check that the fix works rather than a warning not
+  to file a defect against it.
 - **Username availability is format-only.** The server exposes no
   unauthenticated availability check, so the registration screen cannot offer
   live "that name is taken" feedback. Adding it is a *backend* task first; the
@@ -404,41 +406,39 @@ The derivation is unit-tested; what is unverified is that it drives a real
 `RTCView`. The failure mode is not a crash — it is a **black rectangle** where a
 picture or the ambient canvas should be.
 
-**Read this before writing up a defect.** `call-stage-ambient` is gated on the
-main stream having no video *track*:
-`isAudioOnly = Boolean(mainStream) && !mainHasVideo`, where `mainHasVideo` is
-`getVideoTracks().length > 0` (`callStreamHelpers.ts`). Turning a camera off does
-**not** remove a track — it sets `track.enabled = false`, and a disabled sender
-still transmits, so the receiver keeps a video track. An "audio call" in this app
-is also not audio-only on the wire: `startAudioCallWith` places a normal video
-call and toggles the local camera off once connected (`useCallInitiation.ts`),
-`getUserMedia` always requests video with no audio-only fallback, and the callee
-is never told the call was meant to be audio.
+**What changed, and why this section used to read oddly.** `call-stage-ambient`
+was gated on the main stream having no video *track*, and turning a camera off
+does not remove one: `setTrackEnabled` sets `track.enabled = false`, and a
+disabled sender keeps transmitting, so the receiver still counted a track and
+still drew a video view over black frames. Nor is an "audio call" audio-only on
+the wire — `startAudioCallWith` places a normal video call and toggles the local
+camera off once connected (`useCallInitiation.ts`), and `getUserMedia` always
+requests video. So the canvas was unreachable by either route.
 
-So on today's code the ambient canvas is **not** reachable by either route, and a
-tester following the obvious script would file a false defect against it. What to
-actually check:
+`enabled` is a purely local flag the peer cannot observe, so both sides now
+relay it: `isVideoEnabled` travels beside `isScreenSharing` in the existing
+`call.media-state` frame, and `deriveCallStreams` answers "is there a picture"
+as *track ∧ camera on* (`streamHasPicture` in `callStreamHelpers.ts`). The call
+is still a video call with the camera off — that part is unchanged — but the UI
+no longer claims otherwise. What to check:
 
-1. Place an **audio** call from the Calls tab. Expect the stage to render video
-   (the peer is still sending it) — *not* `call-stage-ambient`. Confirm it draws
-   a picture rather than a black rectangle: that is the `RTCView` claim this
-   check exists to test.
-2. Have the peer disable their camera mid-call. Expect the stage to hold the last
-   decoded frame or go black — again **not** ambient.
-3. If you can reach ambient at all — a peer on a client that genuinely omits the
-   video track — confirm it renders a large avatar, the peer's name in
+1. Place an **audio** call from the Calls tab. Once connected, expect
+   `call-stage-ambient`: a large avatar, the peer's name in
    `typography.display`, a status line on the fixed-dark `ambient` token, and
-   **no** self-view PiP.
-
-**This is a real product gap, not a documentation one**, and it is why §3.1 reads
-oddly: the ambient canvas was built and unit-tested for a state the call setup
-never produces. Closing it means either making `hasVideoTrack` consider
-`track.enabled`/`muted` — which needs camera-state signalling, since `enabled` is
-a local flag the peer cannot observe — or removing the track and renegotiating.
-Both are protocol changes, so both are §2 work rather than a QA fix. The stale
-comments at `AppShell.tsx` (`isAudioOnly`) and `callStreamHelpers.ts`
-(`hasVideoTrack`) both assert the camera-off case works; they were left in place
-so this note and the code disagree loudly rather than quietly.
+   **no** self-view PiP. Both ends should agree.
+2. Place a **video** call and confirm the stage draws a picture rather than a
+   black rectangle — that is the `RTCView` claim this check exists to test.
+3. Mid-video-call, have the peer disable their camera. Expect their tile to
+   become the ambient canvas within a frame or two of the relay arriving, and
+   expect it to come back when they re-enable it.
+4. Disable **your own** camera while the peer is the main tile. Expect the
+   self-view PiP to disappear rather than becoming a black square, and the
+   stage to be untouched.
+5. Tap the self-view to swap streams with one camera off, and confirm the
+   ambient canvas follows the tile the camera-off stream is now in.
+6. Against a peer running a build from before this change — one that never
+   sends the flag — expect the previous behaviour exactly: the flag defaults to
+   "camera on", so nothing regresses.
 
 ### 3.2 Picture-in-Picture
 
@@ -688,12 +688,19 @@ are blocked on server work, not client work — see §2.
   the expected translation from `ACTION_SLOT_WIDTH`, plus a check that the
   rendered style's `width + marginLeft` sums to that same constant.
 - **A unit-tested surface can be unreachable in the running app.** The ambient
-  call canvas is fully built, tokenised and covered, and no call the app can
-  place will ever show it — `mainHasVideo` asks whether a video *track* exists,
-  while "camera off" only sets `track.enabled = false`. Tests pinned the
-  derivation, not the premise, so nothing went red. When a component's gate is
-  fed by a value the tests supply directly, check who supplies it in production
-  before trusting the coverage. See §3.1.
+  call canvas was fully built, tokenised and covered, and no call the app could
+  place would ever show it — `mainHasVideo` asked whether a video *track*
+  existed, while "camera off" only sets `track.enabled = false`. Tests pinned
+  the derivation, not the premise, so nothing went red. When a component's gate
+  is fed by a value the tests supply directly, check who supplies it in
+  production before trusting the coverage. Fixed by relaying camera state; see
+  §3.1 and the C6 note in `docs/OPTIMIZATION_PLAN.md`.
+- **A `call.media-state` frame is not a full state snapshot.** It carries
+  whichever flags the sender had a reason to send — a liveness heartbeat has
+  neither `isScreenSharing` nor `isVideoEnabled` — so the handler tests for each
+  key with `in` and leaves the rest alone. Reading a missing flag as `false` is
+  how a heartbeat would silently clear the presenter banner, or claim a camera
+  came back on.
 - **A green suite is not evidence for anything gesture-driven.**
   `mobile/__mocks__/react-native-gesture-handler.js` stubs `GestureDetector` as
   `({ children }) => children` and only records the gesture callbacks, so tests
