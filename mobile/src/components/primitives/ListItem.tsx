@@ -59,6 +59,7 @@ function ListItemContent({
   destructive,
   inlineValue,
   blockValue,
+  valueTestID,
   styles,
   colors,
 }: Pick<ListItemProps, 'title' | 'subtitle' | 'icon' | 'leading' | 'trailing' | 'chevron' |
