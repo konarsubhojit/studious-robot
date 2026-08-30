@@ -140,17 +140,17 @@ describe('appLogger', () => {
     expect(exported).toContain('persisted background line');
   });
 
-  test('truncates the durable log before an append would exceed the size cap', async () => {
+  test('rotates the durable log before an append would exceed the size cap', async () => {
     (RNFS.stat as jest.Mock).mockResolvedValueOnce({ size: MAX_DURABLE_LOG_BYTES - 4 });
 
     await persistLogLine('line that would overflow');
 
-    expect(RNFS.writeFile).toHaveBeenCalledWith('/docs/wetalk-background.log', '', 'utf8');
-    expect(RNFS.appendFile).toHaveBeenCalledWith(
+    expect(RNFS.writeFile).toHaveBeenCalledWith(
       '/docs/wetalk-background.log',
       'line that would overflow\n',
       'utf8',
     );
+    expect(RNFS.appendFile).not.toHaveBeenCalled();
     expect(RNFS.readFile).not.toHaveBeenCalled();
   });
 

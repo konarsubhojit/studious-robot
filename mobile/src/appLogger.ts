@@ -243,13 +243,15 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
       if (!RNFS || !path || !safeLine) return false;
       try {
         const lineToAppend = `${safeLine}\n`;
+        const lineBytes = utf8ByteLength(lineToAppend);
         const currentSize = await getDurableLogSize(RNFS, path);
         if (
           currentSize !== null &&
-          currentSize + utf8ByteLength(lineToAppend) > MAX_DURABLE_LOG_BYTES
+          currentSize + lineBytes > MAX_DURABLE_LOG_BYTES
         ) {
           if (typeof RNFS.writeFile !== 'function') return false;
-          await RNFS.writeFile(path, '', 'utf8');
+          await RNFS.writeFile(path, lineToAppend, 'utf8');
+          return true;
         }
 
         if (typeof RNFS.appendFile === 'function') {
