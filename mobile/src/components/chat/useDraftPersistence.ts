@@ -44,8 +44,8 @@ export type DraftPersistence = {
  * `AppState` flush, and the unmount flush. That is the point of the hook: the
  * previous arrangement had the timer cleared from three places spread through a
  * 977-line component, including an aggregate unmount effect several hundred
- * lines away, which is the shape of the defect fixed in #263. The `AppState`
- * subscription is likewise created and removed by a single effect here.
+ * lines away, which is the shape of the split-lifetime defects fixed in PR 263.
+ * The `AppState` subscription is likewise created and removed by one effect.
  *
  * @param params
  */

@@ -29,7 +29,7 @@ would split one is not an improvement, and is recorded in
 | 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ✅ Done |
 | 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ✅ Done |
 | 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ✅ Done |
-| 2.2 | [Split the message-bubble subtree](#22-split-the-message-bubble-subtree) | ⬜ Not started |
+| 2.2 | [Split the message-bubble subtree](#22-split-the-message-bubble-subtree) | ✅ Done |
 | 2.3 | [`useOutboxDrain`](#23-useoutboxdrain) | ⛔ Deferred by design |
 
 ## 0. Baseline
@@ -308,21 +308,52 @@ the `ChatConversationScreen` suite (80 tests, including the new one).
 
 ### 2.2 Split the message-bubble subtree
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
-`ChatConversationPresentation.tsx:397–1150` is a self-contained render tree from
-`BubbleContent` through `MessageRow`. It moves to
-`components/chat/MessageRow.tsx`. `MessageRow`'s only local state is
-`isReactionBarOpen`; it owns no timer and no subscription.
+The self-contained render tree from `BubbleContent` through `MessageRow` — 21
+declarations — now lives in `mobile/src/components/chat/MessageRow.tsx`.
+`MessageRow`'s only local state is `isReactionBarOpen`; it owns no timer and no
+subscription. `STATUS_LABELS` and `QUICK_REACTIONS` are read only by that
+subtree and moved with it.
 
-**Gesture-coverage warning:** `MessageRow` renders inside `SwipeableRow`, and
+**One thing the plan did not anticipate: `MessageRow` calls
+`useThemedStyles(createStyles)` itself.** Importing `createStyles` back from
+`ChatConversationPresentation` would have created a genuine *runtime* import
+cycle between the two modules — the kind Metro resolves to a partially
+initialised module. So the stylesheet was lifted into a third, leaf module,
+`mobile/src/components/chat/chatStyles.ts` (default-exporting `createStyles`,
+also exporting the `ChatStyles` type and the three bubble-geometry constants).
+Both modules import it and it imports neither.
+
+The only remaining reference from `MessageRow.tsx` back to
+`ChatConversationPresentation.tsx` is a single `import type` for `MessageAction`
+and `ReactionAction`, which is erased at build time. There is no runtime cycle.
+`ChatConversationPresentation.tsx` re-exports `MessageRowProps`, so
+`ChatConversationScreen.tsx`'s facade is unchanged.
+
+**Gesture-coverage warning (still applies to any future change here):**
+`MessageRow` renders inside `SwipeableRow`, and
 `mobile/__mocks__/react-native-gesture-handler.js` stubs `GestureDetector` as a
 pass-through that only records callbacks. The swipe/long-press arbitration
 (activation offset 10 vs fail offset 24, `Gesture.Race(pan, longPress)`) has no
-meaningful automated coverage. The move must be a pure relocation that changes
-no wrapping — in particular it must not introduce a `Pressable` around
-swipeable content, which `SwipeableRow`'s own comment forbids. Any change to
-the wrapping requires on-device verification of swipe and long-press first.
+meaningful automated coverage. **This move was therefore done as a pure
+relocation:** the `SwipeableRow` wrapping, its `actions` array, the
+`accessibilityActions`/`onAccessibilityAction` pair and the long-press handler
+are byte-identical to before, and no `Pressable` was introduced around
+swipeable content. Nothing about gesture arbitration changed, so no device
+verification is required for *this* change — but any future edit to the
+wrapping does need swipe and long-press verified on a device first.
+
+**Result:** `ChatConversationPresentation.tsx` 2247 → 1164 lines. The chat
+directory is now five cohesive modules instead of one 2552-line file:
+
+| File | Lines | Owns |
+| --- | --- | --- |
+| `ChatConversationPresentation.tsx` | 1164 | The screen, its header, timeline, notices, composer and overlays |
+| `MessageRow.tsx` | 805 | One rendered message row and everything inside the bubble |
+| `chatStyles.ts` | 335 | The stylesheet (leaf; imported by both of the above) |
+| `chatTimelineModel.ts` | 306 | Pure grouping/labelling rules (leaf) |
+| `useDraftPersistence.ts` | 109 | The draft and every touchpoint of its debounce timer |
 
 ### 2.3 `useOutboxDrain`
 
@@ -401,6 +432,44 @@ domain each; the server's worst score is 13. No measured debt.
 untestable in CI for the reasons given in §2.2. There is no complexity or size
 justification for touching either, and any refactor that does must be
 device-verified for swipe activation, the long-press race and PiP drag.
+
+## 4. Outcome
+
+All eight actionable items are complete; §2.3 remains deferred by design.
+
+| File | Before | After |
+| --- | --- | --- |
+| `mobile/src/hooks/useCallFlow.ts` | 3483 | 3170 |
+| `mobile/src/components/chat/ChatConversationPresentation.tsx` | 2552 | 1164 |
+
+Six new modules, each owning the whole lifetime of every resource it creates:
+`hooks/useCallQualityStats.ts`, `hooks/useCallAudioRoutes.ts`,
+`components/chat/MessageRow.tsx`, `components/chat/chatStyles.ts`,
+`components/chat/chatTimelineModel.ts`, `components/chat/useDraftPersistence.ts`.
+
+Twelve functions were brought down from 14–15 to at most 10, so the gate now has
+real headroom rather than sitting one edit away from breaching.
+
+Two latent problems were found and fixed on the way, both of them the very
+failure mode this round was guarding against:
+
+- `calls.routes.ts` compared token lengths *before* `timingSafeEqual` and
+  early-returned, leaking the configured operator token's length by timing.
+  Deduping against the padded `metrics.routes.ts` implementation removed it
+  (§1.1).
+- The draft debounce timer was cleared from three places, one of them an
+  aggregate unmount effect several hundred lines from the timer's creation.
+  It is now created and cleared in one 109-line file (§2.1).
+
+`shared/schema.ts`'s dead `isOptional` was removed, and with it a telemetry
+chain — `trackSignalingConnected` → `signalingConnectedAtMs` →
+`signalingLatencyMs` — whose only writer had no callers, so the metric could
+never have reported anything but `null` (§1.6).
+
+Verification at completion: mobile `npm run typecheck` clean, `npx eslint .`
+zero warnings, `npx jest --ci --forceExit` **127 suites / 2114 tests passing**;
+server `npm run typecheck` and `npm run lint` clean, `npm test`
+**486 tests, 485 pass, 0 fail, 1 skipped**.
 
 ## Reproducing the measurements
 
