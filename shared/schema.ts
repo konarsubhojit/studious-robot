@@ -128,7 +128,7 @@ function enumOf<T extends string>(values: ReadonlyArray<T>) {
   const allowed = new Set(values);
   return createSchema((value, path) =>
     typeof value === 'string' && allowed.has(value as T)
-      ? ok(value)
+      ? ok(value as T)
       : fail(path, `expected one of ${[...allowed].join(', ')}`)
   );
 }
@@ -213,11 +213,11 @@ function record<T>(valueSchema: Schema<T>) {
 }
 
 /** @param options */
-function union<TOptions extends readonly Schema<unknown>[]>(options: TOptions) {
-  return createSchema((value, path) => {
+function union<TOptions extends readonly Schema<unknown>[]>(options: TOptions): Schema<SchemaType<TOptions[number]>> {
+  return createSchema<SchemaType<TOptions[number]>>((value, path) => {
     for (const option of options) {
       const result = option._parse(value, path);
-      if (result.success) return result;
+      if (result.success) return result as ParseSuccess<SchemaType<TOptions[number]>>;
     }
     return fail(path, 'did not match any allowed variant');
   });
