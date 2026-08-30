@@ -2115,19 +2115,49 @@ export default function useCallFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, signalingUrl]); // createOrGetSession and connectSocket are stable relative to these
 
+  // ─── Unmount teardown ────────────────────────────────────────────────────
+  //
+  // The teardown callbacks are ref-forwarded so the effect below can hold an
+  // empty dependency array. Listing them as dependencies made this an
+  // *unmount* cleanup that React would also run mid-call whenever any of them
+  // changed identity — stopping the camera and microphone tracks, closing the
+  // peer connection and dropping the socket underneath a live call. Their
+  // stability is not something this file can enforce (Fast Refresh breaks it
+  // by design), so the cleanup reads the current identities at teardown time
+  // instead.
+  const teardownRef = useRef({
+    disconnectSocket,
+    closePeerConnection,
+    stopCallHeartbeat,
+    closeRecoveryEpisode,
+    stopCallService,
+  });
+  useEffect(() => {
+    teardownRef.current = {
+      disconnectSocket,
+      closePeerConnection,
+      stopCallHeartbeat,
+      closeRecoveryEpisode,
+      stopCallService,
+    };
+  });
+
   useEffect(() => {
     return () => {
-      disconnectSocket();
-      closePeerConnection();
+      const teardown = teardownRef.current;
+      teardown.disconnectSocket();
+      teardown.closePeerConnection();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
         localStreamRef.current = null;
       }
-      stopCallHeartbeat('unmount');
-      closeRecoveryEpisode('unmount');
-      stopCallService();
+      teardown.stopCallHeartbeat('unmount');
+      teardown.closeRecoveryEpisode('unmount');
+      teardown.stopCallService();
     };
-  }, [closeRecoveryEpisode, closePeerConnection, disconnectSocket, stopCallHeartbeat]);
+    // Runs exactly once, on unmount: every callback is read from `teardownRef`
+    // at teardown time, so there is nothing for this effect to depend on.
+  }, []);
 
   // ─── Deep-link / push-notification entry points ───────────────────────────
 

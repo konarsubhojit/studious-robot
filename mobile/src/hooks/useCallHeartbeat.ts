@@ -168,6 +168,16 @@ export default function useCallHeartbeat({
     return () => subscription.remove();
   }, []);
 
+  // The interval is created here, so it is cleared here too: `useCallFlow`'s
+  // teardown also calls `stopCallHeartbeat('unmount')`, but an interval whose
+  // lifetime is owned by another file leaks the moment that call is moved or
+  // dropped. `stopCallHeartbeat` is idempotent, so the double stop is safe.
+  useEffect(() => {
+    return () => {
+      stopCallHeartbeat('unmount');
+    };
+  }, [stopCallHeartbeat]);
+
   // Stable wrapper so socket listeners (registered once, via the URL-shared
   // Engine.IO manager) and the `call.media-state` relay can nudge the heartbeat
   // without depending on the current beat callback's identity.
