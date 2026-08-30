@@ -1,6 +1,7 @@
 import { and, count, desc, eq, or } from 'drizzle-orm';
 import { calls as callsTable } from '../../db/schema.ts';
 import { describeError } from '../lib/errors.ts';
+import type { Database } from '../../db/client.ts';
 
 /**
  * Read path for `GET /calls`.
@@ -110,7 +111,7 @@ function readFromMemory(state: ServerState, { userId, statusFilter = null, limit
  * tie-breaks so a row can never appear on two consecutive pages (or on none)
  * when rows share a timestamp.
  */
-async function readFromDb(db: any, { userId, statusFilter = null, limit, offset = 0 }: CallHistoryQuery): Promise<CallHistoryPage> {
+async function readFromDb(db: Database, { userId, statusFilter = null, limit, offset = 0 }: CallHistoryQuery): Promise<CallHistoryPage> {
   const participantFilter = or(eq(callsTable.callerId, userId), eq(callsTable.calleeId, userId));
   const where = statusFilter
     ? and(participantFilter, eq(callsTable.status, statusFilter))

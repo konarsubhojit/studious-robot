@@ -148,7 +148,7 @@ function createServer(opts: CreateServerOptions = {}) {
 
   // Durable store for text-chat messages.  Defaults to an in-process store, so
   // the server runs unchanged when MONGODB_URI is not configured.
-  const messageStore = (createMessageStore({ messageStore: opts.messageStore }) as any);
+  const messageStore = createMessageStore({ messageStore: opts.messageStore });
 
   // Shared read cache for hot queries (conversation lists, first-page message
   // history, call history).  Defaults to the in-process backend; `index.js`

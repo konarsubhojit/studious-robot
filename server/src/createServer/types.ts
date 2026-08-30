@@ -4,9 +4,9 @@ export type CreateServerOptions = {
     email?: string | null;
     authProvider?: string | null;
   }>;
-  stores?: any;
-  db?: any;
-  messageStore?: any;
+  stores?: import('../stores/contracts.ts').Stores;
+  db?: import('../../db/client.ts').Database | null;
+  messageStore?: import('../messageStore.ts').MessageStore;
   cache?: import('../cache.ts').Cache;
   messageBus?: import('../messageBus.ts').MessageBus | null;
   sessionTtlMs?: number;

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { asMessageStore, listenOnRandomPort, readJson } from './helpers.ts';
 
 test('GET /health returns ok status', async () => {
   const { httpServer } = createServer();
@@ -26,13 +26,13 @@ test('GET /health returns ok status', async () => {
 });
 
 test('GET /health reports a failed Mongo startup check without blocking the server', async () => {
-  const messageStore = {
-    type: 'mongo',
+  const messageStore = asMessageStore({
+    type: 'mongo' as const,
     ready: async () => {
       throw new Error('network unavailable');
     },
     close: async () => {},
-  };
+  });
   const { httpServer } = createServer({ messageStore });
   const port = await listenOnRandomPort(httpServer);
 
@@ -48,11 +48,11 @@ test('GET /health reports a failed Mongo startup check without blocking the serv
 });
 
 test('GET /health reports a successful Mongo startup check', async () => {
-  const messageStore = {
-    type: 'mongo',
+  const messageStore = asMessageStore({
+    type: 'mongo' as const,
     ready: async () => {},
     close: async () => {},
-  };
+  });
   const { httpServer } = createServer({ messageStore });
   const port = await listenOnRandomPort(httpServer);
 

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { createMemoryMessageBus, createRedisMessageBus } from '../src/messageBus.ts';
 import { createRedisPgStores } from '../src/stores/index.ts';
 import { STORE_NAMES } from '../src/stores/contracts.ts';
-import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
+import { asSocketIoAdapter, asSocketIoServer, closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 import { createStores } from '../src/stores/index.ts';
 import { createServer, CALL_TRANSITION_CHANNEL } from '../src/index.ts';
 
@@ -175,7 +175,7 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
     createClient: makeClient,
     createAdapter: (pub: unknown, sub: unknown) => {
       adapterArgs.value = { pub, sub };
-      return { kind: 'fake-adapter' };
+      return asSocketIoAdapter({ kind: 'fake-adapter' });
     },
   });
 
@@ -193,12 +193,12 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
 
   // attachAdapter wires the Socket.IO adapter onto the io server.
   let attached = null;
-  const fakeIo = {
+  const fakeIo = asSocketIoServer({
     /** @param a */
     adapter: (a: unknown) => {
       attached = a;
     },
-  };
+  });
   stores.attachAdapter(fakeIo);
   assert.deepEqual(attached, { kind: 'fake-adapter' });
   assert.ok(
@@ -231,7 +231,7 @@ test('createRedisPgStores can be injected as opts.stores into the in-memory cont
   const { makeClient } = createFakeRedis();
   const bundle = await createRedisPgStores({
     createClient: makeClient,
-    createAdapter: () => ({}),
+    createAdapter: () => asSocketIoAdapter({}),
   });
   // The bundle satisfies createStores' contract validation.
   const validated = createStores({ stores: bundle });

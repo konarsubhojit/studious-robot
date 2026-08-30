@@ -79,7 +79,7 @@ function markMissedCallsRead(state: ServerState, userId: string, peerId: string)
     if (call.callerId !== peerId || call.calleeId !== userId) continue;
     if (!isUnreadMissedCall(call, userId)) continue;
     call.missedReadAt = readAt;
-    persistCallRecord(state.db, call);
+    void persistCallRecord(state.db, call);
     updated += 1;
   }
   if (updated > 0) invalidateCallHistoryCache(state, userId);

@@ -103,7 +103,51 @@ async function getJson(url: string, path: string, sessionId?: string): Promise<{
   return { status: response.status, body: await readJson(response) };
 }
 
+/**
+ * Assert a test double into the dependency type it stands in for.
+ *
+ * The injected dependencies are typed against their real implementations — the
+ * schema-bound Drizzle handle, the message-store interface and the Socket.IO
+ * server — each of which is far wider than the subset any one suite exercises.
+ * A double therefore cannot be checked against them structurally, so the
+ * assertion is made once, here at the injection point, rather than with an
+ * `as any` scattered through every suite (the same reasoning as
+ * `src/messageStore/types.ts`'s `MongoClientLike`).  The double's own shape is
+ * preserved so suites can still assert against the calls it recorded.
+ */
+function asDatabase<T>(double: T): T & import('../db/client.ts').Database {
+  return double as T & import('../db/client.ts').Database;
+}
+
+/**
+ * Assert a message-store double into the injected {@link MessageStore}; see
+ * {@link asDatabase}.
+ */
+function asMessageStore<T>(double: T): T & import('../src/messageStore.ts').MessageStore {
+  return double as T & import('../src/messageStore.ts').MessageStore;
+}
+
+/**
+ * Assert a Socket.IO adapter double into the constructor `io.adapter()` takes;
+ * see {@link asDatabase}.
+ */
+function asSocketIoAdapter<T>(double: T): T & Parameters<import('socket.io').Server['adapter']>[0] {
+  return double as T & Parameters<import('socket.io').Server['adapter']>[0];
+}
+
+/**
+ * Assert a Socket.IO server double into the real server type; see
+ * {@link asDatabase}.
+ */
+function asSocketIoServer<T>(double: T): T & import('socket.io').Server {
+  return double as T & import('socket.io').Server;
+}
+
 export {
+  asDatabase,
+  asMessageStore,
+  asSocketIoAdapter,
+  asSocketIoServer,
   captureConsoleLog,
   closeTestServer,
   getJson,

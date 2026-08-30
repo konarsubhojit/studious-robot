@@ -86,7 +86,7 @@ export type Stores = {
   callEvents: CallEventStore;
   blocks: BlockStore;
   messageBus?: import('../messageBus.ts').MessageBus | null;
-  attachAdapter?: (io: any) => void;
+  attachAdapter?: (io: import('socket.io').Server) => void;
   close?: () => Promise<void>;
 };
 export type IncomingCallPushEntry = {
@@ -111,7 +111,7 @@ export type RateLimiter = {
   ) => { allowed: boolean; remaining: number; resetAt: number };
 };
 export type ServerState = Stores & {
-  db: any;
+  db: import('../../db/client.ts').Database | null;
   auditLog: AuditLog;
   callInitRateLimiter: RateLimiter;
   rtcRateLimiter: RateLimiter;
@@ -119,10 +119,10 @@ export type ServerState = Stores & {
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
-  messageStore: any;
-  cache: any;
+  messageStore: import('../messageStore.ts').MessageStore;
+  cache: import('../cache.ts').Cache;
   messageStoreStatus: string;
-  messageBus: any;
+  messageBus: import('../messageBus.ts').MessageBus | null;
   draining: boolean;
   incomingCallPushState?: Map<string, IncomingCallPushEntry>;
 };

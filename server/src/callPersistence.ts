@@ -3,6 +3,7 @@ import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
 import { callRecordFromRow } from './domain/callHistory.ts';
+import type { Database } from '../db/client.ts';
 
 /**
  * @returns the driver error code, when the error carries one.
@@ -43,7 +44,7 @@ function toDateOrNull(value: unknown): Date | null {
 /**
  * Persist (upsert) a call record, fire-and-forget.
  */
-function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRecord) {
+function persistCallRecord(db: Database | null, call: import('./stores/contracts.ts').CallRecord) {
   if (!db || !call?.callId) return;
   return db
     .insert(callsTable)
@@ -88,7 +89,7 @@ function persistCallRecord(db: any, call: import('./stores/contracts.ts').CallRe
 /**
  * Persist a call event, fire-and-forget.
  */
-function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEvent) {
+function persistCallEvent(db: Database | null, event: import('./stores/contracts.ts').CallEvent) {
   if (!db || !event?.eventId) return;
   // Runtime call events expose `timestamp`; persist it as `createdAt`.
   return db
@@ -118,7 +119,7 @@ function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEv
 /**
  * Load persisted calls and call events into the in-memory stores at boot.
  */
-async function hydrateCallRecords(db: any, state: import('./stores/contracts.ts').Stores) {
+async function hydrateCallRecords(db: Database, state: import('./stores/contracts.ts').Stores) {
   try {
     const rows = await db.select().from(callsTable);
     for (const row of rows) {
@@ -134,7 +135,7 @@ async function hydrateCallRecords(db: any, state: import('./stores/contracts.ts'
   }
 }
 
-async function hydrateCallEvents(db: any, state: import('./stores/contracts.ts').Stores) {
+async function hydrateCallEvents(db: Database, state: import('./stores/contracts.ts').Stores) {
   try {
     const rows = await db.select().from(callEventsTable);
     for (const row of rows) {
@@ -163,7 +164,7 @@ async function hydrateCallEvents(db: any, state: import('./stores/contracts.ts')
   }
 }
 
-async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/contracts.ts').Stores) {
+async function hydrateCallsAndEventsFromDb(db: Database | null, state: import('./stores/contracts.ts').Stores) {
   if (!db) return;
   await hydrateCallRecords(db, state);
   await hydrateCallEvents(db, state);
