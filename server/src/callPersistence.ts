@@ -118,9 +118,7 @@ function persistCallEvent(db: any, event: import('./stores/contracts.ts').CallEv
 /**
  * Load persisted calls and call events into the in-memory stores at boot.
  */
-async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/contracts.ts').Stores) {
-  if (!db) return;
-
+async function hydrateCallRecords(db: any, state: import('./stores/contracts.ts').Stores) {
   try {
     const rows = await db.select().from(callsTable);
     for (const row of rows) {
@@ -134,7 +132,9 @@ async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/cont
   } catch (err) {
     console.error('[signaling] failed to hydrate calls from DB:', describeError(err));
   }
+}
 
+async function hydrateCallEvents(db: any, state: import('./stores/contracts.ts').Stores) {
   try {
     const rows = await db.select().from(callEventsTable);
     for (const row of rows) {
@@ -161,6 +161,12 @@ async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/cont
   } catch (err) {
     console.error('[signaling] failed to hydrate call events from DB:', describeError(err));
   }
+}
+
+async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/contracts.ts').Stores) {
+  if (!db) return;
+  await hydrateCallRecords(db, state);
+  await hydrateCallEvents(db, state);
 }
 
 export {

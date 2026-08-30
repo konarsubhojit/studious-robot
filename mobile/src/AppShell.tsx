@@ -29,6 +29,86 @@ import type { RecoveryAnnouncementState } from './accessibilityAnnouncer';
 import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
 
+function AppScreenContent({
+  callFlow,
+  callState,
+  isPrimerVisible,
+  isCallFullScreen,
+  acceptPrimer,
+  skipPrimer,
+}: Pick<ReturnType<typeof useCall>, 'callFlow'> & {
+  callState: string;
+  isPrimerVisible: boolean;
+  isCallFullScreen: boolean;
+  acceptPrimer: () => Promise<void>;
+  skipPrimer: () => Promise<void>;
+}) {
+  if (callFlow.isLoadingIdentity) return null;
+  if (!callFlow.isRegistered) {
+    return (
+      <RegistrationScreen
+        onRegister={registration => {
+          callFlow.registerUser(registration).catch(error => {
+            logError('registerUser failed', error);
+          });
+        }}
+        isLoading={callFlow.isAuthenticating}
+        status={callFlow.status}
+        isGoogleSignInAvailable={callFlow.canUseGoogleSignIn}
+        isMicrosoftSignInAvailable={callFlow.canUseMicrosoftSignIn}
+      />
+    );
+  }
+  if (isPrimerVisible && callState === CALL_STATES.IDLE) {
+    // Only from a standing start: a call arriving during first run outranks an
+    // explanation, and the primer would otherwise cover the ringing screen.
+    return (
+      <PermissionsPrimerScreen
+        onContinue={() => {
+          acceptPrimer().catch(error => {
+            logError('permissions primer accept failed', error);
+          });
+        }}
+        onSkip={() => {
+          skipPrimer().catch(error => {
+            logError('permissions primer skip failed', error);
+          });
+        }}
+      />
+    );
+  }
+  if (callState === CALL_STATES.OUTGOING_RINGING) {
+    return (
+      <OutgoingCallScreen
+        calleeId={callFlow.calleeId}
+        activeCall={callFlow.activeCall}
+        delivery={callFlow.callDelivery}
+        status={callFlow.status}
+        onCancel={callFlow.cancelOutgoingCall}
+      />
+    );
+  }
+  if (callState === CALL_STATES.INCOMING_RINGING) {
+    // Answering clears `incomingCall` immediately, but the call state only
+    // reaches `in_call` once media negotiation completes — so for that second
+    // or two this screen is still on top. Fall back to the active call record
+    // for the caller's identity, or the screen announces the call as being
+    // from "Unknown" the instant the user accepts it.
+    const ringingCall = callFlow.incomingCall ?? callFlow.activeCall;
+    return (
+      <IncomingCallScreen
+        incomingCall={ringingCall}
+        isAnswering={!callFlow.incomingCall && Boolean(callFlow.activeCall)}
+        status={callFlow.status}
+        onAccept={callFlow.acceptIncomingCall}
+        onDecline={callFlow.declineIncomingCall}
+        onCancelAnswer={callFlow.handleEndCall}
+      />
+    );
+  }
+  return isCallFullScreen ? <ActiveCallScreen /> : <TabShell />;
+}
+
 /**
  * Screen router: picks what the app shows for the current call state and
  * registration status.  All behaviour lives in the providers
@@ -81,74 +161,16 @@ export default function AppShell() {
   // so a minimized call is never invisible.
   const isBubbleVisible = isCallMinimizedInShell && !isBubbleDismissed;
 
-  let screenContent;
-  if (callFlow.isLoadingIdentity) {
-    // Blank screen while identity is being loaded from storage; the app
-    // transitions to the correct screen once loading completes.
-    screenContent = null;
-  } else if (!callFlow.isRegistered) {
-    screenContent = (
-      <RegistrationScreen
-        onRegister={registration => {
-          callFlow.registerUser(registration).catch(error => {
-            logError('registerUser failed', error);
-          });
-        }}
-        isLoading={callFlow.isAuthenticating}
-        status={callFlow.status}
-        isGoogleSignInAvailable={callFlow.canUseGoogleSignIn}
-        isMicrosoftSignInAvailable={callFlow.canUseMicrosoftSignIn}
-      />
-    );
-  } else if (isPrimerVisible && callState === CALL_STATES.IDLE) {
-    // Only from a standing start: a call arriving during first run outranks an
-    // explanation, and the primer would otherwise cover the ringing screen.
-    screenContent = (
-      <PermissionsPrimerScreen
-        onContinue={() => {
-          acceptPrimer().catch(error => {
-            logError('permissions primer accept failed', error);
-          });
-        }}
-        onSkip={() => {
-          skipPrimer().catch(error => {
-            logError('permissions primer skip failed', error);
-          });
-        }}
-      />
-    );
-  } else if (callState === CALL_STATES.OUTGOING_RINGING) {
-    screenContent = (
-      <OutgoingCallScreen
-        calleeId={callFlow.calleeId}
-        activeCall={callFlow.activeCall}
-        delivery={callFlow.callDelivery}
-        status={callFlow.status}
-        onCancel={callFlow.cancelOutgoingCall}
-      />
-    );
-  } else if (callState === CALL_STATES.INCOMING_RINGING) {
-    // Answering clears `incomingCall` immediately, but the call state only
-    // reaches `in_call` once media negotiation completes — so for that second
-    // or two this screen is still on top. Fall back to the active call record
-    // for the caller's identity, or the screen announces the call as being
-    // from "Unknown" the instant the user accepts it.
-    const ringingCall = callFlow.incomingCall ?? callFlow.activeCall;
-    screenContent = (
-      <IncomingCallScreen
-        incomingCall={ringingCall}
-        isAnswering={!callFlow.incomingCall && Boolean(callFlow.activeCall)}
-        status={callFlow.status}
-        onAccept={callFlow.acceptIncomingCall}
-        onDecline={callFlow.declineIncomingCall}
-        onCancelAnswer={callFlow.handleEndCall}
-      />
-    );
-  } else if (isCallFullScreen) {
-    screenContent = <ActiveCallScreen />;
-  } else {
-    screenContent = <TabShell />;
-  }
+  const screenContent = (
+    <AppScreenContent
+      callFlow={callFlow}
+      callState={callState}
+      isPrimerVisible={isPrimerVisible}
+      isCallFullScreen={isCallFullScreen}
+      acceptPrimer={acceptPrimer}
+      skipPrimer={skipPrimer}
+    />
+  );
 
   // Padding depends on runtime-only values (measured safe-area insets, and
   // whether the tab shell — which pads its own bottom edge — is active), so it

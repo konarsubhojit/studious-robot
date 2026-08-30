@@ -94,65 +94,63 @@ export function getScreenShareErrorMessage(error: unknown): string {
   return `Unable to start screen sharing: ${errorMessage(error) || 'Unknown error'}`;
 }
 
-/**
- * Prompt the user for screen-capture consent and return the captured stream.
- *
- *   `withAudio` requests screen/system audio in addition to the screen video.
- */
-export async function startScreenCapture({ withAudio = false }: { withAudio?: boolean; } = {}): Promise<{ ok: true; stream: object; videoTrack: object; audioTrack: object | null; audioShared: boolean; } |
-{ ok: false; reason: 'unsupported' | 'cancelled' | 'failed'; message: string; error?: unknown; }> {
-  if (!isScreenShareSupported()) {
-    return {
-      ok: false,
-      reason: 'unsupported',
-      message: 'Screen sharing is not supported on this device',
-    };
-  }
+type ScreenCaptureSuccess = {
+  ok: true;
+  stream: any;
+  videoTrack: object;
+  audioTrack: object | null;
+  audioShared: boolean;
+};
 
-  let stream;
+type ScreenCaptureFailure = {
+  ok: false;
+  reason: 'unsupported' | 'cancelled' | 'failed';
+  message: string;
+  error?: unknown;
+};
+
+type ScreenCaptureResult = ScreenCaptureSuccess | ScreenCaptureFailure;
+
+function failedScreenCapture(error: unknown): ScreenCaptureFailure {
+  const denied = isPermissionDeniedError(error);
+  if (!denied) {
+    logError('Screen capture failed; MediaProjection did not start', error);
+  }
+  return {
+    ok: false,
+    reason: denied ? SCREEN_SHARE_CANCELLED : 'failed',
+    message: getScreenShareErrorMessage(error),
+    error,
+  };
+}
+
+async function requestDisplayMedia(withAudio: boolean): Promise<{ ok: true; stream: any; } | ScreenCaptureFailure> {
   try {
     // `getDisplayMedia` accepts constraints at runtime; react-native-webrtc's
     // typings declare it without parameters.
-    stream = await (mediaDevices as any).getDisplayMedia({
+    const stream = await (mediaDevices as any).getDisplayMedia({
       video: true,
       audio: Boolean(withAudio),
     });
+    return { ok: true, stream };
   } catch (error) {
-    if (withAudio && !isPermissionDeniedError(error)) {
-      // Some platforms reject the whole request when screen audio is asked for
-      // but unavailable; retry video-only before giving up. A refused consent
-      // is never retried: the MediaProjection token is consumed by the prompt,
-      // so retrying only re-asks a user who has already said no.
-      logWarn('Screen capture with audio failed; retrying video only', {
-        message: errorMessage(error),
-      });
-      try {
-        stream = await (mediaDevices as any).getDisplayMedia({ video: true });
-      } catch (retryError) {
-        const denied = isPermissionDeniedError(retryError);
-        if (!denied) {
-          logError('Screen capture failed; MediaProjection did not start', retryError);
-        }
-        return {
-          ok: false,
-          reason: denied ? SCREEN_SHARE_CANCELLED : 'failed',
-          message: getScreenShareErrorMessage(retryError),
-          error: retryError,
-        };
-      }
-    } else {
-      if (!isPermissionDeniedError(error)) {
-        logError('Screen capture failed; MediaProjection did not start', error);
-      }
-      return {
-        ok: false,
-        reason: isPermissionDeniedError(error) ? SCREEN_SHARE_CANCELLED : 'failed',
-        message: getScreenShareErrorMessage(error),
-        error,
-      };
+    if (!withAudio || isPermissionDeniedError(error)) return failedScreenCapture(error);
+    // Some platforms reject the whole request when screen audio is asked for
+    // but unavailable; retry video-only before giving up. A refused consent
+    // is never retried: the MediaProjection token is consumed by the prompt,
+    // so retrying only re-asks a user who has already said no.
+    logWarn('Screen capture with audio failed; retrying video only', {
+      message: errorMessage(error),
+    });
+    try {
+      return { ok: true, stream: await (mediaDevices as any).getDisplayMedia({ video: true }) };
+    } catch (retryError) {
+      return failedScreenCapture(retryError);
     }
   }
+}
 
+function completeScreenCapture(stream: any, withAudio: boolean): ScreenCaptureResult {
   const [videoTrack] = stream?.getVideoTracks?.() ?? [];
   if (!videoTrack) {
     stopScreenCapture(stream);
@@ -162,13 +160,11 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
       message: 'Screen sharing did not return a video track',
     };
   }
-
   const [audioTrack] = withAudio ? stream.getAudioTracks?.() ?? [] : [];
   logInfo('Screen capture started; MediaProjection service running', {
     requestedAudio: Boolean(withAudio),
     audioShared: Boolean(audioTrack),
   });
-
   return {
     ok: true,
     stream,
@@ -176,6 +172,27 @@ export async function startScreenCapture({ withAudio = false }: { withAudio?: bo
     audioTrack: audioTrack ?? null,
     audioShared: Boolean(audioTrack),
   };
+}
+
+/**
+ * Prompt the user for screen-capture consent and return the captured stream.
+ *
+ *   `withAudio` requests screen/system audio in addition to the screen video.
+ */
+export async function startScreenCapture(
+  { withAudio = false }: { withAudio?: boolean; } = {},
+): Promise<ScreenCaptureResult> {
+  if (!isScreenShareSupported()) {
+    return {
+      ok: false,
+      reason: 'unsupported',
+      message: 'Screen sharing is not supported on this device',
+    };
+  }
+
+  const capture = await requestDisplayMedia(withAudio);
+  if (!capture.ok) return capture;
+  return completeScreenCapture(capture.stream, withAudio);
 }
 
 /** @param ms */

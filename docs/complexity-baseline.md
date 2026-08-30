@@ -24,17 +24,15 @@ fix. `eslint-plugin-sonarjs` supports ESLint 8, 9 and 10, so it drops into the
 mobile package's legacy `.eslintrc.js` and the server's flat config without
 dependency friction; no substitution was needed.
 
-The rule is set to **`warn`, not `error`**. There are 35 pre-existing
-violations, listed in full below, and turning them into errors would make
-`backend-ci.yml` and `mobile-ci.yml` fail on every commit. Warnings keep the
-number visible on every lint run without blocking unrelated work. The level is
-raised to `error` when the phases below have cleared the backlog.
+Phase 6 cleared the live backlog, so the rule is now **`error`** in both
+packages. A lint run therefore fails if any function exceeds 15; no baseline
+exception or inline suppression is allowed.
 
-**No inline suppressions were added, and no source was changed in this phase.**
-Measuring and fixing in one change makes it impossible to tell whether the gate
-is calibrated correctly. Nothing is exempted: every method over the threshold
-appears in the table below, including the ones that may turn out to be
-irreducible.
+During the Phase 1 measurement, **no inline suppressions were added and no
+source was changed**. Measuring and fixing in one change makes it impossible to
+tell whether the gate is calibrated correctly. Nothing was exempted: every
+method over the threshold appears in the table below, including the ones that
+might have turned out to be irreducible.
 
 Reproduce the numbers with:
 
@@ -42,6 +40,22 @@ Reproduce the numbers with:
 cd server && npm run lint      # server/ and shared/
 cd mobile && npm run lint
 ```
+
+## Phase 6 completion
+
+Phase 6 cleared all 30 findings emitted by the live gate: 24 in `mobile/` and
+6 in `server/` (including residual work originally assigned to earlier phases).
+The final lint result is **0 violations** at the configured threshold of 15.
+The original 35-item table remains below as the historical Phase 1 measurement.
+
+The final production TypeScript source scope (`mobile/src`, `server/src`,
+`server/db`, and `shared`) contains **51,532 lines**. Phase 6 changed 23
+production modules: 19 mobile modules (**10,453 lines**) and four server
+modules (**1,088 lines**), for **11,541 lines** in total. Existing module paths
+remain the public facades; the decomposition uses local helpers rather than
+changing imports or APIs.
+
+No complexity exemption, lint suppression, or weakened assertion was added.
 
 ## Every violation, worst first
 
@@ -109,12 +123,12 @@ Source files (`server/src`, `server/db`, `shared/`, `mobile/src`):
 
 | Lines | File | Phase |
 | --- | --- | --- |
-| 4222 | `mobile/src/hooks/useCallFlow.ts` | 5 |
-| 2095 | `mobile/src/components/ChatConversationScreen.tsx` | — |
-| 1367 | `mobile/src/hooks/useMessaging.ts` | 4 |
+| 4173 | `mobile/src/hooks/useCallFlow.ts` | 5 |
+| 2563 | `mobile/src/components/ChatConversationScreen.tsx` | — |
+| 1014 | `mobile/src/hooks/useMessaging.ts` | 4 |
 | 944 | `mobile/src/theme.ts` | — |
-| 899 | `mobile/src/pushNotifications.ts` | — |
-| 781 | `mobile/src/components/SettingsScreen.tsx` | — |
+| 922 | `mobile/src/pushNotifications.ts` | — |
+| 887 | `mobile/src/components/SettingsScreen.tsx` | — |
 | 643 | `mobile/src/callKeep.ts` | — |
 | 612 | `mobile/src/components/SearchScreen.tsx` | — |
 | 584 | `server/src/domain/calls.ts` | — |
@@ -174,9 +188,9 @@ largest of them mirrors the largest source file and will have to move with it:
 | **Mobile services** — `pushNotifications.ts`, `storageUsage.ts` | 2 (#27, #28) | **Unassigned** |
 | **Server odds and ends** — `turnCredentials.routes.ts`, `telemetry.ts`, `callTimeline.ts`, and one test helper | 5 (#6, #9, #18, #31, #32) | **Unassigned** |
 
-The honest reading of that table: Phases 2–5 as scoped account for **10 of the
-35** violations. They target the largest *files*, and the largest files are not
-where the highest-scoring *methods* live. Two results make that concrete:
+At the baseline, Phases 2–5 as scoped accounted for **10 of the 35**
+violations. They targeted the largest *files*, and the largest files were not
+where the highest-scoring *methods* lived. Two results made that concrete:
 
 - `server/src/push.ts` (1,289 lines) and `server/src/messageStore.ts` (934
   lines) — the whole of Phase 2 — contain **no method over the threshold**.
@@ -185,11 +199,9 @@ where the highest-scoring *methods* live. Two results make that concrete:
 - The three worst methods in the repository are React components in
   `ChatConversationScreen.tsx`, a file no phase currently owns.
 
-Clearing the backlog to zero, and so promoting the rule from `warn` to `error`,
-needs one further piece of work covering the presentational layer and the
-residual server helpers. That is stated here rather than quietly assumed: the
-epic's success criterion ("no method exceeds the threshold, or every exception
-is documented") cannot be met without it.
+Phase 6 supplied that presentational and residual-server work, clearing the
+live backlog to zero and promoting the rule from `warn` to `error`. The epic's
+success criterion is now met without an exception.
 
 ## Progress against the baseline
 
@@ -197,6 +209,7 @@ is documented") cannot be met without it.
 | --- | --- | --- |
 | Phase 3 (#214) | #13 `message:send` (24) | `handleMessageSend` in `server/src/signaling/messageHandlers/send.ts` scores 8 |
 | Phase 4 (#215) | #19 `downloadAttachment` (19) | under the threshold; the per-directory attempt is its own function |
+| Phase 6 | 30 live findings across mobile and server | zero findings remain; `sonarjs/cognitive-complexity` is enforced as an error at 15 |
 
 Phase 4 also split `mobile/src/hooks/useMessaging.ts` (1,367 lines) into
 `mobile/src/messaging/` — identity/ordering, message history, the send and

@@ -30,38 +30,44 @@ const CALL_COLUMN_TO_PROPERTY = new Map(
  * Only the shapes this read path builds are understood; anything else throws so
  * a query change can never silently degrade into "matches everything".
  */
-function compilePredicate(node: any): (row: any) => boolean {
-  const children: Array<(row: any) => boolean> = [];
-  let operator: 'and' | 'or' = 'and';
-  let column: string | null = null;
+type PredicateState = {
+  children: Array<(row: any) => boolean>;
+  operator: 'and' | 'or';
+  column: string | null;
+};
 
-  for (const chunk of node?.queryChunks ?? []) {
-    if (Array.isArray(chunk?.value) && chunk?.value.every((part: unknown) => typeof part === 'string')) {
-      const text = chunk.value.join('').trim();
-      if (text === 'and' || text === 'or') operator = text;
-      continue;
-    }
-    if (chunk?.queryChunks) {
-      children.push(compilePredicate(chunk));
-      continue;
-    }
-    if (typeof chunk?.name === 'string' && chunk?.table) {
-      column = CALL_COLUMN_TO_PROPERTY.get(chunk.name) ?? chunk.name;
-      continue;
-    }
-    if (column !== null && chunk && 'value' in chunk) {
-      const property = column;
-      const expected = chunk.value;
-      children.push((row: any) => row[property] === expected);
-      column = null;
-      continue;
-    }
-    throw new Error(`fake db: unsupported condition chunk ${JSON.stringify(chunk)}`);
+function appendPredicateChunk(state: PredicateState, chunk: any) {
+  if (Array.isArray(chunk?.value) && chunk.value.every((part: unknown) => typeof part === 'string')) {
+    const text = chunk.value.join('').trim();
+    if (text === 'and' || text === 'or') state.operator = text;
+    return;
   }
+  if (chunk?.queryChunks) {
+    state.children.push(compilePredicate(chunk));
+    return;
+  }
+  if (typeof chunk?.name === 'string' && chunk?.table) {
+    state.column = CALL_COLUMN_TO_PROPERTY.get(chunk.name) ?? chunk.name;
+    return;
+  }
+  if (state.column !== null && chunk && 'value' in chunk) {
+    const property = state.column;
+    const expected = chunk.value;
+    state.children.push((row: any) => row[property] === expected);
+    state.column = null;
+    return;
+  }
+  throw new Error(`fake db: unsupported condition chunk ${JSON.stringify(chunk)}`);
+}
 
-  if (children.length === 0) return () => true;
+function compilePredicate(node: any): (row: any) => boolean {
+  const state: PredicateState = { children: [], operator: 'and', column: null };
+  for (const chunk of node?.queryChunks ?? []) appendPredicateChunk(state, chunk);
+  if (state.children.length === 0) return () => true;
   return (row: any) =>
-    operator === 'and' ? children.every((p) => p(row)) : children.some((p) => p(row));
+    state.operator === 'and'
+      ? state.children.every((predicate) => predicate(row))
+      : state.children.some((predicate) => predicate(row));
 }
 
 /** @returns the row properties named by a list of `desc(column)` expressions. */

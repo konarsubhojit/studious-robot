@@ -221,6 +221,33 @@ export async function measureStorageUsage(): Promise<StorageUsage> {
   return usage;
 }
 
+async function clearMediaInDirectory(
+  directory: string,
+  now: number,
+  seenPaths: Set<string>,
+  result: ClearMediaResult,
+) {
+  for (const file of (await listFiles(directory)).files) {
+    if (seenPaths.has(file.path)) continue;
+    seenPaths.add(file.path);
+    if (categorizeStoredFile(file.name) !== 'media') continue;
+    if (file.modifiedAtMs && now - file.modifiedAtMs < RECENT_FILE_GRACE_MS) {
+      result.skippedFiles += 1;
+      continue;
+    }
+    try {
+      await RNFS.unlink(file.path);
+      result.removedFiles += 1;
+      result.freedBytes += file.size;
+    } catch (error) {
+      result.failedFiles += 1;
+      logWarn('[StorageUsage] Failed to remove cached file', {
+        message: errorMessage(error),
+      });
+    }
+  }
+}
+
 /**
  * Delete the cached media the app can recreate, leaving conversations,
  * settings and logs untouched.
@@ -242,26 +269,7 @@ export async function clearCachedMedia({
 
   const seenPaths = new Set<string>();
   for (const directory of measurableDirectories()) {
-    for (const file of (await listFiles(directory)).files) {
-      if (seenPaths.has(file.path)) continue;
-      seenPaths.add(file.path);
-      if (categorizeStoredFile(file.name) !== 'media') continue;
-      if (file.modifiedAtMs && now - file.modifiedAtMs < RECENT_FILE_GRACE_MS) {
-        result.skippedFiles += 1;
-        continue;
-      }
-
-      try {
-        await RNFS.unlink(file.path);
-        result.removedFiles += 1;
-        result.freedBytes += file.size;
-      } catch (error) {
-        result.failedFiles += 1;
-        logWarn('[StorageUsage] Failed to remove cached file', {
-          message: errorMessage(error),
-        });
-      }
-    }
+    await clearMediaInDirectory(directory, now, seenPaths, result);
   }
 
   return result;

@@ -94,6 +94,310 @@ export type SettingsScreenProps = {
   status?: CallStatus;
 };
 
+function MutedPeopleSettings({
+  mutedPeers,
+  onOpenProfile,
+  onUnmutePeer,
+  confirm,
+  styles,
+}: Pick<SettingsScreenProps, 'mutedPeers' | 'onOpenProfile' | 'onUnmutePeer'> & {
+  mutedPeers: string[];
+  confirm: (message: string) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (mutedPeers.length === 0) {
+    return (
+      <ListItem
+        title="Muted people"
+        value="None"
+        subtitle="Mute someone from their profile to silence their messages."
+        icon="muteNotifications"
+        accessibilityLabel="Muted people, none"
+        testID="settings-muted-empty"
+      />
+    );
+  }
+  return (
+    <View testID="settings-muted-people">
+      <Text style={styles.groupCaption}>Muted people</Text>
+      {mutedPeers.map(peer => (
+        <ListItem
+          key={peer}
+          title={peer}
+          subtitle="Messages arrive silently"
+          leading={<Avatar id={peer} size="sm" />}
+          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+          accessibilityLabel={`${peer}, muted`}
+          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
+          trailing={
+            onUnmutePeer ? (
+              <IconAction
+                icon="unmuteNotifications"
+                accessibilityLabel={`Unmute ${peer}`}
+                accessibilityHint="Lets their messages notify you again"
+                onPress={() => {
+                  onUnmutePeer(peer);
+                  confirm(`${peer} unmuted`);
+                }}
+                size={40}
+                testID="settings-unmute"
+              />
+            ) : null
+          }
+          testID="settings-muted-row"
+        />
+      ))}
+    </View>
+  );
+}
+
+function BlockedPeopleSettings({
+  blockedUsers,
+  onOpenProfile,
+  onUnblockUser,
+  confirm,
+  styles,
+}: Pick<SettingsScreenProps, 'blockedUsers' | 'onOpenProfile' | 'onUnblockUser'> & {
+  blockedUsers: string[];
+  confirm: (message: string) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (blockedUsers.length === 0) {
+    return (
+      <ListItem
+        title="Blocked people"
+        value="None"
+        subtitle="Blocking someone stops their calls and messages both ways."
+        icon="settingsPrivacy"
+        accessibilityLabel="Blocked people, none"
+        testID="settings-blocked-empty"
+      />
+    );
+  }
+  return (
+    <View testID="settings-blocked-people">
+      <Text style={styles.groupCaption}>Blocked people</Text>
+      {blockedUsers.map(peer => (
+        <ListItem
+          key={peer}
+          title={peer}
+          subtitle="Can't call or message you"
+          leading={<Avatar id={peer} size="sm" />}
+          onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
+          accessibilityLabel={`${peer}, blocked`}
+          accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
+          trailing={
+            onUnblockUser ? (
+              <AppButton
+                title="Unblock"
+                onPress={() => {
+                  onUnblockUser(peer);
+                  confirm(`${peer} unblocked`);
+                }}
+                style={styles.inlineButton}
+                accessibilityLabel={`Unblock ${peer}`}
+                accessibilityHint="Lets them call and message you again"
+                testID="settings-unblock"
+              />
+            ) : null
+          }
+          testID="settings-blocked-row"
+        />
+      ))}
+    </View>
+  );
+}
+
+function AdvancedSettings({
+  signalingUrl,
+  onOpenSignalingEditor,
+  onToggleDeveloperMode,
+  developerModeEnabled,
+  onChangeIceTransportPolicy,
+  activeIceTransportPolicy,
+  styles,
+}: Pick<SettingsScreenProps, 'signalingUrl' | 'onToggleDeveloperMode' | 'developerModeEnabled' |
+  'onChangeIceTransportPolicy'> & {
+  onOpenSignalingEditor: () => void;
+  activeIceTransportPolicy: ReturnType<typeof normalizeIceTransportPolicy>;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <>
+      <SectionHeader title="Advanced" icon="settingsDeveloper" />
+      <ListItem
+        title="Signaling server"
+        subtitle="The server that routes your calls."
+        value={signalingUrl || 'Not set'}
+        icon="settingsServer"
+        onPress={onOpenSignalingEditor}
+        accessibilityLabel="Signaling server"
+        accessibilityHint="Opens an editor for the address of the server that routes your calls"
+        testID="settings-signaling-row"
+      />
+      {onToggleDeveloperMode ? (
+        <>
+          <Switch
+            label="Developer mode"
+            hint="Show extra diagnostic tools, such as the ICE transport policy."
+            value={Boolean(developerModeEnabled)}
+            onValueChange={onToggleDeveloperMode}
+            testID="settings-developer-mode"
+          />
+          {onChangeIceTransportPolicy && developerModeEnabled ? (
+            <>
+              <Text style={styles.toggleLabel}>ICE transport policy</Text>
+              <Text style={styles.hint}>Force TURN relay for diagnostics, or use the default ICE path.</Text>
+              <View
+                style={styles.segmentedRow}
+                accessibilityRole="radiogroup"
+                testID="settings-ice-policy">
+                {ICE_TRANSPORT_POLICY_OPTIONS.map(option => {
+                  const isSelected = option.policy === activeIceTransportPolicy;
+                  return (
+                    <Pressable
+                      key={option.policy}
+                      onPress={() => onChangeIceTransportPolicy(option.policy)}
+                      accessibilityRole="radio"
+                      accessibilityLabel={`${option.label} ICE transport policy`}
+                      accessibilityState={{ selected: isSelected, checked: isSelected }}
+                      testID={option.testID}
+                      style={({ pressed }) => [
+                        styles.segment,
+                        isSelected && styles.segmentSelected,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text
+                        style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function CallMediaSettings({
+  onToggleSpeakerDefault,
+  onToggleAutoLighting,
+  onToggleHaptics,
+  speakerDefaultEnabled,
+  autoLightingEnabled,
+  hapticsEnabled,
+}: Pick<SettingsScreenProps, 'onToggleSpeakerDefault' | 'onToggleAutoLighting' |
+  'onToggleHaptics' | 'speakerDefaultEnabled' | 'autoLightingEnabled' | 'hapticsEnabled'>) {
+  if (!onToggleSpeakerDefault && !onToggleAutoLighting && !onToggleHaptics) return null;
+  return (
+    <>
+      <SectionHeader title="Calls &amp; media" icon="settingsCalls" />
+      {onToggleSpeakerDefault ? (
+        <Switch
+          label="Speaker by default"
+          hint="Start calls on the loudspeaker instead of the earpiece."
+          value={Boolean(speakerDefaultEnabled)}
+          onValueChange={onToggleSpeakerDefault}
+          testID="settings-speaker-default"
+        />
+      ) : null}
+      {onToggleAutoLighting ? (
+        <Switch
+          label="Auto camera lighting"
+          hint="Brighten the camera automatically when the light is poor."
+          value={Boolean(autoLightingEnabled)}
+          onValueChange={onToggleAutoLighting}
+          testID="settings-auto-lighting"
+        />
+      ) : null}
+      {onToggleHaptics ? (
+        // Deliberately *not* folded into the OS "reduce motion" setting:
+        // that asks for less animation, while a vibration is often the
+        // only confirmation that a tap registered.
+        <Switch
+          label="Haptic feedback"
+          hint="Vibrate to confirm call controls and call state changes."
+          value={Boolean(hapticsEnabled)}
+          onValueChange={onToggleHaptics}
+          testID="settings-haptics"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function StorageSettings({
+  storageUsage,
+  isMeasuringStorage,
+  isClearingMedia,
+  onClearCachedMedia,
+  onExportLogs,
+}: Pick<SettingsScreenProps, 'isMeasuringStorage' | 'isClearingMedia' |
+  'onClearCachedMedia' | 'onExportLogs'> & {
+  storageUsage: StorageUsage;
+}) {
+  const storageDetails = isMeasuringStorage
+    ? 'Measuring…'
+    : storageUsage.measured
+      ? `Media ${formatBytes(storageUsage.mediaBytes)} · `
+        + `Logs ${formatBytes(storageUsage.logBytes)} · `
+        + `Data ${formatBytes(storageUsage.dataBytes)}`
+      : 'Storage use is unavailable on this device.';
+  const storageValue = isMeasuringStorage || !storageUsage.measured
+    ? '—'
+    : formatBytes(storageUsage.totalBytes);
+  const storageLabel = isMeasuringStorage
+    ? 'Storage used on this device, measuring'
+    : storageUsage.measured
+      ? `Storage used on this device, ${formatBytes(storageUsage.totalBytes)}`
+      : 'Storage used on this device, unavailable';
+  const clearSubtitle = storageUsage.measured && storageUsage.mediaFileCount > 0
+    ? `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
+      + 'Photos and voice notes download again when you open them.'
+    : 'Removes downloaded photos and voice notes. '
+      + 'They download again when you open them.';
+  return (
+    <>
+      <SectionHeader title="Storage &amp; data" icon="settingsStorage" />
+      <ListItem
+        title="On this device"
+        subtitle={storageDetails}
+        value={storageValue}
+        icon="settingsStorage"
+        accessibilityLabel={storageLabel}
+        testID="settings-storage-usage"
+      />
+      {onClearCachedMedia ? (
+        <ListItem
+          title={isClearingMedia ? 'Clearing…' : 'Clear cached media'}
+          subtitle={clearSubtitle}
+          icon="settingsMedia"
+          onPress={isClearingMedia ? undefined : onClearCachedMedia}
+          disabled={isClearingMedia}
+          accessibilityLabel="Clear cached media"
+          accessibilityHint="Removes downloaded photos and voice notes from this device"
+          testID="settings-clear-media"
+        />
+      ) : null}
+      {onExportLogs ? (
+        <ListItem
+          title="Export logs"
+          subtitle="Share a copy of this device's diagnostic log."
+          icon="settingsDeveloper"
+          onPress={onExportLogs}
+          accessibilityLabel="Export logs"
+          accessibilityHint="Shares a copy of this device's diagnostic log"
+          testID="settings-export-logs"
+        />
+      ) : null}
+    </>
+  );
+}
+
 /**
  * Account, notification, privacy, storage and connection settings.
  *
@@ -277,89 +581,22 @@ function SettingsScreen({
             testID="settings-message-notifications"
           />
         ) : null}
-        {/* A row, not a bare heading: an empty group used to render as a
-            caption plus a sentence with no icon, no value and no tap target,
-            which reads as a row that failed rather than as "nobody is muted". */}
-        {mutedPeers.length === 0 ? (
-          <ListItem
-            title="Muted people"
-            value="None"
-            subtitle="Mute someone from their profile to silence their messages."
-            icon="muteNotifications"
-            accessibilityLabel="Muted people, none"
-            testID="settings-muted-empty"
-          />
-        ) : (
-          <View testID="settings-muted-people">
-            <Text style={styles.groupCaption}>Muted people</Text>
-            {mutedPeers.map(peer => (
-              <ListItem
-                key={peer}
-                title={peer}
-                subtitle="Messages arrive silently"
-                leading={<Avatar id={peer} size="sm" />}
-                onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-                accessibilityLabel={`${peer}, muted`}
-                accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-                trailing={
-                  onUnmutePeer ? (
-                    <IconAction
-                      icon="unmuteNotifications"
-                      accessibilityLabel={`Unmute ${peer}`}
-                      accessibilityHint="Lets their messages notify you again"
-                      onPress={() => {
-                        onUnmutePeer(peer);
-                        confirm(`${peer} unmuted`);
-                      }}
-                      size={40}
-                      testID="settings-unmute"
-                    />
-                  ) : null
-                }
-                testID="settings-muted-row"
-              />
-            ))}
-          </View>
-        )}
+        <MutedPeopleSettings
+          mutedPeers={mutedPeers}
+          onOpenProfile={onOpenProfile}
+          onUnmutePeer={onUnmutePeer}
+          confirm={confirm}
+          styles={styles}
+        />
 
-        {/* ── Calls & media ───────────────────────────────────────────────── */}
-        {onToggleSpeakerDefault || onToggleAutoLighting || onToggleHaptics ? (
-          <>
-            <SectionHeader title="Calls &amp; media" icon="settingsCalls" />
-            {/* These two used to live inside the Lobby's developer-tools panel,
-                which meant an ordinary user could not reach them at all. */}
-            {onToggleSpeakerDefault ? (
-              <Switch
-                label="Speaker by default"
-                hint="Start calls on the loudspeaker instead of the earpiece."
-                value={Boolean(speakerDefaultEnabled)}
-                onValueChange={onToggleSpeakerDefault}
-                testID="settings-speaker-default"
-              />
-            ) : null}
-            {onToggleAutoLighting ? (
-              <Switch
-                label="Auto camera lighting"
-                hint="Brighten the camera automatically when the light is poor."
-                value={Boolean(autoLightingEnabled)}
-                onValueChange={onToggleAutoLighting}
-                testID="settings-auto-lighting"
-              />
-            ) : null}
-            {onToggleHaptics ? (
-              // Deliberately *not* folded into the OS "reduce motion" setting:
-              // that asks for less animation, while a vibration is often the
-              // only confirmation that a tap registered.
-              <Switch
-                label="Haptic feedback"
-                hint="Vibrate to confirm call controls and call state changes."
-                value={Boolean(hapticsEnabled)}
-                onValueChange={onToggleHaptics}
-                testID="settings-haptics"
-              />
-            ) : null}
-          </>
-        ) : null}
+        <CallMediaSettings
+          onToggleSpeakerDefault={onToggleSpeakerDefault}
+          onToggleAutoLighting={onToggleAutoLighting}
+          onToggleHaptics={onToggleHaptics}
+          speakerDefaultEnabled={speakerDefaultEnabled}
+          autoLightingEnabled={autoLightingEnabled}
+          hapticsEnabled={hapticsEnabled}
+        />
 
         {/* ── Appearance ──────────────────────────────────────────────────── */}
         <SectionHeader title="Appearance" icon="settingsAppearance" />
@@ -367,162 +604,31 @@ function SettingsScreen({
 
         {/* ── Privacy ─────────────────────────────────────────────────────── */}
         <SectionHeader title="Privacy" icon="settingsPrivacy" />
-        {blockedUsers.length === 0 ? (
-          <ListItem
-            title="Blocked people"
-            value="None"
-            subtitle="Blocking someone stops their calls and messages both ways."
-            icon="settingsPrivacy"
-            accessibilityLabel="Blocked people, none"
-            testID="settings-blocked-empty"
-          />
-        ) : (
-          <View testID="settings-blocked-people">
-            <Text style={styles.groupCaption}>Blocked people</Text>
-            {blockedUsers.map(peer => (
-              <ListItem
-                key={peer}
-                title={peer}
-                subtitle="Can't call or message you"
-                leading={<Avatar id={peer} size="sm" />}
-                onPress={onOpenProfile ? () => onOpenProfile(peer) : undefined}
-                accessibilityLabel={`${peer}, blocked`}
-                accessibilityHint={onOpenProfile ? `Opens ${peer}'s profile` : undefined}
-                trailing={
-                  onUnblockUser ? (
-                    <AppButton
-                      title="Unblock"
-                      onPress={() => {
-                        onUnblockUser(peer);
-                        confirm(`${peer} unblocked`);
-                      }}
-                      style={styles.inlineButton}
-                      accessibilityLabel={`Unblock ${peer}`}
-                      accessibilityHint="Lets them call and message you again"
-                      testID="settings-unblock"
-                    />
-                  ) : null
-                }
-                testID="settings-blocked-row"
-              />
-            ))}
-          </View>
-        )}
-
-        {/* ── Storage & data ──────────────────────────────────────────────── */}
-        <SectionHeader title="Storage & data" icon="settingsStorage" />
-        <ListItem
-          title="On this device"
-          subtitle={
-            isMeasuringStorage
-              ? 'Measuring…'
-              : storageUsage.measured
-                ? `Media ${formatBytes(storageUsage.mediaBytes)} · `
-                  + `Logs ${formatBytes(storageUsage.logBytes)} · `
-                  + `Data ${formatBytes(storageUsage.dataBytes)}`
-                : 'Storage use is unavailable on this device.'
-          }
-          value={
-            isMeasuringStorage || !storageUsage.measured
-              ? '—'
-              : formatBytes(storageUsage.totalBytes)
-          }
-          icon="settingsStorage"
-          accessibilityLabel={
-            isMeasuringStorage
-              ? 'Storage used on this device, measuring'
-              : storageUsage.measured
-                ? `Storage used on this device, ${formatBytes(storageUsage.totalBytes)}`
-                : 'Storage used on this device, unavailable'
-          }
-          testID="settings-storage-usage"
+        <BlockedPeopleSettings
+          blockedUsers={blockedUsers}
+          onOpenProfile={onOpenProfile}
+          onUnblockUser={onUnblockUser}
+          confirm={confirm}
+          styles={styles}
         />
-        {onClearCachedMedia ? (
-          <ListItem
-            title={isClearingMedia ? 'Clearing…' : 'Clear cached media'}
-            subtitle={
-              storageUsage.measured && storageUsage.mediaFileCount > 0
-                ? `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
-                  + 'Photos and voice notes download again when you open them.'
-                : 'Removes downloaded photos and voice notes. '
-                  + 'They download again when you open them.'
-            }
-            icon="settingsMedia"
-            onPress={isClearingMedia ? undefined : onClearCachedMedia}
-            disabled={isClearingMedia}
-            accessibilityLabel="Clear cached media"
-            accessibilityHint="Removes downloaded photos and voice notes from this device"
-            testID="settings-clear-media"
-          />
-        ) : null}
-        {onExportLogs ? (
-          <ListItem
-            title="Export logs"
-            subtitle="Share a copy of this device's diagnostic log."
-            icon="settingsDeveloper"
-            onPress={onExportLogs}
-            accessibilityLabel="Export logs"
-            accessibilityHint="Shares a copy of this device's diagnostic log"
-            testID="settings-export-logs"
-          />
-        ) : null}
 
-        {/* ── Advanced ────────────────────────────────────────────────────── */}
-        <SectionHeader title="Advanced" icon="settingsDeveloper" />
-        <ListItem
-          title="Signaling server"
-          subtitle="The server that routes your calls."
-          value={signalingUrl || 'Not set'}
-          icon="settingsServer"
-          onPress={openSignalingEditor}
-          accessibilityLabel="Signaling server"
-          accessibilityHint="Opens an editor for the address of the server that routes your calls"
-          testID="settings-signaling-row"
+        <StorageSettings
+          storageUsage={storageUsage}
+          isMeasuringStorage={isMeasuringStorage}
+          isClearingMedia={isClearingMedia}
+          onClearCachedMedia={onClearCachedMedia}
+          onExportLogs={onExportLogs}
         />
-        {onToggleDeveloperMode ? (
-          <>
-            <Switch
-              label="Developer mode"
-              hint="Show extra diagnostic tools, such as the ICE transport policy."
-              value={Boolean(developerModeEnabled)}
-              onValueChange={onToggleDeveloperMode}
-              testID="settings-developer-mode"
-            />
-            {onChangeIceTransportPolicy && developerModeEnabled ? (
-              <>
-                <Text style={styles.toggleLabel}>ICE transport policy</Text>
-                <Text style={styles.hint}>Force TURN relay for diagnostics, or use the default ICE path.</Text>
-                <View
-                  style={styles.segmentedRow}
-                  accessibilityRole="radiogroup"
-                  testID="settings-ice-policy">
-                  {ICE_TRANSPORT_POLICY_OPTIONS.map(option => {
-                    const isSelected = option.policy === activeIceTransportPolicy;
-                    return (
-                      <Pressable
-                        key={option.policy}
-                        onPress={() => onChangeIceTransportPolicy(option.policy)}
-                        accessibilityRole="radio"
-                        accessibilityLabel={`${option.label} ICE transport policy`}
-                        accessibilityState={{ selected: isSelected, checked: isSelected }}
-                        testID={option.testID}
-                        style={({ pressed }) => [
-                          styles.segment,
-                          isSelected && styles.segmentSelected,
-                          pressed && styles.pressed,
-                        ]}>
-                        <Text
-                          style={[styles.segmentLabel, isSelected && styles.segmentLabelSelected]}>
-                          {option.label}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
-          </>
-        ) : null}
+
+        <AdvancedSettings
+          signalingUrl={signalingUrl}
+          onOpenSignalingEditor={openSignalingEditor}
+          onToggleDeveloperMode={onToggleDeveloperMode}
+          developerModeEnabled={developerModeEnabled}
+          onChangeIceTransportPolicy={onChangeIceTransportPolicy}
+          activeIceTransportPolicy={activeIceTransportPolicy}
+          styles={styles}
+        />
 
         {/* ── About ───────────────────────────────────────────────────────── */}
         <SectionHeader title="About" icon="settingsAbout" />

@@ -73,6 +73,130 @@ export type MediaViewerItem = {
   kind: 'image' | 'video';
 };
 
+type MediaViewerStyles = ReturnType<typeof createStyles>;
+
+function MediaViewerContent({
+  item,
+  hasFailed,
+  VideoComponent,
+  callOwnsAudio,
+  mediaGesture,
+  animatedMediaStyle,
+  styles,
+  testID,
+  onVideoError,
+  onImageError,
+}: {
+  item: MediaViewerItem | null;
+  hasFailed: boolean;
+  VideoComponent: ReturnType<typeof loadVideoComponent>;
+  callOwnsAudio: boolean;
+  mediaGesture: ReturnType<typeof Gesture.Race>;
+  animatedMediaStyle: object;
+  styles: MediaViewerStyles;
+  testID: string;
+  onVideoError: (error: unknown) => void;
+  onImageError: () => void;
+}) {
+  if (!item) {
+    return (
+      <Text style={styles.message} testID={`${testID}-empty`}>
+        This media is no longer available
+      </Text>
+    );
+  }
+  if (hasFailed) {
+    return (
+      <Text style={styles.message} testID={`${testID}-error`}>
+        This file could not be loaded. It may have been removed from storage.
+      </Text>
+    );
+  }
+  if (item.kind === 'video') {
+    if (!VideoComponent) {
+      return (
+        <Text style={styles.message} testID={`${testID}-video-unavailable`}>
+          Video playback isn't available on this build — download the file to watch it
+        </Text>
+      );
+    }
+    return (
+      <VideoComponent
+        source={{ uri: item.url }}
+        style={styles.media}
+        controls
+        // A call owns the audio route; a video that autoplayed into it
+        // would take the route away mid-call, so it waits for a tap.
+        paused={callOwnsAudio}
+        resizeMode="contain"
+        onError={onVideoError}
+        testID={`${testID}-video`}
+      />
+    );
+  }
+  return (
+    <GestureDetector gesture={mediaGesture}>
+      <Animated.View style={[styles.mediaWrapper, animatedMediaStyle]}>
+        <Image
+          source={{ uri: item.url }}
+          style={styles.media}
+          resizeMode="contain"
+          accessibilityLabel={item.name || 'Photo'}
+          onError={onImageError}
+          testID={`${testID}-image`}
+        />
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
+function MediaViewerPager({
+  index,
+  count,
+  goTo,
+  styles,
+  colors,
+  testID,
+}: {
+  index: number;
+  count: number;
+  goTo: (index: number) => void;
+  styles: MediaViewerStyles;
+  colors: ReturnType<typeof useTheme>['colors'];
+  testID: string;
+}) {
+  if (count <= 1) return null;
+  return (
+    <View style={styles.footer}>
+      <Pressable
+        onPress={() => goTo(index - 1)}
+        disabled={index === 0}
+        accessibilityRole="button"
+        accessibilityLabel="Previous media"
+        accessibilityState={{ disabled: index === 0 }}
+        hitSlop={touchSlop(24)}
+        style={[styles.pageButton, index === 0 && styles.pageButtonDisabled]}
+        testID={`${testID}-previous`}>
+        <Icon name="back" size={22} color={colors.onOverlay} />
+      </Pressable>
+      <Text style={styles.counter} testID={`${testID}-counter`}>
+        {`${index + 1} / ${count}`}
+      </Text>
+      <Pressable
+        onPress={() => goTo(index + 1)}
+        disabled={index === count - 1}
+        accessibilityRole="button"
+        accessibilityLabel="Next media"
+        accessibilityState={{ disabled: index === count - 1 }}
+        hitSlop={touchSlop(24)}
+        style={[styles.pageButton, index === count - 1 && styles.pageButtonDisabled]}
+        testID={`${testID}-next`}>
+        <Icon name="forward" size={22} color={colors.onOverlay} />
+      </Pressable>
+    </View>
+  );
+}
+
 /**
  * Fullscreen viewer for the images and videos of a conversation.
  *
@@ -299,82 +423,32 @@ export default function MediaViewer({ items = [], initialIndex = 0, visible = fa
           )}
         </View>
 
-        {!item ? (
-          <Text style={styles.message} testID={`${testID}-empty`}>
-            This media is no longer available
-          </Text>
-        ) : hasFailed ? (
-          <Text style={styles.message} testID={`${testID}-error`}>
-            This file could not be loaded. It may have been removed from storage.
-          </Text>
-        ) : item.kind === 'video' ? (
-          VideoComponent ? (
-            <VideoComponent
-              source={{ uri: item.url }}
-              style={styles.media}
-              controls
-              // A call owns the audio route; a video that autoplayed into it
-              // would take the route away mid-call, so it waits for a tap.
-              paused={callOwnsAudio}
-              resizeMode="contain"
-              onError={(error: unknown) => {
-                logWarn('[Media] video playback failed', { error, mimeType: item.mimeType });
-                setFailedKey(item.key);
-              }}
-              testID={`${testID}-video`}
-            />
-          ) : (
-            <Text style={styles.message} testID={`${testID}-video-unavailable`}>
-              Video playback isn't available on this build — download the file to watch it
-            </Text>
-          )
-        ) : (
-          <GestureDetector gesture={mediaGesture}>
-            <Animated.View style={[styles.mediaWrapper, animatedMediaStyle]}>
-              <Image
-                source={{ uri: item.url }}
-                style={styles.media}
-                resizeMode="contain"
-                accessibilityLabel={item.name || 'Photo'}
-                onError={() => {
-                  logWarn('[Media] image could not be loaded', { mimeType: item.mimeType });
-                  setFailedKey(item.key);
-                }}
-                testID={`${testID}-image`}
-              />
-            </Animated.View>
-          </GestureDetector>
-        )}
-
-        {items.length > 1 ? (
-          <View style={styles.footer}>
-            <Pressable
-              onPress={() => goTo(index - 1)}
-              disabled={index === 0}
-              accessibilityRole="button"
-              accessibilityLabel="Previous media"
-              accessibilityState={{ disabled: index === 0 }}
-              hitSlop={touchSlop(24)}
-              style={[styles.pageButton, index === 0 && styles.pageButtonDisabled]}
-              testID={`${testID}-previous`}>
-              <Icon name="back" size={22} color={colors.onOverlay} />
-            </Pressable>
-            <Text style={styles.counter} testID={`${testID}-counter`}>
-              {`${index + 1} / ${items.length}`}
-            </Text>
-            <Pressable
-              onPress={() => goTo(index + 1)}
-              disabled={index === items.length - 1}
-              accessibilityRole="button"
-              accessibilityLabel="Next media"
-              accessibilityState={{ disabled: index === items.length - 1 }}
-              hitSlop={touchSlop(24)}
-              style={[styles.pageButton, index === items.length - 1 && styles.pageButtonDisabled]}
-              testID={`${testID}-next`}>
-              <Icon name="forward" size={22} color={colors.onOverlay} />
-            </Pressable>
-          </View>
-        ) : null}
+        <MediaViewerContent
+          item={item}
+          hasFailed={hasFailed}
+          VideoComponent={VideoComponent}
+          callOwnsAudio={callOwnsAudio}
+          mediaGesture={mediaGesture}
+          animatedMediaStyle={animatedMediaStyle}
+          styles={styles}
+          testID={testID}
+          onVideoError={(error: unknown) => {
+            logWarn('[Media] video playback failed', { error, mimeType: item?.mimeType });
+            if (item) setFailedKey(item.key);
+          }}
+          onImageError={() => {
+            logWarn('[Media] image could not be loaded', { mimeType: item?.mimeType });
+            if (item) setFailedKey(item.key);
+          }}
+        />
+        <MediaViewerPager
+          index={index}
+          count={items.length}
+          goTo={goTo}
+          styles={styles}
+          colors={colors}
+          testID={testID}
+        />
       </View>
     </Modal>
   );

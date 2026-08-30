@@ -125,43 +125,75 @@ function mergeTimeline(messages: Array<Record<string, any>>, callEntries: Array<
  * @param conversations
  * @returns Newest-activity first.
  */
-function augmentConversationsWithCalls(state: ServerState, userId: string, conversations: Array<{
-        conversationId: string;
-        peerId: string;
-        lastMessage: Record<string, any> | null;
-        unreadCount: number;
-    }>): Array<Record<string, any>> {
-  const byPeer: Map<string, { entry: ReturnType<typeof toCallTimelineEntry>; unread: number; }> = new Map();
-  for (const call of state.calls.values()) {
-    if (call.callerId !== userId && call.calleeId !== userId) continue;
-    const peerId = call.callerId === userId ? call.calleeId : call.callerId;
-    const entry = toCallTimelineEntry(call, userId);
-    const existing = byPeer.get(peerId);
-    if (!existing) {
-      byPeer.set(peerId, { entry, unread: isUnreadMissedCall(call, userId) ? 1 : 0 });
-    } else {
-      if (entry.createdAt > existing.entry.createdAt) existing.entry = entry;
-      if (isUnreadMissedCall(call, userId)) existing.unread += 1;
-    }
+type CallActivitySummary = {
+  entry: ReturnType<typeof toCallTimelineEntry>;
+  unread: number;
+};
+
+type ConversationSummary = {
+  conversationId: string;
+  peerId: string;
+  lastMessage: Record<string, any> | null;
+  unreadCount: number;
+};
+
+function isUserCall(call: CallRecord, userId: string) {
+  return call.callerId === userId || call.calleeId === userId;
+}
+
+function addCallActivity(
+  byPeer: Map<string, CallActivitySummary>,
+  call: CallRecord,
+  userId: string,
+) {
+  const peerId = call.callerId === userId ? call.calleeId : call.callerId;
+  const entry = toCallTimelineEntry(call, userId);
+  const existing = byPeer.get(peerId);
+  const unread = isUnreadMissedCall(call, userId);
+  if (!existing) {
+    byPeer.set(peerId, { entry, unread: unread ? 1 : 0 });
+    return;
   }
+  if (entry.createdAt > existing.entry.createdAt) existing.entry = entry;
+  if (unread) existing.unread += 1;
+}
 
-  const merged: Array<Record<string, any>> = conversations.map((conversation) => {
-    const calls = byPeer.get(conversation.peerId);
-    byPeer.delete(conversation.peerId);
-    const lastMessage: Record<string, any> | null = conversation.lastMessage
-      ? { ...conversation.lastMessage, type: messageTypeOf(conversation.lastMessage) }
-      : null;
-    const lastActivity =
-      calls && (!lastMessage || calls.entry.createdAt > lastMessage.createdAt)
-        ? calls.entry
-        : lastMessage;
-    return {
-      ...conversation,
-      lastActivity,
-      unreadCount: (conversation.unreadCount || 0) + (calls?.unread ?? 0),
-    };
-  });
+function collectCallActivityByPeer(state: ServerState, userId: string): Map<string, CallActivitySummary> {
+  const byPeer = new Map<string, CallActivitySummary>();
+  for (const call of state.calls.values()) {
+    if (isUserCall(call, userId)) addCallActivity(byPeer, call, userId);
+  }
+  return byPeer;
+}
 
+function mergeConversationCallActivity(
+  conversation: ConversationSummary,
+  calls: CallActivitySummary | undefined,
+): Record<string, any> {
+  const lastMessage: Record<string, any> | null = conversation.lastMessage
+    ? { ...conversation.lastMessage, type: messageTypeOf(conversation.lastMessage) }
+    : null;
+  return {
+    ...conversation,
+    lastActivity: latestConversationActivity(calls, lastMessage),
+    unreadCount: (conversation.unreadCount || 0) + (calls?.unread ?? 0),
+  };
+}
+
+function latestConversationActivity(
+  calls: CallActivitySummary | undefined,
+  lastMessage: Record<string, any> | null,
+) {
+  if (!calls) return lastMessage;
+  if (!lastMessage || calls.entry.createdAt > lastMessage.createdAt) return calls.entry;
+  return lastMessage;
+}
+
+function appendCallOnlyConversations(
+  merged: Array<Record<string, any>>,
+  userId: string,
+  byPeer: Map<string, CallActivitySummary>,
+) {
   for (const [peerId, calls] of byPeer) {
     merged.push({
       conversationId: deriveConversationId(userId, peerId),
@@ -171,13 +203,30 @@ function augmentConversationsWithCalls(state: ServerState, userId: string, conve
       unreadCount: calls.unread,
     });
   }
+}
 
-  return merged.sort((a, b) => {
+function sortConversationsByActivity(conversations: Array<Record<string, any>>) {
+  return conversations.sort((a, b) => {
     const aAt = a.lastActivity?.createdAt ?? '';
     const bAt = b.lastActivity?.createdAt ?? '';
     if (aAt === bAt) return 0;
     return aAt < bAt ? 1 : -1;
   });
+}
+
+function augmentConversationsWithCalls(
+  state: ServerState,
+  userId: string,
+  conversations: ConversationSummary[],
+): Array<Record<string, any>> {
+  const byPeer = collectCallActivityByPeer(state, userId);
+  const merged = conversations.map((conversation) => {
+    const calls = byPeer.get(conversation.peerId);
+    byPeer.delete(conversation.peerId);
+    return mergeConversationCallActivity(conversation, calls);
+  });
+  appendCallOnlyConversations(merged, userId, byPeer);
+  return sortConversationsByActivity(merged);
 }
 
 export {

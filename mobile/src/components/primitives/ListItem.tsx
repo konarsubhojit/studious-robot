@@ -47,6 +47,73 @@ export type ListItemProps = {
   testID?: string;
 };
 
+type ListItemStyles = ReturnType<typeof createStyles>;
+
+function ListItemContent({
+  title,
+  subtitle,
+  icon,
+  leading,
+  trailing,
+  chevron,
+  destructive,
+  inlineValue,
+  blockValue,
+  styles,
+  colors,
+  testID,
+}: Pick<ListItemProps, 'title' | 'subtitle' | 'icon' | 'leading' | 'trailing' | 'chevron' |
+  'destructive' | 'testID'> & {
+  inlineValue: string | null | undefined;
+  blockValue: string | null | undefined;
+  styles: ListItemStyles;
+  colors: ReturnType<typeof useTheme>['colors'];
+}) {
+  return (
+    <>
+      {leading ?? (icon ? (
+        <View style={styles.iconSlot}>
+          <Icon name={icon} size={20} color={colors.onSurfaceVariant} />
+        </View>
+      ) : null)}
+      <View style={styles.text}>
+        <View style={styles.titleRow}>
+          {/* Reflow, not a cap: the row is `minHeight`, not `height`, and this
+              column is `flex: 1`, so it has somewhere to go. A row title is the
+              row's subject — a truncated setting name or peer id is a row you
+              can no longer identify — so it wraps rather than being clipped or
+              shrunk. */}
+          <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={2}>
+            {title}
+          </Text>
+          {inlineValue ? (
+            // Capped: unlike the title, this is boxed into `maxWidth: '40%'` —
+            // the constraint that keeps the title readable — so it is the one
+            // text in the row that cannot be given more width. It only ever
+            // holds a short value ("On", "English", a timestamp), so a modest
+            // cap costs nothing.
+            <Text style={styles.value} maxFontSizeMultiplier={fontScaleCaps.meta} numberOfLines={1}>
+              {inlineValue}
+            </Text>
+          ) : null}
+        </View>
+        {blockValue ? (
+          <Text style={styles.blockValue} testID={testID ? `${testID}-value` : undefined}>
+            {blockValue}
+          </Text>
+        ) : null}
+        {subtitle ? (
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {trailing}
+      {chevron ? <Icon name="disclosure" size={20} color={colors.textMuted} /> : null}
+    </>
+  );
+}
+
 /**
  * The app's one row.
  *
@@ -92,50 +159,20 @@ export default function ListItem({
   // Material 3 sizes a one-line row at 56dp and a two-line one at 72dp; a row
   // carrying a description or a wrapped value is the two-line case.
   const isTwoLine = Boolean(subtitle || blockValue);
-
-  const content = (
-    <>
-      {leading ?? (icon ? (
-        <View style={styles.iconSlot}>
-          <Icon name={icon} size={20} color={colors.onSurfaceVariant} />
-        </View>
-      ) : null)}
-      <View style={styles.text}>
-        <View style={styles.titleRow}>
-          {/* Reflow, not a cap: the row is `minHeight`, not `height`, and this
-              column is `flex: 1`, so it has somewhere to go. A row title is the
-              row's subject — a truncated setting name or peer id is a row you
-              can no longer identify — so it wraps rather than being clipped or
-              shrunk. */}
-          <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={2}>
-            {title}
-          </Text>
-          {inlineValue ? (
-            // Capped: unlike the title, this is boxed into `maxWidth: '40%'` —
-            // the constraint that keeps the title readable — so it is the one
-            // text in the row that cannot be given more width. It only ever
-            // holds a short value ("On", "English", a timestamp), so a modest
-            // cap costs nothing.
-            <Text style={styles.value} maxFontSizeMultiplier={fontScaleCaps.meta} numberOfLines={1}>
-              {inlineValue}
-            </Text>
-          ) : null}
-        </View>
-        {blockValue ? (
-          <Text style={styles.blockValue} testID={testID ? `${testID}-value` : undefined}>
-            {blockValue}
-          </Text>
-        ) : null}
-        {subtitle ? (
-          <Text style={styles.subtitle} numberOfLines={2}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-      {trailing}
-      {chevron ? <Icon name="disclosure" size={20} color={colors.textMuted} /> : null}
-    </>
-  );
+  const contentProps = {
+    title,
+    subtitle,
+    icon,
+    leading,
+    trailing,
+    chevron,
+    destructive,
+    inlineValue,
+    blockValue,
+    styles,
+    colors,
+    testID,
+  };
 
   if (!onPress && !onLongPress) {
     // A read-only row is still one thing, not two texts that happen to be
@@ -149,7 +186,7 @@ export default function ListItem({
         accessibilityHint={accessibilityLabel ? accessibilityHint : undefined}
         accessibilityRole={accessibilityRole === 'button' ? 'text' : accessibilityRole}
         testID={testID}>
-        {content}
+        <ListItemContent {...contentProps} />
       </View>
     );
   }
@@ -172,7 +209,7 @@ export default function ListItem({
         style,
       ]}
       testID={testID}>
-      {content}
+      <ListItemContent {...contentProps} />
     </Pressable>
   );
 }

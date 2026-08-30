@@ -108,6 +108,141 @@ export type ChatListScreenProps = {
   currentUserId?: string;
 };
 
+function ConversationMeta({
+  timestamp,
+  isMuted,
+  activityIcon,
+  unreadCount,
+  styles,
+}: {
+  timestamp: string;
+  isMuted: boolean;
+  activityIcon: string | null;
+  unreadCount: number;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const hasUnread = unreadCount > 0;
+  return (
+    <View style={styles.meta}>
+      {/* Capped: the trailing column of a row whose title and preview
+          are free to grow into the space beside it. A timestamp is a
+          fixed shape with nothing to reflow into, so left uncapped it
+          just takes width from the conversation it describes. */}
+      {timestamp ? (
+        <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
+          {timestamp}
+        </Text>
+      ) : null}
+      <View style={styles.metaRow}>
+        {isMuted ? (
+          <Icon
+            name="muteNotifications"
+            size={14}
+            color={styles.timestamp.color}
+            testID="chat-list-muted-glyph"
+          />
+        ) : null}
+        {activityIcon ? (
+          <Icon
+            name={activityIcon}
+            size={14}
+            color={
+              activityIcon === 'callMissed'
+                ? styles.missedGlyph.color
+                : styles.timestamp.color
+            }
+          />
+        ) : null}
+        {hasUnread ? <Badge count={unreadCount} testID="chat-list-unread-badge" /> : null}
+      </View>
+    </View>
+  );
+}
+
+function ConversationListRow({
+  conversation,
+  drafts,
+  isPeerMuted,
+  onSetPeerMuted,
+  onMarkRead,
+  onOpenConversation,
+  onOpenProfile,
+  styles,
+}: Pick<ChatListScreenProps, 'drafts' | 'isPeerMuted' | 'onSetPeerMuted' | 'onMarkRead' |
+  'onOpenConversation' | 'onOpenProfile'> & {
+  conversation: ConversationRow;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const unreadCount = conversation.unreadCount ?? 0;
+  const hasUnread = unreadCount > 0;
+  const isMuted = Boolean(isPeerMuted?.(conversation.peerId));
+  const actions = [
+    ...(onMarkRead && hasUnread
+      ? [{
+          key: 'mark-read',
+          label: 'Mark read',
+          accessibilityLabel: `Mark conversation with ${conversation.peerId} as read`,
+          testID: 'chat-list-mark-read',
+          onPress: () => onMarkRead(conversation.peerId),
+        }]
+      : []),
+    // Muting is otherwise buried in the person hub, which is two taps and a
+    // screen away from the row the notification actually came from.
+    ...(onSetPeerMuted
+      ? [{
+          key: 'mute',
+          label: isMuted ? 'Unmute' : 'Mute',
+          accessibilityLabel: isMuted
+            ? `Unmute notifications from ${conversation.peerId}`
+            : `Mute notifications from ${conversation.peerId}`,
+          testID: 'chat-list-mute',
+          onPress: () => onSetPeerMuted(conversation.peerId, !isMuted),
+        }]
+      : []),
+  ];
+  const activityIcon = activityIconFor(conversation);
+  // An unsent draft outranks the last event in the preview line: it is the
+  // one thing on the row the user still has to act on.
+  const draftText = drafts?.[conversation.peerId]?.text?.trim();
+  const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
+  const accessibilityLabel = [
+    `Open conversation with ${conversation.peerId}`,
+    hasUnread ? `${unreadCount} unread` : '',
+    isMuted ? 'muted' : '',
+  ].filter(Boolean).join(', ');
+
+  return (
+    <SwipeableRow actions={actions}>
+      <ListItem
+        title={conversation.peerId}
+        subtitle={draftText ? `Draft: ${draftText}` : formatActivityPreview(conversation)}
+        leading={
+          <Avatar
+            id={conversation.peerId}
+            size="md"
+            online={conversation.online}
+            testID="chat-list-avatar"
+          />
+        }
+        trailing={
+          <ConversationMeta
+            timestamp={timestamp}
+            isMuted={isMuted}
+            activityIcon={activityIcon}
+            unreadCount={unreadCount}
+            styles={styles}
+          />
+        }
+        onPress={() => onOpenConversation?.(conversation.peerId)}
+        onLongPress={onOpenProfile ? () => onOpenProfile(conversation.peerId) : undefined}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
+        testID="chat-list-row"
+      />
+    </SwipeableRow>
+  );
+}
+
 /**
  * The Chats tab: the conversation list, and nothing else.
  *
@@ -140,109 +275,18 @@ function ChatListScreen({
   const startChat = onStartChat ?? onOpenConversation;
 
   const renderConversationRow = useCallback(
-    (conversation: ConversationRow) => {
-      const unreadCount = conversation.unreadCount ?? 0;
-      const hasUnread = unreadCount > 0;
-      const isMuted = Boolean(isPeerMuted?.(conversation.peerId));
-      const actions = [
-        ...(onMarkRead && hasUnread
-          ? [
-              {
-                key: 'mark-read',
-                label: 'Mark read',
-                accessibilityLabel: `Mark conversation with ${conversation.peerId} as read`,
-                testID: 'chat-list-mark-read',
-                onPress: () => onMarkRead(conversation.peerId),
-              },
-            ]
-          : []),
-        // Muting is otherwise buried in the person hub, which is two taps and a
-        // screen away from the row the notification actually came from.
-        ...(onSetPeerMuted
-          ? [
-              {
-                key: 'mute',
-                label: isMuted ? 'Unmute' : 'Mute',
-                accessibilityLabel: isMuted
-                  ? `Unmute notifications from ${conversation.peerId}`
-                  : `Mute notifications from ${conversation.peerId}`,
-                testID: 'chat-list-mute',
-                onPress: () => onSetPeerMuted(conversation.peerId, !isMuted),
-              },
-            ]
-          : []),
-      ];
-      const activityIcon = activityIconFor(conversation);
-      // An unsent draft outranks the last event in the preview line: it is the
-      // one thing on the row the user still has to act on.
-      const draftText = drafts?.[conversation.peerId]?.text?.trim();
-      const timestamp = formatConversationTimestamp(lastActivityOf(conversation)?.createdAt);
-
-      return (
-        <SwipeableRow actions={actions}>
-          <ListItem
-            title={conversation.peerId}
-            subtitle={draftText ? `Draft: ${draftText}` : formatActivityPreview(conversation)}
-            leading={
-              <Avatar
-                id={conversation.peerId}
-                size="md"
-                online={conversation.online}
-                testID="chat-list-avatar"
-              />
-            }
-            trailing={
-              <View style={styles.meta}>
-                {/* Capped: the trailing column of a row whose title and preview
-                    are free to grow into the space beside it. A timestamp is a
-                    fixed shape with nothing to reflow into, so left uncapped it
-                    just takes width from the conversation it describes. */}
-                {timestamp ? (
-                  <Text style={styles.timestamp} maxFontSizeMultiplier={fontScaleCaps.meta}>
-                    {timestamp}
-                  </Text>
-                ) : null}
-                <View style={styles.metaRow}>
-                  {isMuted ? (
-                    <Icon
-                      name="muteNotifications"
-                      size={14}
-                      color={styles.timestamp.color}
-                      testID="chat-list-muted-glyph"
-                    />
-                  ) : null}
-                  {activityIcon ? (
-                    <Icon
-                      name={activityIcon}
-                      size={14}
-                      color={
-                        activityIcon === 'callMissed'
-                          ? styles.missedGlyph.color
-                          : styles.timestamp.color
-                      }
-                    />
-                  ) : null}
-                  {hasUnread ? (
-                    <Badge count={unreadCount} testID="chat-list-unread-badge" />
-                  ) : null}
-                </View>
-              </View>
-            }
-            onPress={() => onOpenConversation?.(conversation.peerId)}
-            onLongPress={onOpenProfile ? () => onOpenProfile(conversation.peerId) : undefined}
-            accessibilityLabel={[
-              `Open conversation with ${conversation.peerId}`,
-              hasUnread ? `${unreadCount} unread` : '',
-              isMuted ? 'muted' : '',
-            ]
-              .filter(Boolean)
-              .join(', ')}
-            accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
-            testID="chat-list-row"
-          />
-        </SwipeableRow>
-      );
-    },
+    (conversation: ConversationRow) => (
+      <ConversationListRow
+        conversation={conversation}
+        drafts={drafts}
+        isPeerMuted={isPeerMuted}
+        onSetPeerMuted={onSetPeerMuted}
+        onMarkRead={onMarkRead}
+        onOpenConversation={onOpenConversation}
+        onOpenProfile={onOpenProfile}
+        styles={styles}
+      />
+    ),
     [
       drafts,
       isPeerMuted,

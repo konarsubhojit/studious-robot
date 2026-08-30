@@ -38,6 +38,103 @@ export type CallStageProps = {
   audioStatusLabel?: string | null;
 };
 
+type CallStageStyles = ReturnType<typeof createStyles>;
+
+function StageMedia({
+  hasMainStream,
+  mainStreamUrl,
+  mirrorMain,
+  isAudioOnly,
+  isCompact,
+  participantLabel,
+  audioStatusLabel,
+  styles,
+}: Pick<CallStageProps, 'hasMainStream' | 'mainStreamUrl' | 'mirrorMain' | 'isAudioOnly' |
+  'isCompact' | 'participantLabel' | 'audioStatusLabel'> & { styles: CallStageStyles }) {
+  if (isAudioOnly) {
+    return (
+      <View style={styles.ambientStage} testID="call-stage-ambient">
+        <Avatar id={participantLabel || ''} size={isCompact ? 'lg' : 'xl'} />
+        {/* Reflow, not a cap: the ambient canvas is `flex: 1` and centred, so
+            it has a whole screen of room. Its entire job is to say who you
+            are talking to, and "Alexandr…" is the one truncation that would
+            destroy the surface's meaning, so the name wraps instead. */}
+        <Text style={styles.ambientName} numberOfLines={2} accessibilityRole="header">
+          {participantLabel || 'Unknown'}
+        </Text>
+        {audioStatusLabel ? (
+          <Text style={styles.ambientStatus} testID="call-stage-ambient-status">
+            {audioStatusLabel}
+          </Text>
+        ) : null}
+      </View>
+    );
+  }
+  if (!hasMainStream) {
+    return (
+      <View
+        style={styles.remotePlaceholder}
+        accessibilityLiveRegion="polite"
+        accessibilityRole="alert">
+        <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
+      </View>
+    );
+  }
+  return (
+    <SafeRTCView
+      fallbackLabel="Call video unavailable"
+      style={styles.remoteStream}
+      streamURL={mainStreamUrl}
+      objectFit="cover"
+      mirror={mirrorMain}
+      zOrder={0}
+    />
+  );
+}
+
+function PresenterBanner({
+  text,
+  isCompact,
+  styles,
+}: { text: string | null; isCompact: boolean; styles: CallStageStyles }) {
+  if (isCompact || !text) return null;
+  return (
+    <View
+      style={styles.presenterBanner}
+      testID="presenter-banner"
+      pointerEvents="none"
+      accessibilityLiveRegion="polite"
+      accessibilityRole="alert">
+      <Text style={styles.presenterBannerText}>{text}</Text>
+    </View>
+  );
+}
+
+function CallPip({
+  isCompact,
+  isAudioOnly,
+  hasPipStream,
+  pipGesture,
+  animatedPipStyle,
+  pipStreamUrl,
+  mirrorPip,
+  isMuted,
+  isVideoEnabled,
+}: Pick<CallStageProps, 'isCompact' | 'isAudioOnly' | 'hasPipStream' | 'pipGesture' |
+  'animatedPipStyle' | 'pipStreamUrl' | 'mirrorPip' | 'isMuted' | 'isVideoEnabled'>) {
+  if (isCompact || isAudioOnly || !hasPipStream) return null;
+  return (
+    <DraggablePip
+      gesture={pipGesture}
+      animatedStyle={animatedPipStyle}
+      streamURL={pipStreamUrl}
+      mirror={mirrorPip}
+      isMuted={isMuted}
+      isVideoEnabled={isVideoEnabled}
+    />
+  );
+}
+
 /**
  * The call canvas: the primary stream plus an optional PiP self-view, or — when
  * there is no picture to show — a large avatar on the ambient background.
@@ -89,61 +186,28 @@ export default function CallStage({
         isLandscape && styles.callStageLandscape,
       ]}
       onLayout={onLayout}>
-      {isAudioOnly ? (
-        <View style={styles.ambientStage} testID="call-stage-ambient">
-          <Avatar id={participantLabel || ''} size={isCompact ? 'lg' : 'xl'} />
-          {/* Reflow, not a cap: the ambient canvas is `flex: 1` and centred, so
-              it has a whole screen of room. Its entire job is to say who you
-              are talking to, and "Alexandr…" is the one truncation that would
-              destroy the surface's meaning, so the name wraps instead. */}
-          <Text style={styles.ambientName} numberOfLines={2} accessibilityRole="header">
-            {participantLabel || 'Unknown'}
-          </Text>
-          {audioStatusLabel ? (
-            <Text style={styles.ambientStatus} testID="call-stage-ambient-status">
-              {audioStatusLabel}
-            </Text>
-          ) : null}
-        </View>
-      ) : hasMainStream ? (
-        <SafeRTCView
-          fallbackLabel="Call video unavailable"
-          style={styles.remoteStream}
-          streamURL={mainStreamUrl}
-          objectFit="cover"
-          mirror={mirrorMain}
-          zOrder={0}
-        />
-      ) : (
-        <View
-          style={styles.remotePlaceholder}
-          accessibilityLiveRegion="polite"
-          accessibilityRole="alert">
-          <Text style={styles.remotePlaceholderText}>Waiting for someone to join…</Text>
-        </View>
-      )}
-
-      {!isCompact && presenterBannerText ? (
-        <View
-          style={styles.presenterBanner}
-          testID="presenter-banner"
-          pointerEvents="none"
-          accessibilityLiveRegion="polite"
-          accessibilityRole="alert">
-          <Text style={styles.presenterBannerText}>{presenterBannerText}</Text>
-        </View>
-      ) : null}
-
-      {!isCompact && !isAudioOnly && hasPipStream ? (
-        <DraggablePip
-          gesture={pipGesture}
-          animatedStyle={animatedPipStyle}
-          streamURL={pipStreamUrl}
-          mirror={mirrorPip}
-          isMuted={isMuted}
-          isVideoEnabled={isVideoEnabled}
-        />
-      ) : null}
+      <StageMedia
+        hasMainStream={hasMainStream}
+        mainStreamUrl={mainStreamUrl}
+        mirrorMain={mirrorMain}
+        isAudioOnly={isAudioOnly}
+        isCompact={isCompact}
+        participantLabel={participantLabel}
+        audioStatusLabel={audioStatusLabel}
+        styles={styles}
+      />
+      <PresenterBanner text={presenterBannerText} isCompact={isCompact} styles={styles} />
+      <CallPip
+        isCompact={isCompact}
+        isAudioOnly={isAudioOnly}
+        hasPipStream={hasPipStream}
+        pipGesture={pipGesture}
+        animatedPipStyle={animatedPipStyle}
+        pipStreamUrl={pipStreamUrl}
+        mirrorPip={mirrorPip}
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
+      />
     </View>
   );
 }

@@ -22,6 +22,234 @@ export type UseScreenShareParams = {
   renegotiate?: () => Promise<void>;
 };
 
+type MutableValue<T = any> = { current: T; };
+
+type ScreenShareResources = {
+  screenStream: any;
+  screenVideoTrack: any;
+  cameraTrack: any;
+  audioSender: any;
+};
+
+function takeScreenShareResources(refs: {
+  screenStream: MutableValue;
+  screenVideoTrack: MutableValue;
+  screenAudioSender: MutableValue;
+  cameraTrack: MutableValue;
+}): ScreenShareResources {
+  const resources = {
+    screenStream: refs.screenStream.current,
+    screenVideoTrack: refs.screenVideoTrack.current,
+    cameraTrack: refs.cameraTrack.current,
+    audioSender: refs.screenAudioSender.current,
+  };
+  refs.screenStream.current = null;
+  refs.screenVideoTrack.current = null;
+  refs.screenAudioSender.current = null;
+  refs.cameraTrack.current = null;
+  return resources;
+}
+
+function resetScreenShareState({
+  setIsScreenSharing,
+  setIsScreenAudioShared,
+  setScreenShareDelivery,
+}: {
+  setIsScreenSharing: (value: boolean) => void;
+  setIsScreenAudioShared: (value: boolean) => void;
+  setScreenShareDelivery: (value: ScreenShareDelivery) => void;
+}) {
+  setIsScreenSharing(false);
+  setIsScreenAudioShared(false);
+  setScreenShareDelivery('idle');
+}
+
+async function removeScreenAudioSender(pc: any, audioSender: any) {
+  if (!pc || !audioSender) return;
+  try {
+    await audioSender.replaceTrack?.(null);
+    pc.removeTrack?.(audioSender);
+  } catch (error) {
+    logWarn('Failed to remove screen audio sender', {
+      message: errorMessage(error),
+    });
+  }
+}
+
+async function restoreCameraTrack(pc: any, cameraTrack: any) {
+  if (!cameraTrack) return;
+  cameraTrack.enabled = true;
+  try {
+    const sender = pc?.getSenders?.().find((candidate: any) => candidate.track?.kind === 'video');
+    if (sender) await sender.replaceTrack(cameraTrack);
+  } catch (error) {
+    logWarn('Failed to restore camera track after screen share', {
+      message: errorMessage(error),
+    });
+  }
+}
+
+function restoreLocalStream(
+  localStream: any,
+  screenVideoTrack: any,
+  cameraTrack: any,
+  setLocalStream: (stream: any) => void,
+) {
+  if (!localStream) return;
+  if (screenVideoTrack) localStream.removeTrack?.(screenVideoTrack);
+  if (cameraTrack) localStream.addTrack?.(cameraTrack);
+  setLocalStream(localStream);
+}
+
+async function renegotiateAfterScreenShareStop(
+  renegotiateRef: MutableValue<UseScreenShareParams['renegotiate']>,
+  setStatus: UseScreenShareParams['setStatus'],
+) {
+  try {
+    await renegotiateRef.current?.();
+  } catch (error) {
+    logWarn('Renegotiation after screen share stop failed', {
+      message: errorMessage(error),
+    });
+  }
+  setStatus('Screen sharing stopped');
+}
+
+function acceptedScreenCapture(
+  capture: Awaited<ReturnType<typeof startScreenCapture>>,
+  setStatus: UseScreenShareParams['setStatus'],
+) {
+  if (capture.ok) return capture;
+  if (capture.reason === SCREEN_SHARE_CANCELLED) {
+    logInfo('Screen sharing cancelled by user');
+    setStatus('Screen sharing cancelled');
+    return null;
+  }
+  logWarn('Screen sharing unavailable', { reason: capture.reason, message: capture.message });
+  setStatus(capture.message, 'error');
+  return null;
+}
+
+async function attachScreenVideo(pc: any, stream: any, videoTrack: any) {
+  const videoSender = pc.getSenders?.().find((sender: any) => sender.track?.kind === 'video');
+  const cameraTrack = videoSender?.track ?? null;
+  if (videoSender) await videoSender.replaceTrack(videoTrack);
+  else pc.addTrack?.(videoTrack, stream);
+  logInfo('Screen track attached to peer connection', {
+    replacedSender: Boolean(videoSender),
+    trackId: videoTrack?.id ?? null,
+    trackEnabled: videoTrack?.enabled !== false,
+    direction: pc
+      .getTransceivers?.()
+      ?.find((transceiver: any) => transceiver.sender?.track?.id === videoTrack?.id)?.direction ?? null,
+  });
+  if (cameraTrack) cameraTrack.enabled = false;
+  return cameraTrack;
+}
+
+function attachScreenAudio(pc: any, stream: any, audioTrack: any) {
+  return audioTrack ? pc.addTrack?.(audioTrack, stream) ?? null : null;
+}
+
+function replaceLocalCamera(
+  localStream: any,
+  cameraTrack: any,
+  videoTrack: any,
+  setLocalStream: (stream: any) => void,
+) {
+  if (!localStream) return;
+  if (cameraTrack) localStream.removeTrack?.(cameraTrack);
+  localStream.addTrack?.(videoTrack);
+  setLocalStream(localStream);
+}
+
+async function renegotiateAfterScreenShareStart(
+  pc: any,
+  renegotiateRef: MutableValue<UseScreenShareParams['renegotiate']>,
+) {
+  try {
+    await renegotiateRef.current?.();
+    logInfo('Renegotiation after screen share start completed', {
+      signalingState: pc.signalingState ?? null,
+    });
+  } catch (error) {
+    logWarn('Renegotiation after screen share start failed', {
+      message: errorMessage(error),
+    });
+  }
+}
+
+async function verifyScreenShareDelivery({
+  stream,
+  screenStreamRef,
+  peerConnectionRef,
+  stopScreenShare,
+  setScreenShareDelivery,
+  isScreenAudioEnabled,
+  audioShared,
+  setStatus,
+}: {
+  stream: any;
+  screenStreamRef: MutableValue;
+  peerConnectionRef: MutableValue;
+  stopScreenShare: (options: { silent: boolean }) => Promise<void>;
+  setScreenShareDelivery: (value: ScreenShareDelivery) => void;
+  isScreenAudioEnabled: boolean;
+  audioShared: boolean;
+  setStatus: UseScreenShareParams['setStatus'];
+}) {
+  const frameCheck = await verifyScreenShareFrames(peerConnectionRef.current);
+  if (!frameCheck.ok && screenStreamRef.current === stream) {
+    logError('Screen sharing produced no frames; stopping', {
+      reason: frameCheck.reason,
+    });
+    await stopScreenShare({ silent: true });
+    setStatus(frameCheck.message, 'error');
+    return;
+  }
+  if (screenStreamRef.current === stream) {
+    setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
+  }
+  if (isScreenAudioEnabled && !audioShared) {
+    setStatus('Sharing screen (screen audio unavailable on this device)', 'warning');
+    return;
+  }
+  setStatus(audioShared ? 'Sharing screen with audio' : 'Sharing screen', 'success');
+}
+
+function resetFailedScreenShareStart({
+  stream,
+  screenStreamRef,
+  screenVideoTrackRef,
+  screenAudioSenderRef,
+  cameraTrackRef,
+  setIsScreenSharing,
+  setIsScreenAudioShared,
+  setScreenShareDelivery,
+  setStatus,
+}: {
+  stream: any;
+  screenStreamRef: MutableValue;
+  screenVideoTrackRef: MutableValue;
+  screenAudioSenderRef: MutableValue;
+  cameraTrackRef: MutableValue;
+  setIsScreenSharing: (value: boolean) => void;
+  setIsScreenAudioShared: (value: boolean) => void;
+  setScreenShareDelivery: (value: ScreenShareDelivery) => void;
+  setStatus: UseScreenShareParams['setStatus'];
+}) {
+  stopScreenCapture(stream);
+  screenStreamRef.current = null;
+  screenVideoTrackRef.current = null;
+  screenAudioSenderRef.current = null;
+  if (cameraTrackRef.current) {
+    cameraTrackRef.current.enabled = true;
+    cameraTrackRef.current = null;
+  }
+  resetScreenShareState({ setIsScreenSharing, setIsScreenAudioShared, setScreenShareDelivery });
+  setStatus('Unable to start screen sharing', 'error');
+}
+
 /**
  * Screen-sharing state machine shared by both call flows.
  *
@@ -77,78 +305,33 @@ export default function useScreenShare({
    */
   const stopScreenShare = useCallback(
     async ({ silent = false } = {}) => {
-      const screenStream = screenStreamRef.current;
-      const screenVideoTrack = screenVideoTrackRef.current;
-      const cameraTrack = cameraTrackRef.current;
-      const audioSender = screenAudioSenderRef.current;
+      const resources = takeScreenShareResources({
+        screenStream: screenStreamRef,
+        screenVideoTrack: screenVideoTrackRef,
+        screenAudioSender: screenAudioSenderRef,
+        cameraTrack: cameraTrackRef,
+      });
 
-      screenStreamRef.current = null;
-      screenVideoTrackRef.current = null;
-      screenAudioSenderRef.current = null;
-      cameraTrackRef.current = null;
-
-      if (!screenStream && !screenVideoTrack) {
-        setIsScreenSharing(false);
-        setIsScreenAudioShared(false);
-        setScreenShareDelivery('idle');
+      if (!resources.screenStream && !resources.screenVideoTrack) {
+        resetScreenShareState({ setIsScreenSharing, setIsScreenAudioShared, setScreenShareDelivery });
         return;
       }
 
       const pc = peerConnectionRef.current;
-
-      if (pc && audioSender) {
-        try {
-          await audioSender.replaceTrack?.(null);
-          pc.removeTrack?.(audioSender);
-        } catch (error) {
-          logWarn('Failed to remove screen audio sender', {
-            message: errorMessage(error),
-          });
-        }
-      }
-
-      if (cameraTrack) {
-        cameraTrack.enabled = true;
-        try {
-          const sender = pc
-            ?.getSenders?.()
-            .find((s: any) => s.track?.kind === 'video');
-          if (sender) {
-            await sender.replaceTrack(cameraTrack);
-          }
-        } catch (error) {
-          logWarn('Failed to restore camera track after screen share', {
-            message: errorMessage(error),
-          });
-        }
-      }
-
-      const localStream = localStreamRef.current;
-      if (localStream) {
-        if (screenVideoTrack) {
-          localStream.removeTrack?.(screenVideoTrack);
-        }
-        if (cameraTrack) {
-          localStream.addTrack?.(cameraTrack);
-        }
-        setLocalStream(localStream);
-      }
-
-      stopScreenCapture(screenStream);
-      setIsScreenSharing(false);
-      setIsScreenAudioShared(false);
-      setScreenShareDelivery('idle');
+      await removeScreenAudioSender(pc, resources.audioSender);
+      await restoreCameraTrack(pc, resources.cameraTrack);
+      restoreLocalStream(
+        localStreamRef.current,
+        resources.screenVideoTrack,
+        resources.cameraTrack,
+        setLocalStream,
+      );
+      stopScreenCapture(resources.screenStream);
+      resetScreenShareState({ setIsScreenSharing, setIsScreenAudioShared, setScreenShareDelivery });
       logInfo('Screen sharing stopped');
 
       if (!silent) {
-        try {
-          await renegotiateRef.current?.();
-        } catch (error) {
-          logWarn('Renegotiation after screen share stop failed', {
-            message: errorMessage(error),
-          });
-        }
-        setStatus('Screen sharing stopped');
+        await renegotiateAfterScreenShareStop(renegotiateRef, setStatus);
       }
     },
     [localStreamRef, peerConnectionRef, setLocalStream, setStatus],
@@ -167,72 +350,21 @@ export default function useScreenShare({
       return;
     }
 
-    const capture = await startScreenCapture({ withAudio: isScreenAudioEnabled });
-    if (!capture.ok) {
-      if (capture.reason === SCREEN_SHARE_CANCELLED) {
-        logInfo('Screen sharing cancelled by user');
-        setStatus('Screen sharing cancelled');
-        return;
-      }
-      logWarn('Screen sharing unavailable', { reason: capture.reason, message: capture.message });
-      setStatus(capture.message, 'error');
-      return;
-    }
-
-    const { stream, videoTrack, audioTrack, audioShared } = (capture as any);
+    const capture = acceptedScreenCapture(
+      await startScreenCapture({ withAudio: isScreenAudioEnabled }),
+      setStatus,
+    );
+    if (!capture) return;
+    const { stream, videoTrack, audioTrack, audioShared } = capture as any;
 
     try {
-      const videoSender = pc
-        .getSenders?.()
-        .find((s: any) => s.track?.kind === 'video');
-      const cameraTrack = videoSender?.track ?? null;
-      if (videoSender) {
-        await videoSender.replaceTrack(videoTrack);
-      } else {
-        pc.addTrack?.(videoTrack, stream);
-      }
-
-      // A share that shows nothing on the remote side is almost always a track
-      // that never reached the peer connection, so record exactly what was
-      // attached and in which direction the transceiver ends up negotiated.
-      logInfo('Screen track attached to peer connection', {
-        replacedSender: Boolean(videoSender),
-        trackId: videoTrack?.id ?? null,
-        trackEnabled: videoTrack?.enabled !== false,
-        direction:
-          pc
-            .getTransceivers?.()
-            ?.find(
-              (transceiver: any) => transceiver.sender?.track?.id === videoTrack?.id,
-            )?.direction ?? null,
-      });
-
-      // Keep the camera track alive (but paused) so it can be restored without
-      // re-prompting for permissions or re-opening the camera device.
-      if (cameraTrack) {
-        cameraTrack.enabled = false;
-      }
+      const cameraTrack = await attachScreenVideo(pc, stream, videoTrack);
       cameraTrackRef.current = cameraTrack;
-
-      let audioSender = null;
-      if (audioTrack) {
-        // An extra audio sender changes the SDP, so renegotiation is required.
-        audioSender = pc.addTrack?.(audioTrack, stream) ?? null;
-      }
-
+      const audioSender = attachScreenAudio(pc, stream, audioTrack);
       screenStreamRef.current = stream;
       screenVideoTrackRef.current = videoTrack;
       screenAudioSenderRef.current = audioSender;
-
-      const localStream = localStreamRef.current;
-      if (localStream) {
-        if (cameraTrack) {
-          localStream.removeTrack?.(cameraTrack);
-        }
-        localStream.addTrack?.(videoTrack);
-        setLocalStream(localStream);
-      }
-
+      replaceLocalCamera(localStreamRef.current, cameraTrack, videoTrack, setLocalStream);
       // The OS "stop sharing" affordance ends the track directly.
       videoTrack.onended = () => {
         logInfo('Screen capture ended by the system');
@@ -244,57 +376,30 @@ export default function useScreenShare({
       setIsScreenSharing(true);
       setIsScreenAudioShared(audioShared);
       setScreenShareDelivery('checking');
-
-      try {
-        await renegotiateRef.current?.();
-        logInfo('Renegotiation after screen share start completed', {
-          signalingState: pc.signalingState ?? null,
-        });
-      } catch (error) {
-        logWarn('Renegotiation after screen share start failed', {
-          message: errorMessage(error),
-        });
-      }
-
-      // A capture that never produces frames looks fine locally but shows the
-      // remote peer a black screen, so surface it as a failure instead of
-      // silently "succeeding".
-      const frameCheck = await verifyScreenShareFrames(peerConnectionRef.current);
-      if (!frameCheck.ok && screenStreamRef.current === stream) {
-        logError('Screen sharing produced no frames; stopping', {
-          reason: frameCheck.reason,
-        });
-        await stopScreenShare({ silent: true });
-        setStatus(frameCheck.message, 'error');
-        return;
-      }
-
-      // Frames were counted, so the share can be *settled* rather than left
-      // looking like it is still starting. An unreadable stats report is not a
-      // failure, but it is not a confirmation either.
-      if (screenStreamRef.current === stream) {
-        setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
-      }
-
-      if (isScreenAudioEnabled && !audioShared) {
-        setStatus('Sharing screen (screen audio unavailable on this device)', 'warning');
-      } else {
-        setStatus(audioShared ? 'Sharing screen with audio' : 'Sharing screen', 'success');
-      }
+      await renegotiateAfterScreenShareStart(pc, renegotiateRef);
+      await verifyScreenShareDelivery({
+        stream,
+        screenStreamRef,
+        peerConnectionRef,
+        stopScreenShare,
+        setScreenShareDelivery,
+        isScreenAudioEnabled,
+        audioShared,
+        setStatus,
+      });
     } catch (error) {
       logError('Failed to start screen sharing', error);
-      stopScreenCapture(stream);
-      screenStreamRef.current = null;
-      screenVideoTrackRef.current = null;
-      screenAudioSenderRef.current = null;
-      if (cameraTrackRef.current) {
-        cameraTrackRef.current.enabled = true;
-        cameraTrackRef.current = null;
-      }
-      setIsScreenSharing(false);
-      setIsScreenAudioShared(false);
-      setScreenShareDelivery('idle');
-      setStatus('Unable to start screen sharing', 'error');
+      resetFailedScreenShareStart({
+        stream,
+        screenStreamRef,
+        screenVideoTrackRef,
+        screenAudioSenderRef,
+        cameraTrackRef,
+        setIsScreenSharing,
+        setIsScreenAudioShared,
+        setScreenShareDelivery,
+        setStatus,
+      });
     }
   }, [
     isScreenAudioEnabled,
