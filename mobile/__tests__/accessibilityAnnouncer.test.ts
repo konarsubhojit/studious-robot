@@ -3,8 +3,10 @@ import {
   announceForAccessibility,
   describeAppearanceChange,
   describeCallState,
+  describeCallEnd,
   describeMessageDelivery,
   describeRecoveryState,
+  describeRecoveryTransition,
 } from '../src/accessibilityAnnouncer';
 import { CALL_STATES } from '../src/call/callStateMachine';
 
@@ -15,6 +17,64 @@ describe('describeRecoveryState', () => {
 
   test('names the end of one', () => {
     expect(describeRecoveryState(false)).toBe('Reconnected');
+  });
+});
+
+describe('describeRecoveryTransition', () => {
+  const idle = { isRecovering: false, isConnectionLost: false, attempts: 0 };
+  const recovering = { isRecovering: true, isConnectionLost: false, attempts: 1 };
+
+  test('announces the start and the end of an episode', () => {
+    expect(describeRecoveryTransition(idle, recovering)).toBe('Connection lost, reconnecting');
+    expect(describeRecoveryTransition(recovering, idle)).toBe('Reconnected');
+  });
+
+  test('announces later attempts, but not the first, which is already implied', () => {
+    expect(describeRecoveryTransition(recovering, { ...recovering, attempts: 2 })).toBe(
+      'Still reconnecting, attempt 2',
+    );
+    expect(describeRecoveryTransition(recovering, recovering)).toBeNull();
+  });
+
+  test('announces an exhausted ladder once', () => {
+    const lost = { isRecovering: true, isConnectionLost: true, attempts: 3 };
+    expect(describeRecoveryTransition(recovering, lost)).toBe(
+      'Connection lost. The call could not be restored.',
+    );
+    expect(describeRecoveryTransition(lost, lost)).toBeNull();
+  });
+
+  test('says nothing while nothing is happening', () => {
+    expect(describeRecoveryTransition(idle, idle)).toBeNull();
+  });
+});
+
+describe('describeCallEnd', () => {
+  test('reads the outcome and the duration in words, not as a clock time', () => {
+    expect(
+      describeCallEnd({ direction: 'outgoing', status: 'ended', durationSeconds: 65 }),
+    ).toBe('Outgoing call, 1 minute 5 seconds');
+  });
+
+  test('drops the duration for a call that never connected', () => {
+    expect(
+      describeCallEnd({ direction: 'incoming', status: 'missed', durationSeconds: 0 }),
+    ).toBe('Missed call');
+  });
+
+  test('names a lost connection rather than a plain ending', () => {
+    expect(
+      describeCallEnd({
+        direction: 'outgoing',
+        status: 'ended',
+        endReason: 'media_failed',
+        durationSeconds: 30,
+      }),
+    ).toBe('Connection lost, 30 seconds');
+  });
+
+  test('says nothing when there is no summary', () => {
+    expect(describeCallEnd(null)).toBeNull();
   });
 });
 

@@ -1436,6 +1436,44 @@ describe('useCallFlow incoming-call ringing', () => {
     expect(startIncomingRingtone).not.toHaveBeenCalled();
   });
 
+  test('call.ringing reports whether the callee rang or was only pushed', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const handler = getSocketHandler('call.ringing');
+    const call = { callId: 'call-delivery', callerId: 'alice', calleeId: 'bob', status: 'ringing' };
+
+    await act(async () => {
+      await handler({ call, delivery: 'push' });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.callDelivery).toBe('push');
+
+    // The device woke and acknowledged: the server re-rings, and the caller's
+    // screen stops saying the callee may still be asleep.
+    await act(async () => {
+      await handler({ call, delivery: 'ringing' });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.callDelivery).toBe('ringing');
+  });
+
+  test('a server that reports no delivery is assumed to have rung a live device', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const handler = getSocketHandler('call.ringing');
+
+    await act(async () => {
+      await handler({ call: { callId: 'call-legacy', callerId: 'alice', calleeId: 'bob' } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.callDelivery).toBe('ringing');
+  });
+
   test('call.state_changed "accepted" shows connecting status', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
@@ -3596,6 +3634,55 @@ describe('useCallFlow chat', () => {
         await Promise.resolve();
       });
       expect(emits.filter((entry: any) => entry.event === 'call.connected')).toHaveLength(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('an exhausted budget marks the connection lost, rather than ending in silence', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection } =
+        await acceptCallWithPeerConnection('call-lost-1');
+
+      expect(resultRef.current.isConnectionLost).toBe(false);
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'failed';
+        peerConnection.oniceconnectionstatechange?.();
+        jest.advanceTimersByTime(CALL_RECOVERY_BUDGET_MS * 2);
+        await Promise.resolve();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+
+      expect(resultRef.current.isConnectionLost).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('an in-flight automatic attempt is published, so the UI can hide manual retry', async () => {
+    jest.useFakeTimers();
+    try {
+      const { resultRef, tree, peerConnection } =
+        await acceptCallWithPeerConnection('call-pending-1');
+
+      await act(async () => {
+        peerConnection.iceConnectionState = 'failed';
+        peerConnection.oniceconnectionstatechange?.();
+        await Promise.resolve();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+
+      // Whatever rung the ladder is on, an episode is open and the status says
+      // whether an attempt is under way — the banner reads nothing else.
+      expect(resultRef.current.recoveryStatus).not.toBeNull();
+      expect(typeof resultRef.current.recoveryStatus.isAttemptPending).toBe('boolean');
+      expect(resultRef.current.recoveryStatus.attempts).toBeGreaterThanOrEqual(0);
     } finally {
       jest.useRealTimers();
     }

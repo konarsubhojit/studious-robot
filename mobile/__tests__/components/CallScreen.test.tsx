@@ -368,10 +368,10 @@ describe('CallScreen', () => {
     });
 
     expect(
-      tree.root.findAll(node => node.props.onLayout === onTopChromeLayout).length,
+      tree.root.findAll((node: any) => node.props.onLayout === onTopChromeLayout).length,
     ).toBeGreaterThan(0);
     expect(
-      tree.root.findAll(node => node.props.onLayout === onBottomChromeLayout).length,
+      tree.root.findAll((node: any) => node.props.onLayout === onBottomChromeLayout).length,
     ).toBeGreaterThan(0);
   });
 
