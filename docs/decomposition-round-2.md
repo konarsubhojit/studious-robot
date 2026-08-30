@@ -23,7 +23,7 @@ would split one is not an improvement, and is recorded in
 | # | Item | Status |
 | --- | --- | --- |
 | 1.1 | [Dedupe the operator-token check](#11-dedupe-the-operator-token-check) | ✅ Done |
-| 1.6 | [Remove verified dead surface](#16-remove-verified-dead-surface) | ⬜ Not started |
+| 1.6 | [Remove verified dead surface](#16-remove-verified-dead-surface) | ✅ Done |
 | 1.5 | [Reduce the functions sitting at 14–15](#15-reduce-the-functions-sitting-at-1415) | ⬜ Not started |
 | 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ⬜ Not started |
 | 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ⬜ Not started |
@@ -97,16 +97,24 @@ the two is gone.
 
 ### 1.6 Remove verified dead surface
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
-- `shared/schema.ts` — the `isOptional` field on `Schema<T>` is written in four
+- `shared/schema.ts` — the `isOptional` field on `Schema<T>` was written in four
   places and read nowhere in `mobile/`, `server/`, `shared/` or either test
-  tree. Remove the field and the `meta` plumbing that exists only to carry it.
-- `mobile/src/telemetry.ts` — `trackSignalingConnected` has no caller; its only
-  other occurrence in the repo is its own doc comment.
-- `mobile/src/appLogger.ts` — `logBackgroundError` has no references at all.
+  tree. The field and the `meta` plumbing that existed only to carry it are
+  gone; `createSchema` no longer takes a `meta` argument at all.
+- `mobile/src/telemetry.ts` — `trackSignalingConnected` had no caller. Because
+  it was the only writer of `signalingConnectedAtMs`, the derived
+  `signalingLatencyMs` in the emitted QoS summary was permanently `null`, and it
+  had no readers either. The whole chain — setter, entry field, derived metric
+  and the usage line in the module doc comment — is removed rather than left as
+  a metric that can never report anything.
+- `mobile/src/appLogger.ts` — `logBackgroundError` had no references at all.
+  (Its sibling `logBackgroundWarn` is used by `pushNotifications.ts` and stays.)
 
-**Safety:** trivial. TypeScript proves it.
+**Safety:** trivial, and TypeScript proves it. Verified with `npm run typecheck`
+in both packages, `npx eslint .` in `mobile/`, and the `telemetry` and
+`appLogger` suites.
 
 ### 1.5 Reduce the functions sitting at 14–15
 

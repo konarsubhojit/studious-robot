@@ -12,9 +12,6 @@
  *   // When a call is initiated or accepted:
  *   Telemetry.trackCallStart(callId, sessionId);
  *
- *   // When the socket connects after call start (caller → outgoing):
- *   Telemetry.trackSignalingConnected(callId);
- *
  *   // When the first remote media track arrives:
  *   Telemetry.trackFirstRemoteFrame(callId);
  *
@@ -40,7 +37,6 @@ export type CallQoSSummary = {
   sessionId: string | null;
   setupLatencyMs: number | null;
   firstFrameLatencyMs: number | null;
-  signalingLatencyMs: number | null;
   durationMs: number | null;
   reconnectCount: number;
   iceRestartCount: number;
@@ -50,7 +46,6 @@ export type CallTelemetryEntry = {
   callId: string;
   sessionId: string | null;
   startedAtMs: number | null;
-  signalingConnectedAtMs: number | null;
   connectedAtMs: number | null;
   firstRemoteFrameAtMs: number | null;
   endedAtMs: number | null;
@@ -70,7 +65,6 @@ function getOrCreate(callId: string): CallTelemetryEntry {
       callId,
       sessionId: null,
       startedAtMs: null,
-      signalingConnectedAtMs: null,
       connectedAtMs: null,
       firstRemoteFrameAtMs: null,
       endedAtMs: null,
@@ -103,15 +97,6 @@ export function trackCallStart(callId: string, sessionId: string | null) {
   const entry = getOrCreate(callId);
   entry.startedAtMs = Date.now();
   entry.sessionId = sessionId ?? null;
-}
-
-/**
- * Record when the signaling socket first connects after a call starts.
- */
-export function trackSignalingConnected(callId: string) {
-  const entry = entries.get(callId);
-  if (!entry) return;
-  entry.signalingConnectedAtMs = Date.now();
 }
 
 /**
@@ -188,8 +173,7 @@ export function clearCallTelemetry(callId: string) {
 // ─── Private builder ──────────────────────────────────────────────────────────
 
 function buildSummary(entry: CallTelemetryEntry): CallQoSSummary {
-  const { startedAtMs, signalingConnectedAtMs, connectedAtMs, firstRemoteFrameAtMs, endedAtMs } =
-    entry;
+  const { startedAtMs, connectedAtMs, firstRemoteFrameAtMs, endedAtMs } = entry;
 
   return {
     callId: entry.callId,
@@ -199,10 +183,6 @@ function buildSummary(entry: CallTelemetryEntry): CallQoSSummary {
     firstFrameLatencyMs:
       startedAtMs !== null && firstRemoteFrameAtMs !== null
         ? firstRemoteFrameAtMs - startedAtMs
-        : null,
-    signalingLatencyMs:
-      startedAtMs !== null && signalingConnectedAtMs !== null
-        ? signalingConnectedAtMs - startedAtMs
         : null,
     durationMs: startedAtMs !== null && endedAtMs !== null ? endedAtMs - startedAtMs : null,
     reconnectCount: entry.reconnectCount,

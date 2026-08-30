@@ -327,14 +327,6 @@ export function logBackgroundWarn(message: unknown, metadata?: unknown): Promise
 }
 
 /**
- * @returns resolves once the line is queued for
- *   durable storage.
- */
-export function logBackgroundError(message: unknown, metadata?: unknown): Promise<boolean | void> {
-  return persistLogLine(error(message, metadata));
-}
-
-/**
  * @returns the formatted line that was buffered.
  */
 export function debug(message: unknown, metadata?: unknown): string {

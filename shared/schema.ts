@@ -14,7 +14,6 @@ export type ParseSuccess<T> = { success: true; data: T; };
 export type ParseFailure = { success: false; error: { message: string; path: string; }; };
 export type ParseResult<T = unknown> = ParseSuccess<T> | ParseFailure;
 export type Schema<T = unknown> = {
-  isOptional: boolean;
   _parse: (value: unknown, path: string) => ParseResult<T>;
   safeParse: (value: unknown) => ParseResult<T>;
   parse: (value: unknown) => T;
@@ -44,10 +43,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Wrap a `(value, path) => ParseResult` function in the chainable schema API.
  */
-function createSchema<T>(parse: (value: unknown, path: string) => ParseResult<T>, meta: { isOptional?: boolean; } = {}): Schema<T> {
+function createSchema<T>(parse: (value: unknown, path: string) => ParseResult<T>): Schema<T> {
   const schema: Schema<T> = {
-    ...meta,
-    isOptional: Boolean(meta.isOptional),
     _parse: parse,
     safeParse(value: unknown): ParseResult<T> {
       return parse(value, '');
@@ -62,17 +59,13 @@ function createSchema<T>(parse: (value: unknown, path: string) => ParseResult<T>
     },
     /** Accept `undefined` (and a missing object key) in addition to the base type. */
     optional(): Schema<T | undefined> {
-      return createSchema<T | undefined>(
-        (value, path) => (value === undefined ? ok(undefined) : parse(value, path)),
-        { ...meta, isOptional: true }
+      return createSchema<T | undefined>((value, path) =>
+        value === undefined ? ok(undefined) : parse(value, path)
       );
     },
     /** Accept `null` in addition to the base type. */
     nullable(): Schema<T | null> {
-      return createSchema<T | null>((value, path) => (value === null ? ok(null) : parse(value, path)), {
-        ...meta,
-        isOptional: Boolean(meta.isOptional),
-      });
+      return createSchema<T | null>((value, path) => (value === null ? ok(null) : parse(value, path)));
     },
   };
   return schema;
@@ -80,7 +73,7 @@ function createSchema<T>(parse: (value: unknown, path: string) => ParseResult<T>
 
 /** Any value, including `undefined`. */
 function unknown() {
-  return createSchema((value) => ok(value), { isOptional: true });
+  return createSchema((value) => ok(value));
 }
 
 function string({ min = 0, max = Number.MAX_SAFE_INTEGER, trim = false } = {}) {
