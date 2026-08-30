@@ -173,14 +173,30 @@ export type AnswerError = Error & { answerFailureReason?: string; };
 export type { CallStatus };
 
 /**
+ * The ICE candidate carried by an `onicecandidate` event; `null` on the
+ * end-of-candidates event.
+ */
+export type PeerIceCandidateEvent = {
+  candidate: { candidate?: string; sdpMid?: string | null; sdpMLineIndex?: number | null; } | null;
+};
+
+/** The streams carried by an `ontrack` event. */
+export type PeerTrackEvent = { streams: readonly MediaStream[]; };
+
+/**
  * `react-native-webrtc`'s peer connection, plus the legacy `on*` handler
  * properties it supports at runtime but omits from its published types.
+ *
+ * The handler arguments are described structurally rather than as `any` so a
+ * malformed event fails to compile at the boundary instead of reaching the
+ * call logic; the state-change handlers read the connection itself, so their
+ * event carries nothing this hook uses.
  */
 export type PeerConnection = RTCPeerConnection & {
-  onicecandidate: ((event: any) => void) | null;
-  ontrack: ((event: any) => void) | null;
-  oniceconnectionstatechange: ((event: any) => void) | null;
-  onconnectionstatechange: ((event: any) => void) | null;
+  onicecandidate: ((event: PeerIceCandidateEvent) => void) | null;
+  ontrack: ((event: PeerTrackEvent) => void) | null;
+  oniceconnectionstatechange: ((event: unknown) => void) | null;
+  onconnectionstatechange: ((event: unknown) => void) | null;
 };
 export type WebrtcMediaStream = MediaStream;
 
