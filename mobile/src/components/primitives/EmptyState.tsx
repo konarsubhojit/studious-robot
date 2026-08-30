@@ -80,7 +80,8 @@ export default function EmptyState({
           accessibilityRole="button"
           accessibilityLabel={linkLabel}
           accessibilityHint={linkHint}
-          style={styles.link}
+          android_ripple={{ color: colors.ripple }}
+          style={({ pressed }) => [styles.link, pressed && styles.linkPressed]}
           testID={testID ? `${testID}-link` : undefined}>
           <Text style={styles.linkText}>{linkLabel}</Text>
         </Pressable>
@@ -127,6 +128,9 @@ const createStyles = (colors: ThemeColors) =>
       minHeight: sizes.minTouchTarget,
       justifyContent: 'center',
       paddingHorizontal: spacing.md,
+    },
+    linkPressed: {
+      opacity: 0.6,
     },
     linkText: {
       ...typography.label,
