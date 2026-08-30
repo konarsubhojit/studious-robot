@@ -808,23 +808,26 @@ export default function useMessaging({
 
       setMessagesByPeer(prev => applyIncomingMessage(prev, message));
 
-      if (activeChatPeerIdRef.current === senderId) {
+      const isActiveConversation = activeChatPeerIdRef.current === senderId;
+      const isNewConversation = !conversationsRef.current.some(
+        conversation => conversation.peerId === senderId,
+      );
+      setConversations(prev =>
+        withIncomingMessage(prev, message, { incrementUnread: !isActiveConversation }),
+      );
+      if (isNewConversation) void fetchConversations();
+
+      if (isActiveConversation) {
         // The conversation is currently open: auto-mark-read, no unread bump,
         // and clear any notification a push already posted for it.
         if (message.conversationId) dismissMessageNotification(message.conversationId);
-        markConversationRead(senderId).catch(() => {});
+        markConversationRead(senderId).catch(error => {
+          logWarn('[Messaging] markConversationRead failed', {
+            message: errorMessage(error),
+          });
+        });
         return;
       }
-
-      setConversations(prev => {
-        const next = withIncomingMessage(prev, message);
-        if (!next) {
-          // Brand-new conversation: refetch the authoritative list.
-          fetchConversations();
-          return prev;
-        }
-        return next;
-      });
     },
     [fetchConversations, markConversationRead],
   );

@@ -8,6 +8,7 @@ import {
   SCREEN_SHARE_CANCELLED,
   startScreenCapture,
   stopScreenCapture,
+  logScreenShareAudioRtpStats,
   verifyScreenShareFrames,
 } from '../screenShare';
 
@@ -186,6 +187,7 @@ async function verifyScreenShareDelivery({
   setScreenShareDelivery,
   isScreenAudioEnabled,
   audioShared,
+  audioFallbackReason,
   setStatus,
 }: {
   stream: any;
@@ -194,8 +196,13 @@ async function verifyScreenShareDelivery({
   setScreenShareDelivery: (value: ScreenShareDelivery) => void;
   isScreenAudioEnabled: boolean;
   audioShared: boolean;
+  audioFallbackReason?: 'unsupported' | 'denied';
   setStatus: UseScreenShareParams['setStatus'];
 }) {
+  await logScreenShareAudioRtpStats(peerConnectionRef.current, {
+    requestedAudio: isScreenAudioEnabled,
+    audioObtained: audioShared,
+  });
   const frameCheck = await verifyScreenShareFrames(peerConnectionRef.current);
   if (!frameCheck.ok && screenStreamRef.current === stream) {
     logWarn('Screen sharing produced no frames yet; keeping share active', {
@@ -211,8 +218,11 @@ async function verifyScreenShareDelivery({
   if (screenStreamRef.current === stream) {
     setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
   }
-  if (isScreenAudioEnabled && !audioShared) {
-    setStatus('Sharing screen (screen audio unavailable on this device)', 'warning');
+  if (audioFallbackReason || (isScreenAudioEnabled && !audioShared)) {
+    setStatus(
+      `Screen sharing started without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
+      'warning',
+    );
     return;
   }
   setStatus(audioShared ? 'Sharing screen with audio' : 'Sharing screen', 'success');
@@ -279,7 +289,7 @@ export default function useScreenShare({
   const [screenShareDelivery, setScreenShareDelivery] =
     useState<ScreenShareDelivery>('idle');
   // User preference: include screen (system) audio with the next share.
-  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(false);
+  const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(true);
 
   const screenStreamRef = useRef((null as any));
   const screenVideoTrackRef = useRef((null as any));
@@ -356,7 +366,7 @@ export default function useScreenShare({
       setStatus,
     );
     if (!capture) return;
-    const { stream, videoTrack, audioTrack, audioShared } = capture as any;
+    const { stream, videoTrack, audioTrack, audioShared, audioFallbackReason } = capture as any;
 
     try {
       const cameraTrack = await attachScreenVideo(pc, stream, videoTrack);
@@ -377,6 +387,12 @@ export default function useScreenShare({
       setIsScreenSharing(true);
       setIsScreenAudioShared(audioShared);
       setScreenShareDelivery('checking');
+      if (isScreenAudioEnabled && !audioShared) {
+        setStatus(
+          `Starting screen share without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
+          'warning',
+        );
+      }
       await renegotiateAfterScreenShareStart(pc, renegotiateRef);
       await verifyScreenShareDelivery({
         stream,
@@ -385,6 +401,7 @@ export default function useScreenShare({
         setScreenShareDelivery,
         isScreenAudioEnabled,
         audioShared,
+        audioFallbackReason,
         setStatus,
       });
     } catch (error) {
