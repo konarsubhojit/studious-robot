@@ -2,6 +2,7 @@ import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
+import { callRecordFromRow } from './domain/callHistory.ts';
 
 /**
  * @returns the driver error code, when the error carries one.
@@ -124,24 +125,7 @@ async function hydrateCallsAndEventsFromDb(db: any, state: import('./stores/cont
     const rows = await db.select().from(callsTable);
     for (const row of rows) {
       if (!row?.callId || !row?.callerId || !row?.calleeId || !row?.status) continue;
-      state.calls.set(row.callId, {
-        callId: row.callId,
-        callerId: row.callerId,
-        calleeId: row.calleeId,
-        status: row.status,
-        endReason: row.endReason ?? null,
-        durationSeconds: row.durationSeconds ?? null,
-        missedReadAt:
-          row.missedReadAt instanceof Date
-            ? row.missedReadAt.toISOString()
-            : row.missedReadAt ?? null,
-        createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
-        updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : row.updatedAt,
-        ringTimeoutAt:
-          row.ringTimeoutAt instanceof Date
-            ? row.ringTimeoutAt.toISOString()
-            : row.ringTimeoutAt ?? null,
-      });
+      state.calls.set(row.callId, callRecordFromRow(row));
       if (!state.callEvents.has(row.callId)) {
         state.callEvents.set(row.callId, []);
       }

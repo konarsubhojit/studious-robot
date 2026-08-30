@@ -30,6 +30,7 @@ Besides the call/session/contact routes, the chat surface adds:
 | Method & path | Query | Response | Notes |
 | ------------- | ----- | -------- | ----- |
 | `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
+| `GET /calls` | `limit` (1–100, default `20`), `offset` (default `0`), `status` (optional filter) | `200 { calls, total, limit, offset, hasMore }` | Call history for the authenticated user, **most recently active first** (`updatedAt` descending). Read from the durable `calls` table, so it survives a restart and is not bounded by the in-memory retention window (`CALL_RETENTION_MS` / `MAX_RETAINED_CALLS`); when no `DATABASE_URL` is configured — or the query fails — it degrades to the calls still resident in memory. `401` without a valid session. |
 
 | `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
 
@@ -337,8 +338,9 @@ of cross-instance coordination, both backed by Redis:
 - **Read cache** (`src/cache.ts`) — a shared cache in front of the hottest
   reads: `GET /conversations` (`conv::<userId>`), the first page of
   `GET /messages` (`msg::<conversationId>::<limit>`, excluding the
-  `include=calls` timeline, which mixes in live call state) and `GET /calls`
-  (`callhist::<userId>::<status>::<limit>`), each with a 30s TTL. Writes
+  `include=calls` timeline, which mixes in live call state) and the first page
+  of `GET /calls` (`callhist::<userId>::<status>::<limit>`; paged requests,
+  i.e. `offset > 0`, are not cached), each with a 30s TTL. Writes
   (`message.send`, delivery receipts, `POST /messages/read`, call transitions)
   evict the affected prefixes locally and publish them on the bus so every
   instance drops its copy. Backed by Redis when `REDIS_URL` is set (`SET … PX`
