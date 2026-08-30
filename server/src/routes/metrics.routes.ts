@@ -11,6 +11,7 @@ import { summarizeDeviceFanout } from '../lib/state.ts';
  */
 function createMetricsRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
+  const TOKEN_COMPARE_BYTES = 256;
 
   /**
    * Constant-time check of the operator token guarding metrics access.
@@ -19,10 +20,21 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
     const expected = process.env.DEBUG_API_TOKEN;
     if (!expected) return false;
     const presented = req.get('x-debug-token') ?? '';
-    const expectedBuffer = Buffer.from(expected);
-    const presentedBuffer = Buffer.from(presented);
-    if (expectedBuffer.length !== presentedBuffer.length) return false;
-    return timingSafeEqual(expectedBuffer, presentedBuffer);
+
+    const expectedRaw = Buffer.from(expected);
+    const presentedRaw = Buffer.from(presented);
+    const expectedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
+    const presentedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
+    expectedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(expectedPadded);
+    presentedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(presentedPadded);
+
+    const equal = timingSafeEqual(expectedPadded, presentedPadded);
+    return (
+      equal &&
+      expectedRaw.length === presentedRaw.length &&
+      expectedRaw.length <= TOKEN_COMPARE_BYTES &&
+      presentedRaw.length <= TOKEN_COMPARE_BYTES
+    );
   }
 
   // ─── Call end-reason taxonomy (static, no auth required) ──────────────────

@@ -76,6 +76,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 }
 
 const VERSION = 1;
+const METRICS_TOKEN = 'test-metrics-token';
 
 // ─── Cache hits ───────────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ test('GET /messages first page is cached but deep pagination is not', async (t) 
 
 test('cache hits and misses are exposed through the telemetry counters', async (t) => {
   const previousDebugToken = process.env.DEBUG_API_TOKEN;
-  process.env.DEBUG_API_TOKEN = 'test-metrics-token';
+  process.env.DEBUG_API_TOKEN = METRICS_TOKEN;
   t.after(() => {
     if (previousDebugToken === undefined) delete process.env.DEBUG_API_TOKEN;
     else process.env.DEBUG_API_TOKEN = previousDebugToken;
@@ -154,7 +155,7 @@ test('cache hits and misses are exposed through the telemetry counters', async (
   await getJson(url, '/conversations', aliceSession);
 
   const metricsResponse = await fetch(`${url}/metrics`, {
-    headers: { 'x-debug-token': 'test-metrics-token' },
+    headers: { 'x-debug-token': METRICS_TOKEN },
   });
   const metrics = { status: metricsResponse.status, body: await readJson(metricsResponse) };
   assert.equal(metrics.status, 200);
