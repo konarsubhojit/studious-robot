@@ -6,13 +6,19 @@ import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const METRICS_TOKEN = 'test-metrics-token';
+
 async function startServer() {
+  const previousDebugToken = process.env.DEBUG_API_TOKEN;
+  process.env.DEBUG_API_TOKEN = METRICS_TOKEN;
   const server = createServer();
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
     await closeTestServer(server);
+    if (previousDebugToken === undefined) delete process.env.DEBUG_API_TOKEN;
+    else process.env.DEBUG_API_TOKEN = previousDebugToken;
   }
 
   return { ...server, url, teardown };
@@ -28,12 +34,19 @@ async function createSession(url: string, userId: string, deviceId: string = `de
   return res.body.sessionId;
 }
 
+async function getMetricsHttp(url: string): Promise<{ status: number; body: any; }> {
+  const response = await fetch(`${url}/metrics`, {
+    headers: { 'x-debug-token': METRICS_TOKEN },
+  });
+  return { status: response.status, body: await readJson(response) };
+}
+
 // ─── GET /metrics ─────────────────────────────────────────────────────────────
 
 test('GET /metrics returns a valid snapshot on a fresh server', async () => {
   const { url, teardown } = await startServer();
   try {
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.status, 200);
     const snap = res.body;
 
@@ -65,14 +78,14 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
   }
 });
 
-test('GET /metrics does not require authentication', async () => {
+test('GET /metrics requires the operator token', async () => {
   const { url, teardown } = await startServer();
   try {
-    // No session header – should still return 200
+    // Missing operator token should be rejected.
     const res = await fetch(`${url}/metrics`);
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 401);
     const body = await readJson(res);
-    assert.equal(typeof body.counters, 'object');
+    assert.equal(body.error, 'metrics authentication required');
   } finally {
     await teardown();
   }
@@ -86,7 +99,7 @@ test('GET /metrics increments calls_initiated and calls_ringing after a call', a
 
     await postJson(url, '/calls', { calleeId: 'bob' }, callerSession);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_initiated, 1);
     assert.equal(res.body.counters.calls_ringing, 1);
   } finally {
@@ -105,7 +118,7 @@ test('GET /metrics increments calls_accepted after callee accepts', async () => 
 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_initiated, 1);
     assert.equal(res.body.counters.calls_accepted, 1);
   } finally {
@@ -124,7 +137,7 @@ test('GET /metrics increments calls_declined after callee declines', async () =>
 
     await postJson(url, `/calls/${callId}/decline`, {}, calleeSession);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_declined, 1);
     assert.equal(res.body.counters.calls_accepted, 0);
   } finally {
@@ -144,7 +157,7 @@ test('GET /metrics increments calls_ended after caller ends the call', async () 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_ended, 1);
     assert.equal(res.body.counters.calls_accepted, 1);
   } finally {
@@ -163,7 +176,7 @@ test('GET /metrics increments calls_cancelled after caller cancels', async () =>
 
     await postJson(url, `/calls/${callId}/cancel`, {}, callerSession);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_ended, 1);
     assert.equal(res.body.counters.calls_cancelled, 1);
   } finally {
@@ -182,7 +195,7 @@ test('GET /metrics increments calls_missed after ringing timeout', async () => {
     // Advance time past the ringing timeout.
     tickRingingTimeouts(Date.now() + DEFAULT_RINGING_TIMEOUT_MS + 1_000);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_missed, 1);
   } finally {
     await teardown();
@@ -201,7 +214,7 @@ test('GET /metrics tracks calls_busy when callee already has an active call', as
     // Second call should be immediately busy.
     await postJson(url, '/calls', { calleeId: 'bob' }, callerSession2);
 
-    const res = await getJson(url, '/metrics');
+    const res = await getMetricsHttp(url);
     assert.equal(res.body.counters.calls_initiated, 2);
     assert.equal(res.body.counters.calls_busy, 1);
   } finally {
@@ -220,7 +233,7 @@ test('GET /metrics call_connect_rate is a number after a connected call', async 
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
     await postJson(url, `/calls/${callId}/end`, {}, callerSession);
 
-    const snap = (await getJson(url, '/metrics')).body;
+    const snap = (await getMetricsHttp(url)).body;
     // calls_in_call is 0 until rtc transitions; but connect_rate should not throw
     assert.equal(typeof snap.derived.call_connect_rate, 'number');
   } finally {
@@ -238,7 +251,7 @@ test('GET /metrics histograms include call_setup_latency_ms after accepted call'
     const callId = callRes.body.callId;
     await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
 
-    const snap = (await getJson(url, '/metrics')).body;
+    const snap = (await getMetricsHttp(url)).body;
     const hist = snap.histograms.call_setup_latency_ms;
     assert.equal(hist.count, 1);
     assert.equal(typeof hist.mean, 'number');
@@ -380,7 +393,7 @@ test('getMetrics() returns the same data as GET /metrics', async () => {
     await postJson(url, '/calls', { calleeId: 'bob' }, callerSession);
 
     const direct = getMetrics();
-    const viaHttp = (await getJson(url, '/metrics')).body;
+    const viaHttp = (await getMetricsHttp(url)).body;
 
     // Core counters must agree (ignoring the collectedAt timestamp difference)
     assert.deepEqual(direct.counters, viaHttp.counters);

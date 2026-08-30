@@ -145,6 +145,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `PORT`        | `4173`      | TCP port to listen on                                             |
 | `HOST`        | `0.0.0.0`   | Bind address                                                      |
 | `CORS_ORIGIN` | `*` (dev)   | Comma-separated allow-list for Socket.IO CORS. Set to your app origin(s) in production. |
+| `DEBUG_API_TOKEN` | _(unset)_ | Required operator token for `GET /metrics` and privileged debug endpoints. Send as `x-debug-token`. |
 | `SHUTDOWN_DRAIN_MS` | `25000` | Max time (ms) to wait for in-flight socket connections to drain on `SIGTERM`/`SIGINT` before force-closing. Keep below the systemd `TimeoutStopSec`. |
 | `SOCKET_PING_INTERVAL_MS` | `10000` | Engine.IO heartbeat interval. Together with `SOCKET_PING_TIMEOUT_MS` this bounds how long a dead client (e.g. a suspended phone) still looks connected. The defaults detect a drop in ~20s, comfortably inside the ringing timeout, so the callee falls back to push instead of ringing into a dead socket. |
 | `SOCKET_PING_TIMEOUT_MS` | `10000` | Time (ms) to wait for a client's heartbeat response before considering the socket dead. |

@@ -40,12 +40,13 @@ TimeoutStopSec=30
 # real overrides in the env file rather than mixing both mechanisms.
 Environment=NODE_ENV=production
 Environment=PORT=4173
-Environment=HOST=0.0.0.0
+Environment=HOST=127.0.0.1
 # Tighten CORS_ORIGIN to your actual web-client origin in production,
 # e.g. Environment=CORS_ORIGIN=https://your-app.example.com
 # The native Android app does not send a browser Origin header so CORS does
-# not apply to it; use * only if you have no web-browser clients.
-Environment=CORS_ORIGIN=*
+# not apply to it. Keep this empty by default (no browser origins allowed)
+# and set it explicitly in /etc/robot-signal/env when needed.
+Environment=CORS_ORIGIN=
 # The leading `-` means systemd tolerates the file being absent (useful before
 # first-time setup); once created, values here override the `Environment=`
 # lines above for the same key.

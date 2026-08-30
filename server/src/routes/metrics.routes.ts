@@ -1,15 +1,29 @@
 import express from 'express';
+import { timingSafeEqual } from 'crypto';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { CALL_END_REASONS } from '../config.ts';
 import { summarizeDeviceFanout } from '../lib/state.ts';
 
 /**
- * Operational, no-auth endpoints:
+ * Operational endpoints:
  *   GET /call-end-reasons – static end-reason taxonomy for clients.
- *   GET /metrics          – point-in-time telemetry snapshot for scrapers.
+ *   GET /metrics          – operator-token-protected telemetry snapshot.
  */
 function createMetricsRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
+
+  /**
+   * Constant-time check of the operator token guarding metrics access.
+   */
+  function hasMetricsToken(req: import('express').Request): boolean {
+    const expected = process.env.DEBUG_API_TOKEN;
+    if (!expected) return false;
+    const presented = req.get('x-debug-token') ?? '';
+    const expectedBuffer = Buffer.from(expected);
+    const presentedBuffer = Buffer.from(presented);
+    if (expectedBuffer.length !== presentedBuffer.length) return false;
+    return timingSafeEqual(expectedBuffer, presentedBuffer);
+  }
 
   // ─── Call end-reason taxonomy (static, no auth required) ──────────────────
   router.get('/call-end-reasons', (_req, res) => {
@@ -33,7 +47,12 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
    *                   are visible to a scraper.  Aggregate only: no per-user
    *                   detail and never a push token.
    */
-  router.get(API_ROUTES.METRICS, (_req, res) => {
+  router.get(API_ROUTES.METRICS, (req, res) => {
+    if (!hasMetricsToken(req)) {
+      res.status(401).json({ error: 'metrics authentication required' });
+      return;
+    }
+
     res.status(200).json({
       ...state.telemetry.getSnapshot(),
       devices: summarizeDeviceFanout(state),

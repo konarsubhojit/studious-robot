@@ -133,7 +133,7 @@ account deletion/data export (GDPR), app icon & splash, i18n
 ## 🔧 Infrastructure / ops
 
 - Redis for sessions/presence + multi-instance rate limiting (per-process today).
-- `CORS_ORIGIN` defaults to `*` in `deploy/robot-signal.service` — lock down.
+- Keep `CORS_ORIGIN` locked down in production (no wildcard unless explicitly intended).
 - Error tracking (Sentry/Bugsnag) — `crashReporter.ts` only writes local files.
 - Automate Drizzle migrations in the Oracle VM deploy step (`db:migrate` — already done in `backend-ci.yml`).
 - Prometheus scrape + alerting on the existing `/metrics` endpoint.
