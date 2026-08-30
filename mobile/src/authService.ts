@@ -1,5 +1,15 @@
-import auth from '@react-native-firebase/auth';
-import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import {
+  GoogleAuthProvider,
+  OAuthProvider,
+  createUserWithEmailAndPassword,
+  getAuth as getFirebaseAuth,
+  onAuthStateChanged,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+} from '@react-native-firebase/auth';
+import type { Auth, AuthProvider, User } from '@react-native-firebase/auth';
 import { errorMessage } from './errors';
 
 const FIREBASE_APP_UNAVAILABLE_MESSAGE =
@@ -36,9 +46,9 @@ function toAuthError(error: unknown): unknown {
   return error;
 }
 
-function getAuth() {
+function getAuth(): Auth {
   try {
-    return auth();
+    return getFirebaseAuth();
   } catch (error) {
     throw toAuthError(error);
   }
@@ -85,16 +95,16 @@ function configureGoogle() {
   googleConfigured = true;
 }
 
-export function observeAuthState(listener: (user: FirebaseAuthTypes.User | null) => void): () => void {
-  return getAuth().onAuthStateChanged(listener);
+export function observeAuthState(listener: (user: User | null) => void): () => void {
+  return onAuthStateChanged(getAuth(), listener);
 }
 
 export async function registerWithEmail(email: string, password: string) {
-  return getAuth().createUserWithEmailAndPassword(email.trim(), password);
+  return createUserWithEmailAndPassword(getAuth(), email.trim(), password);
 }
 
 export async function signInWithEmail(email: string, password: string) {
-  return getAuth().signInWithEmailAndPassword(email.trim(), password);
+  return signInWithEmailAndPassword(getAuth(), email.trim(), password);
 }
 
 export async function signInWithGoogle() {
@@ -104,17 +114,20 @@ export async function signInWithGoogle() {
   const result = await GoogleSignin.signIn();
   const idToken = result.data?.idToken ?? result.idToken;
   if (!idToken) throw new Error('Google did not return an ID token');
-  const credential = auth.GoogleAuthProvider.credential(idToken);
-  return getAuth().signInWithCredential(credential);
+  const credential = GoogleAuthProvider.credential(idToken);
+  return signInWithCredential(getAuth(), credential);
 }
 
 export async function signInWithMicrosoft() {
   if (!isMicrosoftSignInConfigured()) {
     throw new Error(MICROSOFT_SIGN_IN_UNAVAILABLE_MESSAGE);
   }
-  const provider = new auth.OAuthProvider('microsoft.com');
+  const provider = new OAuthProvider('microsoft.com');
   provider.addScope('email');
-  return getAuth().signInWithProvider(provider);
+  // `OAuthProvider` declares `providerId` as private, so it does not structurally
+  // satisfy the exported `AuthProvider` interface even though it is the value the
+  // modular API expects here (an upstream typing quirk in @react-native-firebase).
+  return signInWithPopup(getAuth(), provider as unknown as AuthProvider);
 }
 
 export async function getIdToken(forceRefresh = false) {
@@ -128,7 +141,7 @@ export async function getIdToken(forceRefresh = false) {
 }
 
 export async function signOut() {
-  await getAuth().signOut();
+  await firebaseSignOut(getAuth());
 }
 
 export function _resetGoogleSigninCache() {
