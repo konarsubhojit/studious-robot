@@ -15,7 +15,7 @@ import { upsertDevice, resolveReachableChannels, summarizeDeviceFanout } from '.
 import { createStores } from '../src/stores/index.ts';
 import { createMemoryCache } from '../src/cache.ts';
 import * as schema from '../db/schema.ts';
-import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
+import { asDatabase, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -106,14 +106,16 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
     },
   };
 
-  return db;
+  // The double implements only the slice of the Drizzle surface these tests
+  // exercise; assert it once here rather than at every injection point.
+  return asDatabase(db);
 }
 
 function buildCallEventOrderingDb() {
   let callPersisted = false;
   const operations: any[] = [];
 
-  return {
+  return asDatabase({
     operations,
     insert(table: any) {
       return {
@@ -148,10 +150,10 @@ function buildCallEventOrderingDb() {
         },
       };
     },
-  };
+  });
 }
 
-function buildCallState(db: any): import('../src/stores/contracts.ts').ServerState {
+function buildCallState(db: import('../db/client.ts').Database | null): import('../src/stores/contracts.ts').ServerState {
   return ({
     calls: new Map(),
     callEvents: new Map(),
@@ -383,7 +385,7 @@ test('registering a token already held by another device_id evicts the prior hol
 
 // ─── Dead-token pruning ────────────────────────────────────────────────────────
 
-function buildMinimalState(db: any): import('../src/stores/contracts.ts').ServerState {
+function buildMinimalState(db: import('../db/client.ts').Database | null): import('../src/stores/contracts.ts').ServerState {
   return ({ ...createStores(), db } as any);
 }
 
@@ -798,7 +800,7 @@ test('loadPersistedState() is a no-op when no db is provided', async () => {
 });
 
 test('loadPersistedState() fails loudly when users hydration fails', async () => {
-  const db = {
+  const db = asDatabase({
     select() {
       return {
         from(table: any) {
@@ -809,7 +811,7 @@ test('loadPersistedState() fails loudly when users hydration fails', async () =>
         },
       };
     },
-  };
+  });
   const server = createServer({ db });
   await assert.rejects(() => server.loadPersistedState(), /failed to hydrate users from DB/);
 

@@ -51,8 +51,20 @@ function instrumentQuery<T extends { query: Function }>(target: T): T {
   return target;
 }
 
+/**
+ * The Drizzle handle every server module talks to.
+ *
+ * Injected into `createServer()` (and from there onto the server state), so it
+ * is the type that guards the composition root: the query builder is bound to
+ * this project's schema, which makes a misspelled column, a value of the wrong
+ * type or a table that does not exist a compile error rather than a runtime
+ * one.  Test doubles implement only the subset of the surface the case
+ * exercises and are asserted once, at the injection point.
+ */
+export type Database = import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema>;
+
 let _pool: import('pg').Pool | null = null;
-let _db: import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema> | null = null;
+let _db: Database | null = null;
 
 /**
  * Lazily create (or return the cached) `pg` Pool bound to `DATABASE_URL`.
@@ -93,7 +105,7 @@ function getPool(): import('pg').Pool {
 /**
  * Lazily create (or return the cached) Drizzle instance.
  */
-function getDb(): import('drizzle-orm/node-postgres').NodePgDatabase<typeof schema> {
+function getDb(): Database {
   if (_db) return _db;
   _db = drizzle(getPool(), { schema });
   return _db;

@@ -176,7 +176,7 @@ function listBlocks(blocks: Map<string, Set<string>>, blockerId: string): string
  * survives restarts and is queryable outside this process.  DB failures are
  * logged but never block the in-memory record or the request that triggered it.
  */
-function createAuditLog({ db = null }: { db?: object | null; } = {}): import('./stores/contracts.ts').AuditLog & {
+function createAuditLog({ db = null }: { db?: import('../db/client.ts').Database | null; } = {}): import('./stores/contracts.ts').AuditLog & {
     getAll: () => AuditEntry[];
 } {
   const entries: AuditEntry[] = [];
@@ -188,7 +188,7 @@ function createAuditLog({ db = null }: { db?: object | null; } = {}): import('./
   function persist(entry: AuditEntry) {
     if (!db) return;
     try {
-      (db as any)
+      db
         .insert(auditLogTable)
         .values({
           auditId: entry.auditId,

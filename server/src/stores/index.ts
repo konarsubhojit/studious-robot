@@ -34,9 +34,11 @@ function createStores(opts: { stores?: import('./contracts.ts').Stores; } = {}):
  * Redis-backed bundle. The module is imported lazily so the default in-memory
  * path never loads the `redis` / `@socket.io/redis-adapter` dependencies.
  */
-async function createRedisPgStores(opts: object = {}): Promise<import('./contracts.ts').Stores & Record<string, any>> {
+async function createRedisPgStores(
+  ...args: Parameters<typeof import('./redis.ts').createRedisPgStores>
+): ReturnType<typeof import('./redis.ts').createRedisPgStores> {
   const redis = await import('./redis.ts');
-  return redis.createRedisPgStores(opts);
+  return redis.createRedisPgStores(...args);
 }
 
 export { STORE_NAMES, createMemoryStores, createStores, createRedisPgStores };

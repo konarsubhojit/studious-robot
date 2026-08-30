@@ -4,11 +4,12 @@ import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { persistBlock, deletePersistedBlock } from '../lib/persistence.ts';
 import { API_ROUTES } from '../../../shared/index.ts';
+import type { Database } from '../../db/client.ts';
 
 /**
  * Block management: block / unblock / list.
  */
-function createBlocksRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: any; }): import('express').Router {
+function createBlocksRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; }): import('express').Router {
   const router = express.Router();
 
   /**

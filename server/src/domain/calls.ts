@@ -163,7 +163,7 @@ function transitionCall(state: ServerState, callId: string, toStatus: string, { 
   }
 
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
-  persistCallRecord(state.db, call);
+  void persistCallRecord(state.db, call);
   appendCallEvent(state, callId, toStatus, actor, reason);
 
   return { ok: true, call };
@@ -193,7 +193,7 @@ function appendCallEvent(state: ServerState, callId: string, event: string, acto
       });
     return;
   }
-  persistCallEvent(state.db, eventRecord);
+  void persistCallEvent(state.db, eventRecord);
 }
 
 /**
@@ -559,7 +559,7 @@ function finalizeCall(state: ServerState, call: CallRecord, status: string, reas
   call.ringTimeoutAt = null;
   call.durationSeconds = durationSeconds;
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
-  persistCallRecord(state.db, call);
+  void persistCallRecord(state.db, call);
   appendCallEvent(state, call.callId, status, null, reason);
   return previousStatus;
 }

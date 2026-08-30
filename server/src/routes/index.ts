@@ -21,7 +21,7 @@ import { createTurnCredentialsRouter } from './turnCredentials.routes.ts';
  */
 function mountRoutes(app: import('express').Express, ctx: {
         state: import('../stores/contracts.ts').ServerState;
-        db: any;
+        db: import('../../db/client.ts').Database | null;
         io: any;
         sessionTtlMs: number;
         ringingTimeoutMs: number;

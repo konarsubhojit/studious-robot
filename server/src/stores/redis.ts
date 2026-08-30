@@ -27,6 +27,16 @@ import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
 
 /**
+ * Builds the Socket.IO adapter the server installs, given the publish and
+ * subscribe Redis clients.  Matches `@socket.io/redis-adapter`'s `createAdapter`
+ * so a test double is checked against the same contract as the real factory.
+ */
+type SocketIoAdapterFactory = (
+  pub: unknown,
+  sub: unknown
+) => Parameters<import('socket.io').Server['adapter']>[0];
+
+/**
  * Build the hot in-process keyed collections required by the store contract.
  */
 function createHotMaps(): Record<string, Map<unknown, unknown>> {
@@ -53,9 +63,9 @@ function createHotMaps(): Record<string, Map<unknown, unknown>> {
  * @param opts.createClient   Client factory; defaults to `redis.createClient`.
  *   Socket.IO adapter factory; defaults to `@socket.io/redis-adapter.createAdapter`.
  */
-async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () => any; createAdapter?: (pub: any, sub: any) => any; } = {}): Promise<import('./contracts.ts').Stores & {
+async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () => any; createAdapter?: SocketIoAdapterFactory; } = {}): Promise<import('./contracts.ts').Stores & {
     messageBus: import('../messageBus.ts').MessageBus;
-    attachAdapter: (io: any) => void;
+    attachAdapter: (io: import('socket.io').Server) => void;
     close: () => Promise<void>;
 }> {
   const url = opts.redisUrl || process.env.REDIS_URL;
@@ -104,7 +114,7 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
    *
    * @param io  Socket.IO server.
    */
-  bundle.attachAdapter = (io: any) => {
+  bundle.attachAdapter = (io: import('socket.io').Server) => {
     io.adapter(createAdapter(adapterPub, adapterSub));
   };
 

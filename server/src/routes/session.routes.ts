@@ -1,5 +1,6 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
+import type { Database } from '../../db/client.ts';
 import { randomUUID } from 'node:crypto';
 import { resolveIdentityClaim } from '../identity.ts';
 import { getSessionFromRequest } from '../lib/auth.ts';
@@ -14,7 +15,7 @@ import { persistUser, persistDevice } from '../lib/persistence.ts';
  */
 function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
         state: import('../stores/contracts.ts').ServerState;
-        db: any;
+        db: Database | null;
         sessionTtlMs: number;
         verifyIdToken?: (idToken: string) => Promise<{
             authUid: string;

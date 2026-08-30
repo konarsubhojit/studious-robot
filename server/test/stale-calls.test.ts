@@ -15,7 +15,7 @@ import { createServer } from '../src/index.ts';
 import { CALL_TRANSITIONS, CONNECTED_CALL_STATUS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, TERMINAL_CALL_STATES } from '../src/config.ts';
 import { getCallExpiry } from '../src/domain/calls.ts';
 import * as schema from '../db/schema.ts';
-import { captureConsoleLog, closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { asDatabase, captureConsoleLog, closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
       ringTimeoutAt: null,
     },
   ];
-  const db = {
+  const db = asDatabase({
     select() {
       return {
         /** @param table */
@@ -260,7 +260,7 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
         },
       };
     },
-  };
+  });
 
   const { url, getCall, loadPersistedState, teardown } = await startServer({ db });
   try {

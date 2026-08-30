@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'crypto';
 import { createServer } from '../src/index.ts';
 import * as schema from '../db/schema.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { asDatabase, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Fake Drizzle db ──────────────────────────────────────────────────────────
 
@@ -160,7 +160,9 @@ function createFakeCallsDb() {
     };
   }
 
-  return {
+  // The double implements only the slice of the Drizzle surface these tests
+  // exercise; assert it once here rather than at every injection point.
+  return asDatabase({
     rows,
     seedCall,
     select,
@@ -186,7 +188,7 @@ function createFakeCallsDb() {
     delete() {
       return { where: () => Promise.resolve() };
     },
-  };
+  });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -368,7 +370,7 @@ test('history: pages with limit and offset, newest activity first', async () => 
 });
 
 test('history: falls back to resident calls when the query fails', async () => {
-  const failingDb = {
+  const failingDb = asDatabase({
     ...createFakeCallsDb(),
     select() {
       return {
@@ -382,7 +384,7 @@ test('history: falls back to resident calls when the query fails', async () => {
         },
       };
     },
-  };
+  });
 
   const { url, teardown } = await startServer({ db: failingDb });
   try {

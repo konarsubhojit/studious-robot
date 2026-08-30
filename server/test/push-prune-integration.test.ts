@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { pushSenders } from '../src/push.ts';
-import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
+import { asDatabase, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 /** @param [opts] */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
@@ -26,7 +26,9 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 
 function buildMockDb() {
   const deletes: any[] = [];
-  return {
+  // The double implements only the slice of the Drizzle surface these tests
+  // exercise; assert it once here rather than at every injection point.
+  return asDatabase({
     deletes,
     select() {
       return { from: () => Promise.resolve([]) };
@@ -52,7 +54,7 @@ function buildMockDb() {
         },
       };
     },
-  };
+  });
 }
 
 test('a dead-token outcome from an incoming-call push prunes the device row', async () => {

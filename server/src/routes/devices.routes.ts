@@ -4,6 +4,7 @@ import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId, normalisePushProvider, sanitizeForLog } from '../lib/normalize.ts';
 import { upsertDevice } from '../lib/state.ts';
 import { persistDevice } from '../lib/persistence.ts';
+import type { Database } from '../../db/client.ts';
 
 // Delivery stages report that a call push reached the device and rang it;
 // answer stages report what happened when the user tapped Answer, so a call
@@ -34,7 +35,7 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 /**
  * Device push-token registration / unregistration.
  */
-function createDevicesRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: any; }): import('express').Router {
+function createDevicesRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; }): import('express').Router {
   const router = express.Router();
 
   router.post(API_ROUTES.DEVICES_REGISTER, async (req, res) => {
