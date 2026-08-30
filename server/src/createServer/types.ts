@@ -1,0 +1,30 @@
+export type CreateServerOptions = {
+  verifyIdToken?: (idToken: string) => Promise<{
+    authUid: string;
+    email?: string | null;
+    authProvider?: string | null;
+  }>;
+  stores?: any;
+  db?: any;
+  messageStore?: any;
+  cache?: import('../cache.ts').Cache;
+  messageBus?: import('../messageBus.ts').MessageBus | null;
+  sessionTtlMs?: number;
+  participantDisconnectGraceMs?: number;
+  callRateLimit?: number;
+  callRateWindowMs?: number;
+  rtcRateLimit?: number;
+  rtcRateWindowMs?: number;
+  turnRateLimit?: number;
+  turnRateWindowMs?: number;
+  messageRateLimit?: number;
+  messageRateWindowMs?: number;
+  messageSearchRateLimit?: number;
+  messageSearchRateWindowMs?: number;
+  shutdownDrainMs?: number;
+  staleDeviceMaxAgeMs?: number;
+  callRetentionMs?: number;
+  maxRetainedCalls?: number;
+  turnFetch?: typeof fetch;
+  turnEnv?: NodeJS.ProcessEnv;
+};

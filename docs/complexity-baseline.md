@@ -115,12 +115,10 @@ Source files (`server/src`, `server/db`, `shared/`, `mobile/src`):
 | 944 | `mobile/src/theme.ts` | — |
 | 899 | `mobile/src/pushNotifications.ts` | — |
 | 781 | `mobile/src/components/SettingsScreen.tsx` | — |
-| 721 | `server/src/signaling/messageHandlers.ts` | 3 |
 | 643 | `mobile/src/callKeep.ts` | — |
 | 612 | `mobile/src/components/SearchScreen.tsx` | — |
 | 584 | `server/src/domain/calls.ts` | — |
 | 515 | `server/src/domain/notifications.ts` | — |
-| 501 | `server/src/signaling/index.ts` | 3 |
 
 Two entries have since left this table. Phase 2 split `server/src/push.ts`
 (1289 lines) into `server/src/push/` and `server/src/messageStore.ts` (934) into
@@ -128,6 +126,16 @@ Two entries have since left this table. Phase 2 split `server/src/push.ts`
 existing import path still resolves — and the largest resulting module is 316
 lines. No method in either tree exceeds the threshold, so neither appears in the
 violations table above.
+
+Phase 3 did the same for the signaling lifecycle files: `server/src/signaling/messageHandlers.ts`
+went from 721 lines to a 14-line facade and now fronts
+`server/src/signaling/messageHandlers/` (largest module: 275 lines),
+`server/src/signaling/index.ts` went from 501 lines to an 8-line facade and now
+fronts `server/src/signaling/connection/` (largest module: 406), and
+`server/src/createServer.ts` (~21KB) is now a 9-line facade over
+`server/src/createServer/` (`createServer/index.ts`: 443 lines). None of the
+extracted modules exceeds ~500 lines, so both signaling facades leave this
+table.
 
 Test files, for completeness — they are not a decomposition target, but the
 largest of them mirrors the largest source file and will have to move with it:
@@ -187,6 +195,7 @@ is documented") cannot be met without it.
 
 | Phase | Violations cleared | Now |
 | --- | --- | --- |
+| Phase 3 (#214) | #13 `message:send` (24) | `handleMessageSend` in `server/src/signaling/messageHandlers/send.ts` scores 8 |
 | Phase 4 (#215) | #19 `downloadAttachment` (19) | under the threshold; the per-directory attempt is its own function |
 
 Phase 4 also split `mobile/src/hooks/useMessaging.ts` (1,367 lines) into
