@@ -239,8 +239,6 @@ jobs:
             exit 1
           fi
 
-          echo "Using $AAPT_PATH to inspect $APK_PATH"
-          PERMISSIONS_DUMP="$("$AAPT_PATH" dump permissions "$APK_PATH")"
           REQUIRED_PERMISSIONS=(
             "android.permission.INTERNET"
             "android.permission.CAMERA"
