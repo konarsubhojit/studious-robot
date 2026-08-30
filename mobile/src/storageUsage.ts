@@ -178,6 +178,32 @@ async function listFiles(
 }
 
 /**
+ * Add one directory's files to the running totals, skipping any path already
+ * counted.
+ */
+function accumulateFiles(
+  usage: StorageUsage,
+  files: StoredFile[],
+  seenPaths: Set<string>,
+): void {
+  for (const file of files) {
+    if (seenPaths.has(file.path)) continue;
+    seenPaths.add(file.path);
+
+    const category = categorizeStoredFile(file.name);
+    usage.totalBytes += file.size;
+    if (category === 'media') {
+      usage.mediaBytes += file.size;
+      usage.mediaFileCount += 1;
+    } else if (category === 'logs') {
+      usage.logBytes += file.size;
+    } else {
+      usage.dataBytes += file.size;
+    }
+  }
+}
+
+/**
  * Measure what the app is storing on this device.
  *
  * Reports zeroes with `measured: false` rather than rejecting when the
@@ -201,21 +227,7 @@ export async function measureStorageUsage(): Promise<StorageUsage> {
     // One readable directory is enough to report a real number; every
     // directory failing means the device told us nothing.
     if (readable) usage.measured = true;
-    for (const file of files) {
-      if (seenPaths.has(file.path)) continue;
-      seenPaths.add(file.path);
-
-      const category = categorizeStoredFile(file.name);
-      usage.totalBytes += file.size;
-      if (category === 'media') {
-        usage.mediaBytes += file.size;
-        usage.mediaFileCount += 1;
-      } else if (category === 'logs') {
-        usage.logBytes += file.size;
-      } else {
-        usage.dataBytes += file.size;
-      }
-    }
+    accumulateFiles(usage, files, seenPaths);
   }
 
   return usage;

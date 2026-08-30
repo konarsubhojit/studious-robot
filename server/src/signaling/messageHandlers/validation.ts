@@ -31,6 +31,49 @@ function validateBody(
   return { body: trimmed };
 }
 
+/**
+ * Validate the optional voice-note duration, returning the rejection message or
+ * `null` when the value is absent or in range.
+ *
+ * `Number.isInteger` short-circuits the range comparisons for non-numeric
+ * values, so a string duration is rejected before it is ever compared.
+ */
+function validateDurationMs(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (
+    !Number.isInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) > MAX_VOICE_DURATION_MS
+  ) {
+    return `attachment.durationMs must be between 0 and ${MAX_VOICE_DURATION_MS}`;
+  }
+  return null;
+}
+
+/**
+ * Project the caller-supplied attachment onto the stored shape: every optional
+ * field is normalised to a value of its declared type or `null`, so nothing
+ * unvalidated from the request reaches the store.
+ */
+function normaliseAttachmentFields(
+  attachment: Record<string, any>,
+  config: ReturnType<typeof loadR2Config>,
+  mimeType: string
+): Record<string, any> {
+  return {
+    url: String(attachment.url),
+    mimeType,
+    sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : null,
+    name: typeof attachment.name === 'string' ? attachment.name.slice(0, 255) : null,
+    width: Number.isInteger(attachment.width) ? attachment.width : null,
+    height: Number.isInteger(attachment.height) ? attachment.height : null,
+    durationMs: Number.isInteger(attachment.durationMs) ? attachment.durationMs : null,
+    thumbnailUrl: isManagedAttachmentUrl(config, attachment.thumbnailUrl)
+      ? attachment.thumbnailUrl
+      : null,
+  };
+}
+
 function validateAttachment(
   type: string,
   rawAttachment: unknown
@@ -57,29 +100,13 @@ function validateAttachment(
     return { error: 'bad_request', message: `attachment: ${validated.error}` };
   }
 
-  const durationMs = attachment.durationMs;
-  if (durationMs !== undefined && durationMs !== null) {
-    if (!Number.isInteger(durationMs) || durationMs < 0 || durationMs > MAX_VOICE_DURATION_MS) {
-      return {
-        error: 'bad_request',
-        message: `attachment.durationMs must be between 0 and ${MAX_VOICE_DURATION_MS}`,
-      };
-    }
+  const durationError = validateDurationMs(attachment.durationMs);
+  if (durationError) {
+    return { error: 'bad_request', message: durationError };
   }
 
   return {
-    attachment: {
-      url: String(attachment.url),
-      mimeType: validated.mimeType,
-      sizeBytes: Number.isInteger(attachment.sizeBytes) ? attachment.sizeBytes : null,
-      name: typeof attachment.name === 'string' ? attachment.name.slice(0, 255) : null,
-      width: Number.isInteger(attachment.width) ? attachment.width : null,
-      height: Number.isInteger(attachment.height) ? attachment.height : null,
-      durationMs: Number.isInteger(durationMs) ? durationMs : null,
-      thumbnailUrl: isManagedAttachmentUrl(config, attachment.thumbnailUrl)
-        ? attachment.thumbnailUrl
-        : null,
-    },
+    attachment: normaliseAttachmentFields(attachment, config, validated.mimeType),
   };
 }
 

@@ -19,6 +19,48 @@ export type InCallBannerProps = {
 };
 
 /**
+ * Mute / end controls, rendered only when the banner is given a handler for at
+ * least one of them.
+ */
+function InCallBannerActions({
+  isMuted,
+  onMuteToggle,
+  onEndCall,
+  styles,
+}: {
+  isMuted: boolean;
+  onMuteToggle?: () => void;
+  onEndCall?: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (!onMuteToggle && !onEndCall) return null;
+  return (
+    <View style={styles.actions}>
+      {onMuteToggle ? (
+        <IconButton
+          icon={isMuted ? 'micOff' : 'micOn'}
+          onPress={onMuteToggle}
+          variant={isMuted ? 'active' : 'default'}
+          size={32}
+          accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+          testID="in-call-banner-mute"
+        />
+      ) : null}
+      {onEndCall ? (
+        <IconButton
+          icon="callEnd"
+          onPress={onEndCall}
+          variant="danger"
+          size={32}
+          accessibilityLabel="End call"
+          testID="in-call-banner-end"
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/**
  * Slim, persistent banner shown at the top of the tab shell whenever an
  * active call has been minimized (e.g. the user pressed the hardware back
  * button or a bottom tab while on a call) — the in-app analogue of the
@@ -41,17 +83,19 @@ export default function InCallBanner({
   onEndCall,
 }: InCallBannerProps) {
   const styles = useThemedStyles(createStyles);
+  const label = participantLabel || '';
+  const returnHint = label ? `Return to call: ${label}` : 'Return to call';
 
   return (
     <Pressable
       onPress={onExpand}
       accessibilityRole="button"
-      accessibilityLabel={`Return to call${participantLabel ? `: ${participantLabel}` : ''}`}
+      accessibilityLabel={returnHint}
       testID="in-call-banner"
       style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
-      <Avatar id={participantLabel || ''} size="xs" />
+      <Avatar id={label} size="xs" />
       <Text style={styles.text} numberOfLines={1}>
-        {participantLabel || 'Call in progress'}
+        {label || 'Call in progress'}
       </Text>
       {/* Capped: a fixed-format `mm:ss` readout in a single row whose only
           flexible member is the participant label (`flex: 1`). The row grows
@@ -60,30 +104,12 @@ export default function InCallBanner({
       <Text style={styles.timer} maxFontSizeMultiplier={fontScaleCaps.control}>
         {formatCallDuration(elapsedCallSeconds)}
       </Text>
-      {onMuteToggle || onEndCall ? (
-        <View style={styles.actions}>
-          {onMuteToggle ? (
-            <IconButton
-              icon={isMuted ? 'micOff' : 'micOn'}
-              onPress={onMuteToggle}
-              variant={isMuted ? 'active' : 'default'}
-              size={32}
-              accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-              testID="in-call-banner-mute"
-            />
-          ) : null}
-          {onEndCall ? (
-            <IconButton
-              icon="callEnd"
-              onPress={onEndCall}
-              variant="danger"
-              size={32}
-              accessibilityLabel="End call"
-              testID="in-call-banner-end"
-            />
-          ) : null}
-        </View>
-      ) : null}
+      <InCallBannerActions
+        isMuted={isMuted}
+        onMuteToggle={onMuteToggle}
+        onEndCall={onEndCall}
+        styles={styles}
+      />
     </Pressable>
   );
 }

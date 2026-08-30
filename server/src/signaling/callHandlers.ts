@@ -149,6 +149,89 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
   acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
 }
 
+type RtcRelayOptions = {
+  state: import('../stores/contracts.ts').ServerState;
+  io: any;
+  eventName: string;
+  dataKey: string;
+  recordsHeartbeat?: boolean;
+};
+
+/**
+ * Resolve the call an RTC relay names, or acknowledge the reason it cannot be
+ * relayed and return `null`.
+ *
+ * The three rejections are grouped here because they answer one question —
+ * "may this socket relay on this call right now?" — and each one acknowledges
+ * and stops in exactly the same way.
+ */
+function resolveRtcRelayCall(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  callId: string,
+  userId: string,
+  options: RtcRelayOptions
+): import('../stores/contracts.ts').CallRecord | null {
+  const call = options.state.calls.get(callId);
+  if (!call) {
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'call_not_found',
+      'call not found',
+      options.state
+    );
+    return null;
+  }
+
+  if (call.callerId !== userId && call.calleeId !== userId) {
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      ERROR_CODES.FORBIDDEN,
+      'not a participant in this call',
+      options.state
+    );
+    return null;
+  }
+  if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
+    acknowledgeError(
+      socket,
+      ack,
+      options.eventName,
+      'stale_call_state',
+      `call is not ready for RTC in state: ${call.status}`,
+      options.state
+    );
+    return null;
+  }
+
+  return call;
+}
+
+/**
+ * Promote a call to `connecting_media` on its first relayed frame, notifying
+ * participants only when the transition actually moved the call.
+ */
+function promoteToConnectingMedia(
+  callId: string,
+  userId: string,
+  previousStatus: string,
+  options: RtcRelayOptions
+) {
+  const result = transitionCall(options.state, callId, 'connecting_media', {
+    actor: userId,
+  });
+  if (result.ok && previousStatus !== result.call.status) {
+    notifyCallTransition(options.io, options.state, result.call, {
+      previousStatus,
+      actor: userId,
+    });
+  }
+}
+
 /**
  * Handle an RTC relay event (`rtc.offer`, `rtc.answer`, `rtc.candidate`),
  * forwarding the SDP/candidate to the peer after authorization and rate-limit
@@ -157,13 +240,12 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
  *
  * @param options
  */
-function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
-        state: import('../stores/contracts.ts').ServerState;
-        io: any;
-        eventName: string;
-        dataKey: string;
-        recordsHeartbeat?: boolean;
-    }) {
+function handleRtcRelay(
+  socket: import('socket.io').Socket,
+  ack: Function | undefined,
+  payload: object,
+  options: RtcRelayOptions
+) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
     return;
   }
@@ -202,53 +284,13 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
   const callId = (normaliseId(parsed.callId) as string);
   const value = parsed[options.dataKey];
 
-  const call = options.state.calls.get(callId);
+  const call = resolveRtcRelayCall(socket, ack, callId, userId, options);
   if (!call) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'call_not_found',
-      'call not found',
-      options.state
-    );
-    return;
-  }
-
-  if (call.callerId !== userId && call.calleeId !== userId) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      ERROR_CODES.FORBIDDEN,
-      'not a participant in this call',
-      options.state
-    );
-    return;
-  }
-  if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'stale_call_state',
-      `call is not ready for RTC in state: ${call.status}`,
-      options.state
-    );
     return;
   }
 
   if (call.status === 'accepted') {
-    const previousStatus = call.status;
-    const result = transitionCall(options.state, callId, 'connecting_media', {
-      actor: userId,
-    });
-    if (result.ok && previousStatus !== result.call.status) {
-      notifyCallTransition(options.io, options.state, result.call, {
-        previousStatus,
-        actor: userId,
-      });
-    }
+    promoteToConnectingMedia(callId, userId, call.status, options);
   }
 
   // A connected client relays its liveness over this channel every 30s, which

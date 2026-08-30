@@ -25,7 +25,7 @@ would split one is not an improvement, and is recorded in
 | 1.1 | [Dedupe the operator-token check](#11-dedupe-the-operator-token-check) | ✅ Done |
 | 1.6 | [Remove verified dead surface](#16-remove-verified-dead-surface) | ✅ Done |
 | 1.5 | [Reduce the functions sitting at 14–15](#15-reduce-the-functions-sitting-at-1415) | ⬜ Not started |
-| 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ⬜ Not started |
+| 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ✅ Done |
 | 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ⬜ Not started |
 | 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ⬜ Not started |
 | 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ⬜ Not started |
@@ -129,23 +129,29 @@ extraction — **not** file splits.
 
 ### 1.4 Extract the pure chat timeline model
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
-`ChatConversationPresentation.tsx:125–395` is ~270 lines of pure functions with
-zero state, effects or refs: `getMessageStatus`, `messageAccessibilityLabel`,
-`isCallEntry`, `entryKey`, `formatMessageTimestamp`, `isSameCalendarDay`,
-`formatDateSeparator`, `isSameCallRun`, `findUnreadAnchorKey`,
-`appendDateSeparator`, `callListItemAt`, `isMessageGroupEnd`, `buildListItems`,
-`messageContentKind`.
+~270 lines of pure functions with zero state, effects or refs now live in
+`mobile/src/components/chat/chatTimelineModel.ts`: `getMessageStatus`,
+`messageAccessibilityLabel`, `isCallEntry`, `entryKey`,
+`formatMessageTimestamp`, `isSameCalendarDay`, `formatDateSeparator`,
+`isSameCallRun`, `findUnreadAnchorKey`, `appendDateSeparator`,
+`callListItemAt`, `isMessageGroupEnd`, `buildListItems` and
+`messageContentKind`, together with the `TimelineEntry`, `ListItem`,
+`MessageStatus` and `MessageContentKind` types and the two grouping-window
+constants they are the only readers of.
 
-Move to `mobile/src/components/chat/chatTimelineModel.ts` and re-export
-`findUnreadAnchorKey` from the presentation file, so existing imports and tests
-keep working — the same facade convention as `server/src/createServer.ts`.
+`ChatConversationPresentation.tsx` imports them back and re-exports
+`findUnreadAnchorKey` plus the three public types, so `ChatConversationScreen.tsx`
+and every existing consumer import is unchanged — the same facade convention as
+`server/src/createServer.ts`.
 
 **Safety:** no hooks, no timers, no subscriptions. Nothing to straddle.
 
-**Benefit:** the timeline-grouping rules (date separators, call-run grouping,
-the unread anchor) become unit-testable without rendering.
+**Result:** `ChatConversationPresentation.tsx` 2552 → 2295 lines. Verified with
+`npm run typecheck`, `npx eslint src/components/chat`, and the
+`ChatConversationScreen` suite (79 tests passing), which includes the
+unread-divider cases that pin `findUnreadAnchorKey`'s behaviour.
 
 ### 1.2 Extract `useCallQualityStats`
 

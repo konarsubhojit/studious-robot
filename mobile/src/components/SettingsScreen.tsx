@@ -330,6 +330,55 @@ function CallMediaSettings({
   );
 }
 
+/**
+ * The three strings the "On this device" row shows: its subtitle breakdown, the
+ * short trailing total, and the sentence a screen reader announces. They are
+ * derived together because they describe one of three mutually exclusive
+ * states — measuring, unavailable, measured.
+ *
+ * @param storageUsage - Latest measurement.
+ * @param isMeasuringStorage - Whether a measurement is currently in flight.
+ */
+function describeStorageRow(storageUsage: StorageUsage, isMeasuringStorage: boolean) {
+  if (isMeasuringStorage) {
+    return {
+      details: 'Measuring…',
+      value: '—',
+      label: 'Storage used on this device, measuring',
+    };
+  }
+  if (!storageUsage.measured) {
+    return {
+      details: 'Storage use is unavailable on this device.',
+      value: '—',
+      label: 'Storage used on this device, unavailable',
+    };
+  }
+  const total = formatBytes(storageUsage.totalBytes);
+  return {
+    details: `Media ${formatBytes(storageUsage.mediaBytes)} · `
+      + `Logs ${formatBytes(storageUsage.logBytes)} · `
+      + `Data ${formatBytes(storageUsage.dataBytes)}`,
+    value: total,
+    label: `Storage used on this device, ${total}`,
+  };
+}
+
+/**
+ * Subtitle of the "Clear cached media" row: name the space it would actually
+ * free when that is known, and otherwise say plainly what the action removes.
+ *
+ * @param storageUsage - Latest measurement.
+ */
+function describeClearCachedMedia(storageUsage: StorageUsage) {
+  if (storageUsage.measured && storageUsage.mediaFileCount > 0) {
+    return `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
+      + 'Photos and voice notes download again when you open them.';
+  }
+  return 'Removes downloaded photos and voice notes. '
+    + 'They download again when you open them.';
+}
+
 function StorageSettings({
   storageUsage,
   isMeasuringStorage,
@@ -340,35 +389,17 @@ function StorageSettings({
   'onClearCachedMedia' | 'onExportLogs'> & {
   storageUsage: StorageUsage;
 }) {
-  const storageDetails = isMeasuringStorage
-    ? 'Measuring…'
-    : storageUsage.measured
-      ? `Media ${formatBytes(storageUsage.mediaBytes)} · `
-        + `Logs ${formatBytes(storageUsage.logBytes)} · `
-        + `Data ${formatBytes(storageUsage.dataBytes)}`
-      : 'Storage use is unavailable on this device.';
-  const storageValue = isMeasuringStorage || !storageUsage.measured
-    ? '—'
-    : formatBytes(storageUsage.totalBytes);
-  const storageLabel = isMeasuringStorage
-    ? 'Storage used on this device, measuring'
-    : storageUsage.measured
-      ? `Storage used on this device, ${formatBytes(storageUsage.totalBytes)}`
-      : 'Storage used on this device, unavailable';
-  const clearSubtitle = storageUsage.measured && storageUsage.mediaFileCount > 0
-    ? `Frees about ${formatBytes(storageUsage.mediaBytes)}. `
-      + 'Photos and voice notes download again when you open them.'
-    : 'Removes downloaded photos and voice notes. '
-      + 'They download again when you open them.';
+  const storage = describeStorageRow(storageUsage, Boolean(isMeasuringStorage));
+  const clearSubtitle = describeClearCachedMedia(storageUsage);
   return (
     <>
       <SectionHeader title="Storage &amp; data" icon="settingsStorage" />
       <ListItem
         title="On this device"
-        subtitle={storageDetails}
-        value={storageValue}
+        subtitle={storage.details}
+        value={storage.value}
         icon="settingsStorage"
-        accessibilityLabel={storageLabel}
+        accessibilityLabel={storage.label}
         testID="settings-storage-usage"
       />
       {onClearCachedMedia ? (

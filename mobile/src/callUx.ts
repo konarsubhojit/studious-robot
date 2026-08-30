@@ -210,6 +210,33 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /**
+ * The worst grade a sample can still qualify for, in descending severity: the
+ * first entry whose limits are breached wins, and a sample that breaches none
+ * of them is "Strong".
+ */
+const CONNECTION_QUALITY_GRADES = [
+  { loss: 0.12, rtt: 600, bitrate: 120, bars: 0, label: 'Poor' },
+  { loss: 0.07, rtt: 350, bitrate: 250, bars: 1, label: 'Weak' },
+  { loss: 0.03, rtt: 220, bitrate: 500, bars: 2, label: 'Fair' },
+];
+
+/**
+ * Does any measured metric breach this grade's limits?
+ *
+ * Unmeasured metrics never breach, so a sample carrying only a bitrate is
+ * graded on its bitrate alone.
+ */
+function breachesQualityLimits(
+  metrics: { rttMs?: number; packetLossRatio?: number; bitrateKbps?: number; },
+  limits: { loss: number; rtt: number; bitrate: number; },
+): boolean {
+  const { rttMs, packetLossRatio, bitrateKbps } = metrics;
+  if (isFiniteNumber(packetLossRatio) && packetLossRatio > limits.loss) return true;
+  if (isFiniteNumber(rttMs) && rttMs > limits.rtt) return true;
+  return isFiniteNumber(bitrateKbps) && bitrateKbps < limits.bitrate;
+}
+
+/**
  * Grade the live connection from the latest WebRTC stats sample.
  */
 export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { rttMs?: number; packetLossRatio?: number; bitrateKbps?: number; }): { bars: number; label: string; } {
@@ -221,29 +248,9 @@ export function getConnectionQuality({ rttMs, packetLossRatio, bitrateKbps }: { 
     return { bars: 0, label: 'No link' };
   }
 
-  if (
-    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.12) ||
-    (isFiniteNumber(rttMs) && rttMs > 600) ||
-    (isFiniteNumber(bitrateKbps) && bitrateKbps < 120)
-  ) {
-    return { bars: 0, label: 'Poor' };
-  }
-
-  if (
-    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.07) ||
-    (isFiniteNumber(rttMs) && rttMs > 350) ||
-    (isFiniteNumber(bitrateKbps) && bitrateKbps < 250)
-  ) {
-    return { bars: 1, label: 'Weak' };
-  }
-
-  if (
-    (isFiniteNumber(packetLossRatio) && packetLossRatio > 0.03) ||
-    (isFiniteNumber(rttMs) && rttMs > 220) ||
-    (isFiniteNumber(bitrateKbps) && bitrateKbps < 500)
-  ) {
-    return { bars: 2, label: 'Fair' };
-  }
+  const metrics = { rttMs, packetLossRatio, bitrateKbps };
+  const grade = CONNECTION_QUALITY_GRADES.find(limits => breachesQualityLimits(metrics, limits));
+  if (grade) return { bars: grade.bars, label: grade.label };
 
   return { bars: 3, label: 'Strong' };
 }

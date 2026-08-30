@@ -202,6 +202,50 @@ async function downloadToTarget(
 }
 
 /**
+ * Can this target hold the download?
+ *
+ * Without the storage grant the shared Downloads folder is not writable on
+ * legacy Android, so such a target is skipped in favour of a directory this app
+ * always owns.
+ */
+function isTargetUsable(
+  target: { directory: string; shared: boolean; },
+  permissionGranted: boolean,
+): boolean {
+  if (!target.directory) return false;
+  return permissionGranted || !target.shared;
+}
+
+/**
+ * Try each candidate directory in order until one keeps the bytes.
+ *
+ * @returns the successful attempt, the first failure when every usable
+ *   directory was exhausted, or `null` when there was no usable directory.
+ */
+async function downloadToFirstUsableTarget(
+  { url, fileName, onProgress, permissionGranted }: {
+    url: string;
+    fileName: string;
+    onProgress?: (fraction: number) => void;
+    permissionGranted: boolean;
+  },
+): Promise<AttachmentDownloadResult | null> {
+  let firstFailure: AttachmentDownloadResult | null = null;
+
+  for (const target of downloadTargets()) {
+    if (!isTargetUsable(target, permissionGranted)) continue;
+    const attempt = await downloadToTarget(target, { url, fileName, onProgress });
+    if (attempt.success) return attempt;
+    if (!firstFailure) firstFailure = attempt;
+    // A rejected fetch fails identically wherever the bytes would land, so
+    // only a storage-side failure is worth retrying in another directory.
+    if (attempt.reason !== 'storage') break;
+  }
+
+  return firstFailure;
+}
+
+/**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
@@ -241,23 +285,16 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
 
   logInfo('[Attachments] download started', { host: hostOf(url), mimeType, fileName });
 
-  let firstFailure: AttachmentDownloadResult | null = null;
-
-  for (const target of downloadTargets()) {
-    if (!target.directory) continue;
-    // Without the grant the shared Downloads folder is not writable on legacy
-    // Android, so skip straight to a directory this app always owns.
-    if (target.shared && !permission.granted) continue;
-    const attempt = await downloadToTarget(target, { url, fileName, onProgress });
-    if (attempt.success) return attempt;
-    if (!firstFailure) firstFailure = attempt;
-    // A rejected fetch fails identically wherever the bytes would land, so
-    // only a storage-side failure is worth retrying in another directory.
-    if (attempt.reason !== 'storage') break;
-  }
+  const outcome = await downloadToFirstUsableTarget({
+    url,
+    fileName,
+    onProgress,
+    permissionGranted: permission.granted,
+  });
+  if (outcome?.success) return outcome;
 
   const failure =
-    firstFailure ??
+    outcome ??
     ({
       success: false,
       reason: 'storage',

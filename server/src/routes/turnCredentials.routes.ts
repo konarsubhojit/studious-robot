@@ -94,6 +94,56 @@ function normalizeIceServers(payload: any): IceServer[] {
 }
 
 /**
+ * Mint a fresh set of ICE servers from the Cloudflare TURN API.
+ *
+ * Throws on any failure — a non-2xx response, an unparseable body, or a body
+ * carrying no servers — so the single caller has one place to catch and fall
+ * through to the next credential tier.
+ */
+async function fetchCloudflareIceServers({ fetchImpl, keyId, apiToken, ttl }: {
+        fetchImpl: typeof fetch;
+        keyId: string;
+        apiToken: string;
+        ttl: number;
+    }): Promise<IceServer[]> {
+  const response = await fetchImpl(
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + apiToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ttl }),
+    }
+  );
+  const responseBody = await response.text().catch(() => '');
+  if (!response.ok) {
+    throw new Error(
+      `Cloudflare TURN API returned ${response.status}` +
+      (responseBody ? ` body=${responseBody}` : '')
+    );
+  }
+  const payload = responseBody ? JSON.parse(responseBody) : null;
+  const iceServers = normalizeIceServers(payload);
+  if (iceServers.length === 0) {
+    throw new Error('Cloudflare TURN API returned no ICE servers');
+  }
+  return iceServers;
+}
+
+/**
+ * Report a failed mint at the severity its consequence deserves: with static
+ * credentials configured the request still succeeds on the next tier, so this
+ * is a warning; without them the caller is left with STUN only.
+ */
+function logCredentialMintingFailure(env: NodeJS.ProcessEnv, error: unknown): void {
+  const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
+  const message = error instanceof Error ? error.message : '';
+  logger(`[turn] credential minting failed: ${message || 'unknown error'}`);
+}
+
+/**
  * Issue ICE server credentials (Cloudflare TURN, coturn HMAC, or static).
  *
  * @param ctx
@@ -114,29 +164,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
     if (cache && cache.refreshAt > now) return cache;
     try {
       const ttl = getTtlSeconds(env.CLOUDFLARE_TURN_TTL_SECONDS);
-      const response = await fetchImpl(
-        `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: 'Bearer ' + apiToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ ttl }),
-        }
-      );
-      const responseBody = await response.text().catch(() => '');
-      if (!response.ok) {
-        throw new Error(
-          `Cloudflare TURN API returned ${response.status}` +
-          (responseBody ? ` body=${responseBody}` : '')
-        );
-      }
-      const payload = responseBody ? JSON.parse(responseBody) : null;
-      const iceServers = normalizeIceServers(payload);
-      if (iceServers.length === 0) {
-        throw new Error('Cloudflare TURN API returned no ICE servers');
-      }
+      const iceServers = await fetchCloudflareIceServers({ fetchImpl, keyId, apiToken, ttl });
       const expiresAt = new Date(now + ttl * 1000);
       cache = {
         iceServers: withStunServer(iceServers, env.TURN_URL),
@@ -145,9 +173,7 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
       };
       return cache;
     } catch (error) {
-      const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
-      const message = error instanceof Error ? error.message : '';
-      logger(`[turn] credential minting failed: ${message || 'unknown error'}`);
+      logCredentialMintingFailure(env, error);
       return null;
     }
   }
