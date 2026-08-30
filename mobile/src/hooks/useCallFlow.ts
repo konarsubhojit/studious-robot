@@ -40,8 +40,13 @@ import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import {
   CALL_END_REASON_LABELS,
+  candidatePairKey,
   collectCallStats,
+  deriveBitrateKbps,
+  derivePacketLossRatio,
   getConnectionQuality,
+  isRelayPolicyViolated,
+  shouldWarnPoorConnection,
   smoothConnectionQuality,
   summarizeCandidatePair,
 } from '../callUx';
@@ -3779,6 +3784,42 @@ export default function useCallFlow({
 
   // ─── Connection quality polling ───────────────────────────────────────────
 
+  /**
+   * Record a newly selected ICE candidate pair, once per selection.
+   *
+   * `getStats` reports the same pair on every poll, so this is keyed on the
+   * pair's identity: telemetry, the log line and the relay-policy warning fire
+   * when the route changes, not seven seconds apart forever.
+   */
+  const noteSelectedCandidatePair = useCallback(
+    (
+      summary: IceCandidatePairSummary,
+      candidatePair: {
+        id?: unknown;
+        localCandidateId?: unknown;
+        remoteCandidateId?: unknown;
+      },
+    ) => {
+      const key = candidatePairKey(candidatePair, summary);
+      if (key === selectedCandidatePairRef.current) return;
+      selectedCandidatePairRef.current = key;
+      setSelectedCandidatePair(summary);
+      logInfo('[CallFlow] ICE candidate pair selected', summary);
+      if (activeCallIdRef.current) {
+        Telemetry.trackSelectedCandidatePair(activeCallIdRef.current, summary.local);
+      }
+      if (
+        isRelayPolicyViolated({
+          isRelayOnly: activeIceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY,
+          summary,
+        })
+      ) {
+        logWarn('[CallFlow] Relay ICE policy selected a non-relay candidate pair', summary);
+      }
+    },
+    [activeIceTransportPolicy],
+  );
+
   useEffect(() => {
     if (!isInCall) {
       setConnectionQuality({ bars: 0, label: 'No link' });
@@ -3810,51 +3851,23 @@ export default function useCallFlow({
         if (succeededCandidatePair) {
           const getReportStat =
             typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
-          const summary = summarizeCandidatePair(succeededCandidatePair, getReportStat);
-          const localCandidateType = summary.local;
-          const candidatePairKey = JSON.stringify([
-            succeededCandidatePair.id,
-            succeededCandidatePair.localCandidateId,
-            succeededCandidatePair.remoteCandidateId,
-            summary,
-          ]);
-          if (candidatePairKey !== selectedCandidatePairRef.current) {
-            selectedCandidatePairRef.current = candidatePairKey;
-            setSelectedCandidatePair(summary);
-            logInfo('[CallFlow] ICE candidate pair selected', summary);
-            if (activeCallIdRef.current) {
-              Telemetry.trackSelectedCandidatePair(
-                activeCallIdRef.current,
-                localCandidateType,
-              );
-            }
-            if (
-              activeIceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY &&
-              !summary.usingTurn
-            ) {
-              logWarn(
-                '[CallFlow] Relay ICE policy selected a non-relay candidate pair',
-                summary,
-              );
-            }
-          }
+          noteSelectedCandidatePair(
+            summarizeCandidatePair(succeededCandidatePair, getReportStat),
+            succeededCandidatePair,
+          );
         }
 
         const now = Date.now();
-        const previous = connectionStatsRef.current;
-        let bitrateKbps;
-        if (
-          previous.timestampMs &&
-          now > previous.timestampMs &&
-          totalBytesReceived >= previous.totalBytesReceived
-        ) {
-          bitrateKbps =
-            ((totalBytesReceived - previous.totalBytesReceived) * 8) / (now - previous.timestampMs);
-        }
+        const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
+          timestampMs: now,
+          totalBytesReceived,
+        });
         connectionStatsRef.current = { timestampMs: now, totalBytesReceived };
 
-        const denominator = totalPacketsReceived + totalPacketsLost;
-        const packetLossRatio = denominator > 0 ? totalPacketsLost / denominator : undefined;
+        const packetLossRatio = derivePacketLossRatio({
+          totalPacketsLost,
+          totalPacketsReceived,
+        });
         const sampledQuality = getConnectionQuality({
           rttMs,
           packetLossRatio,
@@ -3870,7 +3883,7 @@ export default function useCallFlow({
         // Surface a status warning when packet loss is severe enough to impair
         // the call.  Only update status on the downgrade crossing so the message
         // doesn't flicker; recovery is silent (the bars update speaks for itself).
-        if (nextQuality.bars === 0 && Number.isFinite(packetLossRatio)) {
+        if (shouldWarnPoorConnection({ bars: nextQuality.bars, packetLossRatio })) {
           updateStatus('Poor connection — high packet loss detected', 'error');
         }
       } catch (error) {
@@ -3908,7 +3921,7 @@ export default function useCallFlow({
       stopPolling();
       subscription?.remove?.();
     };
-  }, [activeIceTransportPolicy, isInCall, updateStatus]);
+  }, [isInCall, noteSelectedCandidatePair, updateStatus]);
 
   // ─── Audio session & device routing ──────────────────────────────────────
 
