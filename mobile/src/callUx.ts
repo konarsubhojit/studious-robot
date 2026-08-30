@@ -447,3 +447,110 @@ export function collectCallStats(report: { forEach: (fn: (stat: any) => void) =>
 
   return sample;
 }
+
+/** A byte/timestamp pair from the previous stats poll. */
+export type BytesReceivedSample = {
+  timestampMs: number | null;
+  totalBytesReceived: number;
+};
+
+/**
+ * Inbound bitrate (kbps) between two stats samples, or `undefined` when the
+ * pair cannot be differenced.
+ *
+ * Three things make a pair unusable, and all three have happened: no previous
+ * sample at all (the first poll of a call), a clock that did not advance (two
+ * polls inside the same millisecond divide by zero), and a byte counter that
+ * went backwards — which a renegotiation or a track replacement does, and
+ * which would otherwise report a large negative bitrate as "no link".
+ */
+export function deriveBitrateKbps(
+  previous: BytesReceivedSample,
+  current: BytesReceivedSample,
+): number | undefined {
+  const { timestampMs: nowMs, totalBytesReceived } = current;
+  if (!previous.timestampMs || nowMs === null) return undefined;
+  if (nowMs <= previous.timestampMs) return undefined;
+  if (totalBytesReceived < previous.totalBytesReceived) return undefined;
+  return (
+    ((totalBytesReceived - previous.totalBytesReceived) * 8) /
+    (nowMs - previous.timestampMs)
+  );
+}
+
+/**
+ * Share of inbound packets lost, or `undefined` when nothing has arrived yet.
+ *
+ * A call with no packets at all is not a call with perfect delivery, so an
+ * empty denominator reports nothing rather than zero loss.
+ */
+export function derivePacketLossRatio({
+  totalPacketsLost,
+  totalPacketsReceived,
+}: {
+  totalPacketsLost: number;
+  totalPacketsReceived: number;
+}): number | undefined {
+  const denominator = totalPacketsReceived + totalPacketsLost;
+  if (denominator <= 0) return undefined;
+  return totalPacketsLost / denominator;
+}
+
+/** The part of a candidate-pair summary these rules read. */
+type CandidatePairSummaryLike = { usingTurn?: boolean; };
+
+/**
+ * An identity for the selected candidate pair, so a re-selection is logged and
+ * reported once rather than on every poll.
+ *
+ * The summary is part of the key: the same pair whose relay side changed is a
+ * different route, and the user is entitled to hear about it.
+ */
+export function candidatePairKey(
+  candidatePair: {
+    id?: unknown;
+    localCandidateId?: unknown;
+    remoteCandidateId?: unknown;
+  },
+  summary: CandidatePairSummaryLike,
+): string {
+  return JSON.stringify([
+    candidatePair.id,
+    candidatePair.localCandidateId,
+    candidatePair.remoteCandidateId,
+    summary,
+  ]);
+}
+
+/**
+ * Whether a relay-only call has been handed a non-relay pair.
+ *
+ * `relay` was asked for to keep the peers' addresses off the wire; a
+ * host-to-host pair under that policy means the guarantee was not kept.
+ */
+export function isRelayPolicyViolated({
+  isRelayOnly,
+  summary,
+}: {
+  isRelayOnly: boolean;
+  summary: CandidatePairSummaryLike;
+}): boolean {
+  return isRelayOnly && !summary.usingTurn;
+}
+
+/**
+ * Whether to say out loud that the connection is poor.
+ *
+ * Only when loss was actually measured: a sample with no packets grades as
+ * zero bars too, and blaming that on packet loss is a diagnosis the data does
+ * not support.
+ */
+export function shouldWarnPoorConnection({
+  bars,
+  packetLossRatio,
+}: {
+  bars: number;
+  packetLossRatio?: number;
+}): boolean {
+  return bars === 0 && Number.isFinite(packetLossRatio);
+}

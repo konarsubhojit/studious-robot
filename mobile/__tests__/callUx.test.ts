@@ -1,6 +1,11 @@
 import {
+  candidatePairKey,
   clamp,
+  deriveBitrateKbps,
+  derivePacketLossRatio,
   describeScreenShareDelivery,
+  isRelayPolicyViolated,
+  shouldWarnPoorConnection,
   formatCallDuration,
   formatRingCountdown,
   getConnectionQuality,
@@ -243,5 +248,122 @@ describe('describeScreenShareDelivery', () => {
     expect(describeScreenShareDelivery('unverified')).toBe('Sharing screen');
     expect(describeScreenShareDelivery('unverified', true)).toBe('Sharing screen with audio');
     expect(describeScreenShareDelivery(undefined, true)).toBe('Sharing screen with audio');
+  });
+});
+
+/**
+ * The stats-poll derivation, previously inline in `useCallFlow`'s polling
+ * effect and reachable only by mounting the hook with a fake peer connection.
+ */
+describe('deriveBitrateKbps', () => {
+  test('differences two samples into kbps', () => {
+    expect(
+      deriveBitrateKbps(
+        { timestampMs: 1_000, totalBytesReceived: 0 },
+        { timestampMs: 2_000, totalBytesReceived: 125_000 },
+      ),
+    ).toBe(1_000);
+  });
+
+  test('reports nothing for the first sample of a call', () => {
+    expect(
+      deriveBitrateKbps(
+        { timestampMs: null, totalBytesReceived: 0 },
+        { timestampMs: 1_000, totalBytesReceived: 500 },
+      ),
+    ).toBeUndefined();
+  });
+
+  test('reports nothing when the clock did not advance', () => {
+    expect(
+      deriveBitrateKbps(
+        { timestampMs: 1_000, totalBytesReceived: 0 },
+        { timestampMs: 1_000, totalBytesReceived: 500 },
+      ),
+    ).toBeUndefined();
+  });
+
+  test('reports nothing when the byte counter went backwards', () => {
+    // A renegotiation resets it; a negative bitrate would read as "no link".
+    expect(
+      deriveBitrateKbps(
+        { timestampMs: 1_000, totalBytesReceived: 10_000 },
+        { timestampMs: 2_000, totalBytesReceived: 40 },
+      ),
+    ).toBeUndefined();
+  });
+
+  test('reports zero for a sample that received nothing new', () => {
+    expect(
+      deriveBitrateKbps(
+        { timestampMs: 1_000, totalBytesReceived: 500 },
+        { timestampMs: 2_000, totalBytesReceived: 500 },
+      ),
+    ).toBe(0);
+  });
+});
+
+describe('derivePacketLossRatio', () => {
+  test('is the lost share of everything sent', () => {
+    expect(
+      derivePacketLossRatio({ totalPacketsLost: 1, totalPacketsReceived: 3 }),
+    ).toBe(0.25);
+  });
+
+  test('is nothing at all when no packets have arrived', () => {
+    // No packets is not perfect delivery.
+    expect(
+      derivePacketLossRatio({ totalPacketsLost: 0, totalPacketsReceived: 0 }),
+    ).toBeUndefined();
+  });
+});
+
+describe('candidatePairKey', () => {
+  const pair = { id: 'p1', localCandidateId: 'l1', remoteCandidateId: 'r1' };
+
+  test('is stable for the same pair and summary', () => {
+    expect(candidatePairKey(pair, { usingTurn: true })).toBe(
+      candidatePairKey(pair, { usingTurn: true }),
+    );
+  });
+
+  test('changes when the route changes under the same pair id', () => {
+    expect(candidatePairKey(pair, { usingTurn: true })).not.toBe(
+      candidatePairKey(pair, { usingTurn: false }),
+    );
+  });
+
+  test('changes when the pair itself changes', () => {
+    expect(candidatePairKey(pair, { usingTurn: true })).not.toBe(
+      candidatePairKey({ ...pair, remoteCandidateId: 'r2' }, { usingTurn: true }),
+    );
+  });
+});
+
+describe('isRelayPolicyViolated', () => {
+  test('flags a relay-only call handed a non-relay pair', () => {
+    expect(
+      isRelayPolicyViolated({ isRelayOnly: true, summary: { usingTurn: false } }),
+    ).toBe(true);
+  });
+
+  test('says nothing when the pair is relayed, or the policy is not relay-only', () => {
+    expect(
+      isRelayPolicyViolated({ isRelayOnly: true, summary: { usingTurn: true } }),
+    ).toBe(false);
+    expect(
+      isRelayPolicyViolated({ isRelayOnly: false, summary: { usingTurn: false } }),
+    ).toBe(false);
+  });
+});
+
+describe('shouldWarnPoorConnection', () => {
+  test('blames packet loss only when loss was measured', () => {
+    expect(shouldWarnPoorConnection({ bars: 0, packetLossRatio: 0.4 })).toBe(true);
+    expect(shouldWarnPoorConnection({ bars: 0, packetLossRatio: undefined })).toBe(false);
+  });
+
+  test('stays quiet while the call still has bars', () => {
+    expect(shouldWarnPoorConnection({ bars: 1, packetLossRatio: 0.4 })).toBe(false);
   });
 });
