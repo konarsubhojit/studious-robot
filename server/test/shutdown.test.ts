@@ -5,6 +5,7 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { listenOnRandomPort } from './helpers.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
+import { createMemoryMessageBus } from '../src/messageBus.ts';
 
 /**
  * Start a server on an ephemeral port and return its URL plus the full server
@@ -174,4 +175,38 @@ test('shutdown() closes pluggable stores that expose close()', async () => {
   const server = await startServer({ stores });
   await server.shutdown();
   assert.equal(closed, true, 'stores.close() was awaited during shutdown');
+});
+
+// ─── cache-invalidation subscription is released ────────────────────────────
+
+test('shutdown() unsubscribes from cache invalidations before closing stores', async () => {
+  const messageBus = createMemoryMessageBus();
+  let unsubscribed = false;
+  let unsubscribedBeforeStoresClosed = false;
+  let storesClosed = false;
+  const originalSubscribe = messageBus.subscribe.bind(messageBus);
+  messageBus.subscribe = async (channel, handler) => {
+    const unsubscribe = await originalSubscribe(channel, handler);
+    return async () => {
+      unsubscribed = true;
+      unsubscribedBeforeStoresClosed = !storesClosed;
+      await unsubscribe();
+    };
+  };
+
+  const stores = createMemoryStores();
+  stores.close = async () => {
+    storesClosed = true;
+  };
+
+  const server = await startServer({ messageBus, stores });
+  await server.cacheInvalidationSubscriptionReady;
+  await server.shutdown();
+
+  assert.equal(unsubscribed, true, 'cache-invalidation subscription was unsubscribed');
+  assert.equal(
+    unsubscribedBeforeStoresClosed,
+    true,
+    'unsubscribe happened before stores.close()'
+  );
 });
