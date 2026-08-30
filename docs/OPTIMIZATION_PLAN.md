@@ -68,14 +68,13 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | ◧ partial — eleven slices are out and directly tested (the WebRTC stats helpers and the stats-poll derivation in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions, the `call.state_changed` dispatch and outgoing-call placement in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, push rehydration plus the media-state frame in `call/pushRehydration`, the answer path and the queued-answer replay in `call/answerPath`, and the audio-route rules in `call/audioRouteRules`); Phase 6 cleared all remaining cognitive-complexity findings and promoted the threshold-15 gate to an error, but the structural hook split still wants its own PR |
+| P1.2 | Decompose `useCallFlow` | ✅ the structural hook split is now done. On top of the eleven pure-rule slices already out (the WebRTC stats helpers and stats-poll derivation in `callUx`, the ICE-recovery ladder rules in `call/iceRestartLadder`, the call-lifecycle decisions and `call.state_changed` dispatch and outgoing-call placement in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, push rehydration plus the media-state frame in `call/pushRehydration`, the answer path and queued-answer replay in `call/answerPath`, and the audio-route rules in `call/audioRouteRules`), the two remaining ref-coupled orchestration clusters are now their own concern-hooks: `useCallHeartbeat` (the in-call liveness beat + wake sources) and `useCallRecovery` (the recovery episode, the ICE-restart ladder and the proactive network-change restart, with its forward-refs). The public return contract is unchanged and `useCallFlow.test.tsx` passes unmodified; the new hooks have focused tests (`__tests__/hooks/useCallHeartbeat.test.tsx`, `__tests__/hooks/useCallRecovery.test.tsx`). **Device QA is still pending** (per instruction) — the recovery/audio-session behaviour only manifests on a device; see the checklist in the P1.2 note below |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`, `call/answerPath`, `call/audioRouteRules`, `call/callEndpoints`). Phase 6 confirms the remaining coordination is below the enforced cognitive-complexity threshold, not that it is safe to split structurally. What is left has no decision in it to separate — see "What was deliberately left in the hook, and why" below. Cutting the hooks themselves apart is a behavioural change to the call path, not a refactor, and wants its own PR, its own review and device QA |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -112,7 +111,7 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
 | D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass |
-| E1–E3 | `useCallFlow` decomposition, SQLite, i18n | Tracked above as P1.2 / P1.7; i18n should precede any further copy growth |
+| E1–E3 | `useCallFlow` decomposition, SQLite, i18n | E1 (`useCallFlow` decomposition) is now done — see P1.2 above, device QA pending; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
 
 ## Notes and deviations
 
@@ -228,8 +227,9 @@ The jest mocks for both libraries moved into `mobile/__mocks__/`. They had been
 copy-pasted into each test that touched an animated component, and every new
 one needed them again.
 
-### P1.2: a slice, not the split
-The honest status is partial. What came out is the WebRTC stats handling —
+### P1.2: the slices, then the split
+The honest status at the time of that pass was partial. What came out is the
+WebRTC stats handling —
 `collectCallStats` and `summarizeCandidatePair`, now in `callUx` beside the
 `getConnectionQuality` they feed. That was the largest remaining block of
 genuinely pure logic in the hook, and it was previously reachable only by
@@ -241,10 +241,11 @@ Extracting it also surfaced that `useCallFlow.test.tsx` replaced the whole
 silently be `undefined` there. It now spreads the real module and stubs only
 `getConnectionQuality`.
 
-What is left in `useCallFlow` is call lifecycle, WebRTC negotiation and ICE
-recovery, all coordinated through shared refs. Splitting that is a behavioural
-change to the call path and belongs in its own PR with device QA, exactly as
-the original deferral said.
+What was left in `useCallFlow` after this slice was call lifecycle, WebRTC
+negotiation and ICE recovery, all coordinated through shared refs. The recovery
+and liveness parts of that have since been lifted into their own hooks
+(`useCallRecovery`, `useCallHeartbeat`) — see the completion note at the end of
+this section; device QA of the call path remains the outstanding gate.
 
 **Second slice: the ICE-recovery ladder.** `call/iceRestartLadder.ts` now owns
 the ladder's decisions — the capped exponential backoff, the lexicographic
@@ -387,10 +388,40 @@ decision *was* separable from the effect it sits beside — the offer's
 stale-vs-glare guard, the state-change dispatch, the answer's transport
 fallback — it came out.
 
-The structural three-hook split therefore remains deferred, for the reason it
-was deferred twice before: what is left is coordinated side effects, and
-cutting them apart is a behavioural change to the call path rather than a
-refactor.
+The structural split is now done. What the eleven pure-rule slices left behind
+was coordinated side effects sequenced through shared refs — but two of those
+clusters were cohesive enough to lift out whole, carrying their refs with them
+rather than leaving a decision behind:
+
+- **`useCallHeartbeat`** owns the in-call liveness beat: the `heartbeatRef`
+  interval, the `wakeCallHeartbeatRef` catch-up used by every wake source
+  (socket ping, peer relay, `AppState`, socket reconnect), and the `AppState`
+  listener. `useCallFlow` calls `startCallHeartbeat`/`stopCallHeartbeat` from the
+  call lifecycle and nudges it through the stable `wakeCallHeartbeat` wrapper.
+- **`useCallRecovery`** owns the recovery machinery: the pausable
+  `recoveryEpisode` budget and its deadline timer, the backed-off ICE-restart
+  ladder (schedule/run/cancel plus the `scheduleIceRestartRef` /
+  `beginIceRecoveryRef` / `cancelIceRestartsRef` forward-refs the socket and ICE
+  handlers reach it through), the TURN-less credential re-fetch, and the
+  proactive network-change restart. The pure decisions it runs on stay in
+  `call/recoveryEpisode` and `call/iceRestartLadder`; the hook is only the side
+  effects and the refs that serialise them.
+
+Both keep `react-native-webrtc` at arm's length exactly as the rule modules do —
+they touch the peer connection only through the refs `useCallFlow` passes in, so
+the pure slices remain independent of the native WebRTC surface. The hook's
+public return contract is unchanged, `useCallFlow.test.tsx` passes unmodified,
+and each new hook has a focused test
+(`__tests__/hooks/useCallHeartbeat.test.tsx`,
+`__tests__/hooks/useCallRecovery.test.tsx`).
+
+What deliberately stayed in `useCallFlow` is the orchestrator layer itself — the
+`connectSocket` handlers and the WebRTC negotiation sequence — because, as the
+paragraphs above set out, there is no *decision* left in them to separate: they
+are the ordering of native calls against `peerConnectionRef` /
+`isNegotiatingRef` / `iceCandidateBufferRef`, and a module for them would have to
+carry the peer connection, which is the one thing these modules are defined by
+not having.
 
 **Device QA — outstanding.** CI cannot verify any of this: there is no E2E
 coverage of the call path (#114), so a regression here is caught by a person on
