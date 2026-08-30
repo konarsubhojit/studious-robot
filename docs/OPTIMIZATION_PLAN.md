@@ -260,12 +260,20 @@ the effective guard is that those renderers are now stable, so the route
 components do not re-render and the elements are never recreated. The `memo`
 wrappers matter for the paths where a parent re-renders for an unrelated reason.
 
-### P1.3: retention is also the history horizon
+### P1.3: retention is a memory bound, not the history horizon
 
-`GET /calls` reads history straight out of the in-memory `state.calls` map
-rather than out of Postgres, so the retention window is not purely an internal
-memory bound — it is also how far back that endpoint can see. Eviction is
-therefore deliberately conservative:
+`GET /calls` used to read history straight out of the in-memory `state.calls`
+map rather than out of Postgres, which made the retention window double as the
+history horizon: a restart wiped the log, and nothing older than the window was
+visible even though every call was already persisted. **That deferral is
+resolved.** The endpoint now reads the durable `calls` table (see
+`server/src/domain/callHistory.ts`), scoped to the requesting user, ordered by
+`updatedAt` descending and paged via `limit`/`offset`; only the first page is
+cached, matching how `GET /messages` treats deep pagination. `state.calls`
+backs live-call state only, and the in-memory read is kept as a degraded
+fallback for deployments without `DATABASE_URL` and for a failed query.
+
+Eviction from the hot map remains deliberately conservative:
 
 - Only calls in a terminal state are ever evicted. A live call is state, not
   history, and stays until the existing timeout sweep closes it.
@@ -278,10 +286,8 @@ therefore deliberately conservative:
 
 Both bounds are configurable (`CALL_RETENTION_MS`, `MAX_RETAINED_CALLS`). At the
 target of ~10 concurrent users neither will realistically be reached, so this is
-a leak fix rather than a behaviour change. **If deeper call history is wanted
-later, the fix is to move the `GET /calls` read path onto the durable `calls`
-table (already written by `callPersistence.ts`) rather than to raise the
-retention window.**
+a leak fix rather than a behaviour change — and now purely a memory bound, since
+evicting a call no longer hides it from its participants.
 
 ### P3.1: documented, not re-architected
 

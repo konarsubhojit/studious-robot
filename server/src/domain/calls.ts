@@ -328,10 +328,11 @@ type PruneTerminalCallsOptions = {
  * Drop terminal calls from the in-memory map once they are older than the
  * retention window, and enforce a hard ceiling on how many are retained.
  *
- * `state.calls` is the read path for `GET /calls`, and nothing ever deleted
- * from it: a long-lived process accumulated every call it had ever seen, so
- * both the history route and the sweep below iterated a set that only ever
- * grew.
+ * Nothing ever deleted from `state.calls`: a long-lived process accumulated
+ * every call it had ever seen, so every sweep over the map iterated a set that
+ * only ever grew.  Eviction is purely a memory bound — `GET /calls` reads
+ * history from the durable `calls` table (see `domain/callHistory.ts`), so an
+ * evicted call is still visible to its participants.
  *
  * Only calls in a terminal state are ever evicted — an in-progress call is
  * live state, not history, and is bounded instead by the timeout sweep. The

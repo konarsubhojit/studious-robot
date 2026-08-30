@@ -5,6 +5,7 @@ import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { createCallRecord, transitionCall, describeActiveCallsForUser } from '../domain/calls.ts';
+import { readCallHistory } from '../domain/callHistory.ts';
 import { notifyCallCreated, notifyCallTransition } from '../domain/notifications.ts';
 
 /**
@@ -148,9 +149,16 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
    *
    * Query parameters:
    *   limit  – max number of records to return (1–100, default 20)
+   *   offset – how many records to skip (default 0), for paging
    *   status – optional filter by call status (e.g. "missed", "ended")
    *
-   * Records are ordered by `createdAt` descending (most recent first).
+   * History is read from the durable `calls` table (see
+   * `domain/callHistory.ts`), so it survives a restart and is not bounded by
+   * the in-memory retention window.  Records are ordered by `updatedAt`
+   * descending (most recently active first).
+   *
+   * Only the first page is cached: deeper pages are rare and unbounded in key
+   * space, matching how `GET /messages` treats deep pagination.
    */
   router.get('/calls', async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
@@ -161,30 +169,30 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
 
     const limitParam = parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 100) : 20;
+    const offsetParam = parseInt(String(req.query.offset ?? ''), 10);
+    const offset = Number.isFinite(offsetParam) && offsetParam > 0 ? offsetParam : 0;
     const statusFilter = normaliseId(req.query.status) ?? null;
 
     const userId = session.userId;
-    const cacheKey = callHistoryCacheKey(userId, statusFilter, limit);
-    const cached = await readCached(state, cacheKey);
-    if (cached) {
-      res.status(200).json(cached);
-      return;
+    const cacheKey = offset === 0 ? callHistoryCacheKey(userId, statusFilter, limit) : null;
+    if (cacheKey) {
+      const cached = await readCached(state, cacheKey);
+      if (cached) {
+        res.status(200).json(cached);
+        return;
+      }
     }
 
-    const userCalls = [];
-    for (const call of state.calls.values()) {
-      if (call.callerId !== userId && call.calleeId !== userId) continue;
-      if (statusFilter && call.status !== statusFilter) continue;
-      userCalls.push(call);
-    }
-
-    userCalls.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const page = await readCallHistory(state, { userId, statusFilter, limit, offset });
 
     const payload = {
-      calls: userCalls.slice(0, limit),
-      total: userCalls.length,
+      calls: page.calls,
+      total: page.total,
+      limit,
+      offset,
+      hasMore: offset + page.calls.length < page.total,
     };
-    await writeCached(state, cacheKey, payload);
+    if (cacheKey) await writeCached(state, cacheKey, payload);
     res.status(200).json(payload);
   });
 

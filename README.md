@@ -129,6 +129,7 @@ any failure.  Run them before opening a pull request.
 | Package  | File                                  | What it covers                                               |
 | -------- | ------------------------------------- | ------------------------------------------------------------ |
 | `server` | `test/calls.test.ts`                  | Call lifecycle HTTP endpoints (create, accept, decline, cancel, end, history, timeouts) |
+| `server` | `test/call-history.test.ts`           | Durable `GET /calls` history: restart survival, retention independence, paging |
 | `server` | `test/signaling-contract.test.ts`     | Versioned WebSocket call/RTC signaling contract              |
 | `server` | `test/reconnect.test.ts`              | Socket reconnect, network handoff, offline callee, ICE restart |
 | `server` | `test/push-fallback.test.ts`          | Push-notification fallback for offline callees               |
