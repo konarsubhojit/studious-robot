@@ -119,7 +119,7 @@ function boolean() {
 /** @param expected */
 function literal<T extends string | number | boolean>(expected: T) {
   return createSchema((value, path) =>
-    value === expected ? ok(value) : fail(path, `expected ${JSON.stringify(expected)}`)
+    value === expected ? ok(value as T) : fail(path, `expected ${JSON.stringify(expected)}`)
   );
 }
 
@@ -170,7 +170,7 @@ function object<TShape extends SchemaShape, TPassthrough extends boolean = false
   shape: TShape,
   options: { passthrough?: TPassthrough; } = {}
 ) {
-  const passthrough = (options.passthrough ?? false) as TPassthrough;
+  const passthrough = options.passthrough ?? false;
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
     const parsed: Record<string, unknown> = passthrough ? { ...value } : {};

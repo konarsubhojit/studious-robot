@@ -46,6 +46,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 }
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
+type Assert<T extends true> = T;
 
 /**
  * @returns the created session id
@@ -108,15 +109,13 @@ test('schema helper preserves parsed object/record types at the API boundary', (
   const count: number = parsed.count;
   const tags: string[] = parsed.tags;
   const labels: Record<string, number> | undefined = parsed.labels;
-  const parsedIsAny: IsAny<typeof parsed> = false;
-  const labelsIsAny: IsAny<typeof labels> = false;
+  type _ParsedIsNotAny = Assert<IsAny<typeof parsed> extends false ? true : false>;
+  type _LabelsIsNotAny = Assert<IsAny<typeof parsed.labels> extends false ? true : false>;
 
   assert.equal(id, 'abc');
   assert.equal(count, 3);
   assert.deepEqual(tags, ['one', 'two']);
   assert.deepEqual(labels, { urgent: 1 });
-  assert.equal(parsedIsAny, false);
-  assert.equal(labelsIsAny, false);
 });
 
 test('signaling payload schemas cover both directions and pass unknown events through', () => {
