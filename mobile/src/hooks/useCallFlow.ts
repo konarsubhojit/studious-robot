@@ -105,6 +105,16 @@ import {
 } from '../call/callDecisions';
 import type { CallDelivery, CallEndSummary } from '../call/callDecisions';
 import {
+  SESSION_EXPIRED_MESSAGE,
+  SESSION_REFRESH_FAILED_MESSAGE,
+  SESSION_REFRESH_INTERVAL_MS,
+  SESSION_REMINT_RETRY_MS,
+  parseCallStateReportAck,
+  sessionRemintAttempts,
+  shouldScheduleSessionRefresh,
+  shouldTearDownAfterResync,
+} from '../call/sessionLifecycle';
+import {
   canReuseIceServers,
   decideFetchedIceServers,
   decideIceConnectionState,
@@ -192,14 +202,6 @@ const ANSWER_SOCKET_WAIT_MS = 5000;
 const NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
 /**
- * How many times a session is re-minted after the server rejects the presented
- * one, and how long between tries. More than one only mid-call, where losing
- * the session means losing the call.
- */
-const SESSION_REMINT_ATTEMPTS = 3;
-const SESSION_REMINT_RETRY_MS = 1000;
-
-/**
  * What prompted an ICE restart or opened a recovery episode; carried into every
  * log line about it.
  *
@@ -236,11 +238,9 @@ export type CallRecoveryStatus = {
  */
 export type { CallDelivery, CallEndSummary };
 
-/**
- * How often to proactively rotate the session token.  Set well below typical
- * server-side TTLs (e.g. 1 h) so the token never expires mid-call.
- */
-const SESSION_REFRESH_INTERVAL_MS = 50 * 60 * 1000; // 50 minutes
+// Session rotation timing, the re-mint budget and how a `call.state.report`
+// ack is read now live in `call/sessionLifecycle.ts`, next to the rules that
+// use them.
 
 /**
  * Call phases that drive which screen the UI renders.  Alias of the state
@@ -293,21 +293,16 @@ function reportOwnCallState(
     CLIENT_EVENTS.CALL_STATE_REPORT,
     { version: SIGNALING_VERSION, activeCallIds },
     ack => {
-      if (!ack?.ok) {
+      const report = parseCallStateReportAck(ack);
+      if (!report) {
         logWarn('[CallFlow] call.state.report ack failed', ack?.error);
         return;
       }
-      const clearedCallIds: string[] = ack.clearedCallIds ?? [];
-      // `null`, not `[]`, when the server did not describe its own calls: an
-      // absent field is "no answer", and treating it as "holds nothing" would
-      // tear down healthy calls against an older server.
-      const serverCallIds: string[] | null = Array.isArray(ack.activeCalls)
-        ? ack.activeCalls
-            .map((call: { callId?: string; }) => call?.callId)
-            .filter(Boolean)
-        : null;
-      logInfo('[CallFlow] Server call state', { clearedCallIds, serverCallIds });
-      options.onServerState?.({ clearedCallIds, activeCallIds: serverCallIds });
+      logInfo('[CallFlow] Server call state', {
+        clearedCallIds: report.clearedCallIds,
+        serverCallIds: report.activeCallIds,
+      });
+      options.onServerState?.(report);
     },
   );
 }
@@ -2045,13 +2040,7 @@ export default function useCallFlow({
       onServerState: ({ clearedCallIds, activeCallIds }) => {
         const currentCallId = activeCallIdRef.current;
         if (!currentCallId) return;
-        // Only positive evidence ends a call here: the server explicitly
-        // cleared it, or it described its calls and this one is not among
-        // them. Silence is never read as "the call is gone".
-        const serverClearedCall = clearedCallIds.includes(currentCallId);
-        const serverOmittedCall =
-          activeCallIds !== null && !activeCallIds.includes(currentCallId);
-        if (!serverClearedCall && !serverOmittedCall) {
+        if (!shouldTearDownAfterResync({ currentCallId, clearedCallIds, activeCallIds })) {
           logInfo('[CallFlow] Server still holds this call after reconnect', {
             callId: currentCallId,
           });
@@ -2534,11 +2523,9 @@ export default function useCallFlow({
           inCall: isInCallRef.current,
         });
         sessionIdRef.current = null;
-        // Mid-call this is not a cosmetic re-auth: the socket carrying the
-        // call's signaling is a guest until a live session replaces it, so a
-        // single failed mint (the handoff that caused the reconnect is often
-        // still settling) must not be what ends the call.
-        const attempts = isInCallRef.current ? SESSION_REMINT_ATTEMPTS : 1;
+        // Mid-call this is not a cosmetic re-auth, so it gets a retry budget —
+        // see `call/sessionLifecycle`.
+        const attempts = sessionRemintAttempts(isInCallRef.current);
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           try {
             const newSessionId = await createOrGetSession();
@@ -2557,7 +2544,7 @@ export default function useCallFlow({
             if (socketRef.current !== socket) return;
             if (attempt >= attempts) {
               logError('[CallFlow] Failed to re-mint session after session.invalid', error);
-              updateStatus('Session expired — please reconnect.', 'error');
+              updateStatus(SESSION_EXPIRED_MESSAGE, 'error');
               return;
             }
             await new Promise(resolve => setTimeout(resolve, SESSION_REMINT_RETRY_MS));
@@ -2787,7 +2774,7 @@ export default function useCallFlow({
   // SESSION_TTL_MS should be set well above this interval (e.g. 3600000 = 1 h).
 
   useEffect(() => {
-    if (!userId.trim() || !signalingUrl.trim()) return undefined;
+    if (!shouldScheduleSessionRefresh({ userId, signalingUrl })) return undefined;
 
     const timer = setInterval(async () => {
       if (!sessionIdRef.current) return;
@@ -2795,10 +2782,7 @@ export default function useCallFlow({
         logWarn('[CallFlow] Proactive session refresh failed', {
           message: errorMessage(error),
         });
-        updateStatus(
-          'Session refresh failed — your token may expire soon. Reconnect if calls stop working.',
-          'warning',
-        );
+        updateStatus(SESSION_REFRESH_FAILED_MESSAGE, 'warning');
       });
     }, SESSION_REFRESH_INTERVAL_MS);
 

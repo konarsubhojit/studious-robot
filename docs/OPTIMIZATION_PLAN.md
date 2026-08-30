@@ -68,14 +68,14 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | ◧ partial — two slices are out and directly tested (the WebRTC stats helpers in `callUx`, and the ICE-recovery ladder in `call/iceRestartLadder`); the structural split still wants its own PR |
+| P1.2 | Decompose `useCallFlow` | ◧ partial — four slices are out and directly tested (the WebRTC stats helpers in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions in `call/callDecisions`, and the session/token rules in `call/sessionLifecycle`); the structural hook split still wants its own PR |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; the recovery ladder's decisions have since been extracted (`call/iceRestartLadder`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA — not a rider on a UI pass |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -258,6 +258,50 @@ unchanged, so this is a pure refactor — the same rules, in a place where each
 is a table-driven unit test (`__tests__/call/iceRestartLadder.test.ts`) rather
 than something reachable only by mounting the hook and driving a fake peer
 connection. `useCallFlow.test.tsx` passes unmodified.
+
+**Third slice: the call-lifecycle decisions** (Phase 5, #216).
+`call/callDecisions.ts` now owns the rules that were inline in the hook and
+therefore only reachable by mounting it: which statuses mean a call is live (so
+a failed accept never tears down the call the user just picked up) or terminal
+(so a call that stops ringing takes its OS notification with it), whether an
+inbound `rtc.offer` is stale or glare, duplicate-accept suppression and the
+bounded answered-call history, the replayed-answer guard's bound, delivery
+classification (`ringing` vs `push`, defaulting to `ringing` for a server that
+does not say), terminal ICE-state classification for the queued-report drop,
+and the end-of-call derivation — duration, the `media_failed` override, which
+calls are worth summarising, the summary itself and what counts as missed.
+
+**Fourth slice: the session and token lifecycle.** `call/sessionLifecycle.ts`
+owns the rotation interval and when the timer is worth arming, the re-mint
+budget (three attempts mid-call, one when idle), and the post-reconnect
+reconciliation of `call.state.report`: how the ack is read and what it proves.
+The sharp rule is that `null` is not `[]` — an ack that says nothing about the
+server's calls is "no answer", and reading it as "the server holds nothing"
+tears down healthy calls against an older server. That distinction now has a
+test of its own rather than living in a comment beside a socket callback.
+
+Both slices are pure — no React, no refs, no peer connection, no socket — the
+hook's return shape is unchanged, and `useCallFlow.test.tsx` passes unmodified,
+as it did for the ladder. `endActiveCall`, previously #21 in the complexity
+baseline at 19, is now under the threshold; the two remaining warnings in the
+file (`pollStats`, the `call.state_changed` handler) are unchanged.
+
+Device QA is still the only thing that can verify the call path — there is no
+E2E coverage of it (#114) — so the checklist in #216 (outgoing call, incoming
+accept and decline, an answer from the CallKeep UI including a push cold start,
+a recovering and a non-recovering mid-call drop, the offline-callee push wake,
+and screen share / PiP) has to be run on a device for these slices.
+
+**Slices 3 and 4 of the issue's list — the signaling event surface and WebRTC
+negotiation — were not taken.** Both are side effects, not rules: the socket
+handlers close over the refs they mutate (`activeCallIdRef`, `peerConnectionRef`,
+`iceCandidateBufferRef`, `isNegotiatingRef`) and the negotiation path is
+`setRemoteDescription` / `createAnswer` / `setLocalDescription` against a live
+peer connection. Moving either would relocate side effects rather than separate
+decisions from them, which is the extraction pattern that has held for four
+slices and the reason `useCallFlow.test.tsx` has never needed to change. What
+remains inside the hook is now close to purely that: effects, refs, and the
+peer connection they drive.
 
 The structural three-hook split remains deferred for the reason above.
 
