@@ -445,29 +445,41 @@ function ActiveCallScreen() {
 }
 
 /**
- * What the minimized-call chrome reads: who is on the call, since when, and the
- * two or three controls it offers. Nothing else — these sit over the tab shell,
- * so they must not wake for connection stats or recovery attempts.
+ * What the minimized-call banner reads: who is on the call, since when, and the
+ * two controls it offers. Nothing else — it sits over the tab shell, so it must
+ * not wake for connection stats, recovery attempts or the screen-share flag it
+ * does not show.
  *
  * @param state the call snapshot
- * @returns the minimized chrome's slice of it
+ * @returns the banner's slice of it
  */
-const selectMinimizedSlice = (state: CallContextValue) => ({
+const selectBannerSlice = (state: CallContextValue) => ({
   callConnectedAtMs: state.callFlow.callConnectedAtMs,
   isMuted: state.callFlow.isMuted,
-  isScreenSharing: state.callFlow.isScreenSharing,
   handleMuteToggle: state.callFlow.handleMuteToggle,
-  handleScreenShareToggle: state.callFlow.handleScreenShareToggle,
   participantLabel: state.participantLabel,
   expandCall: state.expandCall,
   endCall: state.endCall,
+});
+
+/**
+ * The banner's slice plus what the bubble additionally shows: it carries a
+ * screen-share glyph and can be flung away.
+ *
+ * @param state the call snapshot
+ * @returns the bubble's slice of it
+ */
+const selectBubbleSlice = (state: CallContextValue) => ({
+  ...selectBannerSlice(state),
+  isScreenSharing: state.callFlow.isScreenSharing,
+  handleScreenShareToggle: state.callFlow.handleScreenShareToggle,
   dismissBubble: state.dismissBubble,
 });
 
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {
   const { callConnectedAtMs, isMuted, handleMuteToggle, participantLabel, expandCall, endCall } =
-    useCallSelector(selectMinimizedSlice);
+    useCallSelector(selectBannerSlice);
   const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (
@@ -494,7 +506,7 @@ function MinimizedCallBubble() {
     expandCall,
     endCall,
     dismissBubble,
-  } = useCallSelector(selectMinimizedSlice);
+  } = useCallSelector(selectBubbleSlice);
   const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (

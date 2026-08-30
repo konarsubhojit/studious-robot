@@ -193,7 +193,11 @@ export function CallProvider({ children }: { children: ReactNode; }) {
   // timer tick.
   const callFlowRef = useRef(callFlow);
   const settingsRef = useRef(appSettings.settings);
-  useEffect(() => {
+  // A layout effect rather than a passive one, and for the same reason the
+  // store publishes its snapshot in one: both have to be current before the
+  // frame the user can act on is painted, or an action fired from it would read
+  // the previous render's call flow.
+  useLayoutEffect(() => {
     callFlowRef.current = callFlow;
     settingsRef.current = appSettings.settings;
   }, [appSettings.settings, callFlow]);
