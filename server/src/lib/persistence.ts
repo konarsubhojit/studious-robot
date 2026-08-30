@@ -17,8 +17,8 @@ import { blocks as blocksTable } from '../../db/schema.ts';
 
 /**
  * Drizzle database handle, bound to this project's schema (see
- * `db/client.ts`).  Re-exported here because every persistence helper below
- * takes one; a `null` handle means "no durable database configured".
+ * `db/client.ts`).  Aliased here because every persistence helper below takes
+ * one, each accepting `null` for "no durable database configured".
  */
 export type DrizzleDb = import('../../db/client.ts').Database;
 export type Stores = import('../stores/contracts.ts').Stores;

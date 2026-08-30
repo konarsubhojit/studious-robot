@@ -123,8 +123,8 @@ function asDatabase<T>(double: T): T & import('../db/client.ts').Database {
  * Assert a message-store double into the injected {@link MessageStore}; see
  * {@link asDatabase}.
  */
-function asMessageStore<T>(double: T): T & import('../src/messageStore/types.ts').MessageStore {
-  return double as T & import('../src/messageStore/types.ts').MessageStore;
+function asMessageStore<T>(double: T): T & import('../src/messageStore.ts').MessageStore {
+  return double as T & import('../src/messageStore.ts').MessageStore;
 }
 
 /**

@@ -119,7 +119,7 @@ export type ServerState = Stores & {
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
-  messageStore: import('../messageStore/types.ts').MessageStore;
+  messageStore: import('../messageStore.ts').MessageStore;
   cache: import('../cache.ts').Cache;
   messageStoreStatus: string;
   messageBus: import('../messageBus.ts').MessageBus | null;
