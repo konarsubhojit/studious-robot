@@ -108,7 +108,8 @@ jobs:
 
           echo "fcm_enabled=true" >> "$GITHUB_OUTPUT"
 
-      # Build release APK only.
+      # Pull requests build the debug APK only; push/workflow_dispatch builds
+      # both debug and release APKs so the uploaded artifacts match the README.
       #
       # -PreactNativeArchitectures=arm64-v8a limits the build to one ABI in CI.
       # All four ABIs (armeabi-v7a, arm64-v8a, x86, x86_64) remain the default
@@ -116,22 +117,35 @@ jobs:
       # build is 2-4× faster without affecting local or production distribution.
       - name: Assemble APK(s)
         env:
+          EVENT_NAME: ${{ github.event_name }}
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
           ROOM_ID: ${{ secrets.ROOM_ID }}
           TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
           TURN_CREDENTIAL: ${{ secrets.TURN_CREDENTIAL }}
         run: |
+          set -euo pipefail
+          GRADLE_TASKS=(assembleDebug)
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            GRADLE_TASKS+=(assembleRelease)
+          fi
+
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleRelease \
+          ./gradlew "${GRADLE_TASKS[@]}" \
             --build-cache --no-daemon \
             -PreactNativeArchitectures=arm64-v8a
 
       - name: Verify Firebase generated resources
         if: steps.firebase_config.outputs.fcm_enabled == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           SEARCH_ROOT="android/app/build/generated/res"
+          BUILD_VARIANTS=(debug)
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            BUILD_VARIANTS+=(release)
+          fi
 
           # The pinned google-services plugin (4.4.2, part of the Kotlin
           # rewrite line introduced in 4.3.4) registers its output via AGP's
@@ -140,68 +154,79 @@ jobs:
           # (processReleaseGoogleServices) rather than the legacy
           # google-services/release path. Locate the file resiliently so this
           # check keeps working across plugin/AGP versions.
-          VALUES_PATH=""
-          for candidate in \
-            "$SEARCH_ROOT/processReleaseGoogleServices/values/values.xml" \
-            "$SEARCH_ROOT/google-services/release/values/values.xml"; do
-            if [[ -f "$candidate" ]]; then
-              VALUES_PATH="$candidate"
-              break
+          for BUILD_VARIANT in "${BUILD_VARIANTS[@]}"; do
+            VARIANT_TASK_NAME="${BUILD_VARIANT^}"
+            VALUES_PATH=""
+            for candidate in \
+              "$SEARCH_ROOT/process${VARIANT_TASK_NAME}GoogleServices/values/values.xml" \
+              "$SEARCH_ROOT/google-services/${BUILD_VARIANT}/values/values.xml"; do
+              if [[ -f "$candidate" ]]; then
+                VALUES_PATH="$candidate"
+                break
+              fi
+            done
+
+            if [[ -z "$VALUES_PATH" ]]; then
+              VALUES_PATH="$(find "$SEARCH_ROOT" -type f -name values.xml -ipath "*${VARIANT_TASK_NAME}GoogleServices*" 2>/dev/null | sort | head -n 1)"
+            fi
+
+            if [[ -z "$VALUES_PATH" || ! -f "$VALUES_PATH" ]]; then
+              echo "::error::Expected Firebase generated resource file (values.xml) was not found for ${BUILD_VARIANT} under $SEARCH_ROOT"
+              exit 1
+            fi
+
+            echo "Verifying Firebase generated resources for ${BUILD_VARIANT} at $VALUES_PATH"
+
+            if ! grep -Fq 'name="google_app_id"' "$VALUES_PATH"; then
+              echo "::error::Missing google_app_id in $VALUES_PATH"
+              exit 1
+            fi
+
+            if ! grep -Fq 'name="gcm_defaultSenderId"' "$VALUES_PATH"; then
+              echo "::error::Missing gcm_defaultSenderId in $VALUES_PATH"
+              exit 1
             fi
           done
 
-          if [[ -z "$VALUES_PATH" ]]; then
-            VALUES_PATH="$(find "$SEARCH_ROOT" -type f -name values.xml -ipath '*GoogleServices*' 2>/dev/null | sort | head -n 1)"
-          fi
-
-          if [[ -z "$VALUES_PATH" || ! -f "$VALUES_PATH" ]]; then
-            echo "::error::Expected Firebase generated resource file (values.xml) was not found under $SEARCH_ROOT"
-            exit 1
-          fi
-
-          echo "Verifying Firebase generated resources at $VALUES_PATH"
-
-          if ! grep -Fq 'name="google_app_id"' "$VALUES_PATH"; then
-            echo "::error::Missing google_app_id in $VALUES_PATH"
-            exit 1
-          fi
-
-          if ! grep -Fq 'name="gcm_defaultSenderId"' "$VALUES_PATH"; then
-            echo "::error::Missing gcm_defaultSenderId in $VALUES_PATH"
-            exit 1
-          fi
-
       - name: Verify bundled icon font
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-
-          if [[ ! -f "$APK_PATH" ]]; then
-            echo "::error::Release APK not found at $APK_PATH"
-            exit 1
+          BUILD_VARIANTS=(debug)
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            BUILD_VARIANTS+=(release)
           fi
 
-          # react-native-vector-icons/fonts.gradle copies the font into
-          # assets/fonts/ inside the APK.  Confirm the calling-UI icon font is
-          # present so the icons render on-device instead of falling back to emoji.
-          FONT_ENTRY="assets/fonts/MaterialCommunityIcons.ttf"
-          if ! unzip -l "$APK_PATH" | grep -Fq "$FONT_ENTRY"; then
-            echo "::error::Icon font $FONT_ENTRY is missing from the built APK; calling-UI icons will not render"
-            unzip -l "$APK_PATH" | grep -F 'assets/fonts/' || true
-            exit 1
-          fi
-          echo "Verified $FONT_ENTRY is bundled in the APK"
+          for BUILD_VARIANT in "${BUILD_VARIANTS[@]}"; do
+            APK_PATH="android/app/build/outputs/apk/${BUILD_VARIANT}/app-${BUILD_VARIANT}.apk"
+            if [[ ! -f "$APK_PATH" ]]; then
+              echo "::error::${BUILD_VARIANT} APK not found at $APK_PATH"
+              exit 1
+            fi
+
+            # react-native-vector-icons/fonts.gradle copies the font into
+            # assets/fonts/ inside the APK.  Confirm the calling-UI icon font is
+            # present so the icons render on-device instead of falling back to emoji.
+            FONT_ENTRY="assets/fonts/MaterialCommunityIcons.ttf"
+            if ! unzip -l "$APK_PATH" | grep -Fq "$FONT_ENTRY"; then
+              echo "::error::Icon font $FONT_ENTRY is missing from the built APK; calling-UI icons will not render"
+              unzip -l "$APK_PATH" | grep -F 'assets/fonts/' || true
+              exit 1
+            fi
+            echo "Verified $FONT_ENTRY is bundled in $APK_PATH"
+          done
 
       - name: Verify APK permissions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
-
-          if [[ ! -f "$APK_PATH" ]]; then
-            echo "::error::Release APK not found at $APK_PATH"
-            exit 1
+          BUILD_VARIANTS=(debug)
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            BUILD_VARIANTS+=(release)
           fi
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 
           if [[ -z "$SDK_ROOT" || ! -d "$SDK_ROOT/build-tools" ]]; then
             echo "::error::Android SDK build-tools directory is unavailable"
@@ -231,25 +256,44 @@ jobs:
             "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
           )
 
-          for permission in "${REQUIRED_PERMISSIONS[@]}"; do
-            if ! grep -Fq "$permission" <<<"$PERMISSIONS_DUMP"; then
-              echo "::error::Built APK is missing required permission $permission"
-              echo "$PERMISSIONS_DUMP"
+          for BUILD_VARIANT in "${BUILD_VARIANTS[@]}"; do
+            APK_PATH="android/app/build/outputs/apk/${BUILD_VARIANT}/app-${BUILD_VARIANT}.apk"
+            if [[ ! -f "$APK_PATH" ]]; then
+              echo "::error::${BUILD_VARIANT} APK not found at $APK_PATH"
+              exit 1
+            fi
+
+            echo "Using $AAPT_PATH to inspect $APK_PATH"
+            PERMISSIONS_DUMP="$("$AAPT_PATH" dump permissions "$APK_PATH")"
+            for permission in "${REQUIRED_PERMISSIONS[@]}"; do
+              if ! grep -Fq "$permission" <<<"$PERMISSIONS_DUMP"; then
+                echo "::error::${BUILD_VARIANT} APK is missing required permission $permission"
+                echo "$PERMISSIONS_DUMP"
+                exit 1
+              fi
+            done
+
+            # Screen sharing captures through MediaProjection, which delivers no
+            # frames unless react-native-webrtc's foreground service survives the
+            # manifest merge into the assembled APK (the remote peer would only
+            # ever see black). Permissions alone do not prove the service is there.
+            MANIFEST_DUMP="$("$AAPT_PATH" dump xmltree "$APK_PATH" AndroidManifest.xml)"
+            if ! grep -Fq "MediaProjectionService" <<<"$MANIFEST_DUMP"; then
+              echo "::error::${BUILD_VARIANT} APK does not declare the WebRTC MediaProjection foreground service"
               exit 1
             fi
           done
 
-          # Screen sharing captures through MediaProjection, which delivers no
-          # frames unless react-native-webrtc's foreground service survives the
-          # manifest merge into the assembled APK (the remote peer would only
-          # ever see black). Permissions alone do not prove the service is there.
-          MANIFEST_DUMP="$("$AAPT_PATH" dump xmltree "$APK_PATH" AndroidManifest.xml)"
-          if ! grep -Fq "MediaProjectionService" <<<"$MANIFEST_DUMP"; then
-            echo "::error::Built APK does not declare the WebRTC MediaProjection foreground service"
-            exit 1
-          fi
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+          if-no-files-found: error
 
       - name: Upload release APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: app-release-apk
