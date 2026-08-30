@@ -61,7 +61,8 @@ The server listens on `PORT` (default **4173**) and exposes:
 
 - `GET /health` — liveness probe
 - `GET /metrics` — call funnel counters, latency histograms, and per-operation
-  SQL/Mongo/Redis query timings (see *Query timing* below)
+  SQL/Mongo/Redis query timings (see *Query timing* below). Requires
+  `x-debug-token` to match `DEBUG_API_TOKEN`.
 - `POST /session` — create / refresh a session token
 - WebSocket (Socket.IO) signaling on the same port
 
@@ -77,6 +78,9 @@ HOST=0.0.0.0                   # bind address
 
 # Comma-separated list of allowed CORS origins (mobile app origin or '*' for dev)
 CORS_ORIGIN=https://your-app.example.com
+
+# Required to read GET /metrics via x-debug-token
+DEBUG_API_TOKEN=replace-with-a-strong-random-token
 
 # ── Database (Postgres) ──────────────────────────────────────────────────────
 # Full connection string, e.g. from Neon:

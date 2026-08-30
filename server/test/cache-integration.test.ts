@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { createMemoryMessageStore } from '../src/messageStore.ts';
 import { createMemoryMessageBus } from '../src/messageBus.ts';
-import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 import { io as ioClient } from 'socket.io-client';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 }
 
 const VERSION = 1;
+const METRICS_TOKEN = 'test-metrics-token';
 
 // ─── Cache hits ───────────────────────────────────────────────────────────────
 
@@ -139,6 +140,13 @@ test('GET /messages first page is cached but deep pagination is not', async (t) 
 });
 
 test('cache hits and misses are exposed through the telemetry counters', async (t) => {
+  const previousDebugToken = process.env.DEBUG_API_TOKEN;
+  process.env.DEBUG_API_TOKEN = METRICS_TOKEN;
+  t.after(() => {
+    if (previousDebugToken === undefined) delete process.env.DEBUG_API_TOKEN;
+    else process.env.DEBUG_API_TOKEN = previousDebugToken;
+  });
+
   const { url, teardown } = await startServer();
   t.after(teardown);
 
@@ -146,7 +154,10 @@ test('cache hits and misses are exposed through the telemetry counters', async (
   await getJson(url, '/conversations', aliceSession);
   await getJson(url, '/conversations', aliceSession);
 
-  const metrics = await getJson(url, '/metrics');
+  const metricsResponse = await fetch(`${url}/metrics`, {
+    headers: { 'x-debug-token': METRICS_TOKEN },
+  });
+  const metrics = { status: metricsResponse.status, body: await readJson(metricsResponse) };
   assert.equal(metrics.status, 200);
   assert.equal(metrics.body.counters.cache_misses, 1);
   assert.equal(metrics.body.counters.cache_hits, 1);
