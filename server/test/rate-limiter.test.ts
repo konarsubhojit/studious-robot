@@ -24,7 +24,7 @@ test('createRateLimiter enforces the window before pruning kicks in', () => {
 test('createRateLimiter sweeps expired buckets so unique keys do not accumulate forever', () => {
   const maxRequests = 5;
   const windowMs = 1000;
-  const limiter = createRateLimiter({ maxRequests, windowMs }) as ReturnType<typeof createRateLimiter> & { size: () => number; };
+  const limiter = createRateLimiter({ maxRequests, windowMs });
 
   // Feed far more unique keys than the sweep interval while keeping every
   // call's window already expired relative to `now`. Each `check()` starts a
@@ -47,7 +47,7 @@ test('createRateLimiter sweeps expired buckets so unique keys do not accumulate 
 });
 
 test('createRateLimiter reset clears a single key or the whole map', () => {
-  const limiter = createRateLimiter({ maxRequests: 1, windowMs: 1000 }) as ReturnType<typeof createRateLimiter> & { size: () => number; };
+  const limiter = createRateLimiter({ maxRequests: 1, windowMs: 1000 });
   limiter.check('a', 0);
   limiter.check('b', 0);
   assert.equal(limiter.size(), 2);
