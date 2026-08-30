@@ -40,7 +40,6 @@ function setup(overrides = {}) {
   const params = {
     authedFetchRef: { current: jest.fn() },
     signalingUrl: 'https://signal.example.com',
-    sendMessage: jest.fn(),
     beginAttachmentUpload: jest.fn(() => 'local-1'),
     updateAttachmentUploadProgress: jest.fn(),
     finishAttachmentUpload: jest.fn(),
@@ -92,7 +91,6 @@ describe('useAttachments', () => {
       MESSAGE_TYPES.IMAGE,
       { url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
     );
-    expect(params.sendMessage).not.toHaveBeenCalled();
   });
 
   test('pickAndSend(file): sends as a FILE message', async () => {
@@ -133,7 +131,7 @@ describe('useAttachments', () => {
     });
 
     expect(uploadAttachment).not.toHaveBeenCalled();
-    expect(params.sendMessage).not.toHaveBeenCalled();
+    expect(params.finishAttachmentUpload).not.toHaveBeenCalled();
   });
 
   test('marks attachmentsAvailable false and surfaces the message on a 503', async () => {
@@ -212,7 +210,6 @@ describe('useAttachments cancellation', () => {
       await pending;
     });
 
-    expect(params.sendMessage).not.toHaveBeenCalled();
     expect(params.failAttachmentUpload).toHaveBeenCalledWith(
       'user-bob',
       'local-1',

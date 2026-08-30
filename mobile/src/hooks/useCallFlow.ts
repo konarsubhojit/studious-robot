@@ -647,7 +647,6 @@ export default function useCallFlow({
   const attachments = useAttachments({
     authedFetchRef,
     signalingUrl,
-    sendMessage: messaging.sendMessage,
     beginAttachmentUpload: messaging.beginAttachmentUpload,
     updateAttachmentUploadProgress: messaging.updateAttachmentUploadProgress,
     finishAttachmentUpload: messaging.finishAttachmentUpload,

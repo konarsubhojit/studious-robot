@@ -994,6 +994,8 @@ function ChatConversationScreen({
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const didMountDraftPersistRef = useRef(false);
+  const autoScrollFrameRef = useRef((null as number | null));
+  const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
   // Tracks the newest message's id so the auto-scroll-to-bottom effect below
   // only fires for a genuinely new/sent message, not when older history is
@@ -1059,6 +1061,15 @@ function ChatConversationScreen({
 
   const activeHighlightId = quotedHighlightId ?? highlightMessageId;
 
+  const scheduleScrollToEnd = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = requestAnimationFrame(() => {
+      autoScrollFrameRef.current = null;
+      if (!isMountedRef.current) return;
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
+
   // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
   // only by a tick glyph in the bubble footer, which a screen-reader user has
   // no reason to go back and re-read — so "did that send?" had no spoken
@@ -1083,6 +1094,12 @@ function ChatConversationScreen({
     announcedStatusRef.current.forEach((_status, messageId) => {
       if (!seen.has(messageId)) announcedStatusRef.current.delete(messageId);
     });
+    return () => {
+      if (autoScrollFrameRef.current !== null) {
+        cancelAnimationFrame(autoScrollFrameRef.current);
+        autoScrollFrameRef.current = null;
+      }
+    };
   }, [messages, currentUserId]);
 
   // Keep the newest message in view: scroll to the bottom whenever the
@@ -1105,7 +1122,7 @@ function ChatConversationScreen({
         !isCallEntry((newestMessage as TimelineEntry)) &&
         (newestMessage as ChatMessage).senderId === currentUserId;
       if (isNearBottomRef.current || isOwnMessage) {
-        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+        scheduleScrollToEnd();
         setShowScrollToBottom(false);
         setNewMessageCount(0);
       } else {
@@ -1113,7 +1130,7 @@ function ChatConversationScreen({
         setNewMessageCount(count => count + 1);
       }
     }
-  }, [messages, currentUserId]);
+  }, [messages, currentUserId, scheduleScrollToEnd]);
 
   // Deep link from a search result: scroll to the message the conversation was
   // opened at, once it is present in the loaded page. `scrollToIndex` is used
@@ -1157,15 +1174,17 @@ function ChatConversationScreen({
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const subscription = Keyboard.addListener(showEvent, () => {
-      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+      scheduleScrollToEnd();
     });
     return () => subscription.remove();
-  }, []);
+  }, [scheduleScrollToEnd]);
 
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       clearTimeout(typingIdleTimerRef.current);
       clearTimeout(draftPersistTimerRef.current);
+      if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     };
   }, []);
 
@@ -1487,10 +1506,10 @@ function ChatConversationScreen({
   }, []);
 
   const handleScrollToBottomPress = useCallback(() => {
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    scheduleScrollToEnd();
     setShowScrollToBottom(false);
     setNewMessageCount(0);
-  }, []);
+  }, [scheduleScrollToEnd]);
 
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
   // Presence is only a one-shot snapshot fetched when the conversation opens

@@ -32,7 +32,6 @@ import {
 export type UseAttachmentsParams = {
   authedFetchRef: { current: Function | null; };
   signalingUrl: string;
-  sendMessage: (peerId: string, body: string, options?: object) => Promise<void>;
   beginAttachmentUpload: (peerId: string, type: string, attachment: Partial<AttachmentRecord>) => string | null;
   updateAttachmentUploadProgress: (peerId: string, messageId: string, progress: number) => void;
   finishAttachmentUpload: (peerId: string, messageId: string, type: string, attachment: AttachmentRecord) => Promise<void>;
@@ -43,7 +42,6 @@ export type UseAttachmentsParams = {
 export default function useAttachments({
   authedFetchRef,
   signalingUrl,
-  sendMessage,
   beginAttachmentUpload,
   updateAttachmentUploadProgress,
   finishAttachmentUpload,
@@ -137,10 +135,7 @@ export default function useAttachments({
     async (peerId: string, message: ChatMessage) => {
       const attachment = message?.attachment;
       const uri = attachment?.url;
-      if (!message?.messageId || !message.type || !uri) {
-        await sendMessage(peerId, message?.body ?? '');
-        return;
-      }
+      if (!message?.messageId || !message.type || !uri) return;
       await sendPicked(
         peerId,
         message.type,
@@ -156,7 +151,7 @@ export default function useAttachments({
         message.messageId,
       );
     },
-    [sendMessage, sendPicked],
+    [sendPicked],
   );
 
   /**

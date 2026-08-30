@@ -58,8 +58,20 @@ function render(props: any) {
   act(() => {
     tree = renderer.create(<ChatConversationScreen {...props} />);
   });
+  mountedTrees.push(tree);
   return tree;
 }
+
+const mountedTrees: any[] = [];
+function unmountRenderedTrees() {
+  mountedTrees.splice(0).forEach(tree => tree.unmount());
+}
+
+afterEach(() => {
+  act(() => {
+    unmountRenderedTrees();
+  });
+});
 
 describe('ChatConversationScreen', () => {
   // VirtualizedList (used internally by FlatList) schedules a setTimeout to
@@ -71,6 +83,7 @@ describe('ChatConversationScreen', () => {
 
   afterEach(() => {
     act(() => {
+      unmountRenderedTrees();
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
@@ -1009,6 +1022,7 @@ describe('ChatConversationScreen deep-linked message', () => {
 
   afterEach(() => {
     act(() => {
+      unmountRenderedTrees();
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
@@ -1204,6 +1218,7 @@ describe('ChatConversationScreen attachments', () => {
 
   afterEach(() => {
     act(() => {
+      unmountRenderedTrees();
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
@@ -1587,6 +1602,7 @@ describe('ChatConversationScreen drafts', () => {
 
   afterEach(() => {
     act(() => {
+      unmountRenderedTrees();
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
