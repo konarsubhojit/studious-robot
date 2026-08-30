@@ -6,6 +6,10 @@ const MAX_DURABLE_LOG_LINE_BYTES = 16 * 1024;
 
 const LOG_ENTRIES: string[] = [];
 let durableLogQueue: Promise<boolean | void> = Promise.resolve();
+const textEncoder =
+  typeof (globalThis as any).TextEncoder === 'function'
+    ? new (globalThis as any).TextEncoder()
+    : null;
 
 const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
@@ -135,9 +139,8 @@ function safeSerialize(metadata: unknown): string | undefined {
 }
 
 function utf8ByteLength(value: string): number {
-  const TextEncoderCtor = (globalThis as any).TextEncoder;
-  if (typeof TextEncoderCtor === 'function') {
-    return new TextEncoderCtor().encode(value).length;
+  if (textEncoder) {
+    return textEncoder.encode(value).length;
   }
   return value.length;
 }
@@ -243,9 +246,9 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
         const currentSize = await getDurableLogSize(RNFS, path);
         if (
           currentSize !== null &&
-          currentSize + utf8ByteLength(lineToAppend) > MAX_DURABLE_LOG_BYTES &&
-          typeof RNFS.writeFile === 'function'
+          currentSize + utf8ByteLength(lineToAppend) > MAX_DURABLE_LOG_BYTES
         ) {
+          if (typeof RNFS.writeFile !== 'function') return false;
           await RNFS.writeFile(path, '', 'utf8');
         }
 

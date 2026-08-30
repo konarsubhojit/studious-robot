@@ -154,6 +154,21 @@ describe('appLogger', () => {
     expect(RNFS.readFile).not.toHaveBeenCalled();
   });
 
+  test('does not append past the durable size cap when truncation is unavailable', async () => {
+    const writeFile = RNFS.writeFile as jest.Mock;
+    (RNFS as any).writeFile = undefined;
+    (RNFS.stat as jest.Mock).mockResolvedValueOnce({ size: MAX_DURABLE_LOG_BYTES - 4 });
+
+    try {
+      await expect(persistLogLine('line that would overflow')).resolves.toBe(false);
+
+      expect(RNFS.appendFile).not.toHaveBeenCalled();
+      expect(RNFS.readFile).not.toHaveBeenCalled();
+    } finally {
+      (RNFS as any).writeFile = writeFile;
+    }
+  });
+
   test('falls back to positional append without read-modify-write when appendFile is unavailable', async () => {
     const appendFile = RNFS.appendFile as jest.Mock;
     (RNFS as any).appendFile = undefined;
