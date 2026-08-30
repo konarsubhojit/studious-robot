@@ -88,6 +88,15 @@ import type {
   RecoveryPauseReason,
   RecoveryTrigger,
 } from '../call/recoveryEpisode';
+import {
+  canReuseIceServers,
+  decideFetchedIceServers,
+  decideIceConnectionState,
+  decideLadderRun,
+  decideLadderSchedule,
+  decideRecoveryExhausted,
+  isRecoveredIceState,
+} from '../call/iceRestartLadder';
 import useScreenShare from './useScreenShare';
 import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
@@ -168,47 +177,9 @@ const TERMINAL_CALL_STATUSES = new Set([
 ]);
 
 
-/**
- * Backoff between rungs of the ICE-restart ladder.
- *
- * The ladder used to be three fixed rungs (`[0, 1500, 4000]`), exhausted ~5.5s
- * into an outage — after which nothing happened at all until the call was
- * declared dead. It now runs on a capped exponential backoff for as long as the
- * recovery episode has budget left, so a handoff that takes twenty seconds to
- * settle still gets attempts throughout.
- *
- * The first rung is immediate: beating ICE to the punch is the whole point.
- */
-const ICE_RESTART_BACKOFF_BASE_MS = 1500;
-const ICE_RESTART_BACKOFF_MAX_MS = 8000;
-
-/**
- * Delay before retrying a rung that could not run because of a precondition
- * which clears on its own (a negotiation in flight, a socket that is coming
- * back). Such a retry deliberately does *not* consume a rung: the proactive
- * network-change attempt was otherwise always spent doing nothing, because a
- * handoff drops the socket for far longer than the debounce that scheduled it.
- */
-const ICE_RESTART_PRECONDITION_RETRY_MS = 1000;
-
-/** Delay for each rung of the ladder; capped so backoff cannot run away. */
-function iceRestartBackoffMs(attempt: number): number {
-  if (attempt <= 1) return 0;
-  return Math.min(
-    ICE_RESTART_BACKOFF_BASE_MS * 2 ** (attempt - 2),
-    ICE_RESTART_BACKOFF_MAX_MS
-  );
-}
-
-/**
- * How long the peer that loses the tie-break waits before restarting.
- *
- * Both peers now react to a failure, so without a tie-break both would send an
- * `rtc.offer` at once and glare. The lexicographically lower userId restarts
- * immediately; the other waits this long and only proceeds if the connection
- * has not come back in the meantime.
- */
-const ICE_RESTART_TIEBREAK_MS = 1500;
+// Backoff, glare tie-break and precondition-retry timing for the ICE-restart
+// ladder now live in `call/iceRestartLadder.ts`, alongside the rules that use
+// them, so both can be unit-tested without mounting this hook.
 
 /**
  * How long connectivity must settle before a network change triggers a
@@ -968,18 +939,23 @@ export default function useCallFlow({
     const pc = peerConnectionRef.current;
     if (!callId || !pc) return;
     const currentState = pc.iceConnectionState ?? pc.connectionState;
-    if (currentState === 'connected' || currentState === 'completed') {
-      closeRecoveryEpisode('recovered');
+    const decision = decideRecoveryExhausted({
+      iceState: currentState,
+      socketConnected: Boolean(socketRef.current?.connected),
+      worstIceState: recoveryIceStateRef.current,
+    });
+    if (decision.action === 'close') {
+      closeRecoveryEpisode(decision.outcome);
       return;
     }
-    if (!socketRef.current?.connected) {
+    if (decision.action === 'skip-report') {
       logWarn('[CallFlow] Recovery budget spent while offline; not reporting failure', {
         callId,
         currentState,
       });
       return;
     }
-    const iceState = recoveryIceStateRef.current === 'failed' ? 'failed' : 'disconnected';
+    const iceState = decision.iceState;
     logWarn('[CallFlow] Media did not recover within the budget; reporting failure', {
       callId,
       currentState,
@@ -1240,8 +1216,7 @@ export default function useCallFlow({
    */
   function isPeerConnectionRecovered(pc: PeerConnection | null): boolean {
     if (!pc) return false;
-    const state = pc.iceConnectionState ?? pc.connectionState;
-    return state === 'connected' || state === 'completed';
+    return isRecoveredIceState(pc.iceConnectionState ?? pc.connectionState);
   }
 
   /** Abandon any pending/queued ICE restart, and say why. */
@@ -1272,11 +1247,14 @@ export default function useCallFlow({
     // network that just broke. A list that had no relay is not cached, so the
     // forced re-fetch below still happens on the next rung.
     const cached = iceRestartRef.current.iceServers;
-    if (cached && getTurnServerEndpoints(cached).length > 0) return cached;
+    if (cached && canReuseIceServers(getTurnServerEndpoints(cached).length > 0)) return cached;
 
     const request = { signalingUrl, sessionId: await ensureIceSessionId() };
     let iceServers = await getIceServersForCall(request);
-    if (getTurnServerEndpoints(iceServers).length > 0) {
+    if (
+      decideFetchedIceServers(getTurnServerEndpoints(iceServers).length > 0, false)
+        === 'cache-and-use'
+    ) {
       iceRestartRef.current.iceServers = iceServers;
       return iceServers;
     }
@@ -1297,7 +1275,10 @@ export default function useCallFlow({
         message: errorMessage(error),
       });
     }
-    if (getTurnServerEndpoints(iceServers).length > 0) {
+    if (
+      decideFetchedIceServers(getTurnServerEndpoints(iceServers).length > 0, true)
+        === 'cache-and-use'
+    ) {
       iceRestartRef.current.iceServers = iceServers;
     } else {
       logError('[CallFlow] Restarting ICE without any TURN server', {
@@ -1323,41 +1304,51 @@ export default function useCallFlow({
     const callId = activeCallIdRef.current;
     const pc = peerConnectionRef.current;
 
-    if (!callId || !pc) {
-      logVerbose('[CallFlow] ICE restart skipped: no active call', { trigger });
-      cancelIceRestarts('no-active-call');
+    const decision = decideLadderRun({
+      trigger,
+      hasActiveCall: Boolean(callId && pc),
+      attempt: restart.attempt,
+      iceState: pc ? pc.iceConnectionState ?? pc.connectionState : null,
+      socketConnected: Boolean(socketRef.current?.connected),
+      isNegotiating: isNegotiatingRef.current,
+    });
+    if (decision.action === 'abort') {
+      if (decision.reason === 'no-active-call') {
+        logVerbose('[CallFlow] ICE restart skipped: no active call', { trigger });
+      } else {
+        logInfo('[CallFlow] ICE restart skipped: connection already recovered', {
+          trigger,
+          callId,
+        });
+      }
+      cancelIceRestarts(decision.reason);
       return;
     }
-    // A network change is acted on *before* ICE notices the old path is dead,
-    // so on its first attempt a still-"connected" state is expected and is not
-    // a reason to skip. Every other case stops the moment media is back.
-    const proactive = trigger === 'network-change' && restart.attempt <= 1;
-    if (!proactive && isPeerConnectionRecovered(pc)) {
-      logInfo('[CallFlow] ICE restart skipped: connection already recovered', { trigger, callId });
-      cancelIceRestarts('recovered');
-      return;
-    }
-    // Both preconditions below clear on their own, so they must cost a retry
-    // rather than a rung: `scheduleIceRestart` has already counted this attempt
-    // and left no timer behind, which is why the proactive network-change rung
-    // was always spent doing nothing (a handoff drops the socket for much
-    // longer than the debounce that scheduled it). The error path further down
-    // has always rescheduled; these paths simply forgot to.
-    if (!socketRef.current?.connected) {
-      logWarn('[CallFlow] ICE restart deferred: signaling socket is offline', { trigger, callId });
-      pauseRecoveryBudgetRef.current?.('socket-offline');
-      scheduleIceRestartRef.current?.(trigger, { consumeAttempt: false });
-      return;
-    }
-    if (isNegotiatingRef.current) {
-      logWarn('[CallFlow] ICE restart deferred: a negotiation is already in flight', {
-        trigger,
-        callId,
-      });
+    if (decision.action === 'defer') {
+      // Both preconditions clear on their own, so they cost a retry rather than
+      // a rung: `scheduleIceRestart` has already counted this attempt and left
+      // no timer behind, which is why the proactive network-change rung was
+      // always spent doing nothing (a handoff drops the socket for much longer
+      // than the debounce that scheduled it).
+      if (decision.reason === 'socket-offline') {
+        logWarn('[CallFlow] ICE restart deferred: signaling socket is offline', {
+          trigger,
+          callId,
+        });
+        pauseRecoveryBudgetRef.current?.('socket-offline');
+      } else {
+        logWarn('[CallFlow] ICE restart deferred: a negotiation is already in flight', {
+          trigger,
+          callId,
+        });
+      }
       scheduleIceRestartRef.current?.(trigger, { consumeAttempt: false });
       return;
     }
 
+    // Unreachable: the machine only decides `restart` when both exist. Present
+    // so `callId`/`pc` narrow to non-null for the negotiation below.
+    if (!callId || !pc) return;
     restart.inFlight = true;
     const attempt = restart.attempt;
     try {
@@ -1397,18 +1388,10 @@ export default function useCallFlow({
     }
   }, [activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart]);
 
-  /**
-   * How long this peer waits before restarting, so two peers that both saw the
-   * failure do not offer at once. Lower userId goes first; the other only acts
-   * if the connection is still down when its turn comes.
-   */
-  const iceRestartTiebreakDelay = useCallback(() => {
+  /** The peer whose userId the glare tie-break is compared against. */
+  const remotePeerUserId = useCallback(() => {
     const call = activeCallRef.current;
-    const localId = (userIdRef.current ?? '').trim();
-    const remoteId = ((isCallerRef.current ? call?.calleeId : call?.callerId) ?? '').trim();
-    // With no peer id to compare there is no glare risk worth a delay.
-    if (!localId || !remoteId || localId === remoteId) return 0;
-    return localId < remoteId ? 0 : ICE_RESTART_TIEBREAK_MS;
+    return (isCallerRef.current ? call?.calleeId : call?.callerId) ?? null;
   }, []);
 
   /**
@@ -1425,45 +1408,52 @@ export default function useCallFlow({
     (trigger: IceRestartTrigger, options: { consumeAttempt?: boolean; } = {}) => {
       const restart = iceRestartRef.current;
       const episode = recoveryEpisodeRef.current;
-      if (!activeCallIdRef.current || !peerConnectionRef.current) {
-        logVerbose('[CallFlow] ICE restart not scheduled: no active call', { trigger });
-        return;
-      }
-      if (restart.timer || restart.inFlight) {
-        logVerbose('[CallFlow] ICE restart already pending', { trigger, attempt: restart.attempt });
-        return;
-      }
-      if (episode.isOpen() && episode.isPaused()) {
-        // Nothing can be restarted with no connectivity or no socket; the
-        // resume path re-enters the ladder the moment recovery is possible
-        // again, so retrying here would only burn CPU against a dead interface.
-        logVerbose('[CallFlow] ICE restart deferred: recovery is paused', {
-          trigger,
-          reason: episode.snapshot()?.pauseReason ?? null,
-        });
-        return;
-      }
-      if (episode.isOpen() && episode.hasExpired()) {
-        logWarn('[CallFlow] ICE restart budget spent', {
-          trigger,
-          callId: activeCallIdRef.current,
-          attempts: restart.attempt,
-        });
+      const snapshot = episode.snapshot();
+      const decision = decideLadderSchedule({
+        trigger,
+        hasActiveCall: Boolean(activeCallIdRef.current && peerConnectionRef.current),
+        isPending: Boolean(restart.timer || restart.inFlight),
+        attempt: restart.attempt,
+        episode: {
+          isOpen: episode.isOpen(),
+          isPaused: episode.isPaused(),
+          pauseReason: snapshot?.pauseReason ?? null,
+          hasExpired: episode.hasExpired(),
+        },
+        consumeAttempt: options.consumeAttempt,
+        localUserId: userIdRef.current,
+        remoteUserId: remotePeerUserId(),
+      });
+      if (decision.action === 'skip') {
+        if (decision.reason === 'no-active-call') {
+          logVerbose('[CallFlow] ICE restart not scheduled: no active call', { trigger });
+        } else if (decision.reason === 'already-pending') {
+          logVerbose('[CallFlow] ICE restart already pending', {
+            trigger,
+            attempt: restart.attempt,
+          });
+        } else if (decision.reason === 'paused') {
+          // Nothing can be restarted with no connectivity or no socket; the
+          // resume path re-enters the ladder the moment recovery is possible
+          // again, so retrying here would only burn CPU against a dead
+          // interface.
+          logVerbose('[CallFlow] ICE restart deferred: recovery is paused', {
+            trigger,
+            reason: decision.pauseReason,
+          });
+        } else {
+          logWarn('[CallFlow] ICE restart budget spent', {
+            trigger,
+            callId: activeCallIdRef.current,
+            attempts: restart.attempt,
+          });
+        }
         return;
       }
 
-      const consumeAttempt = options.consumeAttempt !== false;
-      if (consumeAttempt) {
-        restart.attempt += 1;
-        episode.recordAttempt();
-      }
-      const backoffMs = consumeAttempt
-        ? iceRestartBackoffMs(restart.attempt)
-        : ICE_RESTART_PRECONDITION_RETRY_MS;
-      // The tie-break applies to every rung, not just the first: once both
-      // peers are laddering, later rungs glare exactly as the first one would.
-      const tiebreakMs = iceRestartTiebreakDelay();
-      const delayMs = backoffMs + tiebreakMs;
+      restart.attempt = decision.attempt;
+      if (decision.consumeAttempt) episode.recordAttempt();
+      const { delayMs, tiebreakMs } = decision;
       logInfo('[CallFlow] Scheduling ICE restart', {
         trigger,
         callId: activeCallIdRef.current,
@@ -1482,7 +1472,7 @@ export default function useCallFlow({
         void runIceRestart(trigger);
       }, delayMs);
     },
-    [iceRestartTiebreakDelay, runIceRestart],
+    [remotePeerUserId, runIceRestart],
   );
 
   useEffect(() => {
@@ -1669,19 +1659,17 @@ export default function useCallFlow({
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       logInfo('[CallFlow] ICE connection state', { state });
-      if (state === 'connected' || state === 'completed') {
+      const decision = decideIceConnectionState(state);
+      if (decision.action === 'recovered') {
         reportCallConnected(state);
         cancelIceRestarts('ice-connected');
         return;
       }
-      if (state === 'disconnected') {
-        noteRecoverySymptom('ice-disconnected', state);
-        return;
-      }
-      if (state !== 'failed') return;
+      if (decision.action === 'ignore') return;
       // A failure opens (or keeps) the recovery episode; nothing terminal is
       // reported unless the whole budget is spent with media still down.
-      noteRecoverySymptom('ice-failure', state);
+      noteRecoverySymptom(decision.trigger, state);
+      if (!decision.restart) return;
       emitMetric('call.ice_failed', 1, { callId: activeCallIdRef.current });
       // Whichever peer saw the failure restarts: a callee whose IP changed
       // gets no offer from the caller, who may still think the path is fine.
@@ -1689,7 +1677,7 @@ export default function useCallFlow({
         callId: activeCallIdRef.current,
         isCaller: isCallerRef.current,
       });
-      beginIceRecovery('ice-failure');
+      beginIceRecovery(decision.trigger);
     };
 
     peerConnectionRef.current = pc;

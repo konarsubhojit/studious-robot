@@ -67,14 +67,14 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.3 | Accessibility sweep | ✅ |
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
-| P1.2 | Decompose `useCallFlow` | ◧ partial — the pure stats logic is extracted and directly tested; the structural split still wants its own PR |
+| P1.2 | Decompose `useCallFlow` | ◧ partial — two slices are out and directly tested (the WebRTC stats helpers in `callUx`, and the ICE-recovery ladder in `call/iceRestartLadder`); the structural split still wants its own PR |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test |
 
 ### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining ~3.5k lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery. Cutting them apart is a behavioural risk that wants its own PR, its own review and device QA — not a rider on a UI pass |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; the recovery ladder's decisions have since been extracted (`call/iceRestartLadder`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA — not a rider on a UI pass |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -205,6 +205,21 @@ What is left in `useCallFlow` is call lifecycle, WebRTC negotiation and ICE
 recovery, all coordinated through shared refs. Splitting that is a behavioural
 change to the call path and belongs in its own PR with device QA, exactly as
 the original deferral said.
+
+**Second slice: the ICE-recovery ladder.** `call/iceRestartLadder.ts` now owns
+the ladder's decisions — the capped exponential backoff, the lexicographic
+`userId` glare tie-break, whether a scheduled rung may run (recovered, paused,
+budget spent, socket offline, negotiation in flight), the TURN-less credential
+re-fetch, what an observed `iceConnectionState` means, and what a spent
+recovery budget should report. Trigger in, decision out: no React, no refs, no
+peer connection. The hook still owns every side effect (fetching ICE servers,
+creating the offer, arming timers, emitting signaling) and its return shape is
+unchanged, so this is a pure refactor — the same rules, in a place where each
+is a table-driven unit test (`__tests__/call/iceRestartLadder.test.ts`) rather
+than something reachable only by mounting the hook and driving a fake peer
+connection. `useCallFlow.test.tsx` passes unmodified.
+
+The structural three-hook split remains deferred for the reason above.
 
 ### P1.7: the bound is now pinned
 The JSON document is only defensible *because* the store is bounded — every
