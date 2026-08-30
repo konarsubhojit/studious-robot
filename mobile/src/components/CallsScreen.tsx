@@ -44,6 +44,7 @@ import type { ContactRow, ConversationRow } from '../types/directory';
 export type CallsScreenProps = {
   callHistory?: CallHistoryEntry[];
   missedCallCount?: number;
+  onFetchCallHistory?: () => void | Promise<void>;
   onMarkMissedRead?: () => void;
   /** Person-hub navigation; every person-shaped tap routes here. */
   onOpenProfile?: (peerId: string) => void;
@@ -273,6 +274,7 @@ function CallsScreenResults({
 export default function CallsScreen({
   callHistory,
   missedCallCount = 0,
+  onFetchCallHistory,
   onMarkMissedRead,
   onOpenProfile,
   onMessage,
@@ -293,6 +295,10 @@ export default function CallsScreen({
   const [isPickerVisible, setIsPickerVisible] = useState(false);
   // Peer chosen in the picker, awaiting an audio/video decision.
   const [pendingPeerId, setPendingPeerId] = useState((null as string | null));
+
+  useEffect(() => {
+    void onFetchCallHistory?.();
+  }, [onFetchCallHistory]);
 
   // Opening the tab is the acknowledgement: the badge exists to bring the user
   // here, so keeping it lit once they have arrived is just noise.
