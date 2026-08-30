@@ -69,11 +69,6 @@ import {
   sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
-import {
-  CALL_HEARTBEAT_DUE_MS,
-  CALL_HEARTBEAT_INTERVAL_MS,
-  CALL_RECOVERY_BUDGET_MS,
-} from '../../../shared';
 import { getSocketOptions } from '../socketConfig';
 import {
   CLIENT_EVENTS,
@@ -88,10 +83,7 @@ import {
   getTurnServerEndpoints,
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
-  resetIceServersForCallCache,
 } from '../webrtcConfig';
-import { subscribeNetworkChanges } from '../networkMonitor';
-import { createRecoveryEpisode } from '../call/recoveryEpisode';
 import type {
   RecoveryPauseReason,
   RecoveryTrigger,
@@ -145,15 +137,11 @@ import {
 } from '../call/answerPath';
 import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
 import {
-  canReuseIceServers,
-  decideFetchedIceServers,
   decideIceConnectionState,
-  decideLadderRun,
-  decideLadderSchedule,
-  decideRecoveryExhausted,
-  isRecoveredIceState,
 } from '../call/iceRestartLadder';
 import useScreenShare from './useScreenShare';
+import useCallHeartbeat from './useCallHeartbeat';
+import useCallRecovery from './useCallRecovery';
 import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
@@ -221,12 +209,6 @@ const ICE_SESSION_WAIT_MS = 5000;
 // Backoff, glare tie-break and precondition-retry timing for the ICE-restart
 // ladder now live in `call/iceRestartLadder.ts`, alongside the rules that use
 // them, so both can be unit-tested without mounting this hook.
-
-/**
- * How long connectivity must settle before a network change triggers a
- * restart, so a flapping interface produces one restart rather than a storm.
- */
-const NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
 /**
  * What prompted an ICE restart or opened a recovery episode; carried into every
@@ -485,46 +467,7 @@ export default function useCallFlow({
   // Guards against re-emitting `call.connected` for the same call (both ICE
   // and connection-state callbacks fire, often more than once).
   const connectedReportedCallIdRef = useRef((null as string | null));
-  // Periodic in-call liveness report to the server (see CALL_HEARTBEAT_INTERVAL_MS).
-  // `active` is what ties the heartbeat's lifetime to the call (not to any view
-  // or effect), and `lastBeatAtMs` is what lets any wake-up source emit a beat
-  // that the suspended interval could not.
-  const heartbeatRef = useRef({
-    timer: (null as ReturnType<typeof setInterval> | null),
-    lastBeatAtMs: 0,
-    active: false,
-  });
-  // Ref-forwarded wake-up so socket listeners registered once (and the AppState
-  // listener) can nudge the heartbeat without being re-registered.
-  const wakeCallHeartbeatRef = useRef((null as ((trigger: string) => void) | null));
-  // Removes this hook's `ping` listener from the (URL-shared, socket-outliving)
-  // Engine.IO manager.
   const detachManagerPingRef = useRef((null as (() => void) | null));
-  // The open recovery episode: one bounded, pausable budget owning an entire
-  // outage (see `call/recoveryEpisode.ts`). This replaces a single latched
-  // 12s timer whose expiry told the server "my media failed" — which the
-  // server maps straight to ending the call, so the "grace period" was really
-  // a 12s client-initiated hangup that could never be paused or extended.
-  const recoveryEpisodeRef = useRef(createRecoveryEpisode());
-  // Fires when the budget is spent; re-armed on every pause, resume and
-  // extension rather than being a single fixed deadline.
-  const recoveryDeadlineTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
-  // Worst ICE state seen during the open episode, reported if it expires.
-  const recoveryIceStateRef = useRef('disconnected');
-  // Whether the transport currently claims to be usable; `false` is the one
-  // moment the budget must stop running, because recovery is impossible.
-  const hasConnectivityRef = useRef(true);
-  const armRecoveryDeadlineRef = useRef((null as (() => void) | null));
-  // Ref-forwarded so the restart ladder (defined above them) can pause the
-  // budget and refresh the banner without depending on callback identity.
-  const pauseRecoveryBudgetRef = useRef(
-    (null as ((reason: RecoveryPauseReason) => void) | null),
-  );
-  const publishRecoveryStatusRef = useRef((null as (() => void) | null));
-  const noteRecoverySymptomRef = useRef(
-    (null as ((trigger: IceRestartTrigger, iceState?: string) => void) | null),
-  );
-  const resumeRecoveryBudgetRef = useRef((null as ((reason: string) => void) | null));
   // Set below; the socket `connect` handler reconciles this device's calls with
   // the server's before anything queued offline is replayed.
   const resyncCallStateRef = useRef((null as (() => void) | null));
@@ -554,32 +497,6 @@ export default function useCallFlow({
   const iceCandidateBufferRef = useRef(([] as any[]));
   // Prevents concurrent offer/answer negotiations (glare guard).
   const isNegotiatingRef = useRef(false);
-  // Bookkeeping for the bounded, backed-off ICE-restart ladder: how many
-  // attempts this loss of connectivity has used, the pending timer, and
-  // whether one is already in flight.
-  const iceRestartRef = useRef({
-    attempt: 0,
-    timer: (null as ReturnType<typeof setTimeout> | null),
-    inFlight: false,
-    // TURN credentials are fetched once per episode rather than once per rung:
-    // the fetch travels over the very network that just broke and can add its
-    // own `ICE_SESSION_WAIT_MS` to every attempt.
-    iceServers: (null as any[] | null),
-  });
-  // Set below, so the socket/ICE/network handlers can schedule a restart
-  // without depending on the callback identity.
-  const scheduleIceRestartRef = useRef(
-    (null as
-      | ((trigger: IceRestartTrigger, options?: { consumeAttempt?: boolean; }) => void)
-      | null),
-  );
-  const beginIceRecoveryRef = useRef((null as ((trigger: IceRestartTrigger) => void) | null));
-  const cancelIceRestartsRef = useRef((null as ((reason: string) => void) | null));
-  const networkChangeTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
-  // When the last network change was acted on, so the *first* transition fires
-  // immediately (it is the one path designed to beat ICE to the punch) and only
-  // repeats inside the debounce window are coalesced.
-  const lastNetworkChangeAtRef = useRef(0);
   // Refs that mirror activeCall / incomingCall state for use in any callback
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef((null as CallRecord | null));
@@ -812,362 +729,80 @@ export default function useCallFlow({
     selectedAudioRouteRef.current = audioDevices.selected;
   }, [audioDevices.selected]);
 
-  /**
-   * Stop the in-call liveness heartbeat (idempotent).
-   *
-   * @param reason - why the heartbeat is stopping, recorded in the log so a
-   *   heartbeat that dies for the wrong reason is visible in an export.
-   */
-  const stopCallHeartbeat = useCallback((reason: string = 'call-ended') => {
-    const heartbeat = heartbeatRef.current;
-    if (heartbeat.timer) {
-      clearInterval(heartbeat.timer);
-      heartbeat.timer = null;
-    }
-    if (!heartbeat.active) return;
-    heartbeat.active = false;
-    heartbeat.lastBeatAtMs = 0;
-    logInfo('[CallFlow] Call heartbeat stopped', {
-      callId: activeCallIdRef.current,
-      reason,
-    });
-  }, []);
+  const { startCallHeartbeat, stopCallHeartbeat, wakeCallHeartbeat } = useCallHeartbeat({
+    activeCallIdRef,
+    socketRef,
+    signalingRef,
+    isScreenSharingRef,
+  });
 
   /**
-   * Emit one liveness beat, but only if one is due.
+   * The session id TURN credentials are minted against.
    *
-   * Called by every wake-up source rather than by the interval alone, because
-   * Android suspends the JS timer queue whenever the activity is paused — which
-   * includes Picture-in-Picture, where the call is still very much alive. A
-   * `setInterval` therefore cannot be trusted to keep the call proven live; the
-   * check is against wall-clock time so whichever source does fire (an inbound
-   * server ping, the peer's own relayed beat, an AppState change, a socket
-   * reconnect) catches up the beats the timer missed.
-   *
-   * A beat that cannot be sent (socket down) deliberately does not advance
-   * `lastBeatAtMs`, so the next wake-up retries immediately.
-   *
-   * @param trigger - which wake-up source asked, for diagnosis.
+   * `sessionIdRef` is populated asynchronously by `createOrGetSession`, and a
+   * call answered from a background push builds its peer connection about a
+   * second after rehydration — early enough to read a null ref and fetch no
+   * TURN credentials at all, leaving the call with a STUN-only ICE list. So
+   * the session is *ensured* here rather than read optimistically; a failure
+   * still degrades (never blocks) call setup, and says why.
    */
-  const beatCallHeartbeatIfDue = useCallback((trigger: string) => {
-    const heartbeat = heartbeatRef.current;
-    if (!heartbeat.active) return;
-    const callId = activeCallIdRef.current;
-    if (!callId) return;
-    const now = Date.now();
-    if (heartbeat.lastBeatAtMs && now - heartbeat.lastBeatAtMs < CALL_HEARTBEAT_DUE_MS) return;
-    if (!socketRef.current?.connected) return;
-    heartbeat.lastBeatAtMs = now;
-    logVerbose('[CallFlow] Call heartbeat beat', { callId, trigger });
-    signalingRef.current
-      ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
-        version: SIGNALING_VERSION,
-        callId,
-        mediaState: { isScreenSharing: isScreenSharingRef.current, heartbeat: true },
-      })
-      .catch(error => {
-        logWarn('[CallFlow] call heartbeat failed', { message: errorMessage(error) });
+  const ensureIceSessionId = useCallback(async () => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const minted = createOrGetSession().catch(error => {
+      logWarn('[CallFlow] Session mint failed; ICE will have no TURN servers', {
+        message: errorMessage(error),
       });
-  }, []);
-
-  useEffect(() => {
-    wakeCallHeartbeatRef.current = beatCallHeartbeatIfDue;
-  }, [beatCallHeartbeatIfDue]);
-
-  /**
-   * Report call liveness to the server every `CALL_HEARTBEAT_INTERVAL_MS`.
-   *
-   * Reuses the existing `call.media-state` relay: the server stamps the call
-   * on every inbound frame, which is how it tells a long healthy conversation
-   * apart from one both devices silently abandoned.
-   *
-   * The interval lives in a ref and is started/stopped by call lifecycle alone,
-   * never by an effect — no view state (compact/Picture-in-Picture) or callback
-   * identity may recreate or cancel it. It is only the *fast path*: see
-   * `beatCallHeartbeatIfDue` for the wake-up sources that keep beating while the
-   * OS has the timer queue suspended.
-   *
-   * @param reason - what started the heartbeat, recorded in the log.
-   */
-  const startCallHeartbeat = useCallback(
-    (reason: string = 'media-connected') => {
-      const heartbeat = heartbeatRef.current;
-      if (heartbeat.active) return;
-      heartbeat.active = true;
-      heartbeat.lastBeatAtMs = Date.now();
-      heartbeat.timer = setInterval(
-        () => beatCallHeartbeatIfDue('interval'),
-        CALL_HEARTBEAT_INTERVAL_MS,
-      );
-      logInfo('[CallFlow] Call heartbeat started', {
-        callId: activeCallIdRef.current,
-        intervalMs: CALL_HEARTBEAT_INTERVAL_MS,
-        reason,
-      });
-    },
-    [beatCallHeartbeatIfDue],
-  );
-
-  // Beat on every foreground/background transition too: entering Picture-in-
-  // Picture (or plain backgrounding) suspends the interval, and returning from
-  // it must not wait a further full period to prove the call is still alive.
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextState => {
-      wakeCallHeartbeatRef.current?.(`app-state:${nextState}`);
+      return null;
     });
-    return () => subscription.remove();
-  }, []);
-
-  /** Publish the open episode (or its absence) to the call screen. */
-  const publishRecoveryStatus = useCallback(() => {
-    const snapshot = recoveryEpisodeRef.current.snapshot();
-    const restart = iceRestartRef.current;
-    setRecoveryStatus(
-      snapshot
-        ? {
-            trigger: snapshot.trigger,
-            attempts: snapshot.attempts,
-            remainingMs: snapshot.remainingMs,
-            isPaused: snapshot.pauseReason !== null,
-            pauseReason: snapshot.pauseReason,
-            isAttemptPending: Boolean(restart.timer || restart.inFlight),
-          }
-        : null,
-    );
-  }, []);
-
-  /**
-   * Close the open recovery episode, and say how it ended.
-   *
-   * Logged as one correlated unit — trigger, attempts, paused time, elapsed,
-   * outcome — so "why did this call drop" is one line in the diagnostics
-   * export rather than a reconstruction from scattered events.
-   */
-  const closeRecoveryEpisode = useCallback((outcome: string) => {
-    if (recoveryDeadlineTimerRef.current) {
-      clearTimeout(recoveryDeadlineTimerRef.current);
-      recoveryDeadlineTimerRef.current = null;
-    }
-    iceRestartRef.current.iceServers = null;
-    const summary = recoveryEpisodeRef.current.close(outcome);
-    if (!summary) return null;
-    logInfo('[CallFlow] Recovery episode closed', {
-      callId: activeCallIdRef.current,
-      trigger: summary.trigger,
-      outcome: summary.outcome,
-      attempts: summary.attempts,
-      extensions: summary.extensions,
-      pausedMs: summary.pausedMs,
-      elapsedMs: summary.elapsedMs,
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), ICE_SESSION_WAIT_MS);
     });
-    emitMetric('call.recovery_episode', summary.elapsedMs, {
-      callId: activeCallIdRef.current,
-      trigger: summary.trigger,
-      outcome: summary.outcome,
-      attempts: summary.attempts,
-    });
-    setIsReconnecting(false);
-    publishRecoveryStatus();
-    return summary;
-  }, [publishRecoveryStatus]);
 
-  /**
-   * Record that recovery is over and the media never came back.
-   *
-   * Kept until the call is torn down so the banner can say "Connection lost"
-   * instead of vanishing with the episode, and so the end-of-call summary can
-   * name the reason even when the failure was never reportable.
-   */
-  const markConnectionLost = useCallback(() => {
-    isConnectionLostRef.current = true;
-    setIsConnectionLost(true);
-  }, []);
-
-  /**
-   * Report that media never came back, once the recovery budget is spent.
-   *
-   * The server maps a terminal `iceState` straight to "end this call", so this
-   * is a hangup and is treated as one: it is only ever sent over a live socket,
-   * and always with an acknowledgement so it takes the direct path rather than
-   * the offline queue that a reconnect replays wholesale. A report queued while
-   * offline was, on precisely the handoff this machinery exists to survive, the
-   * first thing replayed on reconnect — recovery defeated by its own success.
-   */
-  const reportRecoveryExhausted = useCallback(() => {
-    const callId = activeCallIdRef.current;
-    const pc = peerConnectionRef.current;
-    if (!callId || !pc) return;
-    const currentState = pc.iceConnectionState ?? pc.connectionState;
-    const decision = decideRecoveryExhausted({
-      iceState: currentState,
-      socketConnected: Boolean(socketRef.current?.connected),
-      worstIceState: recoveryIceStateRef.current,
-    });
-    if (decision.action === 'close') {
-      closeRecoveryEpisode(decision.outcome);
-      return;
-    }
-    if (decision.action === 'skip-report') {
-      logWarn('[CallFlow] Recovery budget spent while offline; not reporting failure', {
-        callId,
-        currentState,
-      });
-      // The report cannot travel, but the ladder is over either way: say so
-      // rather than leaving a "Reconnecting…" banner over a dead call.
-      markConnectionLost();
-      return;
-    }
-    const iceState = decision.iceState;
-    logWarn('[CallFlow] Media did not recover within the budget; reporting failure', {
-      callId,
-      currentState,
-      iceState,
-      budgetMs: CALL_RECOVERY_BUDGET_MS,
-    });
-    markConnectionLost();
-    closeRecoveryEpisode('failed');
-    signalingRef.current?.emit(
-      CLIENT_EVENTS.CALL_CONNECTED,
-      { version: SIGNALING_VERSION, callId, iceState },
-      ack => {
-        if (!ack?.ok) logWarn('[CallFlow] media-failure report ack failed', ack?.error);
-      },
-    );
-  }, [closeRecoveryEpisode, markConnectionLost]);
-
-  /**
-   * (Re-)arm the deadline for the open episode.
-   *
-   * A paused episode has no timer at all: its budget is frozen, so there is
-   * nothing to expire until it resumes.
-   */
-  const armRecoveryDeadline = useCallback(() => {
-    if (recoveryDeadlineTimerRef.current) {
-      clearTimeout(recoveryDeadlineTimerRef.current);
-      recoveryDeadlineTimerRef.current = null;
-    }
-    const episode = recoveryEpisodeRef.current;
-    if (!episode.isOpen() || episode.isPaused()) return;
-    recoveryDeadlineTimerRef.current = setTimeout(() => {
-      recoveryDeadlineTimerRef.current = null;
-      const current = recoveryEpisodeRef.current;
-      if (!current.isOpen() || current.isPaused()) return;
-      // The deadline may have moved (an extension, or time given back after a
-      // pause) since this timer was armed.
-      if (!current.hasExpired()) {
-        armRecoveryDeadlineRef.current?.();
-        return;
-      }
-      reportRecoveryExhausted();
-    }, Math.max(0, episode.remainingMs()));
-  }, [reportRecoveryExhausted]);
-
-  useEffect(() => {
-    armRecoveryDeadlineRef.current = armRecoveryDeadline;
-    publishRecoveryStatusRef.current = publishRecoveryStatus;
-  }, [armRecoveryDeadline, publishRecoveryStatus]);
-
-  /** Stop the budget because recovery is impossible right now. */
-  const pauseRecoveryBudget = useCallback((reason: RecoveryPauseReason) => {
-    const episode = recoveryEpisodeRef.current;
-    if (!episode.pause(reason)) return;
-    logInfo('[CallFlow] Recovery budget paused', {
-      callId: activeCallIdRef.current,
-      reason,
-      remainingMs: episode.remainingMs(),
-    });
-    armRecoveryDeadlineRef.current?.();
-    publishRecoveryStatus();
-  }, [publishRecoveryStatus]);
-
-  useEffect(() => {
-    pauseRecoveryBudgetRef.current = pauseRecoveryBudget;
-  }, [pauseRecoveryBudget]);
-
-  /** Give back exactly the time recovery was impossible for. */
-  const resumeRecoveryBudget = useCallback((reason: string) => {
-    const episode = recoveryEpisodeRef.current;
-    if (!episode.resume()) return;
-    logInfo('[CallFlow] Recovery budget resumed', {
-      callId: activeCallIdRef.current,
-      reason,
-      remainingMs: episode.remainingMs(),
-    });
-    armRecoveryDeadlineRef.current?.();
-    publishRecoveryStatus();
-    // The ladder stops while the episode is paused, because nothing can be
-    // negotiated with no connectivity or no socket. Re-entering it here is what
-    // makes that a pause rather than an abandonment: the rung that could not
-    // run is retried the moment recovery is possible again, without having been
-    // counted against the budget.
-    if (!activeCallIdRef.current || !peerConnectionRef.current) return;
-    if (isPeerConnectionRecovered(peerConnectionRef.current)) return;
-    scheduleIceRestartRef.current?.(
-      episode.snapshot()?.trigger ?? 'network-change',
-      { consumeAttempt: false },
-    );
-  }, [publishRecoveryStatus]);
-
-  /**
-   * Record a symptom of a broken media path: open a recovery episode, or
-   * extend the open one when the trigger is genuinely new information.
-   *
-   * Nothing terminal is reported from here. While an episode is open the
-   * client never tells the server its media failed — that only happens once
-   * the whole budget has been spent with the connection still down.
-   */
-  const noteRecoverySymptom = useCallback(
-    (trigger: IceRestartTrigger, iceState?: string) => {
-      if (!activeCallIdRef.current) return;
-      if (iceState) recoveryIceStateRef.current = iceState;
-      const episode = recoveryEpisodeRef.current;
-      const result = episode.note(trigger);
-      if (result !== 'ignored') {
-        logInfo(`[CallFlow] Recovery episode ${result}`, {
-          callId: activeCallIdRef.current,
-          trigger,
-          iceState: iceState ?? null,
-          remainingMs: episode.remainingMs(),
+    try {
+      const sessionId = await Promise.race([minted, deadline]);
+      if (!sessionId) {
+        logWarn('[CallFlow] No session id for TURN credentials', {
+          waitedMs: ICE_SESSION_WAIT_MS,
         });
       }
-      if (!hasConnectivityRef.current) episode.pause('no-connectivity');
-      else if (!socketRef.current?.connected) episode.pause('socket-offline');
-      setIsReconnecting(true);
-      armRecoveryDeadlineRef.current?.();
-      publishRecoveryStatus();
-    },
-    [publishRecoveryStatus],
-  );
+      return sessionId ?? null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }, [createOrGetSession, sessionIdRef]);
 
-  /**
-   * Tell the server this device's media is connected.
-   *
-   * This is the only signal that advances the call out of `connecting_media`;
-   * without it the server's stale-call sweep force-ends every answered call
-   * with `media_connect_timeout` while media is still flowing.  Both peers
-   * report and the server accepts whichever arrives first.
-   *
-   * @param iceState - the observed peer-connection/ICE state.
-   */
-  const reportCallConnected = useCallback(
-      (iceState: string) => {
-      const callId = activeCallIdRef.current;
-      if (!callId) return;
-      closeRecoveryEpisode('recovered');
-      startCallHeartbeat(`media-connected:${iceState}`);
-      if (connectedReportedCallIdRef.current === callId) return;
-      connectedReportedCallIdRef.current = callId;
-      logInfo('[CallFlow] Media connected; reporting call.connected', { callId, iceState });
-      signalingRef.current?.emit(
-        CLIENT_EVENTS.CALL_CONNECTED,
-        { version: SIGNALING_VERSION, callId, iceState },
-        ack => {
-          if (!ack?.ok) logWarn('[CallFlow] call.connected ack failed', ack?.error);
-        },
-      );
-    },
-    [closeRecoveryEpisode, startCallHeartbeat],
-  );
+  const {
+    closeRecoveryEpisode,
+    reportCallConnected,
+    noteRecoverySymptom,
+    beginIceRecovery,
+    cancelIceRestarts,
+    beginIceRecoveryRef,
+    cancelIceRestartsRef,
+    noteRecoverySymptomRef,
+    pauseRecoveryBudgetRef,
+    resumeRecoveryBudgetRef,
+  } = useCallRecovery({
+    activeCallIdRef,
+    activeCallRef,
+    isCallerRef,
+    peerConnectionRef,
+    socketRef,
+    signalingRef,
+    isNegotiatingRef,
+    userIdRef,
+    connectedReportedCallIdRef,
+    isConnectionLostRef,
+    signalingUrl,
+    activeIceTransportPolicy,
+    ensureIceSessionId,
+    startCallHeartbeat,
+    setRecoveryStatus,
+    setIsReconnecting,
+    setIsConnectionLost,
+  });
 
   const markCallConnected = useCallback(() => {
     if (callConnectedAtRef.current) return;
@@ -1233,409 +868,6 @@ export default function useCallFlow({
     setConnectionQuality({ bars: 0, label: 'No link' });
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
-
-  /**
-   * The session id TURN credentials are minted against.
-   *
-   * `sessionIdRef` is populated asynchronously by `createOrGetSession`, and a
-   * call answered from a background push builds its peer connection about a
-   * second after rehydration — early enough to read a null ref and fetch no
-   * TURN credentials at all, leaving the call with a STUN-only ICE list. So
-   * the session is *ensured* here rather than read optimistically; a failure
-   * still degrades (never blocks) call setup, and says why.
-   */
-  const ensureIceSessionId = useCallback(async () => {
-    if (sessionIdRef.current) return sessionIdRef.current;
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const minted = createOrGetSession().catch(error => {
-      logWarn('[CallFlow] Session mint failed; ICE will have no TURN servers', {
-        message: errorMessage(error),
-      });
-      return null;
-    });
-    const deadline = new Promise<null>(resolve => {
-      timer = setTimeout(() => resolve(null), ICE_SESSION_WAIT_MS);
-    });
-
-    try {
-      const sessionId = await Promise.race([minted, deadline]);
-      if (!sessionId) {
-        logWarn('[CallFlow] No session id for TURN credentials', {
-          waitedMs: ICE_SESSION_WAIT_MS,
-        });
-      }
-      return sessionId ?? null;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }, [createOrGetSession, sessionIdRef]);
-
-  /**
-   * Whether the peer connection is carrying media again.
-   *
-   * Both state machines are consulted: `iceConnectionState` moves first, but a
-   * stub (or a platform that only surfaces `connectionState`) may not have it.
-   */
-  function isPeerConnectionRecovered(pc: PeerConnection | null): boolean {
-    if (!pc) return false;
-    return isRecoveredIceState(pc.iceConnectionState ?? pc.connectionState);
-  }
-
-  /** Abandon any pending/queued ICE restart, and say why. */
-  const cancelIceRestarts = useCallback((reason: string) => {
-    const restart = iceRestartRef.current;
-    if (restart.timer) {
-      clearTimeout(restart.timer);
-      restart.timer = null;
-    }
-    if (restart.attempt > 0) {
-      logInfo('[CallFlow] ICE restart ladder cleared', { reason, attempts: restart.attempt });
-    }
-    restart.attempt = 0;
-    restart.inFlight = false;
-    publishRecoveryStatusRef.current?.();
-  }, []);
-
-  /**
-   * ICE servers for a restart, insisting on a relay.
-   *
-   * A handoff is exactly when TURN matters: the new path is far more likely to
-   * sit behind carrier-grade NAT, so restarting on a STUN-only list usually
-   * just fails again. A missing relay is therefore an error worth one forced
-   * re-fetch — but never a reason to abandon the restart, since degraded
-   * recovery still beats none.
-   */
-  const fetchIceServersForRestart = useCallback(async (trigger: IceRestartTrigger) => {
-    // One usable list per episode: re-fetching on every rung means a network
-    // round-trip (plus up to `ICE_SESSION_WAIT_MS`) per attempt, over the very
-    // network that just broke. A list that had no relay is not cached, so the
-    // forced re-fetch below still happens on the next rung.
-    const cached = iceRestartRef.current.iceServers;
-    if (cached && canReuseIceServers(getTurnServerEndpoints(cached).length > 0)) return cached;
-
-    const request = { signalingUrl, sessionId: await ensureIceSessionId() };
-    let iceServers = await getIceServersForCall(request);
-    if (
-      decideFetchedIceServers(getTurnServerEndpoints(iceServers).length > 0, false)
-        === 'cache-and-use'
-    ) {
-      iceRestartRef.current.iceServers = iceServers;
-      return iceServers;
-    }
-
-    logError('[CallFlow] ICE restart has no TURN server; re-fetching credentials', {
-      trigger,
-      callId: activeCallIdRef.current,
-    });
-    try {
-      resetIceServersForCallCache?.();
-      iceServers = await getIceServersForCall({
-        ...request,
-        sessionId: await ensureIceSessionId(),
-      });
-    } catch (error) {
-      logWarn('[CallFlow] TURN credential re-fetch failed before ICE restart', {
-        trigger,
-        message: errorMessage(error),
-      });
-    }
-    if (
-      decideFetchedIceServers(getTurnServerEndpoints(iceServers).length > 0, true)
-        === 'cache-and-use'
-    ) {
-      iceRestartRef.current.iceServers = iceServers;
-    } else {
-      logError('[CallFlow] Restarting ICE without any TURN server', {
-        trigger,
-        callId: activeCallIdRef.current,
-        impact: 'recovery will fail if either peer is behind symmetric NAT',
-      });
-    }
-    return iceServers;
-  }, [ensureIceSessionId, signalingUrl]);
-
-  /**
-   * Send an ICE-restart offer for the active call.
-   *
-   * Deliberately *not* gated on the caller role: if the callee's IP changes it
-   * is the callee that sees the failure, and waiting for an offer that the
-   * other side has no reason to send is how those calls used to die. Glare is
-   * prevented by the userId tie-break in `scheduleIceRestart` plus the
-   * existing `isNegotiatingRef` guard.
-   */
-  const runIceRestart = useCallback(async (trigger: IceRestartTrigger) => {
-    const restart = iceRestartRef.current;
-    const callId = activeCallIdRef.current;
-    const pc = peerConnectionRef.current;
-
-    const decision = decideLadderRun({
-      trigger,
-      hasActiveCall: Boolean(callId && pc),
-      attempt: restart.attempt,
-      iceState: pc ? pc.iceConnectionState ?? pc.connectionState : null,
-      socketConnected: Boolean(socketRef.current?.connected),
-      isNegotiating: isNegotiatingRef.current,
-    });
-    if (decision.action === 'abort') {
-      if (decision.reason === 'no-active-call') {
-        logVerbose('[CallFlow] ICE restart skipped: no active call', { trigger });
-      } else {
-        logInfo('[CallFlow] ICE restart skipped: connection already recovered', {
-          trigger,
-          callId,
-        });
-      }
-      cancelIceRestarts(decision.reason);
-      return;
-    }
-    if (decision.action === 'defer') {
-      // Both preconditions clear on their own, so they cost a retry rather than
-      // a rung: `scheduleIceRestart` has already counted this attempt and left
-      // no timer behind, which is why the proactive network-change rung was
-      // always spent doing nothing (a handoff drops the socket for much longer
-      // than the debounce that scheduled it).
-      if (decision.reason === 'socket-offline') {
-        logWarn('[CallFlow] ICE restart deferred: signaling socket is offline', {
-          trigger,
-          callId,
-        });
-        pauseRecoveryBudgetRef.current?.('socket-offline');
-      } else {
-        logWarn('[CallFlow] ICE restart deferred: a negotiation is already in flight', {
-          trigger,
-          callId,
-        });
-      }
-      scheduleIceRestartRef.current?.(trigger, { consumeAttempt: false });
-      return;
-    }
-
-    // Unreachable: the machine only decides `restart` when both exist. Present
-    // so `callId`/`pc` narrow to non-null for the negotiation below.
-    if (!callId || !pc) return;
-    restart.inFlight = true;
-    publishRecoveryStatusRef.current?.();
-    const attempt = restart.attempt;
-    try {
-      const iceServers = await fetchIceServersForRestart(trigger);
-      pc.setConfiguration?.({ iceServers, iceTransportPolicy: activeIceTransportPolicy });
-      Telemetry.trackIceRestart(callId);
-      const offer = await pc.createOffer({ iceRestart: true });
-      await pc.setLocalDescription(offer);
-      signalingRef.current?.emit(
-        CLIENT_EVENTS.RTC_OFFER,
-        { version: SIGNALING_VERSION, callId, sdp: pc.localDescription },
-        ack => {
-          if (ack?.ok) return;
-          logWarn('[CallFlow] ICE restart rtc.offer ack failed', {
-            trigger,
-            attempt,
-            error: ack?.error,
-          });
-          scheduleIceRestartRef.current?.(trigger);
-        },
-      );
-      logInfo('[CallFlow] ICE restart offer sent', { trigger, callId, attempt });
-    } catch (error) {
-      // One failed restart used to end the call; a handoff often just needs the
-      // new interface to become routable, so the ladder gets another rung.
-      logError('[CallFlow] ICE restart failed', {
-        trigger,
-        callId,
-        attempt,
-        message: errorMessage(error),
-      });
-      restart.inFlight = false;
-      scheduleIceRestartRef.current?.(trigger);
-      return;
-    } finally {
-      restart.inFlight = false;
-      publishRecoveryStatusRef.current?.();
-    }
-  }, [activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart]);
-
-  /** The peer whose userId the glare tie-break is compared against. */
-  const remotePeerUserId = useCallback(() => {
-    const call = activeCallRef.current;
-    return (isCallerRef.current ? call?.calleeId : call?.callerId) ?? null;
-  }, []);
-
-  /**
-   * Queue the next rung of the restart ladder for `trigger`.
-   *
-   * The ladder is driven by the recovery budget rather than by a fixed attempt
-   * count: it keeps restarting on a capped exponential backoff until either the
-   * connection recovers or the budget expires.
-   *
-   * @param options.consumeAttempt - `false` for a retry of a rung that could
-   *   not run because of a precondition that clears on its own.
-   */
-  const scheduleIceRestart = useCallback(
-    (trigger: IceRestartTrigger, options: { consumeAttempt?: boolean; } = {}) => {
-      const restart = iceRestartRef.current;
-      const episode = recoveryEpisodeRef.current;
-      const snapshot = episode.snapshot();
-      const decision = decideLadderSchedule({
-        trigger,
-        hasActiveCall: Boolean(activeCallIdRef.current && peerConnectionRef.current),
-        isPending: Boolean(restart.timer || restart.inFlight),
-        attempt: restart.attempt,
-        episode: {
-          isOpen: episode.isOpen(),
-          isPaused: episode.isPaused(),
-          pauseReason: snapshot?.pauseReason ?? null,
-          hasExpired: episode.hasExpired(),
-        },
-        consumeAttempt: options.consumeAttempt,
-        localUserId: userIdRef.current,
-        remoteUserId: remotePeerUserId(),
-      });
-      if (decision.action === 'skip') {
-        if (decision.reason === 'no-active-call') {
-          logVerbose('[CallFlow] ICE restart not scheduled: no active call', { trigger });
-        } else if (decision.reason === 'already-pending') {
-          logVerbose('[CallFlow] ICE restart already pending', {
-            trigger,
-            attempt: restart.attempt,
-          });
-        } else if (decision.reason === 'paused') {
-          // Nothing can be restarted with no connectivity or no socket; the
-          // resume path re-enters the ladder the moment recovery is possible
-          // again, so retrying here would only burn CPU against a dead
-          // interface.
-          logVerbose('[CallFlow] ICE restart deferred: recovery is paused', {
-            trigger,
-            reason: decision.pauseReason,
-          });
-        } else {
-          logWarn('[CallFlow] ICE restart budget spent', {
-            trigger,
-            callId: activeCallIdRef.current,
-            attempts: restart.attempt,
-          });
-        }
-        return;
-      }
-
-      restart.attempt = decision.attempt;
-      if (decision.consumeAttempt) episode.recordAttempt();
-      const { delayMs, tiebreakMs } = decision;
-      logInfo('[CallFlow] Scheduling ICE restart', {
-        trigger,
-        callId: activeCallIdRef.current,
-        attempt: restart.attempt,
-        delayMs,
-        deferredForGlare: tiebreakMs > 0,
-        budgetRemainingMs: episode.isOpen() ? episode.remainingMs() : null,
-      });
-      if (delayMs <= 0) {
-        publishRecoveryStatusRef.current?.();
-        void runIceRestart(trigger);
-        return;
-      }
-      restart.timer = setTimeout(() => {
-        restart.timer = null;
-        void runIceRestart(trigger);
-      }, delayMs);
-      publishRecoveryStatusRef.current?.();
-    },
-    [remotePeerUserId, runIceRestart],
-  );
-
-  useEffect(() => {
-    scheduleIceRestartRef.current = scheduleIceRestart;
-  }, [scheduleIceRestart]);
-
-  /**
-   * Start a fresh restart ladder for a newly observed loss of connectivity.
-   *
-   * Opening (or extending) the episode first is what gives the ladder its
-   * budget: every rung is scheduled against the same deadline the failure
-   * report is.
-   */
-  const beginIceRecovery = useCallback((trigger: IceRestartTrigger) => {
-    noteRecoverySymptom(trigger);
-    cancelIceRestarts(`new-trigger:${trigger}`);
-    scheduleIceRestart(trigger);
-  }, [cancelIceRestarts, noteRecoverySymptom, scheduleIceRestart]);
-
-  useEffect(() => {
-    beginIceRecoveryRef.current = beginIceRecovery;
-    cancelIceRestartsRef.current = cancelIceRestarts;
-  }, [beginIceRecovery, cancelIceRestarts]);
-
-  // ── Proactive recovery: restart on a network path change ─────────────────
-  //
-  // Waiting for ICE to reach `failed` means seconds of dead audio on a
-  // Wi-Fi→cellular handoff. The transport knows first, so the call acts on
-  // that instead — debounced, and only while a call is actually up.
-  useEffect(() => {
-    const unsubscribe = subscribeNetworkChanges(
-      ({ from, to }) => {
-        // Connectivity is back (or moved): the budget can run again, and this
-        // is new information worth extending the episode for.
-        hasConnectivityRef.current = true;
-        resumeRecoveryBudget(`connectivity:${to.type}`);
-        // A call that is still negotiating counts: `isInCall` only flips once
-        // media is up, and the handoff most worth surviving is the one during
-        // setup.
-        if (!activeCallIdRef.current || !peerConnectionRef.current) {
-          logVerbose('[CallFlow] Network change ignored: no active call', { to: to.type });
-          return;
-        }
-
-        const restartNow = () => {
-          if (!activeCallIdRef.current) return;
-          lastNetworkChangeAtRef.current = Date.now();
-          logWarn('[CallFlow] Network path changed mid-call; restarting ICE', {
-            callId: activeCallIdRef.current,
-            from: from?.type ?? null,
-            to: to.type,
-            // The old path is already dead here even when ICE still says it is
-            // connected; that lag is the audio gap this restart avoids.
-            iceState: peerConnectionRef.current?.iceConnectionState ?? null,
-          });
-          beginIceRecovery('network-change');
-        };
-
-        // The first transition fires immediately: this is the one path
-        // designed to beat ICE to the punch, and debouncing it gave that head
-        // start away. The debounce is kept for *repeat* events, so a flapping
-        // interface still produces one restart rather than a storm.
-        const sinceLastMs = Date.now() - lastNetworkChangeAtRef.current;
-        if (!networkChangeTimerRef.current && sinceLastMs >= NETWORK_CHANGE_DEBOUNCE_MS) {
-          restartNow();
-          return;
-        }
-        if (networkChangeTimerRef.current) clearTimeout(networkChangeTimerRef.current);
-        networkChangeTimerRef.current = setTimeout(() => {
-          networkChangeTimerRef.current = null;
-          restartNow();
-        }, NETWORK_CHANGE_DEBOUNCE_MS);
-      },
-      {
-        // "Connectivity lost" is the one moment the budget must stop running:
-        // an ICE restart needs a live socket, so time spent here would be
-        // spent waiting rather than trying. It used to be logged and dropped.
-        onConnectivityLost: snapshot => {
-          hasConnectivityRef.current = false;
-          logWarn('[CallFlow] Connectivity lost; pausing recovery budget', {
-            callId: activeCallIdRef.current,
-            type: snapshot.type,
-          });
-          pauseRecoveryBudget('no-connectivity');
-        },
-      },
-    );
-    return () => {
-      unsubscribe();
-      if (networkChangeTimerRef.current) {
-        clearTimeout(networkChangeTimerRef.current);
-        networkChangeTimerRef.current = null;
-      }
-    };
-  }, [beginIceRecovery, pauseRecoveryBudget, resumeRecoveryBudget]);
 
   const createPeerConnection = useCallback(async () => {
     // ICE servers must be known *before* construction: gathering starts as soon
@@ -2011,6 +1243,7 @@ export default function useCallFlow({
     },
     [
       addToHistory,
+      cancelIceRestartsRef,
       closeRecoveryEpisode,
       closePeerConnection,
       releaseLocalMedia,
@@ -2131,9 +1364,7 @@ export default function useCallFlow({
 
   useEffect(() => {
     resyncCallStateRef.current = resyncCallState;
-    noteRecoverySymptomRef.current = noteRecoverySymptom;
-    resumeRecoveryBudgetRef.current = resumeRecoveryBudget;
-  }, [noteRecoverySymptom, resumeRecoveryBudget, resyncCallState]);
+  }, [resyncCallState]);
 
   /**
    * Create and return a new authenticated Socket.IO connection.
@@ -2168,7 +1399,7 @@ export default function useCallFlow({
       };
       const manager = (socket as { io?: ManagerEvents }).io;
       const onManagerPing = () => {
-        wakeCallHeartbeatRef.current?.('socket-ping');
+        wakeCallHeartbeat('socket-ping');
       };
       manager?.on?.('ping', onManagerPing);
       // Socket.IO's reconnection ladder used to stop for good after five
@@ -2452,7 +1683,7 @@ export default function useCallFlow({
       signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
         if (callId !== activeCallIdRef.current) return;
         // The peer's own relayed beat is another timer-free wake-up source.
-        wakeCallHeartbeatRef.current?.('peer-media-state');
+        wakeCallHeartbeat('peer-media-state');
         // The frame is additive and each key is read independently: silence
         // about a flag is not a claim about it, so a liveness heartbeat never
         // clears the "they are presenting" banner or the peer's picture.
@@ -2511,7 +1742,7 @@ export default function useCallFlow({
         // while the socket is down), so prove liveness again straight away.
         // Before the `isInCall` guard on purpose: the heartbeat's own `active`
         // flag is the authority on whether a beat is owed.
-        wakeCallHeartbeatRef.current?.('socket-connect');
+        wakeCallHeartbeat('socket-connect');
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -2619,6 +1850,11 @@ export default function useCallFlow({
       deviceIdRef,
       fetchConversations,
       fetchBlocks,
+      wakeCallHeartbeat,
+      beginIceRecoveryRef,
+      noteRecoverySymptomRef,
+      pauseRecoveryBudgetRef,
+      resumeRecoveryBudgetRef,
     ],
   );
 
