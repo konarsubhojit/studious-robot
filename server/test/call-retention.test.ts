@@ -248,9 +248,15 @@ test('server startup rejects an invalid numeric environment setting', () => {
 
 test('byte-size configuration accepts supported units and rejects invalid values', () => {
   assert.equal(parseByteSize('JSON_BODY_LIMIT', undefined, '64kb'), '64kb');
+  assert.equal(parseByteSize('JSON_BODY_LIMIT', '1048576', '64kb'), '1048576');
   assert.equal(parseByteSize('JSON_BODY_LIMIT', '128KB', '64kb'), '128KB');
-  assert.throws(
-    () => parseByteSize('JSON_BODY_LIMIT', '-1kb', '64kb'),
-    /Invalid JSON_BODY_LIMIT: expected a non-negative byte size/
-  );
+  for (const value of ['1mb', '1gb', '1tb', '1pb']) {
+    assert.equal(parseByteSize('JSON_BODY_LIMIT', value, '64kb'), value);
+  }
+  for (const value of ['', '-1kb']) {
+    assert.throws(
+      () => parseByteSize('JSON_BODY_LIMIT', value, '64kb'),
+      /Invalid JSON_BODY_LIMIT: expected a non-negative byte size/
+    );
+  }
 });

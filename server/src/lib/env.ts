@@ -33,7 +33,7 @@ function parseNonNegativeNumber(
 function parseByteSize(name: string, raw: string | undefined | null, fallback: string): string {
   if (raw === undefined || raw === null) return fallback;
   const value = raw.trim();
-  if (!/^\d+(?:b|kb|mb)?$/i.test(value)) {
+  if (!/^\d+(?:\.\d+)?\s*(?:b|kb|mb|gb|tb|pb)?$/i.test(value)) {
     throw new Error(`Invalid ${name}: expected a non-negative byte size, received ${JSON.stringify(raw)}`);
   }
   return value;
