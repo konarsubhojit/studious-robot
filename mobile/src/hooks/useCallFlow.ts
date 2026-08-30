@@ -3809,13 +3809,21 @@ export default function useCallFlow({
   // Both flags travel in one frame rather than two relays, so the peer can
   // never apply half an update. Best-effort: a rejected/timed-out ack is
   // logged and otherwise ignored.
+  //
+  // The active call id is a dependency, not just a guard, because the flags
+  // move independently of the call: local media starts — and therefore sets
+  // `isVideoEnabled` — before an outgoing call has an id, and a toggle made
+  // while there is no id to address is dropped by the guard below and never
+  // retried. Re-emitting when the id appears sends the peer one explicit
+  // snapshot per call, so their view can never be stale by a whole call.
+  const activeCallId = activeCall?.callId ?? null;
   useEffect(() => {
     isScreenSharingRef.current = isScreenSharing;
-    if (!socketRef.current?.connected || !activeCallIdRef.current) return;
+    if (!socketRef.current?.connected || !activeCallId) return;
     signalingRef.current
       ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
         version: SIGNALING_VERSION,
-        callId: activeCallIdRef.current,
+        callId: activeCallId,
         mediaState: { isScreenSharing, isVideoEnabled },
       })
       .catch(error => {
@@ -3823,7 +3831,7 @@ export default function useCallFlow({
           message: errorMessage(error),
         });
       });
-  }, [isScreenSharing, isVideoEnabled]);
+  }, [activeCallId, isScreenSharing, isVideoEnabled]);
 
   // ─── Connection quality polling ───────────────────────────────────────────
 

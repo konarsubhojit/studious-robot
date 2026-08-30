@@ -2992,6 +2992,55 @@ describe('useCallFlow chat', () => {
     });
   });
 
+  test('relays one media-state snapshot when the call id appears, not only on a toggle', async () => {
+    // Local media starts — and therefore settles `isVideoEnabled` — before an
+    // outgoing call has an id, so an implementation that only emitted on a
+    // flag *change* would leave the peer with no frame at all for the call.
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    const mediaStateEmits: any = [];
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
+      if (event === 'call.initiate') {
+        cb?.({
+          ok: true,
+          call: { callId: 'call-snapshot-1', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+        });
+      } else if (event === 'call.media-state') {
+        mediaStateEmits.push(payload);
+        cb?.({ ok: true });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(mediaStateEmits).toContainEqual({
+      version: 1,
+      callId: 'call-snapshot-1',
+      mediaState: { isScreenSharing: false, isVideoEnabled: true },
+    });
+  });
+
   // ── call.connected ────────────────────────────────────────────────────────
   //
   // Nothing else advances a call out of `connecting_media`, so a client that
