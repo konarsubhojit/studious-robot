@@ -2834,9 +2834,87 @@ describe('useCallFlow chat', () => {
     expect(resultRef.current.isRemoteScreenSharing).toBe(false);
   });
 
+  test('call.media-state relays the peer camera state, and silence about it changes nothing', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    socketMock.emit.mockImplementation((event: any, _payload: any, cb: any) => {
+      if (event === 'call.initiate') {
+        cb?.({
+          ok: true,
+          call: { callId: 'call-media-2', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+        });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // A peer that never sends the flag is assumed to have a camera on, which
+    // is exactly how this app behaved before the flag existed.
+    expect(resultRef.current.isRemoteVideoEnabled).toBe(true);
+
+    const handler = getSocketHandler('call.media-state');
+
+    act(() => {
+      handler({ callId: 'call-media-2', mediaState: { isVideoEnabled: false } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteVideoEnabled).toBe(false);
+
+    // A liveness heartbeat carries no camera flag, and must not be read as a
+    // claim that the camera came back on.
+    act(() => {
+      handler({ callId: 'call-media-2', mediaState: { heartbeat: true } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteVideoEnabled).toBe(false);
+
+    // Nor may a screen-share frame move it.
+    act(() => {
+      handler({ callId: 'call-media-2', mediaState: { isScreenSharing: true } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteScreenSharing).toBe(true);
+    expect(resultRef.current.isRemoteVideoEnabled).toBe(false);
+
+    act(() => {
+      handler({ callId: 'call-media-2', mediaState: { isVideoEnabled: true } });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.isRemoteVideoEnabled).toBe(true);
+  });
+
   // ── call.media-state emit-on-toggle ───────────────────────────────────────
 
-  test('emits call.media-state whenever local isScreenSharing changes during an active call', async () => {
+  test('emits call.media-state with the local screen-share and camera state during an active call', async () => {
     const { resultRef, tree } = await renderWithSocket();
 
     // Simulate an incoming call and accept it so activeCallIdRef/peerConnectionRef
@@ -2907,7 +2985,59 @@ describe('useCallFlow chat', () => {
     expect(mediaStateEmits).toContainEqual({
       version: 1,
       callId: 'call-share-1',
-      mediaState: { isScreenSharing: true },
+      // Both flags travel in one frame so the peer can never apply half an
+      // update: the camera state is what lets their stage tell a picture from
+      // a black rectangle.
+      mediaState: { isScreenSharing: true, isVideoEnabled: true },
+    });
+  });
+
+  test('relays one media-state snapshot when the call id appears, not only on a toggle', async () => {
+    // Local media starts — and therefore settles `isVideoEnabled` — before an
+    // outgoing call has an id, so an implementation that only emitted on a
+    // flag *change* would leave the peer with no frame at all for the call.
+    const { resultRef, tree } = await renderWithSocket();
+
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+    const mediaStateEmits: any = [];
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
+      if (event === 'call.initiate') {
+        cb?.({
+          ok: true,
+          call: { callId: 'call-snapshot-1', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+        });
+      } else if (event === 'call.media-state') {
+        mediaStateEmits.push(payload);
+        cb?.({ ok: true });
+      }
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(mediaStateEmits).toContainEqual({
+      version: 1,
+      callId: 'call-snapshot-1',
+      mediaState: { isScreenSharing: false, isVideoEnabled: true },
     });
   });
 

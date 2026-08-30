@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, HEALTH_RESPONSE, SESSION_RESPONSE, parseEventPayload, s } from '../../shared/index.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 /**
  * Contract tests for `@wetalk/shared`: the schema helper itself, and the
@@ -19,10 +19,7 @@ async function startServer() {
   /** @param clients */
   async function teardown(...clients: import('socket.io-client').Socket[]) {
     clients.forEach((client) => client.disconnect());
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

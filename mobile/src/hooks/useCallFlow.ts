@@ -428,6 +428,13 @@ export default function useCallFlow({
   // True while the remote participant is screen-sharing (relayed via the
   // `call.media-state` socket event).
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
+  // Whether the remote participant's camera is on, relayed over the same
+  // event. Defaults to `true` because that is what an older peer — one that
+  // never sends the flag — effectively claims, and because a video call starts
+  // with both cameras live. `track.enabled = false` neither removes the track
+  // nor tells the peer anything, so this relay is the only way the receiving
+  // side can distinguish "a picture" from "a black rectangle".
+  const [isRemoteVideoEnabled, setIsRemoteVideoEnabled] = useState(true);
 
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
   const [localStream, setLocalStream] = useState((null as WebrtcMediaStream | null));
@@ -2000,6 +2007,7 @@ export default function useCallFlow({
       setIsLocalPrimary(false);
       setAudioDevices({ available: [], selected: null });
       setIsRemoteScreenSharing(false);
+      setIsRemoteVideoEnabled(true);
       resetScreenShare();
       stopCallService();
       closePeerConnection();
@@ -2456,8 +2464,14 @@ export default function useCallFlow({
         wakeCallHeartbeatRef.current?.('peer-media-state');
         // A liveness heartbeat that carries no sharing flag must not clear the
         // "they are presenting" banner.
-        if (!mediaState || !('isScreenSharing' in mediaState)) return;
-        setIsRemoteScreenSharing(Boolean(mediaState.isScreenSharing));
+        if (mediaState && 'isScreenSharing' in mediaState) {
+          setIsRemoteScreenSharing(Boolean(mediaState.isScreenSharing));
+        }
+        // Same rule for the camera flag, and for the same reason: a frame that
+        // omits it is silent about the camera, not a claim that it is off.
+        if (mediaState && 'isVideoEnabled' in mediaState) {
+          setIsRemoteVideoEnabled(Boolean(mediaState.isVideoEnabled));
+        }
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
@@ -3782,25 +3796,42 @@ export default function useCallFlow({
     setCallSummary(null);
   }, []);
 
-  // ─── Screen-share presence relay ──────────────────────────────────────────
-  // Tell the peer whenever the local screen-sharing state changes so their
-  // CallStage can render a "they are presenting" banner. Best-effort: a
-  // rejected/timed-out ack is logged and otherwise ignored.
+  // ─── Local media presence relay ───────────────────────────────────────────
+  // Tell the peer whenever the local screen-sharing or camera state changes:
+  // their CallStage renders a "they are presenting" banner off the first, and
+  // decides between the video stage and the ambient canvas off the second.
+  //
+  // The camera flag has to be relayed because it is not observable on the
+  // wire — turning the camera off sets `track.enabled = false`, which keeps
+  // the track and keeps transmitting, so a receiver that only counted tracks
+  // showed a black rectangle and called it a video call.
+  //
+  // Both flags travel in one frame rather than two relays, so the peer can
+  // never apply half an update. Best-effort: a rejected/timed-out ack is
+  // logged and otherwise ignored.
+  //
+  // The active call id is a dependency, not just a guard, because the flags
+  // move independently of the call: local media starts — and therefore sets
+  // `isVideoEnabled` — before an outgoing call has an id, and a toggle made
+  // while there is no id to address is dropped by the guard below and never
+  // retried. Re-emitting when the id appears sends the peer one explicit
+  // snapshot per call, so their view can never be stale by a whole call.
+  const activeCallId = activeCall?.callId ?? null;
   useEffect(() => {
     isScreenSharingRef.current = isScreenSharing;
-    if (!socketRef.current?.connected || !activeCallIdRef.current) return;
+    if (!socketRef.current?.connected || !activeCallId) return;
     signalingRef.current
       ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
         version: SIGNALING_VERSION,
-        callId: activeCallIdRef.current,
-        mediaState: { isScreenSharing },
+        callId: activeCallId,
+        mediaState: { isScreenSharing, isVideoEnabled },
       })
       .catch(error => {
         logWarn('[CallFlow] call.media-state emit failed', {
           message: errorMessage(error),
         });
       });
-  }, [isScreenSharing]);
+  }, [activeCallId, isScreenSharing, isVideoEnabled]);
 
   // ─── Connection quality polling ───────────────────────────────────────────
 
@@ -4147,6 +4178,7 @@ export default function useCallFlow({
     isInCall,
     isMuted,
     isVideoEnabled,
+    isRemoteVideoEnabled,
     isSpeakerEnabled,
     isScreenSharing,
     isTogglingScreenShare,

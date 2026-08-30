@@ -123,10 +123,19 @@ export function CallProvider({ children }: { children: ReactNode; }) {
         localStream: callFlow.localStream,
         remoteStream: callFlow.remoteStream,
         isFrontCamera: callFlow.isFrontCamera,
+        localVideoEnabled: callFlow.isVideoEnabled,
+        remoteVideoEnabled: callFlow.isRemoteVideoEnabled,
         mainLabel: 'main stream',
         pipLabel: 'picture-in-picture stream',
       }),
-    [callFlow.isFrontCamera, callFlow.isLocalPrimary, callFlow.localStream, callFlow.remoteStream],
+    [
+      callFlow.isFrontCamera,
+      callFlow.isLocalPrimary,
+      callFlow.isRemoteVideoEnabled,
+      callFlow.isVideoEnabled,
+      callFlow.localStream,
+      callFlow.remoteStream,
+    ],
   );
 
   /**

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
-import { captureConsoleLog, listenOnRandomPort, postJson } from './helpers.ts';
+import { captureConsoleLog, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 async function startServer() {
   const server = createServer();
@@ -9,10 +9,7 @@ async function startServer() {
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

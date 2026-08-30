@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { pushSenders } from '../src/push.ts';
-import { listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 /** @param [opts] */
 async function startServer(opts?: import('../src/createServer.ts').CreateServerOptions) {
@@ -19,10 +19,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
   return { ...server, url, teardown };
 }

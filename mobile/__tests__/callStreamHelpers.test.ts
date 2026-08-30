@@ -191,3 +191,90 @@ describe('deriveCallStreams mainHasVideo', () => {
     expect(result.mainHasVideo).toBe(false);
   });
 });
+
+/**
+ * Camera state, which is the half of "is there a picture" that counting tracks
+ * cannot answer.
+ *
+ * Turning a camera off sets `track.enabled = false`; it does not remove the
+ * track, and a disabled sender keeps transmitting. So a receiver that only
+ * counted tracks reported `mainHasVideo: true` for a black rectangle, and the
+ * ambient canvas — built, tokenised and covered — was unreachable for every
+ * call this app can place. The flag is relayed over `call.media-state` and
+ * arrives here as `localVideoEnabled` / `remoteVideoEnabled`.
+ */
+describe('deriveCallStreams camera state', () => {
+  const base = {
+    isFrontCamera: false,
+    mainLabel: 'main',
+    pipLabel: 'pip',
+  };
+
+  test('a remote camera switched off has no picture, even though its track survives', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: false,
+      localStream: makeVideoStream('local://1'),
+      remoteStream: makeVideoStream('remote://1'),
+      localVideoEnabled: true,
+      remoteVideoEnabled: false,
+    });
+
+    expect(result.mainHasVideo).toBe(false);
+    // The self-view still has one, so the tile stays.
+    expect(result.pipHasVideo).toBe(true);
+  });
+
+  test('a local camera switched off empties the self-view tile, not the stage', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: false,
+      localStream: makeVideoStream('local://1'),
+      remoteStream: makeVideoStream('remote://1'),
+      localVideoEnabled: false,
+      remoteVideoEnabled: true,
+    });
+
+    expect(result.mainHasVideo).toBe(true);
+    expect(result.pipHasVideo).toBe(false);
+  });
+
+  test('the flags follow the tiles when the streams are swapped', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: true,
+      localStream: makeVideoStream('local://1'),
+      remoteStream: makeVideoStream('remote://1'),
+      localVideoEnabled: false,
+      remoteVideoEnabled: true,
+    });
+
+    // Local is now the main tile, so it is the local camera that decides it.
+    expect(result.mainHasVideo).toBe(false);
+    expect(result.pipHasVideo).toBe(true);
+  });
+
+  test('an enabled camera with no video track still has no picture', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: false,
+      localStream: null,
+      remoteStream: makeAudioOnlyStream('remote://1'),
+      remoteVideoEnabled: true,
+    });
+
+    expect(result.mainHasVideo).toBe(false);
+  });
+
+  test('defaults to on, so a peer that never sends the flag behaves as before', () => {
+    const result = deriveCallStreams({
+      ...base,
+      isLocalPrimary: false,
+      localStream: makeVideoStream('local://1'),
+      remoteStream: makeVideoStream('remote://1'),
+    });
+
+    expect(result.mainHasVideo).toBe(true);
+    expect(result.pipHasVideo).toBe(true);
+  });
+});

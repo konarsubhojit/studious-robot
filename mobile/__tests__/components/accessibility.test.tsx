@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import AppTabBar from '../../src/components/AppTabBar';
 import CallControls from '../../src/components/CallControls';
 import CallStage from '../../src/components/CallStage';
+import RingingAvatar from '../../src/components/RingingAvatar';
 import { ListItem } from '../../src/components/primitives';
 import { fontScaleCaps } from '../../src/theme';
 
@@ -251,6 +252,12 @@ describe('accessibility contracts', () => {
       expect(
         textNodeWith(tree, 'Shares what your device is playing').props.maxFontSizeMultiplier,
       ).toBeUndefined();
+    });
+
+    test('caps the ringing avatar initials: they sit in a fixed 100 dp disc', () => {
+      const tree = render(<RingingAvatar initials="AF" testID="ringing-avatar" />);
+
+      expect(textNodeWith(tree, 'AF').props.maxFontSizeMultiplier).toBe(fontScaleCaps.badge);
     });
   });
 });

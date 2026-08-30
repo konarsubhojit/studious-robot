@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { createMemoryMessageBus, createRedisMessageBus } from '../src/messageBus.ts';
 import { createRedisPgStores } from '../src/stores/index.ts';
 import { STORE_NAMES } from '../src/stores/contracts.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 import { createStores } from '../src/stores/index.ts';
 import { createServer, CALL_TRANSITION_CHANNEL } from '../src/index.ts';
 
@@ -281,10 +281,7 @@ test('createServer publishes call-state transitions on the injected message bus'
     assert.equal(accepted.callId, callId);
     assert.equal(accepted.previousStatus, 'ringing');
   } finally {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
     await bus.close();
   }
 });

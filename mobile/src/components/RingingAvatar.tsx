@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import useReducedMotion from '../hooks/useReducedMotion';
+import { fontScaleCaps } from '../theme';
 import type { ThemeColors } from '../theme';
 
 /** Diameter of the avatar disc. */
@@ -85,7 +86,9 @@ export default function RingingAvatar({
         style={styles.avatar}
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants">
-        <Text style={styles.avatarText}>{initials}</Text>
+        <Text style={styles.avatarText} maxFontSizeMultiplier={fontScaleCaps.badge}>
+          {initials}
+        </Text>
       </View>
     </View>
   );
@@ -125,6 +128,9 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     avatarText: {
+      // The disc is a fixed 100 dp circle, so the initials are capped like any
+      // other glyph inside fixed geometry: at 200% system type an uncapped
+      // 36 dp initial renders at 72 dp and clips against the border.
       fontSize: 36,
       fontWeight: '700',
       color: colors.textPrimary,

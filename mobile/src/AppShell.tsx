@@ -317,10 +317,15 @@ function ActiveCallScreen() {
       hasMainStream={Boolean(streams.mainStream)}
       // Audio call, or a peer with their camera off: a stream exists and has a
       // URL, but there is no picture in it, so the stage draws the ambient
-      // canvas rather than a black rectangle.
+      // canvas rather than a black rectangle. Both halves matter — an audio
+      // call has no video track, while a camera that has been switched off
+      // keeps its track and says so over `call.media-state`.
       isAudioOnly={Boolean(streams.mainStream) && !streams.mainHasVideo}
       pipStreamUrl={streams.pipStreamUrl}
-      hasPipStream={Boolean(streams.pipStream)}
+      // Same question for the small tile. A self-view of a camera the user has
+      // just turned off is a black square that follows them around the screen,
+      // so the tile goes away with the picture rather than with the stream.
+      hasPipStream={Boolean(streams.pipStream) && streams.pipHasVideo}
       mirrorPip={streams.mirrorPip}
       mirrorMain={streams.mirrorMain}
       pipGesture={pipGesture}
