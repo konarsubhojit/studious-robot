@@ -1,0 +1,195 @@
+/**
+ * Mongo access layer: connecting once, creating the supporting indexes, and
+ * reporting where the connection went without ever logging a credential.
+ *
+ * The connection is established lazily on first use so constructing a store
+ * never blocks server start-up, and a failure to create indexes is logged
+ * rather than fatal (Cosmos DB throttles index builds under load).
+ */
+
+import { MongoClient } from 'mongodb';
+import { describeError } from '../lib/errors.ts';
+import type {
+  MessagesCollection,
+  MongoClientLike,
+  MongoConnection,
+  MongoIndexSpec,
+} from './types.ts';
+
+export const DEFAULT_DB_NAME = 'wetalk';
+export const DEFAULT_COLLECTION_NAME = 'messages';
+export const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
+
+/**
+ * Create one index, logging (rather than throwing) on failure.
+ *
+ * Cosmos DB can reject or throttle index builds (e.g. a unique index that
+ * does not include the shard key); never let that take the server down —
+ * reads/writes still work without the index, just less efficiently, or with
+ * the corresponding guarantee (sort support, uniqueness) degraded. Each index
+ * is attempted independently so one rejection doesn't skip the rest.
+ *
+ * @param messages - The Mongo collection.
+ * @param spec - Index key spec, e.g. `{ conversationId: 1 }`.
+ * @param options - Index options, e.g. `{ unique: true }`.
+ */
+export async function createIndexOrWarn(
+  messages: MessagesCollection,
+  spec: MongoIndexSpec,
+  options?: object
+): Promise<void> {
+  try {
+    await messages.createIndex(spec, options);
+  } catch (error) {
+    console.error(
+      `[messages] DEGRADED: index creation skipped for ${JSON.stringify(spec)}` +
+        `${options ? ` ${JSON.stringify(options)}` : ''} — sorted queries and/or ` +
+        `uniqueness guarantees may be affected: ${describeError(error)}`
+    );
+  }
+}
+
+/**
+ * Create every index the store depends on.
+ *
+ * Index creation is idempotent, but Cosmos DB can reject or throttle it; never
+ * let that take the server down — reads/writes still work without the indexes,
+ * just less efficiently (and, on Cosmos RU, sorted queries may fail outright
+ * without the matching composite index — see below).
+ *
+ * All indexes are prefixed with `conversationId` (the shard/partition key).
+ * Azure Cosmos DB for MongoDB (RU) requires:
+ *   - unique indexes to include the shard key, and
+ *   - `sort()` queries to be served by a matching *direction-specific*
+ *     composite index (no collection-scan fallback like vCore/MongoDB).
+ * `{ messageId: 1 }` alone can no longer be unique (see `saveMessage`'s upsert
+ * for the enforcement fallback), so it is replaced by
+ * `{ conversationId: 1, messageId: 1 }`, which preserves the intended guarantee
+ * because a `messageId` only ever appears within one conversation.
+ */
+export async function ensureMessageIndexes(messages: MessagesCollection): Promise<void> {
+  await createIndexOrWarn(messages, { conversationId: 1, createdAt: -1 });
+  // Ascending counterpart — Cosmos composite indexes are direction specific, so
+  // the descending index above does not also serve an ascending sort.
+  await createIndexOrWarn(messages, { conversationId: 1, createdAt: 1 });
+  // Shard-key-prefixed uniqueness on messageId.
+  await createIndexOrWarn(messages, { conversationId: 1, messageId: 1 }, { unique: true });
+  // Serves `listMessages`'s actual `{ createdAt: -1, messageId: -1 }` tiebreak
+  // sort (Cosmos composite indexes must match sorted fields exactly, including
+  // the tiebreak field).
+  await createIndexOrWarn(messages, { conversationId: 1, createdAt: -1, messageId: -1 });
+  // Supports `searchMessages`' body lookup. Deliberately a plain
+  // shard-key-prefixed index rather than a `text` index: Azure Cosmos DB for
+  // MongoDB (RU) does not support text indexes / `$text`, so the search is
+  // expressed as a case-insensitive literal match on `body` (see
+  // `searchMessages`), which is served identically on the in-memory store,
+  // MongoDB/vCore and Cosmos RU.
+  await createIndexOrWarn(messages, { conversationId: 1, body: 1 });
+}
+
+/**
+ * Best-effort extraction of the Mongo host(s) for startup logging, without
+ * ever logging credentials embedded in the connection string.
+ */
+export function safeMongoHost(mongoClient: MongoClientLike | null, uri?: string): string {
+  try {
+    const options = mongoClient?.options ?? mongoClient?.s?.options;
+    const hosts = options?.hosts;
+    if (Array.isArray(hosts) && hosts.length) {
+      return hosts
+        .map((h: { host?: string; port?: number; }) =>
+          h?.host ? `${h.host}${h.port ? `:${h.port}` : ''}` : String(h)
+        )
+        .join(',');
+    }
+  } catch {
+    // Fall through to URI parsing below.
+  }
+  if (!uri) return 'unknown';
+  try {
+    // Strip credentials before ever touching the URI for logging purposes.
+    const withoutCreds = uri.replace(/\/\/[^@/]+@/, '//');
+    const match = withoutCreds.match(/^[a-zA-Z+]+:\/\/([^/?]+)/);
+    return match ? match[1] : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The lazily-connecting accessor a Mongo store issues every query through. */
+export type MongoConnector = {
+  /** Connect (once) and return the messages collection. */
+  connect: () => Promise<MongoConnection>;
+  /** Close the client, if one was ever opened.  Idempotent; never throws. */
+  close: () => Promise<void>;
+};
+
+/**
+ * Build the lazily-connecting accessor the Mongo store issues every query
+ * through.
+ *
+ * `connect` establishes the connection (and creates indexes) on first call and
+ * resolves with the same connection thereafter; a failed connect is not cached,
+ * so a later call retries rather than inheriting the failure forever.
+ */
+export function createMongoConnector({
+  uri,
+  database,
+  collection,
+  client,
+}: {
+  uri?: string;
+  database: string;
+  collection: string;
+  client?: MongoClientLike;
+}): MongoConnector {
+  let clientPromise: Promise<MongoConnection> | null = null;
+  let closed = false;
+
+  function connect(): Promise<MongoConnection> {
+    if (!clientPromise) {
+      clientPromise = (async () => {
+        const mongoClient: MongoClientLike =
+          client ??
+          // The driver's `MongoClient` is a superset of the surface this store
+          // uses; the structural view keeps the call sites checked without
+          // pinning them to the driver's generics.
+          ((new MongoClient((uri as string), {
+            serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+          }) as unknown) as MongoClientLike);
+        if (typeof mongoClient.connect === 'function') {
+          await mongoClient.connect();
+        }
+        const messages = mongoClient.db(database).collection(collection) as MessagesCollection;
+
+        await ensureMessageIndexes(messages);
+
+        const host = safeMongoHost(mongoClient, uri);
+        const retryWritesDisabled = /retrywrites=false/i.test(uri || '');
+        console.log(
+          `[messages] Mongo message store ready (host=${host} db=${database} ` +
+            `collection=${collection} retryWrites=${retryWritesDisabled ? 'disabled' : 'default'})`
+        );
+        return { mongoClient, messages };
+      })().catch((error) => {
+        // Reset so a later call can retry rather than caching a failed connect.
+        clientPromise = null;
+        throw error;
+      });
+    }
+    return clientPromise;
+  }
+
+  async function close(): Promise<void> {
+    if (closed || !clientPromise) return;
+    closed = true;
+    try {
+      const { mongoClient } = await clientPromise;
+      await mongoClient.close();
+    } catch (error) {
+      console.warn(`[messages] error while closing Mongo client: ${describeError(error)}`);
+    }
+  }
+
+  return { connect, close };
+}

@@ -112,9 +112,7 @@ Source files (`server/src`, `server/db`, `shared/`, `mobile/src`):
 | 4222 | `mobile/src/hooks/useCallFlow.ts` | 5 |
 | 2095 | `mobile/src/components/ChatConversationScreen.tsx` | — |
 | 1367 | `mobile/src/hooks/useMessaging.ts` | 4 |
-| 1289 | `server/src/push.ts` | 2 |
 | 944 | `mobile/src/theme.ts` | — |
-| 934 | `server/src/messageStore.ts` | 2 |
 | 899 | `mobile/src/pushNotifications.ts` | — |
 | 781 | `mobile/src/components/SettingsScreen.tsx` | — |
 | 721 | `server/src/signaling/messageHandlers.ts` | 3 |
@@ -123,6 +121,13 @@ Source files (`server/src`, `server/db`, `shared/`, `mobile/src`):
 | 584 | `server/src/domain/calls.ts` | — |
 | 515 | `server/src/domain/notifications.ts` | — |
 | 501 | `server/src/signaling/index.ts` | 3 |
+
+Two entries have since left this table. Phase 2 split `server/src/push.ts`
+(1289 lines) into `server/src/push/` and `server/src/messageStore.ts` (934) into
+`server/src/messageStore/`; both files remain as the public facade — every
+existing import path still resolves — and the largest resulting module is 316
+lines. No method in either tree exceeds the threshold, so neither appears in the
+violations table above.
 
 Test files, for completeness — they are not a decomposition target, but the
 largest of them mirrors the largest source file and will have to move with it:
