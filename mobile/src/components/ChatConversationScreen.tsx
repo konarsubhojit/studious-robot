@@ -99,6 +99,8 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const QUOTE_HIGHLIGHT_MS = 1600;
 /** How long the "attachments aren't available" notice stays visible. */
 const ATTACHMENTS_UNAVAILABLE_NOTICE_MS = 4000;
+/** Trailing window for persisting a composer draft while the user is typing. */
+const DRAFT_PERSIST_DEBOUNCE_MS = 750;
 /** Rendered height of an inline image attachment. */
 const ATTACHMENT_IMAGE_HEIGHT = 180;
 
@@ -132,6 +134,16 @@ function getMessageStatus(message: {
     ? deliveredTo.includes(message.recipientId)
     : deliveredTo.length > 0;
   return reachedRecipient ? 'delivered' : 'sent';
+}
+
+function messageAccessibilityLabel(message: ChatMessage, status: MessageStatus, progress = 0): string {
+  const preview = describeMessagePreview(message) || 'Message';
+  if (message.uploadState === 'uploading') {
+    return `${preview}. Uploading attachment ${Math.round(progress * 100)} percent`;
+  }
+  if (status === 'failed') return `${preview}. Failed to send. Tap to retry`;
+  if (status === 'sending') return `${preview}. Sending`;
+  return preview;
 }
 
 /**
@@ -357,9 +369,13 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMe
   const textStyle = isOwn ? styles.bubbleTextOwn : styles.bubbleTextPeer;
   const type = messageTypeOf(message);
   const attachmentUrl = message.attachment?.url;
-  const isUploading = Boolean(message.pending) && !attachmentUrl;
+  const isUploading = message.uploadState === 'uploading' || (Boolean(message.pending) && !attachmentUrl);
   const downloadButton =
-    attachmentUrl && onDownloadAttachment ? (
+    isUploading ? (
+      <Text style={[textStyle, styles.placeholderText]} testID="chat-attachment-uploading">
+        Uploading…
+      </Text>
+    ) : attachmentUrl && onDownloadAttachment ? (
       <Pressable
         onPress={() => onDownloadAttachment(message)}
         accessibilityRole="button"
@@ -370,10 +386,6 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMe
         testID="chat-attachment-download">
         <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
       </Pressable>
-    ) : isUploading ? (
-      <Text style={[textStyle, styles.placeholderText]} testID="chat-attachment-uploading">
-        Uploading…
-      </Text>
     ) : null;
 
   /** Every branch ends here, so every bubble is laid out the same way. */
@@ -559,9 +571,35 @@ function ReactionChips({ reactions, currentUserId, onToggle, styles }: {
  *
  * @param props
  */
-function DeliveryState({ status, isQueued, styles, onRetry }: {
-        status: MessageStatus; isQueued: boolean; styles: ChatStyles; onRetry?: () => void;
+function DeliveryState({ status, isQueued, uploadState, uploadProgress, styles, onRetry, onCancelUpload }: {
+        status: MessageStatus; isQueued: boolean; uploadState?: ChatMessage['uploadState'];
+        uploadProgress?: number; styles: ChatStyles; onRetry?: () => void; onCancelUpload?: () => void;
     }) {
+  if (uploadState === 'uploading') {
+    const percent = Math.round((uploadProgress ?? 0) * 100);
+    return (
+      <View style={styles.uploadFooter}>
+        <Text
+          style={styles.pendingText}
+          accessibilityRole="progressbar"
+          accessibilityValue={{ now: percent, min: 0, max: 100 }}
+          testID="chat-attachment-upload-progress">
+          {`Uploading… ${percent}%`}
+        </Text>
+        {onCancelUpload ? (
+          <Pressable
+            onPress={onCancelUpload}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel upload"
+            hitSlop={touchSlop(20)}
+            testID="chat-attachment-upload-cancel">
+            <Text style={styles.failedText}>Cancel</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
+
   if (status === 'failed') {
     return (
       <Pressable
@@ -617,6 +655,7 @@ export type MessageRowProps = {
   onQuotePress?: (messageId: string) => void;
   onDownloadAttachment?: MessageAction;
   onOpenMedia?: MessageAction;
+  onCancelAttachmentUpload?: () => void;
 };
 
 const MessageRow = memo(
@@ -635,6 +674,7 @@ const MessageRow = memo(
   onQuotePress,
   onDownloadAttachment,
   onOpenMedia,
+  onCancelAttachmentUpload,
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
@@ -643,6 +683,9 @@ const MessageRow = memo(
   // as an emoji is chosen or the bubble is pressed again.
   const [isReactionBarOpen, setIsReactionBarOpen] = useState(false);
   const isTombstone = Boolean(message.deletedAt);
+  const uploadProgress = Math.max(0, Math.min(1, message.uploadProgress ?? 0));
+  const accessibilityLabel = messageAccessibilityLabel(message, status, uploadProgress);
+  const retryFailedMessage = status === 'failed' && onRetry ? () => onRetry(message) : undefined;
 
   // Swipe actions only ever apply to the user's own messages: the server
   // refuses to delete somebody else's message, so never offer it here.
@@ -694,8 +737,15 @@ const MessageRow = memo(
       ]}>
       <View
         accessible
-        accessibilityRole={canReact ? 'button' : undefined}
-        accessibilityHint={canReact ? 'Long press to react' : undefined}
+        accessibilityRole={retryFailedMessage || canReact ? 'button' : undefined}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityHint={
+          retryFailedMessage
+            ? 'Sends this message again'
+            : canReact ? 'Long press to react' : undefined
+        }
+        onTouchEnd={retryFailedMessage}
+        onAccessibilityTap={retryFailedMessage}
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,
@@ -753,8 +803,11 @@ const MessageRow = memo(
             <DeliveryState
               status={status}
               isQueued={isQueued}
+              uploadState={message.uploadState}
+              uploadProgress={uploadProgress}
               styles={styles}
-              onRetry={onRetry ? () => onRetry(message) : undefined}
+              onRetry={retryFailedMessage}
+              onCancelUpload={message.uploadState === 'uploading' ? onCancelAttachmentUpload : undefined}
             />
           ) : null}
         </View>
@@ -907,7 +960,6 @@ function ChatConversationScreen({
   onStopVoiceNote,
   onCancelVoiceNote,
   isUploadingAttachment = false,
-  attachmentUploadProgress = 0,
   onCancelAttachmentUpload,
   isRecordingVoiceNote = false,
   attachmentsAvailable = true,
@@ -940,6 +992,10 @@ function ChatConversationScreen({
   const [stickyDateLabel, setStickyDateLabel] = useState((null as string | null));
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
+  const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
+  const didMountDraftPersistRef = useRef(false);
+  const autoScrollFrameRef = useRef((null as number | null));
+  const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
   // Tracks the newest message's id so the auto-scroll-to-bottom effect below
   // only fires for a genuinely new/sent message, not when older history is
@@ -1005,6 +1061,15 @@ function ChatConversationScreen({
 
   const activeHighlightId = quotedHighlightId ?? highlightMessageId;
 
+  const scheduleScrollToEnd = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = requestAnimationFrame(() => {
+      autoScrollFrameRef.current = null;
+      if (!isMountedRef.current) return;
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
+
   // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
   // only by a tick glyph in the bubble footer, which a screen-reader user has
   // no reason to go back and re-read — so "did that send?" had no spoken
@@ -1029,6 +1094,12 @@ function ChatConversationScreen({
     announcedStatusRef.current.forEach((_status, messageId) => {
       if (!seen.has(messageId)) announcedStatusRef.current.delete(messageId);
     });
+    return () => {
+      if (autoScrollFrameRef.current !== null) {
+        cancelAnimationFrame(autoScrollFrameRef.current);
+        autoScrollFrameRef.current = null;
+      }
+    };
   }, [messages, currentUserId]);
 
   // Keep the newest message in view: scroll to the bottom whenever the
@@ -1051,7 +1122,7 @@ function ChatConversationScreen({
         !isCallEntry((newestMessage as TimelineEntry)) &&
         (newestMessage as ChatMessage).senderId === currentUserId;
       if (isNearBottomRef.current || isOwnMessage) {
-        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+        scheduleScrollToEnd();
         setShowScrollToBottom(false);
         setNewMessageCount(0);
       } else {
@@ -1059,7 +1130,7 @@ function ChatConversationScreen({
         setNewMessageCount(count => count + 1);
       }
     }
-  }, [messages, currentUserId]);
+  }, [messages, currentUserId, scheduleScrollToEnd]);
 
   // Deep link from a search result: scroll to the message the conversation was
   // opened at, once it is present in the loaded page. `scrollToIndex` is used
@@ -1103,14 +1174,17 @@ function ChatConversationScreen({
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const subscription = Keyboard.addListener(showEvent, () => {
-      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+      scheduleScrollToEnd();
     });
     return () => subscription.remove();
-  }, []);
+  }, [scheduleScrollToEnd]);
 
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       clearTimeout(typingIdleTimerRef.current);
+      clearTimeout(draftPersistTimerRef.current);
+      if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     };
   }, []);
 
@@ -1175,19 +1249,32 @@ function ChatConversationScreen({
     onSaveDraftRef.current = onSaveDraft;
   }, [onSaveDraft]);
 
+  const persistDraftNow = useCallback(() => {
+    clearTimeout(draftPersistTimerRef.current);
+    draftPersistTimerRef.current = undefined;
+    const { text, replyToId } = draftStateRef.current;
+    onSaveDraftRef.current?.(text, replyToId);
+  }, []);
+
   useEffect(() => {
-    const persist = () => {
-      const { text, replyToId } = draftStateRef.current;
-      onSaveDraftRef.current?.(text, replyToId);
-    };
+    if (!didMountDraftPersistRef.current) {
+      didMountDraftPersistRef.current = true;
+      return undefined;
+    }
+    clearTimeout(draftPersistTimerRef.current);
+    draftPersistTimerRef.current = setTimeout(persistDraftNow, DRAFT_PERSIST_DEBOUNCE_MS);
+    return () => clearTimeout(draftPersistTimerRef.current);
+  }, [draft, persistDraftNow, replyTarget]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener?.('change', nextState => {
-      if (nextState !== 'active') persist();
+      if (nextState !== 'active') persistDraftNow();
     });
     return () => {
       subscription?.remove?.();
-      persist();
+      persistDraftNow();
     };
-  }, []);
+  }, [persistDraftNow]);
 
   const handleAttachPress = useCallback(() => {
     if (!attachmentsAvailable) {
@@ -1381,6 +1468,7 @@ function ChatConversationScreen({
           onQuotePress={handleQuotePress}
           onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
           onOpenMedia={handleOpenMedia}
+          onCancelAttachmentUpload={onCancelAttachmentUpload}
         />
       );
     },
@@ -1397,6 +1485,7 @@ function ChatConversationScreen({
       isOffline,
       messagesById,
       onCallBack,
+      onCancelAttachmentUpload,
       onDeleteMessage,
       onDownloadAttachment,
       onReactToMessage,
@@ -1417,10 +1506,10 @@ function ChatConversationScreen({
   }, []);
 
   const handleScrollToBottomPress = useCallback(() => {
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
+    scheduleScrollToEnd();
     setShowScrollToBottom(false);
     setNewMessageCount(0);
-  }, []);
+  }, [scheduleScrollToEnd]);
 
   const presenceLabel = peerPresence ? (peerPresence.online ? 'Online' : 'Offline') : null;
   // Presence is only a one-shot snapshot fetched when the conversation opens
@@ -1574,22 +1663,6 @@ function ChatConversationScreen({
               message="Attachments aren't available on this server"
               accessibilityRole="alert"
               testID="chat-attachments-unavailable-notice"
-            />
-          ) : null}
-          {isUploadingAttachment ? (
-            <Banner
-              icon="attachmentAttach"
-              message={`Uploading… ${Math.round(attachmentUploadProgress * 100)}%`}
-              accessibilityRole="progressbar"
-              accessibilityValue={{
-                now: Math.round(attachmentUploadProgress * 100),
-                min: 0,
-                max: 100,
-              }}
-              onDismiss={onCancelAttachmentUpload}
-              dismissLabel="Cancel upload"
-              dismissTestID="chat-attachment-upload-cancel"
-              testID="chat-attachment-upload-progress"
             />
           ) : null}
           {replyTarget ? (
@@ -1963,6 +2036,11 @@ const createStyles = (colors: ThemeColors) =>
       ...typography.hint,
       color: colors.textMuted,
       fontStyle: 'italic',
+    },
+    uploadFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
     },
     failedText: {
       ...typography.hint,

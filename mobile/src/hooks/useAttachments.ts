@@ -8,6 +8,8 @@ import {
 import { pickCameraPhoto, pickDocument, pickPhoto } from '../attachmentPicker';
 import { ensureAttachmentPermission } from '../permissions';
 import type { CallStatus } from '../components/StatusBanner';
+import type { ChatMessage } from './useMessaging';
+import type { AttachmentRecord } from '../../../shared/signaling/schemas';
 import {
   isVoiceRecorderAvailable,
   startVoiceRecording,
@@ -30,14 +32,20 @@ import {
 export type UseAttachmentsParams = {
   authedFetchRef: { current: Function | null; };
   signalingUrl: string;
-  sendMessage: (peerId: string, body: string, options?: object) => Promise<void>;
+  beginAttachmentUpload: (peerId: string, type: string, attachment: Partial<AttachmentRecord>) => string | null;
+  updateAttachmentUploadProgress: (peerId: string, messageId: string, progress: number) => void;
+  finishAttachmentUpload: (peerId: string, messageId: string, type: string, attachment: AttachmentRecord) => Promise<void>;
+  failAttachmentUpload: (peerId: string, messageId: string, error?: string | null) => void;
   updateStatus: (message: string, severity?: CallStatus['severity']) => void;
 };
 
 export default function useAttachments({
   authedFetchRef,
   signalingUrl,
-  sendMessage,
+  beginAttachmentUpload,
+  updateAttachmentUploadProgress,
+  finishAttachmentUpload,
+  failAttachmentUpload,
   updateStatus,
 }: UseAttachmentsParams) {
   const [isUploading, setIsUploading] = useState(false);
@@ -57,10 +65,25 @@ export default function useAttachments({
   );
 
   const sendPicked = useCallback(
-    async (peerId: string, type: string, picked: any) => {
+    async (peerId: string, type: string, picked: any, existingMessageId?: string | null) => {
       if (!picked) return;
       setIsUploading(true);
       setUploadProgress(0);
+      const messageId =
+        existingMessageId ??
+        beginAttachmentUpload(peerId, type, {
+          url: picked.uri,
+          mimeType: picked.mimeType,
+          sizeBytes: picked.sizeBytes,
+          name: picked.name,
+          width: picked.width,
+          height: picked.height,
+          durationMs: picked.durationMs,
+        });
+      if (!messageId) {
+        setIsUploading(false);
+        return;
+      }
       try {
         const attachment = await uploadAttachment({
           authedFetch,
@@ -74,14 +97,18 @@ export default function useAttachments({
           width: picked.width,
           height: picked.height,
           durationMs: picked.durationMs,
-          onProgress: setUploadProgress,
+          onProgress: progress => {
+            setUploadProgress(progress);
+            updateAttachmentUploadProgress(peerId, messageId, progress);
+          },
           onAbortHandle: abort => {
             abortUploadRef.current = abort;
           },
         });
-        await sendMessage(peerId, '', { type, attachment });
+        await finishAttachmentUpload(peerId, messageId, type, attachment);
       } catch (error) {
         const failure = ((error ?? {}) as { status?: number, message?: string });
+        failAttachmentUpload(peerId, messageId, failure.message ?? 'Could not send attachment');
         if (failure.message === ATTACHMENT_CANCELLED_MESSAGE) {
           updateStatus?.('Upload cancelled', 'info');
         } else {
@@ -93,7 +120,38 @@ export default function useAttachments({
         setIsUploading(false);
       }
     },
-    [authedFetch, signalingUrl, sendMessage, updateStatus],
+    [
+      authedFetch,
+      beginAttachmentUpload,
+      failAttachmentUpload,
+      finishAttachmentUpload,
+      signalingUrl,
+      updateAttachmentUploadProgress,
+      updateStatus,
+    ],
+  );
+
+  const retryUpload = useCallback(
+    async (peerId: string, message: ChatMessage) => {
+      const attachment = message?.attachment;
+      const uri = attachment?.url;
+      if (!message?.messageId || !message.type || !uri) return;
+      await sendPicked(
+        peerId,
+        message.type,
+        {
+          uri,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          name: attachment.name,
+          width: attachment.width,
+          height: attachment.height,
+          durationMs: attachment.durationMs,
+        },
+        message.messageId,
+      );
+    },
+    [sendPicked],
   );
 
   /**
@@ -165,6 +223,7 @@ export default function useAttachments({
 
   return {
     pickAndSend,
+    retryUpload,
     cancelUpload,
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,

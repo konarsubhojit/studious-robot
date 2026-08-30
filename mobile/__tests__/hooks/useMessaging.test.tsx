@@ -929,6 +929,69 @@ describe('useMessaging searchMessages', () => {
     );
   });
 
+  test('attachment upload helpers keep one message id from preview through retryable send', async () => {
+    const socket = makeSocket();
+    const { resultRef } = setup({ socketRef: { current: socket } });
+    const preview = { url: 'file:///photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+    let messageId = '';
+
+    act(() => {
+      messageId = resultRef.current.beginAttachmentUpload('bob', 'image', preview) ?? '';
+    });
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      messageId,
+      attachment: preview,
+      uploadState: 'uploading',
+      pending: true,
+    });
+    expect(socket.emit).not.toHaveBeenCalled();
+
+    act(() => {
+      resultRef.current.updateAttachmentUploadProgress('bob', messageId, 0.5);
+    });
+    expect(resultRef.current.messagesByPeer.bob[0].uploadProgress).toBe(0.5);
+
+    const uploaded = { url: 'https://media.test/photo.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
+    await act(async () => {
+      await resultRef.current.finishAttachmentUpload('bob', messageId, 'image', uploaded);
+    });
+
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      messageId,
+      attachment: uploaded,
+      uploadState: undefined,
+    });
+    expect(socket.emit).toHaveBeenLastCalledWith(
+      'message.send',
+      expect.objectContaining({ messageId, type: 'image', attachment: uploaded }),
+      expect.any(Function),
+    );
+  });
+
+  test('a failed attachment upload leaves its bubble retryable instead of removing it', async () => {
+    const { resultRef } = setup();
+    let messageId = '';
+
+    act(() => {
+      messageId = resultRef.current.beginAttachmentUpload('bob', 'image', {
+        url: 'file:///photo.jpg',
+        mimeType: 'image/jpeg',
+      }) ?? '';
+      resultRef.current.failAttachmentUpload('bob', messageId, 'Upload cancelled');
+    });
+
+    expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      messageId,
+      pending: false,
+      failed: true,
+      syncState: 'failed',
+      uploadState: 'failed',
+      uploadError: 'Upload cancelled',
+    });
+  });
+
   test('sendMessage still ignores an empty text message', async () => {
     const socket = makeSocket();
     const { resultRef } = setup({ socketRef: { current: socket } });

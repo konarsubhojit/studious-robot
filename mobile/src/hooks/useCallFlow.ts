@@ -647,7 +647,10 @@ export default function useCallFlow({
   const attachments = useAttachments({
     authedFetchRef,
     signalingUrl,
-    sendMessage: messaging.sendMessage,
+    beginAttachmentUpload: messaging.beginAttachmentUpload,
+    updateAttachmentUploadProgress: messaging.updateAttachmentUploadProgress,
+    finishAttachmentUpload: messaging.finishAttachmentUpload,
+    failAttachmentUpload: messaging.failAttachmentUpload,
     updateStatus,
   });
 
@@ -4013,6 +4016,7 @@ export default function useCallFlow({
     searchMessages: messaging.searchMessages,
     sendMessage: messaging.sendMessage,
     retryMessage: messaging.retryMessage,
+    retryAttachmentUpload: attachments.retryUpload,
     discardMessage: messaging.discardMessage,
     deleteMessage: messaging.deleteMessage,
     reactToMessage: messaging.reactToMessage,
