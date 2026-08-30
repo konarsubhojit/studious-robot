@@ -287,6 +287,44 @@ export function smoothConnectionQuality(
 }
 
 /**
+ * How far a screen share has got towards actually reaching the remote peer.
+ *
+ * `verifyScreenShareFrames` already polls the outbound RTP stats and knows the
+ * difference between "frames are flowing", "the stats could not be read" and
+ * "nothing was ever sent" — it just used to speak only in the failure case.
+ *
+ * - `idle` — not sharing.
+ * - `checking` — capture started, the first frame has not been confirmed yet.
+ * - `confirmed` — outbound frames were counted, so the peer is receiving them.
+ * - `unverified` — sharing, but the stats were unreadable, so the claim that
+ *   the peer can see the screen cannot honestly be made.
+ */
+export type ScreenShareDelivery = 'idle' | 'checking' | 'confirmed' | 'unverified';
+
+/**
+ * The line shown under the call controls while sharing.
+ *
+ * Only `confirmed` promises the remote side can see anything: an unverifiable
+ * share falls back to describing what this device is doing, which is all it
+ * actually knows.
+ *
+ * @param delivery frame-delivery state from `useScreenShare`
+ * @param audioShared whether screen audio is part of the share
+ */
+export function describeScreenShareDelivery(
+  delivery: ScreenShareDelivery | null | undefined,
+  audioShared: boolean = false,
+): string {
+  if (delivery === 'checking') return 'Sharing screen — checking they can see it';
+  if (delivery === 'confirmed') {
+    return audioShared
+      ? 'Sharing with audio — they can see your screen'
+      : 'Sharing — they can see your screen';
+  }
+  return audioShared ? 'Sharing screen with audio' : 'Sharing screen';
+}
+
+/**
  * Which side of a candidate pair is relaying the media.
  *
  * Split out of the summary below so the four-way outcome reads as a table

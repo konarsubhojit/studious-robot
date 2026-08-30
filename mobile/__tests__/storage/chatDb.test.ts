@@ -167,6 +167,50 @@ describe('chatDb', () => {
       expect(MAX_CONVERSATIONS).toBe(100);
       expect(MAX_MESSAGES_PER_CONVERSATION * MAX_CONVERSATIONS).toBeLessThanOrEqual(20_000);
     });
+
+    // The message *count* is only half of what a write costs: the other half
+    // is how big each message is, and that grows every time the schema gains a
+    // field. `JSON.stringify` of the whole document runs on the JS thread on
+    // every flush, so this pins the input to the latency recorded against P1.7
+    // in ../../../docs/OPTIMIZATION_PLAN.md — a schema change that doubles the
+    // document doubles the jank on send.
+    test('a full document stays within the size the P1.7 measurement assumed', () => {
+      const snapshot = {
+        conversations: [],
+        messagesByPeer: {},
+        outbox: [],
+        drafts: {},
+      } as any;
+
+      for (let index = 0; index < MAX_CONVERSATIONS; index += 1) {
+        const peerId = `user-peer${index}`;
+        const messages = makeMessages(MAX_MESSAGES_PER_CONVERSATION, {
+          conversationId: `conv-${index}`,
+          senderId: peerId,
+          recipientId: 'user-alice',
+          body: 'Sure, that works for me — see you at half past then.',
+          type: 'text',
+          attachment: null,
+          replyTo: null,
+          reactions: {},
+          deletedAt: null,
+          deliveredTo: ['user-alice'],
+          readAt: '2024-01-01T00:00:00.000Z',
+        } as any);
+        snapshot.conversations.push({
+          conversationId: `conv-${index}`,
+          peerId,
+          lastMessage: messages[0],
+          lastActivity: '2024-01-01T00:00:00.000Z',
+          unreadCount: 0,
+        });
+        snapshot.messagesByPeer[peerId] = messages;
+      }
+
+      const bytes = JSON.stringify(snapshot).length;
+      expect(bytes).toBeGreaterThan(1_000_000);
+      expect(bytes).toBeLessThan(12_000_000);
+    });
   });
 });
 

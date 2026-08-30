@@ -69,7 +69,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
 | P1.2 | Decompose `useCallFlow` | ◧ partial — two slices are out and directly tested (the WebRTC stats helpers in `callUx`, and the ICE-recovery ladder in `call/iceRestartLadder`); the structural split still wants its own PR |
-| P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test |
+| P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
 
@@ -97,6 +97,9 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | C2 | Make failures speak | ✅ `setTrackEnabled` reads the track state back so the UI can never claim "muted" while audio still flows, and a manually chosen headset that disconnects announces the hand-over. The plan's PiP-refusal toast has **no trigger**: PiP is only ever entered natively from `onUserLeaveHint`, never from a user-initiated request |
 | C4 | Disable controls during renegotiation | ✅ the screen-share row reports `isTogglingScreenShare` as a busy, disabled "Starting…/Stopping…" state |
 | D1 | Call from chat / chat from call | ✅ the conversation header already placed calls; call-history rows now swipe to "Message" |
+| — | Screen share confirms success, not only failure | ✅ `verifyScreenShareFrames` already returned `verified`; `useScreenShare` now publishes it as `screenShareDelivery` (`idle`/`checking`/`confirmed`/`unverified`) and the in-call indicator settles on "Sharing — they can see your screen". An unreadable stats report stays `unverified` and keeps the old wording — the UI must not promise a view it could not measure |
+| — | Haptics at the moments that substitute for looking | ✅ connect, end and incoming ring already fired; *message sent* was missing and now fires on the server ack, not on the optimistic bubble. Silent mode is respected through `triggerHapticUnlessSilent`, and only a single-message drain buzzes, so a reconnect replaying a backlog does not rattle once per queued message |
+| — | First-run empty states point somewhere | ✅ the empty chat and call lists now offer a low-emphasis "Search for people" link. Deliberately *not* an `actionLabel`: a second filled button in the screen's accent, a couple of hundred pixels from the FAB, makes whichever the user reaches for the wrong one. The "no results" / "we could not check" distinction from P2.4 is untouched |
 
 ### Chat & calling UX pass — deferred
 
@@ -220,12 +223,34 @@ connection. `useCallFlow.test.tsx` passes unmodified.
 
 The structural three-hook split remains deferred for the reason above.
 
-### P1.7: the bound is now pinned
+### P1.7: the bound is now pinned, and priced
 The JSON document is only defensible *because* the store is bounded — every
 read and write serialises the whole file, so the cost is a direct function of
 `MAX_MESSAGES_PER_CONVERSATION × MAX_CONVERSATIONS`. `chatDb.test.ts` now
 asserts those two constants, so raising them is a deliberate act that fails a
 test and forces the SQLite conversation, rather than a one-line drift.
+
+The bound has since been priced, because the symptom of it arriving is **jank
+on send**, not an error: a full document (100 conversations × 200 messages,
+realistic message shape) serialises to **≈ 7.9 MB**, and `JSON.stringify` of
+it costs **≈ 24 ms (p95 25 ms)** on x86 V8. That is the JS thread, blocked, on
+a flush — and flushes are debounced at 250 ms, so a burst of sends costs it
+once, not once per message. A second `chatDb.test.ts` case pins the document
+size, so a schema change that inflates every message fails a test instead of
+quietly doubling that number.
+
+Two honest caveats. The figure is a **floor**: it is V8 on a CI x86 box, not
+Hermes on a mid-range Android, where the same work runs several times slower —
+a hundred-plus millisecond block, or several dropped frames, at the bound. And
+it excludes the native `writeFile`, which is off the JS thread. Measuring the
+real number needs a device, which this environment does not have; the
+extrapolation is recorded here rather than presented as a measurement.
+
+The conclusion is unchanged but no longer a guess: at *today's* volumes (a few
+conversations, tens of messages) the document is kilobytes and the write is
+sub-millisecond. The cost only becomes visible for a user who is at, or near,
+the retention ceiling on every conversation. SQLite stays deferred, and this
+is the number that would retire the question.
 
 
 ### P3.4 was already fixed

@@ -315,6 +315,62 @@ describe('useScreenShare', () => {
   });
 });
 
+describe('useScreenShare frame delivery', () => {
+  /** Start a share whose frame verification resolves to `frameCheck`. */
+  async function share(frameCheck: any) {
+    (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
+      ok: true,
+      stream: { id: 'screen' },
+      videoTrack: makeTrack('video'),
+      audioTrack: null,
+      audioShared: false,
+    });
+    (screenShare.verifyScreenShareFrames as jest.Mock).mockResolvedValue(frameCheck);
+
+    const harness = setup();
+    await act(async () => {
+      await harness.resultRef.current.handleScreenShareToggle();
+    });
+    return harness;
+  }
+
+  test('is idle before anything is shared', () => {
+    const { resultRef } = setup();
+    expect(resultRef.current.screenShareDelivery).toBe('idle');
+  });
+
+  test('settles on confirmed once outbound frames are counted', async () => {
+    const { resultRef } = await share({ ok: true, frames: 12, verified: true });
+    expect(resultRef.current.screenShareDelivery).toBe('confirmed');
+  });
+
+  test('stays unverified when the stats could not be read', async () => {
+    // Not a failure — the share runs — but the peer's view is unknown, so the
+    // UI must not promise they can see anything.
+    const { resultRef } = await share({ ok: true, frames: null, verified: false });
+    expect(resultRef.current.screenShareDelivery).toBe('unverified');
+  });
+
+  test('returns to idle when the share stops', async () => {
+    const { resultRef } = await share({ ok: true, frames: 3, verified: true });
+
+    await act(async () => {
+      await resultRef.current.handleScreenShareToggle();
+    });
+
+    expect(resultRef.current.screenShareDelivery).toBe('idle');
+  });
+
+  test('a share that never delivered a frame is not left looking confirmed', async () => {
+    const { resultRef } = await share({
+      ok: false,
+      reason: 'no_frames',
+      message: 'Screen sharing produced no video',
+    });
+    expect(resultRef.current.screenShareDelivery).toBe('idle');
+  });
+});
+
 describe('useScreenShare in-flight state', () => {
   test('reports the toggle as in flight until the capture settles', async () => {
     let releaseCapture: (value: any) => void = () => {};

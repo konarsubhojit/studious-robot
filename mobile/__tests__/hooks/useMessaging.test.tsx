@@ -8,12 +8,17 @@ import {
   setActiveConversation,
 } from '../../src/messageNotification';
 import * as chatDb from '../../src/storage/chatDb';
+import { triggerHapticUnlessSilent } from '../../src/haptics';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
   logInfo: jest.fn(),
   logWarn: jest.fn(),
   logVerbose: jest.fn(),
+}));
+
+jest.mock('../../src/haptics', () => ({
+  triggerHapticUnlessSilent: jest.fn(async () => true),
 }));
 
 jest.mock('../../src/messageNotification', () => ({
@@ -317,6 +322,44 @@ describe('useMessaging', () => {
     );
     expect((chatDb as any).__snapshot.outbox).toEqual([]);
     expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({ syncState: 'synced' });
+  });
+
+  test('a delivered message buzzes so the sender need not watch the screen', async () => {
+    const { resultRef } = setup();
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'hi');
+    });
+
+    expect(triggerHapticUnlessSilent).toHaveBeenCalledWith('messageSent');
+  });
+
+  test('a message that is only queued does not claim to have been sent', async () => {
+    const socketRef = { current: makeSocket({ connected: false }) };
+    const { resultRef } = setup({ socketRef });
+
+    await act(async () => {
+      await resultRef.current.sendMessage('bob', 'from the train');
+    });
+
+    expect(triggerHapticUnlessSilent).not.toHaveBeenCalled();
+  });
+
+  test('replaying a backlog buzzes once at most, not once per queued message', async () => {
+    // A reconnect that flushes five queued sends must not rattle five times.
+    (chatDb as any).__snapshot.outbox = [1, 2, 3].map(index => ({
+      messageId: `queued-${index}`,
+      conversationId: 'c1',
+      recipientId: 'bob',
+      body: `queued ${index}`,
+      createdAt: `2024-01-01T00:0${index}:00.000Z`,
+      attempts: 0,
+    }));
+    setup();
+
+    await act(async () => {});
+
+    expect(triggerHapticUnlessSilent).not.toHaveBeenCalled();
   });
 
   test('a send queued by a previous run is replayed on mount', async () => {

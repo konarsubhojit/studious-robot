@@ -334,6 +334,7 @@ function ActiveCallScreen() {
       isTogglingScreenShare={callFlow.isTogglingScreenShare}
       isScreenAudioEnabled={callFlow.isScreenAudioEnabled}
       isScreenAudioShared={callFlow.isScreenAudioShared}
+      screenShareDelivery={callFlow.screenShareDelivery}
       isScreenShareSupported={callFlow.isScreenShareSupported}
       isRemoteScreenSharing={callFlow.isRemoteScreenSharing}
       iceTransportPolicy={settings.iceTransportPolicy}

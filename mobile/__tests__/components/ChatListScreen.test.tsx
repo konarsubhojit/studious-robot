@@ -204,6 +204,23 @@ describe('ChatListScreen', () => {
     expect(picker.props.visible).toBe(true);
   });
 
+  test('the first-run empty state offers search as a low-emphasis way out', () => {
+    const onOpenSearch = jest.fn();
+    const tree = render({ conversations: [], onOpenConversation: jest.fn(), onOpenSearch });
+
+    const link = findByTestId(tree, 'chat-list-empty-link');
+    expect(link).not.toBeNull();
+    act(() => {
+      link.props.onPress();
+    });
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
+  test('the empty state offers nothing to tap when there is no search to open', () => {
+    const tree = render({ conversations: [], onOpenConversation: jest.fn() });
+    expect(findByTestId(tree, 'chat-list-empty-link')).toBeNull();
+  });
+
   test('renders an initials avatar with an online-status dot on conversation rows', () => {
     const tree = render({
       conversations: [makeConversation({ peerId: 'user-bob', online: true })],

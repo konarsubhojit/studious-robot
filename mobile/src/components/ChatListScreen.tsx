@@ -270,7 +270,15 @@ function ChatListScreen({
       icon="emptyChats"
       title="No conversations yet"
       description="Find someone by their username and say hello."
-      // Text only: the new-chat FAB is this screen's single primary action.
+      // No `actionLabel`: the new-chat FAB is this screen's single primary
+      // action, and a second filled button in the same accent a couple of
+      // hundred pixels away makes whichever the user reaches for the wrong
+      // one. The search link is deliberately low-emphasis — it is the route a
+      // first-run user with no contacts at all needs, and "find someone by
+      // their username" is an instruction the screen should be able to obey.
+      linkLabel={onOpenSearch ? 'Search for people' : undefined}
+      onLinkPress={onOpenSearch}
+      linkHint="Search people, conversations, messages and calls"
       testID="chat-list-empty"
     />
   );
