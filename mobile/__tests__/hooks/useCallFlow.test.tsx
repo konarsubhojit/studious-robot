@@ -271,9 +271,8 @@ function renderHook(options?: any) {
 
 // Every hook under test here starts one or more `setInterval`/`setTimeout`
 // timers (elapsed-call clock, proactive session refresh, stats polling,
-// presence debounce, typing-indicator safety net) via `useEffect`, and none
-// of these tests unmount the rendered tree, so those timers are never
-// cleared. Under Jest's *real* timers those are live OS timer handles that
+// presence debounce, typing-indicator safety net) via `useEffect`. Under
+// Jest's *real* timers those are live OS timer handles that
 // keep the process's event loop open, so Jest hangs for tens of seconds
 // after every run ("Jest did not exit...") waiting for them, even though
 // every test already passed. Fake timers are a virtual clock only — they
@@ -3251,6 +3250,12 @@ describe('useCallFlow chat', () => {
     );
   }
 
+  function latestAppStateChangeListeners() {
+    return (AppState.addEventListener as jest.Mock).mock.calls
+      .filter(([event]: any) => event === 'change')
+      .map(([, listener]: any) => listener);
+  }
+
   /** Simulate the app entering (or leaving) Picture-in-Picture / compact view. */
   function setCompactView(tree: any, resultRef: any, isCompactView: boolean) {
     (useCompactCallView as jest.Mock).mockImplementation(() => ({
@@ -3480,6 +3485,110 @@ describe('useCallFlow chat', () => {
       // The manager is shared between sockets for the same URL, so a listener
       // left behind would pile up (and pin this hook) on every reconnect.
       expect(socketMock.io.off).toHaveBeenCalledWith('ping', onPing);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('unmounting an active call stops heartbeat wake-ups from timers and app-state events', async () => {
+    jest.useFakeTimers();
+    try {
+      const { tree, peerConnection, emits } = await acceptCallWithPeerConnection('call-hb-unmount-1');
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+      const beforeUnmount = heartbeatEmits(emits).length;
+
+      const appStateListeners = latestAppStateChangeListeners();
+      expect(appStateListeners.length).toBeGreaterThan(0);
+      const notifyAppState = async (nextState: string) => {
+        await act(async () => {
+          appStateListeners.forEach(listener => listener(nextState));
+          await Promise.resolve();
+        });
+      };
+
+      act(() => {
+        tree.unmount();
+      });
+
+      const onPing = getManagerHandler('ping');
+      await act(async () => {
+        jest.setSystemTime(Date.now() + 90000);
+        jest.advanceTimersByTime(90000);
+        onPing?.();
+        await Promise.resolve();
+      });
+      await notifyAppState('background');
+      await notifyAppState('active');
+
+      expect(heartbeatEmits(emits)).toHaveLength(beforeUnmount);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('device smoke: incoming answer stays alive across reconnect, screen share and app-state transitions', async () => {
+    jest.useFakeTimers();
+    try {
+      const callId = 'call-device-smoke-1';
+      const { resultRef, peerConnection, emits } = await acceptCallWithPeerConnection(callId);
+
+      await act(async () => {
+        peerConnection.connectionState = 'connected';
+        peerConnection.onconnectionstatechange?.();
+      });
+
+      const disconnectHandler = getSocketHandler('disconnect');
+      const connectHandler = getSocketHandler('connect');
+      await act(async () => {
+        disconnectHandler?.('transport error');
+        await Promise.resolve();
+      });
+      const beforeReconnect = heartbeatEmits(emits).length;
+      await act(async () => {
+        jest.setSystemTime(Date.now() + 31000);
+        await connectHandler?.();
+        await Promise.resolve();
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(beforeReconnect + 1);
+
+      const { startScreenCapture } = require('../../src/screenShare');
+      (startScreenCapture as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        stream: { getTracks: () => [] },
+        videoTrack: { kind: 'video', stop: jest.fn() },
+        audioTrack: null,
+        audioShared: false,
+      });
+      await act(async () => {
+        await resultRef.current.handleScreenShareToggle();
+      });
+      expect(resultRef.current.isScreenSharing).toBe(true);
+      expect(emits).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            event: 'call.media-state',
+            payload: expect.objectContaining({
+              callId,
+              mediaState: expect.objectContaining({ isScreenSharing: true }),
+            }),
+          }),
+        ]),
+      );
+
+      const appStateListeners = latestAppStateChangeListeners();
+      expect(appStateListeners.length).toBeGreaterThan(0);
+      const beatsBeforeAppState = heartbeatEmits(emits).length;
+      await act(async () => {
+        appStateListeners.forEach(listener => listener('background'));
+        jest.setSystemTime(Date.now() + 45000);
+        appStateListeners.forEach(listener => listener('active'));
+        await Promise.resolve();
+      });
+      expect(heartbeatEmits(emits)).toHaveLength(beatsBeforeAppState + 1);
     } finally {
       jest.useRealTimers();
     }
