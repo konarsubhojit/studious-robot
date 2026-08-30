@@ -89,6 +89,22 @@ import type {
   RecoveryTrigger,
 } from '../call/recoveryEpisode';
 import {
+  buildCallEndSummary,
+  callDurationSeconds,
+  classifyCallDelivery,
+  decideAcceptIncomingCall,
+  decideIncomingOffer,
+  isLiveCallStatus,
+  isMissedCall,
+  isTerminalCallStatus,
+  isTerminalIceState,
+  rememberAnsweredCallId,
+  resolveCallEndReason,
+  shouldResetReplayGuard,
+  shouldSummariseCall,
+} from '../call/callDecisions';
+import type { CallDelivery, CallEndSummary } from '../call/callDecisions';
+import {
   canReuseIceServers,
   decideFetchedIceServers,
   decideIceConnectionState,
@@ -159,23 +175,11 @@ const ICE_SESSION_WAIT_MS = 5000;
  */
 const ANSWER_SOCKET_WAIT_MS = 5000;
 
-/**
- * Call statuses that mean a call is up (or coming up) on this device.  A failed
- * accept must never tear one of these down: a duplicate Answer tap for a call
- * that is already connected fails server-side ("not ringing any more") and the
- * naive cleanup would kill the very call the user just picked up.
- */
-const LIVE_CALL_STATUSES = new Set(['accepted', 'connecting_media', 'in_call']);
-
-/** Statuses that mean a call has stopped ringing for good. */
-const TERMINAL_CALL_STATUSES = new Set([
-  'ended',
-  'declined',
-  'missed',
-  'busy',
-  'unreachable',
-]);
-
+// Which statuses mean a call is live or terminal, whether a tap is a duplicate
+// accept, what an offer collision means, and how a finished call describes
+// itself now live in `call/callDecisions.ts` — facts in, decision out, so each
+// rule is a unit test rather than something reachable only by mounting this
+// hook.
 
 // Backoff, glare tie-break and precondition-retry timing for the ICE-restart
 // ladder now live in `call/iceRestartLadder.ts`, alongside the rules that use
@@ -227,47 +231,10 @@ export type CallRecoveryStatus = {
 };
 
 /**
- * What the UI is told about a call once it is over.
- *
- * The user used to be returned to the tab shell with no resolution at all — a
- * call that dropped and a call the peer hung up looked identical. The reason is
- * phrased with the same vocabulary the conversation timeline uses, so the same
- * call is described the same way at the moment it ends and forever after.
+ * Re-exported from `call/callDecisions` so existing importers keep working;
+ * they live there because the rules that build and classify them need no React.
  */
-export type CallEndSummary = {
-  durationSeconds: number | null;
-  quality: string;
-  endReason: string | null;
-  status: string | null;
-  direction: 'outgoing' | 'incoming';
-  peerId: string | null;
-};
-
-/**
- * End reasons worth summarising for a call that never connected.
- *
- * A call that failed leaves the user with a question ("was that them, or is
- * this app broken?"); a call they cancelled themself does not.
- */
-const SUMMARISED_END_REASONS = new Set([
-  'media_failed',
-  'failed',
-  'missed',
-  'timeout',
-  'busy',
-  'unreachable',
-]);
-
-/**
- * How the callee is being reached while an outgoing call rings.
- *
- * `ringing` — a device with a live socket is ringing right now.
- * `push` — every device is asleep; a push has been sent and must wake one.
- */
-export type CallDelivery = 'ringing' | 'push';
-
-/** How many answered callIds are remembered for duplicate-accept suppression. */
-const ANSWERED_CALL_HISTORY_LIMIT = 20;
+export type { CallDelivery, CallEndSummary };
 
 /**
  * How often to proactively rotate the session token.  Set well below typical
@@ -295,14 +262,6 @@ export const CALL_PHASES = CALL_STATES;
  * because the call log's pure helpers need it without the WebRTC stack.
  */
 export { CALL_END_REASON_LABELS };
-
-/** ICE states the server reads as "this call is over". */
-const TERMINAL_ICE_STATES = new Set(['disconnected', 'failed']);
-
-/** Whether a queued `call.connected` payload would end the call. */
-function isTerminalIceState(value: unknown): boolean {
-  return typeof value === 'string' && TERMINAL_ICE_STATES.has(value);
-}
 
 /**
  * Tell the server which calls this device still considers live, and hear back
@@ -1928,31 +1887,29 @@ export default function useCallFlow({
       stopIncomingRingtone();
       logInfo('[CallFlow] Ringing stopped');
 
-      const durationSeconds = callConnectedAtRef.current
-        ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
-        : null;
+      const durationSeconds = callDurationSeconds(callConnectedAtRef.current, Date.now());
 
-      // A call whose media never came back ends as a plain `ended` like any
-      // hangup, so the local knowledge that recovery was exhausted outranks the
-      // reason that came back over the wire. This is deliberately the reason
-      // recorded in call history too: the timeline should say "Connection lost"
-      // for the call the user just watched die, not "Call ended".
-      const resolvedReason = isConnectionLostRef.current
-        ? 'media_failed'
-        : endReason ?? callRecord?.endReason ?? null;
+      const resolvedReason = resolveCallEndReason({
+        isConnectionLost: isConnectionLostRef.current,
+        requestedReason: endReason,
+        recordEndReason: callRecord?.endReason,
+      });
 
-      // Every call that got far enough to have an outcome worth reporting: one
-      // that connected, and one that failed. A call the user themself cancelled
-      // needs no summary — they already know how it ended.
-      if (callConnectedAtRef.current || SUMMARISED_END_REASONS.has(resolvedReason ?? '')) {
-        setCallSummary({
-          durationSeconds,
-          quality: connectionQualityRef.current?.label || 'No link',
+      if (
+        shouldSummariseCall({
+          hasConnected: Boolean(callConnectedAtRef.current),
           endReason: resolvedReason,
-          status: callRecord?.status ?? null,
-          direction: isCaller ? 'outgoing' : 'incoming',
-          peerId: (isCaller ? callRecord?.calleeId : callRecord?.callerId) ?? null,
-        });
+        })
+      ) {
+        setCallSummary(
+          buildCallEndSummary({
+            durationSeconds,
+            qualityLabel: connectionQualityRef.current?.label,
+            endReason: resolvedReason,
+            isCaller,
+            call: callRecord,
+          }),
+        );
       }
 
       // Emit QoS summary telemetry for post-call diagnosis.
@@ -1965,10 +1922,10 @@ export default function useCallFlow({
 
       // Record in call history whenever we have a call object to log.
       if (callRecord?.callId) {
-        const isMissed =
-          resolvedReason === 'missed' ||
-          resolvedReason === 'timeout' ||
-          callRecord.status === 'missed';
+        const isMissed = isMissedCall({
+          endReason: resolvedReason,
+          status: callRecord.status,
+        });
         addToHistory({
           callId: callRecord.callId,
           callerId: callRecord.callerId,
@@ -2200,9 +2157,7 @@ export default function useCallFlow({
         logInfo('[CallFlow] Call ringing', { callId: call.callId, delivery });
         activeCallRef.current = call;
         setActiveCall(call);
-        // A server that does not report delivery is one that only ever rang a
-        // live device, which is what `ringing` means.
-        setCallDelivery(delivery === 'push' ? 'push' : 'ringing');
+        setCallDelivery(classifyCallDelivery(delivery));
       });
 
       // ── Call state changes ────────────────────────────────────────────
@@ -2224,7 +2179,7 @@ export default function useCallFlow({
           // A call that stops ringing — cancelled, declined, missed, timed out —
           // must take its OS notification with it, otherwise the shade keeps a
           // tappable ghost that answers a call nobody can join.
-          if (eventCallId && TERMINAL_CALL_STATUSES.has(callStatus)) {
+          if (eventCallId && isTerminalCallStatus(callStatus)) {
             logInfo('[CallFlow] Dismissing call UI for terminal transition', {
               callId: eventCallId,
               callStatus,
@@ -2327,11 +2282,16 @@ export default function useCallFlow({
 
       // ── RTC offer (callee receives offer from caller) ─────────────────
       signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId }) => {
-        if (callId !== activeCallIdRef.current) {
+        const offerDecision = decideIncomingOffer({
+          callId,
+          activeCallId: activeCallIdRef.current,
+          isNegotiating: isNegotiatingRef.current,
+        });
+        if (offerDecision === 'ignore-unknown-call') {
           logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
           return;
         }
-        if (isNegotiatingRef.current) {
+        if (offerDecision === 'ignore-glare') {
           logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer');
           return;
         }
@@ -3256,10 +3216,10 @@ export default function useCallFlow({
 
   /** Remember a callId that must never be accepted twice (bounded). */
   const rememberAnsweredCall = useCallback(/** @param callId */ (callId: string) => {
-    const history = answeredCallIdsRef.current;
-    if (history.includes(callId)) return;
-    history.push(callId);
-    if (history.length > ANSWERED_CALL_HISTORY_LIMIT) history.shift();
+    answeredCallIdsRef.current = rememberAnsweredCallId(
+      answeredCallIdsRef.current,
+      callId,
+    );
   }, []);
 
   const acceptIncomingCall = useCallback(async () => {
@@ -3281,34 +3241,30 @@ export default function useCallFlow({
     // ── Idempotency guard ───────────────────────────────────────────────────
     // A second accept for the same call is a logged no-op, never an error path:
     // the server has already left `ringing`, so it would fail and the old
-    // failure handling tore down the call that had just connected.
-    if (acceptInFlightCallIdRef.current === call.callId) {
+    // failure handling tore down the call that had just connected. A tap for a
+    // call that stopped ringing (a stale notification the OS still showed) is
+    // dismissed instead of answered.
+    const acceptDecision = decideAcceptIncomingCall({
+      callId: call.callId,
+      status: call.status,
+      acceptInFlightCallId: acceptInFlightCallIdRef.current,
+      answeredCallIds: answeredCallIdsRef.current,
+    });
+    if (acceptDecision.action === 'skip') {
       logInfo('[CallFlow] Ignoring duplicate acceptIncomingCall', {
         callId: call.callId,
-        reason: 'accept_in_flight',
+        reason: acceptDecision.reason,
       });
-      reportAnswerStage(call.callId, 'answer_skipped_duplicate', 'accept_in_flight');
+      reportAnswerStage(call.callId, 'answer_skipped_duplicate', acceptDecision.reason);
       return;
     }
-    if (answeredCallIdsRef.current.includes(call.callId)) {
-      logInfo('[CallFlow] Ignoring duplicate acceptIncomingCall', {
-        callId: call.callId,
-        reason: 'already_accepted',
-      });
-      reportAnswerStage(call.callId, 'answer_skipped_duplicate', 'already_accepted');
-      return;
-    }
-
-    // The call stopped ringing before the tap reached here (a stale
-    // notification the OS still showed): dismiss it instead of answering a
-    // call that no longer exists.
-    if (call.status && call.status !== 'ringing') {
+    if (acceptDecision.action === 'dismiss') {
       logInfo('[CallFlow] Ignoring accept for a call that stopped ringing', {
         callId: call.callId,
         status: call.status,
       });
-      reportAnswerStage(call.callId, 'accept_tapped', 'call_already_ended');
-      clearPendingAnswer(call.callId, 'call_already_ended');
+      reportAnswerStage(call.callId, 'accept_tapped', acceptDecision.reason);
+      clearPendingAnswer(call.callId, acceptDecision.reason);
       endCallKeepCall(call.callId);
       return;
     }
@@ -3367,7 +3323,7 @@ export default function useCallFlow({
       // which case the call is connected and ending it here is exactly the
       // "cannot pick up" bug.
       const liveCall = activeCallRef.current;
-      if (liveCall && LIVE_CALL_STATUSES.has(liveCall.status)) {
+      if (liveCall && isLiveCallStatus(liveCall.status)) {
         logWarn('[CallFlow] Accept failed while a call is already active; keeping it', {
           callId: call.callId,
           activeCallId: liveCall.callId,
@@ -3615,7 +3571,7 @@ export default function useCallFlow({
     if (!consumePendingAnswer(callId)) return;
     // Bounded: callIds are unique, so the guard set would otherwise grow for
     // the lifetime of the app.
-    if (replayedAnswerCallIdsRef.current.size >= ANSWERED_CALL_HISTORY_LIMIT) {
+    if (shouldResetReplayGuard(replayedAnswerCallIdsRef.current.size)) {
       replayedAnswerCallIdsRef.current.clear();
     }
     replayedAnswerCallIdsRef.current.add(callId);
