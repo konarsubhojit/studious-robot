@@ -3,6 +3,7 @@
 | Document | Coverage |
 | --- | --- |
 | [Azure setup](./AZURE_SETUP.md) | Configure Azure Notification Hubs and Cosmos DB. |
+| [Complexity baseline](./complexity-baseline.md) | Baselines cognitive complexity at 15 and maps the debt to decomposition phases. |
 | [Firebase setup](./FIREBASE_SETUP.md) | Configure Firebase Authentication and push delivery. |
 | [Implementation guideline](./IMPLEMENTATION_GUIDELINE.md) | Tracks remaining implementation gaps. |
 | [Optimization plan](./OPTIMIZATION_PLAN.md) | Records UI, architecture, and performance work. |

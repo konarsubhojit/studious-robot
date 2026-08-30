@@ -1,4 +1,5 @@
 // @ts-check
+import sonarjs from 'eslint-plugin-sonarjs';
 import tseslint from 'typescript-eslint';
 
 /**
@@ -20,6 +21,7 @@ export default tseslint.config(
   tseslint.configs.base,
   {
     files: ['**/*.ts'],
+    plugins: { sonarjs },
     languageOptions: {
       parserOptions: {
         project: './tsconfig.json',
@@ -27,6 +29,14 @@ export default tseslint.config(
       },
     },
     rules: {
+      // Cognitive complexity, not cyclomatic: it penalises nesting and gives
+      // flat early-return code a pass, which is much closer to what makes a
+      // function hard to read. `warn` rather than `error` because the codebase
+      // has a large pre-existing backlog (catalogued in
+      // `docs/complexity-baseline.md`); the level is raised to `error` once the
+      // decomposition phases have cleared it, and no new violation should be
+      // added in the meantime.
+      'sonarjs/cognitive-complexity': ['warn', 15],
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/no-floating-promises': [
         'error',
