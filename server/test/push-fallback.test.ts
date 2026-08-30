@@ -15,7 +15,7 @@
 import test from 'node:test';
 import { pushSenders } from '../src/push.ts';
 import assert from 'node:assert/strict';
-import { captureConsoleLog } from './helpers.ts';
+import { captureConsoleLog, closeTestServer } from './helpers.ts';
 import { listenOnRandomPort, postJson } from './helpers.ts';
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
@@ -76,10 +76,7 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

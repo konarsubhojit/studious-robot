@@ -24,7 +24,7 @@ import {
   DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS,
   DEFAULT_RINGING_TIMEOUT_MS,
 } from '../src/config.ts';
-import { getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -36,10 +36,7 @@ async function startServer() {
   /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((c) => c?.disconnect());
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

@@ -15,7 +15,7 @@ import { createServer } from '../src/index.ts';
 import { CALL_TRANSITIONS, CONNECTED_CALL_STATUS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, TERMINAL_CALL_STATES } from '../src/config.ts';
 import { getCallExpiry } from '../src/domain/calls.ts';
 import * as schema from '../db/schema.ts';
-import { captureConsoleLog, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { captureConsoleLog, closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -35,10 +35,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((client) => client?.disconnect());
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

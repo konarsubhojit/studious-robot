@@ -15,7 +15,7 @@ import { upsertDevice, resolveReachableChannels, summarizeDeviceFanout } from '.
 import { createStores } from '../src/stores/index.ts';
 import { createMemoryCache } from '../src/cache.ts';
 import * as schema from '../db/schema.ts';
-import { listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -25,10 +25,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
   return { ...server, url, teardown };
 }
@@ -712,10 +709,7 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
     assert.equal(impostor.status, 409, 'hydrated identity should reject another account');
     assert.equal(impostor.body.code, 'identity_claimed');
   } finally {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 });
 
@@ -764,10 +758,7 @@ test('loadPersistedState() hydrates calls and call events from DB rows', async (
   assert.equal(hydratedEvents.length, 1);
   assert.equal(hydratedEvents[0].event, 'created');
 
-  server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => {
-    void server.io.close(() => server.httpServer.close(resolve));
-  });
+  await closeTestServer(server);
 });
 
 test('loadPersistedState() populates state.devices and state.userDevices from DB rows', async () => {
@@ -795,10 +786,7 @@ test('loadPersistedState() populates state.devices and state.userDevices from DB
   assert.equal(channels[0].provider, 'fcm');
   assert.equal(channels[0].pushToken, 'fcm-hydrate-token');
 
-  server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => {
-    void server.io.close(() => server.httpServer.close(resolve));
-  });
+  await closeTestServer(server);
 });
 
 test('loadPersistedState() is a no-op when no db is provided', async () => {
@@ -806,10 +794,7 @@ test('loadPersistedState() is a no-op when no db is provided', async () => {
   const server = createServer();
   await assert.doesNotReject(() => server.loadPersistedState());
 
-  server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => {
-    void server.io.close(() => server.httpServer.close(resolve));
-  });
+  await closeTestServer(server);
 });
 
 test('loadPersistedState() fails loudly when users hydration fails', async () => {
@@ -828,8 +813,5 @@ test('loadPersistedState() fails loudly when users hydration fails', async () =>
   const server = createServer({ db });
   await assert.rejects(() => server.loadPersistedState(), /failed to hydrate users from DB/);
 
-  server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => {
-    void server.io.close(() => server.httpServer.close(resolve));
-  });
+  await closeTestServer(server);
 });

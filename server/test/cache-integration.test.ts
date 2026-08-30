@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { createMemoryMessageStore } from '../src/messageStore.ts';
 import { createMemoryMessageBus } from '../src/messageBus.ts';
-import { getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 import { io as ioClient } from 'socket.io-client';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -46,10 +46,7 @@ async function startServer(opts = {}) {
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

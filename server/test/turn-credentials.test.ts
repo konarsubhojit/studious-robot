@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from '../src/index.ts';
 import { deriveStunUrlsFromTurnUrl } from '../src/routes/turnCredentials.routes.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 /**
  * The TURN stubs below return only the slice of `Response` the route reads, so
@@ -20,10 +20,7 @@ async function startServer(opts: Omit<import('../src/createServer.ts').CreateSer
     ...server,
     url: `http://127.0.0.1:${port}`,
     async teardown() {
-      server.httpServer.closeAllConnections?.();
-      await new Promise((resolve) => {
-        void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-      });
+      await closeTestServer(server);
     },
   };
 }

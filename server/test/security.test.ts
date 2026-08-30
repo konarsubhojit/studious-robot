@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
-import { getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -14,10 +14,7 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
   /** @param clients */
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((c) => c?.disconnect());
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

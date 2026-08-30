@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
-import { listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 async function startServer() {
   const server = createServer();
@@ -12,10 +12,7 @@ async function startServer() {
   /** @param clients */
   async function teardown(...clients: import('socket.io-client').Socket[]) {
     clients.forEach((client) => client.disconnect());
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

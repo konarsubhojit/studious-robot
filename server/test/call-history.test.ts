@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'crypto';
 import { createServer } from '../src/index.ts';
 import * as schema from '../db/schema.ts';
-import { getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 // ─── Fake Drizzle db ──────────────────────────────────────────────────────────
 
@@ -190,10 +190,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
   return { ...server, url, teardown };
 }

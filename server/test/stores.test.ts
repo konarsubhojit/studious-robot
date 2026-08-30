@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, createStores } from '../src/index.ts';
 import { createMemoryStores, STORE_NAMES } from '../src/stores/index.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -12,10 +12,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

@@ -2,25 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
-import { listenOnRandomPort, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 /**
  * Helper: start a server on an ephemeral port and return its URL + teardown.
  */
 async function startServer() {
-  const { httpServer, io } = createServer();
-  const port = await listenOnRandomPort(httpServer);
+  const server = createServer();
+  const port = await listenOnRandomPort(server.httpServer);
   const url = `http://127.0.0.1:${port}`;
 
   /** @param clients */
   async function teardown(...clients: import('socket.io-client').Socket[]) {
     clients.forEach((c) => c.disconnect());
-    // closeAllConnections() (Node 18.2+) forces lingering keep-alive connections
-    // to close so that httpServer.close() can finish promptly.
-    httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void io.close(() => httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { url, teardown };

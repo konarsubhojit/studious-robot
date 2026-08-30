@@ -1,4 +1,29 @@
 /**
+ * Shut a test server down: drop keep-alive sockets, close the Socket.IO
+ * server, then close the HTTP server.
+ *
+ * The order matters and was previously copy-pasted into ~25 suites. Socket.IO
+ * has to close first because it owns the upgraded WebSocket connections that
+ * would otherwise keep `httpServer.close()` waiting until its own timeout, and
+ * `closeAllConnections()` has to run first because idle keep-alive HTTP
+ * connections keep it waiting for the same reason — a suite that gets either
+ * wrong hangs rather than fails. `io.close()` returns a promise as well as
+ * taking a callback; the callback is the one being awaited here, so the
+ * promise is explicitly discarded to satisfy `no-floating-promises`.
+ *
+ * @param server - The object returned by `createServer()`.
+ */
+async function closeTestServer(server: {
+  io: { close: (done: () => void) => unknown; };
+  httpServer: { close: (done: () => void) => unknown; closeAllConnections?: () => void; };
+}): Promise<void> {
+  server.httpServer.closeAllConnections?.();
+  await new Promise((resolve) => {
+    void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+  });
+}
+
+/**
  * Capture console.log output for assertions.
  *
  * Tests must call `restore()` in `t.after(...)` or a `finally` block so the
@@ -80,6 +105,7 @@ async function getJson(url: string, path: string, sessionId?: string): Promise<{
 
 export {
   captureConsoleLog,
+  closeTestServer,
   getJson,
   listenOnRandomPort,
   postJson,

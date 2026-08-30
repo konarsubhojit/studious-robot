@@ -14,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { parseNonNegativeNumber } from '../src/lib/env.ts';
-import { listenOnRandomPort, postJson, readJson } from './helpers.ts';
+import { closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -24,10 +24,7 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const url = `http://127.0.0.1:${port}`;
 
   async function teardown() {
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
-    });
+    await closeTestServer(server);
   }
 
   return { ...server, url, teardown };

@@ -4,7 +4,7 @@ import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { normaliseCorrelationId, resolveSocketIdentity } from '../src/lib/auth.ts';
 import { SIGNALING_VERSION } from '../src/config.ts';
-import { captureConsoleLog, listenOnRandomPort, readJson } from './helpers.ts';
+import { captureConsoleLog, closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 test('correlation ids are normalised to log-safe, bounded strings', () => {
   assert.equal(normaliseCorrelationId('  wt-abc123  '), 'wt-abc123');
@@ -120,9 +120,6 @@ test('a call initiated over the socket is logged with the client correlation id'
     logs.restore();
     caller?.disconnect();
     callee?.disconnect();
-    server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => {
-      void server.io.close(() => server.httpServer.close(resolve));
-    });
+    await closeTestServer(server);
   }
 });
