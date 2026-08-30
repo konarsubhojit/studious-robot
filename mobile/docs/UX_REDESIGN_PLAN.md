@@ -284,6 +284,61 @@ Gesture arbitration was examined and deliberately left alone:
 `simultaneousWithExternalGesture` or `blocksExternalGesture` on suspicion would
 have been speculative. §3.6 is the check that closes this out.
 
+**Second round — a chat bubble stopped moving entirely.** Reported again
+after the merge wave that closed out Phase 6: not a swipe that activates and
+snaps back, but a bubble that will not move a single pixel while long press
+and vertical scroll both still work. That distinction matters — it points at
+the pan being disabled or starved outright, not at the arbitration thresholds
+above, which were left alone again here for the same reason.
+
+- **`SwipeableRow` was gating its pan's `.enabled()` on `trayWidth > 0`.**
+  `trayWidth` is `actions.length * ACTION_SLOT_WIDTH` — a measurement of how
+  far the tray can be revealed, not a question of whether the row wants to be
+  draggable. A row wrapped for its long press alone (`actions={[]}` with
+  `onLongPress` set, which `ChatConversationScreen` builds whenever a bubble's
+  reveal actions come back empty for any reason) reached this expression with
+  `trayWidth === 0` and built its pan with `.enabled(false)`. A disabled pan
+  inside `Gesture.Race(pan, longPress)` never activates, so the long press
+  still fired — matching every symptom reported — while the drag did nothing
+  at all. Fixed by dropping the `.enabled()` call entirely: the early return
+  a few lines below already refuses to wrap a row with neither actions nor a
+  long press, so any row that reaches the pan's construction was wrapped for
+  a reason and must stay draggable. A genuinely empty tray still cannot be
+  dragged open — the `Math.min`/`Math.max` clamp pins it to zero either way —
+  so nothing about a long-press-only row's visible behaviour changes; only
+  the pan's ability to *try* does. `SwipeableRow.test.tsx` gained a
+  `describe` block that renders the `actions: []` + `onLongPress` shape,
+  captures every value `.enabled()` is called with, and asserts `false` is
+  never among them, plus a test that drives the pan and asserts a non-zero
+  `translateX` — the assertion the whole prior suite lacked, since every
+  existing test inspected the gesture's configuration and none of them ever
+  drove it.
+- **A residual touch handler still lived on the drag surface.** The bubble's
+  `View` carried `onTouchEnd`/`onAccessibilityTap` wired to retry a failed
+  send, alongside `accessible`. That combination can still enlist a view in
+  RN's touch responder system — the same class of conflict the `Pressable`
+  above caused, and the reason `SwipeableRow`'s own doc comment warns against
+  it. Retry already has an explicit affordance — `DeliveryState`'s
+  "Failed · tap to retry" control in the message footer — so the touch
+  handler was dropped from the bubble rather than routed around the gesture;
+  nothing is lost, because the footer control renders for every retryable
+  message regardless of group position.
+- **What this does and does not explain.** The `.enabled(false)` path is a
+  complete explanation for "does not move at all" wherever a bubble's
+  `actions` array is empty while a long press is still wired — the two
+  symptoms line up exactly. It does not, on its own, explain every bubble in
+  every state refusing to swipe: as shipped, `ChatConversationScreen` always
+  threads a reply handler down to `MessageRow`, so a plain conversation
+  bubble's `actions` is not empty in the tree as it stands today. The fix
+  removes the latent trap regardless — any future change that makes a
+  bubble's actions conditional (or a screen not yet audited) can no longer
+  reintroduce this exact failure — and the residual touch handler was a
+  second, independent path to the same class of symptom that is now closed
+  too. `CallsScreen` and `ChatListScreen` were re-checked against the same
+  shape: neither passes `onLongPress` to a `SwipeableRow` with potentially
+  empty `actions`, so the early return already renders them unwrapped rather
+  than pan-disabled, and both still swipe.
+
 ### Theming becomes a personalisation surface ✅
 
 Appearance was three radio buttons for System / Light / Dark, and the theme

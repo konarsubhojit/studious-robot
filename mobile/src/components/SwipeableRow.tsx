@@ -95,10 +95,20 @@ export default function SwipeableRow({ actions = [], onLongPress, longPressLabel
     [reduceMotion],
   );
 
+  // Tray width and pan enablement are different questions, and conflating
+  // them is what made this row silently stop swiping: `trayWidth` only bounds
+  // how far a drag can travel to reveal actions, while whether the pan should
+  // run at all is decided once, below, by the early return — if execution
+  // reaches here the component *chose* to wrap `children` in a
+  // `GestureDetector`, because there is either a tray or a long press to
+  // race it against. A wrapped row must stay draggable, so the pan is never
+  // gated on `trayWidth` again; a genuinely empty tray still clamps the drag
+  // to zero via the `Math.min`/`Math.max` below, which is enough to keep an
+  // actionless, long-press-only row visually still without disabling the
+  // gesture that carries the long press.
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(trayWidth > 0)
         .activeOffsetX([-GESTURE_ACTIVATION_DX, GESTURE_ACTIVATION_DX])
         .failOffsetY([-GESTURE_FAIL_DY, GESTURE_FAIL_DY])
         .onStart(() => {
