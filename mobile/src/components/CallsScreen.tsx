@@ -327,11 +327,9 @@ export default function CallsScreen({
               ? 'Calls you miss will be listed here.'
               : 'Call someone and it will show up here.'
           }
-          actionLabel={filter === CALL_FILTERS.MISSED ? undefined : 'Start a call'}
-          actionHint="Opens the list of people you can call"
-          onAction={
-            filter === CALL_FILTERS.MISSED ? undefined : () => setIsPickerVisible(true)
-          }
+          // No action here: the FAB below is the screen's one primary action,
+          // and an empty state that repeats it in the same accent colour 200px
+          // away makes whichever the user reaches for the wrong one.
           testID="calls-empty"
         />
       )}
@@ -342,6 +340,7 @@ export default function CallsScreen({
           accessibilityLabel="New call"
           accessibilityHint="Opens the list of people you can call"
           onPress={() => setIsPickerVisible(true)}
+          style={styles.fab}
           testID="calls-new-call"
         />
       ) : null}
@@ -409,6 +408,14 @@ const createStyles = (colors: ThemeColors) =>
     },
     listContent: {
       paddingBottom: spacing['3xl'] + spacing.xl,
+    },
+    // Material 3 pins a FAB 16dp from the right edge and 16dp above whatever
+    // is beneath it; in flow it used to sit flush against the screen edge and
+    // push the list up by its own height.
+    fab: {
+      position: 'absolute',
+      right: spacing.lg,
+      bottom: spacing.lg,
     },
     trailing: {
       flexDirection: 'row',

@@ -277,13 +277,21 @@ function SettingsScreen({
             testID="settings-message-notifications"
           />
         ) : null}
-        <Text style={styles.groupCaption}>Muted people</Text>
+        {/* A row, not a bare heading: an empty group used to render as a
+            caption plus a sentence with no icon, no value and no tap target,
+            which reads as a row that failed rather than as "nobody is muted". */}
         {mutedPeers.length === 0 ? (
-          <Text style={styles.hint} testID="settings-muted-empty">
-            No one is muted. Mute someone from their profile to silence their messages.
-          </Text>
+          <ListItem
+            title="Muted people"
+            value="None"
+            subtitle="Mute someone from their profile to silence their messages."
+            icon="muteNotifications"
+            accessibilityLabel="Muted people, none"
+            testID="settings-muted-empty"
+          />
         ) : (
           <View testID="settings-muted-people">
+            <Text style={styles.groupCaption}>Muted people</Text>
             {mutedPeers.map(peer => (
               <ListItem
                 key={peer}
@@ -359,13 +367,18 @@ function SettingsScreen({
 
         {/* ── Privacy ─────────────────────────────────────────────────────── */}
         <SectionHeader title="Privacy" icon="settingsPrivacy" />
-        <Text style={styles.groupCaption}>Blocked people</Text>
         {blockedUsers.length === 0 ? (
-          <Text style={styles.hint} testID="settings-blocked-empty">
-            No one is blocked. Blocking someone stops their calls and messages both ways.
-          </Text>
+          <ListItem
+            title="Blocked people"
+            value="None"
+            subtitle="Blocking someone stops their calls and messages both ways."
+            icon="settingsPrivacy"
+            accessibilityLabel="Blocked people, none"
+            testID="settings-blocked-empty"
+          />
         ) : (
           <View testID="settings-blocked-people">
+            <Text style={styles.groupCaption}>Blocked people</Text>
             {blockedUsers.map(peer => (
               <ListItem
                 key={peer}

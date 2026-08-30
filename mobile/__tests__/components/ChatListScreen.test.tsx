@@ -174,7 +174,7 @@ describe('ChatListScreen', () => {
     expect(onStartChat).toHaveBeenCalledWith('user-dave');
   });
 
-  test('the first-run empty state leads into the people picker', () => {
+  test('the first-run empty state states the situation and leaves the FAB to act', () => {
     const tree = render({
       conversations: [],
       onOpenConversation: jest.fn(),
@@ -184,10 +184,18 @@ describe('ChatListScreen', () => {
     const empty = tree.root.findAll(
       (n: any) => n.props?.testID === 'chat-list-empty' && typeof n.type === 'function',
     )[0];
-    expect(empty.props.actionLabel).toBe('Find someone');
+    // Exactly one primary action on the screen: the empty state used to render
+    // a filled button in the same accent, a couple of hundred pixels from the
+    // FAB that does the identical thing.
+    expect(empty.props.actionLabel).toBeUndefined();
+    expect(empty.props.onAction).toBeUndefined();
+    expect(empty.props.title).toBe('No conversations yet');
 
+    const fab = tree.root.findAll(
+      (n: any) => n.props?.testID === 'chat-list-new-chat' && typeof n.props?.onPress === 'function',
+    )[0];
     act(() => {
-      empty.props.onAction();
+      fab.props.onPress();
     });
 
     const picker = tree.root.findAll(

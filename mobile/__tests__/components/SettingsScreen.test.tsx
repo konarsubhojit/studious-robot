@@ -63,6 +63,27 @@ describe('SettingsScreen', () => {
     expect(account.props.children).toContain('Google');
   });
 
+  test('a long row value wraps in full rather than ellipsizing', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <SettingsScreen
+          {...baseProps}
+          accountEmail="alexandra.montgomery@verylongdomain.example.com"
+          accountProviderId="google.com"
+        />,
+      );
+    });
+
+    // The row exists to show that address, so it must show all of it: the
+    // right-aligned 40%-wide slot used to clip it to `alexandra.mo…`.
+    const value = findByTestID(tree, 'settings-account-row-value').filter(
+      (n: any) => typeof n.type === 'string',
+    )[0];
+    expect(value.props.children).toContain('alexandra.montgomery@verylongdomain.example.com');
+    expect(value.props.numberOfLines).toBeUndefined();
+  });
+
   test('the signaling server is edited in a sheet, not inline', () => {
     let tree: any;
     act(() => {
