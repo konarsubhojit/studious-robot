@@ -323,7 +323,7 @@ test('GET /turn-credentials logs minting failures at error level when no static 
     turnFetch: async () => ({
       ok: false,
       status: 500,
-      text: async () => '{"error":"boom"}',
+      text: async () => '<html>boom</html>',
     }),
   });
   try {
@@ -333,7 +333,7 @@ test('GET /turn-credentials logs minting failures at error level when no static 
     assert.ok(
       errors.some((line) => line.includes('[turn] credential minting failed: Cloudflare TURN API returned 500')),
     );
-    assert.ok(errors.some((line) => line.includes('body={"error":"boom"}')));
+    assert.ok(errors.some((line) => line.includes('body=<html>boom</html>')));
     assert.equal(warns.length, 0);
   } finally {
     console.error = originalError;

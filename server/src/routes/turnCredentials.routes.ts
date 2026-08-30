@@ -126,13 +126,13 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
         }
       );
       const responseBody = await response.text().catch(() => '');
-      const payload = responseBody ? JSON.parse(responseBody) : null;
       if (!response.ok) {
         throw new Error(
           `Cloudflare TURN API returned ${response.status}` +
           (responseBody ? ` body=${responseBody}` : '')
         );
       }
+      const payload = responseBody ? JSON.parse(responseBody) : null;
       const iceServers = normalizeIceServers(payload);
       if (iceServers.length === 0) {
         throw new Error('Cloudflare TURN API returned no ICE servers');
