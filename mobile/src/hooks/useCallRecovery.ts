@@ -690,6 +690,16 @@ export default function useCallRecovery({
     cancelIceRestartsRef.current = cancelIceRestarts;
   }, [beginIceRecovery, cancelIceRestarts]);
 
+  // A scheduled restart must not outlive the provider: `closeRecoveryEpisode`
+  // clears the deadline timer, not the restart timer, so without this a
+  // pending ICE restart fires after teardown against a closed peer connection.
+  // The timer is created in this file, so it is cancelled here too.
+  useEffect(() => {
+    return () => {
+      cancelIceRestarts('unmount');
+    };
+  }, [cancelIceRestarts]);
+
   // ── Proactive recovery: restart on a network path change ─────────────────
   //
   // Waiting for ICE to reach `failed` means seconds of dead audio on a
@@ -701,7 +711,7 @@ export default function useCallRecovery({
         // Connectivity is back (or moved): the budget can run again, and this
         // is new information worth extending the episode for.
         hasConnectivityRef.current = true;
-        resumeRecoveryBudget(`connectivity:${to.type}`);
+        resumeRecoveryBudgetRef.current?.(`connectivity:${to.type}`);
         // A call that is still negotiating counts: `isInCall` only flips once
         // media is up, and the handoff most worth surviving is the one during
         // setup.
@@ -721,7 +731,7 @@ export default function useCallRecovery({
             // connected; that lag is the audio gap this restart avoids.
             iceState: peerConnectionRef.current?.iceConnectionState ?? null,
           });
-          beginIceRecovery('network-change');
+          beginIceRecoveryRef.current?.('network-change');
         };
 
         // The first transition fires immediately: this is the one path
@@ -749,7 +759,7 @@ export default function useCallRecovery({
             callId: activeCallIdRef.current,
             type: snapshot.type,
           });
-          pauseRecoveryBudget('no-connectivity');
+          pauseRecoveryBudgetRef.current?.('no-connectivity');
         },
       },
     );
@@ -760,7 +770,14 @@ export default function useCallRecovery({
         networkChangeTimerRef.current = null;
       }
     };
-  }, [activeCallIdRef, beginIceRecovery, pauseRecoveryBudget, peerConnectionRef, resumeRecoveryBudget]);
+    // Subscribed exactly once: the callbacks are read from their refs when a
+    // network change actually fires. Depending on `beginIceRecovery` re-ran
+    // this effect (and so cleared `networkChangeTimerRef`) whenever the
+    // signalling URL or ICE transport policy changed, silently dropping a
+    // debounced Wi-Fi→cellular restart. The remaining deps are refs, whose
+    // identity never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Ref-forward the symptom recorder and budget resumer so the socket handlers
   // (registered once) can reach the current callback identity.

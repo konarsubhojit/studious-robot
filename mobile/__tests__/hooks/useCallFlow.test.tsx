@@ -242,6 +242,27 @@ jest.mock('../../src/authService', () => ({
   signOut: jest.fn(async () => {}),
 }));
 
+// F1 regression support: the unmount teardown effect must not fire mid-call
+// when one of its callbacks changes identity (which Metro's Fast Refresh does
+// on every hot reload). Flipping this makes `stopCallHeartbeat` — one of those
+// callbacks — take a fresh identity on every render.
+let mockChurnHeartbeatIdentity = false;
+jest.mock('../../src/hooks/useCallHeartbeat', () => {
+  const actual = jest.requireActual('../../src/hooks/useCallHeartbeat');
+  return {
+    __esModule: true,
+    ...actual,
+    default: (options: any) => {
+      const api = actual.default(options);
+      if (!mockChurnHeartbeatIdentity) return api;
+      return {
+        ...api,
+        stopCallHeartbeat: (reason?: string) => api.stopCallHeartbeat(reason),
+      };
+    },
+  };
+});
+
 jest.mock('../../src/settingsStorage', () => ({
   loadIdentity: jest.fn(async () => ({ userId: '' })),
   saveIdentity: jest.fn(async () => true),
@@ -3166,6 +3187,51 @@ describe('useCallFlow chat', () => {
       await Promise.resolve();
     });
   }
+
+  test('re-rendering with new teardown callback identities leaves an active call intact', async () => {
+    mockChurnHeartbeatIdentity = true;
+    try {
+      const cameraTrack = { kind: 'video', enabled: true, stop: jest.fn() };
+      const micTrack = { kind: 'audio', enabled: true, stop: jest.fn() };
+      const { mediaDevices } = require('react-native-webrtc');
+      (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
+        getTracks: () => [cameraTrack, micTrack],
+        getVideoTracks: () => [cameraTrack],
+        getAudioTracks: () => [micTrack],
+      });
+
+      const { resultRef, tree, peerConnection } = await acceptCallWithPeerConnection('call-teardown-1');
+      const { io } = require('socket.io-client');
+      const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1].value;
+
+      expect(cameraTrack.stop).not.toHaveBeenCalled();
+
+      // Every one of these renders hands the hook a brand-new
+      // `stopCallHeartbeat`; none of them may tear the call down.
+      for (let i = 0; i < 3; i += 1) {
+        act(() => {
+          tree.update(<TestHook resultRef={resultRef} />);
+        });
+      }
+
+      expect(cameraTrack.stop).not.toHaveBeenCalled();
+      expect(micTrack.stop).not.toHaveBeenCalled();
+      expect(peerConnection.close).not.toHaveBeenCalled();
+      expect(socketMock.disconnect).not.toHaveBeenCalled();
+      expect(resultRef.current.activeCall?.callId).toBe('call-teardown-1');
+
+      // A genuine unmount must still tear everything down.
+      act(() => {
+        tree.unmount();
+      });
+      expect(peerConnection.close).toHaveBeenCalled();
+      expect(socketMock.disconnect).toHaveBeenCalled();
+      expect(cameraTrack.stop).toHaveBeenCalled();
+      expect(micTrack.stop).toHaveBeenCalled();
+    } finally {
+      mockChurnHeartbeatIdentity = false;
+    }
+  });
 
   test('reports call.connected once media reaches the connected ICE state', async () => {
     const { peerConnection, emits } = await acceptCallWithPeerConnection('call-connected-1');
