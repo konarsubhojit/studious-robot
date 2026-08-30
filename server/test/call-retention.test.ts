@@ -250,6 +250,7 @@ test('byte-size configuration accepts supported units and rejects invalid values
   assert.equal(parseByteSize('JSON_BODY_LIMIT', undefined, '64kb'), '64kb');
   assert.equal(parseByteSize('JSON_BODY_LIMIT', '1048576', '64kb'), '1048576');
   assert.equal(parseByteSize('JSON_BODY_LIMIT', '128KB', '64kb'), '128KB');
+  assert.equal(parseByteSize('JSON_BODY_LIMIT', '1.5mb', '64kb'), '1.5mb');
   for (const value of ['1mb', '1gb', '1tb', '1pb']) {
     assert.equal(parseByteSize('JSON_BODY_LIMIT', value, '64kb'), value);
   }
