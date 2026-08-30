@@ -302,13 +302,11 @@ function sleep(ms: number) {
 
 function forEachStatsEntry(report: unknown, visit: (entry: unknown) => void) {
   if (!isRecord(report)) return;
+  // Covers both a `Map` (the real `RTCStatsReport`) and an array; a plain
+  // object of entries is the remaining shape react-native-webrtc can hand back.
   const forEach = report.forEach;
   if (typeof forEach === 'function') {
     (forEach as (callback: (entry: unknown) => void) => void).call(report, visit);
-    return;
-  }
-  if (Array.isArray(report)) {
-    report.forEach(visit);
     return;
   }
   Object.values(report).forEach(visit);
