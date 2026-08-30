@@ -42,9 +42,9 @@ function swipe(distance: number) {
   });
 }
 
-function render(actions: any) {
+function render(actions: any, options: { onLongPress?: () => void; longPressLabel?: string } = {}) {
   const element = () => (
-    <SwipeableRow actions={actions}>
+    <SwipeableRow actions={actions} {...options}>
       <Text>row content</Text>
     </SwipeableRow>
   );
@@ -295,5 +295,62 @@ describe('SwipeableRow gesture arbitration', () => {
       row.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } });
     });
     expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SwipeableRow — pan enablement', () => {
+  /** Records every value the pan's `.enabled()` is built with. */
+  function renderAndCaptureEnabled(actions: any, options: { onLongPress?: () => void } = {}) {
+    const enabled = jest.fn();
+    (Gesture as any).Pan = () => {
+      lastPan = realPan();
+      const originalEnabled = lastPan.enabled.bind(lastPan);
+      lastPan.enabled = (value: any) => {
+        enabled(value);
+        return originalEnabled(value);
+      };
+      return lastPan;
+    };
+    act(() => {
+      renderer.create(
+        <SwipeableRow actions={actions} {...options}>
+          <Text>row content</Text>
+        </SwipeableRow>,
+      );
+    });
+    return enabled;
+  }
+
+  // This is the regression this whole describe block exists for: a row can
+  // reach `SwipeableRow` with an empty `actions` array (any consumer whose
+  // reveal actions are conditionally assembled can produce this) while still
+  // wanting a long press. Gating the pan's `.enabled()` on the tray's width —
+  // as this component briefly did — reads on a device as "the row does not
+  // move at all", because the tray width and the pan's enablement were the
+  // same expression. A `GestureDetector`'s pan must never be disabled purely
+  // because there happens to be nothing to reveal.
+  test('never disables the pan for the actions: [] + onLongPress shape', () => {
+    const enabled = renderAndCaptureEnabled([], { onLongPress: jest.fn() });
+
+    expect(enabled).not.toHaveBeenCalledWith(false);
+  });
+
+  test('never disables the pan when there are swipe actions to reveal', () => {
+    const enabled = renderAndCaptureEnabled([{ key: 'reply', label: 'Reply', onPress: jest.fn() }]);
+
+    expect(enabled).not.toHaveBeenCalledWith(false);
+  });
+
+  test('driving the pan moves a rendered row, with a long press raced alongside it', () => {
+    // Combines both gestures the way `ChatConversationScreen` wires a bubble
+    // that has both swipe actions and a reaction long press, so a regression
+    // in `Gesture.Race` swallowing the pan would show up here too.
+    const tree = render([{ key: 'reply', label: 'Reply', onPress: jest.fn() }], {
+      onLongPress: jest.fn(),
+    });
+
+    swipe(-60);
+
+    expect(readTranslate(tree)).not.toBe(0);
   });
 });

@@ -727,6 +727,15 @@ const MessageRow = memo(
   // (and wins it while its long-press timer runs), which is why a bubble used
   // to refuse to swipe at all. The long press is handed to `SwipeableRow`
   // instead, where it is raced against the pan by the native gesture system.
+  //
+  // Retry used to be wired here too, via `onTouchEnd`/`onAccessibilityTap` —
+  // a raw touch handler spanning the whole bubble, which is the same class of
+  // conflict a `Pressable` causes: `accessible` plus a touch callback can
+  // still enlist the view in the touch responder system and starve the pan of
+  // the movement that activates it. Retry has its own affordance already —
+  // `DeliveryState`'s "Failed · tap to retry" control in the footer below,
+  // which is rendered whenever a message can be retried — so it is dropped
+  // from the drag surface entirely rather than routed around the gesture.
   const row = (
     <View
       testID="chat-message-row"
@@ -737,15 +746,9 @@ const MessageRow = memo(
       ]}>
       <View
         accessible
-        accessibilityRole={retryFailedMessage || canReact ? 'button' : undefined}
+        accessibilityRole={canReact ? 'button' : undefined}
         accessibilityLabel={accessibilityLabel}
-        accessibilityHint={
-          retryFailedMessage
-            ? 'Sends this message again'
-            : canReact ? 'Long press to react' : undefined
-        }
-        onTouchEnd={retryFailedMessage}
-        onAccessibilityTap={retryFailedMessage}
+        accessibilityHint={canReact ? 'Long press to react' : undefined}
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,

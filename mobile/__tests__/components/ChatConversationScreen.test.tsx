@@ -234,15 +234,24 @@ describe('ChatConversationScreen', () => {
     });
     expect(onSendMessage).toHaveBeenCalledWith('oops');
 
+    // Retry is not wired to the bubble itself: a touch handler spanning the
+    // whole drag surface is the same class of conflict a `Pressable` used to
+    // cause with `SwipeableRow`'s pan, so the footer's "tap to retry" control
+    // is the only retry affordance. The bubble still carries the failure in
+    // its accessibility label for context, but nothing on it is tappable.
     const failedBubble = tree.root.findAll(
       (n: any) =>
         n.props?.testID === 'chat-message-bubble' &&
         typeof n.props?.accessibilityLabel === 'string' &&
         n.props.accessibilityLabel.includes('Failed to send'),
     )[0];
-    expect(failedBubble.props.accessibilityRole).toBe('button');
+    expect(failedBubble.props.onTouchEnd).toBeUndefined();
+    expect(failedBubble.props.onAccessibilityTap).toBeUndefined();
+
+    // The footer's `DeliveryState` control is the one remaining retry
+    // affordance, so it must still actually retry.
     act(() => {
-      failedBubble.props.onAccessibilityTap();
+      findByTestId(tree, 'chat-message-failed').props.onPress();
     });
     expect(onSendMessage).toHaveBeenCalledTimes(2);
   });
