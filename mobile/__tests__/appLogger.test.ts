@@ -4,6 +4,7 @@ jest.mock('react-native-fs', () => ({
   exists: jest.fn(),
   readFile: jest.fn(),
   stat: jest.fn(),
+  write: jest.fn(),
   writeFile: jest.fn(),
 }));
 
@@ -27,6 +28,7 @@ describe('appLogger', () => {
     jest.clearAllMocks();
     (RNFS.appendFile as jest.Mock).mockResolvedValue(undefined);
     (RNFS.stat as jest.Mock).mockResolvedValue({ size: 0 });
+    (RNFS.write as jest.Mock).mockResolvedValue(undefined);
     (RNFS.writeFile as jest.Mock).mockResolvedValue(undefined);
     delete process.env.VERBOSE_LOGGING;
     delete process.env.LOG_LEVEL;
@@ -152,21 +154,44 @@ describe('appLogger', () => {
     expect(RNFS.readFile).not.toHaveBeenCalled();
   });
 
-  test('falls back without read-modify-write when appendFile is unavailable', async () => {
+  test('falls back to positional append without read-modify-write when appendFile is unavailable', async () => {
     const appendFile = RNFS.appendFile as jest.Mock;
     (RNFS as any).appendFile = undefined;
 
     try {
       await persistLogLine('latest durable line');
 
-      expect(RNFS.writeFile).toHaveBeenCalledWith(
+      expect(RNFS.write).toHaveBeenCalledWith(
         '/docs/wetalk-background.log',
         'latest durable line\n',
+        -1,
+        'utf8',
+      );
+      expect(RNFS.writeFile).not.toHaveBeenCalled();
+      expect(RNFS.readFile).not.toHaveBeenCalled();
+    } finally {
+      (RNFS as any).appendFile = appendFile;
+    }
+  });
+
+  test('uses a bounded overwrite only when no append API is available', async () => {
+    const appendFile = RNFS.appendFile as jest.Mock;
+    const write = RNFS.write as jest.Mock;
+    (RNFS as any).appendFile = undefined;
+    (RNFS as any).write = undefined;
+
+    try {
+      await persistLogLine('last resort line');
+
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-background.log',
+        'last resort line\n',
         'utf8',
       );
       expect(RNFS.readFile).not.toHaveBeenCalled();
     } finally {
       (RNFS as any).appendFile = appendFile;
+      (RNFS as any).write = write;
     }
   });
 });

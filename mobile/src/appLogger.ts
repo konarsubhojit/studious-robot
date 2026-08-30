@@ -251,8 +251,13 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
 
         if (typeof RNFS.appendFile === 'function') {
           await RNFS.appendFile(path, lineToAppend, 'utf8');
+        } else if (typeof RNFS.write === 'function') {
+          await RNFS.write(path, lineToAppend, -1, 'utf8');
         } else {
           if (typeof RNFS.writeFile !== 'function') return false;
+          // Last-resort bounded fallback for old/incomplete RNFS shims: avoid
+          // the previous read-modify-write loop even though only this line is
+          // retained.
           await RNFS.writeFile(path, lineToAppend, 'utf8');
         }
         return true;
