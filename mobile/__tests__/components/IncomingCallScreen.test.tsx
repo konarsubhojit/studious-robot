@@ -61,7 +61,7 @@ describe('IncomingCallScreen', () => {
     jest.useRealTimers();
   });
 
-  test('renders without throwing', () => {
+  test('keeps an informational status off the screen, and shows a problem', () => {
     let tree: any;
     act(() => {
       tree = createTree(
@@ -73,7 +73,59 @@ describe('IncomingCallScreen', () => {
         />,
       );
     });
+    // The ringing state is already carried by the header, the caller's name
+    // and the countdown; repeating it in a banner is the third label.
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
+
+    act(() => {
+      tree.update(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={{ message: 'Something broke', severity: 'error' } as any}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+        />,
+      );
+    });
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+  });
+
+  test('labels the countdown so it cannot be read as a call duration', () => {
+    let tree: any;
+    act(() => {
+      tree = createTree(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+        />,
+      );
+    });
+    const [node] = tree.root.findAll((n: any) => n.props.testID === 'incoming-countdown');
+    expect(String(node.props.children)).toMatch(/^Ringing · \d+s left$/);
+    expect(node.props.accessibilityLabel).toMatch(/^Rings for /);
+  });
+
+  test('keeps the pulse ring boxed with the avatar, never behind the name', () => {
+    let tree: any;
+    act(() => {
+      tree = createTree(
+        <IncomingCallScreen
+          incomingCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onAccept={jest.fn()}
+          onDecline={jest.fn()}
+        />,
+      );
+    });
+    // The ring lives inside the avatar's own box, so it can only ever centre
+    // on the avatar — the name is a sibling of that box, not of the ring.
+    const [avatar] = tree.root.findAll((n: any) => n.props.testID === 'incoming-avatar');
+    expect(avatar).toBeTruthy();
+    const [name] = tree.root.findAll((n: any) => n.props.testID === 'incoming-caller-id');
+    expect(avatar.findAll((n: any) => n.props.testID === 'incoming-caller-id')).toHaveLength(0);
+    expect(name).toBeTruthy();
   });
 
   test('displays the caller ID', () => {
@@ -202,7 +254,7 @@ describe('IncomingCallScreen', () => {
       );
     });
     const [node] = tree.root.findAll((n: any) => n.props.testID === 'incoming-countdown');
-    expect(String(node.props.children)).toMatch(/^Rings for 1:5\d$/);
+    expect(String(node.props.children)).toMatch(/^Ringing · 1:5\d left$/);
   });
 
   test('hides countdown when ringTimeoutAt is absent', () => {

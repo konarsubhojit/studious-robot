@@ -258,6 +258,14 @@ const SUMMARISED_END_REASONS = new Set([
   'unreachable',
 ]);
 
+/**
+ * How the callee is being reached while an outgoing call rings.
+ *
+ * `ringing` — a device with a live socket is ringing right now.
+ * `push` — every device is asleep; a push has been sent and must wake one.
+ */
+export type CallDelivery = 'ringing' | 'push';
+
 /** How many answered callIds are remembered for duplicate-accept suppression. */
 const ANSWERED_CALL_HISTORY_LIMIT = 20;
 
@@ -466,6 +474,9 @@ export default function useCallFlow({
   // banner vanished with the episode and the call simply stopped.
   const [isConnectionLost, setIsConnectionLost] = useState(false);
   const isConnectionLostRef = useRef(false);
+  // How the callee is being reached for an outgoing call: a device that can
+  // ring now, or one a push still has to wake. Null until the server says.
+  const [callDelivery, setCallDelivery] = useState((null as CallDelivery | null));
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const socketRef = useRef((null as Socket | null));
@@ -1963,6 +1974,7 @@ export default function useCallFlow({
       setCallConnectedAtMs(null);
       isConnectionLostRef.current = false;
       setIsConnectionLost(false);
+      setCallDelivery(null);
       stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       closeRecoveryEpisode(endReason ? `call-ended:${endReason}` : 'call-ended');
       cancelIceRestartsRef.current?.('call-ended');
@@ -2170,10 +2182,13 @@ export default function useCallFlow({
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
-      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call }) => {
-        logInfo('[CallFlow] Call ringing', { callId: call.callId });
+      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call, delivery }) => {
+        logInfo('[CallFlow] Call ringing', { callId: call.callId, delivery });
         activeCallRef.current = call;
         setActiveCall(call);
+        // A server that does not report delivery is one that only ever rang a
+        // live device, which is what `ringing` means.
+        setCallDelivery(delivery === 'push' ? 'push' : 'ringing');
       });
 
       // ── Call state changes ────────────────────────────────────────────
@@ -2930,6 +2945,7 @@ export default function useCallFlow({
       setIsPlacingCall(true);
       try {
         setCallSummary(null);
+        setCallDelivery(null);
 
         const stream = await startLocalPreview();
         if (!stream) return;
@@ -4140,6 +4156,7 @@ export default function useCallFlow({
     isReconnecting,
     recoveryStatus,
     isConnectionLost,
+    callDelivery,
     iceTransportPolicy: activeIceTransportPolicy,
 
     // Call actions

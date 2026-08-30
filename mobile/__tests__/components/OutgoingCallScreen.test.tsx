@@ -33,7 +33,7 @@ describe('OutgoingCallScreen', () => {
     jest.useRealTimers();
   });
 
-  test('renders without throwing', () => {
+  test('keeps an informational status off the screen, and shows a problem', () => {
     let tree: any;
     act(() => {
       tree = renderer.create(
@@ -45,7 +45,90 @@ describe('OutgoingCallScreen', () => {
         />,
       );
     });
+    // "Ringing bob…" repeats the header, the name and the countdown; only a
+    // problem the user has to know about earns the banner.
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(0);
+
+    act(() => {
+      tree.update(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall()}
+          status={{ message: 'Callee is unreachable', severity: 'error' } as any}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+  });
+
+  test('says the callee is ringing rather than only counting down', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall()}
+          delivery="ringing"
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    const [node] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-countdown');
+    expect(String(node.props.children)).toMatch(/^Ringing on their device · /);
+  });
+
+  test('says a sleeping callee is being woken, so silence is not read as a hang', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall()}
+          delivery="push"
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    const [node] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-countdown');
+    expect(String(node.props.children)).toMatch(/^Waking their phone · /);
+    expect(node.props.accessibilityLabel).toBe('Waking their phone. Rings for 30s');
+  });
+
+  test('still says how the callee is being reached without a ring window', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall({ ringTimeoutAt: null })}
+          delivery="push"
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    const [node] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-delivery');
+    expect(String(node.props.children)).toBe('Waking their phone');
+  });
+
+  test('keeps the pulse ring boxed with the avatar, never behind the name', () => {
+    let tree: any;
+    act(() => {
+      tree = renderer.create(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall()}
+          status={DEFAULT_STATUS}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    const [avatar] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-avatar');
+    expect(avatar).toBeTruthy();
+    expect(avatar.findAll((n: any) => n.props.testID === 'outgoing-callee-id')).toHaveLength(0);
   });
 
   test('displays the callee ID', () => {
@@ -145,7 +228,7 @@ describe('OutgoingCallScreen', () => {
       );
     });
     const [node] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-countdown');
-    expect(String(node.props.children)).toMatch(/^1:5\d$/);
+    expect(String(node.props.children)).toMatch(/^Ringing · 1:5\d left$/);
   });
 
   test('hides countdown when ringTimeoutAt is absent', () => {

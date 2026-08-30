@@ -121,6 +121,7 @@ export default function AppShell() {
       <OutgoingCallScreen
         calleeId={callFlow.calleeId}
         activeCall={callFlow.activeCall}
+        delivery={callFlow.callDelivery}
         status={callFlow.status}
         onCancel={callFlow.cancelOutgoingCall}
       />

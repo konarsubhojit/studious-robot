@@ -316,6 +316,49 @@ function describeBusyBlockers(state: ServerState, call: CallRecord): string {
 }
 
 /**
+ * How the callee is being reached, from the caller's point of view.
+ *
+ * The server already decides this — a device with a live socket rings, one
+ * without gets a push and has to wake up first — but it kept the distinction to
+ * itself, so ten seconds of silence on the offline-callee path read to the
+ * caller exactly like a hang.
+ *
+ * @returns `'ringing'` when a device can ring now, `'push'` when one must wake.
+ */
+function describeCallDelivery(state: ServerState, call: CallRecord): 'ringing' | 'push' {
+  return (state.userConnections.get(call.calleeId)?.size ?? 0) > 0 ? 'ringing' : 'push';
+}
+
+/**
+ * Tell the caller that the call is ringing, and how it is being delivered.
+ *
+ * @param io Socket.IO server.
+ */
+function notifyCallRinging(io: any, state: ServerState, call: CallRecord): void {
+  if (call.status !== 'ringing') return;
+  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
+    ...createCallEnvelope(call),
+    delivery: describeCallDelivery(state, call),
+  });
+}
+
+/**
+ * Re-tell the caller once a pushed device has acknowledged the call: it has
+ * woken up, so the call is ringing on it rather than still in transit.
+ *
+ * @param io Socket.IO server.
+ */
+function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: string | null | undefined): void {
+  if (!callId) return;
+  const call = state.calls.get(callId);
+  if (!call || call.status !== 'ringing') return;
+  emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
+    ...createCallEnvelope(call),
+    delivery: 'ringing',
+  });
+}
+
+/**
  * @param io Socket.IO server.
  */
 function notifyCallCreated(io: any, state: ServerState, call: CallRecord): void {
@@ -334,7 +377,7 @@ function notifyCallCreated(io: any, state: ServerState, call: CallRecord): void 
   const envelope = createCallEnvelope(call);
   if (call.status === 'ringing') {
     emitToUserSockets(io, call.calleeId, SERVER_EVENTS.CALL_INCOMING, envelope);
-    emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, envelope);
+    notifyCallRinging(io, state, call);
 
     // Push fallback: deliver the incoming call to every registered device that
     // has no live socket of its own.  This is decided per device rather than
@@ -460,6 +503,7 @@ export {
   getCallTransitionEventName,
   markIncomingCallAcknowledged,
   notifyCallCreated,
+  notifyIncomingCallAcknowledged,
   notifyCallTransition,
   notifyRingingCallsForDisconnectedDevice,
 };
