@@ -10,16 +10,16 @@
  * See `shared/README.md` for why the shared package carries no dependencies.
  */
 
-export type ParseSuccess = { success: true; data: any; };
+export type ParseSuccess<T> = { success: true; data: T; };
 export type ParseFailure = { success: false; error: { message: string; path: string; }; };
-export type ParseResult = ParseSuccess | ParseFailure;
-export type Schema = {
+export type ParseResult<T = unknown> = ParseSuccess<T> | ParseFailure;
+export type Schema<T = unknown> = {
   isOptional: boolean;
-  _parse: (value: unknown, path: string) => ParseResult;
-  safeParse: (value: unknown) => ParseResult;
-  parse: (value: unknown) => any;
-  optional: () => Schema;
-  nullable: () => Schema;
+  _parse: (value: unknown, path: string) => ParseResult<T>;
+  safeParse: (value: unknown) => ParseResult<T>;
+  parse: (value: unknown) => T;
+  optional: () => Schema<T | undefined>;
+  nullable: () => Schema<T | null>;
 };
 
 function fail(path: string, message: string): ParseFailure {
@@ -29,7 +29,7 @@ function fail(path: string, message: string): ParseFailure {
   };
 }
 
-function ok(data: any): ParseSuccess {
+function ok<T>(data: T): ParseSuccess<T> {
   return { success: true, data };
 }
 
@@ -37,23 +37,23 @@ function joinPath(path: string, key: string | number) {
   return path ? `${path}.${key}` : String(key);
 }
 
-function isPlainObject(value: unknown): value is Record<string, any> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
  * Wrap a `(value, path) => ParseResult` function in the chainable schema API.
  */
-function createSchema(parse: (value: unknown, path: string) => ParseResult, meta: { isOptional?: boolean; } = {}): Schema {
-  const schema = {
+function createSchema<T>(parse: (value: unknown, path: string) => ParseResult<T>, meta: { isOptional?: boolean; } = {}): Schema<T> {
+  const schema: Schema<T> = {
     ...meta,
     isOptional: Boolean(meta.isOptional),
     _parse: parse,
-    safeParse(value: unknown): ParseResult {
+    safeParse(value: unknown): ParseResult<T> {
       return parse(value, '');
     },
     /** Throws `TypeError` when invalid. */
-    parse(value: unknown): any {
+    parse(value: unknown): T {
       const result = parse(value, '');
       if (!result.success) {
         throw new TypeError(result.error.message);
@@ -61,15 +61,15 @@ function createSchema(parse: (value: unknown, path: string) => ParseResult, meta
       return result.data;
     },
     /** Accept `undefined` (and a missing object key) in addition to the base type. */
-    optional() {
-      return createSchema(
+    optional(): Schema<T | undefined> {
+      return createSchema<T | undefined>(
         (value, path) => (value === undefined ? ok(undefined) : parse(value, path)),
         { ...meta, isOptional: true }
       );
     },
     /** Accept `null` in addition to the base type. */
-    nullable() {
-      return createSchema((value, path) => (value === null ? ok(null) : parse(value, path)), {
+    nullable(): Schema<T | null> {
+      return createSchema<T | null>((value, path) => (value === null ? ok(null) : parse(value, path)), {
         ...meta,
         isOptional: Boolean(meta.isOptional),
       });
@@ -117,27 +117,27 @@ function boolean() {
 }
 
 /** @param expected */
-function literal(expected: string | number | boolean) {
+function literal<T extends string | number | boolean>(expected: T) {
   return createSchema((value, path) =>
     value === expected ? ok(value) : fail(path, `expected ${JSON.stringify(expected)}`)
   );
 }
 
 /** @param values */
-function enumOf(values: ReadonlyArray<string>) {
+function enumOf<T extends string>(values: ReadonlyArray<T>) {
   const allowed = new Set(values);
   return createSchema((value, path) =>
-    allowed.has((value as string))
+    typeof value === 'string' && allowed.has(value as T)
       ? ok(value)
       : fail(path, `expected one of ${[...allowed].join(', ')}`)
   );
 }
 
 /** @param item */
-function array(item: Schema) {
+function array<T>(item: Schema<T>) {
   return createSchema((value, path) => {
     if (!Array.isArray(value)) return fail(path, 'expected an array');
-    const parsed: any[] = [];
+    const parsed: T[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const result = item._parse(value[index], joinPath(path, `[${index}]`));
       if (!result.success) return result;
@@ -154,10 +154,26 @@ function array(item: Schema) {
  * @param options - `passthrough` keeps unknown
  *   keys, used for records whose full shape is owned by one side only.
  */
-function object(shape: Record<string, Schema>, { passthrough = false }: { passthrough?: boolean; } = {}) {
+type SchemaType<S extends Schema<unknown>> = S extends Schema<infer T> ? T : never;
+type SchemaShape = Record<string, Schema<unknown>>;
+type OptionalKeys<TShape extends SchemaShape> = {
+  [K in keyof TShape]-?: undefined extends SchemaType<TShape[K]> ? K : never;
+}[keyof TShape];
+type RequiredKeys<TShape extends SchemaShape> = Exclude<keyof TShape, OptionalKeys<TShape>>;
+type InferObject<TShape extends SchemaShape, TPassthrough extends boolean> = {
+  [K in RequiredKeys<TShape>]: SchemaType<TShape[K]>;
+} & {
+  [K in OptionalKeys<TShape>]?: SchemaType<TShape[K]>;
+} & (TPassthrough extends true ? Record<string, unknown> : Record<never, never>);
+
+function object<TShape extends SchemaShape, TPassthrough extends boolean = false>(
+  shape: TShape,
+  options: { passthrough?: TPassthrough; } = {}
+) {
+  const passthrough = (options.passthrough ?? false) as TPassthrough;
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
-    const parsed: Record<string, any> = passthrough ? { ...value } : {};
+    const parsed: Record<string, unknown> = passthrough ? { ...value } : {};
     for (const [key, keySchema] of Object.entries(shape)) {
       const result = keySchema._parse(value[key], joinPath(path, key));
       if (!result.success) return result;
@@ -165,7 +181,7 @@ function object(shape: Record<string, Schema>, { passthrough = false }: { passth
         parsed[key] = result.data;
       }
     }
-    return ok(parsed);
+    return ok(parsed as InferObject<TShape, TPassthrough>);
   });
 }
 
@@ -183,10 +199,10 @@ function opaque() {
 /**
  * Object with arbitrary string keys and uniformly typed values.
  */
-function record(valueSchema: Schema) {
+function record<T>(valueSchema: Schema<T>) {
   return createSchema((value, path) => {
     if (!isPlainObject(value)) return fail(path, 'expected an object');
-    const parsed: Record<string, any> = {};
+    const parsed: Record<string, T> = {};
     for (const [key, entry] of Object.entries(value)) {
       const result = valueSchema._parse(entry, joinPath(path, key));
       if (!result.success) return result;
@@ -197,7 +213,7 @@ function record(valueSchema: Schema) {
 }
 
 /** @param options */
-function union(options: Schema[]) {
+function union<TOptions extends readonly Schema<unknown>[]>(options: TOptions) {
   return createSchema((value, path) => {
     for (const option of options) {
       const result = option._parse(value, path);
