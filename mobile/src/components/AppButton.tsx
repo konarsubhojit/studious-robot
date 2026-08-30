@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { useThemedStyles } from '../ThemeContext';
-import { radius, sizes, spacing } from '../theme';
+import { useTheme, useThemedStyles } from '../ThemeContext';
+import { radius, sizes, spacing, typography } from '../theme';
 import type { ThemeColors } from '../theme';
 
 export type AppButtonProps = {
@@ -32,6 +32,7 @@ export default function AppButton({
   accessibilityHint,
   testID,
 }: AppButtonProps) {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -43,6 +44,7 @@ export default function AppButton({
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled, selected: active }}
       testID={testID}
+      android_ripple={{ color: active ? colors.ripple : colors.rippleOnAccent }}
       style={({ pressed }) => [
         styles.button,
         active && styles.buttonActive,
@@ -82,6 +84,7 @@ const createStyles = (colors: ThemeColors) =>
       opacity: 0.88,
     },
     buttonText: {
+      ...typography.label,
       color: colors.textOnAccent,
       fontWeight: '700',
     },

@@ -661,9 +661,9 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.md,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      backgroundColor: colors.surface,
+      padding: spacing.lg,
+      borderRadius: radius.lg,
+      backgroundColor: colors.surfaceContainer,
     },
     identityText: {
       flex: 1,

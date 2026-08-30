@@ -71,6 +71,7 @@ export default function IconAction({
         accessibilityState={{ selected, disabled: disabled || !onPress }}
         hitSlop={touchSlop(size)}
         testID={testID}
+        android_ripple={{ color: colors.ripple, borderless: true, radius: size / 2 }}
         style={({ pressed }) => [
           styles.button,
           { height: size, width: size, borderRadius: size / 2 },
