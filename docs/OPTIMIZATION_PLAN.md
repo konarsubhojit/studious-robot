@@ -292,8 +292,9 @@ is the number that would retire the question.
 
 
 ### P3.4 was already fixed
-The finding in `reviews/copilot-master-review.md` is stale. `handleRtcRelay`
-already requires `mediaState.heartbeat === true` before stamping liveness, and
+The finding that raised it (in a review report since deleted — see the review
+ledger below) was stale. `handleRtcRelay` already requires
+`mediaState.heartbeat === true` before stamping liveness, and
 `stale-calls.test.ts` already asserts that a plain screen-share frame does not
 refresh the deadline. Verified rather than re-implemented.
 
@@ -404,3 +405,33 @@ differ by package because their tooling does:
   rules a hand-rolled scan cannot replicate — `no-floating-promises`,
   `no-misused-promises` and `await-thenable`, which is where an un-awaited
   Socket.IO handler otherwise becomes a process-killing unhandled rejection.
+
+## Review ledger
+
+The `reviews/` directory held six "grumpy code review" reports, one per branch.
+Each carried its own resolution status, and every Critical, High, Medium and Low
+finding across all six was already marked fixed in the report that raised it.
+What was left was the residue: findings graded Nit, findings explicitly deferred,
+and observations filed under "out of scope (pre-existing, not graded)" — the
+category that outlives the branch that noticed it and therefore has nowhere to
+live once the report is deleted.
+
+That residue is closed or recorded below, and the directory is deleted. A review
+report is a per-branch artefact; keeping six of them in the tree turns a merged
+branch's transient state into permanent documentation that slowly diverges from
+the code. Anything from them that is still true belongs in this plan or in
+`mobile/docs/UX_REDESIGN_PLAN.md`, which is where it now is.
+
+| Report | What was still open | Disposition |
+| ------ | ------------------- | ----------- |
+| `add-eslint-typescript-eslint-server` | **Nit**: the Socket.IO teardown was copy-pasted into ~25 suites; a `closeTestServer()` helper would collapse them | **Fixed.** `server/test/helpers.ts` exports `closeTestServer`, and all 25 suites call it. Its docstring states why the order (drop keep-alives → close Socket.IO → close HTTP) is not arbitrary: get it wrong and a suite hangs rather than fails |
+| `add-eslint-typescript-eslint-server` | **Out of scope**: `mobile-ci.yml` never ran `npm run lint`, so only the server's linter gated CI | **Fixed.** `mobile-ci.yml` runs `npm run lint` between typecheck and tests. The mobile package was already clean, so this only closes the gap between "we have a linter" and "the linter can fail a build" |
+| `better-ux-theming-options` | **Nit**: `confirm` in `SettingsScreen` was not a `useCallback` while `dismissToast` was | **Already fixed** on the branch; verified rather than re-done |
+| `copilot-fix-reconnect-banner-state` | **Nit, deferred**: `RingingAvatar`'s 36 dp initials sit in a fixed 100 dp disc with no `maxFontSizeMultiplier`, so they clip at large accessibility text sizes | **Fixed.** Capped at `fontScaleCaps.badge`, which is the token for exactly this shape — a glyph inside fixed geometry. Pinned in `accessibility.test.tsx` alongside the other 17 caps |
+| `fix-ringing-issue-on-caller-side` | **Out of scope**: `chooseAudioRoute` performs its Bluetooth permission check *outside* its `try`, which is why a Medium finding on that branch had to be closed with a `.catch()` at the call site rather than at the cause | **Fixed at the cause.** The permission check is now inside a `try` and a throw degrades exactly as a denial does, so the module keeps its "never throw, log and degrade" contract. The call-site `.catch()` stays as defence in depth. Two tests cover it, including one asserting `restoreInCallAudioSession` resolves |
+| `fix-ringing-issue-on-caller-side` | **Nit**: the three ringer-mode strings are declared on both sides of the native bridge | **Recorded, not changed.** Both sides carry a comment pointing at the other, which is the best available without a codegen step |
+| `fix-ringing-issue-on-caller-side` | **Out of scope**: `stopIncomingRingtone()` tears down the whole audio session rather than just the ringtone | **Recorded here.** Harmless in today's flows — it always runs before the in-call session starts — but it would bite a call-waiting feature, and that is the change that should fix it |
+| `log-sql-mongo-db-query-times` | **Nit**: `dbQueries` sits outside `counters`/`histograms`/`derived` in the telemetry snapshot | **Recorded, not changed.** It is a sorted table rather than a keyed map; already documented in the type |
+| `log-sql-mongo-db-query-times` | **Out of scope**: `persistence.ts` swallows DB errors on most write paths but rethrows on `persistUser`; `MessageStore`'s `any` typing leaves the Mongo call sites unchecked | **Recorded here.** Both are pre-existing and neither is a rider on a UI or observability pass |
+| `copilot-implementation-plan-ui-architecture-performance` | **Two Nits**, both reviewed and knowingly left: `resolveMediaGesture` is dual-natured (exported pure helper *and* worklet), and `useThemedStyles`' cache requires module-level factories | **Recorded here**, because both are invariants rather than defects: adding a non-worklet-safe call to the first reintroduces a device-only crash, and defining a style factory inside a component silently defeats the second |
+| All six | Mobile Jest reports leaked handles and needs `--forceExit`; the server suite reports one skipped test without a CI Postgres service | **Recorded in the UX plan's §0 command table**, which now names `--forceExit` rather than describing the warning as benign |

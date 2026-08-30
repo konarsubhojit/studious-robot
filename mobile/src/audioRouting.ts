@@ -57,6 +57,8 @@ const GENERIC_AUDIO_SESSION_ERROR =
   'Unable to update in-call audio. Check app permissions in Settings and confirm the selected audio device is available.';
 const AUDIO_ROUTE_FALLBACK_MESSAGE =
   'Requested audio route unavailable. Call will stay on speaker or earpiece.';
+const BLUETOOTH_PERMISSION_UNAVAILABLE_MESSAGE =
+  'Unable to check the Bluetooth permission. Call will stay on speaker or earpiece.';
 
 /**
  * Convert a route constant into a display label, falling back to the raw value
@@ -249,7 +251,25 @@ export async function chooseAudioRoute(route: string, { fallbackToSpeaker = true
     message: string;
 }> {
   if (route === AUDIO_ROUTES.BLUETOOTH) {
-    const bluetoothPermission = await ensureBluetoothPermission({ requestIfNeeded: true });
+    // The permission check is the one step here that can reject rather than
+    // return a result, and this module's contract with its callers is that it
+    // never throws — it logs and degrades. Callers rely on that: the unmute
+    // path fires `restoreInCallAudioSession` and only catches to log, so a
+    // throwing permission module used to turn an unmute into an unhandled
+    // rejection. A throw is treated exactly as a denial, because it means the
+    // same thing to the user: this device cannot be routed to Bluetooth.
+    let bluetoothPermission: Awaited<ReturnType<typeof ensureBluetoothPermission>>;
+    try {
+      bluetoothPermission = await ensureBluetoothPermission({ requestIfNeeded: true });
+    } catch (error) {
+      bluetoothPermission = {
+        ok: false,
+        granted: false,
+        requested: false,
+        message: BLUETOOTH_PERMISSION_UNAVAILABLE_MESSAGE,
+      };
+      logWarn('Bluetooth permission check failed', { message: errorMessage(error) });
+    }
     if (!bluetoothPermission.ok) {
       logWarn('Bluetooth permission denied; cannot route call audio to Bluetooth', {
         message: bluetoothPermission.message,

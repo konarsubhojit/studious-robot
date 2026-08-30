@@ -28,10 +28,12 @@ All commands run from `mobile/`:
 | Install | `npm install` | `node_modules` is not checked in; required first. |
 | Tests | `npx jest --ci --forceExit` | ~20 s warm. Current baseline: **113 suites / 1791 tests, all passing**. The run leaks handles and hangs without `--forceExit`. |
 | Types | `npx tsc --noEmit -p tsconfig.json` | Must be clean. |
-| Lint | `npx eslint src/ __tests__/` | Must be clean. |
+| Lint | `npm run lint` | Must be clean; `mobile-ci.yml` runs it. |
 
 The trailing "A worker process has failed to exit gracefully" warning from Jest
-is pre-existing and benign.
+is pre-existing. Without `--forceExit` the run does not merely warn — it hangs
+after the last suite reports, so the flag is part of the command rather than a
+workaround for noise.
 
 Non-negotiable constraints carried from the original plan:
 

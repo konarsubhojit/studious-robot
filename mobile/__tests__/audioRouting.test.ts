@@ -257,6 +257,31 @@ describe('audioRouting', () => {
         message: expect.stringContaining('Unable to update in-call audio'),
       });
     });
+
+    test('degrades rather than rejecting when the permission check itself throws', async () => {
+      // This module's contract is that it never throws — callers such as the
+      // unmute path fire it and only catch to log, so a rejection here becomes
+      // an unhandled promise rejection rather than a degraded route.
+      mockEnsureBluetoothPermission.mockRejectedValue(new Error('permission module unavailable'));
+
+      const status = await chooseAudioRoute(AUDIO_ROUTES.BLUETOOTH);
+
+      expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+      expect(status).toMatchObject({
+        ok: false,
+        reason: 'permission-denied',
+        selected: AUDIO_ROUTES.SPEAKER_PHONE,
+        message: expect.stringContaining('Unable to check the Bluetooth permission'),
+      });
+    });
+
+    test('a throwing permission check does not reject restoreInCallAudioSession either', async () => {
+      mockEnsureBluetoothPermission.mockRejectedValue(new Error('permission module unavailable'));
+
+      await expect(
+        restoreInCallAudioSession(AUDIO_ROUTES.BLUETOOTH),
+      ).resolves.toMatchObject({ ok: false });
+    });
   });
 
   describe('selectPreferredAudioRoute', () => {
