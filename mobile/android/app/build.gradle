@@ -97,8 +97,14 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // Cleartext HTTP is only ever needed against a local/LAN dev server
+        // (e.g. the default `http://localhost:4173` signaling URL); a release
+        // build must never permit it, since an accidentally-configured
+        // production HTTP endpoint would leak session IDs and WebRTC
+        // signaling to network interception. Defaulted to disabled here and
+        // re-enabled only for the debug build type below.
         manifestPlaceholders = [
-            usesCleartextTraffic: "true"
+            usesCleartextTraffic: "false"
         ]
     }
     signingConfigs {
@@ -112,6 +118,7 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            manifestPlaceholders.usesCleartextTraffic = "true"
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
