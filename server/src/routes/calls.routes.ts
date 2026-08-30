@@ -1,26 +1,11 @@
 import express from 'express';
-import { timingSafeEqual } from 'crypto';
 import { isBlocked } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequest, hasOperatorToken } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
 import { createCallRecord, transitionCall, describeActiveCallsForUser } from '../domain/calls.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
 import { notifyCallCreated, notifyCallTransition } from '../domain/notifications.ts';
-
-/**
- * Constant-time check of the operator debug token, so `/debug/active-calls`
- * can be used to inspect another user without leaking the token via timing.
- */
-function hasDebugToken(req: import('express').Request): boolean {
-  const expected = process.env.DEBUG_API_TOKEN;
-  if (!expected) return false;
-  const presented = req.get('x-debug-token') ?? '';
-  const expectedBuffer = Buffer.from(expected);
-  const presentedBuffer = Buffer.from(presented);
-  if (expectedBuffer.length !== presentedBuffer.length) return false;
-  return timingSafeEqual(expectedBuffer, presentedBuffer);
-}
 
 /**
  * Call lifecycle endpoints: create, inspect, history, and state transitions.
@@ -219,7 +204,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    if (userId !== session.userId && !hasDebugToken(req)) {
+    if (userId !== session.userId && !hasOperatorToken(req)) {
       res.status(403).json({ error: 'forbidden' });
       return;
     }

@@ -91,6 +91,36 @@ test('GET /metrics requires the operator token', async () => {
   }
 });
 
+test('GET /metrics rejects tokens of the wrong length and the wrong value', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    // Both buffers are padded to a fixed width before the constant-time
+    // compare, so a length mismatch must be rejected by the comparison itself
+    // rather than by an early length branch (which would leak the configured
+    // token's length by timing).
+    for (const token of [
+      METRICS_TOKEN.slice(0, -1),
+      `${METRICS_TOKEN}x`,
+      '',
+      'x'.repeat(512),
+      `${'x'.repeat(METRICS_TOKEN.length)}`,
+    ]) {
+      const res = await fetch(`${url}/metrics`, {
+        headers: { 'x-debug-token': token },
+      });
+      assert.equal(res.status, 401, `expected 401 for token of length ${token.length}`);
+    }
+
+    // The correct token still passes.
+    const ok = await fetch(`${url}/metrics`, {
+      headers: { 'x-debug-token': METRICS_TOKEN },
+    });
+    assert.equal(ok.status, 200);
+  } finally {
+    await teardown();
+  }
+});
+
 test('GET /metrics increments calls_initiated and calls_ringing after a call', async () => {
   const { url, teardown } = await startServer();
   try {

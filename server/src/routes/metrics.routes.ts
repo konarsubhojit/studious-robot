@@ -1,7 +1,7 @@
 import express from 'express';
-import { timingSafeEqual } from 'crypto';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { CALL_END_REASONS } from '../config.ts';
+import { hasOperatorToken } from '../lib/auth.ts';
 import { summarizeDeviceFanout } from '../lib/state.ts';
 
 /**
@@ -11,32 +11,6 @@ import { summarizeDeviceFanout } from '../lib/state.ts';
  */
 function createMetricsRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
-  const TOKEN_COMPARE_BYTES = 256;
-
-  /**
-   * Constant-time check of the operator token guarding metrics access.
-   */
-  function hasMetricsToken(req: import('express').Request): boolean {
-    const expected = process.env.DEBUG_API_TOKEN;
-    if (!expected) return false;
-    const presented = req.get('x-debug-token') ?? '';
-
-    const expectedRaw = Buffer.from(expected);
-    const presentedRaw = Buffer.from(presented);
-    const expectedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
-    const presentedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
-    expectedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(expectedPadded);
-    presentedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(presentedPadded);
-
-    const equal = timingSafeEqual(expectedPadded, presentedPadded);
-    return (
-      equal &&
-      expectedRaw.length === presentedRaw.length &&
-      expectedRaw.length <= TOKEN_COMPARE_BYTES &&
-      presentedRaw.length <= TOKEN_COMPARE_BYTES
-    );
-  }
-
   // ─── Call end-reason taxonomy (static, no auth required) ──────────────────
   router.get('/call-end-reasons', (_req, res) => {
     res.status(200).json({ reasons: CALL_END_REASONS });
@@ -60,7 +34,7 @@ function createMetricsRouter({ state }: { state: import('../stores/contracts.ts'
    *                   detail and never a push token.
    */
   router.get(API_ROUTES.METRICS, (req, res) => {
-    if (!hasMetricsToken(req)) {
+    if (!hasOperatorToken(req)) {
       res.status(401).json({ error: 'metrics authentication required' });
       return;
     }

@@ -1,8 +1,45 @@
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import { normaliseId, normaliseOptionalString, isPlainObject } from './normalize.ts';
 
 /** Upper bound for the client-supplied correlation id kept for logging. */
 const MAX_CORRELATION_ID_LENGTH = 64;
+
+/**
+ * Width both tokens are padded to before comparison, so `timingSafeEqual`
+ * (which throws on a length mismatch) can be reached without first branching
+ * on length — branching on length is itself the timing leak.
+ */
+const TOKEN_COMPARE_BYTES = 256;
+
+/**
+ * Constant-time check of the operator debug token (`DEBUG_API_TOKEN`) that
+ * guards `/metrics` and `/debug/active-calls`.
+ *
+ * Both buffers are padded to a fixed width before `timingSafeEqual`, so a
+ * wrong-length guess costs exactly as much as a wrong-value one and the
+ * configured token's length is not observable by timing. The length equality
+ * is still asserted, but only *after* the constant-time compare has run.
+ */
+function hasOperatorToken(req: import('express').Request): boolean {
+  const expected = process.env.DEBUG_API_TOKEN;
+  if (!expected) return false;
+  const presented = req.get('x-debug-token') ?? '';
+
+  const expectedRaw = Buffer.from(expected);
+  const presentedRaw = Buffer.from(presented);
+  const expectedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
+  const presentedPadded = Buffer.alloc(TOKEN_COMPARE_BYTES);
+  expectedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(expectedPadded);
+  presentedRaw.subarray(0, TOKEN_COMPARE_BYTES).copy(presentedPadded);
+
+  const equal = timingSafeEqual(expectedPadded, presentedPadded);
+  return (
+    equal &&
+    expectedRaw.length === presentedRaw.length &&
+    expectedRaw.length <= TOKEN_COMPARE_BYTES &&
+    presentedRaw.length <= TOKEN_COMPARE_BYTES
+  );
+}
 
 /**
  * Normalise the client-supplied per-session correlation id used to trace a
@@ -117,6 +154,7 @@ function resolveSocketIdentity(socket: { handshake: { auth?: Record<string, any>
 }
 
 export {
+  hasOperatorToken,
   parseBearerToken,
   normaliseCorrelationId,
   getSessionFromRequest,
