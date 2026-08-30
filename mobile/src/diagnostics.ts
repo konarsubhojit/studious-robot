@@ -365,7 +365,14 @@ export async function exportDiagnosticLogs(context: {
     socket?: object | null;
     iceTransportPolicy?: string;
     selectedCandidatePair?: IceCandidatePairSummary | null;
-} = {}): Promise<{ ok: boolean; message: string; }> {
+} = {}, options: { userInitiated?: boolean } = {}): Promise<{ ok: boolean; message: string; }> {
+  if (options.userInitiated !== true) {
+    return {
+      ok: false,
+      message: 'Diagnostic export requires an explicit user action.',
+    };
+  }
+
   try {
     logInfo('Export Logs button press');
     const signalingUrl = (context.signalingUrl ?? '').trim();

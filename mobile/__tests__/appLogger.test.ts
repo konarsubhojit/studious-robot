@@ -3,6 +3,9 @@ jest.mock('react-native-fs', () => ({
   appendFile: jest.fn(),
   exists: jest.fn(),
   readFile: jest.fn(),
+  stat: jest.fn(),
+  write: jest.fn(),
+  writeFile: jest.fn(),
 }));
 
 import RNFS from 'react-native-fs';
@@ -14,12 +17,19 @@ import {
   logError,
   logInfo,
   logVerbose,
+  MAX_DURABLE_LOG_BYTES,
+  MAX_IN_MEMORY_LOG_ENTRIES,
+  persistLogLine,
 } from '../src/appLogger';
 
 describe('appLogger', () => {
   beforeEach(() => {
     clearLogs();
     jest.clearAllMocks();
+    (RNFS.appendFile as jest.Mock).mockResolvedValue(undefined);
+    (RNFS.stat as jest.Mock).mockResolvedValue({ size: 0 });
+    (RNFS.write as jest.Mock).mockResolvedValue(undefined);
+    (RNFS.writeFile as jest.Mock).mockResolvedValue(undefined);
     delete process.env.VERBOSE_LOGGING;
     delete process.env.LOG_LEVEL;
   });
@@ -67,6 +77,15 @@ describe('appLogger', () => {
     expect(logs).not.toContain('short-lived-turn-secret');
   });
 
+  test('redacts call ids from buffered metadata', () => {
+    logInfo('call status', { callId: 'call-secret', call_id: 'call-secret-2' });
+
+    const logs = getLogsAsText();
+    expect(logs).toContain('[REDACTED]');
+    expect(logs).not.toContain('call-secret');
+    expect(logs).not.toContain('call-secret-2');
+  });
+
   test('clearLogs removes all entries', () => {
     logInfo('first');
     clearLogs();
@@ -86,6 +105,23 @@ describe('appLogger', () => {
     expect(logs).not.toContain('secret-device-token');
   });
 
+  test('keeps only the newest in-memory entries', () => {
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      for (let i = 0; i < MAX_IN_MEMORY_LOG_ENTRIES + 5; i += 1) {
+        logInfo(`entry-${i}`);
+      }
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    const logs = getLogsAsText();
+    const lines = logs.split('\n');
+    expect(lines).toHaveLength(MAX_IN_MEMORY_LOG_ENTRIES);
+    expect(lines[0]).toContain('entry-5');
+    expect(lines[lines.length - 1]).toContain(`entry-${MAX_IN_MEMORY_LOG_ENTRIES + 4}`);
+  });
+
   test('background logs are persisted and included in export text', async () => {
     (RNFS.appendFile as jest.Mock).mockResolvedValueOnce(undefined);
     (RNFS.exists as jest.Mock).mockResolvedValueOnce(true);
@@ -102,5 +138,75 @@ describe('appLogger', () => {
     expect(exported).toContain('background receipt');
     expect(exported).toContain('--- persisted background logs ---');
     expect(exported).toContain('persisted background line');
+  });
+
+  test('rotates the durable log before an append would exceed the size cap', async () => {
+    (RNFS.stat as jest.Mock).mockResolvedValueOnce({ size: MAX_DURABLE_LOG_BYTES - 4 });
+
+    await persistLogLine('line that would overflow');
+
+    expect(RNFS.writeFile).toHaveBeenCalledWith(
+      '/docs/wetalk-background.log',
+      'line that would overflow\n',
+      'utf8',
+    );
+    expect(RNFS.appendFile).not.toHaveBeenCalled();
+    expect(RNFS.readFile).not.toHaveBeenCalled();
+  });
+
+  test('does not append past the durable size cap when truncation is unavailable', async () => {
+    const writeFile = RNFS.writeFile as jest.Mock;
+    (RNFS as any).writeFile = undefined;
+    (RNFS.stat as jest.Mock).mockResolvedValueOnce({ size: MAX_DURABLE_LOG_BYTES - 4 });
+
+    try {
+      await expect(persistLogLine('line that would overflow')).resolves.toBe(false);
+
+      expect(RNFS.appendFile).not.toHaveBeenCalled();
+      expect(RNFS.readFile).not.toHaveBeenCalled();
+    } finally {
+      (RNFS as any).writeFile = writeFile;
+    }
+  });
+
+  test('falls back to positional append without read-modify-write when appendFile is unavailable', async () => {
+    const appendFile = RNFS.appendFile as jest.Mock;
+    (RNFS as any).appendFile = undefined;
+
+    try {
+      await persistLogLine('latest durable line');
+
+      expect(RNFS.write).toHaveBeenCalledWith(
+        '/docs/wetalk-background.log',
+        'latest durable line\n',
+        -1,
+        'utf8',
+      );
+      expect(RNFS.writeFile).not.toHaveBeenCalled();
+      expect(RNFS.readFile).not.toHaveBeenCalled();
+    } finally {
+      (RNFS as any).appendFile = appendFile;
+    }
+  });
+
+  test('uses a bounded overwrite only when no append API is available', async () => {
+    const appendFile = RNFS.appendFile as jest.Mock;
+    const write = RNFS.write as jest.Mock;
+    (RNFS as any).appendFile = undefined;
+    (RNFS as any).write = undefined;
+
+    try {
+      await persistLogLine('last resort line');
+
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/docs/wetalk-background.log',
+        'last resort line\n',
+        'utf8',
+      );
+      expect(RNFS.readFile).not.toHaveBeenCalled();
+    } finally {
+      (RNFS as any).appendFile = appendFile;
+      (RNFS as any).write = write;
+    }
   });
 });

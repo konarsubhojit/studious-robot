@@ -1,7 +1,12 @@
 import { errorMessage } from './errors';
 
+export const MAX_IN_MEMORY_LOG_ENTRIES = 500;
+export const MAX_DURABLE_LOG_BYTES = 256 * 1024;
+const MAX_DURABLE_LOG_LINE_BYTES = 16 * 1024;
+
 const LOG_ENTRIES: string[] = [];
 let durableLogQueue: Promise<boolean | void> = Promise.resolve();
+let estimatedDurableLogBytes: number | null = null;
 
 const REDACTED_TEXT = '[REDACTED]';
 const CIRCULAR_TEXT = '[Circular]';
@@ -20,6 +25,8 @@ const SENSITIVE_FIELDS = new Set([
   'verification_code',
   'recoverycode',
   'recovery_code',
+  'callid',
+  'call_id',
 ]);
 
 function isSensitiveKey(key: unknown): boolean {
@@ -128,6 +135,61 @@ function safeSerialize(metadata: unknown): string | undefined {
   }
 }
 
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function trimToUtf8Bytes(value: string, maxBytes: number): string {
+  if (utf8ByteLength(value) <= maxBytes) {
+    return value;
+  }
+
+  let output = '';
+  let bytes = 0;
+  for (const char of value) {
+    const charBytes = utf8ByteLength(char);
+    if (bytes + charBytes > maxBytes) {
+      break;
+    }
+    output += char;
+    bytes += charBytes;
+  }
+  return output;
+}
+
+async function getDurableLogSize(RNFS: any, path: string): Promise<number | null> {
+  if (typeof RNFS.stat !== 'function') {
+    return null;
+  }
+
+  try {
+    const stat = await RNFS.stat(path);
+    const size = Number(stat?.size);
+    return Number.isFinite(size) && size >= 0 ? size : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @returns the formatted line that was buffered.
  */
@@ -140,6 +202,10 @@ function addLog(level: string, message: unknown, metadata?: unknown): string {
     : `${timestamp} [${level.toUpperCase()}] ${safeMessage}`;
 
   LOG_ENTRIES.push(line);
+  const overflow = LOG_ENTRIES.length - MAX_IN_MEMORY_LOG_ENTRIES;
+  if (overflow > 0) {
+    LOG_ENTRIES.splice(0, overflow);
+  }
 
   if (level === 'warn') {
     console.warn(line);
@@ -178,7 +244,10 @@ export function getDurableLogFilePath(): string | null {
  * @returns resolves when the append completes.
  */
 export function persistLogLine(line: unknown): Promise<boolean | void> {
-  const safeLine = typeof line === 'string' ? line : String(line ?? '');
+  const safeLine = trimToUtf8Bytes(
+    typeof line === 'string' ? line : String(line ?? ''),
+    MAX_DURABLE_LOG_LINE_BYTES,
+  );
   durableLogQueue = durableLogQueue
     .catch(() => {})
     .then(async () => {
@@ -186,14 +255,31 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
       const path = getDurableLogFilePath();
       if (!RNFS || !path || !safeLine) return false;
       try {
-        if (typeof RNFS.appendFile === 'function') {
-          await RNFS.appendFile(path, `${safeLine}\n`, 'utf8');
-        } else {
-          const exists = typeof RNFS.exists === 'function' ? await RNFS.exists(path) : false;
-          const previous =
-            exists && typeof RNFS.readFile === 'function' ? await RNFS.readFile(path, 'utf8') : '';
-          await RNFS.writeFile(path, `${previous}${safeLine}\n`, 'utf8');
+        const lineToAppend = `${safeLine}\n`;
+        const lineBytes = utf8ByteLength(lineToAppend);
+        const currentSize = await getDurableLogSize(RNFS, path);
+        const durableLogSize = currentSize ?? estimatedDurableLogBytes ?? 0;
+        if (
+          durableLogSize + lineBytes > MAX_DURABLE_LOG_BYTES
+        ) {
+          if (typeof RNFS.writeFile !== 'function') return false;
+          await RNFS.writeFile(path, lineToAppend, 'utf8');
+          estimatedDurableLogBytes = lineBytes;
+          return true;
         }
+
+        if (typeof RNFS.appendFile === 'function') {
+          await RNFS.appendFile(path, lineToAppend, 'utf8');
+        } else if (typeof RNFS.write === 'function') {
+          await RNFS.write(path, lineToAppend, -1, 'utf8');
+        } else {
+          if (typeof RNFS.writeFile !== 'function') return false;
+          // Last-resort bounded fallback for old/incomplete RNFS shims: avoid
+          // the previous read-modify-write loop even though only this line is
+          // retained.
+          await RNFS.writeFile(path, lineToAppend, 'utf8');
+        }
+        estimatedDurableLogBytes = durableLogSize + lineBytes;
         return true;
       } catch {
         return false;
