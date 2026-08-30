@@ -89,9 +89,25 @@ None.
 
 ## Resolution summary
 
-4 findings, 4 fixed, 0 deferred: 2 Medium, 1 Low, 1 Nit. Re-validated after the
+5 findings across two passes, 5 fixed, 0 deferred: 2 Medium, 2 Low, 1 Nit. Re-validated after the
 fixes — `npm run typecheck` clean, lint at the same 24 pre-existing warnings,
 2081 tests across 124 suites green, `useCallFlow.test.tsx` still unmodified.
+
+## Re-review pass
+
+Re-ran against the same base after the fixes. One new finding, fixed:
+
+- **[LOW] `decideQueuedAnswerReplay` took a bare `string` outcome** — `mobile/src/call/answerPath.ts`
+  - Its only producer is `rehydrateCallFromPush`, which returns
+    `RehydrationOutcome`. Accepting `string` meant a typo'd outcome
+    (`'not-found'`) would have silently taken the `unavailable` branch —
+    dropping an answer for a call that had merely ended, and reporting the
+    wrong reason on the push receipt.
+  - **Resolution: Fixed.** The parameter is now typed `RehydrationOutcome |
+    null | undefined`; the tables in `answerPath.test.ts` are `as const` so
+    they are checked against that union rather than widened to `string`.
+
+No open Critical, High or Medium findings remain.
 
 ## Out of scope (pre-existing, not graded)
 

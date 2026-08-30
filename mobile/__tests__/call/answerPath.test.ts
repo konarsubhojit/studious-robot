@@ -164,7 +164,7 @@ describe('decideQueuedAnswerReplay', () => {
     ).toEqual({ action: 'ignore' });
   });
 
-  it.each(['terminal', 'not_found'])(
+  it.each(['terminal', 'not_found'] as const)(
     'dismisses a notification that outlived the call (%s)',
     outcome => {
       expect(decideQueuedAnswerReplay({ ...base, outcome })).toEqual({
@@ -179,7 +179,7 @@ describe('decideQueuedAnswerReplay', () => {
     ['an ignored callId', 'ignored'],
     ['no outcome at all', undefined],
     ['a null outcome', null],
-  ])('drops the entry loudly for %s', (_label, outcome) => {
+  ] as const)('drops the entry loudly for %s', (_label, outcome) => {
     expect(decideQueuedAnswerReplay({ ...base, outcome })).toEqual({
       action: 'unavailable',
       reason: 'call_unavailable',
@@ -187,7 +187,9 @@ describe('decideQueuedAnswerReplay', () => {
   });
 
   it('never leaves an entry stuck: every non-deferred outcome resolves it', () => {
-    for (const outcome of ['ringing', 'terminal', 'not_found', 'error', 'ignored']) {
+    for (const outcome of (
+      ['ringing', 'terminal', 'not_found', 'error', 'ignored'] as const
+    )) {
       expect(decideQueuedAnswerReplay({ ...base, outcome }).action).not.toBe('wait');
     }
   });

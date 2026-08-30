@@ -11,6 +11,8 @@
  * No React, no refs, no socket, no peer connection.
  */
 
+import type { RehydrationOutcome } from './pushRehydration';
+
 /**
  * How long to wait for the signaling socket to connect before answering a call
  * over HTTP instead.
@@ -141,7 +143,7 @@ export function decideQueuedAnswerReplay({
   queuedCallId,
   knownIncomingCallId,
 }: {
-  outcome: string | null | undefined;
+  outcome: RehydrationOutcome | null | undefined;
   callUUID: string;
   queuedCallId: string | null | undefined;
   knownIncomingCallId?: string | null;

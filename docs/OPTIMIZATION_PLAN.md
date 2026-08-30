@@ -75,7 +75,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`, `call/answerPath`, `call/audioRouteRules`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`, `call/answerPath`, `call/audioRouteRules`, `call/callEndpoints`). What is left has no decision in it to separate — see "What was deliberately left in the hook, and why" below. Cutting the hooks themselves apart is a behavioural change to the call path, not a refactor, and wants its own PR, its own review and device QA |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -294,6 +294,35 @@ to a named `sendInitialOffer` beside the handler rather than into the pure
 module: it is `createOffer` / `setLocalDescription` against a live peer
 connection, which is exactly what does not belong there.
 
+**Sixth slice: the stats-poll derivation.** `pollStats` was the file's worst
+complexity entry (#4, 35) and computed everything inline: kbps from a pair of
+`bytesReceived` samples, the packet-loss ratio, the identity of the selected
+candidate pair, whether a relay-only policy was actually being honoured, and
+when a poor-connection warning is worth showing. Those five are now in
+`callUx.ts` beside `collectCallStats` and `getConnectionQuality`, which is
+where the first slice went and the one place stats vocabulary can live without
+pulling in a native module. The effectful half — remembering which pair was
+last reported, so the same pair is not logged twice — became a named
+`noteSelectedCandidatePair` in the hook.
+
+**Seventh slice: push rehydration and the relayed media-state frame.**
+`call/pushRehydration.ts` owns what an app opened from a notification decides
+before it can act: whether it must wait for an identity (deferring is not a
+failure — the callId is held and retried, and is reported apart from a call
+that is genuinely gone), where to ask about the call, that a `404` is an answer
+and not a fault, and whether the returned status is still answerable — with the
+terminal-message table phrased as the timeline phrases it and a fallback so a
+status from a newer server never leaves a blank line. It also owns
+`readMediaStateFrame`, which keeps the C6 additive contract explicit: each key
+is read independently with `in`, silence about a flag is not a claim about it,
+and a liveness heartbeat therefore never clears the "they are presenting"
+banner or the peer's picture. One hardening detail came with the move: the
+message table is now looked up with `Object.hasOwn`, so a status of
+`constructor` returns the generic message instead of a function off
+`Object.prototype`. The callId escaping was preserved, not introduced — the
+hook already encoded it at all three call sites, and those builders have since
+been collected into `call/callEndpoints.ts` so that rule is written once.
+
 **Eighth, ninth, tenth and eleventh slices: the answer path, the queued
 answer, outgoing placement, and audio routing.** `call/answerPath.ts` owns what
 answering decides when nothing else is reliable — how long a cold start waits
@@ -325,35 +354,6 @@ never empties itself between two successful switches. It imports the route
 vocabulary from `audioRouting` rather than redeclaring it, and decides only:
 every `chooseAudioRoute` stayed where it was.
 
-**Sixth slice: the stats-poll derivation.** `pollStats` was the file's worst
-complexity entry (#4, 35) and computed everything inline: kbps from a pair of
-`bytesReceived` samples, the packet-loss ratio, the identity of the selected
-candidate pair, whether a relay-only policy was actually being honoured, and
-when a poor-connection warning is worth showing. Those five are now in
-`callUx.ts` beside `collectCallStats` and `getConnectionQuality`, which is
-where the first slice went and the one place stats vocabulary can live without
-pulling in a native module. The effectful half — remembering which pair was
-last reported, so the same pair is not logged twice — became a named
-`noteSelectedCandidatePair` in the hook.
-
-**Seventh slice: push rehydration and the relayed media-state frame.**
-`call/pushRehydration.ts` owns what an app opened from a notification decides
-before it can act: whether it must wait for an identity (deferring is not a
-failure — the callId is held and retried, and is reported apart from a call
-that is genuinely gone), where to ask about the call, that a `404` is an answer
-and not a fault, and whether the returned status is still answerable — with the
-terminal-message table phrased as the timeline phrases it and a fallback so a
-status from a newer server never leaves a blank line. It also owns
-`readMediaStateFrame`, which keeps the C6 additive contract explicit: each key
-is read independently with `in`, silence about a flag is not a claim about it,
-and a liveness heartbeat therefore never clears the "they are presenting"
-banner or the peer's picture. One hardening detail came with the move: the
-message table is now looked up with `Object.hasOwn`, so a status of
-`constructor` returns the generic message instead of a function off
-`Object.prototype`. The callId escaping was preserved, not introduced — the
-hook already encoded it at all three call sites, and those builders have since
-been collected into `call/callEndpoints.ts` so that rule is written once.
-
 Every slice is pure — no React, no refs, no peer connection, no socket — the
 hook's return shape is unchanged, and `useCallFlow.test.tsx` passes unmodified,
 as it did for the ladder. All three of the file's complexity-baseline entries
@@ -361,25 +361,54 @@ are now cleared — `endActiveCall` (#21, 19), the `call.state_changed` handler
 (#22, 19) and `pollStats` (#4, 35) — and `useCallFlow.ts` lints with zero
 warnings.
 
-Device QA is still the only thing that can verify the call path — there is no
-E2E coverage of it (#114) — so the checklist in #216 (outgoing call, incoming
-accept and decline, an answer from the CallKeep UI including a push cold start,
-a recovering and a non-recovering mid-call drop, the offline-callee push wake,
-and screen share / PiP) has to be run on a device for these slices.
+**What was deliberately left in the hook, and why.** #216 listed four target
+areas. The first three came out. The fourth — WebRTC negotiation — did not, and
+this is the documented "this cannot be separated because X" the issue asks for
+in preference to pushing through.
 
-**What was deliberately left in the hook.** The rest of the signaling surface,
-and all of the issue's slice 4 (WebRTC negotiation), stay where they are. The remaining
-socket handlers close over the refs they mutate (`peerConnectionRef`,
-`iceCandidateBufferRef`, `isNegotiatingRef`) and the negotiation path is
-`setRemoteDescription` / `createAnswer` / `setLocalDescription` against a live
-peer connection. Moving either would relocate side effects rather than separate
-decisions from them, which is the extraction pattern that has held for eleven
-slices and the reason `useCallFlow.test.tsx` has never needed to change. Where
-a decision *was* separable from the effect it sits beside — the offer's
-stale-vs-glare guard, the state-change dispatch — it came out; what is left is
-effects, refs, and the peer connection they drive.
+The negotiation path is `setRemoteDescription` / `createAnswer` /
+`setLocalDescription` / `addTrack` against a live `RTCPeerConnection`, sequenced
+by refs that exist precisely to serialise it: `peerConnectionRef`,
+`isNegotiatingRef` and `iceCandidateBufferRef`. There is no *decision* left in
+it to extract. Every rule those effects consult has already come out — whether
+an inbound offer is stale or glare (`decideIncomingOffer`), what an observed
+`iceConnectionState` means and which rung of the ladder may run
+(`call/iceRestartLadder`), what a terminal ICE state implies
+(`isTerminalIceState`) — and what remains is the ordering of native calls.
+Moving that into a module would relocate side effects, not separate decisions
+from them: the module would need the peer connection, which is exactly the
+thing these modules are defined by not having, and `useCallFlow.test.tsx` would
+have to change to follow it. The same applies to the residual socket handlers,
+which close over the refs they mutate.
 
-The structural three-hook split remains deferred for the reason above.
+That is the boundary the extraction pattern has held at for eleven slices, and
+it is the reason `useCallFlow.test.tsx` has never needed to change. Where a
+decision *was* separable from the effect it sits beside — the offer's
+stale-vs-glare guard, the state-change dispatch, the answer's transport
+fallback — it came out.
+
+The structural three-hook split therefore remains deferred, for the reason it
+was deferred twice before: what is left is coordinated side effects, and
+cutting them apart is a behavioural change to the call path rather than a
+refactor.
+
+**Device QA — outstanding.** CI cannot verify any of this: there is no E2E
+coverage of the call path (#114), so a regression here is caught by a person on
+a device or not at all. The following has to be run against this branch before
+it merges, and its result recorded on the PR:
+
+- [ ] Outgoing call: connect, mute, speaker/earpiece, camera switch, end.
+- [ ] Incoming call: ring, accept, and separately decline.
+- [ ] Answer from the CallKeep system UI, including from a cold start via push.
+- [ ] A mid-call network drop that recovers, and one that does not — verifying
+      the reconnect banner's attempt progression and the "Connection lost"
+      endgame.
+- [ ] Call from an offline callee's perspective — the push wake path.
+- [ ] Screen share start/stop, and PiP enter/exit.
+
+The last two items on that list exercise `call/audioRouteRules` and
+`call/answerPath` most directly: the audio hand-over when a headset is pulled
+mid-call, and an answer tapped in the system UI before the app knows the call.
 
 ### P1.7: the bound is now pinned, and priced
 The JSON document is only defensible *because* the store is bounded — every
