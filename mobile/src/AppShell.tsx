@@ -3,14 +3,16 @@ import { Linking, StatusBar, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   announceForAccessibility,
+  describeCallEnd,
   describeCallState,
-  describeRecoveryState,
+  describeRecoveryTransition,
 } from './accessibilityAnnouncer';
 import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
 import { useCall } from './call/CallProvider';
 import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
 import usePermissionsPrimer from './hooks/usePermissionsPrimer';
+import CallEndSummary from './components/CallEndSummary';
 import CallScreen from './components/CallScreen';
 import { Banner } from './components/primitives';
 import FloatingCallBubble from './components/FloatingCallBubble';
@@ -23,6 +25,8 @@ import TabShell from './components/TabShell';
 import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 import { spacing } from './theme';
+import type { RecoveryAnnouncementState } from './accessibilityAnnouncer';
+import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
 
 /**
@@ -48,11 +52,17 @@ export default function AppShell() {
     callFlow.isRegistered && !callFlow.isLoadingIdentity,
   );
 
+  // Only once the call is over and the tab shell is back: a summary shown over
+  // a ringing or connected call would be describing a different call.
+  const callEndSummary = callState === CALL_STATES.IDLE ? callFlow.callSummary : null;
+
   useCallStateAnnouncements(callState, callFlow.incomingCall?.callerId, callFlow.calleeId);
-  useRecoveryAnnouncements(
-    callState === CALL_STATES.IN_CALL,
-    Boolean(callFlow.isReconnecting || callFlow.recoveryStatus),
-  );
+  useRecoveryAnnouncements(callState === CALL_STATES.IN_CALL, {
+    isRecovering: Boolean(callFlow.isReconnecting || callFlow.recoveryStatus),
+    attempts: callFlow.recoveryStatus?.attempts ?? 0,
+    isConnectionLost: Boolean(callFlow.isConnectionLost),
+  });
+  useCallEndAnnouncements(callEndSummary);
 
   // OS PiP always short-circuits to the compact CallScreen, taking precedence
   // over the in-app minimize state.
@@ -112,6 +122,7 @@ export default function AppShell() {
       <OutgoingCallScreen
         calleeId={callFlow.calleeId}
         activeCall={callFlow.activeCall}
+        delivery={callFlow.callDelivery}
         status={callFlow.status}
         onCancel={callFlow.cancelOutgoingCall}
       />
@@ -172,6 +183,9 @@ export default function AppShell() {
           testID="startup-degraded-banner"
         />
       ) : null}
+      {callEndSummary ? (
+        <CallEndSummary summary={callEndSummary} onDismiss={callFlow.dismissCallSummary} />
+      ) : null}
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
@@ -211,25 +225,53 @@ function useCallStateAnnouncements(callState: string, callerId: string | null | 
   }, [callState]);
 }
 
+/** No recovery in progress, and nothing yet announced about one. */
+const IDLE_RECOVERY: RecoveryAnnouncementState = {
+  isRecovering: false,
+  attempts: 0,
+  isConnectionLost: false,
+};
+
 /**
- * Announce the start and end of a recovery episode.
+ * Announce the course of a recovery episode: its start, each further attempt,
+ * whether it succeeded, and — the one the user most needs — that it did not.
  *
  * Only while a call is up: the recovery flags can settle after the call has
  * already ended, and "Reconnected" after "Call ended" is a lie.
  */
-function useRecoveryAnnouncements(isInCall: boolean, isRecovering: boolean) {
-  const wasRecoveringRef = useRef(false);
+function useRecoveryAnnouncements(
+  isInCall: boolean,
+  { isRecovering, attempts, isConnectionLost }: RecoveryAnnouncementState,
+) {
+  const previousRef = useRef(IDLE_RECOVERY);
 
   useEffect(() => {
     if (!isInCall) {
-      wasRecoveringRef.current = false;
+      previousRef.current = IDLE_RECOVERY;
       return;
     }
-    if (wasRecoveringRef.current === isRecovering) return;
-    wasRecoveringRef.current = isRecovering;
-    const message = describeRecoveryState(isRecovering);
+    const next = { isRecovering, attempts, isConnectionLost };
+    const message = describeRecoveryTransition(previousRef.current, next);
+    previousRef.current = next;
     if (message) announceForAccessibility(message);
-  }, [isInCall, isRecovering]);
+  }, [attempts, isConnectionLost, isInCall, isRecovering]);
+}
+
+/**
+ * Announce the end-of-call summary once, as it appears.
+ *
+ * The summary is a banner above a tab shell the user has just been dropped
+ * back into, so nothing moves focus to it.
+ */
+function useCallEndAnnouncements(summary: CallEndSummaryData | null) {
+  const announcedRef = useRef((null as typeof summary));
+
+  useEffect(() => {
+    if (announcedRef.current === summary) return;
+    announcedRef.current = summary;
+    const message = describeCallEnd(summary);
+    if (message) announceForAccessibility(message);
+  }, [summary]);
 }
 
 /** Open the OS settings page for the app so the user can grant what's missing. */
@@ -248,6 +290,8 @@ function ActiveCallScreen() {
     participantLabel,
     streams,
     handleCallStageLayout,
+    handleTopChromeLayout,
+    handleBottomChromeLayout,
     pipGesture,
     animatedPipStyle,
     minimizeCall,
@@ -264,8 +308,11 @@ function ActiveCallScreen() {
       participantLabel={participantLabel}
       isReconnecting={callFlow.isReconnecting}
       recoveryStatus={callFlow.recoveryStatus}
+      isConnectionLost={callFlow.isConnectionLost}
       onRetry={callFlow.handleRetryReconnect}
       onStageLayout={handleCallStageLayout}
+      onTopChromeLayout={handleTopChromeLayout}
+      onBottomChromeLayout={handleBottomChromeLayout}
       mainStreamUrl={streams.mainStreamUrl}
       hasMainStream={Boolean(streams.mainStream)}
       // Audio call, or a peer with their camera off: a stream exists and has a

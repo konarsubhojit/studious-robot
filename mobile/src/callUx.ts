@@ -21,7 +21,108 @@ export const CALL_END_REASON_LABELS: Record<string, string> = {
   busy: 'Line was busy',
   unreachable: 'User unavailable',
   failed: 'Call failed',
+  media_failed: 'Connection lost',
 };
+
+/**
+ * A call as it is described after the fact: in the conversation timeline, and
+ * in the summary shown the moment it ends.
+ */
+export type CallOutcome = {
+  direction?: string;
+  status?: string | null;
+  endReason?: string | null;
+};
+
+/**
+ * Human-readable outcome per call status, by direction.
+ *
+ * A call the caller hung up before it was answered reads as "Cancelled" to the
+ * caller but as a missed call to the callee, which is how every mainstream
+ * messenger presents it.
+ */
+const OUTCOME_LABELS: Record<'outgoing' | 'incoming', Record<string, string>> = {
+  outgoing: {
+    ended: 'Outgoing call',
+    missed: 'No answer',
+    declined: 'Declined',
+    cancelled: 'Cancelled call',
+    busy: 'Busy',
+    unreachable: 'Unavailable',
+  },
+  incoming: {
+    ended: 'Incoming call',
+    missed: 'Missed call',
+    declined: 'Declined',
+    cancelled: 'Missed call',
+    busy: 'Busy',
+    unreachable: 'Unavailable',
+  },
+};
+
+/**
+ * Terminal reasons that outrank the call's status.
+ *
+ * A call whose media never came back ends as `ended`, exactly like a call the
+ * peer hung up — so judging it by status alone told the user "Call ended" for
+ * both. The distinction the recovery ladder spends twelve seconds establishing
+ * is precisely the one worth saying out loud, so the reason wins here.
+ */
+const TERMINAL_REASON_LABELS: Record<string, string> = {
+  media_failed: 'Connection lost',
+};
+
+/** Plural noun for a collapsed run of calls that all ended this way. */
+const TERMINAL_REASON_GROUP_NOUNS: Record<string, string> = {
+  media_failed: 'dropped calls',
+};
+
+/**
+ * Plural noun per outcome for a collapsed run of calls, so a group reads as
+ * "3 missed calls" rather than repeating the singular row label.
+ */
+const GROUP_NOUNS: Record<'outgoing' | 'incoming', Record<string, string>> = {
+  outgoing: {
+    ended: 'outgoing calls',
+    missed: 'unanswered calls',
+    declined: 'declined calls',
+    cancelled: 'cancelled calls',
+    busy: 'busy calls',
+    unreachable: 'unavailable calls',
+  },
+  incoming: {
+    ended: 'incoming calls',
+    missed: 'missed calls',
+    declined: 'declined calls',
+    cancelled: 'missed calls',
+    busy: 'busy calls',
+    unreachable: 'unavailable calls',
+  },
+};
+
+/** `'outgoing'` only when the entry says so; everything else is incoming. */
+function outcomeDirection(outcome: CallOutcome | null | undefined): 'outgoing' | 'incoming' {
+  return outcome?.direction === 'outgoing' ? 'outgoing' : 'incoming';
+}
+
+/**
+ * The one vocabulary for how a call ended.
+ *
+ * Shared by the conversation timeline and the end-of-call summary so a call is
+ * described with the same words at the moment it ends and forever after.
+ */
+export function describeCallOutcome(outcome: CallOutcome | null | undefined): string {
+  const reasonLabel = TERMINAL_REASON_LABELS[outcome?.endReason ?? ''];
+  if (reasonLabel) return reasonLabel;
+  return OUTCOME_LABELS[outcomeDirection(outcome)][outcome?.status ?? ''] ?? 'Call';
+}
+
+/** The same vocabulary, pluralised for a collapsed run of identical calls. */
+export function describeCallOutcomeGroup(outcome: CallOutcome | null | undefined): string {
+  const reasonNoun = TERMINAL_REASON_GROUP_NOUNS[outcome?.endReason ?? ''];
+  if (reasonNoun) return reasonNoun;
+  return GROUP_NOUNS[outcomeDirection(outcome)][outcome?.status ?? ''] ?? 'calls';
+}
 
 /**
  * Modality assumed for a call this device has no record of.
@@ -67,6 +168,26 @@ export function formatRingCountdown(totalSeconds: number): string {
   const minutes = Math.floor(safeSeconds / 60);
   const seconds = safeSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * The one line a ringing screen shows: what is happening, and how much of the
+ * ring window is left — e.g. "Waking their phone · 1:58 left".
+ *
+ * The spoken form is returned alongside the written one so the accessible name
+ * contains the words on screen (WCAG 2.5.3), with the interpunct — which a
+ * screen reader either skips or reads as "middle dot" — replaced by a comma.
+ *
+ * @param stateLabel - what the call is doing, e.g. "Ringing".
+ * @param secondsLeft - seconds remaining in the ring window.
+ */
+export function describeRingCountdown(
+  stateLabel: string,
+  secondsLeft: number,
+): { text: string; spoken: string; } {
+  if (secondsLeft <= 0) return { text: 'Timed out', spoken: 'The call timed out' };
+  const remaining = `${formatRingCountdown(secondsLeft)} left`;
+  return { text: `${stateLabel} · ${remaining}`, spoken: `${stateLabel}, ${remaining}` };
 }
 
 /**

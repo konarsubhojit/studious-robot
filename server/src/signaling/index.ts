@@ -4,7 +4,7 @@ import { isBlocked } from '../security.ts';
 import { resolveSocketIdentity } from '../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../lib/state.ts';
 import { createCallRecord, endCallsForDisconnectedParticipant, reconcileClientCallState, describeActiveCallsForUser } from '../domain/calls.ts';
-import { notifyCallCreated, notifyCallTransition, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice } from '../domain/notifications.ts';
+import { notifyCallCreated, notifyCallTransition, markIncomingCallAcknowledged, notifyIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice } from '../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected } from './callHandlers.ts';
 import { registerMessageHandlers } from './messageHandlers.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
@@ -325,6 +325,9 @@ function registerSocketHandlers(
       const callId = parsed.callId;
       const deviceId = normaliseId(parsed.deviceId) || identity.deviceId;
       markIncomingCallAcknowledged(state, callId, deviceId);
+      // The callee's device is awake and ringing: the caller was told a push
+      // had been sent, and is owed the news that it landed.
+      notifyIncomingCallAcknowledged(io, state, callId, identity.userId);
       logCallCorrelation(socket, callId, CLIENT_EVENTS.CALL_INCOMING_ACK);
       acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INCOMING_ACK, { callId, deviceId });
     });

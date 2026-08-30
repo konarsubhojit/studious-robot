@@ -35,8 +35,11 @@ export default function CallScreen({
   iceTransportPolicy,
   isReconnecting,
   recoveryStatus = null,
+  isConnectionLost = false,
   onRetry,
   onStageLayout,
+  onTopChromeLayout,
+  onBottomChromeLayout,
   mainStreamUrl,
   hasMainStream,
   pipStreamUrl,
@@ -74,15 +77,20 @@ export default function CallScreen({
         onLeave: () => void;
         status?: CallStatus;
         onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
+        onTopChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
+        onBottomChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
         isReconnecting?: boolean;
         recoveryStatus?: CallRecoveryStatus | null;
+        isConnectionLost?: boolean;
     }) {
   const styles = useThemedStyles(createStyles);
   const reduceMotion = useReducedMotion();
   const overlayFadeMs = reduceMotion ? motion.duration.instant : motion.duration.fast;
   // A media-only failure (ICE down, socket up) is a recovery too: gating the
   // banner on socket loss alone left the most common failure case invisible.
-  const isRecovering = Boolean(isReconnecting || recoveryStatus);
+  // A spent recovery budget counts too: the episode closes with it, and the
+  // banner used to vanish at exactly the moment the news was worst.
+  const isRecovering = Boolean(isReconnecting || recoveryStatus || isConnectionLost);
 
   const [visibleStatus, setVisibleStatus] = useState(
     (null as CallStatus | null),
@@ -196,7 +204,11 @@ export default function CallScreen({
         participantLabel={participantLabel}
         isAudioOnly={isAudioOnly}
         audioStatusLabel={
-          isRecovering ? 'Reconnecting…' : formatCallDuration(elapsedCallSeconds)
+          isConnectionLost
+            ? 'Connection lost'
+            : isRecovering
+            ? 'Reconnecting…'
+            : formatCallDuration(elapsedCallSeconds)
         }
       />
 
@@ -211,6 +223,7 @@ export default function CallScreen({
             entering={FadeInDown.duration(overlayFadeMs)}
             exiting={FadeOutUp.duration(overlayFadeMs)}
             style={styles.topOverlay}
+            onLayout={onTopChromeLayout}
             pointerEvents="box-none">
             <CallTopBar
               elapsedCallSeconds={elapsedCallSeconds}
@@ -220,7 +233,11 @@ export default function CallScreen({
               onMinimize={onMinimize}
             />
             {isRecovering ? (
-              <ReconnectBanner onRetry={onRetry} recovery={recoveryStatus} />
+              <ReconnectBanner
+                onRetry={onRetry}
+                recovery={recoveryStatus}
+                isConnectionLost={isConnectionLost}
+              />
             ) : null}
             {visibleStatus?.severity === 'error' ? (
               <ErrorState
@@ -251,6 +268,7 @@ export default function CallScreen({
           <Animated.View
             entering={FadeInUp.duration(overlayFadeMs)}
             exiting={FadeOutDown.duration(overlayFadeMs)}
+            onLayout={onBottomChromeLayout}
             style={styles.bottomOverlay}>
             <CallControls
               isMuted={isMuted}

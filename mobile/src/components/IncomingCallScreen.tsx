@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { deriveInitials, formatRingCountdown } from '../callUx';
+import { StyleSheet, Text, View } from 'react-native';
+import { deriveInitials, describeRingCountdown } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
-import useReducedMotion from '../hooks/useReducedMotion';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
+import RingingAvatar from './RingingAvatar';
 import StatusBanner from './StatusBanner';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from './StatusBanner';
@@ -24,8 +24,12 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
 /**
  * Incoming call screen.
  *
- * Shown to the callee while a call is ringing.  Displays the caller's ID with
- * a pulsing avatar, a countdown, and icon-only Accept / Decline buttons.
+ * Shown to the callee while a call is ringing: the caller in the upper third
+ * with a pulsing avatar, one labelled line of ring-window countdown, and
+ * icon-only Accept / Decline buttons in the lower third.
+ *
+ * The countdown says what it counts. A bare `1:58` under a contact name reads
+ * as a call that has been connected for 1:58 — the opposite of the truth.
  *
  * Purely presentational – all behaviour is supplied via props.
  *
@@ -48,38 +52,6 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
-
-  // ── Pulse animation ───────────────────────────────────────────────────────
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const reduceMotion = useReducedMotion();
-
-  // A never-ending pulse is exactly the kind of motion "reduce motion" is asked
-  // to stop, and it is decorative: the ring conveys nothing the caller's name,
-  // the countdown and the answer/decline buttons do not already say.
-  useEffect(() => {
-    if (reduceMotion) {
-      pulseAnim.setValue(1);
-      return undefined;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.18,
-          duration: 800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulseAnim, reduceMotion]);
 
   // ── Countdown timer ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -107,6 +79,8 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
     };
   }, [ringTimeoutAt]);
 
+  const countdown = describeRingCountdown('Ringing', secondsLeft);
+
   return (
     <View style={styles.container} testID="incoming-call-screen">
       {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -118,17 +92,7 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
 
       {/* ── Caller info ───────────────────────────────────────────────────── */}
       <View style={styles.callerSection}>
-        {/* Pulsing ring behind the avatar */}
-        <Animated.View
-          style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
-          accessible={false}
-        />
-        <View
-          style={styles.avatar}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants">
-          <Text style={styles.avatarText}>{initials}</Text>
-        </View>
+        <RingingAvatar initials={initials} tone="success" testID="incoming-avatar" />
 
         <Text
           style={styles.callerId}
@@ -140,13 +104,9 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
         {ringTimeoutAt ? (
           <Text
             style={styles.countdown}
-            accessibilityLabel={
-              secondsLeft > 0
-                ? `Rings for ${formatRingCountdown(secondsLeft)}`
-                : 'The call timed out'
-            }
+            accessibilityLabel={countdown.spoken}
             testID="incoming-countdown">
-            {secondsLeft > 0 ? `Rings for ${formatRingCountdown(secondsLeft)}` : 'Timed out'}
+            {countdown.text}
           </Text>
         ) : null}
       </View>
@@ -212,7 +172,10 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
         )}
       </View>
 
-      <StatusBanner status={status} />
+      {/* Problems only: while a call rings, an informational status merely
+          repeats the header and the caller's name. Warnings stay — "answering
+          without a camera" is exactly the news this screen must not eat. */}
+      {status?.severity && status.severity !== 'info' ? <StatusBanner status={status} /> : null}
     </View>
   );
 }
@@ -238,34 +201,14 @@ const createStyles = (colors: ThemeColors) =>
       textTransform: 'uppercase',
       letterSpacing: 1.2,
     },
+    // Upper third, not dead centre: a person centred in a field of nothing
+    // reads as a loading state rather than as someone who is calling.
     callerSection: {
       flex: 1,
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
+      paddingTop: spacing.xl,
       gap: spacing.md,
-    },
-    pulseRing: {
-      position: 'absolute',
-      width: 120,
-      height: 120,
-      borderRadius: 60,
-      backgroundColor: colors.success,
-      opacity: 0.18,
-    },
-    avatar: {
-      width: 100,
-      height: 100,
-      borderRadius: 50,
-      backgroundColor: colors.surfaceRaised,
-      borderWidth: 2,
-      borderColor: colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarText: {
-      fontSize: 36,
-      fontWeight: '700',
-      color: colors.textPrimary,
     },
     callerId: {
       fontSize: 30,

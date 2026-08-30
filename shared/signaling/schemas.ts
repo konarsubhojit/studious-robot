@@ -232,6 +232,9 @@ const SERVER_EVENT_SCHEMAS = Object.freeze({
     version: inboundVersionField,
     callId: s.id().optional(),
     call: callRecord,
+    // How the callee is being reached: a device that can ring now, or one that
+    // has to be woken by a push first.
+    delivery: s.enum(['ringing', 'push']).optional(),
   }),
   [SERVER_EVENTS.CALL_STATE_CHANGED]: s.object({
     version: inboundVersionField,

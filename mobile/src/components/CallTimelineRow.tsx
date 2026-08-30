@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { describeCallOutcome, describeCallOutcomeGroup } from '../callUx';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { fontScaleCaps, radius, spacing, touchSlop, typography } from '../theme';
 import { Icon } from './primitives';
@@ -16,32 +17,6 @@ export type CallTimelineEntry = {
   endReason?: string | null;
   durationSeconds?: number | null;
   createdAt?: string;
-};
-
-/**
- * Human-readable outcome per timeline call status, by direction.
- *
- * A call the caller hung up before it was answered reads as "Cancelled" to the
- * caller but as a missed call to the callee, which is how every mainstream
- * messenger presents it.
- */
-const OUTCOME_LABELS: Record<'outgoing' | 'incoming', Record<string, string>> = {
-  outgoing: {
-    ended: 'Outgoing call',
-    missed: 'No answer',
-    declined: 'Declined',
-    cancelled: 'Cancelled call',
-    busy: 'Busy',
-    unreachable: 'Unavailable',
-  },
-  incoming: {
-    ended: 'Incoming call',
-    missed: 'Missed call',
-    declined: 'Declined',
-    cancelled: 'Missed call',
-    busy: 'Busy',
-    unreachable: 'Unavailable',
-  },
 };
 
 /**
@@ -76,44 +51,17 @@ export function formatCallDuration(durationSeconds: number | null | undefined): 
  * Label for a single call entry, e.g. "Outgoing call · 2:08" or "Missed call".
  */
 export function formatCallEntryLabel(entry: CallTimelineEntry): string {
-  const direction = entry?.direction === 'outgoing' ? 'outgoing' : 'incoming';
-  const label = OUTCOME_LABELS[direction][entry?.status ?? ''] ?? 'Call';
+  const label = describeCallOutcome(entry);
   const duration = formatCallDuration(entry?.durationSeconds);
   return duration ? `${label} · ${duration}` : label;
 }
-
-/**
- * Plural noun per outcome for a collapsed run of calls, so a group reads as
- * "3 missed calls" rather than repeating the singular row label.
- */
-const GROUP_NOUNS: Record<'outgoing' | 'incoming', Record<string, string>> = {
-  outgoing: {
-    ended: 'outgoing calls',
-    missed: 'unanswered calls',
-    declined: 'declined calls',
-    cancelled: 'cancelled calls',
-    busy: 'busy calls',
-    unreachable: 'unavailable calls',
-  },
-  incoming: {
-    ended: 'incoming calls',
-    missed: 'missed calls',
-    declined: 'declined calls',
-    cancelled: 'missed calls',
-    busy: 'busy calls',
-    unreachable: 'unavailable calls',
-  },
-};
 
 /**
  * Label for a collapsed run of same-direction/same-outcome calls, e.g.
  * "3 missed calls".
  */
 export function formatCallGroupLabel(entries: CallTimelineEntry[]): string {
-  const [first] = entries;
-  const direction = first?.direction === 'outgoing' ? 'outgoing' : 'incoming';
-  const noun = GROUP_NOUNS[direction][first?.status ?? ''] ?? 'calls';
-  return `${entries.length} ${noun}`;
+  return `${entries.length} ${describeCallOutcomeGroup(entries[0])}`;
 }
 
 /** @param isoString */

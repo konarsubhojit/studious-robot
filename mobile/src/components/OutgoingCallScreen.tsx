@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { deriveInitials, formatRingCountdown } from '../callUx';
+import { StyleSheet, Text, View } from 'react-native';
+import { deriveInitials, describeRingCountdown } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
-import useReducedMotion from '../hooks/useReducedMotion';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
+import RingingAvatar from './RingingAvatar';
 import StatusBanner from './StatusBanner';
+import type { CallDelivery } from '../hooks/useCallFlow';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from './StatusBanner';
 import type { MutableRefObject } from 'react';
@@ -22,58 +23,47 @@ function secondsRemaining(ringTimeoutAt: string | null | undefined): number {
 }
 
 /**
+ * How the callee is being reached, in the caller's words.
+ *
+ * The server distinguishes a device that is ringing right now from one that a
+ * push still has to wake, and only the caller was left guessing: ten seconds of
+ * silence on the push path reads exactly like a hang.
+ */
+function describeDelivery(delivery: CallDelivery | null | undefined): string | null {
+  if (delivery === 'push') return 'Waking their phone';
+  if (delivery === 'ringing') return 'Ringing on their device';
+  return null;
+}
+
+/**
  * Outgoing ringing screen.
  *
- * Shown while the caller waits for the callee to answer.  Displays a
- * pulsing callee avatar, a countdown, and an icon-only Cancel button.
+ * Shown while the caller waits for the callee to answer: the callee in the
+ * upper third with a pulsing avatar, one line saying what is actually
+ * happening (ringing, or waking a sleeping phone) and how long the ring window
+ * has left, and an icon-only Cancel button in the lower third.
+ *
+ * The countdown is labelled rather than bare: a lone `1:58` directly beneath a
+ * contact name reads as a call that has been connected for 1:58, which is the
+ * opposite of the truth.
  *
  * Purely presentational – all behaviour is supplied via props.
  *
  * @param props.calleeId - The ID / name of the callee; falls back to "Unknown".
- *   Live call record (may include ringTimeoutAt).
+ * @param props.activeCall - Live call record (may include ringTimeoutAt).
+ * @param props.delivery - How the callee is being reached, once known.
  * @param props.status - Current status.
  * @param props.onCancel - Called when the user presses Cancel.
  */
-export default function OutgoingCallScreen({ calleeId, activeCall, status, onCancel }: { calleeId?: string; activeCall?: CallRecord | null; status: CallStatus; onCancel: () => void; }) {
+export default function OutgoingCallScreen({ calleeId, activeCall, delivery = null, status, onCancel }: { calleeId?: string; activeCall?: CallRecord | null; delivery?: CallDelivery | null; status: CallStatus; onCancel: () => void; }) {
   const styles = useThemedStyles(createStyles);
 
   const ringTimeoutAt = activeCall?.ringTimeoutAt ?? null;
   const initials = deriveInitials(calleeId);
+  const deliveryLabel = describeDelivery(delivery);
 
   const [secondsLeft, setSecondsLeft] = useState(() => secondsRemaining(ringTimeoutAt));
   const intervalRef: MutableRefObject<ReturnType<typeof setInterval> | null> = useRef(null);
-
-  // ── Pulse animation ───────────────────────────────────────────────────────
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const reduceMotion = useReducedMotion();
-
-  // A never-ending pulse is exactly the kind of motion "reduce motion" is asked
-  // to stop, and it is decorative: the ring conveys nothing the caller's name,
-  // the countdown and the answer/decline buttons do not already say.
-  useEffect(() => {
-    if (reduceMotion) {
-      pulseAnim.setValue(1);
-      return undefined;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.2,
-          duration: 900,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 900,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulseAnim, reduceMotion]);
 
   // ── Countdown timer ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -101,6 +91,8 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
     };
   }, [ringTimeoutAt]);
 
+  const countdown = describeRingCountdown(deliveryLabel ?? 'Ringing', secondsLeft);
+
   return (
     <View style={styles.container} testID="outgoing-call-screen">
       {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -112,17 +104,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
 
       {/* ── Callee info ───────────────────────────────────────────────────── */}
       <View style={styles.calleeSection}>
-        {/* Pulsing ring behind avatar */}
-        <Animated.View
-          style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]}
-          accessible={false}
-        />
-        <View
-          style={styles.avatar}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants">
-          <Text style={styles.avatarText}>{initials}</Text>
-        </View>
+        <RingingAvatar initials={initials} tone="accent" testID="outgoing-avatar" />
 
         <Text
           style={styles.calleeId}
@@ -134,13 +116,13 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
         {ringTimeoutAt ? (
           <Text
             style={styles.countdown}
-            accessibilityLabel={
-              secondsLeft > 0
-                ? `Rings for ${formatRingCountdown(secondsLeft)}`
-                : 'The call timed out'
-            }
+            accessibilityLabel={countdown.spoken}
             testID="outgoing-countdown">
-            {secondsLeft > 0 ? formatRingCountdown(secondsLeft) : 'Timed out'}
+            {countdown.text}
+          </Text>
+        ) : deliveryLabel ? (
+          <Text style={styles.countdown} testID="outgoing-delivery">
+            {deliveryLabel}
           </Text>
         ) : null}
       </View>
@@ -159,7 +141,10 @@ export default function OutgoingCallScreen({ calleeId, activeCall, status, onCan
         />
       </View>
 
-      <StatusBanner status={status} />
+      {/* Problems only: while a call rings, an informational status merely
+          repeats the header and the callee's name. Warnings stay — a degraded
+          answer path is exactly the news this screen must not eat. */}
+      {status?.severity && status.severity !== 'info' ? <StatusBanner status={status} /> : null}
     </View>
   );
 }
@@ -185,34 +170,14 @@ const createStyles = (colors: ThemeColors) =>
       textTransform: 'uppercase',
       letterSpacing: 1.2,
     },
+    // Upper third, not dead centre: a person centred in a field of nothing
+    // reads as a loading state rather than as someone you are reaching.
     calleeSection: {
       flex: 1,
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
+      paddingTop: spacing.xl,
       gap: spacing.md,
-    },
-    pulseRing: {
-      position: 'absolute',
-      width: 130,
-      height: 130,
-      borderRadius: 65,
-      backgroundColor: colors.accentButton,
-      opacity: 0.15,
-    },
-    avatar: {
-      width: 100,
-      height: 100,
-      borderRadius: 50,
-      backgroundColor: colors.surfaceRaised,
-      borderWidth: 2,
-      borderColor: colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    avatarText: {
-      fontSize: 36,
-      fontWeight: '700',
-      color: colors.textPrimary,
     },
     calleeId: {
       fontSize: 30,

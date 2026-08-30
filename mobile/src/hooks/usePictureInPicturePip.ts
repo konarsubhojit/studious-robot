@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { clamp } from '../callUx';
-import { PIP_HEIGHT, PIP_MARGIN, PIP_WIDTH } from '../pipConstants';
+import { NO_PIP_CHROME, PIP_MARGIN, resolvePipBounds } from '../pipConstants';
+import type { PipChromeInsets } from '../pipConstants';
 import useReducedMotion from './useReducedMotion';
 
 /** Spring used to settle the tile against an edge after a drag or a fling. */
@@ -43,10 +44,15 @@ const PIP_FLING_PROJECTION_S = 0.12;
 export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }): {
     stageSize: { width: number; height: number; };
     handleCallStageLayout: (event: object) => void;
+    handleTopChromeLayout: (event: object) => void;
+    handleBottomChromeLayout: (event: object) => void;
     pipGesture: ReturnType<typeof Gesture.Race>;
     animatedPipStyle: object;
 } {
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  // The chrome drawn over the stage. Measured rather than assumed: the top
+  // group grows by a whole banner the moment a call starts recovering.
+  const [chromeInsets, setChromeInsets] = useState((NO_PIP_CHROME as PipChromeInsets));
   const hasDefaultPositioned = useRef(false);
 
   const pipX = useSharedValue(PIP_MARGIN);
@@ -65,16 +71,18 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
   // Shared values for drag bounds so they are readable from UI-thread worklets.
   const pipMaxX = useSharedValue(PIP_MARGIN);
   const pipMaxY = useSharedValue(PIP_MARGIN);
+  const pipMinY = useSharedValue(PIP_MARGIN);
 
   useEffect(() => {
-    const maxX = Math.max(PIP_MARGIN, stageSize.width - PIP_WIDTH - PIP_MARGIN);
-    const maxY = Math.max(PIP_MARGIN, stageSize.height - PIP_HEIGHT - PIP_MARGIN);
+    const { minX, maxX, minY, maxY } = resolvePipBounds(stageSize, chromeInsets);
 
     pipMaxX.value = maxX;
     pipMaxY.value = maxY;
+    pipMinY.value = minY;
 
-    // On first valid layout, snap the PiP to the bottom-right corner so it
-    // does not obscure the remote participant in portrait orientation.
+    // On first valid layout, snap the PiP to the bottom-right *of the safe
+    // region* so it does not obscure the remote participant in portrait
+    // orientation — and does not start life under the control deck.
     if (!hasDefaultPositioned.current && stageSize.width > 0 && stageSize.height > 0) {
       hasDefaultPositioned.current = true;
       pipX.value = maxX;
@@ -82,10 +90,11 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
       return;
     }
 
-    // A rotation or a stage resize can leave the tile outside the new bounds;
-    // ease it back in rather than teleporting it.
-    const clampedX = clamp(pipX.value, PIP_MARGIN, maxX);
-    const clampedY = clamp(pipY.value, PIP_MARGIN, maxY);
+    // A rotation, a stage resize, or chrome that just grew by a reconnect
+    // banner can leave the tile outside the new bounds; ease it back in rather
+    // than teleporting it.
+    const clampedX = clamp(pipX.value, minX, maxX);
+    const clampedY = clamp(pipY.value, minY, maxY);
     // Reduced motion still moves the tile back inside the bounds — leaving it
     // off-screen would be a bug, not a calmer animation — it just arrives in
     // one step.
@@ -95,14 +104,50 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     if (clampedY !== pipY.value) {
       pipY.value = reduceMotion ? clampedY : withSpring(clampedY, PIP_SETTLE_SPRING);
     }
-  }, [stageSize.width, stageSize.height, pipX, pipY, pipMaxX, pipMaxY, reduceMotion]);
+  }, [
+    stageSize,
+    chromeInsets,
+    pipX,
+    pipY,
+    pipMaxX,
+    pipMaxY,
+    pipMinY,
+    reduceMotion,
+  ]);
 
   const handleCallStageLayout = useCallback((event: any) => {
     const { width, height } = event.nativeEvent.layout;
     setStageSize(current =>
       current.width === width && current.height === height ? current : { width, height },
     );
+    // The stage is gone, so the chrome that was over it is too: keeping its
+    // heights would hand the next call the previous one's safe region.
+    if (width === 0 || height === 0) setChromeInsets(NO_PIP_CHROME);
   }, []);
+
+  /**
+   * Record a measured chrome height.
+   *
+   * The chrome auto-hides after a few idle seconds, which unmounts it and
+   * reports no layout at all. The tile deliberately keeps the bounds it had:
+   * the chrome comes back on the next tap, and a tile that drifted under the
+   * top bar in between would be unreachable exactly when a banner appears.
+   */
+  const measureChrome = useCallback((edge: 'top' | 'bottom', height: number) => {
+    setChromeInsets(current =>
+      current[edge] === height ? current : { ...current, [edge]: height },
+    );
+  }, []);
+
+  const handleTopChromeLayout = useCallback(
+    (event: any) => measureChrome('top', event.nativeEvent.layout.height),
+    [measureChrome],
+  );
+
+  const handleBottomChromeLayout = useCallback(
+    (event: any) => measureChrome('bottom', event.nativeEvent.layout.height),
+    [measureChrome],
+  );
 
   const animatedPipStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: pipX.value }, { translateY: pipY.value }],
@@ -125,7 +170,11 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
           })
           .onUpdate(event => {
             pipX.value = clamp(pipStartX.value + event.translationX, PIP_MARGIN, pipMaxX.value);
-            pipY.value = clamp(pipStartY.value + event.translationY, PIP_MARGIN, pipMaxY.value);
+            pipY.value = clamp(
+              pipStartY.value + event.translationY,
+              pipMinY.value,
+              pipMaxY.value,
+            );
           })
           .onEnd(event => {
             // Project the fling, then park flush against whichever side the
@@ -135,7 +184,7 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
             const restingX =
               projectedX > (PIP_MARGIN + pipMaxX.value) / 2 ? pipMaxX.value : PIP_MARGIN;
 
-            const restingY = clamp(projectedY, PIP_MARGIN, pipMaxY.value);
+            const restingY = clamp(projectedY, pipMinY.value, pipMaxY.value);
             if (reduceMotionShared.value) {
               // The tile still parks against the nearest edge; only the glide
               // to it is dropped.
@@ -152,5 +201,12 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     [onTap],
   );
 
-  return { stageSize, handleCallStageLayout, pipGesture, animatedPipStyle };
+  return {
+    stageSize,
+    handleCallStageLayout,
+    handleTopChromeLayout,
+    handleBottomChromeLayout,
+    pipGesture,
+    animatedPipStyle,
+  };
 }

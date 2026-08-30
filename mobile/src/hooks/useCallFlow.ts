@@ -217,7 +217,54 @@ export type CallRecoveryStatus = {
   remainingMs: number;
   isPaused: boolean;
   pauseReason: RecoveryPauseReason | null;
+  /**
+   * Whether a rung of the ladder is queued or in flight right now.
+   *
+   * The banner hides its manual "Retry" while one is: a button that duplicates
+   * work already underway teaches the user that pressing it does nothing.
+   */
+  isAttemptPending: boolean;
 };
+
+/**
+ * What the UI is told about a call once it is over.
+ *
+ * The user used to be returned to the tab shell with no resolution at all — a
+ * call that dropped and a call the peer hung up looked identical. The reason is
+ * phrased with the same vocabulary the conversation timeline uses, so the same
+ * call is described the same way at the moment it ends and forever after.
+ */
+export type CallEndSummary = {
+  durationSeconds: number | null;
+  quality: string;
+  endReason: string | null;
+  status: string | null;
+  direction: 'outgoing' | 'incoming';
+  peerId: string | null;
+};
+
+/**
+ * End reasons worth summarising for a call that never connected.
+ *
+ * A call that failed leaves the user with a question ("was that them, or is
+ * this app broken?"); a call they cancelled themself does not.
+ */
+const SUMMARISED_END_REASONS = new Set([
+  'media_failed',
+  'failed',
+  'missed',
+  'timeout',
+  'busy',
+  'unreachable',
+]);
+
+/**
+ * How the callee is being reached while an outgoing call rings.
+ *
+ * `ringing` — a device with a live socket is ringing right now.
+ * `push` — every device is asleep; a push has been sent and must wake one.
+ */
+export type CallDelivery = 'ringing' | 'push';
 
 /** How many answered callIds are remembered for duplicate-accept suppression. */
 const ANSWERED_CALL_HISTORY_LIMIT = 20;
@@ -376,9 +423,7 @@ export default function useCallFlow({
     ({ message: '', severity: 'info' } as CallStatus),
   );
   // Summary of the last connected call, surfaced by the conversation timeline.
-  const [callSummary, setCallSummary] = useState(
-    (null as { durationSeconds: number | null, quality: string } | null),
-  );
+  const [callSummary, setCallSummary] = useState((null as CallEndSummary | null));
 
   // True while the remote participant is screen-sharing (relayed via the
   // `call.media-state` socket event).
@@ -424,6 +469,14 @@ export default function useCallFlow({
   // Non-null while a recovery episode is open, so the call screen can show what
   // is happening (and how much budget is left) instead of a static spinner.
   const [recoveryStatus, setRecoveryStatus] = useState((null as CallRecoveryStatus | null));
+  // True from the moment the recovery budget is spent with media still down,
+  // until the call is torn down. The ladder ending used to be invisible: the
+  // banner vanished with the episode and the call simply stopped.
+  const [isConnectionLost, setIsConnectionLost] = useState(false);
+  const isConnectionLostRef = useRef(false);
+  // How the callee is being reached for an outgoing call: a device that can
+  // ring now, or one a push still has to wake. Null until the server says.
+  const [callDelivery, setCallDelivery] = useState((null as CallDelivery | null));
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const socketRef = useRef((null as Socket | null));
@@ -879,6 +932,7 @@ export default function useCallFlow({
   /** Publish the open episode (or its absence) to the call screen. */
   const publishRecoveryStatus = useCallback(() => {
     const snapshot = recoveryEpisodeRef.current.snapshot();
+    const restart = iceRestartRef.current;
     setRecoveryStatus(
       snapshot
         ? {
@@ -887,6 +941,7 @@ export default function useCallFlow({
             remainingMs: snapshot.remainingMs,
             isPaused: snapshot.pauseReason !== null,
             pauseReason: snapshot.pauseReason,
+            isAttemptPending: Boolean(restart.timer || restart.inFlight),
           }
         : null,
     );
@@ -928,6 +983,18 @@ export default function useCallFlow({
   }, [publishRecoveryStatus]);
 
   /**
+   * Record that recovery is over and the media never came back.
+   *
+   * Kept until the call is torn down so the banner can say "Connection lost"
+   * instead of vanishing with the episode, and so the end-of-call summary can
+   * name the reason even when the failure was never reportable.
+   */
+  const markConnectionLost = useCallback(() => {
+    isConnectionLostRef.current = true;
+    setIsConnectionLost(true);
+  }, []);
+
+  /**
    * Report that media never came back, once the recovery budget is spent.
    *
    * The server maps a terminal `iceState` straight to "end this call", so this
@@ -956,6 +1023,9 @@ export default function useCallFlow({
         callId,
         currentState,
       });
+      // The report cannot travel, but the ladder is over either way: say so
+      // rather than leaving a "Reconnecting…" banner over a dead call.
+      markConnectionLost();
       return;
     }
     const iceState = decision.iceState;
@@ -965,6 +1035,7 @@ export default function useCallFlow({
       iceState,
       budgetMs: CALL_RECOVERY_BUDGET_MS,
     });
+    markConnectionLost();
     closeRecoveryEpisode('failed');
     signalingRef.current?.emit(
       CLIENT_EVENTS.CALL_CONNECTED,
@@ -973,7 +1044,7 @@ export default function useCallFlow({
         if (!ack?.ok) logWarn('[CallFlow] media-failure report ack failed', ack?.error);
       },
     );
-  }, [closeRecoveryEpisode]);
+  }, [closeRecoveryEpisode, markConnectionLost]);
 
   /**
    * (Re-)arm the deadline for the open episode.
@@ -1233,6 +1304,8 @@ export default function useCallFlow({
       logInfo('[CallFlow] ICE restart ladder cleared', { reason, attempts: restart.attempt });
     }
     restart.attempt = 0;
+    restart.inFlight = false;
+    publishRecoveryStatusRef.current?.();
   }, []);
 
   /**
@@ -1353,6 +1426,7 @@ export default function useCallFlow({
     // so `callId`/`pc` narrow to non-null for the negotiation below.
     if (!callId || !pc) return;
     restart.inFlight = true;
+    publishRecoveryStatusRef.current?.();
     const attempt = restart.attempt;
     try {
       const iceServers = await fetchIceServersForRestart(trigger);
@@ -1388,6 +1462,7 @@ export default function useCallFlow({
       return;
     } finally {
       restart.inFlight = false;
+      publishRecoveryStatusRef.current?.();
     }
   }, [activeIceTransportPolicy, cancelIceRestarts, fetchIceServersForRestart]);
 
@@ -1465,8 +1540,8 @@ export default function useCallFlow({
         deferredForGlare: tiebreakMs > 0,
         budgetRemainingMs: episode.isOpen() ? episode.remainingMs() : null,
       });
-      publishRecoveryStatusRef.current?.();
       if (delayMs <= 0) {
+        publishRecoveryStatusRef.current?.();
         void runIceRestart(trigger);
         return;
       }
@@ -1474,6 +1549,7 @@ export default function useCallFlow({
         restart.timer = null;
         void runIceRestart(trigger);
       }, delayMs);
+      publishRecoveryStatusRef.current?.();
     },
     [remotePeerUserId, runIceRestart],
   );
@@ -1848,10 +1924,26 @@ export default function useCallFlow({
         ? Math.floor((Date.now() - callConnectedAtRef.current) / 1000)
         : null;
 
-      if (callConnectedAtRef.current) {
+      // A call whose media never came back ends as a plain `ended` like any
+      // hangup, so the local knowledge that recovery was exhausted outranks the
+      // reason that came back over the wire. This is deliberately the reason
+      // recorded in call history too: the timeline should say "Connection lost"
+      // for the call the user just watched die, not "Call ended".
+      const resolvedReason = isConnectionLostRef.current
+        ? 'media_failed'
+        : endReason ?? callRecord?.endReason ?? null;
+
+      // Every call that got far enough to have an outcome worth reporting: one
+      // that connected, and one that failed. A call the user themself cancelled
+      // needs no summary — they already know how it ended.
+      if (callConnectedAtRef.current || SUMMARISED_END_REASONS.has(resolvedReason ?? '')) {
         setCallSummary({
           durationSeconds,
           quality: connectionQualityRef.current?.label || 'No link',
+          endReason: resolvedReason,
+          status: callRecord?.status ?? null,
+          direction: isCaller ? 'outgoing' : 'incoming',
+          peerId: (isCaller ? callRecord?.calleeId : callRecord?.callerId) ?? null,
         });
       }
 
@@ -1865,7 +1957,6 @@ export default function useCallFlow({
 
       // Record in call history whenever we have a call object to log.
       if (callRecord?.callId) {
-        const resolvedReason = endReason ?? callRecord.endReason ?? null;
         const isMissed =
           resolvedReason === 'missed' ||
           resolvedReason === 'timeout' ||
@@ -1886,6 +1977,9 @@ export default function useCallFlow({
 
       callConnectedAtRef.current = null;
       setCallConnectedAtMs(null);
+      isConnectionLostRef.current = false;
+      setIsConnectionLost(false);
+      setCallDelivery(null);
       stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       closeRecoveryEpisode(endReason ? `call-ended:${endReason}` : 'call-ended');
       cancelIceRestartsRef.current?.('call-ended');
@@ -2093,10 +2187,13 @@ export default function useCallFlow({
       });
 
       // ── Call ringing (caller confirmation) ────────────────────────────
-      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call }) => {
-        logInfo('[CallFlow] Call ringing', { callId: call.callId });
+      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call, delivery }) => {
+        logInfo('[CallFlow] Call ringing', { callId: call.callId, delivery });
         activeCallRef.current = call;
         setActiveCall(call);
+        // A server that does not report delivery is one that only ever rang a
+        // live device, which is what `ringing` means.
+        setCallDelivery(delivery === 'push' ? 'push' : 'ringing');
       });
 
       // ── Call state changes ────────────────────────────────────────────
@@ -2853,6 +2950,7 @@ export default function useCallFlow({
       setIsPlacingCall(true);
       try {
         setCallSummary(null);
+        setCallDelivery(null);
 
         const stream = await startLocalPreview();
         if (!stream) return;
@@ -3201,6 +3299,8 @@ export default function useCallFlow({
     }
 
     triggerHaptic('answer');
+    // The previous call's summary has been overtaken by this one.
+    setCallSummary(null);
     logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
     acceptInFlightCallIdRef.current = call.callId;
     reportAnswerStage(call.callId, 'answer_attempted');
@@ -4061,6 +4161,8 @@ export default function useCallFlow({
     selectedCandidatePair,
     isReconnecting,
     recoveryStatus,
+    isConnectionLost,
+    callDelivery,
     iceTransportPolicy: activeIceTransportPolicy,
 
     // Call actions
