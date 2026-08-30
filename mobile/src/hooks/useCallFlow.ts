@@ -20,14 +20,18 @@ import {
   applyPreferredAudioRoute,
   AUDIO_ROUTES,
   chooseAudioRoute,
-  DETACHABLE_AUDIO_ROUTES,
-  getAudioRouteLabel,
   restoreInCallAudioSession,
   setAudioRoute,
   startAudioSession,
   stopAudioSession,
   subscribeAudioDevices,
 } from '../audioRouting';
+import {
+  describeChosenRoute,
+  describeDetachedManualRoute,
+  mergeDiscoveredDevices,
+  shouldUpgradeToSpeaker,
+} from '../call/audioRouteRules';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useBlocks from './useBlocks';
@@ -66,7 +70,6 @@ import {
   unregisterPushToken,
 } from '../pushNotifications';
 import {
-  API_ROUTES,
   CALL_HEARTBEAT_DUE_MS,
   CALL_HEARTBEAT_INTERVAL_MS,
   CALL_RECOVERY_BUDGET_MS,
@@ -106,6 +109,7 @@ import {
   isTerminalCallStatus,
   isTerminalIceState,
   rememberAnsweredCallId,
+  resolveOutgoingCallee,
   resolveCallEndReason,
   resolveKnownCallId,
   shouldReportEmptyCallState,
@@ -132,6 +136,15 @@ import {
   shouldDeferRehydration,
 } from '../call/pushRehydration';
 import type { RehydrationOutcome } from '../call/pushRehydration';
+import {
+  ANSWER_SOCKET_ATTEMPTS,
+  ANSWER_SOCKET_WAIT_MS,
+  buildCallActionUrl,
+  classifyHttpAccept,
+  decideQueuedAnswerReplay,
+  describeAnswerFallback,
+  describeDegradedMedia,
+} from '../call/answerPath';
 import {
   canReuseIceServers,
   decideFetchedIceServers,
@@ -195,13 +208,10 @@ const STATS_POLL_INTERVAL_MS = 7000;
  */
 const ICE_SESSION_WAIT_MS = 5000;
 
-/**
- * How long to wait for the signaling socket to connect before answering a call
- * over HTTP instead.  Kept short: on a cold start the caller is already
- * ringing, so a slow socket must never be the reason a call cannot be picked
- * up.
- */
-const ANSWER_SOCKET_WAIT_MS = 5000;
+// How long the answer path waits for a socket, how many times it retries over
+// one, which HTTP failures mean what, how a media-less answer describes itself
+// and what becomes of an answer queued before this hook knew the call all live
+// in `call/answerPath.ts` — facts in, decision out.
 
 // Which statuses mean a call is live or terminal, whether a tap is a duplicate
 // accept, what an offer collision means, and how a finished call describes
@@ -2896,16 +2906,16 @@ export default function useCallFlow({
     async (explicitCalleeId?: string) => {
       if (isPlacingCallRef.current) return;
 
-      const explicit = (typeof explicitCalleeId === 'string' ? explicitCalleeId : '').trim();
-      const trimmedCalleeId = explicit || calleeId.trim();
-      if (!trimmedCalleeId) {
-        updateStatus('Enter a callee ID to call', 'error');
+      const callee = resolveOutgoingCallee({
+        explicitCalleeId,
+        typedCalleeId: calleeId,
+        userId,
+      });
+      if (!callee.ok) {
+        updateStatus(callee.message, 'error');
         return;
       }
-      if (!userId.trim()) {
-        updateStatus('Enter your user ID first', 'error');
-        return;
-      }
+      const trimmedCalleeId = callee.calleeId;
 
       isPlacingCallRef.current = true;
       setIsPlacingCall(true);
@@ -3077,26 +3087,21 @@ export default function useCallFlow({
      * @returns the updated call record
      */
     async (callId: string): Promise<CallRecord> => {
-      const trimmedUrl = (signalingUrl ?? '').trim();
       const response = await authedFetchRef.current?.(sessionId => ({
-        url: `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}/accept`,
+        url: buildCallActionUrl({ signalingUrl: signalingUrl ?? '', callId, action: 'accept' }),
         options: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId }),
         },
       }));
-      if (!response) {
-        const error = (new Error('no session available to accept over HTTP') as AnswerError);
-        error.answerFailureReason = 'no_session';
+      const verdict = classifyHttpAccept(response);
+      if (verdict.outcome === 'failed') {
+        const error = (new Error(verdict.message) as AnswerError);
+        error.answerFailureReason = verdict.answerFailureReason;
         throw error;
       }
-      if (!response.ok) {
-        const error = (new Error(`HTTP ${response.status}`) as AnswerError);
-        error.answerFailureReason = 'http_accept_failed';
-        throw error;
-      }
-      return response.json();
+      return response!.json();
     },
     [authedFetchRef, signalingUrl],
   );
@@ -3109,7 +3114,7 @@ export default function useCallFlow({
     async (callId: string): Promise<{ call: CallRecord; transport: 'socket' | 'http' }> => {
       const socket = await waitForConnectedSocket();
       if (socket) {
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
+        for (let attempt = 1; attempt <= ANSWER_SOCKET_ATTEMPTS; attempt += 1) {
           try {
             const ack = await signalingRef.current?.request(CLIENT_EVENTS.CALL_ACCEPT, {
               version: SIGNALING_VERSION,
@@ -3124,20 +3129,13 @@ export default function useCallFlow({
             });
           }
         }
-        // Both attempts failed on a connected socket: say so before falling
-        // through to HTTP, so the fallback is never silent.
-        logWarn('[CallFlow] Answering over HTTP', {
-          callId,
-          reason: 'socket_accept_failed',
-        });
-        updateStatus('Answering — retrying over a different connection…', 'warning');
-      } else {
-        logWarn('[CallFlow] Answering over HTTP', {
-          callId,
-          reason: 'socket_not_connected',
-        });
-        updateStatus('Answering — connection still starting…', 'warning');
       }
+
+      // The fallback is never silent: a socket that answered and failed reads
+      // differently from one that never connected.
+      const fallback = describeAnswerFallback(Boolean(socket));
+      logWarn('[CallFlow] Answering over HTTP', { callId, reason: fallback.reason });
+      updateStatus(fallback.message, 'warning');
 
       const call = await acceptCallOverHttp(callId);
       return { call, transport: 'http' };
@@ -3173,18 +3171,18 @@ export default function useCallFlow({
         logError('[CallFlow] Local media failed after accepting call', error);
       }
 
-      if (!stream) {
-        const reason = permissions?.missing?.length
-          ? 'media_permission_denied'
-          : 'local_media_unavailable';
-        logWarn('[CallFlow] Call accepted without local media', { callId, reason });
-        updateStatus(
-          permissions?.message
-            ? `${permissions.message}. Call connected without local media.`
-            : 'Call connected, but the camera/microphone is unavailable.',
-          'warning',
-        );
-        reportAnswerStage(callId, 'answer_failed', reason);
+      const degraded = describeDegradedMedia({
+        hasStream: Boolean(stream),
+        missingPermissions: permissions?.missing,
+        permissionMessage: permissions?.message,
+      });
+      if (degraded) {
+        logWarn('[CallFlow] Call accepted without local media', {
+          callId,
+          reason: degraded.reason,
+        });
+        updateStatus(degraded.message, 'warning');
+        reportAnswerStage(callId, 'answer_failed', degraded.reason);
       }
 
       try {
@@ -3366,9 +3364,12 @@ export default function useCallFlow({
       }
 
       try {
-        const trimmedUrl = (signalingUrl ?? '').trim();
         const response = await authedFetchRef.current?.(sessionId => ({
-          url: `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}/decline`,
+          url: buildCallActionUrl({
+            signalingUrl: signalingUrl ?? '',
+            callId,
+            action: 'decline',
+          }),
           options: {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3433,14 +3434,15 @@ export default function useCallFlow({
     if (!callUUID) return;
     recordPendingAnswer(callUUID, source);
     Promise.resolve(rehydrateCallFromPushRef.current?.(callUUID)).then(outcome => {
-      // The call is gone (terminal/not found) or could not be fetched — drop
-      // the queued answer loudly instead of leaving it stuck. A `deferred`
-      // outcome is still in flight (no identity yet), so the queue must
-      // survive until the deferred rehydration runs.
-      if (outcome === 'deferred') return;
-      if (peekPendingAnswer() !== callUUID || incomingCallRef.current?.callId === callUUID) return;
+      const replay = decideQueuedAnswerReplay({
+        outcome,
+        callUUID,
+        queuedCallId: peekPendingAnswer(),
+        knownIncomingCallId: incomingCallRef.current?.callId ?? null,
+      });
+      if (replay.action === 'wait' || replay.action === 'ignore') return;
 
-      if (outcome === 'terminal' || outcome === 'not_found') {
+      if (replay.action === 'dismiss') {
         // The tap was for a call that had already stopped ringing — the
         // notification outlived the call. Dismiss it silently rather than
         // failing an answer nobody can complete.
@@ -3449,8 +3451,8 @@ export default function useCallFlow({
           source,
           outcome,
         });
-        reportAnswerStageRef.current?.(callUUID, 'accept_tapped', 'call_already_ended');
-        clearPendingAnswer(callUUID, 'call_already_ended');
+        reportAnswerStageRef.current?.(callUUID, 'accept_tapped', replay.reason);
+        clearPendingAnswer(callUUID, replay.reason);
         endCallKeepCall(callUUID);
         return;
       }
@@ -3459,8 +3461,8 @@ export default function useCallFlow({
         callUUID,
         source,
       });
-      reportAnswerStageRef.current?.(callUUID, 'answer_failed', 'call_unavailable');
-      clearPendingAnswer(callUUID, 'call_unavailable');
+      reportAnswerStageRef.current?.(callUUID, 'answer_failed', replay.reason);
+      clearPendingAnswer(callUUID, replay.reason);
     });
   }, []);
 
@@ -3725,7 +3727,7 @@ export default function useCallFlow({
           selected: result.selected,
         });
         setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
-        updateStatus(`Audio: ${route === AUDIO_ROUTES.SPEAKER_PHONE ? 'Speaker' : route}`);
+        updateStatus(describeChosenRoute(route));
       } catch (error) {
         logError('[CallFlow] chooseAudioOutput failed', error);
         updateStatus('Unable to switch audio output', 'error');
@@ -3949,11 +3951,17 @@ export default function useCallFlow({
       // "Speaker on join": with no headset/Bluetooth device attached the
       // automatic pick is the earpiece; the persisted preference upgrades
       // that to speakerphone.
-      if (result.ok && speakerEnabledByDefault && result.selected === AUDIO_ROUTES.EARPIECE) {
+      if (
+        shouldUpgradeToSpeaker({
+          routed: result.ok,
+          selected: result.selected,
+          speakerEnabledByDefault,
+        })
+      ) {
         const speakerResult = await chooseAudioRoute(AUDIO_ROUTES.SPEAKER_PHONE);
         if (speakerResult.ok) {
           setAudioDevices({
-            available: speakerResult.available.length > 0 ? speakerResult.available : result.available,
+            available: mergeDiscoveredDevices(speakerResult.available, result.available),
             selected: speakerResult.selected,
           });
           setIsSpeakerEnabled(true);
@@ -3989,21 +3997,15 @@ export default function useCallFlow({
       setAudioDevices(nextDevices);
       // A *detachable* device the user picked by hand can vanish mid-call (a
       // headset runs out of battery, a cable is pulled). The automatic route
-      // silently takes over below, which is right — but saying nothing leaves
-      // the user talking into a phone that is now on speaker in a public
-      // place, so the hand-over is announced and the manual choice released.
-      //
-      // Only the detachable routes are checked: the earpiece and the
-      // loudspeaker are part of the handset and cannot disappear, and a device
-      // list that happens to omit one of them must not be read as an unplug.
-      const manualRoute = manualAudioRouteRef.current;
-      if (
-        manualRoute &&
-        DETACHABLE_AUDIO_ROUTES.includes(manualRoute) &&
-        !nextDevices.available.includes(manualRoute)
-      ) {
+      // silently takes over below, which is right — but the hand-over is
+      // announced and the manual choice released.
+      const detached = describeDetachedManualRoute({
+        manualRoute: manualAudioRouteRef.current,
+        availableRoutes: nextDevices.available,
+      });
+      if (detached) {
         manualAudioRouteRef.current = null;
-        updateStatus(`${getAudioRouteLabel(manualRoute)} disconnected — switching audio output`);
+        updateStatus(detached.message);
       }
       applyAutomaticAudioRoute(nextDevices.available);
     });

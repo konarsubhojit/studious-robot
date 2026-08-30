@@ -13,6 +13,7 @@ import {
   isTerminalIceState,
   rememberAnsweredCallId,
   resolveCallEndReason,
+  resolveOutgoingCallee,
   resolveKnownCallId,
   shouldReportEmptyCallState,
   shouldResetReplayGuard,
@@ -445,5 +446,62 @@ describe('busy self-heal', () => {
     ['incomingCallId', { incomingCallId: 'other' }],
   ])('stays quiet while this device holds a call via %s', (_label, held) => {
     expect(shouldReportEmptyCallState({ eventCallId: 'c1', ...held })).toBe(false);
+  });
+});
+
+describe('resolveOutgoingCallee', () => {
+  it('rings the contact that was tapped, not whatever is in the field', () => {
+    expect(
+      resolveOutgoingCallee({
+        explicitCalleeId: 'bob',
+        typedCalleeId: 'stale-entry',
+        userId: 'alice',
+      }),
+    ).toEqual({ ok: true, calleeId: 'bob' });
+  });
+
+  it('falls back to the dial field when no contact was tapped', () => {
+    expect(
+      resolveOutgoingCallee({ typedCalleeId: '  bob  ', userId: 'alice' }),
+    ).toEqual({ ok: true, calleeId: 'bob' });
+  });
+
+  it.each([
+    ['a blank string', '   '],
+    ['a non-string', 42],
+    ['undefined', undefined],
+  ])('treats %s as no explicit callee and uses the field', (_label, explicitCalleeId) => {
+    expect(
+      resolveOutgoingCallee({ explicitCalleeId, typedCalleeId: 'bob', userId: 'alice' }),
+    ).toEqual({ ok: true, calleeId: 'bob' });
+  });
+
+  it.each([
+    ['neither is set', { typedCalleeId: '', userId: 'alice' }],
+    ['both are blank', { explicitCalleeId: '  ', typedCalleeId: '  ', userId: 'alice' }],
+    ['there is no field at all', { userId: 'alice' }],
+  ])('refuses to place a call when %s', (_label, input) => {
+    expect(resolveOutgoingCallee(input)).toEqual({
+      ok: false,
+      message: 'Enter a callee ID to call',
+    });
+  });
+
+  it.each([
+    ['no userId', undefined],
+    ['a blank userId', '   '],
+    ['a null userId', null],
+  ])('asks for an identity first when there is %s', (_label, userId) => {
+    expect(resolveOutgoingCallee({ typedCalleeId: 'bob', userId })).toEqual({
+      ok: false,
+      message: 'Enter your user ID first',
+    });
+  });
+
+  it('names the missing callee before the missing identity', () => {
+    expect(resolveOutgoingCallee({})).toEqual({
+      ok: false,
+      message: 'Enter a callee ID to call',
+    });
   });
 });

@@ -397,3 +397,41 @@ export function shouldReportEmptyCallState({
     callId => callId && callId !== eventCallId,
   );
 }
+
+// ─── Outgoing call placement ─────────────────────────────────────────────────
+
+/** Whose id to ring, or why no call can be placed. */
+export type OutgoingCallee =
+  | { ok: true; calleeId: string; }
+  | { ok: false; message: string; };
+
+/**
+ * Which callee an outgoing call is for.
+ *
+ * A call can be placed from the dial field or from a contact row, and the row
+ * wins: an explicit id is what the user just tapped, whereas whatever is left
+ * in the field may be days old. An explicit id that is blank or not a string
+ * is no signal at all and falls back to the field rather than ringing nobody.
+ *
+ * Both errors are returned rather than thrown because they are ordinary user
+ * mistakes with their own status messages, not faults.
+ */
+export function resolveOutgoingCallee({
+  explicitCalleeId,
+  typedCalleeId,
+  userId,
+}: {
+  explicitCalleeId?: unknown;
+  typedCalleeId?: string | null;
+  userId?: string | null;
+}): OutgoingCallee {
+  const explicit = (typeof explicitCalleeId === 'string' ? explicitCalleeId : '').trim();
+  const calleeId = explicit || (typedCalleeId ?? '').trim();
+  if (!calleeId) {
+    return { ok: false, message: 'Enter a callee ID to call' };
+  }
+  if (!(userId ?? '').trim()) {
+    return { ok: false, message: 'Enter your user ID first' };
+  }
+  return { ok: true, calleeId };
+}

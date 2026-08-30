@@ -68,14 +68,14 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | ◧ partial — seven slices are out and directly tested (the WebRTC stats helpers and the stats-poll derivation in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions and the `call.state_changed` dispatch in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, and push rehydration plus the media-state frame in `call/pushRehydration`); the structural hook split still wants its own PR |
+| P1.2 | Decompose `useCallFlow` | ◧ partial — eleven slices are out and directly tested (the WebRTC stats helpers and the stats-poll derivation in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions, the `call.state_changed` dispatch and outgoing-call placement in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, push rehydration plus the media-state frame in `call/pushRehydration`, the answer path and the queued-answer replay in `call/answerPath`, and the audio-route rules in `call/audioRouteRules`); the structural hook split still wants its own PR |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`, `call/answerPath`, `call/audioRouteRules`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -294,6 +294,37 @@ to a named `sendInitialOffer` beside the handler rather than into the pure
 module: it is `createOffer` / `setLocalDescription` against a live peer
 connection, which is exactly what does not belong there.
 
+**Eighth, ninth, tenth and eleventh slices: the answer path, the queued
+answer, outgoing placement, and audio routing.** `call/answerPath.ts` owns what
+answering decides when nothing else is reliable — how long a cold start waits
+for a socket and how many times it retries over one, why the answer is going
+over HTTP and what to say while it does (a socket that answered and failed
+reads differently from one that never connected, and the fallback is never
+silent), which HTTP failure is "nothing to answer with" versus "the answer was
+refused" — the two are different bugs and the push receipt is the only place
+either is visible — and what a call that connected without local media should
+report and say. It also owns `decideQueuedAnswerReplay`: whether an answer
+queued before this hook knew the call must survive (a deferred rehydration will
+drain it), has been overtaken, was for a notification that outlived its call, or
+must be dropped loudly. The queue itself stays in `callKeep.js`, where there is
+deliberately exactly one of them.
+
+`call/callDecisions.ts` gained `resolveOutgoingCallee`: a tapped contact beats
+whatever is stale in the dial field, a blank or non-string explicit id is no
+signal and falls back to the field, and both refusals are ordinary user
+mistakes with their own messages rather than faults.
+
+`call/audioRouteRules.ts` owns the four rules that were inline in the hook's
+audio effects and reachable only by replaying a native device-change event:
+that "speaker on join" upgrades the earpiece but never steals a call away from
+a headset, that only a *detachable* route can be lost — an incomplete device
+list is not an unplug — and that the loss is announced rather than silently
+handed over, how a chosen route is named, and that a selection which reports no
+devices has discovered nothing rather than an empty world, so the output picker
+never empties itself between two successful switches. It imports the route
+vocabulary from `audioRouting` rather than redeclaring it, and decides only:
+every `chooseAudioRoute` stayed where it was.
+
 **Sixth slice: the stats-poll derivation.** `pollStats` was the file's worst
 complexity entry (#4, 35) and computed everything inline: kbps from a pair of
 `bytesReceived` samples, the packet-loss ratio, the identity of the selected
@@ -340,7 +371,7 @@ socket handlers close over the refs they mutate (`peerConnectionRef`,
 `iceCandidateBufferRef`, `isNegotiatingRef`) and the negotiation path is
 `setRemoteDescription` / `createAnswer` / `setLocalDescription` against a live
 peer connection. Moving either would relocate side effects rather than separate
-decisions from them, which is the extraction pattern that has held for seven
+decisions from them, which is the extraction pattern that has held for eleven
 slices and the reason `useCallFlow.test.tsx` has never needed to change. Where
 a decision *was* separable from the effect it sits beside — the offer's
 stale-vs-glare guard, the state-change dispatch — it came out; what is left is
