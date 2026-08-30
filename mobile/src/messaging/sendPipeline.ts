@@ -123,7 +123,7 @@ export function buildOptimisticMessage({
     readAt: null,
     pending: true,
     syncState: 'pending',
-  } as ChatMessage;
+  };
 }
 
 /**

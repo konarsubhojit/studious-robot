@@ -74,6 +74,7 @@ export type {
 export { OUTBOX_MAX_ATTEMPTS } from '../messaging/sendPipeline';
 
 import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
+
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
  * this long after the last `isTyping: true` event, in case the corresponding
@@ -103,6 +104,19 @@ const TYPING_INDICATOR_THROTTLE_MS = 2000;
  * encapsulated in one place. Extracted out of `useCallFlow` so this concern
  * stays isolated from that hook's call-lifecycle/session/WebRTC
  * responsibilities.
+ *
+ * What is left here is the wiring: React state, the network calls, the socket
+ * emits and the effects. Everything that can be decided without mounting a
+ * component lives in `../messaging/` and is unit-tested there:
+ *
+ *   `messageIdentity`         id minting, entry identity and ordering
+ *   `messageHistory`          per-peer history transforms, page merging
+ *   `sendPipeline`            optimistic sends, outbox bookkeeping, backoff,
+ *                             upload and retry state transitions
+ *   `receivePipeline`         inbound messages, receipts, tombstones, reactions
+ *   `conversations`           the conversation list and unread accounting
+ *   `drafts`                  per-conversation composer drafts
+ *   `useChatSnapshotMirror`   hydrate-then-fetch and the debounced local mirror
  *
  * @param params
  */
@@ -544,7 +558,7 @@ export default function useMessaging({
       const messageId = createMessageId();
       const createdAt = new Date().toISOString();
       const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
-      const draft = {
+      const outgoing = {
         messageId,
         conversationId,
         senderId: userId,
@@ -557,9 +571,9 @@ export default function useMessaging({
       };
 
       setMessagesByPeer(prev =>
-        prependMessage(prev, trimmedPeerId, buildOptimisticMessage(draft)),
+        prependMessage(prev, trimmedPeerId, buildOptimisticMessage(outgoing)),
       );
-      persistOutbox([...outboxRef.current, buildOutboxItem(draft)]);
+      persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
 
       await drainOutbox();
     },
