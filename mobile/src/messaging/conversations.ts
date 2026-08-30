@@ -28,23 +28,26 @@ export function conversationIdForPeer(
  * Fold an inbound message into the conversation list: it becomes the row's
  * newest activity and bumps its unread count.
  *
- * @returns the new list, or `null` when the sender has no row yet — the caller
- *   has to refetch the authoritative list rather than invent one.
+ * @returns the new list with the changed conversation first.
  */
 export function withIncomingMessage(
   conversations: ConversationSummary[],
   message: ChatMessage,
-): ConversationSummary[] | null {
+  { incrementUnread = true }: { incrementUnread?: boolean; } = {},
+): ConversationSummary[] {
   const index = conversations.findIndex(c => c.peerId === message.senderId);
-  if (index === -1) return null;
-  const next = [...conversations];
-  next[index] = {
-    ...next[index],
+  const existing = index === -1 ? null : conversations[index];
+  const updated = {
+    ...(existing ?? {
+      conversationId: message.conversationId ?? undefined,
+      peerId: message.senderId,
+      unreadCount: 0,
+    }),
     lastMessage: message,
     lastActivity: { ...message, type: 'text' },
-    unreadCount: (next[index].unreadCount || 0) + 1,
+    unreadCount: (existing?.unreadCount || 0) + (incrementUnread ? 1 : 0),
   };
-  return next;
+  return [updated, ...conversations.filter((_, conversationIndex) => conversationIndex !== index)];
 }
 
 /** Zero a conversation's unread badge locally, without waiting for a refetch. */

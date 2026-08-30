@@ -75,6 +75,8 @@ type OutboundRtpStats = {
   mediaType?: unknown;
   framesSent?: unknown;
   framesEncoded?: unknown;
+  packetsSent?: unknown;
+  bytesSent?: unknown;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -194,6 +196,8 @@ type ScreenCaptureSuccess = {
   videoTrack: ScreenTrack;
   audioTrack: ScreenTrack | null;
   audioShared: boolean;
+  /** Why a requested audio capture fell back to video-only. */
+  audioFallbackReason?: 'unsupported' | 'denied';
 };
 
 type ScreenCaptureFailure = {
@@ -220,7 +224,8 @@ function failedScreenCapture(error: unknown): ScreenCaptureFailure {
 
 async function requestDisplayMedia(
   withAudio: boolean,
-): Promise<{ ok: true; stream: unknown; } | ScreenCaptureFailure> {
+): Promise<{ ok: true; stream: unknown; audioFallbackReason?: 'unsupported' | 'denied'; } |
+  ScreenCaptureFailure> {
   try {
     const stream = await callDisplayMedia({ video: true, audio: Boolean(withAudio) });
     return { ok: true, stream };
@@ -234,14 +239,22 @@ async function requestDisplayMedia(
       message: errorMessage(error),
     });
     try {
-      return { ok: true, stream: await callDisplayMedia({ video: true }) };
+      return {
+        ok: true,
+        stream: await callDisplayMedia({ video: true }),
+        audioFallbackReason: 'unsupported',
+      };
     } catch (retryError) {
       return failedScreenCapture(retryError);
     }
   }
 }
 
-function completeScreenCapture(stream: unknown, withAudio: boolean): ScreenCaptureResult {
+function completeScreenCapture(
+  stream: unknown,
+  withAudio: boolean,
+  audioFallbackReason?: 'unsupported' | 'denied',
+): ScreenCaptureResult {
   if (!isScreenStream(stream)) {
     return {
       ok: false,
@@ -262,6 +275,7 @@ function completeScreenCapture(stream: unknown, withAudio: boolean): ScreenCaptu
   logInfo('Screen capture started; MediaProjection service running', {
     requestedAudio: Boolean(withAudio),
     audioShared: Boolean(audioTrack),
+    audioFallbackReason: audioFallbackReason ?? (withAudio && !audioTrack ? 'unsupported' : undefined),
   });
   return {
     ok: true,
@@ -269,6 +283,7 @@ function completeScreenCapture(stream: unknown, withAudio: boolean): ScreenCaptu
     videoTrack,
     audioTrack: audioTrack ?? null,
     audioShared: Boolean(audioTrack),
+    audioFallbackReason: audioFallbackReason ?? (withAudio && !audioTrack ? 'unsupported' : undefined),
   };
 }
 
@@ -290,7 +305,7 @@ export async function startScreenCapture(
 
   const capture = await requestDisplayMedia(withAudio);
   if (!capture.ok) return capture;
-  return completeScreenCapture(capture.stream, withAudio);
+  return completeScreenCapture(capture.stream, withAudio, capture.audioFallbackReason);
 }
 
 /** @param ms */
@@ -319,6 +334,12 @@ function isOutboundVideoStats(entry: unknown): entry is OutboundRtpStats {
   return !kind || kind === 'video';
 }
 
+function isOutboundAudioStats(entry: unknown): entry is OutboundRtpStats {
+  if (!isRecord(entry) || entry.type !== 'outbound-rtp') return false;
+  const kind = entry.kind ?? entry.mediaType;
+  return kind === 'audio';
+}
+
 /**
  * Total frames the outbound video sender has handed to the encoder/network.
  *
@@ -332,6 +353,45 @@ function countOutboundVideoFrames(report: unknown): number {
     if (Number.isFinite(sent)) frames += sent;
   });
   return frames;
+}
+
+/** Log outbound audio RTP counters after screen-share renegotiation. */
+export async function logScreenShareAudioRtpStats(
+  peerConnection: unknown,
+  { requestedAudio, audioObtained }: { requestedAudio: boolean; audioObtained: boolean; },
+): Promise<void> {
+  if (!hasGetStats(peerConnection)) {
+    logInfo('Screen share audio RTP outcome', {
+      requestedAudio,
+      audioObtained,
+      packetsSent: null,
+      bytesSent: null,
+    });
+    return;
+  }
+  try {
+    let packetsSent = 0;
+    let bytesSent = 0;
+    forEachStatsEntry(await peerConnection.getStats(), entry => {
+      if (!isOutboundAudioStats(entry)) return;
+      const packets = Number(entry.packetsSent ?? 0);
+      const bytes = Number(entry.bytesSent ?? 0);
+      if (Number.isFinite(packets)) packetsSent += packets;
+      if (Number.isFinite(bytes)) bytesSent += bytes;
+    });
+    logInfo('Screen share audio RTP outcome', {
+      requestedAudio,
+      audioObtained,
+      packetsSent,
+      bytesSent,
+    });
+  } catch (error) {
+    logWarn('Unable to read screen share audio RTP stats', {
+      requestedAudio,
+      audioObtained,
+      message: errorMessage(error),
+    });
+  }
 }
 
 /**

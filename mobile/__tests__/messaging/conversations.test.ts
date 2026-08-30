@@ -29,20 +29,53 @@ describe('unread accounting', () => {
     ).toBe(5);
   });
 
-  test('an inbound message becomes the row newest activity and bumps its count', () => {
+  test('an inbound message moves its row first and preserves the remaining rows', () => {
+    const alice = conversation({ conversationId: 'conv-0', peerId: 'alice' });
+    const bob = conversation({ unreadCount: 1 });
+    const carol = conversation({ conversationId: 'conv-2', peerId: 'carol' });
     const next = withIncomingMessage(
-      [conversation({ unreadCount: 1 })],
+      [alice, bob, carol],
       { messageId: 'm1', senderId: 'bob', body: 'hi' } as any,
     );
-    expect(next?.[0]).toMatchObject({
+    expect(next).toEqual(expect.arrayContaining([alice, carol]));
+    expect(next.map(row => row.peerId)).toEqual(['bob', 'alice', 'carol']);
+    expect(next[0]).toMatchObject({
       unreadCount: 2,
       lastMessage: { messageId: 'm1' },
       lastActivity: { messageId: 'm1', type: 'text' },
     });
+    expect(next[0]).not.toBe(bob);
+    expect(next[1]).toBe(alice);
+    expect(next[2]).toBe(carol);
   });
 
-  test('a message from an unknown peer forces a refetch rather than an invented row', () => {
-    expect(withIncomingMessage([conversation()], { senderId: 'carol' } as any)).toBeNull();
+  test('a message from an unknown peer creates a provisional first row', () => {
+    const existing = conversation();
+    const next = withIncomingMessage(
+      [existing],
+      { conversationId: 'conv-2', messageId: 'm1', senderId: 'carol', body: 'hi' } as any,
+    );
+    expect(next[0]).toMatchObject({
+      conversationId: 'conv-2',
+      peerId: 'carol',
+      unreadCount: 1,
+      lastMessage: { messageId: 'm1' },
+      lastActivity: { messageId: 'm1', type: 'text' },
+    });
+    expect(next[1]).toBe(existing);
+  });
+
+  test('an inbound message for an open conversation updates activity without adding unread', () => {
+    const next = withIncomingMessage(
+      [conversation({ unreadCount: 4 })],
+      { messageId: 'm1', senderId: 'bob', body: 'hi' } as any,
+      { incrementUnread: false },
+    );
+    expect(next[0]).toMatchObject({
+      unreadCount: 4,
+      lastMessage: { messageId: 'm1' },
+      lastActivity: { messageId: 'm1', type: 'text' },
+    });
   });
 
   test('marking a conversation read zeroes only its own badge', () => {

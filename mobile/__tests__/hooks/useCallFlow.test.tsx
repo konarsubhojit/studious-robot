@@ -93,6 +93,7 @@ jest.mock('../../src/screenShare', () => ({
   SCREEN_SHARE_NO_FRAMES: 'no_frames',
   isScreenShareSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
+  logScreenShareAudioRtpStats: jest.fn(() => Promise.resolve()),
   stopScreenCapture: jest.fn(),
   verifyScreenShareFrames: jest.fn(() => Promise.resolve({ ok: true, frames: 1, verified: true })),
 }));

@@ -3,6 +3,7 @@ import {
   isScreenShareSupported,
   SCREEN_SHARE_CANCELLED,
   SCREEN_SHARE_NO_FRAMES,
+  logScreenShareAudioRtpStats,
   startScreenCapture,
   stopScreenCapture,
   verifyScreenShareFrames,
@@ -114,6 +115,7 @@ describe('startScreenCapture', () => {
     expect(mediaDevices.getDisplayMedia).toHaveBeenLastCalledWith({ video: true });
     expect(result.ok).toBe(true);
     expect(result.audioShared).toBe(false);
+    expect(result.audioFallbackReason).toBe('unsupported');
   });
 
   test('reports cancellation when the user denies the consent dialog', async () => {
@@ -270,6 +272,7 @@ describe('verifyScreenShareFrames', () => {
       frames: 5,
       verified: true,
     });
+
   });
 
   test('fails when the capture never produces a frame', async () => {
@@ -296,6 +299,27 @@ describe('verifyScreenShareFrames', () => {
     await expect(verifyScreenShareFrames(peerConnection, options)).resolves.toMatchObject({
       ok: true,
       frames: 3,
+    });
+  });
+
+  describe('logScreenShareAudioRtpStats', () => {
+    test('logs the requested and obtained outcome with outbound audio counters', async () => {
+      const { logInfo } = require('../src/appLogger');
+      await logScreenShareAudioRtpStats(
+        {
+          getStats: jest.fn(async () => [
+            { type: 'outbound-rtp', kind: 'audio', packetsSent: 4, bytesSent: 120 },
+            { type: 'outbound-rtp', kind: 'video', packetsSent: 9, bytesSent: 1000 },
+          ]),
+        },
+        { requestedAudio: true, audioObtained: true },
+      );
+      expect(logInfo).toHaveBeenCalledWith('Screen share audio RTP outcome', {
+        requestedAudio: true,
+        audioObtained: true,
+        packetsSent: 4,
+        bytesSent: 120,
+      });
     });
   });
 
