@@ -212,20 +212,6 @@ function isSameCallRun(previous: CallActivity, entry: CallActivity): boolean {
 }
 
 /**
- * Turn a flat, oldest-first timeline array into a render list that interleaves
- * date separators and flags the last message of each same-sender/time-window
- * group, so consecutive bubbles from one sender only show a single
- * timestamp/tick at the bottom of the group (Teams/Slack-style grouping).
- *
- * Call entries share the list with messages — one merged conversation, as in
- * every mainstream messenger — and a run of consecutive calls with the same
- * direction and outcome collapses into a single row.
- *
- * Each item also carries the date label of the day it belongs to, so the
- * pinned (sticky) date pill can be derived from whichever item is currently at
- * the top of the viewport without re-scanning the list.
- *
-/**
  * Key of the message the "N new messages" divider belongs above.
  *
  * The anchor is derived from the conversation's unread *count* rather than
@@ -314,6 +300,15 @@ function isMessageGroupEnd(entry: ChatMessage, next: TimelineEntry | undefined):
   );
 }
 
+/**
+ * Turn a flat, oldest-first timeline array into a render list that interleaves
+ * date separators and flags the last message of each same-sender/time-window
+ * group. Call entries collapse by direction and outcome, and each item carries
+ * the date label for the pinned date pill.
+ *
+ * @param orderedEntries oldest-first
+ * @param unread where to place the "N new messages" divider, if anywhere
+ */
 function buildListItems(
   orderedEntries: TimelineEntry[],
   unread: { anchorId: string | null; count: number } = { anchorId: null, count: 0 },

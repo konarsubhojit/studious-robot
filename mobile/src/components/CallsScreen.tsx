@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SectionList, StyleSheet, Text, View } from 'react-native';
 import {
   CALL_FILTERS,
@@ -295,10 +295,11 @@ export default function CallsScreen({
   const [isPickerVisible, setIsPickerVisible] = useState(false);
   // Peer chosen in the picker, awaiting an audio/video decision.
   const [pendingPeerId, setPendingPeerId] = useState((null as string | null));
+  const fetchHistoryOnMountRef = useRef(onFetchCallHistory);
 
   useEffect(() => {
-    void onFetchCallHistory?.();
-  }, [onFetchCallHistory]);
+    void fetchHistoryOnMountRef.current?.();
+  }, []);
 
   // Opening the tab is the acknowledgement: the badge exists to bring the user
   // here, so keeping it lit once they have arrived is just noise.
