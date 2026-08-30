@@ -312,7 +312,12 @@ differ by package because their tooling does:
   usual sense of the rule — every line that is *not* a type or interface
   declaration is exempt. This deliberately avoids imposing a general
   line-length style on the codebase.
-- **Server** has no linter, and adding one for a single rule was not worth the
-  dependency, so `declaration-formatting.test.ts` performs the same check in
-  the existing node test runner. It was verified to fail on a deliberately
-  over-wide declaration, so it cannot silently pass.
+- **Server** now runs `eslint` too (`server/eslint.config.js`, wired to
+  `npm run lint` and to `backend-ci.yml`). It carries the same `max-len` rule,
+  which replaced the `declaration-formatting.test.ts` guard that stood in for a
+  linter while the server had none; the rule was verified to fail on a
+  deliberately over-wide declaration in both `server/` and `shared/`, so it
+  cannot silently pass. The linter earns its dependency with the type-aware
+  rules a hand-rolled scan cannot replicate — `no-floating-promises`,
+  `no-misused-promises` and `await-thenable`, which is where an un-awaited
+  Socket.IO handler otherwise becomes a process-killing unhandled rejection.

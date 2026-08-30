@@ -26,9 +26,9 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) =>
-      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
-    );
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+    });
   }
   return { ...server, url, teardown };
 }
@@ -713,9 +713,9 @@ test('loadPersistedState() populates state.users from DB rows', async () => {
     assert.equal(impostor.body.code, 'identity_claimed');
   } finally {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) =>
-      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
-    );
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+    });
   }
 });
 
@@ -765,7 +765,9 @@ test('loadPersistedState() hydrates calls and call events from DB rows', async (
   assert.equal(hydratedEvents[0].event, 'created');
 
   server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+  await new Promise((resolve) => {
+    void server.io.close(() => server.httpServer.close(resolve));
+  });
 });
 
 test('loadPersistedState() populates state.devices and state.userDevices from DB rows', async () => {
@@ -794,7 +796,9 @@ test('loadPersistedState() populates state.devices and state.userDevices from DB
   assert.equal(channels[0].pushToken, 'fcm-hydrate-token');
 
   server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+  await new Promise((resolve) => {
+    void server.io.close(() => server.httpServer.close(resolve));
+  });
 });
 
 test('loadPersistedState() is a no-op when no db is provided', async () => {
@@ -803,7 +807,9 @@ test('loadPersistedState() is a no-op when no db is provided', async () => {
   await assert.doesNotReject(() => server.loadPersistedState());
 
   server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+  await new Promise((resolve) => {
+    void server.io.close(() => server.httpServer.close(resolve));
+  });
 });
 
 test('loadPersistedState() fails loudly when users hydration fails', async () => {
@@ -823,5 +829,7 @@ test('loadPersistedState() fails loudly when users hydration fails', async () =>
   await assert.rejects(() => server.loadPersistedState(), /failed to hydrate users from DB/);
 
   server.httpServer.closeAllConnections?.();
-  await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+  await new Promise((resolve) => {
+    void server.io.close(() => server.httpServer.close(resolve));
+  });
 });
