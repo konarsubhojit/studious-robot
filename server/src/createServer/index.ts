@@ -204,9 +204,16 @@ function createServer(opts: CreateServerOptions = {}) {
     draining: false,
   };
   // Drop locally cached entries when another instance reports a write.
-  subscribeToCacheInvalidations(state).catch((error: unknown) => {
-    console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
-  });
+  // The resolved unsubscribe handle is retained so `shutdown()` can release
+  // it before tearing down the Redis / message-bus resources it depends on.
+  let unsubscribeFromCacheInvalidations: (() => Promise<void>) | null = null;
+  const cacheInvalidationSubscription = subscribeToCacheInvalidations(state)
+    .then((unsubscribe) => {
+      unsubscribeFromCacheInvalidations = unsubscribe;
+    })
+    .catch((error: unknown) => {
+      console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
+    });
 
   if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
     Promise.resolve(messageStore.ready())
@@ -373,6 +380,14 @@ function createServer(opts: CreateServerOptions = {}) {
         httpServer.close(() => resolve())
       );
 
+      // Release the cache-invalidation subscription before closing Redis /
+      // the message bus it depends on, so no callback fires against
+      // resources that are being torn down.
+      await cacheInvalidationSubscription;
+      if (typeof unsubscribeFromCacheInvalidations === 'function') {
+        await unsubscribeFromCacheInvalidations();
+      }
+
       // Close durable stores (Redis/Postgres) if they support it.
       if (typeof stores.close === 'function') {
         await stores.close();
@@ -405,6 +420,12 @@ function createServer(opts: CreateServerOptions = {}) {
     getPresence: (userId: string) => getPresenceSnapshot(state, userId),
     resolveReachableChannels: (userId: string) =>
       resolveReachableChannels(state, userId),
+    /**
+     * Resolves once the cache-invalidation subscription attempt has settled.
+     * Exposed for deterministic testing; production code never awaits this
+     * directly (see `shutdown()`, which awaits it before closing stores).
+     */
+    cacheInvalidationSubscriptionReady: cacheInvalidationSubscription,
     getCall: (callId: string) => state.calls.get(callId) || null,
     getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
