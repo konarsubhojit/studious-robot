@@ -1,5 +1,9 @@
 import { errorMessage } from './errors';
 
+export const MAX_IN_MEMORY_LOG_ENTRIES = 500;
+export const MAX_DURABLE_LOG_BYTES = 256 * 1024;
+const MAX_DURABLE_LOG_LINE_BYTES = 16 * 1024;
+
 const LOG_ENTRIES: string[] = [];
 let durableLogQueue: Promise<boolean | void> = Promise.resolve();
 
@@ -20,6 +24,8 @@ const SENSITIVE_FIELDS = new Set([
   'verification_code',
   'recoverycode',
   'recovery_code',
+  'callid',
+  'call_id',
 ]);
 
 function isSensitiveKey(key: unknown): boolean {
@@ -128,6 +134,46 @@ function safeSerialize(metadata: unknown): string | undefined {
   }
 }
 
+function utf8ByteLength(value: string): number {
+  const TextEncoderCtor = (globalThis as any).TextEncoder;
+  if (typeof TextEncoderCtor === 'function') {
+    return new TextEncoderCtor().encode(value).length;
+  }
+  return value.length;
+}
+
+function trimToUtf8Bytes(value: string, maxBytes: number): string {
+  if (utf8ByteLength(value) <= maxBytes) {
+    return value;
+  }
+
+  let output = '';
+  let bytes = 0;
+  for (const char of value) {
+    const charBytes = utf8ByteLength(char);
+    if (bytes + charBytes > maxBytes) {
+      break;
+    }
+    output += char;
+    bytes += charBytes;
+  }
+  return output;
+}
+
+async function getDurableLogSize(RNFS: any, path: string): Promise<number | null> {
+  if (typeof RNFS.stat !== 'function') {
+    return null;
+  }
+
+  try {
+    const stat = await RNFS.stat(path);
+    const size = Number(stat?.size);
+    return Number.isFinite(size) && size > 0 ? size : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * @returns the formatted line that was buffered.
  */
@@ -140,6 +186,10 @@ function addLog(level: string, message: unknown, metadata?: unknown): string {
     : `${timestamp} [${level.toUpperCase()}] ${safeMessage}`;
 
   LOG_ENTRIES.push(line);
+  const overflow = LOG_ENTRIES.length - MAX_IN_MEMORY_LOG_ENTRIES;
+  if (overflow > 0) {
+    LOG_ENTRIES.splice(0, overflow);
+  }
 
   if (level === 'warn') {
     console.warn(line);
@@ -178,7 +228,10 @@ export function getDurableLogFilePath(): string | null {
  * @returns resolves when the append completes.
  */
 export function persistLogLine(line: unknown): Promise<boolean | void> {
-  const safeLine = typeof line === 'string' ? line : String(line ?? '');
+  const safeLine = trimToUtf8Bytes(
+    typeof line === 'string' ? line : String(line ?? ''),
+    MAX_DURABLE_LOG_LINE_BYTES,
+  );
   durableLogQueue = durableLogQueue
     .catch(() => {})
     .then(async () => {
@@ -186,13 +239,21 @@ export function persistLogLine(line: unknown): Promise<boolean | void> {
       const path = getDurableLogFilePath();
       if (!RNFS || !path || !safeLine) return false;
       try {
+        const lineToAppend = `${safeLine}\n`;
+        const currentSize = await getDurableLogSize(RNFS, path);
+        if (
+          currentSize !== null &&
+          currentSize + utf8ByteLength(lineToAppend) > MAX_DURABLE_LOG_BYTES &&
+          typeof RNFS.writeFile === 'function'
+        ) {
+          await RNFS.writeFile(path, '', 'utf8');
+        }
+
         if (typeof RNFS.appendFile === 'function') {
-          await RNFS.appendFile(path, `${safeLine}\n`, 'utf8');
+          await RNFS.appendFile(path, lineToAppend, 'utf8');
         } else {
-          const exists = typeof RNFS.exists === 'function' ? await RNFS.exists(path) : false;
-          const previous =
-            exists && typeof RNFS.readFile === 'function' ? await RNFS.readFile(path, 'utf8') : '';
-          await RNFS.writeFile(path, `${previous}${safeLine}\n`, 'utf8');
+          if (typeof RNFS.writeFile !== 'function') return false;
+          await RNFS.writeFile(path, lineToAppend, 'utf8');
         }
         return true;
       } catch {

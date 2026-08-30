@@ -127,11 +127,24 @@ describe('server query timings in the export', () => {
     (global as any).fetch = jest.fn(async () => ({ ok: true, json: async () => snapshot }));
     const RNFS = require('react-native-fs');
 
-    const result = await exportDiagnosticLogs({ signalingUrl: 'https://signal.example.com' });
+    const result = await exportDiagnosticLogs(
+      { signalingUrl: 'https://signal.example.com' },
+      { userInitiated: true },
+    );
 
     expect(result.ok).toBe(true);
     const written = RNFS.writeFile.mock.calls[0][1];
     expect(written).toContain('--- server query timings (slowest total first) ---');
     expect(written).toContain('listConversations');
+  });
+
+  test('refuses to export logs without an explicit user action', async () => {
+    const RNFS = require('react-native-fs');
+
+    const result = await exportDiagnosticLogs({ signalingUrl: 'https://signal.example.com' });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('explicit user action');
+    expect(RNFS.writeFile).not.toHaveBeenCalled();
   });
 });

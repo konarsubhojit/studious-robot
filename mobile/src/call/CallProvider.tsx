@@ -173,16 +173,19 @@ export function CallProvider({ children }: { children: ReactNode; }) {
   }, [isCallConnected, isCallMinimized, setIsCallMinimized]);
 
   const handleExportLogs = useCallback(async () => {
-    const result = await exportDiagnosticLogs({
-      signalingUrl: callFlow.signalingUrl,
-      callId: callFlow.activeCall?.callId ?? null,
-      status: callFlow.status?.message,
-      localStream: callFlow.localStream,
-      remoteStream: callFlow.remoteStream,
-      isInCall: callFlow.isInCall,
-      iceTransportPolicy: appSettings.settings.iceTransportPolicy,
-      selectedCandidatePair: callFlow.selectedCandidatePair,
-    });
+    const result = await exportDiagnosticLogs(
+      {
+        signalingUrl: callFlow.signalingUrl,
+        callId: callFlow.activeCall?.callId ?? null,
+        status: callFlow.status?.message,
+        localStream: callFlow.localStream,
+        remoteStream: callFlow.remoteStream,
+        isInCall: callFlow.isInCall,
+        iceTransportPolicy: appSettings.settings.iceTransportPolicy,
+        selectedCandidatePair: callFlow.selectedCandidatePair,
+      },
+      { userInitiated: true },
+    );
     callFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
   }, [appSettings.settings.iceTransportPolicy, callFlow]);
 
