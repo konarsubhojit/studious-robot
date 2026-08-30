@@ -1,5 +1,7 @@
 import { AccessibilityInfo } from 'react-native';
 import { CALL_STATES } from './call/callStateMachine';
+import { describeCallOutcome } from './callUx';
+import type { CallOutcome } from './callUx';
 
 /**
  * Screen-reader announcements.
@@ -55,6 +57,77 @@ export function describeCallState(callState: string, { callerId, calleeId }: { c
  */
 export function describeRecoveryState(isRecovering: boolean): string | null {
   return isRecovering ? 'Connection lost, reconnecting' : 'Reconnected';
+}
+
+/**
+ * What the recovery banner is currently saying, as the announcer sees it.
+ */
+export type RecoveryAnnouncementState = {
+  isRecovering: boolean;
+  /** Rungs of the restart ladder consumed so far. */
+  attempts: number;
+  /** The recovery budget was spent with the media still down. */
+  isConnectionLost: boolean;
+};
+
+/**
+ * Sentence announced for the move from one recovery state to the next.
+ *
+ * Attempt progress and exhaustion are shown only in a small banner over the
+ * video, so without this the ladder's whole story — trying, trying again,
+ * giving up — reached a screen-reader user as silence followed by a call that
+ * simply stopped.
+ *
+ * @returns the announcement, or `null` when nothing has changed worth saying.
+ */
+export function describeRecoveryTransition(
+  previous: RecoveryAnnouncementState,
+  next: RecoveryAnnouncementState,
+): string | null {
+  if (next.isConnectionLost) {
+    return previous.isConnectionLost ? null : 'Connection lost. The call could not be restored.';
+  }
+  if (next.isRecovering !== previous.isRecovering) {
+    return describeRecoveryState(next.isRecovering);
+  }
+  // The first attempt is already covered by "Connection lost, reconnecting";
+  // only the ones that say the app is still trying are worth repeating.
+  if (next.isRecovering && next.attempts > previous.attempts && next.attempts > 1) {
+    return `Still reconnecting, attempt ${next.attempts}`;
+  }
+  return null;
+}
+
+/**
+ * Sentence announced when a call ends, naming how it ended and how long it ran.
+ *
+ * The summary is a banner above the tab shell the user has just been returned
+ * to, which is exactly the kind of state change nothing moves focus to.
+ *
+ * @returns the announcement, or `null` when there is no summary to read.
+ */
+export function describeCallEnd(
+  summary: (CallOutcome & { durationSeconds?: number | null }) | null | undefined,
+): string | null {
+  if (!summary) return null;
+  const outcome = describeCallOutcome(summary);
+  const duration = describeSpokenDuration(summary.durationSeconds);
+  return duration ? `${outcome}, ${duration}` : outcome;
+}
+
+/**
+ * A call duration as words rather than as `2:08`, which a screen reader reads
+ * as a time of day.
+ */
+function describeSpokenDuration(durationSeconds: number | null | undefined): string {
+  const total = Math.floor(Number(durationSeconds));
+  if (!Number.isFinite(total) || total <= 0) return '';
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  const parts: string[] = [];
+  if (minutes > 0) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+  if (seconds > 0) parts.push(`${seconds} second${seconds === 1 ? '' : 's'}`);
+  return parts.join(' ');
 }
 
 /**
