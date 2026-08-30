@@ -45,6 +45,9 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
   });
 }
 
+type IsAny<T> = 0 extends (1 & T) ? true : false;
+type Assert<T extends true> = T;
+
 /**
  * @returns the created session id
  */
@@ -84,6 +87,35 @@ test('schema helper validates, trims and strips unknown keys', () => {
 
   assert.equal(schema.safeParse(null).success, false);
   assert.equal(schema.safeParse(undefined).success, false);
+});
+
+test('schema helper preserves parsed object/record types at the API boundary', () => {
+  const schema = s.object({
+    id: s.id(),
+    count: s.number({ integer: true, min: 0 }),
+    tags: s.array(s.string({ min: 1 })),
+    labels: s.record(s.number({ integer: true })).optional(),
+  });
+
+  const parsed = schema.parse({
+    id: 'abc',
+    count: 3,
+    tags: ['one', 'two'],
+    labels: { urgent: 1 },
+  });
+
+  // compile-time type checks: these fail if parsed fields are typed `any`
+  const id: string = parsed.id;
+  const count: number = parsed.count;
+  const tags: string[] = parsed.tags;
+  const labels: Record<string, number> | undefined = parsed.labels;
+  type _ParsedIsNotAny = Assert<IsAny<typeof parsed> extends false ? true : false>;
+  type _LabelsIsNotAny = Assert<IsAny<typeof parsed.labels> extends false ? true : false>;
+
+  assert.equal(id, 'abc');
+  assert.equal(count, 3);
+  assert.deepEqual(tags, ['one', 'two']);
+  assert.deepEqual(labels, { urgent: 1 });
 });
 
 test('signaling payload schemas cover both directions and pass unknown events through', () => {
