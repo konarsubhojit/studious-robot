@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from 'react';
 import { deriveCallStreams } from '../callStreamHelpers';
 import { exportDiagnosticLogs } from '../diagnostics';
 import useAppSettings from '../hooks/useAppSettings';
@@ -46,7 +55,20 @@ export type CallContextValue = {
   handleExportLogs: () => Promise<void>;
 };
 
-const CallContext = createContext((null as CallContextValue | null));
+/**
+ * The published call snapshot, plus the subscription machinery that lets a
+ * consumer wake up for one slice of it.
+ *
+ * The store object itself never changes identity, so putting it in a context
+ * means the context never invalidates: a consumer re-renders only when the
+ * slice it selected actually changed.
+ */
+export type CallStore = {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => CallContextValue;
+};
+
+const CallStoreContext = createContext((null as CallStore | null));
 
 /**
  * The app's single source of truth for calls.
@@ -55,8 +77,15 @@ const CallContext = createContext((null as CallContextValue | null));
  * driven by the state machine in `callStateMachine`) together with the
  * presentation concerns that hang off it — minimize/restore, the draggable
  * picture-in-picture self-view, call initiation and the derived stream pair —
- * and publishes them as one context so screens never have to pick between
+ * and publishes them as one snapshot so screens never have to pick between
  * competing call sources (the legacy room-join flow has been retired).
+ *
+ * The snapshot is published through a *store* rather than through the context
+ * value itself. `useCallFlow` returns continuously-evolving state (timers,
+ * connection stats, recovery attempts), so a context carrying that state
+ * directly re-renders every consumer — including chat surfaces that read none
+ * of it — several times a second. Consumers select the slice they read with
+ * {@link useCallSelector} and are woken only when that slice changes.
  */
 export function CallProvider({ children }: { children: ReactNode; }) {
   // Settings are loaded before the call flow because they influence call setup
@@ -156,10 +185,23 @@ export function CallProvider({ children }: { children: ReactNode; }) {
     return `Call with ${remoteId}`;
   }, [activeCall, localUserId]);
 
+  // The two actions below read the whole call flow, which is a fresh object on
+  // every render. Reading it through a ref rather than through the dependency
+  // list is what keeps their identity stable, and a stable action identity is
+  // what keeps the memoised screen renderers in `TabShell` (and the
+  // `React.memo` on the screens they produce) from being invalidated by every
+  // timer tick.
+  const callFlowRef = useRef(callFlow);
+  const settingsRef = useRef(appSettings.settings);
+  useEffect(() => {
+    callFlowRef.current = callFlow;
+    settingsRef.current = appSettings.settings;
+  }, [appSettings.settings, callFlow]);
+
   const endCall = useCallback(() => {
     setIsCallMinimized(false);
-    callFlow.handleEndCall();
-  }, [callFlow, setIsCallMinimized]);
+    callFlowRef.current.handleEndCall();
+  }, [setIsCallMinimized]);
 
   const minimizeCall = useCallback(() => setIsCallMinimized(true), [setIsCallMinimized]);
   const expandCall = useCallback(() => setIsCallMinimized(false), [setIsCallMinimized]);
@@ -173,21 +215,22 @@ export function CallProvider({ children }: { children: ReactNode; }) {
   }, [isCallConnected, isCallMinimized, setIsCallMinimized]);
 
   const handleExportLogs = useCallback(async () => {
+    const currentCallFlow = callFlowRef.current;
     const result = await exportDiagnosticLogs(
       {
-        signalingUrl: callFlow.signalingUrl,
-        callId: callFlow.activeCall?.callId ?? null,
-        status: callFlow.status?.message,
-        localStream: callFlow.localStream,
-        remoteStream: callFlow.remoteStream,
-        isInCall: callFlow.isInCall,
-        iceTransportPolicy: appSettings.settings.iceTransportPolicy,
-        selectedCandidatePair: callFlow.selectedCandidatePair,
+        signalingUrl: currentCallFlow.signalingUrl,
+        callId: currentCallFlow.activeCall?.callId ?? null,
+        status: currentCallFlow.status?.message,
+        localStream: currentCallFlow.localStream,
+        remoteStream: currentCallFlow.remoteStream,
+        isInCall: currentCallFlow.isInCall,
+        iceTransportPolicy: settingsRef.current.iceTransportPolicy,
+        selectedCandidatePair: currentCallFlow.selectedCandidatePair,
       },
       { userInitiated: true },
     );
-    callFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
-  }, [appSettings.settings.iceTransportPolicy, callFlow]);
+    currentCallFlow.updateStatus(result.message, result.ok ? 'success' : 'error');
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -227,7 +270,12 @@ export function CallProvider({ children }: { children: ReactNode; }) {
     }),
     [
       animatedPipStyle,
-      appSettings,
+      appSettings.handleAutoLightingToggle,
+      appSettings.handleDeveloperModeToggle,
+      appSettings.handleHapticsToggle,
+      appSettings.handleIceTransportPolicyChange,
+      appSettings.handleSpeakerDefaultToggle,
+      appSettings.settings,
       callFlow,
       callState,
       endCall,
@@ -251,18 +299,139 @@ export function CallProvider({ children }: { children: ReactNode; }) {
     ],
   );
 
-  return <CallContext.Provider value={value}>{children}</CallContext.Provider>;
+  const store = useCallStore(value);
+
+  return <CallStoreContext.Provider value={store}>{children}</CallStoreContext.Provider>;
 }
 
 /**
- * Access the single call context.
+ * Publish `value` through a store whose identity never changes.
+ *
+ * The snapshot is swapped and the subscribers are woken in a layout effect, so
+ * every consumer has re-read the new slice before the frame is painted.
+ *
+ * @param value the freshly rendered call snapshot
+ * @returns the (stable) store consumers subscribe to
+ */
+function useCallStore(value: CallContextValue): CallStore {
+  const snapshotRef = useRef(value);
+  const listenersRef = useRef((new Set<() => void>()));
+
+  const store = useMemo(
+    () => ({
+      subscribe: (listener: () => void) => {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
+        };
+      },
+      getSnapshot: () => snapshotRef.current,
+    }),
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (snapshotRef.current === value) return;
+    snapshotRef.current = value;
+    // Copied first: a listener is free to unsubscribe as it is notified.
+    for (const listener of Array.from(listenersRef.current)) {
+      listener();
+    }
+  }, [value]);
+
+  return store;
+}
+
+/**
+ * Compare two selected slices one level deep.
+ *
+ * The default for {@link useCallSelector}, so a selector may return a plain
+ * object of the fields a component reads without that object's fresh identity
+ * counting as a change on every notification.
+ *
+ * @param a previously selected slice
+ * @param b freshly selected slice
+ * @returns whether the two slices hold the same values
+ */
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
+  const left = (a as Record<string, unknown>);
+  const right = (b as Record<string, unknown>);
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every(
+    key =>
+      Object.prototype.hasOwnProperty.call(right, key) && Object.is(left[key], right[key]),
+  );
+}
+
+/**
+ * The store published by the nearest {@link CallProvider}.
+ *
+ * @returns the call store
+ */
+function useCallStoreContext(): CallStore {
+  const store = useContext(CallStoreContext);
+  if (!store) {
+    throw new Error('useCall must be used within a CallProvider');
+  }
+  return store;
+}
+
+/**
+ * Subscribe to one slice of the call snapshot.
+ *
+ * The component re-renders only when the selected slice changes, so a call
+ * timer, a connection-quality sample or a recovery attempt no longer disturbs
+ * screens that read none of them. Selectors must be pure functions of the
+ * snapshot — declare them at module scope rather than closing over props, since
+ * the selection is cached per snapshot.
+ *
+ * @param select picks the slice this component reads
+ * @param isEqual decides whether the newly selected slice is a change; shallow
+ * by default, so an object of fields is compared field by field
+ * @returns the selected slice
+ */
+export function useCallSelector<Selected>(
+  select: (state: CallContextValue) => Selected,
+  isEqual: (a: Selected, b: Selected) => boolean = shallowEqual,
+): Selected {
+  const store = useCallStoreContext();
+  const cacheRef = useRef((null as { snapshot: CallContextValue; selected: Selected; } | null));
+
+  const getSelection = useCallback(() => {
+    const snapshot = store.getSnapshot();
+    const cached = cacheRef.current;
+    if (cached && cached.snapshot === snapshot) return cached.selected;
+    const selected = select(snapshot);
+    // Keeping the previous reference when the values match is what makes this
+    // safe for `useSyncExternalStore`, which requires a cached snapshot, *and*
+    // what lets a selector return a fresh object of fields.
+    if (cached && isEqual(cached.selected, selected)) {
+      cacheRef.current = { snapshot, selected: cached.selected };
+      return cached.selected;
+    }
+    cacheRef.current = { snapshot, selected };
+    return selected;
+  }, [isEqual, select, store]);
+
+  return useSyncExternalStore(store.subscribe, getSelection, getSelection);
+}
+
+/** Identity selector for {@link useCall}. */
+const selectAll = (state: CallContextValue) => state;
+
+/**
+ * Access the whole call snapshot.
+ *
+ * Re-renders on every call-flow change, which is what a call surface showing
+ * most of the call generally wants; anything reading a handful of fields —
+ * above all the chat surfaces — should select those fields with
+ * {@link useCallSelector} instead.
  *
  * @returns the value published by {@link CallProvider}
  */
 export function useCall(): CallContextValue {
-  const context = useContext(CallContext);
-  if (!context) {
-    throw new Error('useCall must be used within a CallProvider');
-  }
-  return context;
+  return useCallSelector(selectAll, Object.is);
 }

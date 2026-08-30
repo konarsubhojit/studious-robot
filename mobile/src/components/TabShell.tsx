@@ -1,9 +1,9 @@
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
 import { describeAttachmentDownloadResult, downloadAttachment } from '../attachmentDownload';
-import { useCall } from '../call/CallProvider';
+import { useCallSelector } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
 import useRecentSearches from '../hooks/useRecentSearches';
@@ -25,15 +25,70 @@ import ChatListScreen from './ChatListScreen';
 import PeerProfileScreen from './PeerProfileScreen';
 import SearchScreen from './SearchScreen';
 import SettingsScreen from './SettingsScreen';
+import type { CallContextValue } from '../call/CallProvider';
+
+/**
+ * The fields of the call snapshot this shell reads.
+ *
+ * Declared at module scope and selected as one slice so the shell — and with it
+ * every tab screen below it — re-renders when one of *these* changes and not
+ * when the call's timer, connection stats or recovery attempts do.
+ *
+ * @param state the call snapshot
+ * @returns the tab shell's slice of it
+ */
+const selectTabShellSlice = (state: CallContextValue) => ({
+  accountEmail: state.callFlow.accountEmail,
+  accountProviderId: state.callFlow.accountProviderId,
+  callHistory: state.callFlow.callHistory,
+  fetchCallHistory: state.callFlow.fetchCallHistory,
+  isPlacingCall: state.callFlow.isPlacingCall,
+  isServerUnreachable: state.callFlow.isServerUnreachable,
+  markMissedCallsRead: state.callFlow.markMissedCallsRead,
+  missedCallCount: state.callFlow.missedCallCount,
+  retryPresenceConnect: state.callFlow.retryPresenceConnect,
+  searchUsers: state.callFlow.searchUsers,
+  setSignalingUrl: state.callFlow.setSignalingUrl,
+  signalingUrl: state.callFlow.signalingUrl,
+  status: state.callFlow.status,
+  unregisterUser: state.callFlow.unregisterUser,
+  updateStatus: state.callFlow.updateStatus,
+  userId: state.callFlow.userId,
+  settings: state.settings,
+  handleAutoLightingToggle: state.handleAutoLightingToggle,
+  handleDeveloperModeToggle: state.handleDeveloperModeToggle,
+  handleExportLogs: state.handleExportLogs,
+  handleHapticsToggle: state.handleHapticsToggle,
+  handleIceTransportPolicyChange: state.handleIceTransportPolicyChange,
+  handleSpeakerDefaultToggle: state.handleSpeakerDefaultToggle,
+  minimizeCallOnNavigate: state.minimizeCallOnNavigate,
+  startAudioCallWith: state.startAudioCallWith,
+  startVideoCallWith: state.startVideoCallWith,
+});
 
 /**
  * The bottom-tab shell (Chats / Calls / Settings) shown whenever no call takes
  * over the screen.  Purely wiring: every screen reads its data from the call
  * and chat contexts, so no state lives here.
  */
-export default function TabShell() {
+function TabShell() {
   const {
-    callFlow,
+    accountEmail,
+    accountProviderId,
+    callHistory,
+    fetchCallHistory,
+    isPlacingCall,
+    isServerUnreachable,
+    markMissedCallsRead,
+    missedCallCount,
+    retryPresenceConnect,
+    searchUsers,
+    setSignalingUrl,
+    signalingUrl,
+    status,
+    unregisterUser,
+    updateStatus,
+    userId,
     settings,
     handleAutoLightingToggle,
     handleSpeakerDefaultToggle,
@@ -44,10 +99,10 @@ export default function TabShell() {
     startAudioCallWith,
     startVideoCallWith,
     handleExportLogs,
-  } = useCall();
+  } = useCallSelector(selectTabShellSlice);
   const chat = useChat();
   // Context methods are pulled out rather than invoked as `chat.sendMessage(…)`
-  // or `callFlow.placeCall(…)`: `react-hooks/exhaustive-deps` treats a method
+  // or `placeCall(…)`: `react-hooks/exhaustive-deps` treats a method
   // *call* as a use of the whole container, which is precisely the whole-object
   // dependency that would defeat the memoised renderers below (and the
   // `screenRenderers` memo in `AppNavigator` that depends on them).
@@ -69,7 +124,6 @@ export default function TabShell() {
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
   } = chat;
-  const { fetchCallHistory, unregisterUser, updateStatus } = callFlow;
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
   // Storage accounting is owned here rather than by the Settings screen, so the
@@ -125,7 +179,7 @@ export default function TabShell() {
         onStartVideoCall={() => startVideoCallWith(peerId)}
         onCallBack={startAudioCallWith}
         onVideoCallBack={startVideoCallWith}
-        isStartingCall={callFlow.isPlacingCall}
+        isStartingCall={isPlacingCall}
         isPeerTyping={Boolean(chat.typingByPeer[peerId])}
         isLoadingMessages={chat.isLoadingMessages}
         onPickAttachment={kind => pickAndSendAttachment(peerId, kind)}
@@ -148,7 +202,7 @@ export default function TabShell() {
       />
     );
   }, [
-    callFlow.isPlacingCall,
+    isPlacingCall,
     cancelAttachmentUpload,
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
@@ -217,20 +271,20 @@ export default function TabShell() {
       onSearchContacts={chat.searchUsers}
       onSearchMessages={chat.searchMessages}
       conversations={chat.conversations}
-      callHistory={callFlow.callHistory}
+      callHistory={callHistory}
       currentUserId={chat.currentUserId}
       onOpenConversation={openChatConversation}
       onOpenMessage={({ peerId, messageId }) => openChatConversation(peerId, { messageId })}
       onOpenProfile={openPeerProfile}
       onBack={goBack}
-      isServerUnreachable={callFlow.isServerUnreachable}
+      isServerUnreachable={isServerUnreachable}
       recentSearches={recentSearches}
       onRecordRecentSearch={recordSearch}
       onClearRecentSearches={clearSearches}
     />
   ), [
-    callFlow.callHistory,
-    callFlow.isServerUnreachable,
+    callHistory,
+    isServerUnreachable,
     chat.conversations,
     chat.currentUserId,
     chat.searchMessages,
@@ -249,7 +303,7 @@ export default function TabShell() {
         presence={chat.chatPeerId === peerId ? chat.peerPresence : null}
         isBlocked={Boolean(isUserBlocked?.(peerId))}
         isMuted={isPeerMuted(peerId)}
-        callHistory={callFlow.callHistory}
+        callHistory={callHistory}
         currentUserId={chat.currentUserId}
         onBack={goBack}
         onMessage={openChatConversation}
@@ -261,7 +315,7 @@ export default function TabShell() {
       />
     );
   }, [
-    callFlow.callHistory,
+    callHistory,
     chat.blockPeer,
     chat.chatPeerId,
     chat.currentUserId,
@@ -276,30 +330,30 @@ export default function TabShell() {
 
   const renderCalls = useCallback(() => (
     <CallsScreen
-      callHistory={callFlow.callHistory}
-      missedCallCount={callFlow.missedCallCount}
+      callHistory={callHistory}
+      missedCallCount={missedCallCount}
       onFetchCallHistory={fetchCallHistory}
-      onMarkMissedRead={callFlow.markMissedCallsRead}
+      onMarkMissedRead={markMissedCallsRead}
       onOpenProfile={openPeerProfile}
       onMessage={openChatConversation}
       onAudioCall={startAudioCallWith}
       onVideoCall={startVideoCallWith}
       onOpenSearch={openSearch}
-      onSearchUsers={callFlow.searchUsers}
+      onSearchUsers={searchUsers}
       conversations={chat.conversations}
-      isServerUnreachable={callFlow.isServerUnreachable}
-      onRetryConnect={callFlow.retryPresenceConnect}
-      status={callFlow.status}
+      isServerUnreachable={isServerUnreachable}
+      onRetryConnect={retryPresenceConnect}
+      status={status}
     />
   ), [
-    callFlow.callHistory,
+    callHistory,
     fetchCallHistory,
-    callFlow.isServerUnreachable,
-    callFlow.markMissedCallsRead,
-    callFlow.missedCallCount,
-    callFlow.retryPresenceConnect,
-    callFlow.searchUsers,
-    callFlow.status,
+    isServerUnreachable,
+    markMissedCallsRead,
+    missedCallCount,
+    retryPresenceConnect,
+    searchUsers,
+    status,
     chat.conversations,
     startAudioCallWith,
     startVideoCallWith,
@@ -307,12 +361,12 @@ export default function TabShell() {
 
   const renderSettings = useCallback(() => (
     <SettingsScreen
-      userId={callFlow.userId}
-      accountEmail={callFlow.accountEmail}
-      accountProviderId={callFlow.accountProviderId}
-      signalingUrl={callFlow.signalingUrl}
-      onSaveSignalingUrl={callFlow.setSignalingUrl}
-      status={callFlow.status}
+      userId={userId}
+      accountEmail={accountEmail}
+      accountProviderId={accountProviderId}
+      signalingUrl={signalingUrl}
+      onSaveSignalingUrl={setSignalingUrl}
+      status={status}
       onSignOut={() => {
         // Reset first, then clear: the reset's own state write can only ever
         // race with the clear as the (harmless) default route, never as the
@@ -349,12 +403,12 @@ export default function TabShell() {
       onOpenProfile={openPeerProfile}
     />
   ), [
-    callFlow.accountEmail,
-    callFlow.accountProviderId,
-    callFlow.setSignalingUrl,
-    callFlow.signalingUrl,
-    callFlow.status,
-    callFlow.userId,
+    accountEmail,
+    accountProviderId,
+    setSignalingUrl,
+    signalingUrl,
+    status,
+    userId,
     chat.blockedUsers,
     chat.messageNotificationsEnabled,
     chat.mutedPeers,
@@ -384,7 +438,7 @@ export default function TabShell() {
     <View style={styles.root} testID="app-tab-shell">
       <AppNavigator
         unreadCount={chat.unreadTotal}
-        missedCallCount={callFlow.missedCallCount}
+        missedCallCount={missedCallCount}
         bottomInset={insets.bottom}
         onTabPress={minimizeCallOnNavigate}
         onRouteChange={chat.handleRouteChange}
@@ -404,3 +458,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
+
+// Memoised so an `AppShell` re-render (a call state change it routes on, say)
+// does not re-render the whole tab shell: the element carries no props, so the
+// comparison always bails out and the shell re-renders only for the call slice
+// it selected and for its own chat context.
+export default memo(TabShell);

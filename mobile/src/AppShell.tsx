@@ -9,7 +9,7 @@ import {
 } from './accessibilityAnnouncer';
 import { logError } from './appLogger';
 import { CALL_STATES } from './call/callStateMachine';
-import { useCall } from './call/CallProvider';
+import { useCall, useCallSelector } from './call/CallProvider';
 import useCallElapsedSeconds from './hooks/useCallElapsedSeconds';
 import usePermissionsPrimer from './hooks/usePermissionsPrimer';
 import CallEndSummary from './components/CallEndSummary';
@@ -26,23 +26,75 @@ import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 import { spacing } from './theme';
 import type { RecoveryAnnouncementState } from './accessibilityAnnouncer';
+import type { CallContextValue } from './call/CallProvider';
 import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
 
+/**
+ * What the screen router itself reads: registration, the state machine's phase
+ * and the flags that decide which screen is on top.
+ *
+ * @param state the call snapshot
+ * @returns the router's slice of it
+ */
+const selectShellSlice = (state: CallContextValue) => ({
+  callState: state.callState,
+  isBubbleDismissed: state.isBubbleDismissed,
+  isCallConnected: state.isCallConnected,
+  isCallMinimized: state.isCallMinimized,
+  isCompact: state.isCompact,
+  isLoadingIdentity: state.callFlow.isLoadingIdentity,
+  isRegistered: state.callFlow.isRegistered,
+  callSummary: state.callFlow.callSummary,
+  dismissCallSummary: state.callFlow.dismissCallSummary,
+  callerId: state.callFlow.incomingCall?.callerId ?? null,
+  calleeId: state.callFlow.calleeId,
+  isReconnecting: state.callFlow.isReconnecting,
+  recoveryStatus: state.callFlow.recoveryStatus,
+  isConnectionLost: state.callFlow.isConnectionLost,
+});
+
+/**
+ * What the pre-call screens (registration, ringing) read.
+ *
+ * Selected here rather than handed down from `AppShell`, so the router does not
+ * have to subscribe to the whole call flow on their behalf.
+ *
+ * @param state the call snapshot
+ * @returns the pre-call screens' slice of it
+ */
+const selectScreenContentSlice = (state: CallContextValue) => ({
+  isLoadingIdentity: state.callFlow.isLoadingIdentity,
+  isRegistered: state.callFlow.isRegistered,
+  isAuthenticating: state.callFlow.isAuthenticating,
+  registerUser: state.callFlow.registerUser,
+  canUseGoogleSignIn: state.callFlow.canUseGoogleSignIn,
+  canUseMicrosoftSignIn: state.callFlow.canUseMicrosoftSignIn,
+  status: state.callFlow.status,
+  calleeId: state.callFlow.calleeId,
+  activeCall: state.callFlow.activeCall,
+  callDelivery: state.callFlow.callDelivery,
+  cancelOutgoingCall: state.callFlow.cancelOutgoingCall,
+  incomingCall: state.callFlow.incomingCall,
+  acceptIncomingCall: state.callFlow.acceptIncomingCall,
+  declineIncomingCall: state.callFlow.declineIncomingCall,
+  handleEndCall: state.callFlow.handleEndCall,
+});
+
 function AppScreenContent({
-  callFlow,
   callState,
   isPrimerVisible,
   isCallFullScreen,
   acceptPrimer,
   skipPrimer,
-}: Pick<ReturnType<typeof useCall>, 'callFlow'> & {
+}: {
   callState: string;
   isPrimerVisible: boolean;
   isCallFullScreen: boolean;
   acceptPrimer: () => Promise<void>;
   skipPrimer: () => Promise<void>;
 }) {
+  const callFlow = useCallSelector(selectScreenContentSlice);
   if (callFlow.isLoadingIdentity) return null;
   if (!callFlow.isRegistered) {
     return (
@@ -122,25 +174,39 @@ function AppScreenContent({
  * `useCompactCallView`).
  */
 export default function AppShell() {
-  const { callFlow, callState, isBubbleDismissed, isCallConnected, isCallMinimized, isCompact } =
-    useCall();
+  const {
+    callState,
+    isBubbleDismissed,
+    isCallConnected,
+    isCallMinimized,
+    isCompact,
+    isLoadingIdentity,
+    isRegistered,
+    callSummary,
+    dismissCallSummary,
+    callerId,
+    calleeId,
+    isReconnecting,
+    recoveryStatus,
+    isConnectionLost,
+  } = useCallSelector(selectShellSlice);
   const insets = useSafeAreaInsets();
   const { colors, scheme } = useTheme();
   const styles = useThemedStyles(createStyles);
   const startupIssues = getDegradations();
   const { isPrimerVisible, acceptPrimer, skipPrimer } = usePermissionsPrimer(
-    callFlow.isRegistered && !callFlow.isLoadingIdentity,
+    isRegistered && !isLoadingIdentity,
   );
 
   // Only once the call is over and the tab shell is back: a summary shown over
   // a ringing or connected call would be describing a different call.
-  const callEndSummary = callState === CALL_STATES.IDLE ? callFlow.callSummary : null;
+  const callEndSummary = callState === CALL_STATES.IDLE ? callSummary : null;
 
-  useCallStateAnnouncements(callState, callFlow.incomingCall?.callerId, callFlow.calleeId);
+  useCallStateAnnouncements(callState, callerId, calleeId);
   useRecoveryAnnouncements(callState === CALL_STATES.IN_CALL, {
-    isRecovering: Boolean(callFlow.isReconnecting || callFlow.recoveryStatus),
-    attempts: callFlow.recoveryStatus?.attempts ?? 0,
-    isConnectionLost: Boolean(callFlow.isConnectionLost),
+    isRecovering: Boolean(isReconnecting || recoveryStatus),
+    attempts: recoveryStatus?.attempts ?? 0,
+    isConnectionLost: Boolean(isConnectionLost),
   });
   useCallEndAnnouncements(callEndSummary);
 
@@ -148,8 +214,8 @@ export default function AppShell() {
   // over the in-app minimize state.
   const isCallFullScreen = callState === CALL_STATES.IN_CALL && (isCompact || !isCallMinimized);
   const isTabShellActive =
-    callFlow.isRegistered &&
-    !callFlow.isLoadingIdentity &&
+    isRegistered &&
+    !isLoadingIdentity &&
     !isCallFullScreen &&
     // The primer takes the tab shell's place on first run, and unlike the shell
     // it does not pad its own bottom edge.
@@ -163,7 +229,6 @@ export default function AppShell() {
 
   const screenContent = (
     <AppScreenContent
-      callFlow={callFlow}
       callState={callState}
       isPrimerVisible={isPrimerVisible}
       isCallFullScreen={isCallFullScreen}
@@ -206,7 +271,7 @@ export default function AppShell() {
         />
       ) : null}
       {callEndSummary ? (
-        <CallEndSummary summary={callEndSummary} onDismiss={callFlow.dismissCallSummary} />
+        <CallEndSummary summary={callEndSummary} onDismiss={dismissCallSummary} />
       ) : null}
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
@@ -379,18 +444,39 @@ function ActiveCallScreen() {
   );
 }
 
+/**
+ * What the minimized-call chrome reads: who is on the call, since when, and the
+ * two or three controls it offers. Nothing else — these sit over the tab shell,
+ * so they must not wake for connection stats or recovery attempts.
+ *
+ * @param state the call snapshot
+ * @returns the minimized chrome's slice of it
+ */
+const selectMinimizedSlice = (state: CallContextValue) => ({
+  callConnectedAtMs: state.callFlow.callConnectedAtMs,
+  isMuted: state.callFlow.isMuted,
+  isScreenSharing: state.callFlow.isScreenSharing,
+  handleMuteToggle: state.callFlow.handleMuteToggle,
+  handleScreenShareToggle: state.callFlow.handleScreenShareToggle,
+  participantLabel: state.participantLabel,
+  expandCall: state.expandCall,
+  endCall: state.endCall,
+  dismissBubble: state.dismissBubble,
+});
+
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {
-  const { callFlow, participantLabel, expandCall, endCall } = useCall();
-  const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
+  const { callConnectedAtMs, isMuted, handleMuteToggle, participantLabel, expandCall, endCall } =
+    useCallSelector(selectMinimizedSlice);
+  const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (
     <InCallBanner
       participantLabel={participantLabel}
       elapsedCallSeconds={elapsedCallSeconds}
       onExpand={expandCall}
-      isMuted={callFlow.isMuted}
-      onMuteToggle={callFlow.handleMuteToggle}
+      isMuted={isMuted}
+      onMuteToggle={handleMuteToggle}
       onEndCall={endCall}
     />
   );
@@ -398,19 +484,29 @@ function MinimizedCallBanner() {
 
 /** Draggable bubble overlaying the tab shell while a call is minimized. */
 function MinimizedCallBubble() {
-  const { callFlow, participantLabel, expandCall, endCall, dismissBubble } = useCall();
-  const elapsedCallSeconds = useCallElapsedSeconds(callFlow.callConnectedAtMs);
+  const {
+    callConnectedAtMs,
+    isMuted,
+    isScreenSharing,
+    handleMuteToggle,
+    handleScreenShareToggle,
+    participantLabel,
+    expandCall,
+    endCall,
+    dismissBubble,
+  } = useCallSelector(selectMinimizedSlice);
+  const elapsedCallSeconds = useCallElapsedSeconds(callConnectedAtMs);
 
   return (
     <FloatingCallBubble
       participantLabel={participantLabel}
       elapsedCallSeconds={elapsedCallSeconds}
-      isMuted={callFlow.isMuted}
-      isScreenSharing={callFlow.isScreenSharing}
+      isMuted={isMuted}
+      isScreenSharing={isScreenSharing}
       onExpand={expandCall}
-      onMuteToggle={callFlow.handleMuteToggle}
+      onMuteToggle={handleMuteToggle}
       onEndCall={endCall}
-      onStopScreenShare={callFlow.handleScreenShareToggle}
+      onStopScreenShare={handleScreenShareToggle}
       onDismiss={dismissBubble}
     />
   );

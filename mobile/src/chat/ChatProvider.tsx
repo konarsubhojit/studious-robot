@@ -1,13 +1,14 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import { useCall } from '../call/CallProvider';
+import { useCallSelector } from '../call/CallProvider';
 import useChatDeepLink from '../hooks/useChatDeepLink';
 import useChatSync from '../hooks/useChatSync';
 import useNotificationPreferences from '../hooks/useNotificationPreferences';
 import { openChatConversation } from '../navigation/navigationRef';
+import type { CallContextValue } from '../call/CallProvider';
 import type { ReactNode } from 'react';
 import type { deriveShellRoute } from '../navigation/routes';
 
-export type CallFlow = ReturnType<typeof useCall>['callFlow'];
+export type CallFlow = CallContextValue['callFlow'];
 export type ChatSync = ReturnType<typeof useChatSync>;
 export type NotificationPreferences = ReturnType<typeof useNotificationPreferences>;
 export type ShellRoute = ReturnType<typeof deriveShellRoute>;
@@ -65,6 +66,58 @@ export type ChatContextValue = {
 const ChatContext = createContext((null as ChatContextValue | null));
 
 /**
+ * The chat half of the call flow.
+ *
+ * The chat surfaces live in the same `useCallFlow` state as the call ones, so
+ * this provider selects exactly the fields it republishes: a call timer,
+ * connection sample or recovery attempt then changes nothing here, and the chat
+ * context identity survives the whole call.
+ *
+ * @param state the call snapshot
+ * @returns the chat slice of the call flow
+ */
+const selectChatSlice = (state: CallContextValue) => ({
+  attachmentUploadProgress: state.callFlow.attachmentUploadProgress,
+  attachmentsAvailable: state.callFlow.attachmentsAvailable,
+  blockPeer: state.callFlow.blockPeer,
+  blockedUsers: state.callFlow.blockedUsers,
+  cancelAttachmentUpload: state.callFlow.cancelAttachmentUpload,
+  cancelRecordingVoiceNote: state.callFlow.cancelRecordingVoiceNote,
+  checkPresence: state.callFlow.checkPresence,
+  clearDraft: state.callFlow.clearDraft,
+  conversations: state.callFlow.conversations,
+  deleteMessage: state.callFlow.deleteMessage,
+  drafts: state.callFlow.drafts,
+  fetchConversations: state.callFlow.fetchConversations,
+  fetchMessagesForPeer: state.callFlow.fetchMessagesForPeer,
+  isChatOffline: state.callFlow.isChatOffline,
+  isRecordingVoiceNote: state.callFlow.isRecordingVoiceNote,
+  isRegistered: state.callFlow.isRegistered,
+  isUploadingAttachment: state.callFlow.isUploadingAttachment,
+  isUserBlocked: state.callFlow.isUserBlocked,
+  isVoiceNoteSupported: state.callFlow.isVoiceNoteSupported,
+  markConversationRead: state.callFlow.markConversationRead,
+  messagesByPeer: state.callFlow.messagesByPeer,
+  pickAndSendAttachment: state.callFlow.pickAndSendAttachment,
+  reactToMessage: state.callFlow.reactToMessage,
+  retryAttachmentUpload: state.callFlow.retryAttachmentUpload,
+  retryMessage: state.callFlow.retryMessage,
+  saveDraft: state.callFlow.saveDraft,
+  searchMessages: state.callFlow.searchMessages,
+  searchUsers: state.callFlow.searchUsers,
+  sendMessage: state.callFlow.sendMessage,
+  sendTypingIndicator: state.callFlow.sendTypingIndicator,
+  setActiveChatPeerId: state.callFlow.setActiveChatPeerId,
+  startRecordingVoiceNote: state.callFlow.startRecordingVoiceNote,
+  stopRecordingVoiceNoteAndSend: state.callFlow.stopRecordingVoiceNoteAndSend,
+  typingByPeer: state.callFlow.typingByPeer,
+  unblockPeer: state.callFlow.unblockPeer,
+  unreadTotal: state.callFlow.unreadTotal,
+  userId: state.callFlow.userId,
+});
+
+
+/**
  * Owns the chat side of the app: which conversation the Chats tab currently
  * has open, keeping the call flow's chat state in sync with it, and the
  * message-notification deep link.
@@ -74,7 +127,7 @@ const ChatContext = createContext((null as ChatContextValue | null));
  * rather than in `AppShell` so the shell stays a purely presentational router.
  */
 export function ChatProvider({ children }: { children: ReactNode; }) {
-  const { callFlow } = useCall();
+  const callFlow = useCallSelector(selectChatSlice);
   const [chatPeerId, setChatPeerId] = useState((null as string | null));
 
   const handleRouteChange: (route: ShellRoute) => void = useCallback(route => {

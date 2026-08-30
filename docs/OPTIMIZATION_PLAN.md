@@ -100,12 +100,12 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | — | Haptics at the moments that substitute for looking | ✅ connect, end and incoming ring already fired; *message sent* was missing and now fires on the server ack, not on the optimistic bubble. Silent mode is respected through `triggerHapticUnlessSilent`, and only a single-message drain buzzes, so a reconnect replaying a backlog does not rattle once per queued message |
 | C6 | Honest audio-only calls | ✅ camera state is now relayed over the existing `call.media-state` frame, so `mainHasVideo` asks whether there is a *picture* rather than whether there is a *track*, and `call-stage-ambient` is reachable. See the note below — this is deliberately not the `getUserMedia` change the original entry sketched |
 | — | First-run empty states point somewhere | ✅ the empty chat and call lists now offer a low-emphasis "Search for people" link. Deliberately *not* an `actionLabel`: a second filled button in the screen's accent, a couple of hundred pixels from the FAB, makes whichever the user reaches for the wrong one. The "no results" / "we could not check" distinction from P2.4 is untouched |
+| A1 | Stop `CallProvider` invalidating every consumer | ✅ the snapshot is published through a store and read with `useCallSelector`, so a consumer wakes only for the slice it selected; `endCall` / `handleExportLogs` read the call flow through a ref so their identity (and the memoised renderers that depend on it) survives a re-render. See the note below |
 
 ### Chat & calling UX pass — deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| A1 | Split `CallProvider` into call-state / media-controls / recovery contexts | Real win, but it changes the consumer set of every call screen and is the natural first half of E1. Wants its own PR with render-count assertions, not a rider on this one |
 | B2 | Message editing | Protocol change (`message.edit` / `message.edited`, `editedAt`, a server-enforced edit window). Should land together with D3 behind one schema-compatibility test |
 | B5 | Presence freshness / last seen | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation |
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
@@ -492,6 +492,30 @@ The server's heartbeat timeout was the literal `150_000`; it is now derived as
 (`30_000 * 5`), which is the same number. `heartbeat-timing.test.ts` pins the
 values so the move cannot have changed behaviour and the two edges cannot drift
 apart again.
+
+### A1: a context that changed once per stats sample
+
+`CallProvider` published one memoised value with the whole `useCallFlow` result
+inside it. That result is a fresh object on every render and the call flow
+re-renders continuously while a call is up (connection samples, recovery
+attempts, media-state relays), so the context identity changed several times a
+second and every consumer re-rendered with it — the tab shell, and through it
+the chat surfaces that read none of that state.
+
+The snapshot is now published through a *store* whose identity never changes:
+consumers subscribe with `useCallSelector`, which selects the fields they read
+and compares them one level deep, so an unrelated field changing wakes nobody.
+`useCall` remains for the call surfaces that genuinely read most of the call.
+
+Two provider actions were part of the same problem: `endCall` and
+`handleExportLogs` listed the whole call flow as a dependency, so their identity
+changed on every render, which invalidated the memoised screen renderers in
+`TabShell` and re-rendered the settings screen behind them. They read the call
+flow through a ref instead.
+
+`callContextIsolation.test.tsx` pins both halves: a connection-quality sample
+reaches neither the tab shell nor the chat context, while a change to a selected
+field still wakes its consumer.
 
 ### P1.1: what actually changed
 
