@@ -11,8 +11,6 @@
  * No React, no refs, no socket, no peer connection.
  */
 
-import { API_ROUTES } from '../../../shared';
-
 /**
  * How long to wait for the signaling socket to connect before answering a call
  * over HTTP instead.
@@ -52,27 +50,13 @@ export function describeAnswerFallback(hasConnectedSocket: boolean): {
 }
 
 /**
- * Where to POST a call action, with the callId escaped.
+ * What an HTTP accept attempt amounted to.
  *
- * A callId reaches this path from a notification payload as well as from the
- * server, and building a URL out of unescaped input is how a path separator
- * becomes a different request.
+ * The `ok` variant carries the response back, so the caller reads the body off
+ * this result rather than off a value it has to re-prove is there.
  */
-export function buildCallActionUrl({
-  signalingUrl,
-  callId,
-  action,
-}: {
-  signalingUrl: string;
-  callId: string;
-  action: 'accept' | 'decline';
-}): string {
-  return `${signalingUrl.trim()}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}/${action}`;
-}
-
-/** What an HTTP accept attempt amounted to. */
-export type HttpAcceptOutcome =
-  | { outcome: 'ok'; }
+export type HttpAcceptOutcome<TResponse> =
+  | { outcome: 'ok'; response: TResponse; }
   | { outcome: 'failed'; answerFailureReason: string; message: string; };
 
 /**
@@ -83,9 +67,9 @@ export type HttpAcceptOutcome =
  * was no session to answer with" and "the server refused the answer" are
  * different bugs.
  */
-export function classifyHttpAccept(
-  response: { ok: boolean; status: number; } | null | undefined,
-): HttpAcceptOutcome {
+export function classifyHttpAccept<TResponse extends { ok: boolean; status: number; }>(
+  response: TResponse | null | undefined,
+): HttpAcceptOutcome<TResponse> {
   if (!response) {
     return {
       outcome: 'failed',
@@ -100,7 +84,7 @@ export function classifyHttpAccept(
       message: `HTTP ${response.status}`,
     };
   }
-  return { outcome: 'ok' };
+  return { outcome: 'ok', response };
 }
 
 /**

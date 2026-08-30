@@ -3,9 +3,9 @@
  *
  * Phase 5, slice 5 of the `useCallFlow` decomposition (#216). When the app is
  * opened from a push notification it has a callId and nothing else, and has to
- * work out whether it can act on it at all, where to ask about it, and what the
- * server's answer means. Those are rules; fetching, navigating and ringing are
- * the effects the hook keeps.
+ * work out whether it can act on it at all and what the server's answer means.
+ * Those are rules; fetching, navigating and ringing are the effects the hook
+ * keeps, and the URL it fetches is built by `callEndpoints`.
  *
  * The `call.media-state` reader is here for the same reason: whether a frame
  * claims anything about a flag is a question about the protocol's additive
@@ -13,8 +13,6 @@
  *
  * No React, no refs, no network.
  */
-
-import { API_ROUTES } from '../../../shared';
 
 /**
  * What a rehydration attempt did, so a caller replaying a queued answer can
@@ -48,29 +46,6 @@ export function shouldDeferRehydration({
   signalingUrl?: string | null;
 }): boolean {
   return !(userId ?? '').trim() || !(signalingUrl ?? '').trim();
-}
-
-/**
- * Where to ask the server about a call named by a push.
- *
- * Both the callId and the sessionId are encoded: a callId is server-generated,
- * but it reaches this function by way of a notification payload, and building
- * a URL out of unescaped input is how a path separator becomes a different
- * request.
- */
-export function buildCallLookupUrl({
-  signalingUrl,
-  callId,
-  sessionId,
-}: {
-  signalingUrl: string;
-  callId: string;
-  sessionId: string;
-}): string {
-  return (
-    `${signalingUrl.trim()}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}` +
-    `?sessionId=${encodeURIComponent(sessionId)}`
-  );
 }
 
 /** What a non-OK lookup response means. */

@@ -9,7 +9,6 @@
 import {
   ANSWER_SOCKET_ATTEMPTS,
   ANSWER_SOCKET_WAIT_MS,
-  buildCallActionUrl,
   classifyHttpAccept,
   decideQueuedAnswerReplay,
   describeAnswerFallback,
@@ -45,33 +44,10 @@ describe('describeAnswerFallback', () => {
   });
 });
 
-describe('buildCallActionUrl', () => {
-  it.each(['accept', 'decline'] as const)('addresses the %s endpoint', action => {
-    expect(
-      buildCallActionUrl({ signalingUrl: 'https://s.example', callId: 'c1', action }),
-    ).toBe(`https://s.example/calls/c1/${action}`);
-  });
-
-  it('tolerates a stored URL with surrounding whitespace', () => {
-    expect(
-      buildCallActionUrl({ signalingUrl: '  https://s.example ', callId: 'c', action: 'accept' }),
-    ).toBe('https://s.example/calls/c/accept');
-  });
-
-  it('escapes the callId, so a payload cannot reshape the request', () => {
-    expect(
-      buildCallActionUrl({
-        signalingUrl: 'https://s.example',
-        callId: '../../admin',
-        action: 'decline',
-      }),
-    ).toBe('https://s.example/calls/..%2F..%2Fadmin/decline');
-  });
-});
-
 describe('classifyHttpAccept', () => {
-  it('accepts an ok response', () => {
-    expect(classifyHttpAccept({ ok: true, status: 200 })).toEqual({ outcome: 'ok' });
+  it('accepts an ok response and hands it back to be read', () => {
+    const response = { ok: true, status: 200 };
+    expect(classifyHttpAccept(response)).toEqual({ outcome: 'ok', response });
   });
 
   it.each([

@@ -128,7 +128,6 @@ import {
   shouldTearDownAfterResync,
 } from '../call/sessionLifecycle';
 import {
-  buildCallLookupUrl,
   classifyLookupFailure,
   describeRehydratedCall,
   isRehydratableCallId,
@@ -139,12 +138,12 @@ import type { RehydrationOutcome } from '../call/pushRehydration';
 import {
   ANSWER_SOCKET_ATTEMPTS,
   ANSWER_SOCKET_WAIT_MS,
-  buildCallActionUrl,
   classifyHttpAccept,
   decideQueuedAnswerReplay,
   describeAnswerFallback,
   describeDegradedMedia,
 } from '../call/answerPath';
+import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
 import {
   canReuseIceServers,
   decideFetchedIceServers,
@@ -3101,7 +3100,7 @@ export default function useCallFlow({
         error.answerFailureReason = verdict.answerFailureReason;
         throw error;
       }
-      return response!.json();
+      return verdict.response.json();
     },
     [authedFetchRef, signalingUrl],
   );

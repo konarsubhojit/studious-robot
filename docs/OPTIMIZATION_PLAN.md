@@ -347,10 +347,12 @@ status from a newer server never leaves a blank line. It also owns
 `readMediaStateFrame`, which keeps the C6 additive contract explicit: each key
 is read independently with `in`, silence about a flag is not a claim about it,
 and a liveness heartbeat therefore never clears the "they are presenting"
-banner or the peer's picture. Two hardening details came with the move —
-the callId is now URL-encoded (it arrives via a notification payload) and the
-message table is looked up with `Object.hasOwn`, so a status of `constructor`
-cannot return a function.
+banner or the peer's picture. One hardening detail came with the move: the
+message table is now looked up with `Object.hasOwn`, so a status of
+`constructor` returns the generic message instead of a function off
+`Object.prototype`. The callId escaping was preserved, not introduced — the
+hook already encoded it at all three call sites, and those builders have since
+been collected into `call/callEndpoints.ts` so that rule is written once.
 
 Every slice is pure — no React, no refs, no peer connection, no socket — the
 hook's return shape is unchanged, and `useCallFlow.test.tsx` passes unmodified,
