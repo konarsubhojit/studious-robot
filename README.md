@@ -12,7 +12,7 @@ Cloud-first project with two folders:
 This project is split into a signaling backend and a React Native mobile client.
 The backend is developed entirely in GitHub Codespaces; the mobile app uses the
 React Native CLI and is built with the Android/iOS native toolchains (or via the
-CI workflow that produces a debug APK).
+CI workflow that produces a release APK).
 
 ---
 
@@ -194,13 +194,14 @@ The following critical call paths have repeatable automated test coverage:
 ### Android APKs
 
 [`.github/workflows/android-apk.yml`](./.github/workflows/android-apk.yml)
-is a single combined workflow that builds both the debug and release APKs.
+builds the release APK only. A debug APK is deliberately not produced: React
+Native's `assembleDebug` does not embed the JS bundle, so it cannot run without
+a Metro dev server.
 
-- **Pull requests** to `master`: builds and uploads the **debug APK** only
-  (`app-debug-apk` artifact, kept for 3 days).
-- **Push to `master`** or **manual `workflow_dispatch`**: builds and uploads
-  both APKs in a single Gradle invocation (`app-debug-apk` and
-  `app-release-apk` artifacts, each kept for 3 days).
+- **Pull requests** to `master`: builds and verifies the **release APK**
+  (no artifact is uploaded).
+- **Push to `master`** or **manual `workflow_dispatch`**: builds, verifies and
+  uploads the release APK (`app-release-apk` artifact, kept for 3 days).
 
 The workflow limits the Android ABI to `arm64-v8a` in CI
 (`-PreactNativeArchitectures=arm64-v8a`) so the Gradle build is 2–4× faster
@@ -210,12 +211,12 @@ in `mobile/android/gradle.properties`.
 A `concurrency` group cancels any in-progress run for the same branch when a
 newer commit is pushed, avoiding wasted runner time.
 
-> **Note:** The debug APK loads its JavaScript from the Metro bundler at runtime.
+> **Note:** A debug APK loads its JavaScript from the Metro bundler at runtime.
 > Installing it on a device without a running Metro server will show the
 > *"Unable to load script"* error. Use the **release APK** for standalone
-> installation.
+> installation — that is the only APK CI builds.
 
-To build a debug APK locally:
+To build a debug APK locally (requires Metro):
 
 ```bash
 cd mobile/android
@@ -291,12 +292,12 @@ automatically on every pull request and push to `master` that touches `server/`:
 ### GitHub Actions — Android APKs
 
 [`.github/workflows/android-apk.yml`](./.github/workflows/android-apk.yml)
-builds both APKs in a single job, eliminating duplicated checkout, Node/Java
-setup, and `npm ci` steps.
+builds the release APK in a single job, eliminating duplicated checkout,
+Node/Java setup, and `npm ci` steps.
 
-- On pull requests: builds the debug APK and uploads it as `app-debug-apk`.
-- On push to `master` / `workflow_dispatch`: builds both APKs in one Gradle
-  invocation and uploads `app-debug-apk` and `app-release-apk`.
+- On pull requests: builds and verifies the release APK (no artifact upload).
+- On push to `master` / `workflow_dispatch`: builds the release APK and uploads
+  it as `app-release-apk`.
 
 Optimizations applied vs the previous two-workflow setup:
 
@@ -314,14 +315,14 @@ feature branch
     ▼
 Pull Request opened
     │  ├─ GitHub Actions: backend-ci.yml runs "test" job
-    │  └─ GitHub Actions: android-apk.yml builds the debug APK
+    │  └─ GitHub Actions: android-apk.yml builds the release APK
     │
     ▼
 Merge to master
     │  ├─ GitHub Actions: backend-ci.yml "deploy" job SSHes into Oracle VM
     │  │      └─ git pull → npm ci → systemctl reload-or-restart → /health ✓
     │  │
-    │  └─ GitHub Actions: android-apk.yml builds debug + release APKs
+    │  └─ GitHub Actions: android-apk.yml builds the release APK
     │         └─ Download app-release-apk from the Actions artifact, install on device
     ▼
 QA installs release APK (no Metro needed), points app to Oracle VM URL, tests end-to-end
