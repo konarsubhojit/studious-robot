@@ -223,10 +223,15 @@ cd mobile/android
 # => app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The Android application id is `com.konarsubhojit.studiousrobot`. If you fork this
-repository, update the `applicationId`/`namespace` in
-[`mobile/android/app/build.gradle`](./mobile/android/app/build.gradle) (and the
-matching Kotlin package directory) to your own identifier.
+The Android application id is `com.wetalk` (see
+[`mobile/android/app/build.gradle`](./mobile/android/app/build.gradle)), and the
+iOS bundle identifier matches it. If you fork this repository and want your own
+identifier, update the `applicationId`/`namespace` in the Gradle build, the
+matching Kotlin package directory, the `PRODUCT_BUNDLE_IDENTIFIER` in the Xcode
+project, and the package name checked by the APK workflow
+([`.github/workflows/android-apk.yml`](./.github/workflows/android-apk.yml)),
+which verifies that `google-services.json` contains a client for the expected
+package.
 
 ### Android release APK
 

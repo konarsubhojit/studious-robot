@@ -82,7 +82,7 @@ Only needed if you ship an iOS build.
      filename `AuthKey_<KeyID>.p8`.
    - **Team ID** — the 10-character Team ID from the Apple Developer portal
      (**Membership** page, "Team ID").
-   - **Bundle ID** — your app's bundle identifier, e.g. `com.wetalk.app`. It must
+   - **Bundle ID** — your app's bundle identifier, `com.wetalk`. It must
      match the `PRODUCT_BUNDLE_IDENTIFIER` in the Xcode project exactly.
    - **Application Mode** — **Sandbox** for debug/TestFlight-from-Xcode builds,
      **Production** for App Store / TestFlight distribution builds.
