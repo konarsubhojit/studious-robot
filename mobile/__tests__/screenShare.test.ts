@@ -161,6 +161,31 @@ describe('startScreenCapture', () => {
     expect(audioTrack.stop).toHaveBeenCalled();
   });
 
+  test('rejects a capture that is not a media stream instead of passing it on', async () => {
+    // A malformed descriptor used to travel into the call logic as `any`.
+    mediaDevices.getDisplayMedia.mockResolvedValue({ tracks: [] });
+
+    const result = expectNotOk(await startScreenCapture());
+
+    expect(result.reason).toBe('failed');
+    expect(result.message).toBe('Screen sharing did not return a media stream');
+  });
+
+  test('ignores track lists that are not arrays of tracks', async () => {
+    const videoTrack = makeTrack('video');
+    mediaDevices.getDisplayMedia.mockResolvedValue({
+      getTracks: () => [videoTrack],
+      getVideoTracks: () => [videoTrack, { kind: 'video' }],
+      getAudioTracks: () => 'not-a-list',
+    });
+
+    const result = expectOk(await startScreenCapture({ withAudio: true }));
+
+    expect(result.videoTrack).toBe(videoTrack);
+    expect(result.audioTrack).toBeNull();
+    expect(result.audioShared).toBe(false);
+  });
+
   test('reports unsupported platforms without prompting', async () => {
     const original = mediaDevices.getDisplayMedia;
     delete mediaDevices.getDisplayMedia;
@@ -186,6 +211,12 @@ describe('stopScreenCapture', () => {
 
     expect(videoTrack.stop).toHaveBeenCalled();
     expect(audioTrack.stop).toHaveBeenCalled();
+  });
+
+  test('tolerates streams whose track accessor is malformed', () => {
+    expect(() => stopScreenCapture({ getTracks: () => { throw new Error('closed'); } })).not.toThrow();
+    expect(() => stopScreenCapture({ getTracks: () => null })).not.toThrow();
+    expect(() => stopScreenCapture({ getTracks: 'nope' })).not.toThrow();
   });
 });
 
@@ -266,6 +297,29 @@ describe('verifyScreenShareFrames', () => {
       ok: true,
       frames: 3,
     });
+  });
+
+  test('ignores stats entries that are not outbound video objects', async () => {
+    const peerConnection = {
+      getStats: jest.fn(async () => [
+        null,
+        'outbound-rtp',
+        { type: 'inbound-rtp', kind: 'video', framesSent: 99 },
+        { type: 'outbound-rtp', kind: 'video', framesSent: 2 },
+      ]),
+    };
+
+    await expect(verifyScreenShareFrames(peerConnection, options)).resolves.toMatchObject({
+      ok: true,
+      frames: 2,
+    });
+  });
+
+  test('does not measure a report that is not iterable', async () => {
+    const peerConnection = { getStats: jest.fn(async () => 'no stats here') };
+
+    const result = expectNotOk(await verifyScreenShareFrames(peerConnection, options));
+    expect(result.reason).toBe(SCREEN_SHARE_NO_FRAMES);
   });
 
   test('does not fail a share it cannot measure', async () => {

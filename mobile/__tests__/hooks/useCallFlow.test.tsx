@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
 import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 
@@ -4806,7 +4807,9 @@ describe('useCallFlow answer path', () => {
       addIceCandidate: jest.fn().mockResolvedValue(undefined),
       localDescription: { type: 'answer', sdp: 'a' },
       onicecandidate: null,
-      ontrack: null,
+      // Typed so the handler stays callable below: an untyped `null` narrows to
+      // `null`, which the mocked assignment never widens.
+      ontrack: null as ((event: PeerTrackEvent) => void) | null,
       close: jest.fn(),
     };
     (RTCPeerConnection as jest.Mock).mockImplementation(() => peerConnection);
@@ -4829,10 +4832,10 @@ describe('useCallFlow answer path', () => {
     });
 
     await act(async () => {
-      peerConnection.ontrack?.({ streams: [primaryRemoteStream] });
+      peerConnection.ontrack?.({ streams: [primaryRemoteStream as unknown as WebrtcMediaStream] });
     });
     await act(async () => {
-      peerConnection.ontrack?.({ streams: [screenAudioOnlyStream] });
+      peerConnection.ontrack?.({ streams: [screenAudioOnlyStream as unknown as WebrtcMediaStream] });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
