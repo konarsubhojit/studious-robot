@@ -4728,6 +4728,80 @@ describe('useCallFlow answer path', () => {
     );
   });
 
+  test('merges screen-audio-only remote streams into the active remote stream', async () => {
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    const cameraTrack = { kind: 'video', id: 'cam-track' };
+    const micTrack = { kind: 'audio', id: 'mic-track' };
+    const primaryRemoteAudio = { kind: 'audio', id: 'remote-mic' };
+    const primaryRemoteVideo = { kind: 'video', id: 'remote-video' };
+    const sharedSystemAudio = { kind: 'audio', id: 'screen-audio' };
+
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [cameraTrack, micTrack],
+      getVideoTracks: () => [cameraTrack],
+      getAudioTracks: () => [micTrack],
+    });
+
+    const primaryRemoteStream = {
+      id: 'remote-main',
+      addTrack: jest.fn(),
+      getTracks: () => [primaryRemoteVideo, primaryRemoteAudio],
+      getVideoTracks: () => [primaryRemoteVideo],
+      getAudioTracks: () => [primaryRemoteAudio],
+      toURL: () => 'remote-main-url',
+    };
+    const screenAudioOnlyStream = {
+      id: 'remote-screen-audio',
+      getTracks: () => [sharedSystemAudio],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [sharedSystemAudio],
+    };
+
+    const peerConnection = {
+      addTrack: jest.fn(),
+      getSenders: jest.fn(() => []),
+      setRemoteDescription: jest.fn().mockResolvedValue(undefined),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      createAnswer: jest.fn().mockResolvedValue({ type: 'answer', sdp: 'a' }),
+      addIceCandidate: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'answer', sdp: 'a' },
+      onicecandidate: null,
+      ontrack: null,
+      close: jest.fn(),
+    };
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => peerConnection);
+
+    const { resultRef, tree } = await renderWithSocket();
+    const call = { callId: 'call-screen-audio', callerId: 'ivy' };
+    await ring(resultRef, tree, call);
+
+    const socketMock = latestSocket();
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => {
+      cb?.({ ok: true, call });
+    });
+
+    await act(async () => {
+      await resultRef.current.acceptIncomingCall();
+    });
+    const offerHandler = getSocketHandler('rtc.offer');
+    await act(async () => {
+      await offerHandler({ callId: call.callId, sdp: { type: 'offer', sdp: 'o' } });
+    });
+
+    await act(async () => {
+      peerConnection.ontrack?.({ streams: [primaryRemoteStream] });
+    });
+    await act(async () => {
+      peerConnection.ontrack?.({ streams: [screenAudioOnlyStream] });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(primaryRemoteStream.addTrack).toHaveBeenCalledWith(sharedSystemAudio);
+    expect(resultRef.current.remoteStream).toBe(primaryRemoteStream);
+  });
+
   // ── audio routing ─────────────────────────────────────────────────────────
 
   test('prefers an external audio device at call start and keeps the manual choice', async () => {

@@ -183,7 +183,6 @@ async function verifyScreenShareDelivery({
   stream,
   screenStreamRef,
   peerConnectionRef,
-  stopScreenShare,
   setScreenShareDelivery,
   isScreenAudioEnabled,
   audioShared,
@@ -192,7 +191,6 @@ async function verifyScreenShareDelivery({
   stream: any;
   screenStreamRef: MutableValue;
   peerConnectionRef: MutableValue;
-  stopScreenShare: (options: { silent: boolean }) => Promise<void>;
   setScreenShareDelivery: (value: ScreenShareDelivery) => void;
   isScreenAudioEnabled: boolean;
   audioShared: boolean;
@@ -200,11 +198,14 @@ async function verifyScreenShareDelivery({
 }) {
   const frameCheck = await verifyScreenShareFrames(peerConnectionRef.current);
   if (!frameCheck.ok && screenStreamRef.current === stream) {
-    logError('Screen sharing produced no frames; stopping', {
+    logWarn('Screen sharing produced no frames yet; keeping share active', {
       reason: frameCheck.reason,
     });
-    await stopScreenShare({ silent: true });
-    setStatus(frameCheck.message, 'error');
+    setScreenShareDelivery('unverified');
+    setStatus(
+      'Screen sharing started, but the remote view is not confirmed yet. Open the app you want to share or minimise WeTalk once.',
+      'warning',
+    );
     return;
   }
   if (screenStreamRef.current === stream) {
@@ -381,7 +382,6 @@ export default function useScreenShare({
         stream,
         screenStreamRef,
         peerConnectionRef,
-        stopScreenShare,
         setScreenShareDelivery,
         isScreenAudioEnabled,
         audioShared,
