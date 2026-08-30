@@ -1,5 +1,5 @@
 {
-  // TypeScript migration complete - see TYPESCRIPT_MIGRATION.md.
+  // TypeScript migration complete - see ../docs/history/TYPESCRIPT_MIGRATION.md.
   //
   // Every source file is TypeScript (`.ts`/`.tsx`), so the whole project is
   // strict-checked by default. Run `npm run typecheck` (also enforced in CI)

@@ -38,7 +38,7 @@ Enable **Email/Password**, **Google**, and **Microsoft** under **Firebase
 Console → Authentication → Sign-in method**. Google requires the Web OAuth
 client ID in `GOOGLE_WEB_CLIENT_ID`; add Android SHA-1/SHA-256 fingerprints and
 the iOS URL scheme from `GoogleService-Info.plist` as described in
-[`FIREBASE_SETUP.md`](../FIREBASE_SETUP.md). Microsoft also requires its Azure
+[`FIREBASE_SETUP.md`](../docs/FIREBASE_SETUP.md). Microsoft also requires its Azure
 client ID and secret in the Firebase provider configuration.
 
 The app sends short-lived Firebase ID tokens to the signaling server. It does

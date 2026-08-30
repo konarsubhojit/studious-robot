@@ -351,5 +351,5 @@ data-only payload.
 
 - [`FIREBASE_SETUP.md`](./FIREBASE_SETUP.md) — obtaining the FCM and APNs
   credentials that both Notification Hubs and the direct fallback path need.
-- [`server/README.md`](./server/README.md) — the full environment-variable table,
+- [`server/README.md`](../server/README.md) — the full environment-variable table,
   the push provider chain, and the `message.*` socket contract.

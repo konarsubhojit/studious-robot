@@ -124,7 +124,7 @@ test('every data value is a string, as FCM v1 requires', () => {
 test('neither transport adds a notification block', () => {
   // A `notification` block makes Android route the push to the system tray and
   // skips the app's background handler, so CallKeep never rings the call
-  // (AZURE_SETUP.md §1.7).
+  // (../../docs/AZURE_SETUP.md §1.7).
   const direct = JSON.parse(push._buildFcmPayload('device-token-123', CALL)).message;
   const hub = (push._buildNotificationHubAndroidPayload(CALL).message as any);
   assert.equal(direct.notification, undefined);
