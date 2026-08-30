@@ -98,6 +98,101 @@ export type PeerProfileScreenProps = {
   onUnblock?: (peerId: string) => Promise<boolean> | void;
 };
 
+function PeerActions({
+  peerId,
+  isBlocked,
+  onMessage,
+  onAudioCall,
+  onVideoCall,
+  styles,
+}: Pick<PeerProfileScreenProps, 'peerId' | 'isBlocked' | 'onMessage' | 'onAudioCall' |
+  'onVideoCall'> & { styles: ReturnType<typeof createStyles> }) {
+  return (
+    <View style={styles.actions}>
+      <PrimaryAction
+        icon="tabChats"
+        label="Message"
+        accessibilityLabel={`Message ${peerId}`}
+        accessibilityHint="Opens the conversation"
+        onPress={onMessage ? () => onMessage(peerId) : undefined}
+        disabled={isBlocked || !onMessage}
+        testID="peer-profile-message"
+      />
+      <PrimaryAction
+        icon="chatAudioCall"
+        label="Audio"
+        accessibilityLabel={`Audio call ${peerId}`}
+        accessibilityHint="Starts an audio call"
+        onPress={onAudioCall ? () => onAudioCall(peerId) : undefined}
+        disabled={isBlocked || !onAudioCall}
+        testID="peer-profile-audio-call"
+      />
+      <PrimaryAction
+        icon="chatVideoCall"
+        label="Video"
+        accessibilityLabel={`Video call ${peerId}`}
+        accessibilityHint="Starts a video call"
+        onPress={onVideoCall ? () => onVideoCall(peerId) : undefined}
+        disabled={isBlocked || !onVideoCall}
+        testID="peer-profile-video-call"
+      />
+    </View>
+  );
+}
+
+function PeerRecentCalls({
+  peerId,
+  recentCalls,
+  sections,
+  styles,
+}: {
+  peerId: string;
+  recentCalls: CallHistoryEntry[];
+  sections: ReturnType<typeof groupCallsByDay>;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (recentCalls.length === 0) {
+    return (
+      <Text style={styles.empty} testID="peer-profile-no-calls">
+        No calls with {peerId} yet
+      </Text>
+    );
+  }
+  return (
+    <>
+      {sections.map(section => (
+        <View key={section.key}>
+          <SectionHeader title={section.title} />
+          {section.entries.map(entry => {
+            const durationLabel =
+              entry.durationSeconds != null ? formatCallDuration(entry.durationSeconds) : '';
+            const subtitle = [formatCallTimeOfDay(entry.createdAt), durationLabel]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <ListItem
+                key={entry.callId}
+                title={describeCallOutcome(entry)}
+                subtitle={subtitle || null}
+                destructive={isMissedCall(entry)}
+                icon={callDirectionIcon(entry)}
+                // Read-only: the primary actions above are how a call starts
+                // here, so a history row can never dial by surprise.
+                accessibilityRole="none"
+                accessibilityLabel={describeCallEntryForA11y(entry, durationLabel)}
+                trailing={
+                  <Icon name={callMediaIcon(entry)} size={16} color={styles.rowGlyph.color} />
+                }
+                testID="peer-profile-call-row"
+              />
+            );
+          })}
+        </View>
+      ))}
+    </>
+  );
+}
+
 /**
  * The person hub: everything the app knows about one person, and every
  * relationship-level decision about them, in one place.
@@ -204,73 +299,22 @@ function PeerProfileScreen({
         </Text>
       ) : null}
 
-      <View style={styles.actions}>
-        <PrimaryAction
-          icon="tabChats"
-          label="Message"
-          accessibilityLabel={`Message ${peerId}`}
-          accessibilityHint="Opens the conversation"
-          onPress={onMessage ? () => onMessage(peerId) : undefined}
-          disabled={isBlocked || !onMessage}
-          testID="peer-profile-message"
-        />
-        <PrimaryAction
-          icon="chatAudioCall"
-          label="Audio"
-          accessibilityLabel={`Audio call ${peerId}`}
-          accessibilityHint="Starts an audio call"
-          onPress={onAudioCall ? () => onAudioCall(peerId) : undefined}
-          disabled={isBlocked || !onAudioCall}
-          testID="peer-profile-audio-call"
-        />
-        <PrimaryAction
-          icon="chatVideoCall"
-          label="Video"
-          accessibilityLabel={`Video call ${peerId}`}
-          accessibilityHint="Starts a video call"
-          onPress={onVideoCall ? () => onVideoCall(peerId) : undefined}
-          disabled={isBlocked || !onVideoCall}
-          testID="peer-profile-video-call"
-        />
-      </View>
+      <PeerActions
+        peerId={peerId}
+        isBlocked={isBlocked}
+        onMessage={onMessage}
+        onAudioCall={onAudioCall}
+        onVideoCall={onVideoCall}
+        styles={styles}
+      />
 
       <SectionHeader title="Calls" icon="tabCalls" variant="section" />
-      {recentCalls.length === 0 ? (
-        <Text style={styles.empty} testID="peer-profile-no-calls">
-          No calls with {peerId} yet
-        </Text>
-      ) : (
-        sections.map(section => (
-          <View key={section.key}>
-            <SectionHeader title={section.title} />
-            {section.entries.map(entry => {
-              const durationLabel =
-                entry.durationSeconds != null ? formatCallDuration(entry.durationSeconds) : '';
-              const subtitle = [formatCallTimeOfDay(entry.createdAt), durationLabel]
-                .filter(Boolean)
-                .join(' · ');
-
-              return (
-                <ListItem
-                  key={entry.callId}
-                  title={describeCallOutcome(entry)}
-                  subtitle={subtitle || null}
-                  destructive={isMissedCall(entry)}
-                  icon={callDirectionIcon(entry)}
-                  // Read-only: the primary actions above are how a call starts
-                  // here, so a history row can never dial by surprise.
-                  accessibilityRole="none"
-                  accessibilityLabel={describeCallEntryForA11y(entry, durationLabel)}
-                  trailing={
-                    <Icon name={callMediaIcon(entry)} size={16} color={styles.rowGlyph.color} />
-                  }
-                  testID="peer-profile-call-row"
-                />
-              );
-            })}
-          </View>
-        ))
-      )}
+      <PeerRecentCalls
+        peerId={peerId}
+        recentCalls={recentCalls}
+        sections={sections}
+        styles={styles}
+      />
 
       <SectionHeader title="Privacy" icon="settingsPrivacy" variant="section" />
       <Switch

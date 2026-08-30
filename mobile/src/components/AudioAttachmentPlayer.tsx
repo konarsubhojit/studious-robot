@@ -20,6 +20,26 @@ import type { ThemeColors } from '../theme';
 /** Height (dp) of the scrubber track — small, but still comfortably tappable with the hit slop below. */
 const TRACK_HEIGHT = 4;
 
+function PlaybackIcon({
+  isLoading,
+  iconDefinition,
+  VectorIcon,
+  styles,
+  testID,
+}: {
+  isLoading: boolean;
+  iconDefinition: (typeof ICONS)[keyof typeof ICONS];
+  VectorIcon: ReturnType<typeof loadVectorIcons>;
+  styles: ReturnType<typeof createStyles>;
+  testID: string;
+}) {
+  if (isLoading) return <ActivityIndicator size="small" testID={`${testID}-loading`} />;
+  if (VectorIcon && iconDefinition) {
+    return <VectorIcon name={iconDefinition.icon} size={18} style={styles.playGlyph} />;
+  }
+  return <Text style={styles.playGlyph}>{iconDefinition.emoji}</Text>;
+}
+
 /**
  * Inline player for a voice note or audio attachment.
  *
@@ -112,13 +132,13 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
         hitSlop={touchSlop(12)}
         style={[styles.playButton, unavailable && styles.disabled]}
         testID={`${testID}-toggle`}>
-        {isLoading ? (
-          <ActivityIndicator size="small" testID={`${testID}-loading`} />
-        ) : VectorIcon && iconDefinition ? (
-          <VectorIcon name={iconDefinition.icon} size={18} style={styles.playGlyph} />
-        ) : (
-          <Text style={styles.playGlyph}>{iconDefinition.emoji}</Text>
-        )}
+        <PlaybackIcon
+          isLoading={isLoading}
+          iconDefinition={iconDefinition}
+          VectorIcon={VectorIcon}
+          styles={styles}
+          testID={testID}
+        />
       </Pressable>
 
       <View style={styles.body}>

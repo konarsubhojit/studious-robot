@@ -69,7 +69,7 @@ export default function TabShell() {
     startRecordingVoiceNote,
     stopRecordingVoiceNoteAndSend,
   } = chat;
-  const { unregisterUser, updateStatus } = callFlow;
+  const { fetchCallHistory, unregisterUser, updateStatus } = callFlow;
   const insets = useSafeAreaInsets();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
   // Storage accounting is owned here rather than by the Settings screen, so the
@@ -278,6 +278,7 @@ export default function TabShell() {
     <CallsScreen
       callHistory={callFlow.callHistory}
       missedCallCount={callFlow.missedCallCount}
+      onFetchCallHistory={fetchCallHistory}
       onMarkMissedRead={callFlow.markMissedCallsRead}
       onOpenProfile={openPeerProfile}
       onMessage={openChatConversation}
@@ -292,6 +293,7 @@ export default function TabShell() {
     />
   ), [
     callFlow.callHistory,
+    fetchCallHistory,
     callFlow.isServerUnreachable,
     callFlow.markMissedCallsRead,
     callFlow.missedCallCount,

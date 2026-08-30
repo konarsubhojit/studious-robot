@@ -12,12 +12,9 @@ module.exports = {
   rules: {
     // Cognitive complexity, not cyclomatic: it penalises nesting and gives
     // flat early-return code a pass, which is much closer to what makes a
-    // function hard to read. `warn` rather than `error` because the codebase
-    // has a large pre-existing backlog (catalogued in
-    // `docs/complexity-baseline.md`); the level is raised to `error` once the
-    // decomposition phases have cleared it, and no new violation should be
-    // added in the meantime.
-    'sonarjs/cognitive-complexity': ['warn', 15],
+    // function hard to read. Phase 6 cleared the documented backlog, so this
+    // is an error gate: no function may exceed the threshold.
+    'sonarjs/cognitive-complexity': ['error', 15],
     'import/first': 'off',
     'no-void': 'off',
     // Context and props types used to be written as single-line object

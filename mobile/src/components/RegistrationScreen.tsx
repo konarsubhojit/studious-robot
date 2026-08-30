@@ -47,6 +47,190 @@ export type RegistrationScreenProps = {
   isMicrosoftSignInAvailable?: boolean;
 };
 
+function UsernameRegistrationStep({
+  chosenMethod,
+  name,
+  setName,
+  username,
+  colors,
+  styles,
+  isLoading,
+  submit,
+}: {
+  chosenMethod: AuthMethod;
+  name: string;
+  setName: (name: string) => void;
+  username: ReturnType<typeof checkUsername>;
+  colors: ReturnType<typeof useTheme>['colors'];
+  styles: ReturnType<typeof createStyles>;
+  isLoading: boolean;
+  submit: (method: AuthMethod) => void;
+}) {
+  return (
+    <View style={styles.step}>
+      <Text style={styles.formHint}>
+        {AUTH_METHOD_COPY[chosenMethod].chosenLabel}.
+        {'\n'}Other people will call you by this name, and it stays bound to your account.
+      </Text>
+      <TextInput
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g. alice or alice-42"
+        placeholderTextColor={colors.textSecondary}
+        autoCapitalize="none"
+        autoCorrect={false}
+        returnKeyType="done"
+        onSubmitEditing={() => submit(chosenMethod)}
+        style={styles.input}
+        accessibilityLabel="Your username"
+        accessibilityHint="Other people will call you by this name"
+        testID="registration-username-input"
+      />
+      <View style={styles.rules} testID="registration-username-rules">
+        {username.rules.map(rule => (
+          <View
+            key={rule.id}
+            style={styles.rule}
+            accessible
+            accessibilityLabel={describeUsernameRule(rule)}
+            testID={`registration-username-rule-${rule.id}`}>
+            <Icon
+              name={rule.state === 'met' ? 'check' : 'presenceOffline'}
+              size={RULE_ICON_SIZE}
+              color={ruleColor(colors, rule.state)}
+            />
+            <Text style={[styles.ruleLabel, { color: ruleColor(colors, rule.state) }]}>
+              {rule.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+      <Text
+        style={styles.summary}
+        accessibilityLiveRegion="polite"
+        testID="registration-username-summary">
+        {username.summary}
+      </Text>
+      <Text style={styles.note} testID="registration-username-note">
+        {USERNAME_UNIQUENESS_NOTE}
+      </Text>
+      <AppButton
+        title={isLoading ? 'Setting up…' : AUTH_METHOD_COPY[chosenMethod].submitLabel}
+        onPress={() => submit(chosenMethod)}
+        disabled={!username.isValid || isLoading}
+        accessibilityHint="Sends this username with the sign-in method you chose"
+        testID="registration-submit"
+      />
+    </View>
+  );
+}
+
+function MethodRegistrationStep({
+  email,
+  password,
+  setEmail,
+  setPassword,
+  emailReady,
+  isLoading,
+  isGoogleSignInAvailable,
+  isMicrosoftSignInAvailable,
+  chooseMethod,
+  styles,
+  colors,
+}: {
+  email: string;
+  password: string;
+  setEmail: (email: string) => void;
+  setPassword: (password: string) => void;
+  emailReady: boolean;
+  isLoading: boolean;
+  isGoogleSignInAvailable: boolean;
+  isMicrosoftSignInAvailable: boolean;
+  chooseMethod: (method: AuthMethod) => void;
+  styles: ReturnType<typeof createStyles>;
+  colors: ReturnType<typeof useTheme>['colors'];
+}) {
+  return (
+    <View style={styles.step}>
+      <AppButton
+        title={isGoogleSignInAvailable ? 'Continue with Google' : 'Google unavailable'}
+        onPress={() => chooseMethod('google')}
+        disabled={!isGoogleSignInAvailable || isLoading}
+        accessibilityHint={
+          isGoogleSignInAvailable
+            ? 'Goes to step 2 to choose your username'
+            : 'Google sign-in is not configured in this build'
+        }
+        testID="registration-google"
+      />
+      <AppButton
+        title={isMicrosoftSignInAvailable ? 'Continue with Microsoft' : 'Microsoft unavailable'}
+        onPress={() => chooseMethod('microsoft')}
+        disabled={!isMicrosoftSignInAvailable || isLoading}
+        accessibilityHint={
+          isMicrosoftSignInAvailable
+            ? 'Goes to step 2 to choose your username'
+            : 'Microsoft sign-in is not configured in this build'
+        }
+        testID="registration-microsoft"
+      />
+      <SectionHeader title="Or use an email address" variant="section" />
+      <Text style={styles.optionalHint}>
+        Register a new account or sign in to an existing one.
+      </Text>
+      <TextInput
+        value={email}
+        onChangeText={setEmail}
+        placeholder="you@example.com"
+        placeholderTextColor={colors.textSecondary}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="email-address"
+        textContentType="emailAddress"
+        autoComplete="email"
+        style={styles.input}
+        accessibilityLabel="Email address"
+        testID="registration-email-input"
+      />
+      <TextInput
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Password (6+ characters)"
+        placeholderTextColor={colors.textSecondary}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+        textContentType="password"
+        autoComplete="password"
+        returnKeyType="done"
+        onSubmitEditing={() => {
+          if (emailReady) chooseMethod('email-register');
+        }}
+        style={styles.input}
+        accessibilityLabel="Password"
+        accessibilityHint="At least 6 characters"
+        testID="registration-password-input"
+      />
+      <AppButton
+        title="Create account"
+        onPress={() => chooseMethod('email-register')}
+        disabled={!emailReady || isLoading}
+        accessibilityLabel="Create account"
+        accessibilityHint="Goes to step 2 to choose the username for the new account"
+        testID="registration-email-register"
+      />
+      <AppButton
+        title="Sign in with email"
+        onPress={() => chooseMethod('email-sign-in')}
+        disabled={!emailReady || isLoading}
+        accessibilityLabel="Sign in with email"
+        accessibilityHint="Goes to step 2 to confirm the username on your existing account"
+        testID="registration-email-sign-in"
+      />
+    </View>
+  );
+}
+
 export default function RegistrationScreen({
   onRegister,
   isLoading = false,
@@ -171,152 +355,30 @@ export default function RegistrationScreen({
           </View>
 
           {chosenMethod ? (
-            /* ── Step 2: choose a username ─────────────────────────────── */
-            <View style={styles.step}>
-              <Text style={styles.formHint}>
-                {AUTH_METHOD_COPY[chosenMethod].chosenLabel}.
-                {'\n'}Other people will call you by this name, and it stays bound to your account.
-              </Text>
-
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder="e.g. alice or alice-42"
-                placeholderTextColor={colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="done"
-                onSubmitEditing={() => submit(chosenMethod)}
-                style={styles.input}
-                accessibilityLabel="Your username"
-                accessibilityHint="Other people will call you by this name"
-                testID="registration-username-input"
-              />
-
-              <View style={styles.rules} testID="registration-username-rules">
-                {username.rules.map(rule => (
-                  <View
-                    key={rule.id}
-                    style={styles.rule}
-                    accessible
-                    accessibilityLabel={describeUsernameRule(rule)}
-                    testID={`registration-username-rule-${rule.id}`}>
-                    <Icon
-                      name={rule.state === 'met' ? 'check' : 'presenceOffline'}
-                      size={RULE_ICON_SIZE}
-                      color={ruleColor(colors, rule.state)}
-                    />
-                    <Text style={[styles.ruleLabel, { color: ruleColor(colors, rule.state) }]}>
-                      {rule.label}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-
-              {/* One live sentence, rather than a live region over the whole
-                  checklist, which would re-read all three rules per keystroke. */}
-              <Text
-                style={styles.summary}
-                accessibilityLiveRegion="polite"
-                testID="registration-username-summary">
-                {username.summary}
-              </Text>
-              <Text style={styles.note} testID="registration-username-note">
-                {USERNAME_UNIQUENESS_NOTE}
-              </Text>
-
-              <AppButton
-                title={isLoading ? 'Setting up…' : AUTH_METHOD_COPY[chosenMethod].submitLabel}
-                onPress={() => submit(chosenMethod)}
-                disabled={!username.isValid || isLoading}
-                accessibilityHint="Sends this username with the sign-in method you chose"
-                testID="registration-submit"
-              />
-            </View>
+            <UsernameRegistrationStep
+              chosenMethod={chosenMethod}
+              name={name}
+              setName={setName}
+              username={username}
+              colors={colors}
+              styles={styles}
+              isLoading={isLoading}
+              submit={submit}
+            />
           ) : (
-            /* ── Step 1: choose how to sign in ─────────────────────────── */
-            <View style={styles.step}>
-              <AppButton
-                title={isGoogleSignInAvailable ? 'Continue with Google' : 'Google unavailable'}
-                onPress={() => chooseMethod('google')}
-                disabled={!isGoogleSignInAvailable || isLoading}
-                accessibilityHint={
-                  isGoogleSignInAvailable
-                    ? 'Goes to step 2 to choose your username'
-                    : 'Google sign-in is not configured in this build'
-                }
-                testID="registration-google"
-              />
-              <AppButton
-                title={
-                  isMicrosoftSignInAvailable ? 'Continue with Microsoft' : 'Microsoft unavailable'
-                }
-                onPress={() => chooseMethod('microsoft')}
-                disabled={!isMicrosoftSignInAvailable || isLoading}
-                accessibilityHint={
-                  isMicrosoftSignInAvailable
-                    ? 'Goes to step 2 to choose your username'
-                    : 'Microsoft sign-in is not configured in this build'
-                }
-                testID="registration-microsoft"
-              />
-
-              <SectionHeader title="Or use an email address" variant="section" />
-              <Text style={styles.optionalHint}>
-                Register a new account or sign in to an existing one.
-              </Text>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                placeholderTextColor={colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                textContentType="emailAddress"
-                autoComplete="email"
-                style={styles.input}
-                accessibilityLabel="Email address"
-                testID="registration-email-input"
-              />
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Password (6+ characters)"
-                placeholderTextColor={colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-                secureTextEntry
-                textContentType="password"
-                autoComplete="password"
-                returnKeyType="done"
-                onSubmitEditing={() => {
-                  if (emailReady) chooseMethod('email-register');
-                }}
-                style={styles.input}
-                accessibilityLabel="Password"
-                accessibilityHint="At least 6 characters"
-                testID="registration-password-input"
-              />
-
-              {/* No 'Setting up…' title on these: they advance a step, they no
-                  longer reach the network. That title belongs to step 2. */}
-              <AppButton
-                title="Create account"
-                onPress={() => chooseMethod('email-register')}
-                disabled={!emailReady || isLoading}
-                accessibilityLabel="Create account"
-                accessibilityHint="Goes to step 2 to choose the username for the new account"
-                testID="registration-email-register"
-              />
-              <AppButton
-                title="Sign in with email"
-                onPress={() => chooseMethod('email-sign-in')}
-                disabled={!emailReady || isLoading}
-                accessibilityHint="Goes to step 2 to confirm the username on your existing account"
-                testID="registration-email-sign-in"
-              />
-            </View>
+            <MethodRegistrationStep
+              email={email}
+              password={password}
+              setEmail={setEmail}
+              setPassword={setPassword}
+              emailReady={emailReady}
+              isLoading={isLoading}
+              isGoogleSignInAvailable={isGoogleSignInAvailable}
+              isMicrosoftSignInAvailable={isMicrosoftSignInAvailable}
+              chooseMethod={chooseMethod}
+              styles={styles}
+              colors={colors}
+            />
           )}
         </View>
       </View>

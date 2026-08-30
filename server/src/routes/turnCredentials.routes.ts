@@ -107,6 +107,73 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
   let cache: { iceServers: IceServer[]; expiresAt: Date; refreshAt: number; } | null = null;
   let warnedMissingTurnUrl = false;
 
+  async function cloudflareCredentials(now: number) {
+    const keyId = env.CLOUDFLARE_TURN_KEY_ID;
+    const apiToken = env.CLOUDFLARE_TURN_API_TOKEN;
+    if (!keyId || !apiToken) return null;
+    if (cache && cache.refreshAt > now) return cache;
+    try {
+      const ttl = getTtlSeconds(env.CLOUDFLARE_TURN_TTL_SECONDS);
+      const response = await fetchImpl(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + apiToken,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ttl }),
+        }
+      );
+      const responseBody = await response.text().catch(() => '');
+      if (!response.ok) {
+        throw new Error(
+          `Cloudflare TURN API returned ${response.status}` +
+          (responseBody ? ` body=${responseBody}` : '')
+        );
+      }
+      const payload = responseBody ? JSON.parse(responseBody) : null;
+      const iceServers = normalizeIceServers(payload);
+      if (iceServers.length === 0) {
+        throw new Error('Cloudflare TURN API returned no ICE servers');
+      }
+      const expiresAt = new Date(now + ttl * 1000);
+      cache = {
+        iceServers: withStunServer(iceServers, env.TURN_URL),
+        expiresAt,
+        refreshAt: now + Math.floor(ttl * 0.9) * 1000,
+      };
+      return cache;
+    } catch (error) {
+      const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
+      const message = error instanceof Error ? error.message : '';
+      logger(`[turn] credential minting failed: ${message || 'unknown error'}`);
+      return null;
+    }
+  }
+
+  function hmacCredentials(userId: string, now: number) {
+    const staticAuthSecret = env.TURN_STATIC_AUTH_SECRET;
+    if (!staticAuthSecret) return null;
+    const urls = parseTurnUrls(env.TURN_URL);
+    if (urls.length === 0) {
+      if (!warnedMissingTurnUrl) {
+        warnedMissingTurnUrl = true;
+        console.warn(
+          '[turn] TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing; falling back to static credentials'
+        );
+      }
+      return null;
+    }
+    return createHmacIceServers({
+      secret: staticAuthSecret,
+      urls,
+      userId,
+      ttlSeconds: getTtlSeconds(env.TURN_TTL_SECONDS),
+      now,
+    });
+  }
+
   router.get(API_ROUTES.TURN_CREDENTIALS, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const session = getSessionFromRequest(req, state.sessions);
@@ -129,82 +196,21 @@ function createTurnCredentialsRouter({ state, fetchImpl = fetch, env = process.e
       return;
     }
 
-    const keyId = env.CLOUDFLARE_TURN_KEY_ID;
-    const apiToken = env.CLOUDFLARE_TURN_API_TOKEN;
     const now = Date.now();
-    if (keyId && apiToken) {
-      if (cache && cache.refreshAt > now) {
-        res.set('X-Turn-Credential-Expires-At', cache.expiresAt.toISOString());
-        res.json(cache.iceServers);
-        return;
-      }
-
-      try {
-        const ttl = getTtlSeconds(env.CLOUDFLARE_TURN_TTL_SECONDS);
-        const response = await fetchImpl(
-          `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + apiToken,
-              'Content-Type': 'application/json',
-            },
-              body: JSON.stringify({ ttl }),
-          }
-        );
-        const responseBody = await response.text().catch(() => '');
-        const payload = responseBody ? JSON.parse(responseBody) : null;
-        if (!response.ok) {
-          throw new Error(
-              `Cloudflare TURN API returned ${response.status}` +
-              (responseBody ? ` body=${responseBody}` : '')
-          );
-        }
-        const iceServers = normalizeIceServers(payload);
-        if (iceServers.length === 0) {
-          throw new Error('Cloudflare TURN API returned no ICE servers');
-        }
-
-        const expiresAt = new Date(now + ttl * 1000);
-        cache = {
-          iceServers: withStunServer(iceServers, env.TURN_URL),
-          expiresAt,
-          refreshAt: now + Math.floor(ttl * 0.9) * 1000,
-        };
-        res.set('X-Turn-Credential-Expires-At', expiresAt.toISOString());
-        res.json(cache.iceServers);
-        return;
-      } catch (error) {
-        const logger = env.TURN_USERNAME && env.TURN_CREDENTIAL ? console.warn : console.error;
-        const message = error instanceof Error ? error.message : '';
-        logger(`[turn] credential minting failed: ${message || 'unknown error'}`);
-      }
+    const cloudflare = await cloudflareCredentials(now);
+    if (cloudflare) {
+      res.set('X-Turn-Credential-Expires-At', cloudflare.expiresAt.toISOString());
+      res.json(cloudflare.iceServers);
+      return;
     }
 
     // HMAC (coturn `use-auth-secret`) tier: per-user, time-limited credentials.
     // Never cached — every request mints a fresh credential for its own user.
-    const staticAuthSecret = env.TURN_STATIC_AUTH_SECRET;
-    if (staticAuthSecret) {
-      const urls = parseTurnUrls(env.TURN_URL);
-      if (urls.length === 0) {
-        if (!warnedMissingTurnUrl) {
-          warnedMissingTurnUrl = true;
-          console.warn(
-            '[turn] TURN_STATIC_AUTH_SECRET is set but TURN_URL is missing; falling back to static credentials'
-          );
-        }
-      } else {
-        const { iceServers, expiresAt } = createHmacIceServers({
-          secret: staticAuthSecret,
-          urls,
-          userId: session.userId,
-          ttlSeconds: getTtlSeconds(env.TURN_TTL_SECONDS),
-          now,
-        });
-        res.set('X-Turn-Credential-Expires-At', expiresAt.toISOString());
-        res.json(iceServers);
-        return;
-      }
+    const hmac = hmacCredentials(session.userId, now);
+    if (hmac) {
+      res.set('X-Turn-Credential-Expires-At', hmac.expiresAt.toISOString());
+      res.json(hmac.iceServers);
+      return;
     }
 
     res.json(getStaticIceServers(env));

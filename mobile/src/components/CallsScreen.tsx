@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SectionList, StyleSheet, Text, View } from 'react-native';
 import {
   CALL_FILTERS,
@@ -44,6 +44,7 @@ import type { ContactRow, ConversationRow } from '../types/directory';
 export type CallsScreenProps = {
   callHistory?: CallHistoryEntry[];
   missedCallCount?: number;
+  onFetchCallHistory?: () => void | Promise<void>;
   onMarkMissedRead?: () => void;
   /** Person-hub navigation; every person-shaped tap routes here. */
   onOpenProfile?: (peerId: string) => void;
@@ -68,6 +69,189 @@ const FILTER_OPTIONS = [
 /** Placeholder rows drawn while the first history fetch is in flight. */
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
+function CallHistoryTrailing({
+  item,
+  peerId,
+  missed,
+  canCall,
+  colors,
+  styles,
+  onRedial,
+}: {
+  item: CallHistoryEntry;
+  peerId: string;
+  missed: boolean;
+  canCall: boolean;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+  onRedial: (entry: CallHistoryEntry) => void;
+}) {
+  const modality = callMediaType(item);
+  return (
+    <View style={styles.trailing}>
+      <Icon
+        name={callDirectionIcon(item)}
+        size={16}
+        color={missed ? colors.negative : colors.onSurfaceVariant}
+      />
+      <Icon name={callMediaIcon(item)} size={16} color={colors.onSurfaceVariant} />
+      {canCall && peerId ? (
+        <IconAction
+          icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
+          accessibilityLabel={`Call ${peerId} back`}
+          accessibilityHint={modality === 'audio' ? 'Starts an audio call' : 'Starts a video call'}
+          onPress={() => onRedial(item)}
+          size={40}
+          testID="call-history-redial"
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function CallHistoryRow({
+  item,
+  canCall,
+  colors,
+  styles,
+  onMessage,
+  onOpenProfile,
+  onRedial,
+}: {
+  item: CallHistoryEntry;
+  canCall: boolean;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+  onMessage?: (peerId: string) => void;
+  onOpenProfile?: (peerId: string) => void;
+  onRedial: (entry: CallHistoryEntry) => void;
+}) {
+  const peerId = callPeerId(item);
+  const missed = isMissedCall(item);
+  const durationLabel =
+    item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
+  const timeLabel = formatCallTimeOfDay(item.createdAt);
+  // The reciprocal of the call button in the conversation header: from
+  // a call in the log, reach the conversation with the same person.
+  const actions = onMessage && peerId
+    ? [{
+        key: 'message',
+        label: 'Message',
+        accessibilityLabel: `Message ${peerId}`,
+        testID: 'call-history-message',
+        onPress: () => onMessage(peerId),
+      }]
+    : [];
+
+  return (
+    <SwipeableRow actions={actions}>
+      <ListItem
+        title={peerId || 'Unknown contact'}
+        subtitle={[describeCallOutcome(item), timeLabel, durationLabel].filter(Boolean).join(' · ')}
+        destructive={missed}
+        leading={<Avatar id={peerId} size="md" />}
+        onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
+        accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
+        accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
+        trailing={
+          <CallHistoryTrailing
+            item={item}
+            peerId={peerId}
+            missed={missed}
+            canCall={canCall}
+            colors={colors}
+            styles={styles}
+            onRedial={onRedial}
+          />
+        }
+        testID="call-history-row"
+      />
+    </SwipeableRow>
+  );
+}
+
+function CallsScreenResults({
+  isServerUnreachable,
+  onRetryConnect,
+  status,
+  isLoading,
+  hasEntries,
+  sections,
+  renderSectionHeader,
+  renderItem,
+  filter,
+  onOpenSearch,
+  styles,
+}: {
+  isServerUnreachable?: boolean;
+  onRetryConnect?: () => void;
+  status?: CallStatus;
+  isLoading: boolean;
+  hasEntries: boolean;
+  sections: Array<CallLogSection & { data: CallHistoryEntry[]; }>;
+  renderSectionHeader: ({ section }: { section: CallLogSection }) => React.ReactElement;
+  renderItem: ({ item }: { item: CallHistoryEntry }) => React.ReactElement;
+  filter: CallFilter;
+  onOpenSearch?: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <>
+      {/* The same condition, worded the same way and weighted the same way, as
+          the one Search and the conversation show. */}
+      {isServerUnreachable ? (
+        <Banner
+          tone="warning"
+          message={describeOffline(OFFLINE_CONSEQUENCE.calls)}
+          icon={OFFLINE_ICON}
+          actionLabel="Retry"
+          actionHint="Tries to reconnect to the signaling server"
+          onAction={onRetryConnect}
+          accessibilityRole="alert"
+          style={styles.bannerWrap}
+          testID="offline-banner"
+        />
+      ) : null}
+      <StatusBanner status={status} style={styles.bannerWrap} />
+      {isLoading && !hasEntries ? (
+        <View testID="calls-loading">
+          {SKELETON_ROWS.map(row => <SkeletonRow key={row} />)}
+        </View>
+      ) : hasEntries ? (
+        <SectionList
+          sections={sections}
+          keyExtractor={entry => entry.callId}
+          stickySectionHeadersEnabled={false}
+          contentContainerStyle={styles.listContent}
+          testID="call-history-section"
+          renderSectionHeader={renderSectionHeader}
+          renderItem={renderItem}
+        />
+      ) : (
+        <EmptyState
+          icon="emptyCalls"
+          title={filter === CALL_FILTERS.MISSED ? 'No missed calls' : 'No calls yet'}
+          description={
+            filter === CALL_FILTERS.MISSED
+              ? 'Calls you miss will be listed here.'
+              : 'Call someone and it will show up here.'
+          }
+          // No `actionLabel` here: the FAB below is the screen's one primary
+          // action, and an empty state that repeats it in the same accent
+          // colour 200px away makes whichever the user reaches for the wrong
+          // one. The search link is low-emphasis on purpose: it is the way out
+          // for someone who has no one to call yet, which the FAB's picker
+          // cannot offer them.
+          linkLabel={onOpenSearch ? 'Search for people' : undefined}
+          onLinkPress={onOpenSearch}
+          linkHint="Search people, conversations, messages and calls"
+          testID="calls-empty"
+        />
+      )}
+    </>
+  );
+}
+
 /**
  * The Calls tab: a real call log.
  *
@@ -90,6 +274,7 @@ const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 export default function CallsScreen({
   callHistory,
   missedCallCount = 0,
+  onFetchCallHistory,
   onMarkMissedRead,
   onOpenProfile,
   onMessage,
@@ -110,6 +295,11 @@ export default function CallsScreen({
   const [isPickerVisible, setIsPickerVisible] = useState(false);
   // Peer chosen in the picker, awaiting an audio/video decision.
   const [pendingPeerId, setPendingPeerId] = useState((null as string | null));
+  const fetchHistoryOnMountRef = useRef(onFetchCallHistory);
+
+  useEffect(() => {
+    void fetchHistoryOnMountRef.current?.();
+  }, []);
 
   // Opening the tab is the acknowledgement: the badge exists to bring the user
   // here, so keeping it lit once they have arrived is just noise.
@@ -162,81 +352,24 @@ export default function CallsScreen({
   // Hoisted out of the JSX: an inline renderer is a new function identity on
   // every render, which forces SectionList to re-render every mounted row.
   const renderItem = useCallback(
-    ({ item }: { item: CallHistoryEntry }) => {
-          const peerId = callPeerId(item);
-          const missed = isMissedCall(item);
-          const durationLabel =
-            item.durationSeconds != null ? formatCallDuration(item.durationSeconds) : '';
-          const timeLabel = formatCallTimeOfDay(item.createdAt);
-          const modality = callMediaType(item);
-          // The reciprocal of the call button in the conversation header: from
-          // a call in the log, reach the conversation with the same person.
-          const actions =
-            onMessage && peerId
-              ? [
-                  {
-                    key: 'message',
-                    label: 'Message',
-                    accessibilityLabel: `Message ${peerId}`,
-                    testID: 'call-history-message',
-                    onPress: () => onMessage(peerId),
-                  },
-                ]
-              : [];
-
-          return (
-            <SwipeableRow actions={actions}>
-              <ListItem
-                title={peerId || 'Unknown contact'}
-                subtitle={[describeCallOutcome(item), timeLabel, durationLabel]
-                  .filter(Boolean)
-                  .join(' · ')}
-                destructive={missed}
-                leading={<Avatar id={peerId} size="md" />}
-                onPress={onOpenProfile && peerId ? () => onOpenProfile(peerId) : undefined}
-                accessibilityLabel={describeCallEntryForA11y(item, durationLabel)}
-                accessibilityHint={peerId ? `Opens ${peerId}'s details` : undefined}
-                trailing={
-                  <View style={styles.trailing}>
-                    <Icon
-                      name={callDirectionIcon(item)}
-                      size={16}
-                      color={missed ? colors.negative : colors.onSurfaceVariant}
-                    />
-                    <Icon
-                      name={callMediaIcon(item)}
-                      size={16}
-                      color={colors.onSurfaceVariant}
-                    />
-                    {canCall && peerId ? (
-                      <IconAction
-                        icon={modality === 'audio' ? 'callTypeAudio' : 'callTypeVideo'}
-                        accessibilityLabel={`Call ${peerId} back`}
-                        accessibilityHint={
-                          modality === 'audio'
-                            ? 'Starts an audio call'
-                            : 'Starts a video call'
-                        }
-                        onPress={() => redial(item)}
-                        size={40}
-                        testID="call-history-redial"
-                      />
-                    ) : null}
-                  </View>
-                }
-                testID="call-history-row"
-              />
-            </SwipeableRow>
-          );
-},
+    ({ item }: { item: CallHistoryEntry }) => (
+      <CallHistoryRow
+        item={item}
+        canCall={canCall}
+        colors={colors}
+        styles={styles}
+        onMessage={onMessage}
+        onOpenProfile={onOpenProfile}
+        onRedial={redial}
+      />
+    ),
     [
       canCall,
-      colors.negative,
-      colors.onSurfaceVariant,
+      colors,
       onMessage,
       onOpenProfile,
       redial,
-      styles.trailing,
+      styles,
     ],
   );
 
@@ -284,61 +417,19 @@ export default function CallsScreen({
         />
       </View>
 
-      {/* The same condition, worded the same way and weighted the same way, as
-          the one Search and the conversation show. */}
-      {isServerUnreachable ? (
-        <Banner
-          tone="warning"
-          message={describeOffline(OFFLINE_CONSEQUENCE.calls)}
-          icon={OFFLINE_ICON}
-          actionLabel="Retry"
-          actionHint="Tries to reconnect to the signaling server"
-          onAction={onRetryConnect}
-          accessibilityRole="alert"
-          style={styles.bannerWrap}
-          testID="offline-banner"
-        />
-      ) : null}
-
-      <StatusBanner status={status} style={styles.bannerWrap} />
-
-      {isLoading && !hasEntries ? (
-        <View testID="calls-loading">
-          {SKELETON_ROWS.map(row => (
-            <SkeletonRow key={row} />
-          ))}
-        </View>
-      ) : hasEntries ? (
-        <SectionList
-          sections={sections}
-          keyExtractor={entry => entry.callId}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={styles.listContent}
-          testID="call-history-section"
-          renderSectionHeader={renderSectionHeader}
-          renderItem={renderItem}
-        />
-      ) : (
-        <EmptyState
-          icon="emptyCalls"
-          title={filter === CALL_FILTERS.MISSED ? 'No missed calls' : 'No calls yet'}
-          description={
-            filter === CALL_FILTERS.MISSED
-              ? 'Calls you miss will be listed here.'
-              : 'Call someone and it will show up here.'
-          }
-          // No `actionLabel` here: the FAB below is the screen's one primary
-          // action, and an empty state that repeats it in the same accent
-          // colour 200px away makes whichever the user reaches for the wrong
-          // one. The search link is low-emphasis on purpose: it is the way out
-          // for someone who has no one to call yet, which the FAB's picker
-          // cannot offer them.
-          linkLabel={onOpenSearch ? 'Search for people' : undefined}
-          onLinkPress={onOpenSearch}
-          linkHint="Search people, conversations, messages and calls"
-          testID="calls-empty"
-        />
-      )}
+      <CallsScreenResults
+        isServerUnreachable={isServerUnreachable}
+        onRetryConnect={onRetryConnect}
+        status={status}
+        isLoading={isLoading}
+        hasEntries={hasEntries}
+        sections={sections}
+        renderSectionHeader={renderSectionHeader}
+        renderItem={renderItem}
+        filter={filter}
+        onOpenSearch={onOpenSearch}
+        styles={styles}
+      />
 
       {canCall ? (
         <FAB

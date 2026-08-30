@@ -16,6 +16,154 @@ import type { CallRecoveryStatus } from '../hooks/useCallFlow';
 import type { MutableRefObject } from 'react';
 import type { ThemeColors } from '../theme';
 
+type CallScreenProps = Omit<Parameters<typeof CallStage>[0], 'onLayout'> &
+  Parameters<typeof CallControls>[0] &
+  Parameters<typeof CallTopBar>[0] & {
+    onRetry: () => void;
+    onLeave: () => void;
+    status?: CallStatus;
+    onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
+    onTopChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
+    onBottomChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
+    isReconnecting?: boolean;
+    recoveryStatus?: CallRecoveryStatus | null;
+    isConnectionLost?: boolean;
+  };
+
+type CallScreenStyles = ReturnType<typeof createStyles>;
+
+function callAudioStatus(
+  isConnectionLost: boolean,
+  isRecovering: boolean,
+  elapsedCallSeconds: number,
+) {
+  if (isConnectionLost) return 'Connection lost';
+  if (isRecovering) return 'Reconnecting…';
+  return formatCallDuration(elapsedCallSeconds);
+}
+
+function CallStatusContent({
+  isRecovering,
+  recoveryStatus,
+  isConnectionLost,
+  visibleStatus,
+  onRetry,
+  styles,
+}: Pick<CallScreenProps, 'recoveryStatus' | 'isConnectionLost' | 'onRetry'> & {
+  isRecovering: boolean;
+  visibleStatus: CallStatus | null;
+  styles: CallScreenStyles;
+}) {
+  if (isRecovering) {
+    return (
+      <ReconnectBanner
+        onRetry={onRetry}
+        recovery={recoveryStatus}
+        isConnectionLost={isConnectionLost}
+      />
+    );
+  }
+  if (visibleStatus?.severity === 'error') {
+    return (
+      <ErrorState
+        title="Call problem"
+        description={visibleStatus.message}
+        actionLabel="Retry connection"
+        actionHint="Renegotiates the call connection now"
+        onAction={onRetry}
+        style={styles.inCallError}
+        testID="call-error-state"
+      />
+    );
+  }
+  if (!visibleStatus) return null;
+  return (
+    <StatusBanner
+      status={visibleStatus}
+      style={styles.inCallStatus}
+      textStyle={styles.inCallStatusText}
+    />
+  );
+}
+
+function CallTopOverlay({
+  isCompact,
+  showControlsOverlay,
+  overlayFadeMs,
+  styles,
+  elapsedCallSeconds,
+  connectionQuality,
+  participantLabel,
+  iceTransportPolicy,
+  onMinimize,
+  onTopChromeLayout,
+  isRecovering,
+  recoveryStatus,
+  isConnectionLost,
+  visibleStatus,
+  onRetry,
+}: Pick<CallScreenProps, 'elapsedCallSeconds' | 'connectionQuality' | 'participantLabel' |
+  'iceTransportPolicy' | 'onMinimize' | 'onTopChromeLayout' | 'recoveryStatus' |
+  'isConnectionLost' | 'onRetry'> & {
+  isCompact: boolean;
+  showControlsOverlay: boolean;
+  overlayFadeMs: number;
+  styles: CallScreenStyles;
+  isRecovering: boolean;
+  visibleStatus: CallStatus | null;
+}) {
+  if (isCompact || !showControlsOverlay) return null;
+  return (
+    <Animated.View
+      entering={FadeInDown.duration(overlayFadeMs)}
+      exiting={FadeOutUp.duration(overlayFadeMs)}
+      style={styles.topOverlay}
+      onLayout={onTopChromeLayout}
+      pointerEvents="box-none">
+      <CallTopBar
+        elapsedCallSeconds={elapsedCallSeconds}
+        connectionQuality={connectionQuality}
+        participantLabel={participantLabel}
+        iceTransportPolicy={iceTransportPolicy}
+        onMinimize={onMinimize}
+      />
+      <CallStatusContent
+        isRecovering={isRecovering}
+        recoveryStatus={recoveryStatus}
+        isConnectionLost={isConnectionLost}
+        visibleStatus={visibleStatus}
+        onRetry={onRetry}
+        styles={styles}
+      />
+    </Animated.View>
+  );
+}
+
+function CallBottomOverlay({
+  isCompact,
+  showControlsOverlay,
+  overlayFadeMs,
+  onBottomChromeLayout,
+  styles,
+  ...controls
+}: Pick<CallScreenProps, 'onBottomChromeLayout'> & {
+  isCompact: boolean;
+  showControlsOverlay: boolean;
+  overlayFadeMs: number;
+  styles: CallScreenStyles;
+} & Parameters<typeof CallControls>[0]) {
+  if (isCompact || !showControlsOverlay) return null;
+  return (
+    <Animated.View
+      entering={FadeInUp.duration(overlayFadeMs)}
+      exiting={FadeOutDown.duration(overlayFadeMs)}
+      onLayout={onBottomChromeLayout}
+      style={styles.bottomOverlay}>
+      <CallControls {...controls} />
+    </Animated.View>
+  );
+}
+
 /**
  * Full-screen in-call screen whose overlay chrome (top bar + control deck)
  * auto-hides after a few seconds of inactivity and fades back in on tap.
@@ -71,19 +219,7 @@ export default function CallScreen({
   status,
   isCompact = false,
   isAudioOnly = false,
-}: Omit<Parameters<typeof CallStage>[0], 'onLayout'> & Parameters<typeof CallControls>[0] &
-    Parameters<typeof CallTopBar>[0] &
-    {
-        onRetry: () => void;
-        onLeave: () => void;
-        status?: CallStatus;
-        onStageLayout: Parameters<typeof CallStage>[0]['onLayout'];
-        onTopChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
-        onBottomChromeLayout?: Parameters<typeof CallStage>[0]['onLayout'];
-        isReconnecting?: boolean;
-        recoveryStatus?: CallRecoveryStatus | null;
-        isConnectionLost?: boolean;
-    }) {
+}: CallScreenProps) {
   const styles = useThemedStyles(createStyles);
   const reduceMotion = useReducedMotion();
   const overlayFadeMs = reduceMotion ? motion.duration.instant : motion.duration.fast;
@@ -92,6 +228,7 @@ export default function CallScreen({
   // A spent recovery budget counts too: the episode closes with it, and the
   // banner used to vanish at exactly the moment the news was worst.
   const isRecovering = Boolean(isReconnecting || recoveryStatus || isConnectionLost);
+  const audioStatusLabel = callAudioStatus(isConnectionLost, isRecovering, elapsedCallSeconds);
 
   const [visibleStatus, setVisibleStatus] = useState(
     (null as CallStatus | null),
@@ -204,13 +341,7 @@ export default function CallScreen({
         isRemoteScreenSharing={isRemoteScreenSharing}
         participantLabel={participantLabel}
         isAudioOnly={isAudioOnly}
-        audioStatusLabel={
-          isConnectionLost
-            ? 'Connection lost'
-            : isRecovering
-            ? 'Reconnecting…'
-            : formatCallDuration(elapsedCallSeconds)
-        }
+        audioStatusLabel={audioStatusLabel}
       />
 
       {/* The overlay container is a layout-only box with no visuals of its
@@ -219,81 +350,55 @@ export default function CallScreen({
           exit animations, and Reanimated would unmount them with no
           transition at all. */}
       <View style={styles.overlay} pointerEvents="box-none">
-        {!isCompact && showControlsOverlay ? (
-          <Animated.View
-            entering={FadeInDown.duration(overlayFadeMs)}
-            exiting={FadeOutUp.duration(overlayFadeMs)}
-            style={styles.topOverlay}
-            onLayout={onTopChromeLayout}
-            pointerEvents="box-none">
-            <CallTopBar
-              elapsedCallSeconds={elapsedCallSeconds}
-              connectionQuality={connectionQuality}
-              participantLabel={participantLabel}
-              iceTransportPolicy={iceTransportPolicy}
-              onMinimize={onMinimize}
-            />
-            {isRecovering ? (
-              <ReconnectBanner
-                onRetry={onRetry}
-                recovery={recoveryStatus}
-                isConnectionLost={isConnectionLost}
-              />
-            ) : null}
-            {visibleStatus?.severity === 'error' ? (
-              <ErrorState
-                title="Call problem"
-                description={visibleStatus.message}
-                actionLabel="Retry connection"
-                actionHint="Renegotiates the call connection now"
-                onAction={onRetry}
-                style={styles.inCallError}
-                testID="call-error-state"
-              />
-            ) : visibleStatus ? (
-              <StatusBanner
-                status={visibleStatus}
-                style={styles.inCallStatus}
-                textStyle={styles.inCallStatusText}
-              />
-            ) : null}
-          </Animated.View>
-        ) : null}
+        <CallTopOverlay
+          isCompact={isCompact}
+          showControlsOverlay={showControlsOverlay}
+          overlayFadeMs={overlayFadeMs}
+          styles={styles}
+          elapsedCallSeconds={elapsedCallSeconds}
+          connectionQuality={connectionQuality}
+          participantLabel={participantLabel}
+          iceTransportPolicy={iceTransportPolicy}
+          onMinimize={onMinimize}
+          onTopChromeLayout={onTopChromeLayout}
+          isRecovering={isRecovering}
+          recoveryStatus={recoveryStatus}
+          isConnectionLost={isConnectionLost}
+          visibleStatus={visibleStatus}
+          onRetry={onRetry}
+        />
 
         {/* No extra bottom safe-area padding is added here: the app-level
             root container (App.js) already pads its bottom edge by the
             device's safe-area/gesture-navigation inset whenever a
             non-compact CallScreen is on screen, so these controls never
             sit under the system nav bar. */}
-        {!isCompact && showControlsOverlay ? (
-          <Animated.View
-            entering={FadeInUp.duration(overlayFadeMs)}
-            exiting={FadeOutDown.duration(overlayFadeMs)}
-            onLayout={onBottomChromeLayout}
-            style={styles.bottomOverlay}>
-            <CallControls
-              isMuted={isMuted}
-              isVideoEnabled={isVideoEnabled}
-              isAudioOnly={isAudioOnly}
-              hasLocalStream={hasLocalStream}
-              audioDevices={audioDevices}
-              isSpeakerEnabled={isSpeakerEnabled}
-              isScreenSharing={isScreenSharing}
-              isTogglingScreenShare={isTogglingScreenShare}
-              isScreenAudioEnabled={isScreenAudioEnabled}
-              isScreenAudioShared={isScreenAudioShared}
-              screenShareDelivery={screenShareDelivery}
-              isScreenShareSupported={isScreenShareSupported}
-              onMuteToggle={onMuteToggle}
-              onVideoToggle={onVideoToggle}
-              onChooseAudioOutput={onChooseAudioOutput}
-              onCameraSwitch={onCameraSwitch}
-              onScreenShareToggle={onScreenShareToggle}
-              onScreenAudioToggle={onScreenAudioToggle}
-              onLeave={onLeave}
-            />
-          </Animated.View>
-        ) : null}
+        <CallBottomOverlay
+          isCompact={isCompact}
+          showControlsOverlay={showControlsOverlay}
+          overlayFadeMs={overlayFadeMs}
+          onBottomChromeLayout={onBottomChromeLayout}
+          styles={styles}
+          isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
+          isAudioOnly={isAudioOnly}
+          hasLocalStream={hasLocalStream}
+          audioDevices={audioDevices}
+          isSpeakerEnabled={isSpeakerEnabled}
+          isScreenSharing={isScreenSharing}
+          isTogglingScreenShare={isTogglingScreenShare}
+          isScreenAudioEnabled={isScreenAudioEnabled}
+          isScreenAudioShared={isScreenAudioShared}
+          screenShareDelivery={screenShareDelivery}
+          isScreenShareSupported={isScreenShareSupported}
+          onMuteToggle={onMuteToggle}
+          onVideoToggle={onVideoToggle}
+          onChooseAudioOutput={onChooseAudioOutput}
+          onCameraSwitch={onCameraSwitch}
+          onScreenShareToggle={onScreenShareToggle}
+          onScreenAudioToggle={onScreenAudioToggle}
+          onLeave={onLeave}
+        />
       </View>
     </Pressable>
   );

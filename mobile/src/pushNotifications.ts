@@ -471,6 +471,43 @@ async function resolveReceiptBaseUrl(remoteMessage: { data?: Record<string, any>
   return (settings.signalingUrl || DEFAULT_SIGNALING_URL).trim();
 }
 
+function receiptValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function buildPushReceiptRequest({
+  remoteMessage,
+  callId,
+  messageId,
+  stage,
+  reason,
+  explicitSessionId,
+  explicitSignalingUrl,
+}: {
+  remoteMessage?: { data?: Record<string, any>; } | null;
+  callId: string;
+  messageId: string;
+  stage: string;
+  reason: string | null;
+  explicitSessionId: string | null;
+  explicitSignalingUrl: string | null;
+}) {
+  const data = remoteMessage?.data ?? {};
+  const sessionId = receiptValue(explicitSessionId) || receiptValue(data.sessionId);
+  const deviceId = receiptValue(data.deviceId) || await loadDeviceId();
+  const signalingUrl = receiptValue(explicitSignalingUrl) || await resolveReceiptBaseUrl(remoteMessage);
+  if (!signalingUrl || (!sessionId && !deviceId)) return null;
+  return {
+    url: `${signalingUrl.replace(/\/+$/, '')}${API_ROUTES.DEVICES_PUSH_RECEIPT}`,
+    body: {
+      ...(sessionId ? { sessionId } : { deviceId }),
+      ...(callId ? { callId } : { messageId }),
+      stage,
+      ...(reason ? { reason } : {}),
+    },
+  };
+}
+
 /**
  * Report a call- or message-lifecycle stage to the server.
  *
@@ -503,40 +540,26 @@ export async function sendPushReceipt({
         sessionId?: string | null;
         signalingUrl?: string | null;
     }): Promise<boolean> {
-  const trimmedCallId = typeof callId === 'string' ? callId.trim() : '';
-  const trimmedMessageId = typeof messageId === 'string' ? messageId.trim() : '';
+  const trimmedCallId = receiptValue(callId);
+  const trimmedMessageId = receiptValue(messageId);
   const allowedStages = trimmedCallId ? RECEIPT_STAGES : MESSAGE_RECEIPT_STAGES;
-  if (
-    (!trimmedCallId && !trimmedMessageId) ||
-    !allowedStages.has(stage) ||
-    typeof fetch !== 'function'
-  ) {
-    return false;
-  }
+  if (!trimmedCallId && !trimmedMessageId) return false;
+  if (!allowedStages.has(stage) || typeof fetch !== 'function') return false;
   try {
-    const data = remoteMessage?.data ?? {};
-    const sessionId =
-      (typeof explicitSessionId === 'string' ? explicitSessionId.trim() : '') ||
-      (typeof data.sessionId === 'string' ? data.sessionId.trim() : '');
-    const deviceId =
-      typeof data.deviceId === 'string' && data.deviceId.trim()
-        ? data.deviceId.trim()
-        : await loadDeviceId();
-    const signalingUrl =
-      (typeof explicitSignalingUrl === 'string' ? explicitSignalingUrl.trim() : '') ||
-      (await resolveReceiptBaseUrl(remoteMessage));
-    if (!signalingUrl || (!sessionId && !deviceId)) return false;
-
-    const receiptUrl = `${signalingUrl.replace(/\/+$/, '')}${API_ROUTES.DEVICES_PUSH_RECEIPT}`;
-    const response = await fetch(receiptUrl, {
+    const request = await buildPushReceiptRequest({
+      remoteMessage,
+      callId: trimmedCallId,
+      messageId: trimmedMessageId,
+      stage,
+      reason,
+      explicitSessionId,
+      explicitSignalingUrl,
+    });
+    if (!request) return false;
+    const response = await fetch(request.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(sessionId ? { sessionId } : { deviceId }),
-        ...(trimmedCallId ? { callId: trimmedCallId } : { messageId: trimmedMessageId }),
-        stage,
-        ...(reason ? { reason } : {}),
-      }),
+      body: JSON.stringify(request.body),
     });
     if (!response.ok) {
       await logBackgroundWarn('[Push] push receipt failed', { status: response.status, stage });

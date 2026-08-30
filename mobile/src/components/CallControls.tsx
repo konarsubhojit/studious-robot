@@ -34,6 +34,199 @@ export type CallControlsProps = {
   isAudioOnly?: boolean;
 };
 
+type CallControlsStyles = ReturnType<typeof createStyles>;
+
+function PrimaryCallControls({
+  isMuted,
+  isVideoEnabled,
+  hasLocalStream,
+  audioDevices,
+  isSpeakerEnabled,
+  isScreenSharing,
+  isAudioOnly,
+  onMuteToggle,
+  onVideoToggle,
+  onChooseAudioOutput,
+  onCameraSwitch,
+  onScreenShareToggle,
+  onOpenMore,
+  styles,
+}: Pick<CallControlsProps, 'isMuted' | 'isVideoEnabled' | 'hasLocalStream' | 'audioDevices' |
+  'isSpeakerEnabled' | 'isScreenSharing' | 'isAudioOnly' | 'onMuteToggle' | 'onVideoToggle' |
+  'onChooseAudioOutput' | 'onCameraSwitch' | 'onScreenShareToggle'> & {
+  onOpenMore: () => void;
+  styles: CallControlsStyles;
+}) {
+  if (!onScreenShareToggle) {
+    return (
+      <View style={styles.mediaRow}>
+        <MediaControlButtons
+          isMuted={isMuted}
+          isVideoEnabled={isVideoEnabled}
+          hasLocalStream={hasLocalStream}
+          audioDevices={audioDevices}
+          isSpeakerEnabled={isSpeakerEnabled}
+          isScreenSharing={isScreenSharing}
+          isAudioOnly={isAudioOnly}
+          onMuteToggle={onMuteToggle}
+          onVideoToggle={onVideoToggle}
+          onChooseAudioOutput={onChooseAudioOutput}
+          onCameraSwitch={onCameraSwitch}
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={styles.mediaRow}>
+      <MediaControlButtons
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
+        hasLocalStream={hasLocalStream}
+        audioDevices={audioDevices}
+        isSpeakerEnabled={isSpeakerEnabled}
+        isScreenSharing={isScreenSharing}
+        isAudioOnly={isAudioOnly}
+        onMuteToggle={onMuteToggle}
+        onVideoToggle={onVideoToggle}
+        onChooseAudioOutput={onChooseAudioOutput}
+        onCameraSwitch={onCameraSwitch}
+      />
+      <IconButton
+        icon="more"
+        onPress={onOpenMore}
+        variant={isScreenSharing ? 'active' : 'default'}
+        selected={isScreenSharing}
+        size={56}
+        accessibilityLabel="More call options"
+        accessibilityHint="Opens screen sharing options"
+        testID="control-more"
+      />
+    </View>
+  );
+}
+
+function MediaControlButtons({
+  isMuted,
+  isVideoEnabled,
+  hasLocalStream,
+  audioDevices,
+  isSpeakerEnabled,
+  isScreenSharing,
+  isAudioOnly,
+  onMuteToggle,
+  onVideoToggle,
+  onChooseAudioOutput,
+  onCameraSwitch,
+}: Pick<CallControlsProps, 'isMuted' | 'isVideoEnabled' | 'hasLocalStream' | 'audioDevices' |
+  'isSpeakerEnabled' | 'isScreenSharing' | 'isAudioOnly' | 'onMuteToggle' | 'onVideoToggle' |
+  'onChooseAudioOutput' | 'onCameraSwitch'>) {
+  return (
+    <>
+      <IconButton
+        icon={isMuted ? 'micOff' : 'micOn'}
+        label={isMuted ? 'Unmute' : 'Mute'}
+        onPress={onMuteToggle}
+        variant={isMuted ? 'active' : 'default'}
+        selected={isMuted}
+        disabled={!hasLocalStream}
+        size={56}
+        accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+        testID="control-mute"
+      />
+      <IconButton
+        icon={isVideoEnabled ? 'videoOn' : 'videoOff'}
+        label={isVideoEnabled ? 'Stop video' : 'Start video'}
+        onPress={onVideoToggle}
+        variant={isVideoEnabled ? 'default' : 'active'}
+        selected={!isVideoEnabled}
+        disabled={!hasLocalStream || isScreenSharing}
+        size={56}
+        accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
+        testID="control-video"
+      />
+      <AudioOutputMenu
+        available={audioDevices?.available}
+        selected={audioDevices?.selected}
+        isSpeakerEnabled={isSpeakerEnabled}
+        onSelect={onChooseAudioOutput}
+      />
+      <IconButton
+        icon="cameraSwitch"
+        onPress={onCameraSwitch}
+        variant="default"
+        disabled={!hasLocalStream || isScreenSharing || isAudioOnly}
+        size={56}
+        accessibilityLabel="Switch between front and back camera"
+        testID="control-swap-camera"
+      />
+    </>
+  );
+}
+
+function ScreenShareOptions({
+  visible,
+  onClose,
+  isScreenSharing,
+  isTogglingScreenShare,
+  isScreenAudioEnabled,
+  isScreenShareSupported,
+  onScreenShareToggle,
+  onScreenAudioToggle,
+}: Pick<CallControlsProps, 'isScreenSharing' | 'isTogglingScreenShare' | 'isScreenAudioEnabled' |
+  'isScreenShareSupported' | 'onScreenShareToggle' | 'onScreenAudioToggle'> & {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  if (!onScreenShareToggle) return null;
+  const sharingTitle = isTogglingScreenShare
+    ? (isScreenSharing ? 'Stopping…' : 'Starting…')
+    : (isScreenSharing ? 'Stop sharing your screen' : 'Share your screen');
+  const unsupportedSubtitle = isScreenShareSupported ? null : 'Not supported on this device';
+  return (
+    <Sheet visible={visible} onClose={onClose} title="More options" testID="call-more-sheet">
+      <ListItem
+        title={sharingTitle}
+        subtitle={unsupportedSubtitle}
+        icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
+        // A toggle already in flight is inert, not silently ignored: the
+        // hook drops the second tap either way, so the control has to say
+        // so rather than looking unresponsive.
+        disabled={!isScreenShareSupported || isTogglingScreenShare}
+        accessibilityRole="switch"
+        accessibilityState={{
+          checked: isScreenSharing,
+          disabled: !isScreenShareSupported || isTogglingScreenShare,
+          busy: isTogglingScreenShare,
+        }}
+        onPress={() => {
+          onClose();
+          onScreenShareToggle();
+        }}
+        testID="control-screen-share"
+      />
+      {onScreenAudioToggle ? (
+        <ListItem
+          title="Include screen audio"
+          subtitle={
+            isScreenShareSupported
+              ? 'Shares what your device is playing while you present'
+              : 'Not supported on this device'
+          }
+          icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
+          disabled={!isScreenShareSupported}
+          accessibilityRole="switch"
+          accessibilityState={{
+            checked: isScreenAudioEnabled,
+            disabled: !isScreenShareSupported,
+          }}
+          onPress={onScreenAudioToggle}
+          testID="control-screen-audio"
+        />
+      ) : null}
+    </Sheet>
+  );
+}
+
 /**
  * In-call control deck: one primary row, a "More" sheet, and Leave.
  *
@@ -68,61 +261,25 @@ export default function CallControls({
 }: CallControlsProps) {
   const styles = useThemedStyles(createStyles);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
-  const hasMoreActions = Boolean(onScreenShareToggle);
 
   return (
     <View style={styles.controls}>
-      <View style={styles.mediaRow}>
-        <IconButton
-          icon={isMuted ? 'micOff' : 'micOn'}
-          label={isMuted ? 'Unmute' : 'Mute'}
-          onPress={onMuteToggle}
-          variant={isMuted ? 'active' : 'default'}
-          selected={isMuted}
-          disabled={!hasLocalStream}
-          size={56}
-          accessibilityLabel={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-          testID="control-mute"
-        />
-        <IconButton
-          icon={isVideoEnabled ? 'videoOn' : 'videoOff'}
-          label={isVideoEnabled ? 'Stop video' : 'Start video'}
-          onPress={onVideoToggle}
-          variant={isVideoEnabled ? 'default' : 'active'}
-          selected={!isVideoEnabled}
-          disabled={!hasLocalStream || isScreenSharing}
-          size={56}
-          accessibilityLabel={isVideoEnabled ? 'Turn camera off' : 'Turn camera on'}
-          testID="control-video"
-        />
-        <AudioOutputMenu
-          available={audioDevices?.available}
-          selected={audioDevices?.selected}
-          isSpeakerEnabled={isSpeakerEnabled}
-          onSelect={onChooseAudioOutput}
-        />
-        <IconButton
-          icon="cameraSwitch"
-          onPress={onCameraSwitch}
-          variant="default"
-          disabled={!hasLocalStream || isScreenSharing || isAudioOnly}
-          size={56}
-          accessibilityLabel="Switch between front and back camera"
-          testID="control-swap-camera"
-        />
-        {hasMoreActions ? (
-          <IconButton
-            icon="more"
-            onPress={() => setIsMoreOpen(true)}
-            variant={isScreenSharing ? 'active' : 'default'}
-            selected={isScreenSharing}
-            size={56}
-            accessibilityLabel="More call options"
-            accessibilityHint="Opens screen sharing options"
-            testID="control-more"
-          />
-        ) : null}
-      </View>
+      <PrimaryCallControls
+        isMuted={isMuted}
+        isVideoEnabled={isVideoEnabled}
+        hasLocalStream={hasLocalStream}
+        audioDevices={audioDevices}
+        isSpeakerEnabled={isSpeakerEnabled}
+        isScreenSharing={isScreenSharing}
+        isAudioOnly={isAudioOnly}
+        onMuteToggle={onMuteToggle}
+        onVideoToggle={onVideoToggle}
+        onChooseAudioOutput={onChooseAudioOutput}
+        onCameraSwitch={onCameraSwitch}
+        onScreenShareToggle={onScreenShareToggle}
+        onOpenMore={() => setIsMoreOpen(true)}
+        styles={styles}
+      />
 
       {isScreenSharing ? (
         // Capped: the deck hangs off `CallScreen`'s `StyleSheet.absoluteFill`
@@ -148,63 +305,16 @@ export default function CallControls({
         testID="control-leave"
       />
 
-      {hasMoreActions ? (
-        <Sheet
-          visible={isMoreOpen}
-          onClose={() => setIsMoreOpen(false)}
-          title="More options"
-          testID="call-more-sheet">
-          <ListItem
-            title={
-              isTogglingScreenShare
-                ? isScreenSharing
-                  ? 'Stopping…'
-                  : 'Starting…'
-                : isScreenSharing
-                  ? 'Stop sharing your screen'
-                  : 'Share your screen'
-            }
-            subtitle={
-              isScreenShareSupported ? null : 'Not supported on this device'
-            }
-            icon={isScreenSharing ? 'screenShareOff' : 'screenShare'}
-            // A toggle already in flight is inert, not silently ignored: the
-            // hook drops the second tap either way, so the control has to say
-            // so rather than looking unresponsive.
-            disabled={!isScreenShareSupported || isTogglingScreenShare}
-            accessibilityRole="switch"
-            accessibilityState={{
-              checked: isScreenSharing,
-              disabled: !isScreenShareSupported || isTogglingScreenShare,
-              busy: isTogglingScreenShare,
-            }}
-            onPress={() => {
-              setIsMoreOpen(false);
-              onScreenShareToggle?.();
-            }}
-            testID="control-screen-share"
-          />
-          {onScreenAudioToggle ? (
-            <ListItem
-              title="Include screen audio"
-              subtitle={
-                isScreenShareSupported
-                  ? 'Shares what your device is playing while you present'
-                  : 'Not supported on this device'
-              }
-              icon={isScreenAudioEnabled ? 'screenAudioOn' : 'screenAudioOff'}
-              disabled={!isScreenShareSupported}
-              accessibilityRole="switch"
-              accessibilityState={{
-                checked: isScreenAudioEnabled,
-                disabled: !isScreenShareSupported,
-              }}
-              onPress={onScreenAudioToggle}
-              testID="control-screen-audio"
-            />
-          ) : null}
-        </Sheet>
-      ) : null}
+      <ScreenShareOptions
+        visible={isMoreOpen}
+        onClose={() => setIsMoreOpen(false)}
+        isScreenSharing={isScreenSharing}
+        isTogglingScreenShare={isTogglingScreenShare}
+        isScreenAudioEnabled={isScreenAudioEnabled}
+        isScreenShareSupported={isScreenShareSupported}
+        onScreenShareToggle={onScreenShareToggle}
+        onScreenAudioToggle={onScreenAudioToggle}
+      />
     </View>
   );
 }

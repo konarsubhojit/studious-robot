@@ -73,20 +73,18 @@ export default function Banner({
 }: BannerProps) {
   const styles = useThemedStyles(createStyles);
 
-  const containerTone =
-    tone === 'warning'
-      ? styles.bannerWarning
-      : tone === 'negative'
-        ? styles.bannerNegative
-        : tone === 'accent'
-          ? styles.bannerAccent
-          : null;
-  const textStyle =
-    tone === 'warning'
-      ? styles.textWarning
-      : tone === 'negative'
-        ? styles.textNegative
-        : styles.text;
+  const containerTone = {
+    neutral: null,
+    warning: styles.bannerWarning,
+    accent: styles.bannerAccent,
+    negative: styles.bannerNegative,
+  }[tone];
+  const textStyle = {
+    neutral: styles.text,
+    warning: styles.textWarning,
+    accent: styles.text,
+    negative: styles.textNegative,
+  }[tone];
   // Tinting from the resolved text colour rather than naming a palette entry
   // keeps the glyph and the sentence the same colour by construction.
   const foreground = StyleSheet.flatten(textStyle).color as string;

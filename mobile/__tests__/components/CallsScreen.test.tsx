@@ -83,6 +83,12 @@ describe('CallsScreen – missed calls', () => {
 describe('CallsScreen – call log', () => {
   afterEach(() => jest.clearAllMocks());
 
+  test('fetches the persisted history when the Calls tab opens', () => {
+    const onFetchCallHistory = jest.fn();
+    render({ onFetchCallHistory });
+    expect(onFetchCallHistory).toHaveBeenCalledTimes(1);
+  });
+
   test('shows an empty state, not an empty list, when there is no history', () => {
     const tree = render({ callHistory: [] });
     expect(byTestID(tree, 'calls-empty').length).toBeGreaterThanOrEqual(1);

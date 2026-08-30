@@ -89,6 +89,13 @@ const MAX_TRACKED_QUERY_OPERATIONS = 100;
  * would only ever hold a stale zero.
  */
 type QueryOperationTotals = Omit<QueryOperationSnapshot, 'meanMs'>;
+type CallTimestamp = {
+  createdMs: number;
+  ringingMs: number | null;
+  acceptedMs: number | null;
+  inCallMs: number | null;
+  endedMs: number | null;
+};
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -184,7 +191,7 @@ function createTelemetry(): Telemetry {
   const queryOperations: Map<string, QueryOperationTotals> = new Map();
 
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
-  const callTimestamps: Map<string, { createdMs: number; ringingMs: number | null; acceptedMs: number | null; inCallMs: number | null; endedMs: number | null; }> = new Map();
+  const callTimestamps: Map<string, CallTimestamp> = new Map();
 
   // ─── Recording API ──────────────────────────────────────────────────────
 
@@ -215,64 +222,68 @@ function createTelemetry(): Telemetry {
   /**
    * Record a call state transition.
    */
+  function recordAcceptedCall(ts: CallTimestamp | undefined, nowMs: number) {
+    counters.calls_accepted += 1;
+    if (!ts) return;
+    ts.acceptedMs = nowMs;
+    if (ts.ringingMs !== null) {
+      observeHistogram(histograms.call_setup_latency_ms, nowMs - ts.ringingMs);
+    }
+  }
+
+  function recordInCall(ts: CallTimestamp | undefined, nowMs: number) {
+    counters.calls_in_call += 1;
+    if (!ts) return;
+    ts.inCallMs = nowMs;
+    if (ts.acceptedMs !== null) {
+      observeHistogram(histograms.call_connect_latency_ms, nowMs - ts.acceptedMs);
+    }
+  }
+
+  function recordRingEnd(counter: 'calls_declined' | 'calls_missed', ts: CallTimestamp | undefined, nowMs: number) {
+    counters[counter] += 1;
+    if (ts?.ringingMs !== null && ts?.ringingMs !== undefined) {
+      observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
+    }
+  }
+
+  function recordCallEnd(
+    call: { endReason?: string | null },
+    ts: CallTimestamp | undefined,
+    nowMs: number,
+  ) {
+    counters.calls_ended += 1;
+    if (call.endReason === 'failed') counters.calls_failed += 1;
+    if (call.endReason === 'cancelled') counters.calls_cancelled += 1;
+    if (!ts) return;
+    ts.endedMs = nowMs;
+    if (ts.inCallMs !== null) {
+      observeHistogram(histograms.call_duration_ms, nowMs - ts.inCallMs);
+    } else if (ts.ringingMs !== null) {
+      observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
+    }
+  }
+
   function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; }, previousStatus: string) {
     const ts = callTimestamps.get(call.callId);
     const nowMs = Date.now();
 
     switch (call.status) {
-      case 'accepted': {
-        counters.calls_accepted += 1;
-        if (ts) {
-          ts.acceptedMs = nowMs;
-          if (ts.ringingMs !== null) {
-            observeHistogram(histograms.call_setup_latency_ms, nowMs - ts.ringingMs);
-          }
-        }
+      case 'accepted':
+        recordAcceptedCall(ts, nowMs);
         break;
-      }
-
-      case 'in_call': {
-        counters.calls_in_call += 1;
-        if (ts) {
-          ts.inCallMs = nowMs;
-          if (ts.acceptedMs !== null) {
-            observeHistogram(histograms.call_connect_latency_ms, nowMs - ts.acceptedMs);
-          }
-        }
+      case 'in_call':
+        recordInCall(ts, nowMs);
         break;
-      }
-
-      case 'declined': {
-        counters.calls_declined += 1;
-        if (ts && ts.ringingMs !== null) {
-          observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
-        }
+      case 'declined':
+        recordRingEnd('calls_declined', ts, nowMs);
         break;
-      }
-
-      case 'missed': {
-        counters.calls_missed += 1;
-        if (ts && ts.ringingMs !== null) {
-          observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
-        }
+      case 'missed':
+        recordRingEnd('calls_missed', ts, nowMs);
         break;
-      }
-
-      case 'ended': {
-        counters.calls_ended += 1;
-        if (call.endReason === 'failed') counters.calls_failed += 1;
-        if (call.endReason === 'cancelled') counters.calls_cancelled += 1;
-        if (ts) {
-          ts.endedMs = nowMs;
-          if (ts.inCallMs !== null) {
-            observeHistogram(histograms.call_duration_ms, nowMs - ts.inCallMs);
-          } else if (ts.ringingMs !== null) {
-            observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
-          }
-        }
+      case 'ended':
+        recordCallEnd(call, ts, nowMs);
         break;
-      }
-
       default:
         break;
     }
@@ -310,23 +321,21 @@ function createTelemetry(): Telemetry {
   /**
    * Record one timed datastore round trip (see `lib/queryTiming.ts`).
    */
-  function recordDbQuery(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
-    if (!record || !Number.isFinite(record.durationMs)) return;
-
+  function recordDbQueryCounters(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
     counters.db_queries_total += 1;
     if (!record.ok) counters.db_query_errors_total += 1;
     if (record.slow) counters.db_slow_queries_total += 1;
     if (record.kind === 'read') counters.db_reads_total += 1;
     else counters.db_writes_total += 1;
+  }
 
-    const histogram =
-      record.backend === 'pg'
-        ? histograms.pg_query_duration_ms
-        : record.backend === 'mongo'
-          ? histograms.mongo_query_duration_ms
-          : histograms.redis_query_duration_ms;
-    if (histogram) observeHistogram(histogram, record.durationMs);
+  function queryHistogramFor(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
+    if (record.backend === 'pg') return histograms.pg_query_duration_ms;
+    if (record.backend === 'mongo') return histograms.mongo_query_duration_ms;
+    return histograms.redis_query_duration_ms;
+  }
 
+  function queryOperationFor(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
     const preferredKey = `${record.backend}:${record.kind}:${record.operation}`;
     // Fold anything past the cap into a per-backend, per-kind overflow row
     // rather than growing the map without bound.  `kind` stays part of the key
@@ -335,7 +344,6 @@ function createTelemetry(): Telemetry {
       queryOperations.has(preferredKey) || queryOperations.size < MAX_TRACKED_QUERY_OPERATIONS
         ? preferredKey
         : `${record.backend}:${record.kind}:other`;
-
     let entry = queryOperations.get(key);
     if (!entry) {
       entry = {
@@ -350,6 +358,14 @@ function createTelemetry(): Telemetry {
       };
       queryOperations.set(key, entry);
     }
+    return entry;
+  }
+
+  function recordDbQuery(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
+    if (!record || !Number.isFinite(record.durationMs)) return;
+    recordDbQueryCounters(record);
+    observeHistogram(queryHistogramFor(record), record.durationMs);
+    const entry = queryOperationFor(record);
 
     entry.count += 1;
     if (!record.ok) entry.errors += 1;

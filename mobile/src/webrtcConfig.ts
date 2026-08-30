@@ -226,6 +226,94 @@ function reportIceServers(iceServers: IceServer[], tier: IceServerTier, metadata
   return iceServers;
 }
 
+function missingIceFallbackReason(
+  signalingUrl: string | undefined,
+  sessionId: string | null | undefined,
+  fetchImpl: typeof fetch,
+): IceFallbackReason {
+  if (!signalingUrl) return 'missing-signaling-url';
+  if (!sessionId) return 'missing-session-id';
+  return typeof fetchImpl === 'function' ? 'transport-error' : 'no-fetch-implementation';
+}
+
+async function fetchServerIceServers(
+  signalingUrl: string,
+  sessionId: string,
+  fetchImpl: typeof fetch,
+): Promise<IceServer[]> {
+  let response;
+  try {
+    response = await fetchImpl(`${signalingUrl.trim().replace(/\/+$/, '')}/turn-credentials`, {
+      headers: { Authorization: 'Bearer ' + sessionId },
+    });
+  } catch (error) {
+    throw new IceFetchError(
+      `TURN credentials request could not be sent: ${describeError(error)}`,
+      'transport-error',
+    );
+  }
+  if (!response.ok) {
+    throw new IceFetchError(
+      `TURN credentials request failed (HTTP ${response.status})`,
+      'http-error',
+      response.status,
+    );
+  }
+  let iceServers;
+  try {
+    iceServers = await response.json();
+  } catch (error) {
+    throw new IceFetchError(
+      `TURN credentials response could not be parsed: ${describeError(error)}`,
+      'malformed-response',
+    );
+  }
+  if (!Array.isArray(iceServers)) {
+    throw new IceFetchError(
+      'TURN credentials response was not an ICE server array',
+      'malformed-response',
+    );
+  }
+  const expiresAt = Date.parse(response.headers?.get?.('x-turn-credential-expires-at') || '');
+  cachedServerIceServers = iceServers;
+  cachedServerIceServersExpiresAt =
+    Number.isFinite(expiresAt) && expiresAt > Date.now()
+      ? expiresAt
+      : Date.now() + DEFAULT_CREDENTIAL_TTL_MS;
+  return iceServers;
+}
+
+function fetchServerIceServersOnce(
+  signalingUrl: string,
+  sessionId: string,
+  fetchImpl: typeof fetch,
+): Promise<IceServer[]> {
+  if (!pendingServerIceServers) {
+    pendingServerIceServers = fetchServerIceServers(signalingUrl, sessionId, fetchImpl).finally(() => {
+      pendingServerIceServers = null;
+    });
+  }
+  return pendingServerIceServers;
+}
+
+function fallbackIceServersAfterFetchError(error: unknown, now: number, host: string): IceServer[] {
+  const reason: IceFallbackReason =
+    error instanceof IceFetchError ? error.reason : 'transport-error';
+  const status = error instanceof IceFetchError ? error.status : undefined;
+  // The message, never the error object: a serialized error can carry the
+  // request it was thrown from, and that request carries the session token.
+  const message = describeError(error);
+  if (cachedServerIceServers && cachedServerIceServersExpiresAt > now) {
+    return reportIceServers(cachedServerIceServers, 'stale-cache', {
+      host,
+      reason,
+      status,
+      message,
+    });
+  }
+  return reportIceServers(getIceServers(), 'build-time-config', { host, reason, status, message });
+}
+
 /**
  * Fetch short-lived ICE servers for an authenticated call. A network failure
  * intentionally falls through to a still-valid cache, build-time fallback,
@@ -249,81 +337,15 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
   if (!signalingUrl || !sessionId || typeof fetchImpl !== 'function') {
     // No fetch is even attempted here — the branch that produced a TURN-less
     // call with no trace of a request in either the client or server logs.
-    const reason: IceFallbackReason = !signalingUrl
-      ? 'missing-signaling-url'
-      : !sessionId
-        ? 'missing-session-id'
-        : 'no-fetch-implementation';
+    const reason = missingIceFallbackReason(signalingUrl, sessionId, fetchImpl);
     return reportIceServers(getIceServers(), 'build-time-config', { host, reason });
   }
 
-  if (!pendingServerIceServers) {
-    pendingServerIceServers = (async () => {
-      let response;
-      try {
-        response = await fetchImpl(`${signalingUrl.trim().replace(/\/+$/, '')}/turn-credentials`, {
-          headers: { Authorization: 'Bearer ' + sessionId },
-        });
-      } catch (error) {
-        throw new IceFetchError(
-          `TURN credentials request could not be sent: ${describeError(error)}`,
-          'transport-error',
-        );
-      }
-      if (!response.ok) {
-        throw new IceFetchError(
-          `TURN credentials request failed (HTTP ${response.status})`,
-          'http-error',
-          response.status,
-        );
-      }
-      let iceServers;
-      try {
-        iceServers = await response.json();
-      } catch (error) {
-        throw new IceFetchError(
-          `TURN credentials response could not be parsed: ${describeError(error)}`,
-          'malformed-response',
-        );
-      }
-      if (!Array.isArray(iceServers)) {
-        throw new IceFetchError(
-          'TURN credentials response was not an ICE server array',
-          'malformed-response',
-        );
-      }
-      const expiresAt = Date.parse(response.headers?.get?.('x-turn-credential-expires-at') || '');
-      cachedServerIceServers = iceServers;
-      cachedServerIceServersExpiresAt =
-        Number.isFinite(expiresAt) && expiresAt > Date.now()
-          ? expiresAt
-          : Date.now() + DEFAULT_CREDENTIAL_TTL_MS;
-      return iceServers;
-    })().finally(() => {
-      pendingServerIceServers = null;
-    });
-  }
-
   try {
-    return reportIceServers(await pendingServerIceServers, 'fetched', { host });
+    const iceServers = await fetchServerIceServersOnce(signalingUrl, sessionId, fetchImpl);
+    return reportIceServers(iceServers, 'fetched', { host });
   } catch (error) {
-    // The reason must survive: a swallowed error here is exactly why an empty
-    // TURN list could not be explained from the logs.
-    const reason: IceFallbackReason =
-      error instanceof IceFetchError ? error.reason : 'transport-error';
-    const status = error instanceof IceFetchError ? error.status : undefined;
-    // The message, never the error object: a serialized error can carry the
-    // request it was thrown from, and that request carries the session token.
-    const message = describeError(error);
-    if (cachedServerIceServers && cachedServerIceServersExpiresAt > now) {
-      return reportIceServers(cachedServerIceServers, 'stale-cache', {
-        host,
-        reason,
-        status,
-        message,
-      });
-    }
-    return reportIceServers(getIceServers(), 'build-time-config', { host, reason, status, message });
+    return fallbackIceServersAfterFetchError(error, now, host);
   }
 }
 
