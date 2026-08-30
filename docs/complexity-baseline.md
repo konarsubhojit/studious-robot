@@ -178,6 +178,19 @@ residual server helpers. That is stated here rather than quietly assumed: the
 epic's success criterion ("no method exceeds the threshold, or every exception
 is documented") cannot be met without it.
 
+## Progress against the baseline
+
+| Phase | Violations cleared | Now |
+| --- | --- | --- |
+| Phase 4 (#215) | #19 `downloadAttachment` (19) | under the threshold; the per-directory attempt is its own function |
+
+Phase 4 also split `mobile/src/hooks/useMessaging.ts` (1,367 lines) into
+`mobile/src/messaging/` — identity/ordering, message history, the send and
+receive pipelines, conversations and unread accounting, drafts, and the
+snapshot mirror — leaving the hook at ~1,000 lines of composition. None of the
+extracted modules contains a method over the threshold, and none of them needs
+an exemption.
+
 ## Exemptions
 
 None. No method has been exempted from the rule, and no inline suppression

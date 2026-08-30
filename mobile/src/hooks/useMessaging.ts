@@ -7,83 +7,73 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
-import { flushChatDb, loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
-import type { ChatDraft } from '../storage/chatDb';
+import { saveChatSnapshot } from '../storage/chatDb';
+import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
-import type { AttachmentRecord, MessageRecord } from '../../../shared/signaling/schemas';
+import {
+  conversationIdForPeer,
+  totalUnread,
+  withConversationRead,
+  withIncomingMessage,
+} from '../messaging/conversations';
+import { withDraft, withoutDraft } from '../messaging/drafts';
+import {
+  mergeHistoryPage,
+  patchMessage as patchMessageIn,
+  prependMessage,
+  removeMessage,
+} from '../messaging/messageHistory';
+import { createMessageId } from '../messaging/messageIdentity';
+import {
+  applyDeliveryReceipt,
+  applyIncomingMessage,
+  applyReactions,
+  applyReadReceipt,
+  applyTombstone,
+  tombstoneOf,
+} from '../messaging/receivePipeline';
+import {
+  OUTBOX_MAX_ATTEMPTS,
+  asFailed,
+  asQueued,
+  asSent,
+  asUploadFailed,
+  asUploaded,
+  buildOptimisticMessage,
+  buildOutboxItem,
+  buildUploadingMessage,
+  drainOrder,
+  isRetryable,
+  nextDrainDelayMs,
+  withAttemptRecorded,
+  withAttemptsReset,
+  withUploadProgress,
+  withoutMessage,
+} from '../messaging/sendPipeline';
+import useChatSnapshotMirror from '../messaging/useChatSnapshotMirror';
+import type { AttachmentRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
 import { errorMessage } from '../errors';
 
 /**
- * A chat message as persisted by the server, plus the client-only fields an
- * optimistic send carries until the server acknowledges it.
+ * The messaging vocabulary lives in `../messaging/types`, so the pure modules
+ * below can be imported without React or the socket layer. It is re-exported
+ * here because that is where the rest of the app has always imported it from.
  */
-export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
-  conversationId?: string | null;
-  status?: string;
-  peerId?: string;
-  localId?: string;
-  pending?: boolean;
-  failed?: boolean;
-  syncState?: 'pending' | 'synced' | 'failed';
-  uploadState?: 'uploading' | 'failed';
-  uploadProgress?: number;
-  uploadError?: string | null;
-  deliveredTo?: string[];
-  readAt?: string | null;
-};
+export type {
+  CallActivity,
+  ChatMessage,
+  ConversationActivity,
+  ConversationSummary,
+  OutboxItem,
+} from '../messaging/types';
+export { OUTBOX_MAX_ATTEMPTS } from '../messaging/sendPipeline';
 
-/**
- * A message queued for (re)delivery, with the bookkeeping the outbox drain
- * needs: which peer it belongs to, how many sends have been attempted and why
- * the last one failed.
- */
-export type OutboxItem = {
-  messageId: string;
-  recipientId: string;
-  conversationId?: string | null;
-  body?: string;
-  type?: string;
-  attachment?: AttachmentRecord | null;
-  replyTo?: string | null;
-  createdAt?: string;
-  attempts?: number;
-  lastAttemptAt?: string | null;
-  lastError?: string | null;
-};
-
-/**
- * Newest event of a conversation: either a message or a call, as merged by the
- * server (`lastActivity`).
- */
-export type CallActivity = {
-  type: 'call';
-  callId: string;
-  conversationId?: string;
-  direction: 'incoming' | 'outgoing';
-  status: string;
-  endReason?: string | null;
-  durationSeconds?: number | null;
-  createdAt: string;
-};
-
-export type ConversationActivity = ChatMessage | CallActivity;
-
-/**
- * One row of the chat list: the peer, the newest message and whether anything
- * in it is still unread.
- */
-export type ConversationSummary = {
-  conversationId?: string;
-  peerId: string;
-  lastMessage?: ChatMessage | null;
-  lastActivity?: ConversationActivity | null;
-  unreadCount?: number;
-};
+import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
 
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
@@ -95,88 +85,6 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
-
-/**
- * Trailing window over which chat-state changes are coalesced into a single
- * mirror into the local store. Sized to be shorter than a user's attention
- * span but long enough to absorb a burst (a fetched history page, a run of
- * delivery/read receipts) into one prune-and-write.
- */
-const SNAPSHOT_PERSIST_DEBOUNCE_MS = 750;
-
-/**
- * Identity of a timeline entry: a message id, or a call id for the call
- * records the unified timeline interleaves with the messages.
- */
-function timelineEntryId(entry: { messageId?: string; callId?: string; }): string | undefined {
-  return entry?.messageId ?? entry?.callId;
-}
-
-/** How many send attempts a queued message gets before it is marked failed
- * and left for the user to retry or delete explicitly. */
-export const OUTBOX_MAX_ATTEMPTS = 5;
-/** First outbox drain retry delay; doubles per attempt up to the cap. */
-const OUTBOX_BASE_RETRY_MS = 1000;
-/** Ceiling for the exponential backoff between outbox drains. */
-const OUTBOX_MAX_RETRY_MS = 60_000;
-
-/**
- * The tombstone a deleted message becomes: the content is gone, the row stays
- * so a reply quoting it still resolves and renders "Message deleted".
- *
- * @param message - the local copy being replaced.
- * @param serverTombstone - the server's version, when it sent one.
- */
-function tombstoneOf(message: ChatMessage, serverTombstone?: Partial<ChatMessage>): Partial<ChatMessage> {
-  return {
-    ...(serverTombstone ?? {}),
-    body: '',
-    attachment: null,
-    reactions: {},
-    deletedAt: serverTombstone?.deletedAt ?? message?.deletedAt ?? new Date().toISOString(),
-  };
-}
-
-/**
- * True while a queued message may still be sent automatically.
- */
-function isRetryable(item: OutboxItem): boolean {
-  return (item?.attempts ?? 0) < OUTBOX_MAX_ATTEMPTS;
-}
-
-/**
- * Newest-first ordering, matching the server's message ordering.
- */
-function byNewestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): number {
-  return Date.parse(b?.createdAt ?? '') - Date.parse(a?.createdAt ?? '');
-}
-
-/**
- * Oldest-first ordering, so queued sends are flushed in composition order.
- */
-function byOldestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): number {
-  return Date.parse(a?.createdAt ?? '') - Date.parse(b?.createdAt ?? '');
-}
-
-/**
- * Client-generated message id. The server upserts on
- * `{ conversationId, messageId }`, so this is what makes a replayed send
- * idempotent rather than a duplicate.
- *
- * Not a security token — it only has to be unique — so a `Math.random()`
- * fallback is fine where the runtime has no `crypto.randomUUID`.
- */
-function createMessageId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return uuid;
-  const randomHex = (length: number) =>
-    Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-  const variant = '89ab'[Math.floor(Math.random() * 4)];
-  return (
-    `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-` +
-    `${variant}${randomHex(3)}-${randomHex(12)}`
-  );
-}
 
 /**
  * Owns text chat: the conversation list, per-peer message history, optimistic
@@ -196,6 +104,19 @@ function createMessageId(): string {
  * encapsulated in one place. Extracted out of `useCallFlow` so this concern
  * stays isolated from that hook's call-lifecycle/session/WebRTC
  * responsibilities.
+ *
+ * What is left here is the wiring: React state, the network calls, the socket
+ * emits and the effects. Everything that can be decided without mounting a
+ * component lives in `../messaging/` and is unit-tested there:
+ *
+ *   `messageIdentity`         id minting, entry identity and ordering
+ *   `messageHistory`          per-peer history transforms, page merging
+ *   `sendPipeline`            optimistic sends, outbox bookkeeping, backoff,
+ *                             upload and retry state transitions
+ *   `receivePipeline`         inbound messages, receipts, tombstones, reactions
+ *   `conversations`           the conversation list and unread accounting
+ *   `drafts`                  per-conversation composer drafts
+ *   `useChatSnapshotMirror`   hydrate-then-fetch and the debounced local mirror
  *
  * @param params
  */
@@ -267,9 +188,6 @@ export default function useMessaging({
   const isDrainingRef = useRef(false);
   const drainOutboxRef = useRef(() => {});
   const attachmentUploadMetaRef = useRef(({} as Record<string, { conversationId?: string | null; createdAt: string; }>));
-  // True once the local store has been read; gates persistence so an empty
-  // initial render can't overwrite the cached history with nothing.
-  const hydratedRef = useRef(false);
   const conversationsRef = useRef(([] as ConversationSummary[]));
 
   useEffect(() => {
@@ -281,82 +199,30 @@ export default function useMessaging({
   }, [conversations]);
 
   // ─── Hydrate-then-fetch ──────────────────────────────────────────────────
-  // Render whatever was cached locally straight away (so launching offline —
-  // or before the first response lands — shows real conversations and history
-  // instead of an empty app), then let the network refresh it.
-  useEffect(() => {
-    let cancelled = false;
-    loadChatSnapshot()
-      .then(snapshot => {
-        if (cancelled) return;
-        outboxRef.current = snapshot.outbox;
-        setPendingSendCount(snapshot.outbox.length);
-        // Only fill in what the network hasn't already provided: a response
-        // that beat the disk read is newer than the cache.
-        setConversations(prev => (prev.length ? prev : snapshot.conversations));
-        setMessagesByPeer(prev => {
-          const next = { ...snapshot.messagesByPeer, ...prev };
-          return next;
-        });
-        // Drafts only ever come from disk: nothing else can have typed for the
-        // user between mount and here.
-        setDrafts(snapshot.drafts ?? {});
-        hydratedRef.current = true;
-        // Anything still queued from a previous run goes out as soon as the
-        // socket allows it — this is what makes a force-quit mid-send safe.
-        if (snapshot.outbox.some(isRetryable)) drainOutboxRef.current();
-      })
-      .catch(() => {
-        hydratedRef.current = true;
-      });
-    return () => {
-      cancelled = true;
-    };
+  // Render whatever was cached locally straight away, then let the network
+  // refresh it. The mirror back into the local store — trailing-debounced and
+  // force-flushed on background and unmount — lives in the same module.
+  const applySnapshot = useCallback((snapshot: ChatSnapshot) => {
+    outboxRef.current = snapshot.outbox;
+    setPendingSendCount(snapshot.outbox.length);
+    // Only fill in what the network hasn't already provided: a response that
+    // beat the disk read is newer than the cache.
+    setConversations(prev => (prev.length ? prev : snapshot.conversations));
+    setMessagesByPeer(prev => ({ ...snapshot.messagesByPeer, ...prev }));
+    // Drafts only ever come from disk: nothing else can have typed for the
+    // user between mount and here.
+    setDrafts(snapshot.drafts ?? {});
+    // Anything still queued from a previous run goes out as soon as the socket
+    // allows it — this is what makes a force-quit mid-send safe.
+    if (snapshot.outbox.some(isRetryable)) drainOutboxRef.current();
   }, []);
 
-  // Mirror the rendered chat state into the local store, so the next launch
-  // has something to hydrate from.
-  //
-  // The mirror is debounced rather than run per state change: every one of
-  // them (a delivery receipt, a typing-driven re-render, each message of a
-  // fetched page) would otherwise re-prune every conversation's history on the
-  // JS thread. A burst therefore costs one prune, and the tail is not at risk
-  // because the state is flushed when the app leaves the foreground and when
-  // the hook unmounts.
-  const snapshotRef = useRef({ conversations, messagesByPeer, drafts: {} as Record<string, ChatDraft> });
-  const persistTimerRef = useRef((null as ReturnType<typeof setTimeout> | null));
-  const persistNow = useCallback(() => {
-    if (persistTimerRef.current) {
-      clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = null;
-    }
-    if (!hydratedRef.current) return;
-    saveChatSnapshot(snapshotRef.current);
-  }, []);
-
-  useEffect(() => {
-    snapshotRef.current = { conversations, messagesByPeer, drafts };
-    if (!hydratedRef.current) return undefined;
-    if (persistTimerRef.current) return undefined;
-    persistTimerRef.current = setTimeout(() => {
-      persistTimerRef.current = null;
-      saveChatSnapshot(snapshotRef.current);
-    }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
-    return undefined;
-  }, [conversations, messagesByPeer, drafts]);
-
-  // Leaving the foreground is the last moment the process is guaranteed to be
-  // alive, so the pending mirror is written out (and pushed to disk) there.
-  useEffect(() => {
-    const subscription = AppState.addEventListener?.('change', nextState => {
-      if (nextState === 'active') return;
-      persistNow();
-      flushChatDb();
-    });
-    return () => subscription?.remove?.();
-  }, [persistNow]);
-
-  useEffect(() => () => persistNow(), [persistNow]);
+  useChatSnapshotMirror({
+    conversations,
+    messagesByPeer,
+    drafts,
+    onHydrate: applySnapshot,
+  });
 
   // Mirror the open conversation into the push layer, so a message push for
   // the conversation the user is looking at is suppressed instead of being
@@ -428,33 +294,10 @@ export default function useMessaging({
         if (!response?.ok) return [];
         const data = await response.json();
         const messages = Array.isArray(data.messages) ? data.messages : [];
-        setMessagesByPeer(prev => {
-          const existing = prev[trimmedPeerId] ?? [];
-          const serverIds = new Set(messages.map(timelineEntryId));
-          if (!before) {
-            // First page: the server is authoritative for everything it knows
-            // about, but entries it has never seen — sends still queued in the
-            // outbox — are kept and merged by id, never by position, so an
-            // optimistic entry is replaced rather than duplicated.
-            const unsent = existing.filter(
-              entry =>
-                (entry.syncState === 'pending' || entry.syncState === 'failed') &&
-                !serverIds.has(timelineEntryId(entry)),
-            );
-            const merged = unsent.length ? [...unsent, ...messages].sort(byNewestFirst) : messages;
-            return { ...prev, [trimmedPeerId]: merged };
-          }
-          // Pagination: append older entries, deduping by their own id (a
-          // call entry carries a `callId` rather than a `messageId`).
-          const existingIds = new Set(existing.map(timelineEntryId));
-          const merged = [
-            ...existing,
-            ...messages.filter(
-              (entry: ChatMessage) => !existingIds.has(timelineEntryId(entry)),
-            ),
-          ];
-          return { ...prev, [trimmedPeerId]: merged };
-        });
+        setMessagesByPeer(prev => ({
+          ...prev,
+          [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before }),
+        }));
         return messages;
       } catch (error) {
         logWarn('[Messaging] fetchMessagesForPeer failed', {
@@ -487,9 +330,7 @@ export default function useMessaging({
           },
         }));
         if (!response?.ok) return;
-        setConversations(prev =>
-          prev.map(c => (c.peerId === trimmedPeerId ? { ...c, unreadCount: 0 } : c)),
-        );
+        setConversations(prev => withConversationRead(prev, trimmedPeerId));
       } catch (error) {
         logWarn('[Messaging] markConversationRead failed', {
           message: errorMessage(error),
@@ -545,18 +386,10 @@ export default function useMessaging({
    */
   const patchMessage = useCallback(
     (peerId: string, messageId: string, update: (message: ChatMessage) => ChatMessage) => {
-    setMessagesByPeer(prev => {
-      const existing = prev[peerId];
-      if (!existing) return prev;
-      let changed = false;
-      const next = existing.map(entry => {
-        if (entry.messageId !== messageId) return entry;
-        changed = true;
-        return update(entry);
-      });
-      return changed ? { ...prev, [peerId]: next } : prev;
-    });
-  }, []);
+      setMessagesByPeer(prev => patchMessageIn(prev, peerId, messageId, update));
+    },
+    [],
+  );
 
   /**
    * Replace the outbox and mirror it into the local store, so a queued send
@@ -573,14 +406,10 @@ export default function useMessaging({
     if (drainTimerRef.current) return;
     const attempt = drainAttemptRef.current;
     drainAttemptRef.current = attempt + 1;
-    const ceiling = Math.min(OUTBOX_BASE_RETRY_MS * 2 ** attempt, OUTBOX_MAX_RETRY_MS);
-    // Jitter across the second half of the window so many clients coming back
-    // online together don't retry in lockstep.
-    const delay = ceiling / 2 + Math.random() * (ceiling / 2);
     drainTimerRef.current = setTimeout(() => {
       drainTimerRef.current = null;
       drainOutboxRef.current();
-    }, delay);
+    }, nextDrainDelayMs(attempt));
   }, []);
 
   /**
@@ -610,39 +439,23 @@ export default function useMessaging({
           messageId: item.messageId,
         });
         const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
-        patchMessage(item.recipientId, item.messageId, entry => ({
-          ...entry,
-          ...(confirmed ?? {}),
-          pending: false,
-          failed: false,
-          syncState: 'synced',
-        }));
-        persistOutbox(outboxRef.current.filter(queued => queued.messageId !== item.messageId));
+        patchMessage(item.recipientId, item.messageId, entry => asSent(entry, confirmed));
+        persistOutbox(withoutMessage(outboxRef.current, item.messageId));
         return true;
       } catch (error) {
         logWarn('[Messaging] sendMessage failed', { message: errorMessage(error) });
         const attempts = (item.attempts ?? 0) + 1;
         persistOutbox(
-          outboxRef.current.map(queued =>
-            queued.messageId === item.messageId
-              ? {
-                  ...queued,
-                  attempts,
-                  lastAttemptAt: new Date().toISOString(),
-                  lastError: errorMessage(error) ?? null,
-                }
-              : queued,
-          ),
+          withAttemptRecorded(outboxRef.current, item.messageId, {
+            attempts,
+            lastAttemptAt: new Date().toISOString(),
+            lastError: errorMessage(error) ?? null,
+          }),
         );
         if (attempts >= OUTBOX_MAX_ATTEMPTS) {
           // Out of automatic retries: surface it so the user can retry or
           // delete the message explicitly.
-          patchMessage(item.recipientId, item.messageId, entry => ({
-            ...entry,
-            pending: false,
-            failed: true,
-            syncState: 'failed',
-          }));
+          patchMessage(item.recipientId, item.messageId, asFailed);
           updateStatus('Message failed to send', 'error');
         }
         return false;
@@ -658,7 +471,7 @@ export default function useMessaging({
    */
   const drainOutbox = useCallback(async () => {
     if (isDrainingRef.current) return;
-    const queue = outboxRef.current.filter(isRetryable);
+    const queue = drainOrder(outboxRef.current);
     if (!queue.length) return;
     if (!socketRef.current?.connected || !signalingRef?.current) {
       scheduleDrain();
@@ -668,9 +481,9 @@ export default function useMessaging({
     isDrainingRef.current = true;
     let allSent = true;
     try {
-      for (const item of [...queue].sort(byOldestFirst)) {
+      for (const item of queue) {
         // Stop at the first failure so queued messages keep their order.
-          const sent = await sendOutboxItem(item);
+        const sent = await sendOutboxItem(item);
         if (!sent) {
           allSent = false;
           break;
@@ -744,46 +557,23 @@ export default function useMessaging({
 
       const messageId = createMessageId();
       const createdAt = new Date().toISOString();
-      const conversationId =
-        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ?? null;
-      const optimisticMessage: ChatMessage = {
+      const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
+      const outgoing = {
         messageId,
         conversationId,
         senderId: userId,
         recipientId: trimmedPeerId,
+        createdAt,
         body: trimmedBody,
         type,
         attachment,
         replyTo,
-        reactions: {},
-        deletedAt: null,
-        createdAt,
-        deliveredTo: [],
-        readAt: null,
-        pending: true,
-        syncState: 'pending',
       };
 
-      setMessagesByPeer(prev => ({
-        ...prev,
-        [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
-      }));
-      persistOutbox([
-        ...outboxRef.current,
-        {
-          messageId,
-          conversationId,
-          recipientId: trimmedPeerId,
-          body: trimmedBody,
-          type,
-          attachment,
-          replyTo,
-          createdAt,
-          attempts: 0,
-          lastAttemptAt: null,
-          lastError: null,
-        },
-      ]);
+      setMessagesByPeer(prev =>
+        prependMessage(prev, trimmedPeerId, buildOptimisticMessage(outgoing)),
+      );
+      persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
 
       await drainOutbox();
     },
@@ -797,34 +587,18 @@ export default function useMessaging({
 
       const messageId = createMessageId();
       const createdAt = new Date().toISOString();
-      const conversationId =
-        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ?? null;
-      const optimisticMessage: ChatMessage = {
+      const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
+      const optimisticMessage = buildUploadingMessage({
         messageId,
         conversationId,
         senderId: userId,
         recipientId: trimmedPeerId,
-        body: '',
+        createdAt,
         type,
         attachment: attachment as AttachmentRecord,
-        replyTo: null,
-        reactions: {},
-        deletedAt: null,
-        createdAt,
-        deliveredTo: [],
-        readAt: null,
-        pending: true,
-        failed: false,
-        syncState: 'pending',
-        uploadState: 'uploading',
-        uploadProgress: 0,
-        uploadError: null,
-      };
+      });
 
-      setMessagesByPeer(prev => ({
-        ...prev,
-        [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
-      }));
+      setMessagesByPeer(prev => prependMessage(prev, trimmedPeerId, optimisticMessage));
       attachmentUploadMetaRef.current[messageId] = { conversationId, createdAt };
       return messageId;
     },
@@ -833,12 +607,7 @@ export default function useMessaging({
 
   const updateAttachmentUploadProgress = useCallback(
     (peerId: string, messageId: string, progress: number) => {
-      const bounded = Math.max(0, Math.min(1, Number(progress) || 0));
-      patchMessage(peerId, messageId, entry => ({
-        ...entry,
-        uploadState: 'uploading',
-        uploadProgress: bounded,
-      }));
+      patchMessage(peerId, messageId, entry => withUploadProgress(entry, progress));
     },
     [patchMessage],
   );
@@ -849,37 +618,22 @@ export default function useMessaging({
       if (!trimmedPeerId || !messageId || !attachment?.url) return;
       const meta = attachmentUploadMetaRef.current[messageId];
       const conversationId =
-        meta?.conversationId ??
-        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ??
-        null;
+        meta?.conversationId ?? conversationIdForPeer(conversationsRef.current, trimmedPeerId);
       const createdAt = meta?.createdAt ?? new Date().toISOString();
 
-      patchMessage(trimmedPeerId, messageId, entry => ({
-        ...entry,
-        attachment,
-        pending: true,
-        failed: false,
-        syncState: 'pending',
-        uploadState: undefined,
-        uploadProgress: undefined,
-        uploadError: null,
-      }));
+      patchMessage(trimmedPeerId, messageId, entry => asUploaded(entry, attachment));
 
-      const nextItem: OutboxItem = {
+      const nextItem = buildOutboxItem({
         messageId,
         conversationId,
         recipientId: trimmedPeerId,
-        body: '',
+        createdAt,
         type,
         attachment,
-        replyTo: null,
-        createdAt,
-        attempts: 0,
-        lastAttemptAt: null,
-        lastError: null,
-      };
-      const withoutDuplicate = outboxRef.current.filter(item => item.messageId !== messageId);
-      persistOutbox([...withoutDuplicate, nextItem]);
+      });
+      // Replayed under the original message identity, so a retry can never
+      // duplicate the send it is retrying.
+      persistOutbox([...withoutMessage(outboxRef.current, messageId), nextItem]);
       delete attachmentUploadMetaRef.current[messageId];
       await drainOutbox();
     },
@@ -890,16 +644,11 @@ export default function useMessaging({
     (peerId: string, messageId: string, error: string | null = null) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
-      persistOutbox(outboxRef.current.filter(item => item.messageId !== messageId));
+      persistOutbox(withoutMessage(outboxRef.current, messageId));
       delete attachmentUploadMetaRef.current[messageId];
-      patchMessage(trimmedPeerId, messageId, entry => ({
-        ...entry,
-        pending: false,
-        failed: true,
-        syncState: 'failed',
-        uploadState: 'failed',
-        uploadError: error,
-      }));
+      // The bubble stays, in a failed state: a cancelled or failed upload must
+      // never silently vanish.
+      patchMessage(trimmedPeerId, messageId, entry => asUploadFailed(entry, error));
     },
     [patchMessage, persistOutbox],
   );
@@ -913,21 +662,13 @@ export default function useMessaging({
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
 
-      const queued = outboxRef.current.find(item => item.messageId === messageId);
-      const next = queued
-        ? outboxRef.current.map(item =>
-            item.messageId === messageId ? { ...item, attempts: 0, lastError: null } : item,
-          )
-        : outboxRef.current;
-      persistOutbox(next);
+      const queued = outboxRef.current.some(item => item.messageId === messageId);
+      // The retry keeps the original message identity, so a late-succeeding
+      // original send cannot land alongside it as a duplicate.
+      persistOutbox(queued ? withAttemptsReset(outboxRef.current, messageId) : outboxRef.current);
       if (!queued) return;
 
-      patchMessage(trimmedPeerId, messageId, entry => ({
-        ...entry,
-        pending: true,
-        failed: false,
-        syncState: 'pending',
-      }));
+      patchMessage(trimmedPeerId, messageId, asQueued);
       drainAttemptRef.current = 0;
       clearTimeout(drainTimerRef.current ?? undefined);
       drainTimerRef.current = null;
@@ -941,13 +682,10 @@ export default function useMessaging({
    */
   const removeMessageLocally = useCallback(
     (peerId: string, messageId: string) => {
-    setMessagesByPeer(prev => {
-      const existing = prev[peerId];
-      if (!existing) return prev;
-      const next = existing.filter(m => m.messageId !== messageId);
-      return next.length === existing.length ? prev : { ...prev, [peerId]: next };
-    });
-  }, []);
+      setMessagesByPeer(prev => removeMessage(prev, peerId, messageId));
+    },
+    [],
+  );
 
   /**
    * Drop a message that never made it to the server: it leaves both the local
@@ -957,7 +695,7 @@ export default function useMessaging({
     (peerId: string, messageId: string) => {
       const trimmedPeerId = (peerId ?? '').trim();
       if (!trimmedPeerId || !messageId) return;
-      persistOutbox(outboxRef.current.filter(item => item.messageId !== messageId));
+      persistOutbox(withoutMessage(outboxRef.current, messageId));
       removeMessageLocally(trimmedPeerId, messageId);
     },
     [persistOutbox, removeMessageLocally],
@@ -1043,10 +781,7 @@ export default function useMessaging({
   );
 
   /** Sum of unreadCount across every conversation; drives the tab badge. */
-  const unreadTotal = useMemo(
-    () => conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0),
-    [conversations],
-  );
+  const unreadTotal = useMemo(() => totalUnread(conversations), [conversations]);
 
   /**
    * Clear all pending typing-indicator safety-net timers. Called when the
@@ -1071,15 +806,7 @@ export default function useMessaging({
       // here.
       markMessageSeen(message.messageId);
 
-      setMessagesByPeer(prev => {
-        const existing = prev[senderId] ?? [];
-        // Dedupe by id, so a message that arrives over both the socket and a
-        // background push converges on one entry.
-        if (existing.some(m => m.messageId === message.messageId)) {
-          return prev;
-        }
-        return { ...prev, [senderId]: [{ ...message, syncState: 'synced' }, ...existing] };
-      });
+      setMessagesByPeer(prev => applyIncomingMessage(prev, message));
 
       if (activeChatPeerIdRef.current === senderId) {
         // The conversation is currently open: auto-mark-read, no unread bump,
@@ -1090,19 +817,12 @@ export default function useMessaging({
       }
 
       setConversations(prev => {
-        const index = prev.findIndex(c => c.peerId === senderId);
-        if (index === -1) {
+        const next = withIncomingMessage(prev, message);
+        if (!next) {
           // Brand-new conversation: refetch the authoritative list.
           fetchConversations();
           return prev;
         }
-        const next = [...prev];
-        next[index] = {
-          ...next[index],
-          lastMessage: message,
-          lastActivity: { ...message, type: 'text' },
-          unreadCount: (next[index].unreadCount || 0) + 1,
-        };
         return next;
       });
     },
@@ -1111,42 +831,16 @@ export default function useMessaging({
 
   const handleMessageDelivered = useCallback(/** @param message */ (message: ChatMessage) => {
     if (!message?.recipientId) return;
-    const peerId = message.recipientId;
-    setMessagesByPeer(prev => {
-      const existing = prev[peerId] ?? [];
-      const index = existing.findIndex(m => m.messageId === message.messageId);
-      if (index === -1) {
-        return { ...prev, [peerId]: [message, ...existing] };
-      }
-      // Already held (the send ack raced ahead of this event): merge the
-      // server's copy in so the delivery receipt (`deliveredTo`) flips the
-      // message's status tick from "sent" to "delivered".
-      const next = [...existing];
-      next[index] = { ...next[index], ...message };
-      return { ...prev, [peerId]: next };
-    });
+    setMessagesByPeer(prev => applyDeliveryReceipt(prev, message));
   }, []);
 
   const handleMessageRead = useCallback(
     /** @param payload */
     ({ readerId, readAt }: { readerId?: string; readAt?: string; }) => {
       if (!readerId) return;
-      // `readerId` is the peer who just read our messages; messagesByPeer
-      // is keyed by the other participant regardless of send direction, so
-      // it doubles as the lookup key here.
-      setMessagesByPeer(prev => {
-        const existing = prev[readerId];
-        if (!existing) return prev;
-        let changed = false;
-        const updated = existing.map(m => {
-          if (m.senderId === userId && !m.readAt) {
-            changed = true;
-            return { ...m, readAt: readAt ?? new Date().toISOString() };
-          }
-          return m;
-        });
-        return changed ? { ...prev, [readerId]: updated } : prev;
-      });
+      setMessagesByPeer(prev =>
+        applyReadReceipt(prev, { readerId, readAt, currentUserId: userId }),
+      );
     },
     [userId],
   );
@@ -1181,20 +875,9 @@ export default function useMessaging({
       deletedBy?: string;
       message?: Partial<ChatMessage> | null;
     }) => {
-    const messageId = payload?.messageId;
-    if (!messageId) return;
-      setMessagesByPeer(prev => {
-        let changed = false;
-        const next: Record<string, ChatMessage[]> = {};
-        Object.entries(prev).forEach(([peerId, messages]) => {
-          next[peerId] = messages.map(m => {
-            if (m.messageId !== messageId) return m;
-            changed = true;
-            return { ...m, ...tombstoneOf(m, payload?.message ?? undefined) };
-          });
-        });
-        return changed ? next : prev;
-      });
+      const messageId = payload?.messageId;
+      if (!messageId) return;
+      setMessagesByPeer(prev => applyTombstone(prev, messageId, payload?.message ?? undefined));
     },
     [],
   );
@@ -1206,21 +889,10 @@ export default function useMessaging({
    */
   const handleMessageReaction = useCallback(
     (payload: { messageId?: string; reactions?: Record<string, string[]> }) => {
-    const messageId = payload?.messageId;
-    if (!messageId) return;
+      const messageId = payload?.messageId;
+      if (!messageId) return;
       const reactions = payload?.reactions ?? {};
-      setMessagesByPeer(prev => {
-        let changed = false;
-        const next: Record<string, ChatMessage[]> = {};
-        Object.entries(prev).forEach(([peerId, messages]) => {
-          next[peerId] = messages.map(m => {
-            if (m.messageId !== messageId) return m;
-            changed = true;
-            return { ...m, reactions };
-          });
-        });
-        return changed ? next : prev;
-      });
+      setMessagesByPeer(prev => applyReactions(prev, messageId, reactions));
     },
     [],
   );
@@ -1291,38 +963,13 @@ export default function useMessaging({
    */
   const saveDraft = useCallback((peerId: string, text: string, replyToId?: string | null) => {
     if (!peerId) return;
-    setDrafts(prev => {
-      const trimmed = typeof text === 'string' ? text : '';
-      if (!trimmed.trim()) {
-        if (!prev[peerId]) return prev;
-        const next = { ...prev };
-        delete next[peerId];
-        return next;
-      }
-      const existing = prev[peerId];
-      if (existing?.text === trimmed && (existing.replyToId ?? null) === (replyToId ?? null)) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [peerId]: {
-          text: trimmed,
-          replyToId: replyToId ?? null,
-          updatedAt: new Date().toISOString(),
-        },
-      };
-    });
+    setDrafts(prev => withDraft(prev, peerId, text, replyToId ?? null));
   }, []);
 
   /** Drop the draft for a conversation (on send, or when it is emptied). */
   const clearDraft = useCallback((peerId: string) => {
     if (!peerId) return;
-    setDrafts(prev => {
-      if (!prev[peerId]) return prev;
-      const next = { ...prev };
-      delete next[peerId];
-      return next;
-    });
+    setDrafts(prev => withoutDraft(prev, peerId));
   }, []);
 
   return {

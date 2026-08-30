@@ -1,6 +1,6 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
-import type { ChatMessage, ConversationSummary, OutboxItem } from '../hooks/useMessaging';
+import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
 import { errorMessage } from '../errors';
 
 /**

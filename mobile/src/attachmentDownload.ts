@@ -147,6 +147,61 @@ function hostOf(url: string): string {
 }
 
 /**
+ * One attempt, at one directory.
+ *
+ * Never throws: a transport failure, a non-2xx status and a storage failure
+ * all come back in the same result shape as a success, so the caller only has
+ * to decide whether another directory is worth trying.
+ */
+async function downloadToTarget(
+  target: { directory: string; label: string; primary: boolean; },
+  { url, fileName, onProgress }: {
+    url: string;
+    fileName: string;
+    onProgress?: (fraction: number) => void;
+  },
+): Promise<AttachmentDownloadResult> {
+  const path = `${target.directory}/${fileName}`;
+  try {
+    const job = RNFS.downloadFile({
+      fromUrl: url,
+      toFile: path,
+      progressDivider: 5,
+      progress: ({ bytesWritten, contentLength }: { bytesWritten?: number; contentLength?: number; }) => {
+        if (!contentLength || contentLength <= 0) return;
+        const fraction = Math.min(1, Math.max(0, (bytesWritten ?? 0) / contentLength));
+        logVerbose('[Attachments] download progress', { fileName, fraction });
+        onProgress?.(fraction);
+      },
+    });
+    const result = await job.promise;
+    const statusCode = result?.statusCode;
+    if (!result || statusCode < 200 || statusCode >= 300) {
+      throw Object.assign(new Error(`Download failed with status ${statusCode ?? 'unknown'}`), {
+        statusCode,
+      });
+    }
+    onProgress?.(1);
+    logInfo('[Attachments] download saved', {
+      label: target.label,
+      fileName,
+      usedFallback: !target.primary,
+    });
+    return { success: true, path, label: target.label, usedFallback: !target.primary };
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number })?.statusCode;
+    const reason = classifyFailure({ statusCode, error });
+    logWarn('[Attachments] download attempt failed', {
+      label: target.label,
+      reason,
+      statusCode,
+      error,
+    });
+    return { success: false, error, reason, statusCode };
+  }
+}
+
+/**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
@@ -193,47 +248,12 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
     // Without the grant the shared Downloads folder is not writable on legacy
     // Android, so skip straight to a directory this app always owns.
     if (target.shared && !permission.granted) continue;
-    const path = `${target.directory}/${fileName}`;
-    try {
-      const job = RNFS.downloadFile({
-        fromUrl: url,
-        toFile: path,
-        progressDivider: 5,
-        progress: ({ bytesWritten, contentLength }: { bytesWritten?: number; contentLength?: number; }) => {
-          if (!contentLength || contentLength <= 0) return;
-          const fraction = Math.min(1, Math.max(0, (bytesWritten ?? 0) / contentLength));
-          logVerbose('[Attachments] download progress', { fileName, fraction });
-          onProgress?.(fraction);
-        },
-      });
-      const result = await job.promise;
-      const statusCode = result?.statusCode;
-      if (!result || statusCode < 200 || statusCode >= 300) {
-        throw Object.assign(new Error(`Download failed with status ${statusCode ?? 'unknown'}`), {
-          statusCode,
-        });
-      }
-      onProgress?.(1);
-      logInfo('[Attachments] download saved', {
-        label: target.label,
-        fileName,
-        usedFallback: !target.primary,
-      });
-      return { success: true, path, label: target.label, usedFallback: !target.primary };
-    } catch (error) {
-      const statusCode = (error as { statusCode?: number })?.statusCode;
-      const reason = classifyFailure({ statusCode, error });
-      logWarn('[Attachments] download attempt failed', {
-        label: target.label,
-        reason,
-        statusCode,
-        error,
-      });
-      if (!firstFailure) firstFailure = { success: false, error, reason, statusCode };
-      // A rejected fetch fails identically wherever the bytes would land, so
-      // only a storage-side failure is worth retrying in another directory.
-      if (reason !== 'storage') break;
-    }
+    const attempt = await downloadToTarget(target, { url, fileName, onProgress });
+    if (attempt.success) return attempt;
+    if (!firstFailure) firstFailure = attempt;
+    // A rejected fetch fails identically wherever the bytes would land, so
+    // only a storage-side failure is worth retrying in another directory.
+    if (attempt.reason !== 'storage') break;
   }
 
   const failure =
