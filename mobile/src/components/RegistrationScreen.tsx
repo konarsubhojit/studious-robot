@@ -368,7 +368,7 @@ export default function RegistrationScreen({
           ) : (
             <MethodRegistrationStep
               email={email}
-              {...{ password }}
+              password={password}
               setEmail={setEmail}
               setPassword={setPassword}
               emailReady={emailReady}

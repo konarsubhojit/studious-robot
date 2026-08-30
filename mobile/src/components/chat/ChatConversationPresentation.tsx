@@ -401,7 +401,7 @@ function messageContentKind(message: ChatMessage): MessageContentKind {
    return 'video';
  }
  if (type === MESSAGE_TYPES.VOICE || isAudioMimeType(message.attachment?.mimeType)) return 'audio';
- if (type === MESSAGE_TYPES.VOICE || type === MESSAGE_TYPES.FILE) return 'attachment';
+ if (type === MESSAGE_TYPES.FILE) return 'attachment';
  return 'text';
 }
 
