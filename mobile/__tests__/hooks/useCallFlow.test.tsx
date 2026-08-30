@@ -4730,6 +4730,7 @@ describe('useCallFlow answer path', () => {
 
   test('a queued answer replay that throws is caught, not left an unhandled rejection, and cleans up CallKeep', async () => {
     const { endCall, clearPendingAnswer, peekPendingAnswer } = require('../../src/callKeep');
+    const { sendPushReceipt } = require('../../src/pushNotifications');
     mockFetch({
       '/calls/call-throws': { ok: false, status: 500, json: async () => ({}) },
     });
@@ -4754,10 +4755,17 @@ describe('useCallFlow answer path', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    // The throw is caught: the pending CallKeep entry is still cleared and the
-    // OS call UI is told to stop ringing/connecting rather than getting stuck.
+    // The throw is caught: the failure is reported, the pending CallKeep
+    // entry is still cleared, and the OS call UI is told to stop
+    // ringing/connecting rather than getting stuck.
     expect(peekPendingAnswer()).toBeNull();
     expect(endCall).toHaveBeenCalledWith('call-throws');
+    expect(sendPushReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        callId: 'call-throws',
+        stage: 'answer_failed',
+      }),
+    );
   });
 
   test('merges screen-audio-only remote streams into the active remote stream', async () => {
