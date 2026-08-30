@@ -348,15 +348,6 @@ function buildListItems(
 }
 
 /**
- * The content of one bubble: text, an inline attachment, a tombstone, or —
- * for a `type` this build does not know — a neutral placeholder.
- *
- * The placeholder is the compatibility contract: a message written by a newer
- * client must never blank out or crash an older one.
- *
- * @param props
- */
-/**
  * The inside of a bubble, for every message type there is.
  *
  * One geometry: an optional media block, then the body text, then an optional
@@ -366,6 +357,9 @@ function buildListItems(
  * caption below the picture while the file branch put its label above, and only
  * some of them left room for a download link. A bubble should look like a
  * bubble before you have read what is in it.
+ *
+ * The unsupported-message placeholder is a compatibility contract: a message
+ * written by a newer client must never blank out or crash an older one.
  *
  * @param props
  */
