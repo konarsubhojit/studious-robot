@@ -3478,6 +3478,18 @@ export default function useCallFlow({
       });
       reportAnswerStageRef.current?.(callUUID, 'answer_failed', replay.reason);
       clearPendingAnswer(callUUID, replay.reason);
+    }).catch(error => {
+      // A failed lookup/parse here would otherwise surface as an unhandled
+      // promise rejection on the incoming-call answer path — the worst
+      // possible moment for a redbox (dev) or silent breakage (release).
+      // Fail the answer the same way `acceptIncomingCall` does: log
+      // (redacted), report the stage, clear the queue, and end the pending
+      // CallKeep entry so the OS call UI doesn't get stuck ringing/connecting.
+      const reason = (error as AnswerError)?.answerFailureReason ?? 'rehydrate_failed';
+      logError('[CallFlow] Queued answer rehydrate failed', error);
+      reportAnswerStageRef.current?.(callUUID, 'answer_failed', reason);
+      clearPendingAnswer(callUUID, reason);
+      endCallKeepCall(callUUID);
     });
   }, []);
 

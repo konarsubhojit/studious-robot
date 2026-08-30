@@ -4728,6 +4728,38 @@ describe('useCallFlow answer path', () => {
     );
   });
 
+  test('a queued answer replay that throws is caught, not left an unhandled rejection, and cleans up CallKeep', async () => {
+    const { endCall, clearPendingAnswer, peekPendingAnswer } = require('../../src/callKeep');
+    mockFetch({
+      '/calls/call-throws': { ok: false, status: 500, json: async () => ({}) },
+    });
+
+    const { resultRef, tree } = await renderWithSocket();
+    const { setCallActionHandlers } = require('../../src/callKeep');
+    const { onAnswer } =
+      (setCallActionHandlers as jest.Mock).mock.calls[(setCallActionHandlers as jest.Mock).mock.calls.length - 1][0];
+
+    // Simulate a parser/lookup exception surfacing while the queued answer is
+    // replayed: the first `clearPendingAnswer` call (inside the replay
+    // decision) throws, which used to become an unhandled promise rejection.
+    (clearPendingAnswer as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+
+    await act(async () => {
+      onAnswer('call-throws');
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // The throw is caught: the pending CallKeep entry is still cleared and the
+    // OS call UI is told to stop ringing/connecting rather than getting stuck.
+    expect(peekPendingAnswer()).toBeNull();
+    expect(endCall).toHaveBeenCalledWith('call-throws');
+  });
+
   test('merges screen-audio-only remote streams into the active remote stream', async () => {
     const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
     const cameraTrack = { kind: 'video', id: 'cam-track' };
