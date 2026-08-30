@@ -17,7 +17,7 @@ import { mountRoutes } from '../routes/index.ts';
 import { registerSocketHandlers } from '../signaling/index.ts';
 import { isVerboseLoggingEnabled, verboseLog } from '../lib/verbose.ts';
 import { describeError } from '../lib/errors.ts';
-import { parseNonNegativeNumber } from '../lib/env.ts';
+import { parseByteSize, parseNonNegativeNumber } from '../lib/env.ts';
 import { setQueryTimingSink } from '../lib/queryTiming.ts';
 import type { CreateServerOptions } from './types.ts';
 
@@ -36,7 +36,11 @@ function createServer(opts: CreateServerOptions = {}) {
     throw new Error('createServer requires verifyIdToken outside the Node test runner');
   }
   const app = express();
-  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || DEFAULT_JSON_BODY_LIMIT }));
+  app.use(
+    express.json({
+      limit: parseByteSize('JSON_BODY_LIMIT', process.env.JSON_BODY_LIMIT, DEFAULT_JSON_BODY_LIMIT),
+    })
+  );
   app.use((req, res, next) => {
     // Bail before touching the request when verbose logging is off, which is
     // the production default. Building the metadata object (and enumerating
@@ -63,16 +67,18 @@ function createServer(opts: CreateServerOptions = {}) {
     next();
   });
 
-  const ringingTimeoutMs = Number(process.env.RINGING_TIMEOUT_MS) || DEFAULT_RINGING_TIMEOUT_MS;
+  const parseEnv = (name: string, fallback: number) =>
+    parseNonNegativeNumber(name, process.env[name], fallback);
+  const ringingTimeoutMs = parseEnv('RINGING_TIMEOUT_MS', DEFAULT_RINGING_TIMEOUT_MS);
   // Windows after which a call stuck in a non-terminal state is force-ended, so
   // no state can keep both participants busy forever (see domain/calls.js).
   const callTimeouts = {
     ringingTimeoutMs,
     mediaConnectTimeoutMs:
-      Number(process.env.MEDIA_CONNECT_TIMEOUT_MS) || DEFAULT_MEDIA_CONNECT_TIMEOUT_MS,
-    maxCallDurationMs: Number(process.env.MAX_CALL_DURATION_MS) || DEFAULT_MAX_CALL_DURATION_MS,
+      parseEnv('MEDIA_CONNECT_TIMEOUT_MS', DEFAULT_MEDIA_CONNECT_TIMEOUT_MS),
+    maxCallDurationMs: parseEnv('MAX_CALL_DURATION_MS', DEFAULT_MAX_CALL_DURATION_MS),
     heartbeatTimeoutMs:
-      Number(process.env.CALL_HEARTBEAT_TIMEOUT_MS) || DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS,
+      parseEnv('CALL_HEARTBEAT_TIMEOUT_MS', DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS),
   };
   // Parsed rather than `Number(env) || DEFAULT` so `0` reaches the scheduler
   // as "end the call as soon as the sockets are gone" instead of being read as
@@ -80,6 +86,7 @@ function createServer(opts: CreateServerOptions = {}) {
   const participantDisconnectGraceMs =
     opts.participantDisconnectGraceMs ??
     parseNonNegativeNumber(
+      'PARTICIPANT_DISCONNECT_GRACE_MS',
       process.env.PARTICIPANT_DISCONNECT_GRACE_MS,
       DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS
     );
@@ -87,35 +94,35 @@ function createServer(opts: CreateServerOptions = {}) {
   // ── Session TTL ──────────────────────────────────────────────────────────
   // When non-zero, sessions expire after this many milliseconds.  Pass via
   // opts (tests) or SESSION_TTL_MS env var (production).
-  const sessionTtlMs = opts.sessionTtlMs ?? (Number(process.env.SESSION_TTL_MS) || 0);
+  const sessionTtlMs = opts.sessionTtlMs ?? parseEnv('SESSION_TTL_MS', 0);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const callInitRateLimiter = createRateLimiter({
-    maxRequests: opts.callRateLimit ?? (Number(process.env.CALL_RATE_LIMIT) || 10),
-    windowMs: opts.callRateWindowMs ?? (Number(process.env.CALL_RATE_WINDOW_MS) || 60_000),
+    maxRequests: opts.callRateLimit ?? parseEnv('CALL_RATE_LIMIT', 10),
+    windowMs: opts.callRateWindowMs ?? parseEnv('CALL_RATE_WINDOW_MS', 60_000),
   });
   const rtcRateLimiter = createRateLimiter({
-    maxRequests: opts.rtcRateLimit ?? (Number(process.env.RTC_RATE_LIMIT) || 100),
-    windowMs: opts.rtcRateWindowMs ?? (Number(process.env.RTC_RATE_WINDOW_MS) || 10_000),
+    maxRequests: opts.rtcRateLimit ?? parseEnv('RTC_RATE_LIMIT', 100),
+    windowMs: opts.rtcRateWindowMs ?? parseEnv('RTC_RATE_WINDOW_MS', 10_000),
   });
   const turnCredentialsRateLimiter = createRateLimiter({
-    maxRequests: opts.turnRateLimit ?? (Number(process.env.TURN_CREDENTIALS_RATE_LIMIT) || 10),
+    maxRequests: opts.turnRateLimit ?? parseEnv('TURN_CREDENTIALS_RATE_LIMIT', 10),
     windowMs:
-      opts.turnRateWindowMs ?? (Number(process.env.TURN_CREDENTIALS_RATE_WINDOW_MS) || 60_000),
+      opts.turnRateWindowMs ?? parseEnv('TURN_CREDENTIALS_RATE_WINDOW_MS', 60_000),
   });
   const messageSendRateLimiter = createRateLimiter({
-    maxRequests: opts.messageRateLimit ?? (Number(process.env.MESSAGE_RATE_LIMIT) || 30),
-    windowMs: opts.messageRateWindowMs ?? (Number(process.env.MESSAGE_RATE_WINDOW_MS) || 60_000),
+    maxRequests: opts.messageRateLimit ?? parseEnv('MESSAGE_RATE_LIMIT', 30),
+    windowMs: opts.messageRateWindowMs ?? parseEnv('MESSAGE_RATE_WINDOW_MS', 60_000),
   });
   // Search fans out across every conversation a user takes part in, so it is
   // the most expensive read the API serves; it gets its own budget rather than
   // sharing the (much cheaper) send allowance.
   const messageSearchRateLimiter = createRateLimiter({
     maxRequests:
-      opts.messageSearchRateLimit ?? (Number(process.env.MESSAGE_SEARCH_RATE_LIMIT) || 30),
+      opts.messageSearchRateLimit ?? parseEnv('MESSAGE_SEARCH_RATE_LIMIT', 30),
     windowMs:
       opts.messageSearchRateWindowMs ??
-      (Number(process.env.MESSAGE_SEARCH_RATE_WINDOW_MS) || 60_000),
+      parseEnv('MESSAGE_SEARCH_RATE_WINDOW_MS', 60_000),
   });
 
   const telemetry = createTelemetry();
@@ -255,10 +262,10 @@ function createServer(opts: CreateServerOptions = {}) {
   // instead of the call being emitted into a dead socket (see config.js).
   const io = new Server(httpServer, {
     cors: { origin: corsOrigin },
-    pingInterval: Number(process.env.SOCKET_PING_INTERVAL_MS) || DEFAULT_SOCKET_PING_INTERVAL_MS,
-    pingTimeout: Number(process.env.SOCKET_PING_TIMEOUT_MS) || DEFAULT_SOCKET_PING_TIMEOUT_MS,
+    pingInterval: parseEnv('SOCKET_PING_INTERVAL_MS', DEFAULT_SOCKET_PING_INTERVAL_MS),
+    pingTimeout: parseEnv('SOCKET_PING_TIMEOUT_MS', DEFAULT_SOCKET_PING_TIMEOUT_MS),
     maxHttpBufferSize:
-      Number(process.env.SOCKET_MAX_BUFFER_BYTES) || DEFAULT_SOCKET_MAX_BUFFER_BYTES,
+      parseEnv('SOCKET_MAX_BUFFER_BYTES', DEFAULT_SOCKET_MAX_BUFFER_BYTES),
   });
 
   // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
@@ -290,10 +297,18 @@ function createServer(opts: CreateServerOptions = {}) {
   // survive parsing rather than being swallowed as falsy.
   const callRetentionMs =
     opts.callRetentionMs ??
-    parseNonNegativeNumber(process.env.CALL_RETENTION_MS, DEFAULT_CALL_RETENTION_MS);
+    parseNonNegativeNumber(
+      'CALL_RETENTION_MS',
+      process.env.CALL_RETENTION_MS,
+      DEFAULT_CALL_RETENTION_MS
+    );
   const maxRetainedCalls =
     opts.maxRetainedCalls ??
-    parseNonNegativeNumber(process.env.MAX_RETAINED_CALLS, DEFAULT_MAX_RETAINED_CALLS);
+    parseNonNegativeNumber(
+      'MAX_RETAINED_CALLS',
+      process.env.MAX_RETAINED_CALLS,
+      DEFAULT_MAX_RETAINED_CALLS
+    );
   const pollTimer = setInterval(() => {
     const now = Date.now();
     tickRingingTimeouts(
@@ -320,7 +335,7 @@ function createServer(opts: CreateServerOptions = {}) {
   // so age is the only signal available (see pruneStaleDevices).
   const staleDeviceMaxAgeMs =
     opts.staleDeviceMaxAgeMs ??
-    (Number(process.env.STALE_DEVICE_MAX_AGE_MS) || DEFAULT_STALE_DEVICE_MAX_AGE_MS);
+    parseEnv('STALE_DEVICE_MAX_AGE_MS', DEFAULT_STALE_DEVICE_MAX_AGE_MS);
   const deviceSweepTimer = setInterval(() => {
     pruneStaleDevices(db, state, { maxAgeMs: staleDeviceMaxAgeMs }).catch((err) => {
       console.error('[devices] stale device sweep failed:', (err as any)?.message);
@@ -329,7 +344,7 @@ function createServer(opts: CreateServerOptions = {}) {
   deviceSweepTimer.unref();
 
   const shutdownDrainMs =
-    opts.shutdownDrainMs ?? (Number(process.env.SHUTDOWN_DRAIN_MS) || DEFAULT_SHUTDOWN_DRAIN_MS);
+    opts.shutdownDrainMs ?? parseEnv('SHUTDOWN_DRAIN_MS', DEFAULT_SHUTDOWN_DRAIN_MS);
 
   /**
    * Resolves once shutdown has fully completed; shared for idempotency.

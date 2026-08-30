@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
-import { parseNonNegativeNumber } from '../src/lib/env.ts';
+import { parseByteSize, parseNonNegativeNumber } from '../src/lib/env.ts';
 import { closeTestServer, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -220,11 +220,37 @@ test('retention: MAX_RETAINED_CALLS=0 disables the ceiling instead of defaulting
   }
 });
 
-test('retention: a malformed window falls back to the default rather than to zero', () => {
-  assert.equal(parseNonNegativeNumber('0', 42), 0);
-  assert.equal(parseNonNegativeNumber('not-a-number', 42), 42);
-  assert.equal(parseNonNegativeNumber('-1', 42), 42);
-  assert.equal(parseNonNegativeNumber('', 42), 42);
-  assert.equal(parseNonNegativeNumber(undefined, 42), 42);
-  assert.equal(parseNonNegativeNumber('1500', 42), 1500);
+test('retention: numeric configuration accepts zero and rejects invalid values', () => {
+  assert.equal(parseNonNegativeNumber('TEST_VALUE', '0', 42), 0);
+  assert.equal(parseNonNegativeNumber('TEST_VALUE', undefined, 42), 42);
+  assert.equal(parseNonNegativeNumber('TEST_VALUE', '1500', 42), 1500);
+  for (const value of ['not-a-number', '-1', '', '1.5', 'Infinity']) {
+    assert.throws(
+      () => parseNonNegativeNumber('TEST_VALUE', value, 42),
+      /Invalid TEST_VALUE: expected a non-negative integer/
+    );
+  }
+});
+
+test('server startup rejects an invalid numeric environment setting', () => {
+  const previous = process.env.CALL_RATE_LIMIT;
+  process.env.CALL_RATE_LIMIT = '-1';
+  try {
+    assert.throws(
+      () => createServer(),
+      /Invalid CALL_RATE_LIMIT: expected a non-negative integer, received "-1"/
+    );
+  } finally {
+    if (previous === undefined) delete process.env.CALL_RATE_LIMIT;
+    else process.env.CALL_RATE_LIMIT = previous;
+  }
+});
+
+test('byte-size configuration accepts supported units and rejects invalid values', () => {
+  assert.equal(parseByteSize('JSON_BODY_LIMIT', undefined, '64kb'), '64kb');
+  assert.equal(parseByteSize('JSON_BODY_LIMIT', '128KB', '64kb'), '128KB');
+  assert.throws(
+    () => parseByteSize('JSON_BODY_LIMIT', '-1kb', '64kb'),
+    /Invalid JSON_BODY_LIMIT: expected a non-negative byte size/
+  );
 });
