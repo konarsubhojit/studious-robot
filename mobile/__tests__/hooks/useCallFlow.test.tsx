@@ -211,6 +211,7 @@ jest.mock('../../src/ringerMode', () => ({
 jest.mock('../../src/haptics', () => ({
   initHaptics: jest.fn(() => jest.fn()),
   triggerHaptic: jest.fn(),
+  triggerHapticUnlessSilent: jest.fn(async () => true),
 }));
 
 jest.mock('../../src/pushNotifications', () => ({
