@@ -177,11 +177,9 @@ const TERMINAL_CALL_STATUSES = new Set([
 ]);
 
 
-/**
- * Backoff, glare tie-break and precondition-retry timing for the ICE-restart
- * ladder now live in `call/iceRestartLadder.ts`, alongside the rules that use
- * them, so both can be unit-tested without mounting this hook.
- */
+// Backoff, glare tie-break and precondition-retry timing for the ICE-restart
+// ladder now live in `call/iceRestartLadder.ts`, alongside the rules that use
+// them, so both can be unit-tested without mounting this hook.
 
 /**
  * How long connectivity must settle before a network change triggers a
