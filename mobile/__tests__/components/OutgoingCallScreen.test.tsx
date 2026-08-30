@@ -60,6 +60,20 @@ describe('OutgoingCallScreen', () => {
       );
     });
     expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
+
+    // A warning is news too — a degraded connection attempt is exactly what
+    // this screen must not swallow while it says "Calling…".
+    act(() => {
+      tree.update(
+        <OutgoingCallScreen
+          calleeId="bob"
+          activeCall={makeCall()}
+          status={{ message: 'Retrying over a different connection…', severity: 'warning' } as any}
+          onCancel={jest.fn()}
+        />,
+      );
+    });
+    expect(tree.root.findAllByType('StatusBanner')).toHaveLength(1);
   });
 
   test('says the callee is ringing rather than only counting down', () => {
@@ -94,7 +108,7 @@ describe('OutgoingCallScreen', () => {
     });
     const [node] = tree.root.findAll((n: any) => n.props.testID === 'outgoing-countdown');
     expect(String(node.props.children)).toMatch(/^Waking their phone · /);
-    expect(node.props.accessibilityLabel).toBe('Waking their phone. Rings for 30s');
+    expect(node.props.accessibilityLabel).toBe('Waking their phone, 30s left');
   });
 
   test('still says how the callee is being reached without a ring window', () => {

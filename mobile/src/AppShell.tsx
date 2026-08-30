@@ -26,6 +26,7 @@ import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 import { spacing } from './theme';
 import type { RecoveryAnnouncementState } from './accessibilityAnnouncer';
+import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
 
 /**
@@ -262,7 +263,7 @@ function useRecoveryAnnouncements(
  * The summary is a banner above a tab shell the user has just been dropped
  * back into, so nothing moves focus to it.
  */
-function useCallEndAnnouncements(summary: ReturnType<typeof useCall>['callFlow']['callSummary']) {
+function useCallEndAnnouncements(summary: CallEndSummaryData | null) {
   const announcedRef = useRef((null as typeof summary));
 
   useEffect(() => {

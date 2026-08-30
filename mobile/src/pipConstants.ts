@@ -13,6 +13,9 @@ export type PipChromeInsets = {
 
 export type PipBounds = { minX: number; maxX: number; minY: number; maxY: number; };
 
+/** No chrome measured yet, i.e. the whole stage is available. */
+export const NO_PIP_CHROME: PipChromeInsets = Object.freeze({ top: 0, bottom: 0 });
+
 /**
  * The region of the stage the self-view may occupy.
  *
@@ -28,7 +31,7 @@ export type PipBounds = { minX: number; maxX: number; minY: number; maxY: number
  */
 export function resolvePipBounds(
   stageSize: { width: number; height: number; },
-  chrome: PipChromeInsets = { top: 0, bottom: 0 },
+  chrome: PipChromeInsets = NO_PIP_CHROME,
 ): PipBounds {
   const minX = PIP_MARGIN;
   const minY = PIP_MARGIN + Math.max(0, chrome.top);

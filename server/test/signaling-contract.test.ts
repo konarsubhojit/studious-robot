@@ -116,6 +116,59 @@ test('call.initiate notifies the callee and caller with versioned call events', 
   }
 });
 
+test('call.ringing tells the caller whether the callee rang or was only pushed', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'user-alice');
+  const calleeSession = await createSession(url, 'user-bob');
+  const intruderSession = await createSession(url, 'user-carol');
+  // The callee deliberately has no socket yet: every device is asleep, so the
+  // call can only be delivered by a push that has to wake one.
+  const caller = await connect(url, { sessionId: callerSession });
+  let callee: import('socket.io-client').Socket | null = null;
+  let intruder: import('socket.io-client').Socket | null = null;
+
+  try {
+    const ringingPromise = waitFor(caller, 'call.ringing');
+    const ack = await emitWithAck(caller, 'call.initiate', {
+      version: 1,
+      calleeId: 'user-bob',
+    });
+    assert.equal(ack.ok, true);
+
+    const pushRinging = await ringingPromise;
+    assert.equal(pushRinging.delivery, 'push');
+
+    // The pushed device wakes and acknowledges: the caller is owed the news
+    // that the push landed, so the screen stops saying "waking their phone".
+    const wokeRingingPromise = waitFor(caller, 'call.ringing');
+    callee = await connect(url, { sessionId: calleeSession });
+    const ackResult = await emitWithAck(callee, 'call.incoming.ack', {
+      version: 1,
+      callId: ack.call.callId,
+      deviceId: 'device-user-bob',
+    });
+    assert.equal(ackResult.ok, true);
+
+    const wokeRinging = await wokeRingingPromise;
+    assert.equal(wokeRinging.callId, ack.call.callId);
+    assert.equal(wokeRinging.delivery, 'ringing');
+
+    // Nobody else may claim the callee's phone is ringing, even knowing the id.
+    intruder = await connect(url, { sessionId: intruderSession });
+    const forged = emitWithAck(intruder, 'call.incoming.ack', {
+      version: 1,
+      callId: ack.call.callId,
+      deviceId: 'device-user-carol',
+    });
+    await assert.rejects(
+      Promise.all([forged, waitFor(caller, 'call.ringing', 250)]),
+      /Timeout waiting for "call.ringing"/
+    );
+  } finally {
+    await teardown(caller, ...(callee ? [callee] : []), ...(intruder ? [intruder] : []));
+  }
+});
+
 test('accepted calls relay rtc.offer/answer/candidate only to the other participant', async () => {
   const { url, teardown } = await startServer();
   const callerSession = await createSession(url, 'user-alice');

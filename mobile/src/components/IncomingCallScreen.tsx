@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { deriveInitials, formatRingCountdown } from '../callUx';
+import { deriveInitials, describeRingCountdown } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
@@ -79,6 +79,8 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
     };
   }, [ringTimeoutAt]);
 
+  const countdown = describeRingCountdown('Ringing', secondsLeft);
+
   return (
     <View style={styles.container} testID="incoming-call-screen">
       {/* ── Header ────────────────────────────────────────────────────────── */}
@@ -102,13 +104,9 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
         {ringTimeoutAt ? (
           <Text
             style={styles.countdown}
-            accessibilityLabel={
-              secondsLeft > 0
-                ? `Rings for ${formatRingCountdown(secondsLeft)}`
-                : 'The call timed out'
-            }
+            accessibilityLabel={countdown.spoken}
             testID="incoming-countdown">
-            {secondsLeft > 0 ? `Ringing · ${formatRingCountdown(secondsLeft)} left` : 'Timed out'}
+            {countdown.text}
           </Text>
         ) : null}
       </View>
@@ -174,9 +172,10 @@ export default function IncomingCallScreen({ incomingCall, status, onAccept, onD
         )}
       </View>
 
-      {/* Only problems: while a call rings, an informational status merely
-          repeats the header and the caller's name. */}
-      {status?.severity === 'error' ? <StatusBanner status={status} /> : null}
+      {/* Problems only: while a call rings, an informational status merely
+          repeats the header and the caller's name. Warnings stay — "answering
+          without a camera" is exactly the news this screen must not eat. */}
+      {status?.severity && status.severity !== 'info' ? <StatusBanner status={status} /> : null}
     </View>
   );
 }

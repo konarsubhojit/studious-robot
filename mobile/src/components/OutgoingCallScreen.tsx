@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { deriveInitials, formatRingCountdown } from '../callUx';
+import { deriveInitials, describeRingCountdown } from '../callUx';
 import { useThemedStyles } from '../ThemeContext';
 import { spacing } from '../theme';
 import IconButton from './IconButton';
@@ -91,7 +91,7 @@ export default function OutgoingCallScreen({ calleeId, activeCall, delivery = nu
     };
   }, [ringTimeoutAt]);
 
-  const countdownLabel = describeCountdown(deliveryLabel, secondsLeft);
+  const countdown = describeRingCountdown(deliveryLabel ?? 'Ringing', secondsLeft);
 
   return (
     <View style={styles.container} testID="outgoing-call-screen">
@@ -116,15 +116,9 @@ export default function OutgoingCallScreen({ calleeId, activeCall, delivery = nu
         {ringTimeoutAt ? (
           <Text
             style={styles.countdown}
-            accessibilityLabel={
-              secondsLeft > 0
-                ? `${deliveryLabel ? `${deliveryLabel}. ` : ''}Rings for ${formatRingCountdown(
-                    secondsLeft,
-                  )}`
-                : 'The call timed out'
-            }
+            accessibilityLabel={countdown.spoken}
             testID="outgoing-countdown">
-            {countdownLabel}
+            {countdown.text}
           </Text>
         ) : deliveryLabel ? (
           <Text style={styles.countdown} testID="outgoing-delivery">
@@ -147,18 +141,12 @@ export default function OutgoingCallScreen({ calleeId, activeCall, delivery = nu
         />
       </View>
 
-      {status?.severity === 'error' ? <StatusBanner status={status} /> : null}
+      {/* Problems only: while a call rings, an informational status merely
+          repeats the header and the callee's name. Warnings stay — a degraded
+          answer path is exactly the news this screen must not eat. */}
+      {status?.severity && status.severity !== 'info' ? <StatusBanner status={status} /> : null}
     </View>
   );
-}
-
-/**
- * The one line that says what is happening and how long it has left, e.g.
- * "Waking their phone · 1:58 left".
- */
-function describeCountdown(deliveryLabel: string | null, secondsLeft: number): string {
-  if (secondsLeft <= 0) return 'Timed out';
-  return `${deliveryLabel ?? 'Ringing'} · ${formatRingCountdown(secondsLeft)} left`;
 }
 
 /** @param colors */

@@ -171,6 +171,26 @@ export function formatRingCountdown(totalSeconds: number): string {
 }
 
 /**
+ * The one line a ringing screen shows: what is happening, and how much of the
+ * ring window is left — e.g. "Waking their phone · 1:58 left".
+ *
+ * The spoken form is returned alongside the written one so the accessible name
+ * contains the words on screen (WCAG 2.5.3), with the interpunct — which a
+ * screen reader either skips or reads as "middle dot" — replaced by a comma.
+ *
+ * @param stateLabel - what the call is doing, e.g. "Ringing".
+ * @param secondsLeft - seconds remaining in the ring window.
+ */
+export function describeRingCountdown(
+  stateLabel: string,
+  secondsLeft: number,
+): { text: string; spoken: string; } {
+  if (secondsLeft <= 0) return { text: 'Timed out', spoken: 'The call timed out' };
+  const remaining = `${formatRingCountdown(secondsLeft)} left`;
+  return { text: `${stateLabel} · ${remaining}`, spoken: `${stateLabel}, ${remaining}` };
+}
+
+/**
  * @returns up to two uppercase initials, `?` when unknown.
  */
 export function deriveInitials(id: string | null | undefined): string {

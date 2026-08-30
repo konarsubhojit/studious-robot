@@ -1923,7 +1923,9 @@ export default function useCallFlow({
 
       // A call whose media never came back ends as a plain `ended` like any
       // hangup, so the local knowledge that recovery was exhausted outranks the
-      // reason that came back over the wire.
+      // reason that came back over the wire. This is deliberately the reason
+      // recorded in call history too: the timeline should say "Connection lost"
+      // for the call the user just watched die, not "Call ended".
       const resolvedReason = isConnectionLostRef.current
         ? 'media_failed'
         : endReason ?? callRecord?.endReason ?? null;

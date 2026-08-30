@@ -327,7 +327,7 @@ function registerSocketHandlers(
       markIncomingCallAcknowledged(state, callId, deviceId);
       // The callee's device is awake and ringing: the caller was told a push
       // had been sent, and is owed the news that it landed.
-      notifyIncomingCallAcknowledged(io, state, callId);
+      notifyIncomingCallAcknowledged(io, state, callId, identity.userId);
       logCallCorrelation(socket, callId, CLIENT_EVENTS.CALL_INCOMING_ACK);
       acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INCOMING_ACK, { callId, deviceId });
     });

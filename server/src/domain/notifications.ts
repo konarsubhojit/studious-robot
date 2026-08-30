@@ -346,12 +346,18 @@ function notifyCallRinging(io: any, state: ServerState, call: CallRecord): void 
  * Re-tell the caller once a pushed device has acknowledged the call: it has
  * woken up, so the call is ringing on it rather than still in transit.
  *
+ * Only the callee may say this. The ack carries a client-supplied `callId`, so
+ * without the check any authenticated user who learned a live call id could
+ * tell its caller that a phone was ringing when nothing was.
+ *
  * @param io Socket.IO server.
+ * @param userId the acknowledging socket's identity.
  */
-function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: string | null | undefined): void {
+function notifyIncomingCallAcknowledged(io: any, state: ServerState, callId: string | null | undefined, userId: string | null | undefined): void {
   if (!callId) return;
   const call = state.calls.get(callId);
   if (!call || call.status !== 'ringing') return;
+  if (!userId || call.calleeId !== userId) return;
   emitToUserSockets(io, call.callerId, SERVER_EVENTS.CALL_RINGING, {
     ...createCallEnvelope(call),
     delivery: 'ringing',

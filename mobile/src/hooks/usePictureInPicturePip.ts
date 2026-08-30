@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { clamp } from '../callUx';
-import { PIP_MARGIN, resolvePipBounds } from '../pipConstants';
+import { NO_PIP_CHROME, PIP_MARGIN, resolvePipBounds } from '../pipConstants';
 import type { PipChromeInsets } from '../pipConstants';
 import useReducedMotion from './useReducedMotion';
 
@@ -52,7 +52,7 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   // The chrome drawn over the stage. Measured rather than assumed: the top
   // group grows by a whole banner the moment a call starts recovering.
-  const [chromeInsets, setChromeInsets] = useState(({ top: 0, bottom: 0 } as PipChromeInsets));
+  const [chromeInsets, setChromeInsets] = useState((NO_PIP_CHROME as PipChromeInsets));
   const hasDefaultPositioned = useRef(false);
 
   const pipX = useSharedValue(PIP_MARGIN);
@@ -120,6 +120,9 @@ export default function usePictureInPicturePip({ onTap }: { onTap: () => void; }
     setStageSize(current =>
       current.width === width && current.height === height ? current : { width, height },
     );
+    // The stage is gone, so the chrome that was over it is too: keeping its
+    // heights would hand the next call the previous one's safe region.
+    if (width === 0 || height === 0) setChromeInsets(NO_PIP_CHROME);
   }, []);
 
   /**
