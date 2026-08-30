@@ -141,6 +141,34 @@ describe('CallControls screen sharing', () => {
     expect(findByTestId(tree, 'control-video').props.disabled).toBe(true);
   });
 
+  test('the indicator settles once frames are confirmed to reach the peer', () => {
+    const tree = render(
+      createProps({
+        onScreenShareToggle: jest.fn(),
+        isScreenSharing: true,
+        screenShareDelivery: 'confirmed',
+      }),
+    );
+
+    expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
+      'Sharing — they can see your screen',
+    );
+  });
+
+  test('the indicator says it is still checking before the first frame lands', () => {
+    const tree = render(
+      createProps({
+        onScreenShareToggle: jest.fn(),
+        isScreenSharing: true,
+        screenShareDelivery: 'checking',
+      }),
+    );
+
+    expect(findByTestId(tree, 'screen-share-indicator').props.children).toBe(
+      'Sharing screen — checking they can see it',
+    );
+  });
+
   test('leave stays on the surface, never inside the More sheet', () => {
     const tree = render(createProps({ onScreenShareToggle: jest.fn() }));
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
+import { triggerHapticUnlessSilent } from '../haptics';
 import {
   dismissMessageNotification,
   markMessageSeen,
@@ -681,6 +682,13 @@ export default function useMessaging({
 
     if (allSent) {
       drainAttemptRef.current = 0;
+      // The message the user just sent is now the server's problem, and they
+      // are told without having to look at the screen. Only a single-item
+      // drain buzzes: a reconnect that replays a backlog would otherwise
+      // rattle once per queued message, which is noise, not feedback.
+      if (queue.length === 1) {
+        triggerHapticUnlessSilent('messageSent');
+      }
     } else if (outboxRef.current.some(isRetryable)) {
       scheduleDrain();
     }

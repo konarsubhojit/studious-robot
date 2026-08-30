@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logError, logInfo, logWarn } from '../appLogger';
 import type { CallStatus } from '../components/StatusBanner';
+import type { ScreenShareDelivery } from '../callUx';
 import { errorMessage } from '../errors';
 import {
   isScreenShareSupported,
@@ -43,6 +44,11 @@ export default function useScreenShare({
 }: UseScreenShareParams) {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isScreenAudioShared, setIsScreenAudioShared] = useState(false);
+  // The frame verification already runs on every share; this publishes its
+  // result so the sharer gets the positive confirmation too, not only the
+  // "no frames" failure.
+  const [screenShareDelivery, setScreenShareDelivery] =
+    useState<ScreenShareDelivery>('idle');
   // User preference: include screen (system) audio with the next share.
   const [isScreenAudioEnabled, setIsScreenAudioEnabled] = useState(false);
 
@@ -84,6 +90,7 @@ export default function useScreenShare({
       if (!screenStream && !screenVideoTrack) {
         setIsScreenSharing(false);
         setIsScreenAudioShared(false);
+        setScreenShareDelivery('idle');
         return;
       }
 
@@ -130,6 +137,7 @@ export default function useScreenShare({
       stopScreenCapture(screenStream);
       setIsScreenSharing(false);
       setIsScreenAudioShared(false);
+      setScreenShareDelivery('idle');
       logInfo('Screen sharing stopped');
 
       if (!silent) {
@@ -235,6 +243,7 @@ export default function useScreenShare({
 
       setIsScreenSharing(true);
       setIsScreenAudioShared(audioShared);
+      setScreenShareDelivery('checking');
 
       try {
         await renegotiateRef.current?.();
@@ -260,6 +269,13 @@ export default function useScreenShare({
         return;
       }
 
+      // Frames were counted, so the share can be *settled* rather than left
+      // looking like it is still starting. An unreadable stats report is not a
+      // failure, but it is not a confirmation either.
+      if (screenStreamRef.current === stream) {
+        setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
+      }
+
       if (isScreenAudioEnabled && !audioShared) {
         setStatus('Sharing screen (screen audio unavailable on this device)', 'warning');
       } else {
@@ -277,6 +293,7 @@ export default function useScreenShare({
       }
       setIsScreenSharing(false);
       setIsScreenAudioShared(false);
+      setScreenShareDelivery('idle');
       setStatus('Unable to start screen sharing', 'error');
     }
   }, [
@@ -342,6 +359,7 @@ export default function useScreenShare({
     isTogglingScreenShare,
     isScreenAudioShared,
     isScreenAudioEnabled,
+    screenShareDelivery,
     isScreenShareSupported: isScreenShareSupported(),
     startScreenShare,
     stopScreenShare,

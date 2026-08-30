@@ -327,9 +327,15 @@ export default function CallsScreen({
               ? 'Calls you miss will be listed here.'
               : 'Call someone and it will show up here.'
           }
-          // No action here: the FAB below is the screen's one primary action,
-          // and an empty state that repeats it in the same accent colour 200px
-          // away makes whichever the user reaches for the wrong one.
+          // No `actionLabel` here: the FAB below is the screen's one primary
+          // action, and an empty state that repeats it in the same accent
+          // colour 200px away makes whichever the user reaches for the wrong
+          // one. The search link is low-emphasis on purpose: it is the way out
+          // for someone who has no one to call yet, which the FAB's picker
+          // cannot offer them.
+          linkLabel={onOpenSearch ? 'Search for people' : undefined}
+          onLinkPress={onOpenSearch}
+          linkHint="Search people, conversations, messages and calls"
           testID="calls-empty"
         />
       )}

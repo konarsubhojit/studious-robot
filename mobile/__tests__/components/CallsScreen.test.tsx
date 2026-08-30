@@ -208,6 +208,22 @@ describe('CallsScreen – All / Missed filter', () => {
     expect(announceForAccessibility).toHaveBeenCalledWith('Showing missed calls');
   });
 
+  test('the empty log points at search without competing with the FAB', () => {
+    const onOpenSearch = jest.fn();
+    const tree = render({ callHistory: [], onOpenSearch });
+
+    const empty = byTestID(tree, 'calls-empty').find((n: any) => typeof n.type === 'function');
+    // The FAB keeps the screen's single primary action; the route to someone
+    // you have never called is a text link, not a second filled button.
+    expect(empty.props.actionLabel).toBeUndefined();
+
+    const link = pressable(tree, 'calls-empty-link');
+    act(() => {
+      link.props.onPress();
+    });
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
   test('an empty Missed filter reads as "no missed calls", not "no calls yet"', () => {
     const tree = render({ callHistory: [call({ callId: 'answered' })] });
 

@@ -1,5 +1,6 @@
 import {
   clamp,
+  describeScreenShareDelivery,
   formatCallDuration,
   formatRingCountdown,
   getConnectionQuality,
@@ -219,5 +220,28 @@ describe('smoothConnectionQuality', () => {
     let state = smoothConnectionQuality(null, poor);
     state = smoothConnectionQuality(state, fair);
     expect(state.reported).toEqual(fair);
+  });
+});
+
+describe('describeScreenShareDelivery', () => {
+  test('says the share is still being checked before the first frame lands', () => {
+    expect(describeScreenShareDelivery('checking')).toBe(
+      'Sharing screen — checking they can see it',
+    );
+  });
+
+  test('confirms the peer is receiving frames once they have been counted', () => {
+    expect(describeScreenShareDelivery('confirmed')).toBe('Sharing — they can see your screen');
+    expect(describeScreenShareDelivery('confirmed', true)).toBe(
+      'Sharing with audio — they can see your screen',
+    );
+  });
+
+  test('never promises visibility it could not verify', () => {
+    // Unreadable stats are not a failure, but they are not a confirmation
+    // either: the label falls back to describing this device's own state.
+    expect(describeScreenShareDelivery('unverified')).toBe('Sharing screen');
+    expect(describeScreenShareDelivery('unverified', true)).toBe('Sharing screen with audio');
+    expect(describeScreenShareDelivery(undefined, true)).toBe('Sharing screen with audio');
   });
 });

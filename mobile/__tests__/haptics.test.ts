@@ -5,7 +5,13 @@ import {
   resetHapticsForTests,
   setHapticsEnabled,
   triggerHaptic,
+  triggerHapticUnlessSilent,
 } from '../src/haptics';
+import { shouldVibrateForRing } from '../src/ringerMode';
+
+jest.mock('../src/ringerMode', () => ({
+  shouldVibrateForRing: jest.fn(async () => true),
+}));
 
 describe('haptics', () => {
   let vibrateSpy: jest.SpyInstance;
@@ -67,5 +73,47 @@ describe('haptics', () => {
 
     expect(triggerHaptic('tap')).toBe(true);
     expect(isReduceMotionEnabled).not.toHaveBeenCalled();
+  });
+});
+
+describe('triggerHapticUnlessSilent', () => {
+  beforeEach(() => {
+    resetHapticsForTests();
+    jest.clearAllMocks();
+    jest.spyOn(Vibration, 'vibrate').mockImplementation(() => {});
+    (shouldVibrateForRing as jest.Mock).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    resetHapticsForTests();
+  });
+
+  test('buzzes when the phone is not on silent', async () => {
+    await expect(triggerHapticUnlessSilent('messageSent')).resolves.toBe(true);
+    expect(Vibration.vibrate).toHaveBeenCalledWith(HAPTIC_PATTERNS.messageSent);
+  });
+
+  test('stays still on a silenced phone', async () => {
+    (shouldVibrateForRing as jest.Mock).mockResolvedValue(false);
+
+    await expect(triggerHapticUnlessSilent('messageSent')).resolves.toBe(false);
+    expect(Vibration.vibrate).not.toHaveBeenCalled();
+  });
+
+  test('still buzzes when the ringer state cannot be read', async () => {
+    // An unknown ringer (iOS, or a missing native module) must not silence
+    // feedback everywhere it cannot be measured.
+    (shouldVibrateForRing as jest.Mock).mockRejectedValue(new Error('no native module'));
+
+    await expect(triggerHapticUnlessSilent('messageSent')).resolves.toBe(true);
+  });
+
+  test('the user preference wins over the ringer, and costs no native call', async () => {
+    setHapticsEnabled(false);
+
+    await expect(triggerHapticUnlessSilent('messageSent')).resolves.toBe(false);
+    expect(shouldVibrateForRing).not.toHaveBeenCalled();
+    expect(Vibration.vibrate).not.toHaveBeenCalled();
   });
 });

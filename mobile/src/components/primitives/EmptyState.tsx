@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../../ThemeContext';
 import { sizes, spacing, typography } from '../../theme';
 import AppButton from '../AppButton';
@@ -15,6 +15,14 @@ export type EmptyStateProps = {
   actionLabel?: string;
   onAction?: () => void;
   actionHint?: string;
+  /**
+   * Low-emphasis secondary route out, rendered as a text link rather than a
+   * filled button so it never competes with a screen's primary action (a FAB,
+   * or `actionLabel` above).
+   */
+  linkLabel?: string;
+  onLinkPress?: () => void;
+  linkHint?: string;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 };
@@ -37,6 +45,9 @@ export default function EmptyState({
   actionLabel,
   onAction,
   actionHint,
+  linkLabel,
+  onLinkPress,
+  linkHint,
   style,
   testID,
 }: EmptyStateProps) {
@@ -62,6 +73,17 @@ export default function EmptyState({
           style={styles.action}
           testID={testID ? `${testID}-action` : undefined}
         />
+      ) : null}
+      {linkLabel && onLinkPress ? (
+        <Pressable
+          onPress={onLinkPress}
+          accessibilityRole="button"
+          accessibilityLabel={linkLabel}
+          accessibilityHint={linkHint}
+          style={styles.link}
+          testID={testID ? `${testID}-link` : undefined}>
+          <Text style={styles.linkText}>{linkLabel}</Text>
+        </Pressable>
       ) : null}
     </View>
   );
@@ -100,5 +122,15 @@ const createStyles = (colors: ThemeColors) =>
       flex: 0,
       minWidth: sizes.minTouchTarget * 3,
       marginTop: spacing.sm,
+    },
+    link: {
+      minHeight: sizes.minTouchTarget,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+    },
+    linkText: {
+      ...typography.label,
+      color: colors.accent,
+      textAlign: 'center',
     },
   });

@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useThemedStyles } from '../ThemeContext';
 import { fontScaleCaps, spacing, typography } from '../theme';
+import { describeScreenShareDelivery } from '../callUx';
 import AudioOutputMenu from './AudioOutputMenu';
 import IconButton from './IconButton';
 import { ListItem, Sheet } from './primitives';
+import type { ScreenShareDelivery } from '../callUx';
 import type { ThemeColors } from '../theme';
 
 export type CallControlsProps = {
@@ -18,6 +20,8 @@ export type CallControlsProps = {
   isTogglingScreenShare?: boolean;
   isScreenAudioEnabled?: boolean;
   isScreenAudioShared?: boolean;
+  /** How far the share has got towards reaching the remote peer. */
+  screenShareDelivery?: ScreenShareDelivery;
   isScreenShareSupported?: boolean;
   onMuteToggle: () => void;
   onVideoToggle: () => void;
@@ -51,6 +55,7 @@ export default function CallControls({
   isTogglingScreenShare = false,
   isScreenAudioEnabled = false,
   isScreenAudioShared = false,
+  screenShareDelivery = 'idle',
   isScreenShareSupported = true,
   onMuteToggle,
   onVideoToggle,
@@ -129,7 +134,7 @@ export default function CallControls({
           style={styles.sharingLabel}
           maxFontSizeMultiplier={fontScaleCaps.control}
           testID="screen-share-indicator">
-          {isScreenAudioShared ? 'Sharing screen with audio' : 'Sharing screen'}
+          {describeScreenShareDelivery(screenShareDelivery, isScreenAudioShared)}
         </Text>
       ) : null}
 

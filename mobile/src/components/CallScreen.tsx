@@ -57,6 +57,7 @@ export default function CallScreen({
   isTogglingScreenShare,
   isScreenAudioEnabled,
   isScreenAudioShared,
+  screenShareDelivery,
   isScreenShareSupported,
   isRemoteScreenSharing = false,
   onMuteToggle,
@@ -281,6 +282,7 @@ export default function CallScreen({
               isTogglingScreenShare={isTogglingScreenShare}
               isScreenAudioEnabled={isScreenAudioEnabled}
               isScreenAudioShared={isScreenAudioShared}
+              screenShareDelivery={screenShareDelivery}
               isScreenShareSupported={isScreenShareSupported}
               onMuteToggle={onMuteToggle}
               onVideoToggle={onVideoToggle}

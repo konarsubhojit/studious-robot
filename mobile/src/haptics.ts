@@ -1,4 +1,5 @@
 import { Vibration } from 'react-native';
+import { shouldVibrateForRing } from './ringerMode';
 
 /**
  * Named haptic patterns used across the call experience, expressed as
@@ -19,6 +20,13 @@ export const HAPTIC_PATTERNS = {
   end: 40,
   /** Attention-grabbing buzz that accompanies the incoming-call UI. */
   incomingRing: 400,
+  /**
+   * The lightest pattern in the set: a message left the device and the server
+   * acknowledged it. Deliberately shorter than `tap` — it fires while the
+   * phone is often already back in a pocket, and it must never read as an
+   * alert.
+   */
+  messageSent: 10,
 };
 
 /**
@@ -69,6 +77,33 @@ export function triggerHaptic(pattern: keyof typeof HAPTIC_PATTERNS): boolean {
     // best-effort
     return false;
   }
+}
+
+/**
+ * Fires the named haptic pattern unless the phone is on silent.
+ *
+ * The user preference still applies first. On top of it, this consults the
+ * device ringer: a phone flicked to silent is asking for stillness as well as
+ * quiet, and a buzz in a meeting is worse than no feedback at all. Vibrate
+ * mode buzzes, and an unknown mode (iOS, or a missing native module) buzzes
+ * too — refusing on "unknown" would silence the feedback everywhere it cannot
+ * be measured.
+ *
+ * Reading the ringer is a native round trip, so this is asynchronous and must
+ * never gate anything the user is waiting on.
+ *
+ * @returns true when a vibration was actually triggered.
+ */
+export async function triggerHapticUnlessSilent(
+  pattern: keyof typeof HAPTIC_PATTERNS,
+): Promise<boolean> {
+  if (!hapticsEnabled) return false;
+  try {
+    if (!(await shouldVibrateForRing())) return false;
+  } catch {
+    // Ringer state is advisory; an unreadable one must not lose the feedback.
+  }
+  return triggerHaptic(pattern);
 }
 
 /** Test-only: resets the cached preference to its default. */
