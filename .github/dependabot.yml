@@ -1,3 +1,5 @@
+# Leaf dependencies are grouped; toolchain roots whose minor releases carry breaking
+# changes are excluded so they arrive as individually reviewable PRs.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -9,6 +11,9 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns:
+          - typescript
+          - "@types/node"
   - package-ecosystem: npm
     directory: /mobile
     schedule:
@@ -18,6 +23,21 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns:
+          - react-native
+          - "@react-native/*"
+          - "@react-native-community/*"
+          - react-native-gesture-handler
+          - react-native-reanimated
+          - react-native-worklets
+          - react-native-webrtc
+          - react-native-incall-manager
+          - react-native-callkeep
+          - "@react-native-firebase/*"
+          - "@babel/*"
+          - react
+          - react-test-renderer
+          - "metro*"
   - package-ecosystem: gradle
     directory: /mobile/android
     schedule:
@@ -27,6 +47,8 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns:
+          - gradle-wrapper
   - package-ecosystem: github-actions
     directory: /
     schedule:
