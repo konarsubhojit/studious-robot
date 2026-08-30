@@ -218,15 +218,11 @@ async function verifyScreenShareDelivery({
   if (screenStreamRef.current === stream) {
     setScreenShareDelivery(frameCheck.ok && frameCheck.verified ? 'confirmed' : 'unverified');
   }
-  if (audioFallbackReason) {
+  if (audioFallbackReason || (isScreenAudioEnabled && !audioShared)) {
     setStatus(
-      `Screen sharing started without system audio: audio capture ${audioFallbackReason}.`,
+      `Screen sharing started without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
       'warning',
     );
-    return;
-  }
-  if (isScreenAudioEnabled && !audioShared) {
-    setStatus('Screen sharing started without system audio: audio capture unsupported.', 'warning');
     return;
   }
   setStatus(audioShared ? 'Sharing screen with audio' : 'Sharing screen', 'success');
@@ -393,7 +389,7 @@ export default function useScreenShare({
       setScreenShareDelivery('checking');
       if (isScreenAudioEnabled && !audioShared) {
         setStatus(
-          `Screen sharing started without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
+          `Starting screen share without system audio: audio capture ${audioFallbackReason ?? 'unsupported'}.`,
           'warning',
         );
       }

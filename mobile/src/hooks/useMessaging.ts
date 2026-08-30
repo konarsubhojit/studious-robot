@@ -809,11 +809,13 @@ export default function useMessaging({
       setMessagesByPeer(prev => applyIncomingMessage(prev, message));
 
       const isActiveConversation = activeChatPeerIdRef.current === senderId;
-      setConversations(prev => {
-        const isNewConversation = !prev.some(conversation => conversation.peerId === senderId);
-        if (isNewConversation) void fetchConversations();
-        return withIncomingMessage(prev, message, { incrementUnread: !isActiveConversation });
-      });
+      const isNewConversation = !conversationsRef.current.some(
+        conversation => conversation.peerId === senderId,
+      );
+      setConversations(prev =>
+        withIncomingMessage(prev, message, { incrementUnread: !isActiveConversation }),
+      );
+      if (isNewConversation) void fetchConversations();
 
       if (isActiveConversation) {
         // The conversation is currently open: auto-mark-read, no unread bump,

@@ -275,7 +275,7 @@ function completeScreenCapture(
   logInfo('Screen capture started; MediaProjection service running', {
     requestedAudio: Boolean(withAudio),
     audioShared: Boolean(audioTrack),
-    audioFallbackReason: audioFallbackReason ?? (withAudio && !audioTrack ? 'unsupported' : null),
+    audioFallbackReason: audioFallbackReason ?? (withAudio && !audioTrack ? 'unsupported' : undefined),
   });
   return {
     ok: true,
