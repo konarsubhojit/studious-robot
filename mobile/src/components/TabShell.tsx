@@ -101,8 +101,8 @@ function TabShell() {
     handleExportLogs,
   } = useCallSelector(selectTabShellSlice);
   const chat = useChat();
-  // Context methods are pulled out rather than invoked as `chat.sendMessage(…)`
-  // or `placeCall(…)`: `react-hooks/exhaustive-deps` treats a method
+  // Context methods are pulled out rather than invoked as `chat.sendMessage(…)`:
+  // `react-hooks/exhaustive-deps` treats a method
   // *call* as a use of the whole container, which is precisely the whole-object
   // dependency that would defeat the memoised renderers below (and the
   // `screenRenderers` memo in `AppNavigator` that depends on them).
@@ -202,7 +202,6 @@ function TabShell() {
       />
     );
   }, [
-    isPlacingCall,
     cancelAttachmentUpload,
     cancelRecordingVoiceNote,
     chat.attachmentUploadProgress,
@@ -222,6 +221,7 @@ function TabShell() {
     clearDraft,
     deleteMessage,
     insets.top,
+    isPlacingCall,
     pickAndSendAttachment,
     reactToMessage,
     retryAttachmentUpload,
@@ -284,12 +284,12 @@ function TabShell() {
     />
   ), [
     callHistory,
-    isServerUnreachable,
     chat.conversations,
     chat.currentUserId,
     chat.searchMessages,
     chat.searchUsers,
     clearSearches,
+    isServerUnreachable,
     recentSearches,
     recordSearch,
   ]);

@@ -374,7 +374,7 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 function useCallStoreContext(): CallStore {
   const store = useContext(CallStoreContext);
   if (!store) {
-    throw new Error('useCall must be used within a CallProvider');
+    throw new Error('useCall / useCallSelector must be used within a CallProvider');
   }
   return store;
 }
@@ -398,21 +398,25 @@ export function useCallSelector<Selected>(
   isEqual: (a: Selected, b: Selected) => boolean = shallowEqual,
 ): Selected {
   const store = useCallStoreContext();
-  const cacheRef = useRef((null as { snapshot: CallContextValue; selected: Selected; } | null));
+  const cacheRef = useRef(
+    (null as { snapshot: CallContextValue; select: typeof select; selected: Selected; } | null),
+  );
 
   const getSelection = useCallback(() => {
     const snapshot = store.getSnapshot();
     const cached = cacheRef.current;
-    if (cached && cached.snapshot === snapshot) return cached.selected;
+    // Keyed on the selector too, so a component that swaps selectors (or passes
+    // an inline one closing over a prop) is never served another's selection.
+    if (cached && cached.snapshot === snapshot && cached.select === select) return cached.selected;
     const selected = select(snapshot);
     // Keeping the previous reference when the values match is what makes this
     // safe for `useSyncExternalStore`, which requires a cached snapshot, *and*
     // what lets a selector return a fresh object of fields.
     if (cached && isEqual(cached.selected, selected)) {
-      cacheRef.current = { snapshot, selected: cached.selected };
+      cacheRef.current = { snapshot, select, selected: cached.selected };
       return cached.selected;
     }
-    cacheRef.current = { snapshot, selected };
+    cacheRef.current = { snapshot, select, selected };
     return selected;
   }, [isEqual, select, store]);
 
