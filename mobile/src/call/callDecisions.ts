@@ -283,3 +283,117 @@ export function isMissedCall({
 }): boolean {
   return MISSED_END_REASONS.has(endReason ?? '') || status === 'missed';
 }
+
+/**
+ * The severity vocabulary the status banner understands.
+ *
+ * Declared here rather than imported from the banner component so this module
+ * stays free of anything React touches; `CallStatus['severity']` is the same
+ * union and the hook passes these values straight through.
+ */
+export type CallStatusSeverity = 'info' | 'success' | 'warning' | 'error';
+
+/** How a `call.state_changed` transition ends the call, if it ends it. */
+export type CallEndingTransition = {
+  message: string;
+  severity: CallStatusSeverity;
+  endReason: string;
+};
+
+/**
+ * The callId this device currently considers its own.
+ *
+ * An accepted call, the outgoing one it is placing, and an incoming one still
+ * ringing are the three places a callId can be, in that order of authority.
+ */
+export function resolveKnownCallId({
+  activeCallId,
+  activeCall,
+  incomingCall,
+}: {
+  activeCallId?: string | null;
+  activeCall?: { callId?: string | null; } | null;
+  incomingCall?: { callId?: string | null; } | null;
+}): string | null {
+  return activeCallId ?? activeCall?.callId ?? incomingCall?.callId ?? null;
+}
+
+/**
+ * Whether a transition belongs to some other call.
+ *
+ * A stale ring that ends while a call is up must not touch the call in
+ * progress. An event for a call this device cannot identify — either side
+ * unknown — is not evidence of that, so it is not suppressed here.
+ */
+export function isStateChangeForOtherCall({
+  eventCallId,
+  knownCallId,
+}: {
+  eventCallId: string | null;
+  knownCallId: string | null;
+}): boolean {
+  return Boolean(eventCallId && knownCallId && eventCallId !== knownCallId);
+}
+
+/**
+ * How a terminal `call.state_changed` status is reported to the user and
+ * recorded in history, or `null` for a status that does not end the call.
+ *
+ * `ended` alone reads its `reason`: the caller hanging up before the callee
+ * picked up is a cancellation, and saying "Call ended" for it describes a call
+ * that never happened.
+ */
+export function describeCallStateEnding({
+  status,
+  reason,
+}: {
+  status: string;
+  reason?: string | null;
+}): CallEndingTransition | null {
+  switch (status) {
+    case 'declined':
+      return { message: 'Call declined', severity: 'info', endReason: 'declined' };
+    case 'missed':
+      return { message: 'Call not answered', severity: 'error', endReason: 'missed' };
+    case 'busy':
+      return { message: 'Callee is busy', severity: 'error', endReason: 'busy' };
+    case 'unreachable':
+      return {
+        message: 'Callee is unreachable',
+        severity: 'error',
+        endReason: 'unreachable',
+      };
+    case 'ended':
+      return {
+        message: reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
+        severity: 'info',
+        endReason: reason ?? 'ended',
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether a `busy` rejection should be answered with an empty call-state
+ * report.
+ *
+ * `busy` means the server still believes one of the participants is in a call.
+ * When this device holds no live call of its own, saying so lets the server
+ * clear the phantom that is blocking every new call, instead of the user being
+ * stuck forever. The call the rejection is *about* does not count as one this
+ * device holds.
+ */
+export function shouldReportEmptyCallState({
+  eventCallId,
+  activeCallId,
+  incomingCallId,
+}: {
+  eventCallId: string | null;
+  activeCallId?: string | null;
+  incomingCallId?: string | null;
+}): boolean {
+  return ![activeCallId, incomingCallId].some(
+    callId => callId && callId !== eventCallId,
+  );
+}

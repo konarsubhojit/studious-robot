@@ -280,11 +280,26 @@ server's calls is "no answer", and reading it as "the server holds nothing"
 tears down healthy calls against an older server. That distinction now has a
 test of its own rather than living in a comment beside a socket callback.
 
-Both slices are pure — no React, no refs, no peer connection, no socket — the
+**Fifth slice: the `call.state_changed` dispatch.** This is the takeable half
+of the issue's "signaling event handling": the handler was a decision table
+written as a `switch` with an act of negotiation embedded in one of its arms.
+`call/callDecisions.ts` now also owns which callId this device considers its
+own, whether a transition belongs to some other call (a stale ring that ends
+while a call is up must not touch the call in progress), the terminal-status →
+message/severity/`endReason` table — including that an `ended` whose reason is
+`cancelled` is a cancellation, not a call that happened — and the `busy`
+self-heal condition, where the call the rejection is *about* does not count as
+one this device holds. The negotiation the `accepted` transition triggers moved
+to a named `sendInitialOffer` beside the handler rather than into the pure
+module: it is `createOffer` / `setLocalDescription` against a live peer
+connection, which is exactly what does not belong there.
+
+Every slice is pure — no React, no refs, no peer connection, no socket — the
 hook's return shape is unchanged, and `useCallFlow.test.tsx` passes unmodified,
-as it did for the ladder. `endActiveCall`, previously #21 in the complexity
-baseline at 19, is now under the threshold; the two remaining warnings in the
-file (`pollStats`, the `call.state_changed` handler) are unchanged.
+as it did for the ladder. Two of the file's three complexity-baseline entries
+are cleared: `endActiveCall` (#21, 19) and the `call.state_changed` handler
+(#22, 19) are both under the threshold, leaving `pollStats` (#4, 35) as the
+only warning in the file.
 
 Device QA is still the only thing that can verify the call path — there is no
 E2E coverage of it (#114) — so the checklist in #216 (outgoing call, incoming
@@ -292,16 +307,17 @@ accept and decline, an answer from the CallKeep UI including a push cold start,
 a recovering and a non-recovering mid-call drop, the offline-callee push wake,
 and screen share / PiP) has to be run on a device for these slices.
 
-**Slices 3 and 4 of the issue's list — the signaling event surface and WebRTC
-negotiation — were not taken.** Both are side effects, not rules: the socket
-handlers close over the refs they mutate (`activeCallIdRef`, `peerConnectionRef`,
+**What was deliberately left in the hook.** The rest of the signaling surface,
+and all of slice 4 (WebRTC negotiation), stay where they are. The remaining
+socket handlers close over the refs they mutate (`peerConnectionRef`,
 `iceCandidateBufferRef`, `isNegotiatingRef`) and the negotiation path is
 `setRemoteDescription` / `createAnswer` / `setLocalDescription` against a live
 peer connection. Moving either would relocate side effects rather than separate
-decisions from them, which is the extraction pattern that has held for four
-slices and the reason `useCallFlow.test.tsx` has never needed to change. What
-remains inside the hook is now close to purely that: effects, refs, and the
-peer connection they drive.
+decisions from them, which is the extraction pattern that has held for five
+slices and the reason `useCallFlow.test.tsx` has never needed to change. Where
+a decision *was* separable from the effect it sits beside — the offer's
+stale-vs-glare guard, the state-change dispatch — it came out; what is left is
+effects, refs, and the peer connection they drive.
 
 The structural three-hook split remains deferred for the reason above.
 

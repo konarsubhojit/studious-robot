@@ -5,12 +5,16 @@ import {
   classifyCallDelivery,
   decideAcceptIncomingCall,
   decideIncomingOffer,
+  describeCallStateEnding,
   isLiveCallStatus,
+  isStateChangeForOtherCall,
   isMissedCall,
   isTerminalCallStatus,
   isTerminalIceState,
   rememberAnsweredCallId,
   resolveCallEndReason,
+  resolveKnownCallId,
+  shouldReportEmptyCallState,
   shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../../src/call/callDecisions';
@@ -327,5 +331,119 @@ describe('missed calls', () => {
   it('does not count an ordinary hangup', () => {
     expect(isMissedCall({ endReason: 'ended', status: 'ended' })).toBe(false);
     expect(isMissedCall({ endReason: null })).toBe(false);
+  });
+});
+
+describe('call.state_changed dispatch', () => {
+  it('prefers the active callId, then the active call, then the incoming one', () => {
+    expect(
+      resolveKnownCallId({
+        activeCallId: 'active',
+        activeCall: { callId: 'record' },
+        incomingCall: { callId: 'incoming' },
+      }),
+    ).toBe('active');
+    expect(
+      resolveKnownCallId({
+        activeCallId: null,
+        activeCall: { callId: 'record' },
+        incomingCall: { callId: 'incoming' },
+      }),
+    ).toBe('record');
+    expect(
+      resolveKnownCallId({ incomingCall: { callId: 'incoming' } }),
+    ).toBe('incoming');
+    expect(resolveKnownCallId({})).toBeNull();
+  });
+
+  it('suppresses a transition for a stale ring while another call is up', () => {
+    expect(
+      isStateChangeForOtherCall({ eventCallId: 'stale', knownCallId: 'live' }),
+    ).toBe(true);
+  });
+
+  it('does not suppress a transition for the call in progress', () => {
+    expect(
+      isStateChangeForOtherCall({ eventCallId: 'live', knownCallId: 'live' }),
+    ).toBe(false);
+  });
+
+  it.each([
+    [null, 'live'],
+    ['stale', null],
+    [null, null],
+  ])(
+    'does not treat an unidentifiable transition (%p vs %p) as another call',
+    (eventCallId, knownCallId) => {
+      expect(isStateChangeForOtherCall({ eventCallId, knownCallId })).toBe(false);
+    },
+  );
+});
+
+describe('terminal transitions', () => {
+  it.each([
+    ['declined', 'Call declined', 'info', 'declined'],
+    ['missed', 'Call not answered', 'error', 'missed'],
+    ['busy', 'Callee is busy', 'error', 'busy'],
+    ['unreachable', 'Callee is unreachable', 'error', 'unreachable'],
+  ])('reports %s as "%s"', (status, message, severity, endReason) => {
+    expect(describeCallStateEnding({ status })).toEqual({
+      message,
+      severity,
+      endReason,
+    });
+  });
+
+  it('calls a hang-up before the callee answered a cancellation', () => {
+    expect(describeCallStateEnding({ status: 'ended', reason: 'cancelled' })).toEqual({
+      message: 'Call cancelled',
+      severity: 'info',
+      endReason: 'cancelled',
+    });
+  });
+
+  it('carries the server reason through an ordinary end', () => {
+    expect(describeCallStateEnding({ status: 'ended', reason: 'peer_left' })).toEqual({
+      message: 'Call ended',
+      severity: 'info',
+      endReason: 'peer_left',
+    });
+    expect(describeCallStateEnding({ status: 'ended' })?.endReason).toBe('ended');
+  });
+
+  it.each(['accepted', 'ringing', 'connecting_media', 'anything'])(
+    'does not end the call for %s',
+    status => {
+      expect(describeCallStateEnding({ status })).toBeNull();
+    },
+  );
+});
+
+describe('busy self-heal', () => {
+  it('reports an empty call state when this device holds nothing', () => {
+    expect(
+      shouldReportEmptyCallState({
+        eventCallId: 'c1',
+        activeCallId: null,
+        incomingCallId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not count the call the rejection is about', () => {
+    expect(
+      shouldReportEmptyCallState({
+        eventCallId: 'c1',
+        activeCallId: 'c1',
+        incomingCallId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['activeCallId', { activeCallId: 'other' }],
+    ['incomingCallId', { incomingCallId: 'other' }],
+  ])('stays quiet while this device holds a call via %s', (_label, held) => {
+    expect(shouldReportEmptyCallState({ eventCallId: 'c1', ...held })).toBe(false);
   });
 });

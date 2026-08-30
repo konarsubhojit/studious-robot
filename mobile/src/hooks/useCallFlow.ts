@@ -94,12 +94,16 @@ import {
   classifyCallDelivery,
   decideAcceptIncomingCall,
   decideIncomingOffer,
+  describeCallStateEnding,
   isLiveCallStatus,
   isMissedCall,
+  isStateChangeForOtherCall,
   isTerminalCallStatus,
   isTerminalIceState,
   rememberAnsweredCallId,
   resolveCallEndReason,
+  resolveKnownCallId,
+  shouldReportEmptyCallState,
   shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../call/callDecisions';
@@ -2018,12 +2022,44 @@ export default function useCallFlow({
   }, [startLocalPreview]);
 
   /**
-   * Create and return a new authenticated Socket.IO connection.
-   * All call-level and RTC-relay events are registered here.
+   * Start local media and send the caller's initial RTC offer.
    *
-   * Uses ref-forwarded callbacks so the socket never needs to be recreated
-   * simply because a callback identity changed.
+   * The negotiation half of the `accepted` transition, lifted out of the
+   * `call.state_changed` handler so that handler is dispatch and this is the
+   * peer connection it drives. A failure here ends the call: an offer that was
+   * never sent means media that will never arrive.
    */
+  const sendInitialOffer = useCallback(
+    async (
+      signaling: ReturnType<typeof createSignalingClient>,
+      callId: string,
+    ) => {
+      try {
+        await startLocalPreviewRef.current?.();
+        const pc = await ensurePeerConnectionRef.current?.();
+        if (!pc) return;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        signaling.emit(
+          CLIENT_EVENTS.RTC_OFFER,
+          {
+            version: SIGNALING_VERSION,
+            callId,
+            sdp: pc.localDescription,
+          },
+          ack => {
+            if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
+          },
+        );
+      } catch (error) {
+        logError('[CallFlow] Failed to create/send RTC offer', error);
+        updateStatus('Failed to connect media', 'error');
+        endActiveCallRef.current?.('Failed to connect media', 'error');
+      }
+    },
+    [updateStatus],
+  );
+
   /**
    * Reconcile this device's calls with the server's after a reconnect.
    *
@@ -2060,6 +2096,13 @@ export default function useCallFlow({
     resumeRecoveryBudgetRef.current = resumeRecoveryBudget;
   }, [noteRecoverySymptom, resumeRecoveryBudget, resyncCallState]);
 
+  /**
+   * Create and return a new authenticated Socket.IO connection.
+   * All call-level and RTC-relay events are registered here.
+   *
+   * Uses ref-forwarded callbacks so the socket never needs to be recreated
+   * simply because a callback identity changed.
+   */
   const connectSocket = useCallback(
       (sessionId: string) => {
       disconnectSocket();
@@ -2159,11 +2202,11 @@ export default function useCallFlow({
             reason,
           });
           const eventCallId = call?.callId ?? null;
-          const knownCallId =
-            activeCallIdRef.current ??
-            activeCallRef.current?.callId ??
-            incomingCallRef.current?.callId ??
-            null;
+          const knownCallId = resolveKnownCallId({
+            activeCallId: activeCallIdRef.current,
+            activeCall: activeCallRef.current,
+            incomingCall: incomingCallRef.current,
+          });
 
           // A call that stops ringing — cancelled, declined, missed, timed out —
           // must take its OS notification with it, otherwise the shade keeps a
@@ -2181,7 +2224,7 @@ export default function useCallFlow({
 
           // Transitions for a *different* call (a stale ring that ended while
           // this one is up) must not touch the call currently in progress.
-          if (eventCallId && knownCallId && eventCallId !== knownCallId) {
+          if (isStateChangeForOtherCall({ eventCallId, knownCallId })) {
             logInfo('[CallFlow] Ignoring state change for a non-current call', {
               callId: eventCallId,
               knownCallId,
@@ -2195,76 +2238,36 @@ export default function useCallFlow({
             setActiveCall(call);
           }
 
-          switch (callStatus) {
-            case 'accepted': {
-              updateStatus('Call accepted, connecting media…');
-              // Caller is responsible for sending the initial RTC offer.
-              if (isCallerRef.current && call) {
-                activeCallIdRef.current = call.callId;
-                try {
-                  await startLocalPreviewRef.current?.();
-                  const pc = await ensurePeerConnectionRef.current?.();
-                  if (!pc) break;
-                  const offer = await pc.createOffer();
-                  await pc.setLocalDescription(offer);
-                  signaling.emit(
-                    CLIENT_EVENTS.RTC_OFFER,
-                    {
-                      version: SIGNALING_VERSION,
-                      callId: call.callId,
-                      sdp: pc.localDescription,
-                    },
-                    ack => {
-                      if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
-                    },
-                  );
-                } catch (error) {
-                  logError('[CallFlow] Failed to create/send RTC offer', error);
-                  updateStatus('Failed to connect media', 'error');
-                  endActiveCallRef.current?.('Failed to connect media', 'error');
-                }
-              }
-              break;
+          if (callStatus === 'accepted') {
+            updateStatus('Call accepted, connecting media…');
+            // Caller is responsible for sending the initial RTC offer. This is
+            // the negotiation the event triggers, and it stays here: the rules
+            // above are decisions, this is a peer connection.
+            if (isCallerRef.current && call) {
+              activeCallIdRef.current = call.callId;
+              await sendInitialOffer(signaling, call.callId);
             }
+            return;
+          }
 
-            case 'declined':
-              endActiveCallRef.current?.('Call declined', 'info', 'declined');
-              break;
+          // `busy` means the server still believes one of the participants is
+          // in a call. When this device holds no live call of its own, saying
+          // so lets the server clear the phantom that is blocking every new
+          // call, instead of the user being stuck forever.
+          if (
+            callStatus === 'busy' &&
+            shouldReportEmptyCallState({
+              eventCallId,
+              activeCallId: activeCallIdRef.current,
+              incomingCallId: incomingCallRef.current?.callId,
+            })
+          ) {
+            reportOwnCallState(signaling, [], { reason: 'busy-rejection' });
+          }
 
-            case 'missed':
-              endActiveCallRef.current?.('Call not answered', 'error', 'missed');
-              break;
-
-            case 'busy': {
-              // Self-heal: `busy` means the server still believes one of the
-              // participants is in a call.  When this device holds no live call,
-              // say so, so the server can clear the phantom that is blocking
-              // every new call instead of the user being stuck forever.
-              const liveCallIds = [
-                activeCallIdRef.current,
-                incomingCallRef.current?.callId,
-              ].filter(id => id && id !== eventCallId);
-              if (liveCallIds.length === 0) {
-                reportOwnCallState(signaling, [], { reason: 'busy-rejection' });
-              }
-              endActiveCallRef.current?.('Callee is busy', 'error', 'busy');
-              break;
-            }
-
-            case 'unreachable':
-              endActiveCallRef.current?.('Callee is unreachable', 'error', 'unreachable');
-              break;
-
-            case 'ended':
-              endActiveCallRef.current?.(
-                reason === 'cancelled' ? 'Call cancelled' : 'Call ended',
-                'info',
-                reason ?? 'ended',
-              );
-              break;
-
-            default:
-              break;
+          const ending = describeCallStateEnding({ status: callStatus, reason });
+          if (ending) {
+            endActiveCallRef.current?.(ending.message, ending.severity, ending.endReason);
           }
         },
       );
@@ -2559,6 +2562,7 @@ export default function useCallFlow({
     [
       createOrGetSession,
       disconnectSocket,
+      sendInitialOffer,
       updateStatus,
       showIncomingCallUi,
       signalingUrl,
