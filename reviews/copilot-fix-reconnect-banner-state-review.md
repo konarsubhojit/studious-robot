@@ -171,6 +171,15 @@ Validated after the fixes: `mobile` — `tsc --noEmit`, `eslint`, full Jest suit
 below), `tsc --noEmit`, `npm test` (451 tests, 450 pass / 1 pre-existing skip,
 66s).
 
+## Re-review (second pass, b072ff2..HEAD)
+
+The fix pass was re-read against the same checklist. Nothing new at Medium or
+above: the changes are a server-side authorization guard (covered by a forged-ack
+test), a widened status gate (covered in both screen suites), one shared
+countdown helper replacing two divergent strings, and small constant/typing
+tidy-ups. The only finding left open is the deferred Nit on `RingingAvatar`
+font scaling. Gate clear.
+
 ## Out of scope (pre-existing, not graded)
 
 - `server/test/call-history.test.ts:194` failed `@typescript-eslint/no-misused-promises`
