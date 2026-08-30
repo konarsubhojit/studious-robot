@@ -26,7 +26,7 @@ would split one is not an improvement, and is recorded in
 | 1.6 | [Remove verified dead surface](#16-remove-verified-dead-surface) | ✅ Done |
 | 1.5 | [Reduce the functions sitting at 14–15](#15-reduce-the-functions-sitting-at-1415) | ⬜ Not started |
 | 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ✅ Done |
-| 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ⬜ Not started |
+| 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ✅ Done |
 | 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ⬜ Not started |
 | 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ⬜ Not started |
 | 2.2 | [Split the message-bubble subtree](#22-split-the-message-bubble-subtree) | ⬜ Not started |
@@ -155,9 +155,9 @@ unread-divider cases that pin `findUnreadAnchorKey`'s behaviour.
 
 ### 1.2 Extract `useCallQualityStats`
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
-`useCallFlow.ts:3089–3229`. Owns `qualitySmootherRef`, `connectionStatsRef`,
+Now `mobile/src/hooks/useCallQualityStats.ts`. Owns `qualitySmootherRef`, `connectionStatsRef`,
 `selectedCandidatePairRef`, the `connectionQuality` and `selectedCandidatePair`
 state, and `noteSelectedCandidatePair`.
 
@@ -168,9 +168,27 @@ and `updateStatus`, passed in as refs and callbacks — the pattern
 
 **Safety:** the interval and the AppState subscription are born and die inside
 the same effect, whose cleanup already does
-`cancelled = true; stopPolling(); subscription?.remove?.()`. That effect moves
-whole. Nothing for this cluster sits in `useCallFlow`'s aggregate unmount
-teardown today and nothing needs to be added there.
+`cancelled = true; stopPolling(); subscription?.remove?.()`. That effect moved
+whole. Nothing for this cluster sat in `useCallFlow`'s aggregate unmount
+teardown and nothing needed to be added there.
+
+**Two touchpoints outside the original line range had to be handled explicitly
+rather than left straddling the boundary:**
+
+- `connectionQualityRef` (the mirror the call-end summary reads for its quality
+  label) moved into the hook together with the effect that writes it, and is
+  returned. Previously the state and its mirror could have ended up on opposite
+  sides of the split — precisely the #263 failure mode.
+- `closePeerConnection` also reset `connectionQuality` and `connectionStatsRef`
+  inline. It now calls the hook's `resetConnectionQuality`, which is
+  `useCallback(..., [])` and therefore permanently stable, so
+  `closePeerConnection`'s own identity is unchanged and no effect downstream of
+  it can be re-run by this refactor.
+
+**Result:** `useCallFlow.ts` 3483 → 3321 lines; new hook 251 lines. Verified
+with `npm run typecheck`, `npx eslint`, and the `useCallFlow` suite
+(144 tests passing), which includes the quality-polling cases at
+`__tests__/hooks/useCallFlow.test.tsx:4198–4310`.
 
 ### 1.3 Extract `useCallAudioRoutes`
 

@@ -231,6 +231,100 @@ function MethodRegistrationStep({
   );
 }
 
+/**
+ * The step-1 choice the form should be showing after `message` came back as a
+ * failure, or `undefined` to leave the user where they are.
+ *
+ * A failure has to leave the user on the step that owns it: a taken username is
+ * fixed in step 2, a rejected email or password in step 1. A failure that names
+ * neither — and a step-2 failure with no method to return to — moves nobody.
+ *
+ * @param message - The failure message being routed.
+ * @param lastMethod - The method whose attempt failed, if any.
+ */
+function methodForFailure(
+  message: string,
+  lastMethod: AuthMethod | null,
+): AuthMethod | null | undefined {
+  const target = stepForFailure(message);
+  if (target === 'method') return null;
+  if (target === 'username' && lastMethod) return lastMethod;
+  return undefined;
+}
+
+/**
+ * Heading block: the way back sits with the heading, where the user is already
+ * looking, rather than below the primary action.
+ */
+function RegistrationStepHeader({
+  step,
+  chosenMethod,
+  isLoading,
+  onBack,
+  styles,
+}: {
+  step: RegistrationStep;
+  chosenMethod: AuthMethod | null;
+  isLoading: boolean;
+  onBack: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View style={styles.stepHeader}>
+      {chosenMethod ? (
+        <IconAction
+          icon="back"
+          variant="plain"
+          accessibilityLabel="Back"
+          accessibilityHint="Returns to the sign-in choices, keeping what you have typed"
+          onPress={onBack}
+          disabled={isLoading}
+          testID="registration-back"
+        />
+      ) : null}
+      <View style={styles.stepHeading}>
+        <Text style={styles.stepPosition} maxFontSizeMultiplier={fontScaleCaps.meta}>
+          {describeStepPosition(step)}
+        </Text>
+        <Text style={styles.formTitle} accessibilityRole="header">
+          {REGISTRATION_STEP_TITLES[step]}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The form's one feedback slot: an error the user can retry, or the ordinary
+ * status banner. Retrying with a username that cannot be sent is a button that
+ * does nothing, so the affordance appears only when it can actually act.
+ */
+function RegistrationFormStatus({
+  status,
+  failureMessage,
+  canRetry,
+  lastMethod,
+  submit,
+}: {
+  status?: CallStatus;
+  failureMessage: string;
+  canRetry: boolean;
+  lastMethod: AuthMethod | null;
+  submit: (method: AuthMethod) => void;
+}) {
+  if (!failureMessage) return <StatusBanner status={status} />;
+  return (
+    <ErrorState
+      title="Couldn't complete sign-in"
+      description={failureMessage}
+      actionLabel="Try again"
+      actionHint="Retries the last sign-in attempt"
+      onAction={canRetry && lastMethod ? () => submit(lastMethod) : undefined}
+      testID="registration-error"
+    />
+  );
+}
+
 export default function RegistrationScreen({
   onRegister,
   isLoading = false,
@@ -256,14 +350,14 @@ export default function RegistrationScreen({
   const step: RegistrationStep = chosenMethod ? 'username' : 'method';
   const username = checkUsername(name);
   const emailReady = Boolean(email.trim()) && password.length >= 6;
-  const hasError = status?.severity === 'error' && Boolean(status?.message);
-  const failureMessage = hasError ? status.message : '';
+  // An error status with a message is a failure the user must act on; the
+  // message itself is the key everything downstream keys on.
+  const failureMessage = status?.severity === 'error' && status.message ? status.message : '';
   // Retrying with a username that cannot be sent is a button that does
   // nothing, so the affordance appears only when it can actually act.
   const canRetry = Boolean(lastMethod) && !isLoading && username.isValid;
 
-  // A failure has to leave the user on the step that owns it: a taken username
-  // is fixed in step 2, a rejected email or password in step 1. Keyed on the
+  // A failure has to leave the user on the step that owns it. Keyed on the
   // message so a re-render — or the user deliberately stepping away while the
   // error is still on screen — does not drag them back.
   const routedFailureRef = useRef((null as string | null));
@@ -274,9 +368,8 @@ export default function RegistrationScreen({
     }
     if (routedFailureRef.current === failureMessage) return;
     routedFailureRef.current = failureMessage;
-    const target = stepForFailure(failureMessage);
-    if (target === 'method') setChosenMethod(null);
-    else if (target === 'username' && lastMethod) setChosenMethod(lastMethod);
+    const nextMethod = methodForFailure(failureMessage, lastMethod);
+    if (nextMethod !== undefined) setChosenMethod(nextMethod);
   }, [failureMessage, lastMethod]);
 
   // Swapping the form's contents is not a navigation event, so nothing else
@@ -317,42 +410,23 @@ export default function RegistrationScreen({
 
         {/* ── Registration form ──────────────────────────────────────────── */}
         <View style={styles.form}>
-          {hasError ? (
-            <ErrorState
-              title="Couldn't complete sign-in"
-              description={status.message}
-              actionLabel="Try again"
-              actionHint="Retries the last sign-in attempt"
-              onAction={canRetry && lastMethod ? () => submit(lastMethod) : undefined}
-              testID="registration-error"
-            />
-          ) : (
-            <StatusBanner status={status} />
-          )}
+          <RegistrationFormStatus
+            status={status}
+            failureMessage={failureMessage}
+            canRetry={canRetry}
+            lastMethod={lastMethod}
+            submit={submit}
+          />
 
           {/* The way back sits with the heading, where the user is already
               looking, rather than below the primary action. */}
-          <View style={styles.stepHeader}>
-            {chosenMethod ? (
-              <IconAction
-                icon="back"
-                variant="plain"
-                accessibilityLabel="Back"
-                accessibilityHint="Returns to the sign-in choices, keeping what you have typed"
-                onPress={() => setChosenMethod(null)}
-                disabled={isLoading}
-                testID="registration-back"
-              />
-            ) : null}
-            <View style={styles.stepHeading}>
-              <Text style={styles.stepPosition} maxFontSizeMultiplier={fontScaleCaps.meta}>
-                {describeStepPosition(step)}
-              </Text>
-              <Text style={styles.formTitle} accessibilityRole="header">
-                {REGISTRATION_STEP_TITLES[step]}
-              </Text>
-            </View>
-          </View>
+          <RegistrationStepHeader
+            step={step}
+            chosenMethod={chosenMethod}
+            isLoading={isLoading}
+            onBack={() => setChosenMethod(null)}
+            styles={styles}
+          />
 
           {chosenMethod ? (
             <UsernameRegistrationStep

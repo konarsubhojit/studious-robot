@@ -116,6 +116,22 @@ function ListItemContent({
 }
 
 /**
+ * Splits a row's value into the slot it belongs in.
+ *
+ * Short values keep the trailing treatment they were designed for; long ones
+ * move under the title, where they have the full width of the row to wrap
+ * into. The old layout gave every value the same 40%-wide right-hand slot,
+ * which turned "Signed in with" into `koner.subhojit@g…`.
+ *
+ * @param value - The row's value, if any.
+ */
+function splitValue(value?: string | null) {
+  if (!value) return { inlineValue: null, blockValue: null };
+  if (value.length <= INLINE_VALUE_MAX_CHARS) return { inlineValue: value, blockValue: null };
+  return { inlineValue: null, blockValue: value };
+}
+
+/**
  * The app's one row.
  *
  * Conversation rows, call-log rows, settings rows, blocked-people rows and
@@ -150,13 +166,7 @@ export default function ListItem({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  // Short values keep the trailing treatment they were designed for; long ones
-  // move under the title, where they have the full width of the row to wrap
-  // into. The old layout gave every value the same 40%-wide right-hand slot,
-  // which turned "Signed in with" into `koner.subhojit@g…`.
-  const isInlineValue = Boolean(value) && (value as string).length <= INLINE_VALUE_MAX_CHARS;
-  const inlineValue = isInlineValue ? value : null;
-  const blockValue = value && !isInlineValue ? value : null;
+  const { inlineValue, blockValue } = splitValue(value);
   const valueTestID = testID ? `${testID}-value` : undefined;
   // Material 3 sizes a one-line row at 56dp and a two-line one at 72dp; a row
   // carrying a description or a wrapped value is the two-line case.

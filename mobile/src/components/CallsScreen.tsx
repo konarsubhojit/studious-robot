@@ -170,6 +170,71 @@ function CallHistoryRow({
   );
 }
 
+function CallsScreenBody({
+  isLoading,
+  hasEntries,
+  sections,
+  renderSectionHeader,
+  renderItem,
+  filter,
+  onOpenSearch,
+  styles,
+}: {
+  isLoading: boolean;
+  hasEntries: boolean;
+  sections: Array<CallLogSection & { data: CallHistoryEntry[]; }>;
+  renderSectionHeader: ({ section }: { section: CallLogSection }) => React.ReactElement;
+  renderItem: ({ item }: { item: CallHistoryEntry }) => React.ReactElement;
+  filter: CallFilter;
+  onOpenSearch?: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  if (isLoading && !hasEntries) {
+    return (
+      <View testID="calls-loading">
+        {SKELETON_ROWS.map(row => <SkeletonRow key={row} />)}
+      </View>
+    );
+  }
+
+  if (hasEntries) {
+    return (
+      <SectionList
+        sections={sections}
+        keyExtractor={entry => entry.callId}
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={styles.listContent}
+        testID="call-history-section"
+        renderSectionHeader={renderSectionHeader}
+        renderItem={renderItem}
+      />
+    );
+  }
+
+  const isMissedFilter = filter === CALL_FILTERS.MISSED;
+  return (
+    <EmptyState
+      icon="emptyCalls"
+      title={isMissedFilter ? 'No missed calls' : 'No calls yet'}
+      description={
+        isMissedFilter
+          ? 'Calls you miss will be listed here.'
+          : 'Call someone and it will show up here.'
+      }
+      // No `actionLabel` here: the FAB below is the screen's one primary
+      // action, and an empty state that repeats it in the same accent
+      // colour 200px away makes whichever the user reaches for the wrong
+      // one. The search link is low-emphasis on purpose: it is the way out
+      // for someone who has no one to call yet, which the FAB's picker
+      // cannot offer them.
+      linkLabel={onOpenSearch ? 'Search for people' : undefined}
+      onLinkPress={onOpenSearch}
+      linkHint="Search people, conversations, messages and calls"
+      testID="calls-empty"
+    />
+  );
+}
+
 function CallsScreenResults({
   isServerUnreachable,
   onRetryConnect,
@@ -213,41 +278,16 @@ function CallsScreenResults({
         />
       ) : null}
       <StatusBanner status={status} style={styles.bannerWrap} />
-      {isLoading && !hasEntries ? (
-        <View testID="calls-loading">
-          {SKELETON_ROWS.map(row => <SkeletonRow key={row} />)}
-        </View>
-      ) : hasEntries ? (
-        <SectionList
-          sections={sections}
-          keyExtractor={entry => entry.callId}
-          stickySectionHeadersEnabled={false}
-          contentContainerStyle={styles.listContent}
-          testID="call-history-section"
-          renderSectionHeader={renderSectionHeader}
-          renderItem={renderItem}
-        />
-      ) : (
-        <EmptyState
-          icon="emptyCalls"
-          title={filter === CALL_FILTERS.MISSED ? 'No missed calls' : 'No calls yet'}
-          description={
-            filter === CALL_FILTERS.MISSED
-              ? 'Calls you miss will be listed here.'
-              : 'Call someone and it will show up here.'
-          }
-          // No `actionLabel` here: the FAB below is the screen's one primary
-          // action, and an empty state that repeats it in the same accent
-          // colour 200px away makes whichever the user reaches for the wrong
-          // one. The search link is low-emphasis on purpose: it is the way out
-          // for someone who has no one to call yet, which the FAB's picker
-          // cannot offer them.
-          linkLabel={onOpenSearch ? 'Search for people' : undefined}
-          onLinkPress={onOpenSearch}
-          linkHint="Search people, conversations, messages and calls"
-          testID="calls-empty"
-        />
-      )}
+      <CallsScreenBody
+        isLoading={isLoading}
+        hasEntries={hasEntries}
+        sections={sections}
+        renderSectionHeader={renderSectionHeader}
+        renderItem={renderItem}
+        filter={filter}
+        onOpenSearch={onOpenSearch}
+        styles={styles}
+      />
     </>
   );
 }
