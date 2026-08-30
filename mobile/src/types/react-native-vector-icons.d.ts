@@ -1,6 +1,6 @@
 // Ambient declarations for `react-native-vector-icons`, which ships Flow types
 // (`*.js.flow`) but no TypeScript definitions. Only the icon set the app uses
-// is declared; see TYPESCRIPT_MIGRATION.md.
+// is declared; see ../../../docs/history/TYPESCRIPT_MIGRATION.md.
 declare module 'react-native-vector-icons/MaterialCommunityIcons' {
   import type { ComponentType } from 'react';
   import type { TextProps } from 'react-native';

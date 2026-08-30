@@ -160,7 +160,7 @@ describe('chatDb', () => {
     // The JSON document is only a defensible medium for this store *because*
     // it is bounded: every read and write serialises the whole file, so the
     // cost grows with these two numbers. Raising them is the point at which
-    // the store has to move to SQLite (see OPTIMIZATION_PLAN.md, P1.7), so
+    // the store has to move to SQLite (see ../../../docs/OPTIMIZATION_PLAN.md, P1.7), so
     // they are pinned here rather than left to drift.
     test('keeps the document small enough for whole-file reads and writes', () => {
       expect(MAX_MESSAGES_PER_CONVERSATION).toBe(200);

@@ -7,6 +7,7 @@ Cloud-first project with two folders:
 | `mobile/`  | React Native app (React Native CLI)                      |
 | `server/`  | Node.js signaling server (Express + Socket.IO + `/health`) |
 | `shared/`  | Signaling/REST contracts (event names, payload schemas, routes) shared by both |
+| [`docs/`](./docs/README.md) | Setup guides, planning records, and historical reports |
 
 This project is split into a signaling backend and a React Native mobile client.
 The backend is developed entirely in GitHub Codespaces; the mobile app uses the
@@ -157,8 +158,8 @@ any failure.  Run them before opening a pull request.
 
 All three workflows run automatically.  A pull request that touches `server/`
 or `shared/` must pass `backend-ci.yml`; a PR touching `mobile/` or `shared/`
-must pass `mobile-ci.yml`.  Both gates run `npm run typecheck` (see
-[`TYPESCRIPT_MIGRATION.md`](./TYPESCRIPT_MIGRATION.md)) before the tests.
+must pass `mobile-ci.yml`.  Both gates run `npm run typecheck` (see the
+[documentation index](./docs/README.md)) before the tests.
 The APK build is informational (the artifact is uploaded but the check does not
 gate the merge on its own).
 

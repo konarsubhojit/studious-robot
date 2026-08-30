@@ -156,10 +156,10 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `FCM_SERVICE_ACCOUNT_JSON` | _(required)_ | Firebase service-account credentials used for ID-token verification and FCM HTTP v1 push delivery. Either the raw JSON string or a path to the JSON key file. |
 | `APNS_KEY` / `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_BUNDLE_ID` | _(unset)_ | APNs token-auth credentials. All four required to enable APNs pushes. |
 | `APNS_PRODUCTION` | `false` | Use the APNs production gateway when `true`, sandbox otherwise. |
-| `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../AZURE_SETUP.md). |
+| `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md). |
 | `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
-| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../AZURE_SETUP.md)). Required when `NODE_ENV=production` unless the memory store is explicitly enabled. |
+| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md)). Required when `NODE_ENV=production` unless the memory store is explicitly enabled. |
 | `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
@@ -245,7 +245,7 @@ for Android devices.
 
 APNs and FCM credentials still have to be configured **inside the hub** (Apple
 token auth + the Firebase service-account JSON). Step-by-step portal
-instructions live in [`AZURE_SETUP.md`](../AZURE_SETUP.md).
+instructions live in [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md).
 
 ### FCM (Firebase Cloud Messaging) — HTTP v1 (fallback)
 
@@ -291,7 +291,7 @@ On first connect the Mongo store creates a compound
 index. Index creation failures are logged and ignored rather than taking the
 server down.
 
-See [`AZURE_SETUP.md`](../AZURE_SETUP.md) for provisioning the Cosmos DB account.
+See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md) for provisioning the Cosmos DB account.
 
 ## Database (Drizzle ORM)
 

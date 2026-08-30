@@ -91,7 +91,7 @@ client ID as `GOOGLE_WEB_CLIENT_ID` before bundling the mobile app.
    mobile/android/app/google-services.json
    ```
 
-   > ⚠️ **Do not commit this file to a public repository.** It contains your Firebase project ID and API keys. Add it to `.gitignore` or manage it via CI secrets (see [CI / CD](#ci--cd) in `SETUP.md`).
+   > ⚠️ **Do not commit this file to a public repository.** It contains your Firebase project ID and API keys. Add it to `.gitignore` or manage it via CI secrets (see [CI / CD](./SETUP.md#ci--cd)).
 
 3. Click **Next** on the remaining wizard screens and then **Continue to console** — the SDK integration is already complete in this project.
 
