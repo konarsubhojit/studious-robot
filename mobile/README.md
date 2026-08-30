@@ -272,7 +272,7 @@ These features rely on the following permissions declared in
   `NotificationManager.canUseFullScreenIntent()` and falls back to a plain (but
   still audible, high-importance-channel) heads-up notification when denied.
 
-The Android APK workflow now inspects the assembled debug APK with `aapt dump
+The Android APK workflow now inspects the assembled release APK with `aapt dump
 permissions` and fails CI if any required call permission is missing from the
 final packaged manifest.
 
