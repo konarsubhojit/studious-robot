@@ -61,11 +61,11 @@ function ListItemContent({
   blockValue,
   styles,
   colors,
-  testID,
 }: Pick<ListItemProps, 'title' | 'subtitle' | 'icon' | 'leading' | 'trailing' | 'chevron' |
-  'destructive' | 'testID'> & {
+  'destructive'> & {
   inlineValue: string | null | undefined;
   blockValue: string | null | undefined;
+  valueTestID?: string;
   styles: ListItemStyles;
   colors: ReturnType<typeof useTheme>['colors'];
 }) {
@@ -98,7 +98,7 @@ function ListItemContent({
           ) : null}
         </View>
         {blockValue ? (
-          <Text style={styles.blockValue} testID={testID ? `${testID}-value` : undefined}>
+          <Text style={styles.blockValue} testID={valueTestID}>
             {blockValue}
           </Text>
         ) : null}
@@ -156,6 +156,7 @@ export default function ListItem({
   const isInlineValue = Boolean(value) && (value as string).length <= INLINE_VALUE_MAX_CHARS;
   const inlineValue = isInlineValue ? value : null;
   const blockValue = value && !isInlineValue ? value : null;
+  const valueTestID = testID ? `${testID}-value` : undefined;
   // Material 3 sizes a one-line row at 56dp and a two-line one at 72dp; a row
   // carrying a description or a wrapped value is the two-line case.
   const isTwoLine = Boolean(subtitle || blockValue);
@@ -171,7 +172,7 @@ export default function ListItem({
     blockValue,
     styles,
     colors,
-    testID,
+    valueTestID,
   };
 
   if (!onPress && !onLongPress) {
