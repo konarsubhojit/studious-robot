@@ -719,20 +719,30 @@ describe('useMessaging', () => {
     expect(resultRef.current.conversations[0].unreadCount).toBe(0);
   });
 
-  test('handleMessageReceived refetches conversations for a brand-new peer not already in the list', async () => {
+  test('handleMessageReceived keeps a provisional new conversation visible when its refetch fails', async () => {
     const { resultRef, params } = setup();
-    params.authedFetchRef.current.mockResolvedValue({
-      ok: true,
-      json: async () => ({ conversations: [] }),
-    });
+    params.authedFetchRef.current.mockRejectedValue(new Error('offline'));
 
     await act(async () => {
-      resultRef.current.handleMessageReceived({ messageId: 'm1', senderId: 'newpeer', body: 'hi' });
+      resultRef.current.handleMessageReceived({
+        conversationId: 'c-new',
+        messageId: 'm1',
+        senderId: 'newpeer',
+        body: 'hi',
+      });
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(params.authedFetchRef.current).toHaveBeenCalled();
+    expect(resultRef.current.conversations).toEqual([
+      expect.objectContaining({
+        conversationId: 'c-new',
+        peerId: 'newpeer',
+        unreadCount: 1,
+        lastMessage: expect.objectContaining({ messageId: 'm1' }),
+      }),
+    ]);
   });
 
   test('handleMessageDelivered appends to the outgoing peer thread, deduping by messageId', () => {

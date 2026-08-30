@@ -13,6 +13,7 @@ jest.mock('../../src/screenShare', () => ({
   isScreenShareSupported: jest.fn(() => true),
   startScreenCapture: jest.fn(),
   stopScreenCapture: jest.fn(),
+  logScreenShareAudioRtpStats: jest.fn(() => Promise.resolve()),
   verifyScreenShareFrames: jest.fn(() => Promise.resolve({ ok: true, frames: 1, verified: true })),
 }));
 
@@ -65,7 +66,7 @@ beforeEach(() => {
 });
 
 describe('useScreenShare', () => {
-  test('starts video-only sharing by replacing the camera track and renegotiating', async () => {
+  test('requests screen audio by default when starting a share', async () => {
     const screenVideoTrack = makeTrack('video');
     (screenShare.startScreenCapture as jest.Mock).mockResolvedValue({
       ok: true,
@@ -81,7 +82,7 @@ describe('useScreenShare', () => {
       await resultRef.current.handleScreenShareToggle();
     });
 
-    expect(screenShare.startScreenCapture).toHaveBeenCalledWith({ withAudio: false });
+    expect(screenShare.startScreenCapture).toHaveBeenCalledWith({ withAudio: true });
     expect(sender.replaceTrack).toHaveBeenCalledWith(screenVideoTrack);
     expect(cameraTrack.enabled).toBe(false);
     expect(localStream.removeTrack).toHaveBeenCalledWith(cameraTrack);
@@ -89,7 +90,10 @@ describe('useScreenShare', () => {
     expect(renegotiate).toHaveBeenCalledTimes(1);
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(resultRef.current.isScreenAudioShared).toBe(false);
-    expect(params.setStatus).toHaveBeenCalledWith('Sharing screen', 'success');
+    expect(params.setStatus).toHaveBeenCalledWith(
+      'Screen sharing started without system audio: audio capture unsupported.',
+      'warning',
+    );
   });
 
   test('adds a screen audio sender and renegotiates when screen audio is enabled', async () => {
@@ -105,9 +109,6 @@ describe('useScreenShare', () => {
     const renegotiate = jest.fn(() => Promise.resolve());
     const { resultRef, params, peerConnection } = setup({ renegotiate });
 
-    act(() => {
-      resultRef.current.handleScreenAudioToggle();
-    });
     await act(async () => {
       await resultRef.current.handleScreenShareToggle();
     });
@@ -129,15 +130,12 @@ describe('useScreenShare', () => {
     });
     const { resultRef, params } = setup();
 
-    act(() => {
-      resultRef.current.handleScreenAudioToggle();
-    });
     await act(async () => {
       await resultRef.current.handleScreenShareToggle();
     });
 
     expect(params.setStatus).toHaveBeenCalledWith(
-      'Sharing screen (screen audio unavailable on this device)',
+      'Screen sharing started without system audio: audio capture unsupported.',
       'warning',
     );
   });
@@ -181,9 +179,6 @@ describe('useScreenShare', () => {
     const renegotiate = jest.fn(() => Promise.resolve());
     const { resultRef, peerConnection, audioSender } = setup({ renegotiate });
 
-    act(() => {
-      resultRef.current.handleScreenAudioToggle();
-    });
     await act(async () => {
       await resultRef.current.handleScreenShareToggle();
     });
@@ -259,7 +254,7 @@ describe('useScreenShare', () => {
       resultRef.current.handleScreenAudioToggle();
     });
 
-    expect(resultRef.current.isScreenAudioEnabled).toBe(false);
+    expect(resultRef.current.isScreenAudioEnabled).toBe(true);
     expect(params.setStatus).toHaveBeenCalledWith(
       'Stop sharing to change the screen audio setting',
     );
