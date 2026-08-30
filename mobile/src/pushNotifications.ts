@@ -27,7 +27,7 @@ import {
   isPeerMuted,
 } from './notificationPreferences';
 import { loadDeviceId, loadSettings } from './settingsStorage';
-import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
+import type { Messaging } from '@react-native-firebase/messaging';
 import { errorMessage } from './errors';
 
 /**
@@ -286,7 +286,7 @@ export async function unregisterPushToken({ sessionId, signalingUrl }: { session
 // which simply skips when the APNs/FCM credentials are absent.
 
 export type MessagingHandle = {
-  instance: FirebaseMessagingTypes.Module;
+  instance: Messaging;
   api: typeof import('@react-native-firebase/messaging');
 };
 

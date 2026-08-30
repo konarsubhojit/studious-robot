@@ -11,32 +11,30 @@ describe('authService optional-provider loading', () => {
     }
   });
 
+  // Mirrors the modular @react-native-firebase/auth API (v22+): free functions
+  // that take the Auth instance returned by `getAuth()` as their first argument.
   function mockFirebaseAuth() {
-    const onAuthStateChanged = jest.fn(() => jest.fn());
-    const createUserWithEmailAndPassword = jest.fn(async () => ({ user: { uid: 'u1' } }));
-    const signInWithEmailAndPassword = jest.fn(async () => ({ user: { uid: 'u1' } }));
-    const signInWithCredential = jest.fn(async () => ({ user: { uid: 'u1' } }));
-    const signOut = jest.fn(async () => {});
     const currentUser = { getIdToken: jest.fn(async () => 'token-1') };
-    const instance = {
-      onAuthStateChanged,
-      createUserWithEmailAndPassword,
-      signInWithEmailAndPassword,
-      signInWithCredential,
-      signOut,
-      currentUser,
+    const instance = { currentUser };
+    const api = {
+      getAuth: jest.fn(() => instance),
+      onAuthStateChanged: jest.fn(() => jest.fn()),
+      createUserWithEmailAndPassword: jest.fn(async () => ({ user: { uid: 'u1' } })),
+      signInWithEmailAndPassword: jest.fn(async () => ({ user: { uid: 'u1' } })),
+      signInWithCredential: jest.fn(async () => ({ user: { uid: 'u1' } })),
+      signInWithPopup: jest.fn(async () => ({ user: { uid: 'u1' } })),
+      signOut: jest.fn(async () => {}),
+      GoogleAuthProvider: { credential: jest.fn(() => ({ provider: 'google' })) },
+      OAuthProvider: function OAuthProvider(this: any) {
+        this.addScope = jest.fn();
+      },
     };
-    const authMock = (jest.fn(() => instance) as jest.Mock & Record<string, any>);
-    authMock.GoogleAuthProvider = { credential: jest.fn(() => ({ provider: 'google' })) };
-    authMock.OAuthProvider = function OAuthProvider() {
-      this.addScope = jest.fn();
-    };
-    jest.doMock('@react-native-firebase/auth', () => authMock);
-    return { instance, authMock };
+    jest.doMock('@react-native-firebase/auth', () => api);
+    return { instance, api };
   }
 
   test('email/password helpers still work when Google native module is unavailable', async () => {
-    const { instance } = mockFirebaseAuth();
+    const { instance, api } = mockFirebaseAuth();
     jest.doMock('@react-native-google-signin/google-signin', () => {
       throw new Error('missing module');
     });
@@ -54,9 +52,9 @@ describe('authService optional-provider loading', () => {
     await expect(authService.getIdToken()).resolves.toBe('token-1');
     await authService.signOut();
 
-    expect(instance.createUserWithEmailAndPassword).toHaveBeenCalledWith('alice@example.com', 'secret12');
-    expect(instance.signInWithEmailAndPassword).toHaveBeenCalledWith('alice@example.com', 'secret12');
-    expect(instance.signOut).toHaveBeenCalled();
+    expect(api.createUserWithEmailAndPassword).toHaveBeenCalledWith(instance, 'alice@example.com', 'secret12');
+    expect(api.signInWithEmailAndPassword).toHaveBeenCalledWith(instance, 'alice@example.com', 'secret12');
+    expect(api.signOut).toHaveBeenCalledWith(instance);
   });
 
   test('signInWithGoogle throws a clear message when Google Sign-In is unavailable', async () => {

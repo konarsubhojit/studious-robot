@@ -12,7 +12,7 @@ import {
 } from '../authService';
 import { loadIdentity, saveIdentity } from '../settingsStorage';
 import type { CallStatus } from '../components/StatusBanner';
-import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import type { User } from '@react-native-firebase/auth';
 
 /**
  * @returns the user-facing text for a failed sign-in / registration.
@@ -51,7 +51,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
   const [isLoadingIdentity, setIsLoadingIdentity] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [authUser, setAuthUser] = useState(
-    (null as FirebaseAuthTypes.User | null),
+    (null as User | null),
   );
 
   const committedIdentityRef = useRef({ userId: '' });
