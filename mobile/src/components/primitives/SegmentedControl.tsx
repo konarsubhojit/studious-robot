@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useThemedStyles } from '../../ThemeContext';
-import { fontScaleCaps, radius, spacing, touchSlop, typography } from '../../theme';
+import { useTheme, useThemedStyles } from '../../ThemeContext';
+import { fontScaleCaps, radius, sizes, spacing, touchSlop, typography } from '../../theme';
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { ThemeColors } from '../../theme';
 
@@ -22,8 +22,11 @@ export type SegmentedControlProps<T extends string> = {
   testID?: string;
 };
 
-/** Height that keeps a segment tappable without inflating the control. */
-const SEGMENT_HEIGHT = 40;
+/**
+ * Material 3 sizes a segmented button at 40dp; `touchSlop` below grows the
+ * tappable area back to the 48dp minimum without inflating the visual control.
+ */
+const SEGMENT_HEIGHT = sizes.control;
 
 /**
  * Mutually exclusive filter, rendered as a radio group.
@@ -41,6 +44,7 @@ export default function SegmentedControl<T extends string>({
   style,
   testID,
 }: SegmentedControlProps<T>) {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
   return (
@@ -62,6 +66,7 @@ export default function SegmentedControl<T extends string>({
             accessibilityState={{ selected: isSelected, checked: isSelected }}
             hitSlop={touchSlop(SEGMENT_HEIGHT)}
             testID={option.testID}
+            android_ripple={{ color: isSelected ? colors.rippleOnAccent : colors.ripple }}
             style={({ pressed }) => [
               styles.segment,
               isSelected && styles.segmentSelected,

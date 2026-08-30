@@ -270,9 +270,7 @@ function ChatListScreen({
       icon="emptyChats"
       title="No conversations yet"
       description="Find someone by their username and say hello."
-      actionLabel={onSearchUsers ? 'Find someone' : undefined}
-      actionHint="Opens the list of people you can message"
-      onAction={onSearchUsers ? () => setIsPickerVisible(true) : undefined}
+      // Text only: the new-chat FAB is this screen's single primary action.
       testID="chat-list-empty"
     />
   );
@@ -327,6 +325,7 @@ function ChatListScreen({
           accessibilityLabel="New chat"
           accessibilityHint="Opens the list of people you can message"
           onPress={() => setIsPickerVisible(true)}
+          style={styles.fab}
           testID="chat-list-new-chat"
         />
       ) : null}
@@ -368,6 +367,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     titleSpacer: {
       flex: 1,
+    },
+    // 16dp from the right edge and from the tab bar, per Material 3.
+    fab: {
+      position: 'absolute',
+      right: spacing.lg,
+      bottom: spacing.lg,
     },
     meta: {
       alignItems: 'flex-end',

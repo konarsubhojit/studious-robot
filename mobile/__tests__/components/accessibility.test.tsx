@@ -221,16 +221,26 @@ describe('accessibility contracts', () => {
     });
 
     test('a list row wraps its title and caps only the boxed value column', () => {
-      const tree = render(<ListItem title="Signaling server" value="wss://example.test" />);
+      const tree = render(<ListItem title="Signaling server" value="On" />);
 
       // `minHeight` row + `flex: 1` text column: the title has somewhere to go.
       const title = textNodeWith(tree, 'Signaling server');
       expect(title.props.numberOfLines).toBe(2);
       expect(title.props.maxFontSizeMultiplier).toBeUndefined();
-      // The value is boxed into `maxWidth: '40%'` and cannot be given more.
-      expect(textNodeWith(tree, 'wss://example.test').props.maxFontSizeMultiplier).toBe(
-        fontScaleCaps.meta,
-      );
+      // A short value keeps the trailing slot, which is boxed into
+      // `maxWidth: '40%'` and cannot be given more.
+      expect(textNodeWith(tree, 'On').props.maxFontSizeMultiplier).toBe(fontScaleCaps.meta);
+    });
+
+    test('a long row value leaves the boxed column and wraps at full width', () => {
+      const tree = render(<ListItem title="Signaling server" value="wss://example.test" />);
+
+      // The value is the whole point of such a row, so it may not be capped
+      // into `wss://exa…` — it drops below the title, where it has the row's
+      // full width to wrap into.
+      const value = textNodeWith(tree, 'wss://example.test');
+      expect(value.props.numberOfLines).toBeUndefined();
+      expect(value.props.maxFontSizeMultiplier).toBeUndefined();
     });
 
     test('leaves the row subtitle uncapped: it is running text', () => {

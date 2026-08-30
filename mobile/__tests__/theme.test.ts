@@ -51,7 +51,34 @@ function contrast(a: string, b: string) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const SURFACES = ['background', 'backgroundAlt', 'surface', 'surfaceRaised', 'surfaceControl'];
+/**
+ * Every surface a component may paint content on.
+ *
+ * The `surfaceContainer*` rungs are the Material 3 tonal roles the legacy
+ * `surface*` names now alias; they are listed independently so that re-pointing
+ * an alias, or adding a rung, cannot quietly ship a surface nothing has ever
+ * measured a text colour against.
+ */
+const SURFACES = [
+  'background',
+  'backgroundAlt',
+  'surface',
+  'surfaceRaised',
+  'surfaceControl',
+  'surfaceContainerLow',
+  'surfaceContainer',
+  'surfaceContainerHigh',
+  'surfaceContainerHighest',
+  'surfaceVariant',
+];
+
+/** The tonal ladder, from the page outwards. */
+const TONAL_LADDER = [
+  'surfaceContainerLow',
+  'surfaceContainer',
+  'surfaceContainerHigh',
+  'surfaceContainerHighest',
+];
 
 /**
  * The surfaces a tinted notice can end up sitting on.
@@ -88,6 +115,21 @@ const FOREGROUNDS = [
 describe('theme palettes', () => {
   test('light and dark expose exactly the same tokens', () => {
     expect(Object.keys(palettes.light).sort()).toEqual(Object.keys(palettes.dark).sort());
+  });
+
+  test.each(['light', 'dark'])('%s steps the tonal ladder away from the page', scheme => {
+    const colors = palettes[(scheme as 'light'|'dark')] as unknown as Record<string, string>;
+    // Depth is the point of the roles: a ladder whose rungs are the same tone,
+    // or that doubles back on itself, is the "nothing reads as elevated"
+    // defect the roles were added to fix.
+    const rungs = TONAL_LADDER.map(role => luminance(colors[role]));
+    const ascending = scheme === 'dark';
+    rungs.slice(1).forEach((rung, index) => {
+      const previous = rungs[index];
+      expect(ascending ? rung > previous : rung < previous).toBe(true);
+      // Each step has to be visible, not merely different.
+      expect(Math.abs(rung - previous)).toBeGreaterThan(0.004);
+    });
   });
 
   test.each(['light', 'dark'])('%s text colours meet WCAG AA on every surface', scheme => {

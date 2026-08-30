@@ -22,7 +22,7 @@ import {
 } from '../../../shared';
 import { logWarn } from '../appLogger';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { radius, spacing, touchSlop, typography } from '../theme';
+import { elevation, radius, spacing, touchSlop, typography } from '../theme';
 import { isAudioMimeType, isVideoMimeType } from '../videoPlayback';
 import AttachSheet from './AttachSheet';
 import AudioAttachmentPlayer from './AudioAttachmentPlayer';
@@ -101,6 +101,10 @@ const QUOTE_HIGHLIGHT_MS = 1600;
 const ATTACHMENTS_UNAVAILABLE_NOTICE_MS = 4000;
 /** Rendered height of an inline image attachment. */
 const ATTACHMENT_IMAGE_HEIGHT = 180;
+
+/** Material 3 puts a chat bubble at 16–20dp; the tail corner is squared. */
+const BUBBLE_RADIUS = 18;
+const BUBBLE_TAIL_RADIUS = radius.xs;
 
 /** Where one of the current user's own messages has got to. */
 export type MessageStatus = 'sending' | 'failed' | 'sent' | 'delivered' | 'read';
@@ -418,6 +422,10 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMe
         />
       </Pressable>,
       message.body ? <Text style={textStyle}>{message.body}</Text> : null,
+      // Inline media carries no `Download` link: the picture *is* the control
+      // (it opens fullscreen, where downloading lives), and the extra line
+      // pushed the footer past the bubble it belongs to.
+      null,
     );
   }
 
@@ -448,6 +456,7 @@ function MessageContent({ message, isOwn, styles, onDownloadAttachment, onOpenMe
         </View>
       </Pressable>,
       message.body ? <Text style={textStyle}>{message.body}</Text> : null,
+      null,
     );
   }
 
@@ -690,6 +699,7 @@ const MessageRow = memo(
         style={[
           styles.bubble,
           isOwn ? styles.bubbleOwn : styles.bubblePeer,
+          isGroupEnd && (isOwn ? styles.bubbleTailOwn : styles.bubbleTailPeer),
           isHighlighted && styles.bubbleHighlighted,
         ]}
         testID={isHighlighted ? 'chat-message-highlighted' : 'chat-message-bubble'}>
@@ -1321,8 +1331,12 @@ function ChatConversationScreen({
     ({ item }: { item: ListItem; }) => {
       if (item.type === 'date') {
         return (
+          // A rule either side of the label, like the unread divider: as a
+          // bare chip it sat beside the day's first bubble instead of above it.
           <View style={styles.dateSeparator} testID="chat-date-separator">
+            <View style={styles.dateSeparatorRule} />
             <Text style={styles.dateSeparatorText}>{item.label}</Text>
+            <View style={styles.dateSeparatorRule} />
           </View>
         );
       }
@@ -1520,7 +1534,7 @@ function ChatConversationScreen({
           />
           {stickyDateLabel ? (
             <View style={styles.stickyDate} pointerEvents="none" testID="chat-sticky-date">
-              <Text style={styles.dateSeparatorText}>{stickyDateLabel}</Text>
+              <Text style={styles.stickyDateText}>{stickyDateLabel}</Text>
             </View>
           ) : null}
           {showScrollToBottom ? (
@@ -1648,7 +1662,10 @@ function ChatConversationScreen({
           <IconButton
             icon="➤"
             onPress={handleSend}
-            variant="active"
+            // A faded accent circle beside an enabled mic button is what made
+            // send look broken; when there is nothing to send it is simply a
+            // quiet control, and it lights up in the accent once there is.
+            variant={draft.trim() ? 'active' : 'default'}
             disabled={!draft.trim() || isSending}
             size={44}
             accessibilityLabel="Send message"
@@ -1736,16 +1753,30 @@ const createStyles = (colors: ThemeColors) =>
       gap: spacing.sm,
     },
     dateSeparator: {
+      flexDirection: 'row',
       alignItems: 'center',
-      marginVertical: spacing.sm,
+      gap: spacing.sm,
+      marginVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+    },
+    dateSeparatorRule: {
+      flex: 1,
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.outlineVariant,
     },
     dateSeparatorText: {
-      ...typography.hint,
+      ...typography.caption,
       color: colors.textSecondary,
-      backgroundColor: colors.surfaceRaised,
+    },
+    // The floating copy of the same label, which needs its own fill because it
+    // is drawn over the messages rather than between them.
+    stickyDateText: {
+      ...typography.caption,
+      color: colors.textSecondary,
+      backgroundColor: colors.surfaceContainerHigh,
       paddingHorizontal: spacing.sm,
       paddingVertical: 2,
-      borderRadius: radius.sm,
+      borderRadius: radius.pill,
       overflow: 'hidden',
     },
     unreadDivider: {
@@ -1792,38 +1823,43 @@ const createStyles = (colors: ThemeColors) =>
       alignSelf: 'flex-start',
       alignItems: 'flex-start',
     },
+    // 18dp, not the near-pill it used to read as at 16dp on short bubbles:
+    // Material 3 puts a bubble at 16–20dp and squares the tail-side corner of
+    // the last bubble in a run, which is what gives grouping for free.
     bubble: {
-      borderRadius: radius.lg,
+      borderRadius: BUBBLE_RADIUS,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
     bubbleOwn: {
       backgroundColor: colors.accentButton,
-      borderWidth: 1,
-      borderColor: colors.accent,
-      shadowColor: colors.shadow,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.25,
-      shadowRadius: 3,
-      elevation: 2,
+      ...elevation(colors.shadow).low,
+    },
+    // Filled, not outlined: an outlined incoming bubble beside a filled
+    // outgoing one inverts the platform norm and reads as draft or disabled.
+    bubblePeer: {
+      backgroundColor: colors.surfaceVariant,
+    },
+    bubbleTailOwn: {
+      borderBottomRightRadius: BUBBLE_TAIL_RADIUS,
+    },
+    bubbleTailPeer: {
+      borderBottomLeftRadius: BUBBLE_TAIL_RADIUS,
     },
     bubbleHighlighted: {
       borderColor: colors.accent,
       borderWidth: 2,
     },
-    bubblePeer: {
-      backgroundColor: colors.surfaceRaised,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
     bubbleContent: {
       gap: spacing.xs,
     },
     bubbleTextOwn: {
+      ...typography.bodyLarge,
       color: colors.textOnAccent,
     },
     bubbleTextPeer: {
-      color: colors.textPrimary,
+      ...typography.bodyLarge,
+      color: colors.onSurface,
     },
     placeholderText: {
       fontStyle: 'italic',
@@ -1833,7 +1869,6 @@ const createStyles = (colors: ThemeColors) =>
       width: 220,
       height: ATTACHMENT_IMAGE_HEIGHT,
       borderRadius: radius.md,
-      marginBottom: spacing.xs,
     },
     attachmentVideo: {
       position: 'relative',
@@ -1953,10 +1988,10 @@ const createStyles = (colors: ThemeColors) =>
     composerInput: {
       flex: 1,
       maxHeight: 120,
-      borderRadius: radius.md,
+      borderRadius: radius.lg,
       borderWidth: 1,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.surfaceContainerHigh,
       color: colors.textPrimary,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,

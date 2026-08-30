@@ -6,10 +6,24 @@ import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { ThemeColors } from '../../theme';
 
+/**
+ * Longest value still shown as trailing text beside the title.
+ *
+ * Long enough for the values the right-hand slot was designed for — `On`,
+ * `English`, `1.2 GB`, a timestamp — and short enough that an email address or
+ * a signed-in-with sentence falls through to the wrapping block below the
+ * title instead of being ellipsized into uselessness.
+ */
+const INLINE_VALUE_MAX_CHARS = 12;
+
 export type ListItemProps = {
   title: string;
   subtitle?: string | null;
-  /** Trailing value text, e.g. the current setting or a timestamp. */
+  /**
+   * Value text. Short values sit beside the title; anything longer wraps
+   * full-width beneath it, because a row whose whole purpose is to state a
+   * value must not truncate that value.
+   */
   value?: string | null;
   /** Semantic `ICONS` key rendered in the leading slot. */
   icon?: string;
@@ -68,6 +82,17 @@ export default function ListItem({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
+  // Short values keep the trailing treatment they were designed for; long ones
+  // move under the title, where they have the full width of the row to wrap
+  // into. The old layout gave every value the same 40%-wide right-hand slot,
+  // which turned "Signed in with" into `koner.subhojit@g…`.
+  const isInlineValue = Boolean(value) && (value as string).length <= INLINE_VALUE_MAX_CHARS;
+  const inlineValue = isInlineValue ? value : null;
+  const blockValue = value && !isInlineValue ? value : null;
+  // Material 3 sizes a one-line row at 56dp and a two-line one at 72dp; a row
+  // carrying a description or a wrapped value is the two-line case.
+  const isTwoLine = Boolean(subtitle || blockValue);
+
   const content = (
     <>
       {leading ?? (icon ? (
@@ -76,29 +101,37 @@ export default function ListItem({
         </View>
       ) : null)}
       <View style={styles.text}>
-        {/* Reflow, not a cap: the row is `minHeight`, not `height`, and this
-            column is `flex: 1`, so it has somewhere to go. A row title is the
-            row's subject — a truncated setting name or peer id is a row you
-            can no longer identify — so it wraps rather than being clipped or
-            shrunk. */}
-        <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={2}>
-          {title}
-        </Text>
+        <View style={styles.titleRow}>
+          {/* Reflow, not a cap: the row is `minHeight`, not `height`, and this
+              column is `flex: 1`, so it has somewhere to go. A row title is the
+              row's subject — a truncated setting name or peer id is a row you
+              can no longer identify — so it wraps rather than being clipped or
+              shrunk. */}
+          <Text style={[styles.title, destructive && styles.titleDestructive]} numberOfLines={2}>
+            {title}
+          </Text>
+          {inlineValue ? (
+            // Capped: unlike the title, this is boxed into `maxWidth: '40%'` —
+            // the constraint that keeps the title readable — so it is the one
+            // text in the row that cannot be given more width. It only ever
+            // holds a short value ("On", "English", a timestamp), so a modest
+            // cap costs nothing.
+            <Text style={styles.value} maxFontSizeMultiplier={fontScaleCaps.meta} numberOfLines={1}>
+              {inlineValue}
+            </Text>
+          ) : null}
+        </View>
+        {blockValue ? (
+          <Text style={styles.blockValue} testID={testID ? `${testID}-value` : undefined}>
+            {blockValue}
+          </Text>
+        ) : null}
         {subtitle ? (
           <Text style={styles.subtitle} numberOfLines={2}>
             {subtitle}
           </Text>
         ) : null}
       </View>
-      {value ? (
-        // Capped: unlike the title, this is boxed into `maxWidth: '40%'` — the
-        // constraint that keeps the title readable — so it is the one text in
-        // the row that cannot be given more width. It is trailing metadata (the
-        // current setting, a timestamp), so a modest cap costs nothing.
-        <Text style={styles.value} maxFontSizeMultiplier={fontScaleCaps.meta} numberOfLines={1}>
-          {value}
-        </Text>
-      ) : null}
       {trailing}
       {chevron ? <Icon name="disclosure" size={20} color={colors.textMuted} /> : null}
     </>
@@ -110,7 +143,7 @@ export default function ListItem({
     // with the `button` role a row without a handler has no business claiming.
     return (
       <View
-        style={[styles.row, style]}
+        style={[styles.row, isTwoLine && styles.rowTwoLine, style]}
         accessible={accessibilityLabel ? true : undefined}
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={accessibilityLabel ? accessibilityHint : undefined}
@@ -130,7 +163,14 @@ export default function ListItem({
       accessibilityLabel={accessibilityLabel ?? title}
       accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled, ...accessibilityState }}
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed, disabled && styles.rowDisabled, style]}
+      android_ripple={{ color: colors.ripple }}
+      style={({ pressed }) => [
+        styles.row,
+        isTwoLine && styles.rowTwoLine,
+        pressed && styles.rowPressed,
+        disabled && styles.rowDisabled,
+        style,
+      ]}
       testID={testID}>
       {content}
     </Pressable>
@@ -141,13 +181,16 @@ export default function ListItem({
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     row: {
-      minHeight: sizes.minTouchTarget,
+      minHeight: sizes.row.singleLine,
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.md,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
       borderRadius: radius.md,
+    },
+    rowTwoLine: {
+      minHeight: sizes.row.twoLine,
     },
     rowPressed: {
       backgroundColor: colors.surfaceRaised,
@@ -163,9 +206,15 @@ const createStyles = (colors: ThemeColors) =>
       flex: 1,
       gap: 2,
     },
+    titleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
     title: {
       ...typography.subtitle,
       color: colors.onSurface,
+      flexShrink: 1,
     },
     titleDestructive: {
       color: colors.negative,
@@ -178,6 +227,13 @@ const createStyles = (colors: ThemeColors) =>
       ...typography.body,
       color: colors.textMuted,
       maxWidth: '40%',
+      marginLeft: 'auto',
       textAlign: 'right',
+    },
+    // Deliberately uncapped: this is the value the row exists to state, so it
+    // wraps across the full width rather than ellipsizing.
+    blockValue: {
+      ...typography.body,
+      color: colors.onSurfaceVariant,
     },
   });

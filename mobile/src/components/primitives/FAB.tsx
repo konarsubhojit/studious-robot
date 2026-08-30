@@ -51,7 +51,7 @@ export default function FAB({
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
 
-  const diameter = size === 'sm' ? sizes.minTouchTarget - 8 : sizes.fab;
+  const diameter = size === 'sm' ? sizes.minTouchTarget : sizes.fab;
   const glyphColor = tone === 'accent' ? colors.textOnAccent : colors.onSurface;
 
   return (
@@ -66,6 +66,10 @@ export default function FAB({
         }
         accessibilityHint={accessibilityHint}
         testID={testID}
+        android_ripple={{
+          color: tone === 'accent' ? colors.rippleOnAccent : colors.ripple,
+          borderless: false,
+        }}
         style={({ pressed }) => [
           styles.fab,
           tone === 'accent' ? styles.fabAccent : styles.fabSurface,

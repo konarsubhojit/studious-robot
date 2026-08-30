@@ -86,6 +86,7 @@ export default function AppTabBar({ activeTab, onChangeTab, unreadCount = 0, mis
             }
             accessibilityState={{ selected: isActive }}
             testID={tab.testID}
+            android_ripple={{ color: colors.ripple, borderless: false }}
             style={styles.tab}>
             <Icon name={isActive ? tab.iconActive : tab.icon} size={24} color={iconColor} />
             {/* Capped: the bar is one row of three equal columns and can never
@@ -120,7 +121,9 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      backgroundColor: colors.surface,
+      // A step up the tonal ladder from the page, so the bar reads as chrome
+      // rather than as more content.
+      backgroundColor: colors.surfaceContainer,
     },
     tab: {
       flex: 1,
@@ -130,13 +133,17 @@ const createStyles = (colors: ThemeColors) =>
       gap: 2,
       paddingVertical: spacing.sm,
     },
+    // Material 3 `labelMedium`: 12sp at medium weight. The bar used to set its
+    // labels at a bold 15sp, which is heavier than the screen titles are
+    // relative to their content.
     tabLabel: {
       ...typography.caption,
       color: colors.onSurfaceVariant,
-      fontWeight: '600',
+      fontWeight: '500',
     },
     tabLabelActive: {
       color: colors.onSurface,
+      fontWeight: '600',
     },
     badge: {
       position: 'absolute',

@@ -1,6 +1,6 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme, useThemedStyles } from '../ThemeContext';
-import { spacing } from '../theme';
+import { spacing, typography } from '../theme';
 import { ICONS, loadVectorIcons } from '../vectorIcons';
 import type { ThemeColors } from '../theme';
 
@@ -84,6 +84,11 @@ export default function IconButton({
         accessibilityHint={accessibilityHint}
         accessibilityState={{ disabled: isDisabled, busy: loading, selected }}
         testID={testID}
+        android_ripple={{
+          color: variant === 'default' || variant === 'muted' ? colors.ripple : colors.rippleOnAccent,
+          borderless: true,
+          radius: size / 2,
+        }}
         style={({ pressed }) => [
           styles.circle,
           { width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor },
@@ -145,8 +150,8 @@ const createStyles = (colors: ThemeColors) =>
       lineHeight: undefined,
     },
     label: {
+      ...typography.caption,
       color: colors.textSecondary,
-      fontSize: 11,
       textAlign: 'center',
       marginTop: spacing.xs,
     },

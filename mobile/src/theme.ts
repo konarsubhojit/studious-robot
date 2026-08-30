@@ -14,14 +14,40 @@ import type { TextStyle } from 'react-native';
  * text, 3:1 for large text and control borders).
  */
 
+/**
+ * Material 3 tonal surface roles for the dark scheme.
+ *
+ * One ladder, four rungs, each a visible step lighter than the last: the page
+ * sits on `background`, and anything drawn on top of it picks the rung that
+ * says how prominent it is. Every surface in the app used to be one of four
+ * hand-picked navies within a couple of percent luminance of each other, so a
+ * card, the tab bar and the page behind them all read as the same plane.
+ *
+ * The legacy `surface*` token names below are aliases onto these rungs, so no
+ * screen has to change to gain the depth.
+ */
+const darkContainers = {
+  /** Cards and the tab bar: the first step off the page. */
+  surfaceContainerLow: '#17213b',
+  /** Grouped content: sheets, list sections, incoming chat bubbles' backdrop. */
+  surfaceContainer: '#1e2848',
+  /** Controls drawn on a card, and filled (incoming) chat bubbles. */
+  surfaceContainerHigh: '#26325a',
+  /** The most prominent rung: banners and pressed control fills. */
+  surfaceContainerHighest: '#2a3760',
+};
+
 const darkColors = {
   // Backgrounds / surfaces (midnight blue)
   background: '#0b1020',
   backgroundAlt: '#121a2e',
-  surface: '#17213b',
-  surfaceRaised: '#1d2947',
-  surfaceControl: '#243154',
-  surfaceBanner: '#2a3a63',
+  ...darkContainers,
+  /** Filled container behind content that must read as a distinct block. */
+  surfaceVariant: darkContainers.surfaceContainerHigh,
+  surface: darkContainers.surfaceContainerLow,
+  surfaceRaised: darkContainers.surfaceContainer,
+  surfaceControl: darkContainers.surfaceContainerHigh,
+  surfaceBanner: darkContainers.surfaceContainerHighest,
   stage: '#0f172a',
   stageDark: '#070b16',
   pipBackground: '#060a13',
@@ -60,6 +86,13 @@ const darkColors = {
   // schemes can diverge later without hunting through component stylesheets.
   shadow: '#000000',
 
+  // Android touch ripple. Translucent so it takes the colour of whatever
+  // surface it is drawn on, which is the property that lets one token serve
+  // every row, button and tab.
+  ripple: 'rgba(246, 248, 255, 0.14)',
+  /** Ripple on an accent-filled control, where the foreground is dark. */
+  rippleOnAccent: 'rgba(13, 31, 74, 0.18)',
+
   // ── Semantic aliases ──────────────────────────────────────────────────────
   // Layered over the raw palette above so components stop choosing between
   // `accentValue` and `accentButton` by guesswork. Each alias states the *role*
@@ -75,14 +108,30 @@ const darkColors = {
   ambient: '#141d38',
 };
 
+/**
+ * The same four rungs for the light scheme.
+ *
+ * Light steps the other way — a container is *darker* than the paper it sits
+ * on, as Material 3 specifies — but the roles mean the same thing, so a
+ * component picks a rung by what it is, not by which scheme is active.
+ */
+const lightContainers = {
+  surfaceContainerLow: '#f1f4fb',
+  surfaceContainer: '#e8edf7',
+  surfaceContainerHigh: '#e0e7f5',
+  surfaceContainerHighest: '#d8e0f2',
+};
+
 const lightColors = {
   // Backgrounds / surfaces (cool daylight)
   background: '#f4f6fb',
-  backgroundAlt: '#e8edf7',
+  backgroundAlt: lightContainers.surfaceContainer,
+  ...lightContainers,
+  surfaceVariant: lightContainers.surfaceContainer,
   surface: '#ffffff',
-  surfaceRaised: '#f1f4fb',
-  surfaceControl: '#e0e7f5',
-  surfaceBanner: '#d5def2',
+  surfaceRaised: lightContainers.surfaceContainerLow,
+  surfaceControl: lightContainers.surfaceContainerHigh,
+  surfaceBanner: lightContainers.surfaceContainerHighest,
   // The video stage stays dark in both schemes: letterboxing camera frames in
   // white is glaring and hides the (light) overlay controls drawn on top.
   stage: '#0f172a',
@@ -116,6 +165,9 @@ const lightColors = {
   onOverlay: '#f6f8ff',
 
   shadow: '#000000',
+
+  ripple: 'rgba(16, 26, 48, 0.12)',
+  rippleOnAccent: 'rgba(255, 255, 255, 0.24)',
 
   // ── Semantic aliases (see the dark palette for the rationale) ─────────────
   onSurface: '#101a30',
@@ -379,13 +431,22 @@ export function resolveContrast(
  *
  * Light has no equivalent, so this is dark-only (see {@link buildPalette}).
  */
+const trueBlackContainers = {
+  surfaceContainerLow: '#101319',
+  surfaceContainer: '#171b23',
+  surfaceContainerHigh: '#20252f',
+  surfaceContainerHighest: '#272d3a',
+};
+
 const trueBlackSurfaces = {
   background: '#000000',
   backgroundAlt: '#0a0d14',
-  surface: '#101319',
-  surfaceRaised: '#171b23',
-  surfaceControl: '#20252f',
-  surfaceBanner: '#272d3a',
+  ...trueBlackContainers,
+  surfaceVariant: trueBlackContainers.surfaceContainerHigh,
+  surface: trueBlackContainers.surfaceContainerLow,
+  surfaceRaised: trueBlackContainers.surfaceContainer,
+  surfaceControl: trueBlackContainers.surfaceContainerHigh,
+  surfaceBanner: trueBlackContainers.surfaceContainerHighest,
 };
 
 /**
@@ -598,6 +659,8 @@ export const spacing = {
 };
 
 export const radius = {
+  /** Squared-off corner: the tail of the last bubble in a message run. */
+  xs: 4,
   sm: 8,
   md: 12,
   lg: 16,
@@ -680,7 +743,17 @@ export const motion = {
 
 /** Minimum recommended dimensions (dp) for reliable touch targets. */
 export const sizes = {
-  minTouchTarget: 56,
+  minTouchTarget: 48,
+  /**
+   * Material 3 list-row heights: 56dp for a single line, 72dp once a row also
+   * carries a description or a wrapped value.
+   */
+  row: {
+    singleLine: 56,
+    twoLine: 72,
+  },
+  /** Height of a standard control: a segment, a filled button, a text field. */
+  control: 40,
   /** Avatar diameters, keyed by the `Avatar` primitive's `size` prop. */
   avatar: {
     xs: 24,
@@ -728,6 +801,7 @@ type TypographyToken =
   | 'title'
   | 'headline'
   | 'subtitle'
+  | 'bodyLarge'
   | 'body'
   | 'bodyStrong'
   | 'label'
@@ -739,27 +813,29 @@ type TypographyToken =
   | 'hint';
 
 const BASE_TYPOGRAPHY: Record<TypographyToken, TextStyle> = {
-  /** Large-title header ("Chats", "Calls"), and the call canvas' peer name. */
-  display: { fontSize: 32, lineHeight: 38, fontWeight: '700' },
-  /** Screen title. */
-  title: { fontSize: 28, lineHeight: 34, fontWeight: '600' },
-  /** Card / section heading, list-row primary text at emphasis. */
-  headline: { fontSize: 18, lineHeight: 24, fontWeight: '700' },
-  /** List-row primary text. */
-  subtitle: { fontSize: 16, lineHeight: 22, fontWeight: '600' },
-  /** Default running text: message bodies, row secondary text. */
+  /** M3 `headlineMedium`: large-title header ("Chats", "Calls"). */
+  display: { fontSize: 28, lineHeight: 36, fontWeight: '700' },
+  /** M3 `titleLarge`: screen title, and the call canvas' peer name. */
+  title: { fontSize: 22, lineHeight: 28, fontWeight: '600' },
+  /** M3 `titleMedium`: card / section heading, list-row primary at emphasis. */
+  headline: { fontSize: 16, lineHeight: 24, fontWeight: '700' },
+  /** M3 `bodyLarge` at title weight: list-row primary text. */
+  subtitle: { fontSize: 16, lineHeight: 24, fontWeight: '600' },
+  /** M3 `bodyLarge`: message bodies and other primary running text. */
+  bodyLarge: { fontSize: 16, lineHeight: 24 },
+  /** M3 `bodyMedium`: secondary running text, row descriptions. */
   body: { fontSize: 14, lineHeight: 20 },
   /** Body weight-emphasised, for a row that has unread content. */
   bodyStrong: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
-  /** Button and control labels. */
-  label: { fontSize: 14, lineHeight: 18, fontWeight: '600' },
-  /** Timestamps, hints, badge counts. */
+  /** M3 `labelLarge`: button and control labels. */
+  label: { fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  /** M3 `labelMedium`: timestamps, tab labels, badge counts. */
   caption: { fontSize: 12, lineHeight: 16 },
 
-  sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: '700' },
+  sectionTitle: { fontSize: 16, lineHeight: 24, fontWeight: '700' },
   groupLabel: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,

@@ -92,7 +92,8 @@ const createStyles = (colors: ThemeColors) =>
     sheet: {
       borderTopLeftRadius: radius.lg,
       borderTopRightRadius: radius.lg,
-      backgroundColor: colors.surfaceRaised,
+      // The modal layer, a rung above the cards it is presented over.
+      backgroundColor: colors.surfaceContainerHigh,
       paddingHorizontal: spacing.md,
       paddingTop: spacing.sm,
       gap: spacing.xs,
