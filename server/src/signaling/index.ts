@@ -20,9 +20,10 @@ function leaveRoom(socket: import('socket.io').Socket, roomId: string, rooms: Ma
   if (!room) return;
 
   room.delete(socket.id);
-  // `join`/`leave` are synchronous with the in-memory adapter and return a
-  // promise only with the Redis one; the room bookkeeping above is what this
-  // code depends on, so the result is deliberately not awaited.
+  // `join`/`leave` are typed `void | Promise<void>` because an adapter may be
+  // asynchronous. Nothing below depends on the membership change having landed
+  // — the local bookkeeping above is what this code reads — so the result is
+  // deliberately not awaited.
   void socket.leave(roomId);
   console.log(`[signaling] leave: socket ${socket.id} left room "${roomId}" (size=${room.size})`);
 
