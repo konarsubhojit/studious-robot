@@ -20,9 +20,9 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
   const url = `http://127.0.0.1:${port}`;
   async function teardown() {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) =>
-      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
-    );
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+    });
   }
   return { ...server, url, teardown };
 }

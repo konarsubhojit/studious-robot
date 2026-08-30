@@ -18,7 +18,9 @@ async function startServer() {
     // closeAllConnections() (Node 18.2+) forces lingering keep-alive connections
     // to close so that httpServer.close() can finish promptly.
     httpServer.closeAllConnections?.();
-    await new Promise((resolve) => io.close(() => httpServer.close(() => resolve(undefined))));
+    await new Promise((resolve) => {
+      void io.close(() => httpServer.close(() => resolve(undefined)));
+    });
   }
 
   return { url, teardown };

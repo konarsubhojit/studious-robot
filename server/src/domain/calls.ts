@@ -313,7 +313,7 @@ function endCallsForDisconnectedParticipant(
  * Bounds applied by {@link pruneTerminalCalls}.
  *
  * Named rather than written inline so the declaration stays inside the
- * `declaration-formatting` guard, which only matches `type`/`interface` lines.
+ * `max-len` lint rule, which only matches `type`/`interface` lines.
  *
  * `0` means "skip this bound on this pass" for both windows, so a deployment
  * can disable age-based or count-based eviction without disabling the other.

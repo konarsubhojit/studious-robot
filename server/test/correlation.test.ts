@@ -121,6 +121,8 @@ test('a call initiated over the socket is logged with the client correlation id'
     caller?.disconnect();
     callee?.disconnect();
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) => server.io.close(() => server.httpServer.close(resolve)));
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(resolve));
+    });
   }
 });

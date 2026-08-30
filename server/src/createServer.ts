@@ -395,9 +395,9 @@ function createServer(opts: CreateServerOptions = {}) {
       // Force-disconnect any remaining sockets, then close the servers.
       io.disconnectSockets(true);
       httpServer.closeAllConnections?.();
-      await new Promise((resolve: (value?: undefined) => void) =>
-        io.close(() => resolve())
-      );
+      await new Promise((resolve: (value?: undefined) => void) => {
+        void io.close(() => resolve());
+      });
       await new Promise((resolve: (value?: undefined) => void) =>
         httpServer.close(() => resolve())
       );

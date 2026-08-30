@@ -15,9 +15,9 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
   async function teardown(...clients: (import('socket.io-client').Socket | undefined)[]) {
     clients.forEach((c) => c?.disconnect());
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) =>
-      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
-    );
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+    });
   }
 
   return { ...server, url, teardown };

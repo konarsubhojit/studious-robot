@@ -20,7 +20,10 @@ function leaveRoom(socket: import('socket.io').Socket, roomId: string, rooms: Ma
   if (!room) return;
 
   room.delete(socket.id);
-  socket.leave(roomId);
+  // `join`/`leave` are synchronous with the in-memory adapter and return a
+  // promise only with the Redis one; the room bookkeeping above is what this
+  // code depends on, so the result is deliberately not awaited.
+  void socket.leave(roomId);
   console.log(`[signaling] leave: socket ${socket.id} left room "${roomId}" (size=${room.size})`);
 
   if (room.size === 0) {
@@ -104,7 +107,7 @@ function registerSocketHandlers(
     // Join a per-user room so call/RTC notifications can be addressed to the
     // user regardless of which instance their socket(s) live on (the Socket.IO
     // Redis adapter fans the emit out across instances).
-    socket.join(userRoom(identity.userId));
+    void socket.join(userRoom(identity.userId));
 
     // The handshake presented a sessionId that no longer resolves to a live
     // session (server restart dropped the in-memory table, TTL expiry, …):
@@ -170,7 +173,7 @@ function registerSocketHandlers(
 
       currentRoom = roomId;
       room.add(socket.id);
-      socket.join(roomId);
+      void socket.join(roomId);
       console.log(
         `[signaling] join: socket ${socket.id} joined room "${roomId}" (size=${room.size})`
       );

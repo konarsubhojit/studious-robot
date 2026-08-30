@@ -282,9 +282,9 @@ test('createServer publishes call-state transitions on the injected message bus'
     assert.equal(accepted.previousStatus, 'ringing');
   } finally {
     server.httpServer.closeAllConnections?.();
-    await new Promise((resolve) =>
-      server.io.close(() => server.httpServer.close(() => resolve(undefined)))
-    );
+    await new Promise((resolve) => {
+      void server.io.close(() => server.httpServer.close(() => resolve(undefined)));
+    });
     await bus.close();
   }
 });

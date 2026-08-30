@@ -94,6 +94,7 @@ Both folders expose a consistent script surface:
 | `npm run dev`  | Run with `node --watch`          | —                                |
 | `npm test`     | `node --test`                    | `jest`                           |
 | `npm run typecheck` | `tsc --noEmit`              | `tsc --noEmit`                   |
+| `npm run lint` | `eslint` (server + `shared/`)    | `eslint`                         |
 
 ## Verifying a fresh setup
 
