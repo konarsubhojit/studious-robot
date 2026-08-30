@@ -68,14 +68,14 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | ◧ partial — four slices are out and directly tested (the WebRTC stats helpers in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions in `call/callDecisions`, and the session/token rules in `call/sessionLifecycle`); the structural hook split still wants its own PR |
+| P1.2 | Decompose `useCallFlow` | ◧ partial — seven slices are out and directly tested (the WebRTC stats helpers and the stats-poll derivation in `callUx`, the ICE-recovery ladder in `call/iceRestartLadder`, the call-lifecycle decisions and the `call.state_changed` dispatch in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, and push rehydration plus the media-state frame in `call/pushRehydration`); the structural hook split still wants its own PR |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
+| P1.2 | Split `useCallFlow` into per-concern hooks | The remaining lines are ref-coupled call lifecycle, WebRTC negotiation and ICE recovery *side effects*; every rule those effects run on has now been extracted (`call/iceRestartLadder`, `call/callDecisions`, `call/sessionLifecycle`, `call/pushRehydration`). Cutting the hooks themselves apart is still a behavioural risk that wants its own PR, its own review and device QA |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
 | P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
 
@@ -294,12 +294,39 @@ to a named `sendInitialOffer` beside the handler rather than into the pure
 module: it is `createOffer` / `setLocalDescription` against a live peer
 connection, which is exactly what does not belong there.
 
+**Sixth slice: the stats-poll derivation.** `pollStats` was the file's worst
+complexity entry (#4, 35) and computed everything inline: kbps from a pair of
+`bytesReceived` samples, the packet-loss ratio, the identity of the selected
+candidate pair, whether a relay-only policy was actually being honoured, and
+when a poor-connection warning is worth showing. Those five are now in
+`callUx.ts` beside `collectCallStats` and `getConnectionQuality`, which is
+where the first slice went and the one place stats vocabulary can live without
+pulling in a native module. The effectful half — remembering which pair was
+last reported, so the same pair is not logged twice — became a named
+`noteSelectedCandidatePair` in the hook.
+
+**Seventh slice: push rehydration and the relayed media-state frame.**
+`call/pushRehydration.ts` owns what an app opened from a notification decides
+before it can act: whether it must wait for an identity (deferring is not a
+failure — the callId is held and retried, and is reported apart from a call
+that is genuinely gone), where to ask about the call, that a `404` is an answer
+and not a fault, and whether the returned status is still answerable — with the
+terminal-message table phrased as the timeline phrases it and a fallback so a
+status from a newer server never leaves a blank line. It also owns
+`readMediaStateFrame`, which keeps the C6 additive contract explicit: each key
+is read independently with `in`, silence about a flag is not a claim about it,
+and a liveness heartbeat therefore never clears the "they are presenting"
+banner or the peer's picture. Two hardening details came with the move —
+the callId is now URL-encoded (it arrives via a notification payload) and the
+message table is looked up with `Object.hasOwn`, so a status of `constructor`
+cannot return a function.
+
 Every slice is pure — no React, no refs, no peer connection, no socket — the
 hook's return shape is unchanged, and `useCallFlow.test.tsx` passes unmodified,
-as it did for the ladder. Two of the file's three complexity-baseline entries
-are cleared: `endActiveCall` (#21, 19) and the `call.state_changed` handler
-(#22, 19) are both under the threshold, leaving `pollStats` (#4, 35) as the
-only warning in the file.
+as it did for the ladder. All three of the file's complexity-baseline entries
+are now cleared — `endActiveCall` (#21, 19), the `call.state_changed` handler
+(#22, 19) and `pollStats` (#4, 35) — and `useCallFlow.ts` lints with zero
+warnings.
 
 Device QA is still the only thing that can verify the call path — there is no
 E2E coverage of it (#114) — so the checklist in #216 (outgoing call, incoming
@@ -308,12 +335,12 @@ a recovering and a non-recovering mid-call drop, the offline-callee push wake,
 and screen share / PiP) has to be run on a device for these slices.
 
 **What was deliberately left in the hook.** The rest of the signaling surface,
-and all of slice 4 (WebRTC negotiation), stay where they are. The remaining
+and all of the issue's slice 4 (WebRTC negotiation), stay where they are. The remaining
 socket handlers close over the refs they mutate (`peerConnectionRef`,
 `iceCandidateBufferRef`, `isNegotiatingRef`) and the negotiation path is
 `setRemoteDescription` / `createAnswer` / `setLocalDescription` against a live
 peer connection. Moving either would relocate side effects rather than separate
-decisions from them, which is the extraction pattern that has held for five
+decisions from them, which is the extraction pattern that has held for seven
 slices and the reason `useCallFlow.test.tsx` has never needed to change. Where
 a decision *was* separable from the effect it sits beside — the offer's
 stale-vs-glare guard, the state-change dispatch — it came out; what is left is

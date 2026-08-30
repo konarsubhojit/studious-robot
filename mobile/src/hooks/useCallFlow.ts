@@ -124,6 +124,15 @@ import {
   shouldTearDownAfterResync,
 } from '../call/sessionLifecycle';
 import {
+  buildCallLookupUrl,
+  classifyLookupFailure,
+  describeRehydratedCall,
+  isRehydratableCallId,
+  readMediaStateFrame,
+  shouldDeferRehydration,
+} from '../call/pushRehydration';
+import type { RehydrationOutcome } from '../call/pushRehydration';
+import {
   canReuseIceServers,
   decideFetchedIceServers,
   decideIceConnectionState,
@@ -2419,15 +2428,15 @@ export default function useCallFlow({
         if (callId !== activeCallIdRef.current) return;
         // The peer's own relayed beat is another timer-free wake-up source.
         wakeCallHeartbeatRef.current?.('peer-media-state');
-        // A liveness heartbeat that carries no sharing flag must not clear the
-        // "they are presenting" banner.
-        if (mediaState && 'isScreenSharing' in mediaState) {
-          setIsRemoteScreenSharing(Boolean(mediaState.isScreenSharing));
+        // The frame is additive and each key is read independently: silence
+        // about a flag is not a claim about it, so a liveness heartbeat never
+        // clears the "they are presenting" banner or the peer's picture.
+        const frame = readMediaStateFrame(mediaState);
+        if (frame.isScreenSharing !== undefined) {
+          setIsRemoteScreenSharing(frame.isScreenSharing);
         }
-        // Same rule for the camera flag, and for the same reason: a frame that
-        // omits it is silent about the camera, not a claim that it is off.
-        if (mediaState && 'isVideoEnabled' in mediaState) {
-          setIsRemoteVideoEnabled(Boolean(mediaState.isVideoEnabled));
+        if (frame.isVideoEnabled !== undefined) {
+          setIsRemoteVideoEnabled(frame.isVideoEnabled);
         }
       });
 
@@ -2604,17 +2613,10 @@ export default function useCallFlow({
    * the presence auto-connect effect fires with a valid identity.
    */
   const rehydrateCallFromPush = useCallback(
-    /**
-     *   what happened, so callers replaying a queued answer can tell "still
-     *   waiting on an identity" apart from "this call is gone".
-     */
-    async (callId: string): Promise<'deferred'|'ringing'|'terminal'|'not_found'|'error'|'ignored'> => {
-      if (!callId) return 'ignored';
+    async (callId: string): Promise<RehydrationOutcome> => {
+      if (!isRehydratableCallId(callId)) return 'ignored';
 
-      const trimmedUserId = (userId ?? '').trim();
-      const trimmedUrl = (signalingUrl ?? '').trim();
-
-      if (!trimmedUserId || !trimmedUrl) {
+      if (shouldDeferRehydration({ userId, signalingUrl })) {
         logInfo('[CallFlow] Deferring push rehydration until identity is set', {
           callId,
         });
@@ -2628,58 +2630,49 @@ export default function useCallFlow({
         const sessionId = await createOrGetSession();
 
         const response = await fetch(
-          `${trimmedUrl}${API_ROUTES.CALLS}/${encodeURIComponent(callId)}` +
-            `?sessionId=${encodeURIComponent(sessionId)}`,
+          buildCallLookupUrl({ signalingUrl, callId, sessionId }),
         );
 
         if (!response.ok) {
-          if (response.status === 404) {
-            updateStatus('Call no longer available', 'info');
+          const failure = classifyLookupFailure(response.status);
+          if (failure.outcome === 'not_found') {
+            updateStatus(failure.message, 'info');
             return 'not_found';
           }
           throw new Error(`HTTP ${response.status}`);
         }
 
         const call = await response.json();
+        const rehydrated = describeRehydratedCall(call.status);
 
-        if (call.status === 'ringing') {
-          logInfo('[CallFlow] Rehydrated ringing call; showing incoming screen', {
-            callId: call.callId,
-          });
-          incomingCallRef.current = call;
-          setIncomingCall(call);
-          dispatchCallEvent(CALL_EVENTS.RECEIVE);
-          updateStatus(`Incoming call from ${call.callerId}`);
-          showIncomingCallUi(call).catch(error => {
-            logWarn('[CallFlow] showIncomingCallUi unexpected error', {
-              message: errorMessage(error),
-            });
-          });
-
-          // Ensure a socket is live so the user can accept / decline.
-          if (!socketRef.current?.connected) {
-            connectSocket(sessionId);
-          }
-          return 'ringing';
-        } else {
+        if (rehydrated.outcome === 'terminal') {
           // Terminal or non-ringing state – inform the user and stay idle.
-          const terminalMessages = {
-            missed: 'Missed call',
-            declined: 'Call was declined',
-            ended: 'Call ended',
-            busy: 'Line was busy',
-            unreachable: 'Call unreachable',
-          };
-          const message =
-            terminalMessages[(call.status as keyof typeof terminalMessages)] ??
-            'Call no longer active';
           logInfo('[CallFlow] Push call already finished', {
             callId,
             status: call.status,
           });
-          updateStatus(message, 'info');
+          updateStatus(rehydrated.message, 'info');
           return 'terminal';
         }
+
+        logInfo('[CallFlow] Rehydrated ringing call; showing incoming screen', {
+          callId: call.callId,
+        });
+        incomingCallRef.current = call;
+        setIncomingCall(call);
+        dispatchCallEvent(CALL_EVENTS.RECEIVE);
+        updateStatus(`Incoming call from ${call.callerId}`);
+        showIncomingCallUi(call).catch(error => {
+          logWarn('[CallFlow] showIncomingCallUi unexpected error', {
+            message: errorMessage(error),
+          });
+        });
+
+        // Ensure a socket is live so the user can accept / decline.
+        if (!socketRef.current?.connected) {
+          connectSocket(sessionId);
+        }
+        return 'ringing';
       } catch (error) {
         logError('[CallFlow] rehydrateCallFromPush failed', error);
         updateStatus('Unable to retrieve call state', 'error');
