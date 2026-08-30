@@ -15,22 +15,7 @@ import {
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
 import { emitEvent, emitMetric, getCorrelationId } from '../observability';
-import {
-  applyPreferredAudioRoute,
-  AUDIO_ROUTES,
-  chooseAudioRoute,
-  restoreInCallAudioSession,
-  setAudioRoute,
-  startAudioSession,
-  stopAudioSession,
-  subscribeAudioDevices,
-} from '../audioRouting';
-import {
-  describeChosenRoute,
-  describeDetachedManualRoute,
-  mergeDiscoveredDevices,
-  shouldUpgradeToSpeaker,
-} from '../call/audioRouteRules';
+import { restoreInCallAudioSession } from '../audioRouting';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useBlocks from './useBlocks';
@@ -42,6 +27,7 @@ import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import useCallQualityStats from './useCallQualityStats';
+import useCallAudioRoutes from './useCallAudioRoutes';
 import {
   CALL_END_REASON_LABELS,
 } from '../callUx';
@@ -408,13 +394,6 @@ export default function useCallFlow({
   const [remoteStream, setRemoteStream] = useState((null as WebrtcMediaStream | null));
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  // Starts false: the route is picked automatically from the connected
-  // devices (Bluetooth → wired → earpiece) and only becomes the loudspeaker
-  // when nothing else is available or the user asks for it.
-  const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(false);
-  // Route the user explicitly picked; never overridden by automatic
-  // re-evaluation for the rest of the call.
-  const manualAudioRouteRef = useRef((null as string | null));
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   /**
@@ -426,12 +405,6 @@ export default function useCallFlow({
    * duration derive it locally with `useCallElapsedSeconds`.
    */
   const [callConnectedAtMs, setCallConnectedAtMs] = useState((null as number | null));
-  const [audioDevices, setAudioDevices] = useState(
-    ({
-      available: [],
-      selected: null,
-    } as { available: any[], selected: any }),
-  );
   const [isReconnecting, setIsReconnecting] = useState(false);
   // Non-null while a recovery episode is open, so the call screen can show what
   // is happening (and how much budget is left) instead of a static spinner.
@@ -472,9 +445,6 @@ export default function useCallFlow({
   // without re-creating the timer on every toggle.
   const isScreenSharingRef = useRef(false);
   const isInCallRef = useRef(false);
-  // Mirrors the selected audio output so callbacks can re-apply it without
-  // being re-created every time the device list changes.
-  const selectedAudioRouteRef = useRef((null as string | null));
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
   const iceCandidateBufferRef = useRef(([] as any[]));
@@ -528,6 +498,20 @@ export default function useCallFlow({
     peerConnectionRef,
     activeCallIdRef,
     activeIceTransportPolicy,
+    updateStatus,
+  });
+
+  // Audio output owns its session, its device subscription and the manual
+  // override together; each of its effects starts and stops its own resource.
+  const {
+    isSpeakerEnabled,
+    audioDevices,
+    selectedAudioRouteRef,
+    chooseAudioOutput,
+    resetAudioDevices,
+  } = useCallAudioRoutes({
+    isInCall: callPhase === CALL_PHASES.IN_CALL,
+    speakerEnabledByDefault,
     updateStatus,
   });
 
@@ -719,10 +703,6 @@ export default function useCallFlow({
       incomingCallId: incomingCallRef.current?.callId ?? null,
     });
   }, [callPhase, isInCall]);
-
-  useEffect(() => {
-    selectedAudioRouteRef.current = audioDevices.selected;
-  }, [audioDevices.selected]);
 
   const { startCallHeartbeat, stopCallHeartbeat, wakeCallHeartbeat } = useCallHeartbeat({
     activeCallIdRef,
@@ -1226,7 +1206,7 @@ export default function useCallFlow({
       setCallConnectedAtMs(null);
       setIsCompactView(false);
       setIsLocalPrimary(false);
-      setAudioDevices({ available: [], selected: null });
+      resetAudioDevices();
       setIsRemoteScreenSharing(false);
       setIsRemoteVideoEnabled(true);
       resetScreenShare();
@@ -1242,6 +1222,7 @@ export default function useCallFlow({
       closePeerConnection,
       connectionQualityRef,
       releaseLocalMedia,
+      resetAudioDevices,
       resetScreenShare,
       setIsCompactView,
       stopCallHeartbeat,
@@ -2906,7 +2887,7 @@ export default function useCallFlow({
     }
 
     updateStatus(nextMuted ? 'Muted microphone' : 'Unmuted microphone');
-  }, [isMuted, updateStatus]);
+  }, [isMuted, selectedAudioRouteRef, updateStatus]);
 
   // The Picture-in-Picture window's controls are wired up long before these
   // handlers exist (the hook that owns them runs near the top of this one), so
@@ -2995,35 +2976,6 @@ export default function useCallFlow({
     socket.connect();
   }, [updateStatus]);
 
-  const chooseAudioOutput = useCallback(
-    /** @param route */
-    async (route: string) => {
-      try {
-        manualAudioRouteRef.current = route;
-        const result = await chooseAudioRoute(route);
-        if (!result.ok) {
-          setAudioDevices({
-            available: result.available,
-            selected: result.selected,
-          });
-          setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
-          updateStatus(result.message, 'error');
-          return;
-        }
-        setAudioDevices({
-          available: result.available,
-          selected: result.selected,
-        });
-        setIsSpeakerEnabled(route === AUDIO_ROUTES.SPEAKER_PHONE);
-        updateStatus(describeChosenRoute(route));
-      } catch (error) {
-        logError('[CallFlow] chooseAudioOutput failed', error);
-        updateStatus('Unable to switch audio output', 'error');
-      }
-    },
-    [updateStatus],
-  );
-
   const dismissCallSummary = useCallback(() => {
     setCallSummary(null);
   }, []);
@@ -3064,109 +3016,6 @@ export default function useCallFlow({
         });
       });
   }, [activeCallId, isScreenSharing, isVideoEnabled]);
-
-  // ─── Audio session & device routing ──────────────────────────────────────
-
-  useEffect(() => {
-    if (!isInCall) return undefined;
-
-    const result = startAudioSession();
-    if (!result.ok) {
-      logWarn('[CallFlow] InCallManager start failed', {
-        message: result.message,
-      });
-      updateStatus(result.message, 'error');
-    }
-
-    return () => {
-      const stopResult = stopAudioSession();
-      if (!stopResult.ok) {
-        logWarn('[CallFlow] InCallManager stop failed', {
-          message: stopResult.message,
-        });
-      }
-    };
-  }, [isInCall, updateStatus]);
-
-  // Pick the best available output (Bluetooth → wired → earpiece → speaker)
-  // unless the user already chose one explicitly during this call.
-  const applyAutomaticAudioRoute = useCallback(
-    /** @param available */
-    async (available: string[]) => {
-      if (manualAudioRouteRef.current) return;
-      const result = await applyPreferredAudioRoute(available);
-      // "Speaker on join": with no headset/Bluetooth device attached the
-      // automatic pick is the earpiece; the persisted preference upgrades
-      // that to speakerphone.
-      if (
-        shouldUpgradeToSpeaker({
-          routed: result.ok,
-          selected: result.selected,
-          speakerEnabledByDefault,
-        })
-      ) {
-        const speakerResult = await chooseAudioRoute(AUDIO_ROUTES.SPEAKER_PHONE);
-        if (speakerResult.ok) {
-          setAudioDevices({
-            available: mergeDiscoveredDevices(speakerResult.available, result.available),
-            selected: speakerResult.selected,
-          });
-          setIsSpeakerEnabled(true);
-          return;
-        }
-        logWarn('[CallFlow] Speaker default unavailable; keeping automatic route', {
-          message: speakerResult.message,
-        });
-      }
-      setAudioDevices({ available: result.available, selected: result.selected });
-      setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
-      if (!result.ok) {
-        logWarn('[CallFlow] Automatic audio routing degraded', {
-          message: result.message,
-        });
-      }
-    },
-    [speakerEnabledByDefault],
-  );
-
-  useEffect(() => {
-    if (!isInCall) {
-      manualAudioRouteRef.current = null;
-      return undefined;
-    }
-
-    // The device list is discovered by the first selection (see
-    // applyPreferredAudioRoute), so no list is needed here.
-    applyAutomaticAudioRoute([]);
-    // Re-evaluate whenever a device is plugged in or removed mid-call.
-    return subscribeAudioDevices(nextDevices => {
-      logInfo('[CallFlow] Audio devices changed', nextDevices);
-      setAudioDevices(nextDevices);
-      // A *detachable* device the user picked by hand can vanish mid-call (a
-      // headset runs out of battery, a cable is pulled). The automatic route
-      // silently takes over below, which is right — but the hand-over is
-      // announced and the manual choice released.
-      const detached = describeDetachedManualRoute({
-        manualRoute: manualAudioRouteRef.current,
-        availableRoutes: nextDevices.available,
-      });
-      if (detached) {
-        manualAudioRouteRef.current = null;
-        updateStatus(detached.message);
-      }
-      applyAutomaticAudioRoute(nextDevices.available);
-    });
-  }, [applyAutomaticAudioRoute, isInCall, updateStatus]);
-
-  useEffect(() => {
-    if (!isInCall || !isSpeakerEnabled) return;
-    const result = setAudioRoute(true);
-    if (!result.ok) {
-      logWarn('[CallFlow] Audio route update failed', {
-        message: result.message,
-      });
-    }
-  }, [isInCall, isSpeakerEnabled]);
 
   // ─── Ringtone cleanup on unmount ─────────────────────────────────────────
   // Ensure the fallback ringtone never outlives the component tree in case the

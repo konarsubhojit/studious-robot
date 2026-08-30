@@ -24,10 +24,10 @@ would split one is not an improvement, and is recorded in
 | --- | --- | --- |
 | 1.1 | [Dedupe the operator-token check](#11-dedupe-the-operator-token-check) | ✅ Done |
 | 1.6 | [Remove verified dead surface](#16-remove-verified-dead-surface) | ✅ Done |
-| 1.5 | [Reduce the functions sitting at 14–15](#15-reduce-the-functions-sitting-at-1415) | ⬜ Not started |
+| 1.5 | [Reduce the functions sitting at 14–15](#15-reduce-the-functions-sitting-at-1415) | ✅ Done |
 | 1.4 | [Extract the pure chat timeline model](#14-extract-the-pure-chat-timeline-model) | ✅ Done |
 | 1.2 | [Extract `useCallQualityStats`](#12-extract-usecallqualitystats) | ✅ Done |
-| 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ⬜ Not started |
+| 1.3 | [Extract `useCallAudioRoutes`](#13-extract-usecallaudioroutes) | ✅ Done |
 | 2.1 | [Extract `useDraftPersistence`](#21-extract-usedraftpersistence) | ⬜ Not started |
 | 2.2 | [Split the message-bubble subtree](#22-split-the-message-bubble-subtree) | ⬜ Not started |
 | 2.3 | [`useOutboxDrain`](#23-useoutboxdrain) | ⛔ Deferred by design |
@@ -118,14 +118,45 @@ in both packages, `npx eslint .` in `mobile/`, and the `telemetry` and
 
 ### 1.5 Reduce the functions sitting at 14–15
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done (with three entries deliberately deferred — see below).**
 
 The functions tabulated in §0. These are what the gate is *not* catching and
 what will break the build on the next feature touch. All are single-function,
 intra-file simplifications — guard-clause flattening and local helper
 extraction — **not** file splits.
 
-**Safety:** no code moves between files, so no lifetime can be split.
+**Safety:** no code moved between files, so no lifetime could be split. No
+timer, subscription or listener was touched by any of these.
+
+| File | Function | Before | After |
+| --- | --- | --- | --- |
+| `server/src/signaling/callHandlers.ts` | `handleRtcRelay` | 15 | 9 |
+| `server/src/signaling/messageHandlers/validation.ts` | `validateAttachment` | 15 | 6 |
+| `server/src/routes/turnCredentials.routes.ts` | `cloudflareCredentials` | 14 | 4 |
+| `mobile/src/audioRouting.ts` | `chooseAudioRoute` | 15 | <11 |
+| `mobile/src/attachmentDownload.ts` | `downloadAttachment` | 15 | <11 |
+| `mobile/src/storageUsage.ts` | `measureStorageUsage` | 14 | <11 |
+| `mobile/src/callUx.ts` | `getConnectionQuality` | 14 | <11 |
+| `mobile/src/components/InCallBanner.tsx` | `InCallBanner` | 15 | 1 |
+| `mobile/src/components/SettingsScreen.tsx` | `StorageSettings` | 15 | 6 |
+| `mobile/src/components/CallsScreen.tsx` | `CallsScreenResults` | 14 | 1 |
+| `mobile/src/components/RegistrationScreen.tsx` | `RegistrationScreen` | 14 | 7 |
+| `mobile/src/components/primitives/ListItem.tsx` | `ListItem` | 14 | 10 |
+
+`ListItem.tsx` was deliberately taken only as far as 10 by the smallest possible
+change (one `splitValue` helper). It is a widely shared primitive, and the
+read-only vs. `Pressable` branch was left intact rather than restructured.
+
+`cloudflareCredentials`' module-level `cache` closure is still read and written
+inside the route handler; only the pure fetch/parse was extracted, so the cached
+credential's lifetime did not cross the new boundary.
+
+**Deferred behind other items:** `ChatConversationPresentation.tsx`'s
+`MessageRowComponent` (15), `ConversationHeader` (15) and `ConversationComposer`
+(14) were left alone here because §1.4 and §2.2 move that same code; reducing
+them first would have meant doing the work twice and would have conflicted.
+They are the natural follow-on once §2.2 lands. `AppShell.tsx:176` (14) stays
+untouched by design — see §3.
 
 ### 1.4 Extract the pure chat timeline model
 
@@ -192,9 +223,9 @@ with `npm run typecheck`, `npx eslint`, and the `useCallFlow` suite
 
 ### 1.3 Extract `useCallAudioRoutes`
 
-**Status: ⬜ Not started.**
+**Status: ✅ Done.**
 
-`useCallFlow.ts:3230–3332` plus `chooseAudioOutput` and
+Now `mobile/src/hooks/useCallAudioRoutes.ts`, holding `chooseAudioOutput` and
 `applyAutomaticAudioRoute`. Owns `manualAudioRouteRef`, `selectedAudioRouteRef`,
 and the `isSpeakerEnabled` and `audioDevices` state. Three effects: audio
 session start/stop, the device subscription, and the speaker-route apply.
@@ -206,10 +237,27 @@ manipulates `localStreamRef`'s tracks. Moving it would split media-track
 ownership across a file boundary. It stays with the local stream.
 
 **Safety:** the only subscription is `subscribeAudioDevices`, whose unsubscriber
-*is* the effect's cleanup return, so it moves as one unit.
+*is* the effect's cleanup return, so it moved as one unit.
 `startAudioSession`/`stopAudioSession` are likewise paired inside one effect.
 The `manualAudioRouteRef` reset on `!isInCall` lives in the same effect as the
-subscription and must move with it.
+subscription and moved with it.
+
+**Two touchpoints outside the original line range, handled explicitly:**
+
+- `selectedAudioRouteRef` and the effect that mirrors `audioDevices.selected`
+  into it moved together into the hook, which returns the ref.
+  `handleMuteToggle` stayed behind — as planned, because it manipulates
+  `localStreamRef`'s tracks — and now reads the live route through that
+  returned ref, so the mute path is unchanged and media-track ownership never
+  crossed the boundary.
+- `endCallLocally` cleared the device list inline; it now calls the hook's
+  `resetAudioDevices`, which is `useCallback(..., [])` and permanently stable.
+
+**Result:** `useCallFlow.ts` 3321 → 3170 lines (3483 before §1.2, so −313 across
+the two extractions); new hook 227 lines. Verified with `npm run typecheck`,
+`npx eslint`, and the `useCallFlow` suite (144 tests passing), which includes
+the external-device-preference, headset-hand-over and unmute-restores-session
+cases at `__tests__/hooks/useCallFlow.test.tsx:5044–5110`.
 
 ## Tier 2 — high value, higher risk: tests first
 
