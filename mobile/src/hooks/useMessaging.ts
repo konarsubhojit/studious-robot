@@ -29,6 +29,9 @@ export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
   pending?: boolean;
   failed?: boolean;
   syncState?: 'pending' | 'synced' | 'failed';
+  uploadState?: 'uploading' | 'failed';
+  uploadProgress?: number;
+  uploadError?: string | null;
   deliveredTo?: string[];
   readAt?: string | null;
 };
@@ -262,6 +265,7 @@ export default function useMessaging({
   const drainAttemptRef = useRef(0);
   const isDrainingRef = useRef(false);
   const drainOutboxRef = useRef(() => {});
+  const attachmentUploadMetaRef = useRef(({} as Record<string, { conversationId?: string | null; createdAt: string; }>));
   // True once the local store has been read; gates persistence so an empty
   // initial render can't overwrite the cached history with nothing.
   const hydratedRef = useRef(false);
@@ -778,6 +782,120 @@ export default function useMessaging({
     [drainOutbox, persistOutbox, userId],
   );
 
+  const beginAttachmentUpload = useCallback(
+    (peerId: string, type: string, attachment: Partial<AttachmentRecord> | null) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !isAttachmentMessageType(type) || !attachment?.url) return null;
+
+      const messageId = createMessageId();
+      const createdAt = new Date().toISOString();
+      const conversationId =
+        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ?? null;
+      const optimisticMessage: ChatMessage = {
+        messageId,
+        conversationId,
+        senderId: userId,
+        recipientId: trimmedPeerId,
+        body: '',
+        type,
+        attachment: attachment as AttachmentRecord,
+        replyTo: null,
+        reactions: {},
+        deletedAt: null,
+        createdAt,
+        deliveredTo: [],
+        readAt: null,
+        pending: true,
+        failed: false,
+        syncState: 'pending',
+        uploadState: 'uploading',
+        uploadProgress: 0,
+        uploadError: null,
+      };
+
+      setMessagesByPeer(prev => ({
+        ...prev,
+        [trimmedPeerId]: [optimisticMessage, ...(prev[trimmedPeerId] ?? [])],
+      }));
+      attachmentUploadMetaRef.current[messageId] = { conversationId, createdAt };
+      return messageId;
+    },
+    [userId],
+  );
+
+  const updateAttachmentUploadProgress = useCallback(
+    (peerId: string, messageId: string, progress: number) => {
+      const bounded = Math.max(0, Math.min(1, Number(progress) || 0));
+      patchMessage(peerId, messageId, entry => ({
+        ...entry,
+        uploadState: 'uploading',
+        uploadProgress: bounded,
+      }));
+    },
+    [patchMessage],
+  );
+
+  const finishAttachmentUpload = useCallback(
+    async (peerId: string, messageId: string, type: string, attachment: AttachmentRecord) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId || !attachment?.url) return;
+      const meta = attachmentUploadMetaRef.current[messageId];
+      const conversationId =
+        meta?.conversationId ??
+        conversationsRef.current.find(c => c.peerId === trimmedPeerId)?.conversationId ??
+        null;
+      const createdAt = meta?.createdAt ?? new Date().toISOString();
+
+      patchMessage(trimmedPeerId, messageId, entry => ({
+        ...entry,
+        attachment,
+        pending: true,
+        failed: false,
+        syncState: 'pending',
+        uploadState: undefined,
+        uploadProgress: undefined,
+        uploadError: null,
+      }));
+
+      const nextItem: OutboxItem = {
+        messageId,
+        conversationId,
+        recipientId: trimmedPeerId,
+        body: '',
+        type,
+        attachment,
+        replyTo: null,
+        createdAt,
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+      };
+      const withoutDuplicate = outboxRef.current.filter(item => item.messageId !== messageId);
+      persistOutbox([...withoutDuplicate, nextItem]);
+      delete attachmentUploadMetaRef.current[messageId];
+      await drainOutbox();
+    },
+    [drainOutbox, patchMessage, persistOutbox],
+  );
+
+  const failAttachmentUpload = useCallback(
+    (peerId: string, messageId: string, error: string | null = null) => {
+      const trimmedPeerId = (peerId ?? '').trim();
+      if (!trimmedPeerId || !messageId) return;
+      persistOutbox(outboxRef.current.filter(item => item.messageId !== messageId));
+      delete attachmentUploadMetaRef.current[messageId];
+      patchMessage(trimmedPeerId, messageId, entry => ({
+        ...entry,
+        pending: false,
+        failed: true,
+        syncState: 'failed',
+        uploadState: 'failed',
+        uploadError: error,
+      }));
+    },
+    [patchMessage, persistOutbox],
+  );
+
   /**
    * Re-queue a message whose automatic retries were exhausted, putting it back
    * into `pending` and draining immediately.
@@ -1217,6 +1335,10 @@ export default function useMessaging({
     fetchMessagesForPeer,
     searchMessages,
     sendMessage,
+    beginAttachmentUpload,
+    updateAttachmentUploadProgress,
+    finishAttachmentUpload,
+    failAttachmentUpload,
     retryMessage,
     discardMessage,
     deleteMessage,

@@ -220,6 +220,18 @@ describe('ChatConversationScreen', () => {
       retryLabel.props.onPress();
     });
     expect(onSendMessage).toHaveBeenCalledWith('oops');
+
+    const failedBubble = tree.root.findAll(
+      (n: any) =>
+        n.props?.testID === 'chat-message-bubble' &&
+        typeof n.props?.accessibilityLabel === 'string' &&
+        n.props.accessibilityLabel.includes('Failed to send'),
+    )[0];
+    expect(failedBubble.props.accessibilityRole).toBe('button');
+    act(() => {
+      failedBubble.props.onAccessibilityTap();
+    });
+    expect(onSendMessage).toHaveBeenCalledTimes(2);
   });
 
   test('every delivery state renders in the same footer slot', () => {
@@ -1317,12 +1329,22 @@ describe('ChatConversationScreen attachments', () => {
   test('shows upload progress while an attachment is uploading', () => {
     const tree = render({
       peerId: 'user-bob',
-      messages: [],
+      messages: [
+        makeMessage({
+          messageId: 'file-uploading',
+          senderId: 'user-alice',
+          body: '',
+          type: 'file',
+          pending: true,
+          uploadState: 'uploading',
+          uploadProgress: 0.42,
+          attachment: { url: 'file:///report.pdf', mimeType: 'application/pdf', name: 'report.pdf' },
+        }),
+      ],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
       currentUserId: 'user-alice',
       isUploadingAttachment: true,
-      attachmentUploadProgress: 0.42,
     });
 
     const notice = findByTestId(tree, 'chat-attachment-upload-progress');
@@ -1331,6 +1353,7 @@ describe('ChatConversationScreen attachments', () => {
       .findAll((n: any) => typeof n.props?.children === 'string')
       .map((n: any) => n.props.children);
     expect(text.some((value: string) => value.includes('42%'))).toBe(true);
+    expect(notice.props.accessibilityRole).toBe('progressbar');
   });
 
   test('shows a download action for sent file attachments', () => {
@@ -1603,6 +1626,36 @@ describe('ChatConversationScreen drafts', () => {
     expect(onSaveDraft).toHaveBeenCalledWith('typed but not sent', null);
   });
 
+  test('debounces draft persistence while the user is typing', () => {
+    const onSaveDraft = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      currentUserId: 'user-alice',
+      onSaveDraft,
+    });
+
+    const input = tree.root.findByProps({ testID: 'chat-message-input' });
+    act(() => {
+      input.props.onChangeText('typed but');
+    });
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    act(() => {
+      input.props.onChangeText('typed but not lost');
+    });
+    act(() => {
+      jest.advanceTimersByTime(749);
+    });
+    expect(onSaveDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(onSaveDraft).toHaveBeenCalledWith('typed but not lost', null);
+  });
+
   test('clears the stored draft once the message is sent', () => {
     const onClearDraft = jest.fn();
     const onSendMessage = jest.fn();
@@ -1764,7 +1817,18 @@ describe('ChatConversationScreen upload cancellation', () => {
     const onCancelAttachmentUpload = jest.fn();
     const tree = render({
       peerId: 'user-bob',
-      messages: [],
+      messages: [
+        makeMessage({
+          messageId: 'file-uploading',
+          senderId: 'user-alice',
+          body: '',
+          type: 'file',
+          pending: true,
+          uploadState: 'uploading',
+          uploadProgress: 0.42,
+          attachment: { url: 'file:///report.pdf', mimeType: 'application/pdf', name: 'report.pdf' },
+        }),
+      ],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
       currentUserId: 'user-alice',
@@ -1784,7 +1848,18 @@ describe('ChatConversationScreen upload cancellation', () => {
   test('omits the cancel control when cancelling is not wired up', () => {
     const tree = render({
       peerId: 'user-bob',
-      messages: [],
+      messages: [
+        makeMessage({
+          messageId: 'file-uploading',
+          senderId: 'user-alice',
+          body: '',
+          type: 'file',
+          pending: true,
+          uploadState: 'uploading',
+          uploadProgress: 0.42,
+          attachment: { url: 'file:///report.pdf', mimeType: 'application/pdf', name: 'report.pdf' },
+        }),
+      ],
       onSendMessage: jest.fn(),
       onBack: jest.fn(),
       currentUserId: 'user-alice',

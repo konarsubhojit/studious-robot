@@ -41,6 +41,10 @@ function setup(overrides = {}) {
     authedFetchRef: { current: jest.fn() },
     signalingUrl: 'https://signal.example.com',
     sendMessage: jest.fn(),
+    beginAttachmentUpload: jest.fn(() => 'local-1'),
+    updateAttachmentUploadProgress: jest.fn(),
+    finishAttachmentUpload: jest.fn(),
+    failAttachmentUpload: jest.fn(),
     updateStatus: jest.fn(),
     ...overrides,
   };
@@ -57,7 +61,7 @@ beforeEach(() => {
 });
 
 describe('useAttachments', () => {
-  test('pickAndSend(photo): uploads the picked photo and sends it', async () => {
+  test('pickAndSend(photo): inserts an optimistic bubble before uploading, then finishes it', async () => {
     (pickPhoto as jest.Mock).mockResolvedValue({ uri: 'file:///a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     (uploadAttachment as jest.Mock).mockResolvedValue({ url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 });
     const { resultRef, params } = setup();
@@ -67,13 +71,28 @@ describe('useAttachments', () => {
     });
 
     expect(ensureAttachmentPermission).toHaveBeenCalledWith('photo');
+    expect(params.beginAttachmentUpload).toHaveBeenCalledWith('user-bob', MESSAGE_TYPES.IMAGE, {
+      url: 'file:///a.jpg',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+      name: undefined,
+      width: undefined,
+      height: undefined,
+      durationMs: undefined,
+    });
+    expect(params.beginAttachmentUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      (uploadAttachment as jest.Mock).mock.invocationCallOrder[0],
+    );
     expect(uploadAttachment).toHaveBeenCalledWith(
       expect.objectContaining({ peerId: 'user-bob', type: MESSAGE_TYPES.IMAGE, uri: 'file:///a.jpg' }),
     );
-    expect(params.sendMessage).toHaveBeenCalledWith('user-bob', '', {
-      type: MESSAGE_TYPES.IMAGE,
-      attachment: { url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
-    });
+    expect(params.finishAttachmentUpload).toHaveBeenCalledWith(
+      'user-bob',
+      'local-1',
+      MESSAGE_TYPES.IMAGE,
+      { url: 'https://cdn/a.jpg', mimeType: 'image/jpeg', sizeBytes: 100 },
+    );
+    expect(params.sendMessage).not.toHaveBeenCalled();
   });
 
   test('pickAndSend(file): sends as a FILE message', async () => {
@@ -85,10 +104,11 @@ describe('useAttachments', () => {
       await resultRef.current.pickAndSend('user-bob', 'file');
     });
 
-    expect(params.sendMessage).toHaveBeenCalledWith(
+    expect(params.finishAttachmentUpload).toHaveBeenCalledWith(
       'user-bob',
-      '',
-      expect.objectContaining({ type: MESSAGE_TYPES.FILE }),
+      'local-1',
+      MESSAGE_TYPES.FILE,
+      { url: 'https://cdn/a.pdf' },
     );
   });
 
@@ -158,10 +178,11 @@ describe('useAttachments', () => {
     });
 
     expect(resultRef.current.isRecordingVoiceNote).toBe(false);
-    expect(params.sendMessage).toHaveBeenCalledWith(
+    expect(params.finishAttachmentUpload).toHaveBeenCalledWith(
       'user-bob',
-      '',
-      expect.objectContaining({ type: MESSAGE_TYPES.VOICE }),
+      'local-1',
+      MESSAGE_TYPES.VOICE,
+      { url: 'https://cdn/v.m4a' },
     );
   });
 });
@@ -192,6 +213,11 @@ describe('useAttachments cancellation', () => {
     });
 
     expect(params.sendMessage).not.toHaveBeenCalled();
+    expect(params.failAttachmentUpload).toHaveBeenCalledWith(
+      'user-bob',
+      'local-1',
+      ATTACHMENT_CANCELLED_MESSAGE,
+    );
     expect(params.updateStatus).toHaveBeenCalledWith('Upload cancelled', 'info');
     expect(resultRef.current.isUploading).toBe(false);
     expect(resultRef.current.attachmentsAvailable).toBe(true);

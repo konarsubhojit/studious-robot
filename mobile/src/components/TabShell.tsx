@@ -60,6 +60,7 @@ export default function TabShell() {
     isUserBlocked,
     pickAndSendAttachment,
     reactToMessage,
+    retryAttachmentUpload,
     retryMessage,
     saveDraft,
     sendMessage,
@@ -92,7 +93,13 @@ export default function TabShell() {
         highlightMessageId={messageId ?? null}
         onOpenProfile={() => openPeerProfile(peerId)}
         onSendMessage={(body, options) => sendMessage(peerId, body, options)}
-        onRetryMessage={message => retryMessage(peerId, message.messageId)}
+        onRetryMessage={message => {
+          if (message.uploadState === 'failed') {
+            retryAttachmentUpload(peerId, message);
+          } else {
+            retryMessage(peerId, message.messageId);
+          }
+        }}
         onDeleteMessage={message => deleteMessage(peerId, message.messageId)}
         onReactToMessage={(message, emoji, action) =>
           reactToMessage(peerId, message.messageId, emoji, action)
@@ -163,6 +170,7 @@ export default function TabShell() {
     insets.top,
     pickAndSendAttachment,
     reactToMessage,
+    retryAttachmentUpload,
     retryMessage,
     saveDraft,
     sendMessage,

@@ -67,6 +67,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.3 | Accessibility sweep | ✅ |
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
+| B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
 | P1.2 | Decompose `useCallFlow` | ◧ partial — two slices are out and directly tested (the WebRTC stats helpers in `callUx`, and the ICE-recovery ladder in `call/iceRestartLadder`); the structural split still wants its own PR |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test |
 
@@ -89,9 +90,8 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | A2 | Debounce the chat snapshot mirror | ✅ trailing 750 ms debounce, force-flushed when the app leaves the foreground and on unmount |
 | A3 | Gate WebRTC stats polling on foreground | ✅ polling pauses in `background`, resumes with an immediate sample |
 | A4 | Call-history list cost | ✅ sections are shaped for `SectionList` inside the memo and the renderers are hoisted out of the JSX; server-side paging of `/calls` is not needed at the current log sizes |
-| B1 | Per-conversation drafts | ✅ persisted in the chat snapshot, restored on open (including the reply target), previewed as "Draft: …" in the chat list; written on leave/background rather than per keystroke |
+| B1 | Per-conversation drafts | ✅ persisted in the chat snapshot, restored on open (including the reply target), previewed as "Draft: …" in the chat list; written with a trailing debounce and force-flushed on leave/background |
 | B3 | Jump-to-latest / unread divider | ✅ the jump-to-latest pill (with a new-message count) and tap-a-quote-to-scroll already existed; this pass added the "N new messages" divider. It is anchored by counting back N *incoming* messages from the frozen mount-time unread count, **not** by `readAt` — see the note below |
-| B4 | Attachment progress ring | 🟡 partial: the screen-level upload banner is now cancellable end to end (`putAttachment` exposes an abort handle → `useAttachments.cancelUpload`), and a cancel is reported as "Upload cancelled", never as a failure. The per-bubble ring is still deferred — see the note below |
 | B6 | Unread badge cap / mute | ✅ the badge was already capped at 99+ by the `Badge` primitive (verified, no change); mute/unmute is now reachable from a chat-list swipe and muted rows carry a glyph |
 | C1 | Quality-indicator hysteresis | ✅ `smoothConnectionQuality`: upgrade immediately, downgrade only after two consecutive worse samples |
 | C2 | Make failures speak | ✅ `setTrackEnabled` reads the track state back so the UI can never claim "muted" while audio still flows, and a manually chosen headset that disconnects announces the hand-over. The plan's PiP-refusal toast has **no trigger**: PiP is only ever entered natively from `onUserLeaveHint`, never from a user-initiated request |
@@ -104,7 +104,6 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | -- | ---- | ------ |
 | A1 | Split `CallProvider` into call-state / media-controls / recovery contexts | Real win, but it changes the consumer set of every call screen and is the natural first half of E1. Wants its own PR with render-count assertions, not a rider on this one |
 | B2 | Message editing | Protocol change (`message.edit` / `message.edited`, `editedAt`, a server-enforced edit window). Should land together with D3 behind one schema-compatibility test |
-| B4 (remainder) | Per-bubble attachment progress ring | Blocked on optimistic sends: `useAttachments.sendPicked` uploads *before* calling `sendMessage`, so no bubble exists during the upload to hang a ring on. Needs a pending message created up front and reconciled on success |
 | B5 | Presence freshness / last seen | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation |
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |

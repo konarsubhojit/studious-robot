@@ -31,6 +31,7 @@ export type ChatContextValue = {
   currentUserId: CallFlow['userId'];
   sendMessage: CallFlow['sendMessage'];
   retryMessage: CallFlow['retryMessage'];
+  retryAttachmentUpload: CallFlow['retryAttachmentUpload'];
   deleteMessage: CallFlow['deleteMessage'];
   reactToMessage: CallFlow['reactToMessage'];
   isChatOffline: CallFlow['isChatOffline'];
@@ -136,6 +137,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       currentUserId: callFlow.userId,
       sendMessage: callFlow.sendMessage,
       retryMessage: callFlow.retryMessage,
+      retryAttachmentUpload: callFlow.retryAttachmentUpload,
       deleteMessage: callFlow.deleteMessage,
       reactToMessage: callFlow.reactToMessage,
       isChatOffline: callFlow.isChatOffline,
@@ -178,6 +180,7 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       callFlow.markConversationRead,
       callFlow.deleteMessage,
       callFlow.isChatOffline,
+      callFlow.retryAttachmentUpload,
       callFlow.retryMessage,
       callFlow.reactToMessage,
       callFlow.sendMessage,
