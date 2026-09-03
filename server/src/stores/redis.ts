@@ -1,44 +1,12 @@
-/**
- * Redis + Postgres ("hot + durable") store bundle for horizontal scaling.
- *
- * The signaling server keeps its keyed runtime collections behind a pluggable
- * {@link import('./contracts.ts').Stores} bundle. The default in-memory bundle
- * (see `./memory`) is correct for a single instance. To run multiple instances
- * behind a load balancer two things are required beyond shared durable storage:
- *
- *   1. A **cross-instance message bus** so an event handled on one instance can
- *      be observed by the others (see `../messageBus`).
- *   2. A **Socket.IO Redis adapter** so room/`io.to(...)` emits fan out to
- *      sockets connected to other instances.
- *
- * `createRedisPgStores()` wires both using Redis Pub/Sub, and returns the store
- * bundle augmented with `messageBus`, `attachAdapter(io)`, and `close()`.
- *
- * Hot keyed state (rooms, sessions, presence, …) is kept as in-process `Map`s on
- * each instance — the store contract is synchronous, and per-socket emits are
- * routed across instances by the Redis adapter via per-user rooms rather than by
- * sharing the maps. Durable records (call history, devices, audit, blocks) are
- * persisted through the Drizzle Postgres client (`server/db/client.js`) where
- * appropriate; this module focuses on the Redis wiring that the durable layer
- * and the adapter depend on.
- */
-
+import { randomUUID } from 'node:crypto';
 import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
 
-/**
- * Builds the Socket.IO adapter the server installs, given the publish and
- * subscribe Redis clients.  Matches `@socket.io/redis-adapter`'s `createAdapter`
- * so a test double is checked against the same contract as the real factory.
- */
 type SocketIoAdapterFactory = (
   pub: unknown,
   sub: unknown
 ) => Parameters<import('socket.io').Server['adapter']>[0];
 
-/**
- * Build the hot in-process keyed collections required by the store contract.
- */
 function createHotMaps(): Record<string, Map<unknown, unknown>> {
   const maps: Record<string, Map<unknown, unknown>> = {};
   for (const name of STORE_NAMES) {
@@ -47,49 +15,73 @@ function createHotMaps(): Record<string, Map<unknown, unknown>> {
   return maps;
 }
 
-/**
- * Create a Redis-backed store bundle with a cross-instance message bus and a
- * Socket.IO Redis adapter.
- *
- * Four Redis connections are opened: a publish/subscribe pair for the message
- * bus and a separate pair for the Socket.IO adapter (Socket.IO's adapter and a
- * Pub/Sub subscriber must not share a subscriber connection).
- *
- * For testability without a live Redis, callers may inject a `createClient`
- * factory (each call must return a fresh, connectable client) and a
- * `createAdapter` function.
- *
- * @param opts.redisUrl   Redis connection URL (defaults to `REDIS_URL`).
- * @param opts.createClient   Client factory; defaults to `redis.createClient`.
- *   Socket.IO adapter factory; defaults to `@socket.io/redis-adapter.createAdapter`.
- */
-async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () => any; createAdapter?: SocketIoAdapterFactory; } = {}): Promise<import('./contracts.ts').Stores & {
+function callKey(callId: string): string {
+  return `signaling:call:${callId}`;
+}
+
+function sessionKey(sessionId: string): string {
+  return `signaling:session:${sessionId}`;
+}
+
+const SWEEP_LEASE_KEY = 'signaling:calls:sweep:lease';
+
+const TRANSITION_CALL_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return cjson.encode({ ok = false, error = 'not_found' }) end
+local call = cjson.decode(raw)
+local fromStatus = ARGV[1]
+local toStatus = ARGV[2]
+local nowIso = ARGV[3]
+local reason = ARGV[4]
+local terminal = { ended = true, declined = true, missed = true, busy = true, unreachable = true }
+if call.status == toStatus then return cjson.encode({ ok = true, idempotent = true, call = call }) end
+if terminal[call.status] then return cjson.encode({ ok = false, error = 'terminal_state' }) end
+if call.status ~= fromStatus then return cjson.encode({ ok = false, error = 'stale_call_state' }) end
+call.status = toStatus
+call.updatedAt = nowIso
+if reason ~= '' then call.endReason = reason end
+redis.call('SET', KEYS[1], cjson.encode(call))
+return cjson.encode({ ok = true, idempotent = false, call = call })
+`;
+
+const ACQUIRE_SWEEP_LEASE_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+if redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX') then return 1 end
+return 0
+`;
+
+const RELEASE_SWEEP_LEASE_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
+
+async function createRedisPgStores(
+  opts: { redisUrl?: string; createClient?: () => any; createAdapter?: SocketIoAdapterFactory } = {}
+): Promise<
+  import('./contracts.ts').Stores & {
     messageBus: import('../messageBus.ts').MessageBus;
     attachAdapter: (io: import('socket.io').Server) => void;
     close: () => Promise<void>;
-}> {
+  }
+> {
   const url = opts.redisUrl || process.env.REDIS_URL;
   if (!url && !opts.createClient) {
     throw new Error('createRedisPgStores: set REDIS_URL or pass opts.createClient');
   }
 
-  // The optional Redis dependencies are imported here (rather than at module
-  // scope) so the default in-memory path never loads them.
   const createClient =
     opts.createClient || ((await import('redis')).createClient.bind(null, { url }));
   const createAdapter =
     opts.createAdapter || (await import('@socket.io/redis-adapter')).createAdapter;
 
-  /** @type Every Redis client opened here, for orderly shutdown. */
   const clients: any[] = [];
-
-  /**
-   * Open and connect a fresh Redis client, tracking it for `close()`.
-   */
   async function openClient(): Promise<any> {
     const client = createClient();
-    // node-redis surfaces connection errors as 'error' events; log instead of
-    // letting them crash the process.
     client.on?.('error', (error: any) => {
       console.error(`[stores:redis] client error: ${error?.message}`);
     });
@@ -104,29 +96,146 @@ async function createRedisPgStores(opts: { redisUrl?: string; createClient?: () 
   const adapterSub = await openClient();
 
   const messageBus = createRedisMessageBus({ pub: busPub, sub: busSub });
+  const instanceId = process.env.INSTANCE_ID || randomUUID();
+  const callFallback = new Map<string, import('./contracts.ts').CallRecord>();
+  const sessionFallback = new Map<string, import('./contracts.ts').SessionRecord>();
+  const evalFn = typeof busPub.eval === 'function' ? busPub.eval.bind(busPub) : null;
 
   const bundle: Record<string, any> = createHotMaps();
   bundle.messageBus = messageBus;
+  bundle.stateAffinity = 'shared';
+  bundle.instanceId = instanceId;
 
-  /**
-   * Attach the Socket.IO Redis adapter to a server instance so room/user emits
-   * fan out across all instances.
-   *
-   * @param io  Socket.IO server.
-   */
+  bundle.callState = {
+    get: async (callId: string) => {
+      if (typeof busPub.get === 'function') {
+        const raw = await busPub.get(callKey(callId));
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }
+      return callFallback.get(callId) ?? null;
+    },
+    save: async (call: import('./contracts.ts').CallRecord) => {
+      if (typeof busPub.set === 'function') {
+        await busPub.set(callKey(call.callId), JSON.stringify(call));
+        return;
+      }
+      callFallback.set(call.callId, { ...call });
+    },
+    transitionAtomic: async ({
+      callId,
+      fromStatus,
+      toStatus,
+      reason = null,
+    }: {
+      callId: string;
+      fromStatus: string;
+      toStatus: string;
+      actor?: string | null;
+      reason?: string | null;
+    }) => {
+      const redisResult = evalFn
+        ? await evalFn(TRANSITION_CALL_LUA, {
+            keys: [callKey(callId)],
+            arguments: [fromStatus, toStatus, new Date().toISOString(), reason ?? ''],
+          })
+        : null;
+      const resolved = evalFn
+        ? (typeof redisResult === 'string' ? JSON.parse(redisResult) : redisResult)
+        : (() => {
+            const call = callFallback.get(callId);
+            if (!call) return { ok: false, error: 'not_found' };
+            const terminal = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
+            if (call.status === toStatus) return { ok: true, idempotent: true, call };
+            if (terminal.has(call.status)) return { ok: false, error: 'terminal_state' };
+            if (call.status !== fromStatus) return { ok: false, error: 'stale_call_state' };
+            callFallback.set(callId, { ...call, status: toStatus, updatedAt: new Date().toISOString() });
+            return { ok: true, idempotent: false, call: callFallback.get(callId) };
+          })();
+      if (!resolved?.ok) {
+        return {
+          ok: false as const,
+          error: (resolved?.error ?? 'stale_call_state') as
+            | 'not_found'
+            | 'stale_call_state'
+            | 'terminal_state',
+        };
+      }
+      return {
+        ok: true as const,
+        call: resolved.call as import('./contracts.ts').CallRecord,
+        idempotent: Boolean(resolved.idempotent),
+      };
+    },
+    acquireSweepLease: async (ownerId: string, ttlMs: number) => {
+      if (evalFn) {
+        const result = await evalFn(ACQUIRE_SWEEP_LEASE_LUA, {
+          keys: [SWEEP_LEASE_KEY],
+          arguments: [ownerId, String(Math.max(1_000, ttlMs))],
+        });
+        return Number(result) === 1;
+      }
+      return true;
+    },
+    releaseSweepLease: async (ownerId: string) => {
+      if (!evalFn) return;
+      await evalFn(RELEASE_SWEEP_LEASE_LUA, {
+        keys: [SWEEP_LEASE_KEY],
+        arguments: [ownerId],
+      });
+    },
+  };
+
+  bundle.sessionState = {
+    get: async (sessionId: string) => {
+      if (typeof busPub.get === 'function') {
+        const raw = await busPub.get(sessionKey(sessionId));
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }
+      return sessionFallback.get(sessionId) ?? null;
+    },
+    save: async (session: import('./contracts.ts').SessionRecord) => {
+      const payload = JSON.stringify(session);
+      const ttlMs = session.expiresAt ? Date.parse(session.expiresAt) - Date.now() : Number.NaN;
+      if (typeof busPub.set === 'function') {
+        if (Number.isFinite(ttlMs) && ttlMs > 0) {
+          await busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs });
+          return;
+        }
+        await busPub.set(sessionKey(session.sessionId), payload);
+        return;
+      }
+      sessionFallback.set(session.sessionId, { ...session });
+    },
+    remove: async (sessionId: string) => {
+      if (typeof busPub.del === 'function') {
+        await busPub.del(sessionKey(sessionId));
+        return;
+      }
+      sessionFallback.delete(sessionId);
+    },
+  };
+
   bundle.attachAdapter = (io: import('socket.io').Server) => {
     io.adapter(createAdapter(adapterPub, adapterSub));
   };
 
-  /**
-   * Tear down the message bus and close every Redis connection.
-   */
   bundle.close = async (): Promise<void> => {
+    await bundle.callState?.releaseSweepLease(bundle.instanceId);
     await messageBus.close();
     await Promise.allSettled(clients.map((client) => client.quit?.()));
   };
 
-  return (bundle as any);
+  return bundle as any;
 }
 
 export { createRedisPgStores };

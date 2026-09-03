@@ -7,12 +7,9 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * While the instance is draining (rolling deploy / SIGTERM) it reports 503 so
  * load balancers stop routing new traffic here.
  *
- * The response also advertises `stateAffinity`, which is always `'sticky'`.
- * Sessions, calls, presence, and socket connections live in per-process maps
- * (see `stores/redis.ts`), so a request must reach the same instance that
- * issued the session — a Redis adapter shares Socket.IO fanout but not this
- * state. Deployments can assert on this field rather than rediscovering the
- * constraint from intermittent 401s behind a round-robin load balancer.
+ * The response advertises `stateAffinity`: `'sticky'` for per-process runtime
+ * state and `'shared'` when runtime call/session state is coordinated through
+ * Redis-backed store primitives.
  *
  * @param ctx
  */
@@ -21,6 +18,10 @@ function createHealthRouter({ state }: {
             draining: boolean;
             messageStore: { type: string; };
             messageStoreStatus: string;
+            stateAffinity?: 'sticky' | 'shared';
+            instanceId?: string;
+            callState?: object;
+            messageBus?: object | null;
         };
     }): import('express').Router {
   const router = express.Router();
@@ -40,9 +41,12 @@ function createHealthRouter({ state }: {
     res.status(200).json({
       status: 'ok',
       service: 'wetalk-signaling',
-      // See the docstring above: this is a real deployment constraint, not a
-      // configuration option.
-      stateAffinity: 'sticky',
+      stateAffinity: state.stateAffinity ?? 'sticky',
+      instanceId: state.instanceId ?? `${process.pid}`,
+      sharedState: {
+        calls: Boolean(state.callState),
+        messageBus: Boolean(state.messageBus),
+      },
       messageStore: {
         type: state.messageStore.type,
         status: state.messageStoreStatus,

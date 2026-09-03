@@ -130,6 +130,33 @@ TimeoutStopSec=30
 
 Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restart`** instead of a hard `restart`, which lets in-flight calls drain during a redeploy and starts the service if it was stopped. For a multi-instance (true rolling) setup, restart instances one at a time behind the load balancer, waiting for each `/health` to return `200` before moving to the next.
 
+### PM2 multi-process path (keeps systemd single-instance path intact)
+
+For one VM running multiple signaling processes, this repo now ships
+`deploy/ecosystem.config.js`:
+
+- `instances: 6` by default on 8 vCPU (override with `PM2_INSTANCES`)
+- `exec_mode: "fork"` with `increment_var: "PORT"`
+- `kill_timeout: 30000` (must be >= `SHUTDOWN_DRAIN_MS`)
+
+Example nginx upstream (round-robin; **no `ip_hash`**):
+
+```nginx
+upstream robot_signal {
+    server 127.0.0.1:4173;
+    server 127.0.0.1:4174;
+    server 127.0.0.1:4175;
+    server 127.0.0.1:4176;
+    server 127.0.0.1:4177;
+    server 127.0.0.1:4178;
+}
+```
+
+`deploy/deploy.sh` supports both runtimes:
+
+- `DEPLOY_RUNTIME=systemd` (default, existing path)
+- `DEPLOY_RUNTIME=pm2` (uses `pm2 reload ... --update-env`)
+
 ---
 
 ## 6. Create the deploy SSH key pair
@@ -198,11 +225,10 @@ when the new code starts. `drizzle-kit` is a dev dependency and is intentionally
 not installed on the VM (`npm ci --omit=dev`); migrations therefore run from CI,
 not on the VM.
 
-### Redis (horizontal scaling) configuration — optional
+### Redis (horizontal scaling) configuration
 
-A single VM instance does **not** need Redis. Redis is only required to run more
-than one server instance (multiple processes/VMs behind a load balancer), where
-it provides:
+Redis is required for **N > 1 signaling instances** (multiple processes/VMs
+behind a load balancer). It provides:
 
 - a **Pub/Sub message bus** for cross-instance call-state events and cache
   invalidations,
@@ -227,10 +253,10 @@ Provision Redis and point the server at it with the `REDIS_URL` env var:
 
 Then add `Environment=REDIS_URL=redis://127.0.0.1:6379` (or the managed URL) to
 the systemd unit's `Environment=` lines on **every** instance and reload the
-service. When `REDIS_URL` is unset the server runs in single-instance mode with
-in-memory state — keep it unset for a one-VM deployment. Secure self-hosted Redis
-by binding to localhost (or a private subnet) and/or setting `requirepass`; never
-expose it publicly.
+service. For multi-instance, use round-robin upstream routing (remove `ip_hash`)
+after verifying `/health` reports `stateAffinity: "shared"`.
+Secure self-hosted Redis by binding to localhost (or a private subnet) and/or
+setting `requirepass`; never expose it publicly.
 
 ---
 
@@ -431,4 +457,3 @@ Chat message history and conversation lists are persisted via `server/src/messag
 The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.ts` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
 
 > **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
-

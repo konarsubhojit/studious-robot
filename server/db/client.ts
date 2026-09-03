@@ -17,7 +17,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { describeSqlStatement, sqlTextOf, timeQuery } from '../src/lib/queryTiming.ts';
 
 /** Maximum app-side pool size; keep small since Neon pools server-side too. */
-const DEFAULT_POOL_MAX = 10;
+const DEFAULT_POOL_MAX = 4;
 
 /** Marks an already-wrapped pool/client, see {@link instrumentQuery}. */
 const INSTRUMENTED = Symbol('queryTimingInstrumented');
@@ -77,9 +77,15 @@ function getPool(): import('pg').Pool {
     throw new Error('DATABASE_URL is not set; cannot create Postgres pool');
   }
 
+  const configuredPoolSize = Number(process.env.DB_POOL_SIZE ?? process.env.DATABASE_POOL_MAX);
+  const poolMax =
+    Number.isSafeInteger(configuredPoolSize) && configuredPoolSize > 0
+      ? configuredPoolSize
+      : DEFAULT_POOL_MAX;
+
   _pool = new Pool({
     connectionString,
-    max: Number(process.env.DATABASE_POOL_MAX) || DEFAULT_POOL_MAX,
+    max: poolMax,
   });
   _pool.on('error', (error) => {
     console.error('[database] unexpected idle Postgres client error:', error?.message);
