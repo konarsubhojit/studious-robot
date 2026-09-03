@@ -85,6 +85,8 @@ DEBUG_API_TOKEN=replace-with-a-strong-random-token
 # ── Database (Postgres) ──────────────────────────────────────────────────────
 # Full connection string, e.g. from Neon:
 DATABASE_URL=******host/dbname?sslmode=require
+# Per-instance pool size (divide Neon pooled budget by instance count):
+DB_POOL_SIZE=4
 
 # ── Redis ────────────────────────────────────────────────────────────────────
 # When set, session/presence state is Redis-backed (required for multi-instance).
@@ -202,7 +204,7 @@ exported `wetalk-logs-*.txt` ends with a `--- server query timings ---` table
 
 ### Redis
 
-Redis is **optional** but strongly recommended for production:
+Redis is required for multi-instance signaling and optional for single-instance:
 
 - Enables cross-instance session/presence fan-out via the Socket.IO Redis adapter.
 - Persists sessions and presence maps across server restarts.
@@ -213,7 +215,8 @@ docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```
 
-For a single-VM deployment Redis is optional (in-memory state is used). Install it locally on the VM or use a managed service such as Upstash. See [Deploying to a VM (GCP + Ubuntu)](#deploying-to-a-vm-gcp--ubuntu) for setup instructions.
+For multi-instance deployment, verify `/health` returns `stateAffinity: "shared"`
+before switching nginx to round-robin (no `ip_hash`).
 
 ### Push notifications — FCM (Android)
 

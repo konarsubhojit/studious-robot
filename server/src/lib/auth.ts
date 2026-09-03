@@ -57,6 +57,33 @@ function getSessionFromRequest(req: import('express').Request, sessions: import(
   return session;
 }
 
+async function getSessionFromRequestAsync(
+  req: import('express').Request,
+  state: import('../stores/contracts.ts').ServerState
+): Promise<import('../stores/contracts.ts').SessionRecord | null> {
+  const sessionId =
+    normaliseId(parseBearerToken(req.headers.authorization)) ||
+    normaliseId(req.body?.sessionId) ||
+    normaliseId(req.query?.sessionId);
+  if (!sessionId) return null;
+
+  const local = state.sessions.get(sessionId);
+  if (local) {
+    if (local.expiresAt && new Date(local.expiresAt).getTime() < Date.now()) return null;
+    return local;
+  }
+
+  if (!state.sessionState) {
+    return null;
+  }
+
+  const shared = await state.sessionState.get(sessionId);
+  if (!shared) return null;
+  if (shared.expiresAt && new Date(shared.expiresAt).getTime() < Date.now()) return null;
+  state.sessions.set(sessionId, shared);
+  return shared;
+}
+
 /**
  * Resolve the identity for a connecting Socket.IO client.
  *
@@ -116,9 +143,34 @@ function resolveSocketIdentity(socket: { handshake: { auth?: Record<string, any>
   };
 }
 
+async function resolveSocketIdentityAsync(
+  socket: { handshake: { auth?: Record<string, any> } },
+  state: import('../stores/contracts.ts').ServerState
+): Promise<{
+  userId: string;
+  deviceId: string;
+  platform: string | null;
+  sessionId: string | null;
+  presentedSessionId: string | null;
+  sessionDowngraded: boolean;
+  correlationId: string | null;
+}> {
+  const auth = isPlainObject(socket.handshake.auth) ? socket.handshake.auth ?? {} : {};
+  const sessionId = normaliseId(auth.sessionId);
+  const localSession = sessionId ? state.sessions.get(sessionId) : null;
+  const sharedSession =
+    !localSession && sessionId && state.sessionState ? await state.sessionState.get(sessionId) : null;
+  if (sharedSession && sessionId) {
+    state.sessions.set(sessionId, sharedSession);
+  }
+  return resolveSocketIdentity(socket, state.sessions);
+}
+
 export {
   parseBearerToken,
   normaliseCorrelationId,
   getSessionFromRequest,
+  getSessionFromRequestAsync,
   resolveSocketIdentity,
+  resolveSocketIdentityAsync,
 };

@@ -13,6 +13,14 @@ import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from 
 export type CallRecord = import('../stores/contracts.ts').CallRecord;
 export type ServerState = import('../stores/contracts.ts').ServerState;
 
+function mirrorCallToShared(state: ServerState, call: CallRecord): void {
+  if (!state.callState) return;
+  void state.callState.save(call).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[calls] failed to mirror call ${call.callId} to shared store: ${message}`);
+  });
+}
+
 /**
  * Create a new call record and append the initial `created` event.
  *
@@ -67,6 +75,7 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
   };
 
   state.calls.set(callId, call);
+  mirrorCallToShared(state, call);
   state.callEvents.set(callId, []);
   invalidateCallHistoryCache(state, callerId, calleeId);
   const persistedCall = persistCallRecord(state.db, call);
@@ -164,6 +173,7 @@ function transitionCall(state: ServerState, callId: string, toStatus: string, { 
 
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
   void persistCallRecord(state.db, call);
+  mirrorCallToShared(state, call);
   appendCallEvent(state, callId, toStatus, actor, reason);
 
   return { ok: true, call };
@@ -245,6 +255,7 @@ function recordCallHeartbeat(state: ServerState, callId: string, now: number = D
   const call = state.calls.get(callId);
   if (!call || TERMINAL_CALL_STATES.has(call.status)) return false;
   call.lastHeartbeatAt = new Date(now).toISOString();
+  mirrorCallToShared(state, call);
   return true;
 }
 
@@ -560,6 +571,7 @@ function finalizeCall(state: ServerState, call: CallRecord, status: string, reas
   call.durationSeconds = durationSeconds;
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
   void persistCallRecord(state.db, call);
+  mirrorCallToShared(state, call);
   appendCallEvent(state, call.callId, status, null, reason);
   return previousStatus;
 }

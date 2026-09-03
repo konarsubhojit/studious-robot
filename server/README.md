@@ -173,7 +173,8 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
-| `REDIS_URL` | _(unset)_ | Redis connection URL enabling multi-instance mode (cross-instance message bus + shared read cache + Socket.IO Redis adapter). Single-instance/in-memory when unset. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. |
+| `DB_POOL_SIZE` | `4` | Per-instance Postgres pool size (fallback: `DATABASE_POOL_MAX`). For N instances, divide Neon pooler budget across instances. |
 
 ## Attachments
 

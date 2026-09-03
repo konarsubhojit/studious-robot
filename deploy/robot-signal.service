@@ -19,6 +19,7 @@ WorkingDirectory=/home/ubuntu/repos/studious-robot/server
 ExecStart=/usr/bin/node src/index.ts
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=65535
 # Graceful shutdown for rolling deploys: send SIGTERM to the main process only
 # (the app drains in-flight connections on SIGTERM) and allow up to 30s for the
 # drain to complete before systemd hard-kills the process.  Keep this >= the

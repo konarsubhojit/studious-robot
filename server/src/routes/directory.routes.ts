@@ -2,7 +2,7 @@ import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
 import { USER_DIRECTORY_DEFAULT_LIMIT, USER_DIRECTORY_MAX_LIMIT } from '../config.ts';
 import { isBlocked } from '../security.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.ts';
 
@@ -12,8 +12,8 @@ import { getPresenceSnapshot, hasKnownUser, listKnownUsers } from '../lib/state.
 function createDirectoryRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
 
-  router.get('/presence/:userId', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get('/presence/:userId', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -44,8 +44,8 @@ function createDirectoryRouter({ state }: { state: import('../stores/contracts.t
    *
    * Response 200: { users: Array<{ userId, status, online, lastSeen }>, total }
    */
-  router.get(API_ROUTES.USERS, (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get(API_ROUTES.USERS, async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;

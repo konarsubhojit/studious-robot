@@ -1,15 +1,15 @@
 import express from 'express';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 
 /**
  * GET /audit-log – return the security audit entries where the authenticated
  * user is the actor or the target (oldest-first).
  */
-function createAuditLogRouter({ state }: { state: { sessions: import('../stores/contracts.ts').SessionStore; auditLog: { getForUser: (userId: string) => object[]; }; }; }): import('express').Router {
+function createAuditLogRouter({ state }: { state: import('../stores/contracts.ts').ServerState; }): import('express').Router {
   const router = express.Router();
 
-  router.get('/audit-log', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get('/audit-log', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;

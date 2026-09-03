@@ -62,13 +62,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       try {
         const stores = await createRedisPgStores();
         console.log('[signaling] using Redis-backed stores (REDIS_URL set)');
-        // Redis shares the Socket.IO adapter and the message bus, but sessions,
-        // calls, presence, and connections are still per-process maps. Running
-        // more than one instance behind a non-sticky load balancer therefore
-        // fails intermittently rather than obviously, so say so out loud.
-        console.warn(
-          '[signaling] sessions/calls/presence are per-instance: multi-instance deployments require sticky routing (see /health stateAffinity)'
-        );
+        console.log('[signaling] cross-instance call state enabled (stateAffinity=shared)');
         // Share the read cache across instances so a cached conversation list
         // is not re-read (and re-throttled) once per instance.
         const cache = await createCache({ redisUrl: process.env.REDIS_URL });

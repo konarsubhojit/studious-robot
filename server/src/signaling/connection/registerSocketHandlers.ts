@@ -1,9 +1,10 @@
 import { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
 import { normaliseId } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
-import { resolveSocketIdentity } from '../../lib/auth.ts';
+import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
-import { createCallRecord, reconcileClientCallState, describeActiveCallsForUser } from '../../domain/calls.ts';
+import { reconcileClientCallState, describeActiveCallsForUser } from '../../domain/calls.ts';
+import { createCallRecordWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
@@ -21,7 +22,7 @@ function registerSocketHandlers(
     participantDisconnectGraceMs?: number;
   }
 ) {
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
     if (state.draining) {
       socket.emit(SERVER_EVENTS.SERVER_DRAINING, {
         reason: 'shutdown',
@@ -31,7 +32,7 @@ function registerSocketHandlers(
       return;
     }
 
-    const identity = resolveSocketIdentity(socket, state.sessions);
+    const identity = await resolveSocketIdentityAsync(socket, state);
     socket.data.identity = identity;
     ensurePresenceRecord(state, identity.userId);
     upsertDevice(state, identity);
@@ -144,7 +145,7 @@ function registerSocketHandlers(
         .emit(SERVER_EVENTS.ROOM_ICE_CANDIDATE, { from: socket.id, candidate: parsed.candidate });
     });
 
-    socket.on(CLIENT_EVENTS.CALL_INITIATE, (payload = {}, ack) => {
+    socket.on(CLIENT_EVENTS.CALL_INITIATE, async (payload = {}, ack) => {
       if (!requireSocketSession(socket, ack, CLIENT_EVENTS.CALL_INITIATE)) {
         return;
       }
@@ -217,7 +218,7 @@ function registerSocketHandlers(
         return;
       }
 
-      const call = createCallRecord(state, {
+      const call = await createCallRecordWithShared(state, {
         callerId: socket.data.identity.userId,
         calleeId,
         ringingTimeoutMs,
@@ -253,18 +254,20 @@ function registerSocketHandlers(
     });
 
     socket.on(CLIENT_EVENTS.CALL_ACCEPT, (payload = {}, ack) => {
-      handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_ACCEPT,
         nextStatus: 'accepted',
         authorize: (call, userId) =>
           call.calleeId === userId ? null : 'only the callee can accept a call',
+      }).catch((error) => {
+        console.error('[signaling] call.accept handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_DECLINE, (payload = {}, ack) => {
-      handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_DECLINE,
@@ -272,11 +275,13 @@ function registerSocketHandlers(
         reason: 'declined',
         authorize: (call, userId) =>
           call.calleeId === userId ? null : 'only the callee can decline a call',
+      }).catch((error) => {
+        console.error('[signaling] call.decline handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_CANCEL, (payload = {}, ack) => {
-      handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_CANCEL,
@@ -284,11 +289,13 @@ function registerSocketHandlers(
         reason: 'cancelled',
         authorize: (call, userId) =>
           call.callerId === userId ? null : 'only the caller can cancel a call',
+      }).catch((error) => {
+        console.error('[signaling] call.cancel handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_END, (payload = {}, ack) => {
-      handleSocketCallTransition(socket, ack, payload, {
+      void handleSocketCallTransition(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_END,
@@ -298,47 +305,59 @@ function registerSocketHandlers(
           call.callerId === userId || call.calleeId === userId
             ? null
             : 'not a participant in this call',
+      }).catch((error) => {
+        console.error('[signaling] call.end handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_CONNECTED, (payload = {}, ack) => {
-      handleCallConnected(socket, ack, payload, { state, io });
+      void handleCallConnected(socket, ack, payload, { state, io }).catch((error) => {
+        console.error('[signaling] call.connected handler failed:', (error as any)?.message);
+      });
     });
 
     socket.on(CLIENT_EVENTS.RTC_OFFER, (payload = {}, ack) => {
-      handleRtcRelay(socket, ack, payload, {
+      void handleRtcRelay(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.RTC_OFFER,
         dataKey: 'sdp',
+      }).catch((error) => {
+        console.error('[signaling] rtc.offer handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.RTC_ANSWER, (payload = {}, ack) => {
-      handleRtcRelay(socket, ack, payload, {
+      void handleRtcRelay(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.RTC_ANSWER,
         dataKey: 'sdp',
+      }).catch((error) => {
+        console.error('[signaling] rtc.answer handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.RTC_CANDIDATE, (payload = {}, ack) => {
-      handleRtcRelay(socket, ack, payload, {
+      void handleRtcRelay(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.RTC_CANDIDATE,
         dataKey: 'candidate',
+      }).catch((error) => {
+        console.error('[signaling] rtc.candidate handler failed:', (error as any)?.message);
       });
     });
 
     socket.on(CLIENT_EVENTS.CALL_MEDIA_STATE, (payload = {}, ack) => {
-      handleRtcRelay(socket, ack, payload, {
+      void handleRtcRelay(socket, ack, payload, {
         state,
         io,
         eventName: CLIENT_EVENTS.CALL_MEDIA_STATE,
         dataKey: 'mediaState',
         recordsHeartbeat: true,
+      }).catch((error) => {
+        console.error('[signaling] call.media_state handler failed:', (error as any)?.message);
       });
     });
 

@@ -2,9 +2,14 @@ import express from 'express';
 import { timingSafeEqual } from 'crypto';
 import { isBlocked } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId } from '../lib/normalize.ts';
-import { createCallRecord, transitionCall, describeActiveCallsForUser } from '../domain/calls.ts';
+import { describeActiveCallsForUser } from '../domain/calls.ts';
+import {
+  createCallRecordWithShared,
+  hydrateCallFromShared,
+  transitionCallWithShared,
+} from '../domain/sharedCalls.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
 import { notifyCallCreated, notifyCallTransition } from '../domain/notifications.ts';
 
@@ -31,8 +36,8 @@ function hasDebugToken(req: import('express').Request): boolean {
 function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../stores/contracts.ts').ServerState; io: any; ringingTimeoutMs: number; }): import('express').Router {
   const router = express.Router();
 
-  router.post('/calls', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post('/calls', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -82,7 +87,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    const call = createCallRecord(state, {
+    const call = await createCallRecordWithShared(state, {
       callerId: session.userId,
       calleeId,
       ringingTimeoutMs,
@@ -92,14 +97,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(201).json(call);
   });
 
-  router.get('/calls/:callId', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get('/calls/:callId', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -122,14 +127,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
    *
    * Requires an authenticated session that belongs to a call participant.
    */
-  router.get('/calls/:callId/events', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get('/calls/:callId/events', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -161,7 +166,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
    * space, matching how `GET /messages` treats deep pagination.
    */
   router.get('/calls', async (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -206,8 +211,8 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
    * Requires an authenticated session; a user may only inspect themselves
    * unless the request carries the operator token (`DEBUG_API_TOKEN`).
    */
-  router.get('/debug/active-calls/:userId', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get('/debug/active-calls/:userId', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -228,14 +233,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(200).json({ userId, activeCalls, total: activeCalls.length });
   });
 
-  router.post('/calls/:callId/accept', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post('/calls/:callId/accept', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -247,12 +252,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = transitionCall(state, call.callId, 'accepted', { actor: session.userId });
+    const result = await transitionCallWithShared(state, call.callId, 'accepted', {
+      actor: session.userId,
+    });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (previousStatus !== result.call.status) {
+    if (!result.stale && previousStatus !== result.call.status) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -262,14 +269,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(200).json(result.call);
   });
 
-  router.post('/calls/:callId/decline', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post('/calls/:callId/decline', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -281,7 +288,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = transitionCall(state, call.callId, 'declined', {
+    const result = await transitionCallWithShared(state, call.callId, 'declined', {
       actor: session.userId,
       reason: 'declined',
     });
@@ -289,7 +296,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (previousStatus !== result.call.status) {
+    if (!result.stale && previousStatus !== result.call.status) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -300,14 +307,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(200).json(result.call);
   });
 
-  router.post('/calls/:callId/cancel', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post('/calls/:callId/cancel', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -319,7 +326,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = transitionCall(state, call.callId, 'ended', {
+    const result = await transitionCallWithShared(state, call.callId, 'ended', {
       actor: session.userId,
       reason: 'cancelled',
     });
@@ -327,7 +334,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (previousStatus !== result.call.status) {
+    if (!result.stale && previousStatus !== result.call.status) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,
@@ -338,14 +345,14 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     res.status(200).json(result.call);
   });
 
-  router.post('/calls/:callId/end', (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post('/calls/:callId/end', async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
     }
 
-    const call = state.calls.get(normaliseId(req.params.callId) ?? '');
+    const call = await hydrateCallFromShared(state, normaliseId(req.params.callId) ?? '');
     if (!call) {
       res.status(404).json({ error: 'call not found' });
       return;
@@ -357,7 +364,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
     }
 
     const previousStatus = call.status;
-    const result = transitionCall(state, call.callId, 'ended', {
+    const result = await transitionCallWithShared(state, call.callId, 'ended', {
       actor: session.userId,
       reason: 'ended',
     });
@@ -365,7 +372,7 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       res.status(result.status).json({ error: result.message || result.error });
       return;
     }
-    if (previousStatus !== result.call.status) {
+    if (!result.stale && previousStatus !== result.call.status) {
       notifyCallTransition(io, state, result.call, {
         previousStatus,
         actor: session.userId,

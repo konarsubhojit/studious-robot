@@ -203,6 +203,10 @@ function createServer(opts: CreateServerOptions = {}) {
      * `null` for single-instance (in-memory) deployments.
      */
     messageBus: opts.messageBus ?? stores.messageBus ?? null,
+    stateAffinity: stores.stateAffinity ?? 'sticky',
+    instanceId: stores.instanceId ?? process.env.INSTANCE_ID ?? `${process.pid}`,
+    callState: stores.callState,
+    sessionState: stores.sessionState,
     /**
      * Lifecycle flag.  Flipped to `true` by `shutdown()` so that `/health`
      * reports the instance as draining and new socket connections are rejected
@@ -310,22 +314,34 @@ function createServer(opts: CreateServerOptions = {}) {
       DEFAULT_MAX_RETAINED_CALLS
     );
   const pollTimer = setInterval(() => {
-    const now = Date.now();
-    tickRingingTimeouts(
-      state,
-      now,
-      (call, previousStatus, reason) => {
-        notifyCallTransition(io, state, call, {
-          previousStatus,
-          actor: null,
-          reason,
-        });
-      },
-      callTimeouts
-    );
-    // Bound the in-memory history the sweep above just added to, so neither it
-    // nor `GET /calls` iterates a map that only ever grows.
-    pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now });
+    void (async () => {
+      if (state.callState) {
+        const lockTtlMs = Math.max(RINGING_POLL_MS * 3, 15_000);
+        const acquired = await state.callState.acquireSweepLease(state.instanceId ?? 'unknown', lockTtlMs);
+        if (!acquired) {
+          return;
+        }
+      }
+
+      const now = Date.now();
+      tickRingingTimeouts(
+        state,
+        now,
+        (call, previousStatus, reason) => {
+          notifyCallTransition(io, state, call, {
+            previousStatus,
+            actor: null,
+            reason,
+          });
+        },
+        callTimeouts
+      );
+      // Bound the in-memory history the sweep above just added to, so neither it
+      // nor `GET /calls` iterates a map that only ever grows.
+      pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now });
+    })().catch((error: unknown) => {
+      console.error(`[calls] stale-call sweep failed: ${describeError(error)}`);
+    });
   }, RINGING_POLL_MS);
   // Don't prevent the process from exiting if only the timer is left.
   pollTimer.unref();

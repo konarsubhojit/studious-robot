@@ -3,7 +3,7 @@ import { API_ROUTES } from '../../../shared/index.ts';
 import type { Database } from '../../db/client.ts';
 import { randomUUID } from 'node:crypto';
 import { resolveIdentityClaim } from '../identity.ts';
-import { getSessionFromRequest } from '../lib/auth.ts';
+import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString, sanitizeForLog } from '../lib/normalize.ts';
 import { addSessionToUser, upsertDevice, ensurePresenceRecord } from '../lib/state.ts';
 import { persistUser, persistDevice } from '../lib/persistence.ts';
@@ -96,6 +96,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
     };
 
     state.sessions.set(session.sessionId, session);
+    await state.sessionState?.save(session);
     addSessionToUser(state, session);
     const device = upsertDevice(state, {
       userId,
@@ -115,8 +116,8 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
     res.status(201).json(session);
   });
 
-  router.get(API_ROUTES.SESSION, (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.get(API_ROUTES.SESSION, async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -132,8 +133,8 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
    * fresh one (same userId / deviceId) is returned.  Useful for security-
    * conscious clients that periodically rotate their credentials.
    */
-  router.post(API_ROUTES.SESSION_REFRESH, (req, res) => {
-    const session = getSessionFromRequest(req, state.sessions);
+  router.post(API_ROUTES.SESSION_REFRESH, async (req, res) => {
+    const session = await getSessionFromRequestAsync(req, state);
     if (!session) {
       res.status(401).json({ error: 'invalid session' });
       return;
@@ -141,6 +142,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
     // Invalidate the old session token.
     state.sessions.delete(session.sessionId);
+    await state.sessionState?.remove(session.sessionId);
     state.userSessions.get(session.userId)?.delete(session.sessionId);
 
     // Issue a fresh session with a new token.
@@ -153,6 +155,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       expiresAt: sessionTtlMs > 0 ? new Date(Date.now() + sessionTtlMs).toISOString() : null,
     };
     state.sessions.set(newSession.sessionId, newSession);
+    await state.sessionState?.save(newSession);
     addSessionToUser(state, newSession);
     upsertDevice(state, {
       userId: newSession.userId,

@@ -87,6 +87,29 @@ export type Stores = {
   blocks: BlockStore;
   messageBus?: import('../messageBus.ts').MessageBus | null;
   attachAdapter?: (io: import('socket.io').Server) => void;
+  stateAffinity?: 'sticky' | 'shared';
+  instanceId?: string;
+  callState?: {
+    get: (callId: string) => Promise<CallRecord | null>;
+    save: (call: CallRecord) => Promise<void>;
+    transitionAtomic: (args: {
+      callId: string;
+      fromStatus: string;
+      toStatus: string;
+      actor?: string | null;
+      reason?: string | null;
+    }) => Promise<
+      | { ok: true; call: CallRecord; idempotent: boolean }
+      | { ok: false; error: 'not_found' | 'stale_call_state' | 'terminal_state' }
+    >;
+    acquireSweepLease: (instanceId: string, ttlMs: number) => Promise<boolean>;
+    releaseSweepLease: (instanceId: string) => Promise<void>;
+  };
+  sessionState?: {
+    get: (sessionId: string) => Promise<SessionRecord | null>;
+    save: (session: SessionRecord) => Promise<void>;
+    remove: (sessionId: string) => Promise<void>;
+  };
   close?: () => Promise<void>;
 };
 export type IncomingCallPushEntry = {

@@ -1,7 +1,8 @@
 import { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } from '../config.ts';
 import { normaliseId } from '../lib/normalize.ts';
-import { transitionCall, recordCallHeartbeat } from '../domain/calls.ts';
+import { recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
+import { hydrateCallFromShared, persistCallToShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 
@@ -76,7 +77,7 @@ type SocketCallTransitionOptions = SocketCallTransitionBase &
  *
  * @param options
  */
-function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: SocketCallTransitionOptions) {
+async function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: SocketCallTransitionOptions) {
   if (!requireSocketSession(socket, ack, options.eventName)) {
     return;
   }
@@ -91,7 +92,7 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
 
   // The payload is schema-validated above, so `callId` is a non-empty id.
   const callId = (normaliseId(parsed.callId) as string);
-  const call = options.state.calls.get(callId);
+  const call = await hydrateCallFromShared(options.state, callId);
   if (!call) {
     acknowledgeError(
       socket,
@@ -122,23 +123,24 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
   const transition: CallTransition = options.resolveTransition
     ? options.resolveTransition(parsed)
     : { nextStatus: options.nextStatus, reason: options.reason ?? null };
-  const result = transitionCall(options.state, callId, transition.nextStatus, {
+  const result = await transitionCallWithShared(options.state, callId, transition.nextStatus, {
     actor: socket.data.identity.userId,
     reason: transition.reason ?? null,
   });
   if (!result.ok) {
+    const errorCode = result.error === 'stale_call_state' ? 'stale_call_state' : 'invalid_state';
     acknowledgeError(
       socket,
       ack,
       options.eventName,
-      'invalid_state',
+      errorCode,
       result.message || result.error,
       options.state
     );
     return;
   }
 
-  if (previousStatus !== result.call.status) {
+  if (!result.stale && previousStatus !== result.call.status) {
     notifyCallTransition(options.io, options.state, result.call, {
       previousStatus,
       actor: socket.data.identity.userId,
@@ -157,7 +159,7 @@ function handleSocketCallTransition(socket: import('socket.io').Socket, ack: Fun
  *
  * @param options
  */
-function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
+async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
         state: import('../stores/contracts.ts').ServerState;
         io: any;
         eventName: string;
@@ -202,7 +204,7 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
   const callId = (normaliseId(parsed.callId) as string);
   const value = parsed[options.dataKey];
 
-  const call = options.state.calls.get(callId);
+  const call = await hydrateCallFromShared(options.state, callId);
   if (!call) {
     acknowledgeError(
       socket,
@@ -240,10 +242,10 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
 
   if (call.status === 'accepted') {
     const previousStatus = call.status;
-    const result = transitionCall(options.state, callId, 'connecting_media', {
+    const result = await transitionCallWithShared(options.state, callId, 'connecting_media', {
       actor: userId,
     });
-    if (result.ok && previousStatus !== result.call.status) {
+    if (result.ok && !result.stale && previousStatus !== result.call.status) {
       notifyCallTransition(options.io, options.state, result.call, {
         previousStatus,
         actor: userId,
@@ -258,6 +260,7 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
   // heartbeat deadline on a call that will never satisfy it.
   if (options.recordsHeartbeat && value?.heartbeat === true) {
     recordCallHeartbeat(options.state, callId);
+    await persistCallToShared(options.state, options.state.calls.get(callId)!);
   }
 
   const peerUserId = call.callerId === userId ? call.calleeId : call.callerId;
@@ -284,8 +287,8 @@ function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | unde
  * idempotency.  A report of `disconnected`/`failed` ends the call immediately
  * instead of leaving it to a sweep.
  */
-function handleCallConnected(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: { state: import('../stores/contracts.ts').ServerState; io: any; }) {
-  handleSocketCallTransition(socket, ack, payload, {
+async function handleCallConnected(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: { state: import('../stores/contracts.ts').ServerState; io: any; }) {
+  await handleSocketCallTransition(socket, ack, payload, {
     state: options.state,
     io: options.io,
     eventName: CLIENT_EVENTS.CALL_CONNECTED,
