@@ -323,7 +323,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     let updated;
     try {
-      updated = await state.messageStore.markRead(conversationId, session.userId);
+      updated = await state.messageStore.markRead(conversationId, session.userId, peerId);
     } catch (error) {
       console.error(`[messages] markRead failed: ${describeError(error)}`);
       res.status(503).json({ error: 'message store unavailable' });

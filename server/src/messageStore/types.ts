@@ -71,12 +71,22 @@ export type MessageStore = {
   saveMessage: (message: NewMessageInput) => Promise<StoredMessage>;
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
+  /**
+   * `conversationId` is the shard key of the messages collection: supplying it
+   * keeps the update single-partition on Cosmos. It stays optional so callers
+   * that only hold a message id (and the in-memory store) still work.
+   */
   markDelivered: (
     messageId: string,
-    userId: string
+    userId: string,
+    conversationId?: string
   ) => Promise<StoredMessage | null>;
   listConversations: (userId: string) => Promise<ConversationSummary[]>;
-  markRead: (conversationId: string, userId: string) => Promise<number>;
+  /**
+   * `peerId` saves the store a round trip it would otherwise spend looking the
+   * peer up in the conversation index; optional for callers that do not know it.
+   */
+  markRead: (conversationId: string, userId: string, peerId?: string) => Promise<number>;
   deleteMessage: (
     conversationId: string,
     messageId: string,

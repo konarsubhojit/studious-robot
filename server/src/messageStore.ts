@@ -28,9 +28,9 @@
  *   saveMessage(message)                        → Promise<savedMessage>
  *   listMessages({ conversationId, limit, before }) → Promise<message[]>
  *   searchMessages({ userId, query, limit, before }) → Promise<message[]>
- *   markDelivered(messageId, userId)            → Promise<message|null>
+ *   markDelivered(messageId, userId, conversationId?)  → Promise<message|null>
  *   listConversations(userId)                   → Promise<conversationSummary[]>
- *   markRead(conversationId, userId)            → Promise<number>
+ *   markRead(conversationId, userId, peerId?)   → Promise<number>
  *   deleteMessage(conversationId, messageId, userId) → Promise<message|null>
  *   reactToMessage({ conversationId, messageId, userId, emoji, action }) → Promise<message|null>
  *   close()                                     → Promise<void>

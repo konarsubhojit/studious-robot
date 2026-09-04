@@ -8,6 +8,7 @@
  * method performs, and the Cosmos-specific reasons behind them.
  */
 
+import { describeError } from '../lib/errors.ts';
 import { summariseConversations } from './conversations.ts';
 import { toStoredMessage, toStoredMessages } from './documents.ts';
 import { instrumentMongoStore } from './instrumentation.ts';
@@ -330,7 +331,7 @@ export function createMongoMessageStore({
       return summariseConversations(toStoredMessages(found), userId);
     },
 
-    async markRead(conversationId, userId) {
+    async markRead(conversationId, userId, peerId) {
       const { messages, conversationIndex } = await connect();
       const readAt = nextTimestamp();
       const result = await messages.updateMany(
@@ -338,25 +339,50 @@ export function createMongoMessageStore({
         { $set: { readAt } }
       );
       if (conversationIndex) {
-        const summary = await conversationIndex.findOne({ userId, conversationId });
-        const participants = summary ? [userId, summary.peerId] : [userId];
-        await conversationIndex.updateOne(
-          { userId, conversationId },
-          { $set: { unreadCount: 0 } }
+        // Without a `peerId` from the caller the peer's row can only be found
+        // the old way — one extra round trip — rather than left unpatched.
+        const resolvedPeerId =
+          peerId ?? (await conversationIndex.findOne({ userId, conversationId }))?.peerId;
+        // The reader's unread reset and the read receipt on their own row are
+        // one write. The `lastMessage.*` conditions are in the *filter* rather
+        // than checked by a prior read: when the last message is the reader's
+        // own (or already read) the update matches nothing, and the plain reset
+        // below runs instead — never both.
+        const merged = await conversationIndex.updateOne(
+          {
+            userId,
+            conversationId,
+            'lastMessage.recipientId': userId,
+            'lastMessage.readAt': null,
+          },
+          { $set: { unreadCount: 0, 'lastMessage.readAt': readAt } }
         );
-        if (summary?.lastMessage.recipientId === userId && !summary.lastMessage.readAt) {
-          await Promise.all(
-            participants.map((participantId) =>
-              conversationIndex.updateOne(
-                {
-                  userId: participantId,
-                  conversationId,
-                  'lastMessage.messageId': summary.lastMessage.messageId,
-                },
-                { $set: { 'lastMessage.readAt': readAt } }
-              )
-            )
+        if (!merged?.modifiedCount) {
+          await conversationIndex.updateOne(
+            { userId, conversationId },
+            { $set: { unreadCount: 0 } }
           );
+        }
+        if (resolvedPeerId) {
+          // The sender's copy of the receipt is not needed before answering the
+          // reader, so it is not awaited; it is pushed to them over the socket
+          // anyway. Same filter-as-guard trick: a no-op when it does not apply.
+          void conversationIndex
+            .updateOne(
+              {
+                userId: resolvedPeerId,
+                conversationId,
+                'lastMessage.recipientId': userId,
+                'lastMessage.readAt': null,
+              },
+              { $set: { 'lastMessage.readAt': readAt } }
+            )
+            .catch((error: unknown) => {
+              console.error(
+                `[messages] conversation index read receipt failed` +
+                  ` conversationId=${conversationId}: ${describeError(error)}`
+              );
+            });
         }
       }
       return result?.modifiedCount ?? 0;
