@@ -3,7 +3,7 @@ module.exports = {
       name: 'robot-signal',
       script: './start.sh',
       cwd: '/home/wetalk/repos/studious-robot/server',
-      instances: 6, // single-instance host: 1
+      instances: 6, // single-instance host: 1 — >1 requires REDIS_URL
       exec_mode: 'fork',
       increment_var: 'PORT', // single-instance host: omit
       env: { PORT: 4173, HOST: '127.0.0.1' },

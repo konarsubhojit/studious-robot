@@ -258,6 +258,16 @@ after verifying `/health` reports `stateAffinity: "shared"`.
 Secure self-hosted Redis by binding to localhost (or a private subnet) and/or
 setting `requirepass`; never expose it publicly.
 
+**Startup guard.** Running more than one instance without `REDIS_URL` is a
+silent correctness bug: each process keeps its own sessions, presence, call
+registry and read cache, so a cache invalidation published by one process never
+reaches the other five and clients can read stale data for a full TTL. To make
+that impossible to miss, a process whose PM2 ordinal (`NODE_APP_INSTANCE`, or
+`pm_id`) is greater than zero refuses to start when `REDIS_URL` is unset and
+`NODE_ENV=production`, and logs a warning otherwise (see
+`server/src/lib/instances.ts`). Instance `0` is never faulted — it cannot tell
+whether it is alone — so a single-instance host is unaffected.
+
 ---
 
 ## 7. Sudoers — passwordless restart for the deploy script

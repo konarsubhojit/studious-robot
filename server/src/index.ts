@@ -25,6 +25,7 @@ import { createMemoryMessageBus, createRedisMessageBus } from './messageBus.ts';
 import { createCache } from './cache.ts';
 import { logNotificationHubStartupStatus } from './push.ts';
 import { describeError } from './lib/errors.ts';
+import { assertSharedStateForMultiInstance } from './lib/instances.ts';
 
 export {
   createServer,
@@ -50,6 +51,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
    */
   async function bootstrap(): Promise<{ httpServer: import('http').Server; shutdown: Function; stores?: object; }> {
     logNotificationHubStartupStatus();
+    // Fail (or at least shout) before serving traffic if this process is one of
+    // several but has no shared state to invalidate across.
+    assertSharedStateForMultiInstance();
     const verifyIdToken = createFirebaseTokenVerifier();
 
     if (process.env.NODE_ENV === 'production' && !process.env.DATABASE_URL) {
