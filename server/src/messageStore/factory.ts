@@ -77,6 +77,9 @@ export function createMessageStore(opts: { messageStore?: MessageStore; } = {}):
     conversationIndexCollectionName:
       process.env.MONGODB_CONVERSATION_INDEX_COLLECTION?.trim() ||
       DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME,
+    conversationIndexWrites:
+      process.env.MONGODB_CONVERSATION_INDEX_WRITES === 'true' ||
+      process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
     conversationIndexReady: process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
     // The driver's client is a superset of the surface the store uses; see
     // `MongoClientLike` for why the store is typed structurally.

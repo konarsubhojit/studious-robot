@@ -481,6 +481,15 @@ az cosmosdb mongodb collection create \
   --name conversation_index \
   --shard userId
 
+# Add MONGODB_CONVERSATION_INDEX_WRITES=true to /etc/robot-signal/env and
+# gracefully reload PM2. Reads still use the legacy path during this phase,
+# while every new message updates both stores.
+#
+# Before the command below, gracefully drain and stop every signaling-server
+# process that can write messages. Keep them stopped until the backfill and
+# index verification finish: the backfill is authoritative and must not race
+# a newer dual-write.
+
 cd /home/wetalk/repos/studious-robot/server
 set -a
 . /etc/robot-signal/env
@@ -493,8 +502,10 @@ mongosh "$MONGODB_URI" --quiet --eval \
 ```
 
 Then add `MONGODB_CONVERSATION_INDEX_READY=true` to
-`/etc/robot-signal/env` and perform the normal graceful PM2 reload. Do not set
-the flag before the backfill completes. Use
+`/etc/robot-signal/env` and restart the stopped PM2 processes. Do not set the
+read flag or restart any writer before the backfill completes. Keep
+`MONGODB_CONVERSATION_INDEX_WRITES=true`; the read flag also implies writes as
+a fail-safe. Use
 `MONGODB_CONVERSATION_INDEX_COLLECTION` if the provisioned name differs.
 
 The store also creates the exact supporting indexes:

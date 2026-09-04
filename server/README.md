@@ -166,6 +166,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
 | `MONGODB_CONVERSATION_INDEX_COLLECTION` | `conversation_index` | User-partitioned routing collection for bounded conversation-list reads. |
+| `MONGODB_CONVERSATION_INDEX_WRITES` | `false` | Enables dual writes during the conversation-index backfill phase. |
 | `MONGODB_CONVERSATION_INDEX_READY` | `false` | Set to `true` only after provisioning and backfilling the routing collection. |
 | `MONGODB_POOL_MAX` | `4` | Maximum Mongo connections per server process. |
 | `MONGODB_MAX_IDLE_TIME_MS` | `120000` | Maximum idle lifetime for Mongo connections. |

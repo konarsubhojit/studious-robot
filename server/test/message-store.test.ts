@@ -501,9 +501,15 @@ test('mongo store connects with the real driver when no client is injected', asy
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
-function matchesFilter(doc: any, filter: any) {
+function matchesFilter(doc: any, filter: any): boolean {
   return Object.entries(filter).every(([field, value]) => {
+    if (field === '$or') {
+      return (value as any[]).some((clause) => matchesFilter(doc, clause));
+    }
     const actual = field.split('.').reduce((current, part) => current?.[part], doc);
+    if (value && typeof value === 'object' && '$lt' in value) {
+      return actual < (value as { $lt: string }).$lt;
+    }
     return actual === value;
   });
 }
@@ -860,6 +866,12 @@ test('mongo store lists conversations through the user-partition routing index',
     body: 'newer',
     createdAt: '2024-01-02T00:00:00.000Z',
   });
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'late replay',
+    createdAt: '2024-01-01T12:00:00.000Z',
+  });
 
   const [conversation] = await store.listConversations('alice');
   assert.equal(conversation.lastMessage.body, 'newer');
@@ -898,6 +910,9 @@ test('mongo store lists conversations through the user-partition routing index',
   const [read] = await store.listConversations('alice');
   assert.equal(read.unreadCount, 0);
   assert.ok(read.lastMessage.readAt);
+  fake.conversationIndexDocs.find((row) => row.userId === 'alice').unreadCount = 3;
+  assert.equal(await store.markRead('alice:bob', 'alice'), 0);
+  assert.equal((await store.listConversations('alice'))[0].unreadCount, 0);
 
   const deleted = await store.deleteMessage(
     'alice:bob',
@@ -905,6 +920,12 @@ test('mongo store lists conversations through the user-partition routing index',
     'bob'
   );
   assert.equal(deleted?.body, '');
+  assert.equal((await store.listConversations('alice'))[0].lastMessage.body, '');
+  fake.conversationIndexDocs.find((row) => row.userId === 'alice').lastMessage.body = 'stale';
+  assert.equal(
+    await store.deleteMessage('alice:bob', conversation.lastMessage.messageId, 'bob'),
+    null
+  );
   assert.equal((await store.listConversations('alice'))[0].lastMessage.body, '');
 
   fake.conversationIndexDocs.push({
@@ -924,6 +945,27 @@ test('mongo store lists conversations through the user-partition routing index',
     (await store.listConversations('alice')).length,
     1,
     'a malformed index row cannot expose another user conversation'
+  );
+
+  await store.close?.();
+});
+
+test('mongo store can dual-write the index before indexed reads are enabled', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexWrites: true,
+    conversationIndexReady: false,
+  });
+
+  await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
+  assert.equal(fake.conversationIndexDocs.length, 2);
+
+  await store.listConversations('alice');
+  assert.ok(
+    fake.findCalls.some((call) => call.collection === 'messages' && call.query.$or),
+    'legacy reads remain active during the dual-write migration phase'
   );
 
   await store.close?.();

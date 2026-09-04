@@ -42,32 +42,70 @@ import type {
   StoredMessage,
 } from './types.ts';
 
+function isDuplicateKeyError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 11000);
+}
+
 async function updateConversationIndex(
   conversationIndex: ConversationIndexCollection,
-  message: StoredMessage,
-  { incrementUnread = false }: { incrementUnread?: boolean; } = {}
+  message: StoredMessage
 ): Promise<void> {
   const participants = new Set([message.senderId, message.recipientId]);
   await Promise.all(
-    [...participants].map((userId) => {
-      const isUnreadRecipient = incrementUnread && message.recipientId === userId;
-      return conversationIndex.updateOne(
+    [...participants].map(async (userId) => {
+      const isUnreadRecipient = message.recipientId === userId && !message.readAt;
+      let inserted = false;
+      try {
+        const initial = await conversationIndex.updateOne(
           { userId, conversationId: message.conversationId },
           {
-          $set: {
-            peerId: message.senderId === userId ? message.recipientId : message.senderId,
-            lastMessage: message,
-            updatedAt: message.createdAt,
+            $setOnInsert: {
+              userId,
+              conversationId: message.conversationId,
+              peerId: message.senderId === userId ? message.recipientId : message.senderId,
+              lastMessage: message,
+              unreadCount: isUnreadRecipient ? 1 : 0,
+              updatedAt: message.createdAt,
+            },
           },
-          $setOnInsert: {
+          { upsert: true }
+        );
+        inserted = Boolean(initial.upsertedCount);
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) throw error;
+      }
+      if (inserted) return;
+
+      await Promise.all([
+        ...(isUnreadRecipient
+          ? [
+              conversationIndex.updateOne(
+                { userId, conversationId: message.conversationId },
+                { $inc: { unreadCount: 1 } }
+              ),
+            ]
+          : []),
+        conversationIndex.updateOne(
+          {
             userId,
             conversationId: message.conversationId,
-            ...(!isUnreadRecipient ? { unreadCount: 0 } : {}),
+            $or: [
+              { updatedAt: { $lt: message.createdAt } },
+              {
+                updatedAt: message.createdAt,
+                'lastMessage.messageId': { $lt: message.messageId },
+              },
+            ],
           },
-          ...(isUnreadRecipient ? { $inc: { unreadCount: 1 } } : {}),
-        },
-        { upsert: true }
-      );
+          {
+            $set: {
+              peerId: message.senderId === userId ? message.recipientId : message.senderId,
+              lastMessage: message,
+              updatedAt: message.createdAt,
+            },
+          }
+        ),
+      ]);
     })
   );
 }
@@ -136,6 +174,7 @@ export function createMongoMessageStore({
   dbName,
   collectionName,
   conversationIndexCollectionName,
+  conversationIndexWrites,
   conversationIndexReady,
   client,
 }: {
@@ -143,6 +182,7 @@ export function createMongoMessageStore({
   dbName?: string;
   collectionName?: string;
   conversationIndexCollectionName?: string;
+  conversationIndexWrites?: boolean;
   conversationIndexReady?: boolean;
   client?: MongoClientLike;
 } = {}): MessageStore {
@@ -155,13 +195,14 @@ export function createMongoMessageStore({
   const conversationIndexCollection =
     conversationIndexCollectionName || DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME;
   const useConversationIndex = conversationIndexReady ?? false;
+  const writeConversationIndex = conversationIndexWrites ?? useConversationIndex;
 
   const connector = createMongoConnector({
     uri,
     database,
     collection,
     conversationIndexCollection,
-    enableConversationIndex: useConversationIndex,
+    enableConversationIndex: writeConversationIndex,
     client,
   });
   const connect = connector.connect;
@@ -199,7 +240,7 @@ export function createMongoMessageStore({
         }
       }
       if (conversationIndex && result?.upsertedCount) {
-        await updateConversationIndex(conversationIndex, saved, { incrementUnread: true });
+        await updateConversationIndex(conversationIndex, saved);
       } else if (conversationIndex) {
         await ensureConversationIndexRows(conversationIndex, saved);
       }
@@ -249,7 +290,7 @@ export function createMongoMessageStore({
 
     async listConversations(userId) {
       const { messages, conversationIndex } = await connect();
-      if (conversationIndex) {
+      if (useConversationIndex && conversationIndex) {
         const indexed = await conversationIndex
           .find(
             { userId },
@@ -296,7 +337,7 @@ export function createMongoMessageStore({
         { conversationId, recipientId: userId, readAt: null },
         { $set: { readAt } }
       );
-      if (conversationIndex && result?.modifiedCount) {
+      if (conversationIndex) {
         const summary = await conversationIndex.findOne({ userId, conversationId });
         const participants = summary ? [userId, summary.peerId] : [userId];
         await conversationIndex.updateOne(
@@ -327,7 +368,13 @@ export function createMongoMessageStore({
       // someone else's message matches nothing and reports "not found".
       // Shard-key (`conversationId`) prefixed so Cosmos can route the write.
       const existing = await messages.findOne({ conversationId, messageId, senderId: userId });
-      if (!existing?.messageId || existing.deletedAt) return null;
+      if (!existing?.messageId) return null;
+      if (existing.deletedAt) {
+        if (conversationIndex) {
+          await updateIndexedLastMessage(conversationIndex, toStoredMessage(existing));
+        }
+        return null;
+      }
       // A tombstone rather than a deletion: the content goes, the row stays so
       // a reply quoting it still resolves on both clients.
       const tombstone = applyTombstone(toStoredMessage(existing), nextTimestamp());
