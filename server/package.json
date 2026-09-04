@@ -16,7 +16,8 @@
     "db:generate": "drizzle-kit generate",
     "db:generate:named": "drizzle-kit generate --name",
     "db:check": "drizzle-kit check",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "db:backfill-conversations": "node scripts/backfill-conversation-index.ts"
   },
   "dependencies": {
     "@socket.io/redis-adapter": "^8.3.0",

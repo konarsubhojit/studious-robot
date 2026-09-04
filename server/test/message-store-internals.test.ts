@@ -21,6 +21,7 @@ import {
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
+  buildUnreadFilter,
   clampLimit,
   deriveConversationId,
   escapeRegExp,
@@ -94,6 +95,23 @@ test('the participant filter matches either direction of a conversation', () => 
   assert.deepEqual(buildParticipantFilter('alice'), {
     $or: [{ senderId: 'alice' }, { recipientId: 'alice' }],
   });
+});
+
+test('the unread filter is routed by conversation partition', () => {
+  assert.deepEqual(buildUnreadFilter('alice:bob', 'alice'), {
+    conversationId: 'alice:bob',
+    recipientId: 'alice',
+    readAt: null,
+  });
+});
+
+test('Cosmos throttling detection recognises Mongo and HTTP codes', async () => {
+  const { isCosmosThrottle } = await import('../src/messageStore/mongoConnection.ts');
+
+  assert.equal(isCosmosThrottle({ code: 16500 }), true);
+  assert.equal(isCosmosThrottle({ failure: { code: 429 } }), true);
+  assert.equal(isCosmosThrottle({ errmsg: 'Request rate is large. RetryAfterMs=20' }), true);
+  assert.equal(isCosmosThrottle({ code: 11000 }), false);
 });
 
 // ─── Records ──────────────────────────────────────────────────────────────────

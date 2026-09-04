@@ -165,6 +165,10 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
 | `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
 | `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
+| `MONGODB_CONVERSATION_INDEX_COLLECTION` | `conversation_index` | User-partitioned routing collection for bounded conversation-list reads. |
+| `MONGODB_CONVERSATION_INDEX_READY` | `false` | Set to `true` only after provisioning and backfilling the routing collection. |
+| `MONGODB_POOL_MAX` | `4` | Maximum Mongo connections per server process. |
+| `MONGODB_MAX_IDLE_TIME_MS` | `120000` | Maximum idle lifetime for Mongo connections. |
 | `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
 | `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
@@ -175,6 +179,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
 | `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. |
 | `DB_POOL_SIZE` | `4` | Per-instance Postgres pool size (fallback: `DATABASE_POOL_MAX`). For N instances, divide Neon pooler budget across instances. |
+| `DATABASE_POOL_IDLE_TIMEOUT_MS` | `300000` | Keep idle Postgres connections reusable to avoid a new TLS handshake on sporadic writes. |
 
 ## Attachments
 

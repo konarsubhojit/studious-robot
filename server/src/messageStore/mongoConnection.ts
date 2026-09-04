@@ -11,6 +11,7 @@ import { MongoClient } from 'mongodb';
 import { describeError } from '../lib/errors.ts';
 import type {
   MessagesCollection,
+  ConversationIndexCollection,
   MongoClientLike,
   MongoConnection,
   MongoIndexSpec,
@@ -18,7 +19,62 @@ import type {
 
 export const DEFAULT_DB_NAME = 'wetalk';
 export const DEFAULT_COLLECTION_NAME = 'messages';
+export const DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME = 'conversation_index';
 export const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
+export const DEFAULT_MONGO_POOL_MAX = 4;
+export const DEFAULT_MONGO_MAX_IDLE_TIME_MS = 120_000;
+
+function positiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function mongoClientOptions(): object {
+  return {
+    serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+    maxPoolSize: positiveInteger(process.env.MONGODB_POOL_MAX, DEFAULT_MONGO_POOL_MAX),
+    maxIdleTimeMS: positiveInteger(
+      process.env.MONGODB_MAX_IDLE_TIME_MS,
+      DEFAULT_MONGO_MAX_IDLE_TIME_MS
+    ),
+    monitorCommands: true,
+  };
+}
+
+export function isCosmosThrottle(error: unknown): boolean {
+  const failure = ((error ?? {}) as { failure?: unknown; }).failure ?? error;
+  const details = (failure ?? {}) as {
+    code?: unknown;
+    codeName?: unknown;
+    message?: unknown;
+    errmsg?: unknown;
+  };
+  return (
+    details.code === 16500 ||
+    details.code === 429 ||
+    /(?:too many requests|request rate is large|retryafterms)/i.test(
+      String(details.message ?? details.errmsg ?? '')
+    )
+  );
+}
+
+export function installThrottleLogger(client: MongoClientLike): void {
+  client.on?.('commandFailed', (event: unknown) => {
+    if (!isCosmosThrottle(event)) return;
+    const commandFailure = (event ?? {}) as {
+      commandName?: unknown;
+      failure?: { code?: unknown; message?: unknown; errmsg?: unknown; };
+    };
+    const failure = commandFailure.failure ?? {};
+    const text = String(failure?.message ?? failure?.errmsg ?? '');
+    const retryAfterMs = text.match(/retryafterms[=:]\s*(\d+)/i)?.[1];
+    console.warn(
+      `[messages] THROTTLED command=${String(commandFailure.commandName ?? 'unknown')}` +
+        ` code=${String(failure?.code ?? 16500)}` +
+        `${retryAfterMs ? ` retryAfterMs=${retryAfterMs}` : ''}`
+    );
+  });
+}
 
 /**
  * Create one index, logging (rather than throwing) on failure.
@@ -34,7 +90,7 @@ export const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
  * @param options - Index options, e.g. `{ unique: true }`.
  */
 export async function createIndexOrWarn(
-  messages: MessagesCollection,
+  messages: Pick<MessagesCollection, 'createIndex'>,
   spec: MongoIndexSpec,
   options?: object
 ): Promise<void> {
@@ -85,6 +141,22 @@ export async function ensureMessageIndexes(messages: MessagesCollection): Promis
   // `searchMessages`), which is served identically on the in-memory store,
   // MongoDB/vCore and Cosmos RU.
   await createIndexOrWarn(messages, { conversationId: 1, body: 1 });
+  await createIndexOrWarn(messages, { conversationId: 1, recipientId: 1, readAt: 1 });
+}
+
+export async function ensureConversationIndex(
+  conversationIndex: ConversationIndexCollection
+): Promise<void> {
+  await createIndexOrWarn(
+    conversationIndex,
+    { userId: 1, conversationId: 1 },
+    { unique: true }
+  );
+  await createIndexOrWarn(conversationIndex, {
+    userId: 1,
+    updatedAt: -1,
+    conversationId: 1,
+  });
 }
 
 /**
@@ -136,11 +208,15 @@ export function createMongoConnector({
   uri,
   database,
   collection,
+  conversationIndexCollection,
+  enableConversationIndex,
   client,
 }: {
   uri?: string;
   database: string;
   collection: string;
+  conversationIndexCollection: string;
+  enableConversationIndex: boolean;
   client?: MongoClientLike;
 }): MongoConnector {
   let clientPromise: Promise<MongoConnection> | null = null;
@@ -155,14 +231,23 @@ export function createMongoConnector({
           // uses; the structural view keeps the call sites checked without
           // pinning them to the driver's generics.
           ((new MongoClient((uri as string), {
-            serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+            ...mongoClientOptions(),
           }) as unknown) as MongoClientLike);
+        installThrottleLogger(mongoClient);
         if (typeof mongoClient.connect === 'function') {
           await mongoClient.connect();
         }
         const messages = mongoClient.db(database).collection(collection) as MessagesCollection;
+        const conversationIndex = enableConversationIndex
+          ? (mongoClient
+              .db(database)
+              .collection(conversationIndexCollection) as ConversationIndexCollection)
+          : null;
 
         await ensureMessageIndexes(messages);
+        if (conversationIndex) {
+          await ensureConversationIndex(conversationIndex);
+        }
 
         const host = safeMongoHost(mongoClient, uri);
         const retryWritesDisabled = /retrywrites=false/i.test(uri || '');
@@ -170,7 +255,7 @@ export function createMongoConnector({
           `[messages] Mongo message store ready (host=${host} db=${database} ` +
             `collection=${collection} retryWrites=${retryWritesDisabled ? 'disabled' : 'default'})`
         );
-        return { mongoClient, messages };
+        return { mongoClient, messages, conversationIndex };
       })().catch((error) => {
         // Reset so a later call can retry rather than caching a failed connect.
         clientPromise = null;

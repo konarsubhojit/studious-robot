@@ -18,6 +18,7 @@ import { describeSqlStatement, sqlTextOf, timeQuery } from '../src/lib/queryTimi
 
 /** Maximum app-side pool size; keep small since Neon pools server-side too. */
 const DEFAULT_POOL_MAX = 4;
+const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
 
 /** Marks an already-wrapped pool/client, see {@link instrumentQuery}. */
 const INSTRUMENTED = Symbol('queryTimingInstrumented');
@@ -82,10 +83,18 @@ function getPool(): import('pg').Pool {
     Number.isSafeInteger(configuredPoolSize) && configuredPoolSize > 0
       ? configuredPoolSize
       : DEFAULT_POOL_MAX;
+  const configuredIdleTimeout = Number(process.env.DATABASE_POOL_IDLE_TIMEOUT_MS);
+  const idleTimeoutMillis =
+    Number.isSafeInteger(configuredIdleTimeout) && configuredIdleTimeout > 0
+      ? configuredIdleTimeout
+      : DEFAULT_IDLE_TIMEOUT_MS;
 
   _pool = new Pool({
     connectionString,
     max: poolMax,
+    idleTimeoutMillis,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
   });
   _pool.on('error', (error) => {
     console.error('[database] unexpected idle Postgres client error:', error?.message);

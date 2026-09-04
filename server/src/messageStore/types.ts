@@ -26,6 +26,13 @@ export type StoredMessage = MessageRecord & {
 /** A stored message as it comes back from the driver, `_id` and all. */
 export type MessageDocument = StoredMessage & { _id?: unknown; };
 
+export type ConversationIndexDocument = {
+  _id?: unknown;
+  userId: string;
+  conversationId: string;
+  updatedAt: string;
+};
+
 export type ConversationSummary = {
   conversationId: string;
   peerId: string;
@@ -112,17 +119,17 @@ export type MongoFindOneAndUpdateResult =
   | null;
 
 /** The cursor methods the store chains onto `find()`. */
-export type MongoFindCursor = {
-  sort: (spec: MongoSortSpec) => MongoFindCursor;
-  limit: (count: number) => MongoFindCursor;
-  toArray: () => Promise<MessageDocument[]>;
+export type MongoFindCursor<T = MessageDocument> = {
+  sort: (spec: MongoSortSpec) => MongoFindCursor<T>;
+  limit: (count: number) => MongoFindCursor<T>;
+  toArray: () => Promise<T[]>;
 };
 
-/** The messages collection, restricted to the operations this store issues. */
-export type MessagesCollection = {
+/** A Mongo collection, restricted to the operations this store issues. */
+export type MongoCollection<T = MessageDocument> = {
   createIndex: (spec: MongoIndexSpec, options?: object) => Promise<unknown>;
-  find: (filter: MongoFilter) => MongoFindCursor;
-  findOne: (filter: MongoFilter) => Promise<MessageDocument | null>;
+  find: (filter: MongoFilter, options?: object) => MongoFindCursor<T>;
+  findOne: (filter: MongoFilter) => Promise<T | null>;
   findOneAndUpdate: (
     filter: MongoFilter,
     update: MongoUpdate,
@@ -135,6 +142,9 @@ export type MessagesCollection = {
   ) => Promise<MongoWriteResult>;
   updateMany: (filter: MongoFilter, update: MongoUpdate) => Promise<MongoWriteResult>;
 };
+
+export type MessagesCollection = MongoCollection<MessageDocument>;
+export type ConversationIndexCollection = MongoCollection<ConversationIndexDocument>;
 
 /**
  * The client surface the store needs: connect, reach a collection, close.
@@ -154,6 +164,7 @@ export type MongoClientLike = {
   connect?: () => Promise<unknown>;
   db: (name: string) => { collection: (name: string) => unknown; };
   close: () => Promise<unknown>;
+  on?: (event: string, listener: (event: unknown) => void) => unknown;
   options?: { hosts?: unknown; };
   s?: { options?: { hosts?: unknown; }; };
 };
@@ -162,4 +173,5 @@ export type MongoClientLike = {
 export type MongoConnection = {
   mongoClient: MongoClientLike;
   messages: MessagesCollection;
+  conversationIndex: ConversationIndexCollection | null;
 };

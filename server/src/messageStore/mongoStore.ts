@@ -13,14 +13,19 @@ import { toStoredMessage, toStoredMessages } from './documents.ts';
 import { instrumentMongoStore } from './instrumentation.ts';
 import {
   DEFAULT_COLLECTION_NAME,
+  DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME,
   DEFAULT_DB_NAME,
   createMongoConnector,
 } from './mongoConnection.ts';
 import {
   LIST_MESSAGES_SORT,
+  LIST_CONVERSATION_INDEX_SORT,
+  MAX_CONVERSATION_LIMIT,
+  CONVERSATION_READ_CONCURRENCY,
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
+  buildUnreadFilter,
   clampLimit,
   normaliseSearchTerm,
 } from './queries.ts';
@@ -31,7 +36,12 @@ import {
   createMessageRecord,
   nextTimestamp,
 } from './records.ts';
-import type { MessageStore, MessageDocument, MongoClientLike } from './types.ts';
+import type {
+  ConversationSummary,
+  MessageStore,
+  MessageDocument,
+  MongoClientLike,
+} from './types.ts';
 
 /**
  * Read the updated document out of a `findOneAndUpdate` result, which the
@@ -54,11 +64,15 @@ export function createMongoMessageStore({
   uri,
   dbName,
   collectionName,
+  conversationIndexCollectionName,
+  conversationIndexReady,
   client,
 }: {
   uri?: string;
   dbName?: string;
   collectionName?: string;
+  conversationIndexCollectionName?: string;
+  conversationIndexReady?: boolean;
   client?: MongoClientLike;
 } = {}): MessageStore {
   if (!uri && !client) {
@@ -67,8 +81,18 @@ export function createMongoMessageStore({
 
   const database = dbName || DEFAULT_DB_NAME;
   const collection = collectionName || DEFAULT_COLLECTION_NAME;
+  const conversationIndexCollection =
+    conversationIndexCollectionName || DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME;
+  const useConversationIndex = conversationIndexReady ?? false;
 
-  const connector = createMongoConnector({ uri, database, collection, client });
+  const connector = createMongoConnector({
+    uri,
+    database,
+    collection,
+    conversationIndexCollection,
+    enableConversationIndex: useConversationIndex,
+    client,
+  });
   const connect = connector.connect;
 
   const store: MessageStore = {
@@ -78,7 +102,7 @@ export function createMongoMessageStore({
 
     async saveMessage(message) {
       const record = createMessageRecord(message);
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
       // `messageId` is client-supplied (mobile-generated UUIDs), so a client
       // retry/replay of the same send must not create a duplicate message —
       // upsert on the shard-key-prefixed `{ conversationId, messageId }` pair
@@ -93,16 +117,31 @@ export function createMongoMessageStore({
       // The write was a replay of an already-stored message: return the stored
       // document rather than this copy of it, so the caller (and the sender)
       // sees what is actually persisted.
+      let saved = record;
       if (!result?.upsertedCount) {
         const existing = await messages.findOne({
           conversationId: record.conversationId,
           messageId: record.messageId,
         });
         if (existing?.messageId) {
-          return toStoredMessage(existing);
+          saved = toStoredMessage(existing);
         }
       }
-      return record;
+      if (conversationIndex) {
+        await Promise.all(
+          [saved.senderId, saved.recipientId].map((userId) =>
+            conversationIndex.updateOne(
+              { userId, conversationId: saved.conversationId },
+              {
+                $setOnInsert: { userId, conversationId: saved.conversationId },
+                $max: { updatedAt: saved.createdAt },
+              },
+              { upsert: true }
+            )
+          )
+        );
+      }
+      return saved;
     },
 
     async listMessages({ conversationId, limit, before } = {}) {
@@ -145,7 +184,52 @@ export function createMongoMessageStore({
     },
 
     async listConversations(userId) {
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
+      if (conversationIndex) {
+        const indexed = await conversationIndex
+          .find(
+            { userId },
+            { projection: { _id: 0, conversationId: 1 } }
+          )
+          .sort(LIST_CONVERSATION_INDEX_SORT)
+          .limit(MAX_CONVERSATION_LIMIT)
+          .toArray();
+        const candidates: Array<ConversationSummary | null> = [];
+        for (let offset = 0; offset < indexed.length; offset += CONVERSATION_READ_CONCURRENCY) {
+          const batch = indexed.slice(offset, offset + CONVERSATION_READ_CONCURRENCY);
+          candidates.push(
+            ...(await Promise.all(
+              batch.map(async ({ conversationId }) => {
+                const [latest, unread] = await Promise.all([
+                  messages
+                    .find({ conversationId })
+                    .sort(LIST_MESSAGES_SORT)
+                    .limit(1)
+                    .toArray(),
+                  messages
+                    .find(buildUnreadFilter(conversationId, userId), {
+                      projection: { _id: 0, messageId: 1 },
+                    })
+                    .toArray(),
+                ]);
+                const message = toStoredMessages(latest)[0];
+                return message
+                  ? {
+                      conversationId,
+                      peerId:
+                        message.senderId === userId ? message.recipientId : message.senderId,
+                      lastMessage: message,
+                      unreadCount: unread.length,
+                    }
+                  : null;
+              })
+            ))
+          );
+        }
+        return candidates
+          .filter((summary): summary is ConversationSummary => summary !== null)
+          .sort((a, b) => byNewestFirst(a.lastMessage, b.lastMessage));
+      }
       // Deliberately no `.sort()`/`$sort`/`$group` at the database level: this
       // query fans out across every conversation the user is part of (i.e.
       // across shard-key partitions), and Cosmos DB for MongoDB (RU) rejects
