@@ -361,7 +361,9 @@ export function createMongoMessageStore({
           },
           { $set: { unreadCount: 0, 'lastMessage.readAt': readAt } }
         );
-        if (!merged?.modifiedCount) {
+        // `matchedCount`, not `modifiedCount`: a row the guard matched but left
+        // unchanged (its `unreadCount` was already 0) needs no second write.
+        if (!(merged?.matchedCount ?? merged?.modifiedCount)) {
           await conversationIndex.updateOne(
             { userId, conversationId },
             { $set: { unreadCount: 0 } }

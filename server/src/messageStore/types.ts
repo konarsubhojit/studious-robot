@@ -114,6 +114,7 @@ export type MongoSortSpec = Record<string, 1 | -1>;
 /** The counters this store reads off a write result. */
 export type MongoWriteResult = {
   upsertedCount?: number;
+  matchedCount?: number;
   modifiedCount?: number;
 };
 

@@ -1090,6 +1090,7 @@ test('mongo store markRead with a known peer resets the index without reading it
     .filter((call) => call.collection === 'conversation_index')
     .slice(indexUpdatesBefore)
     .find((call) => call.filter.userId === 'alice');
+  assert.ok(peerUpdate, "the sender's row is patched out of band");
   assert.deepEqual(peerUpdate.filter, {
     userId: 'alice',
     conversationId,
