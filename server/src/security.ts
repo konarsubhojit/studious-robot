@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { auditLog as auditLogTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
+import { runDetached } from './lib/queryTiming.ts';
 
 /**
  * Security utilities for call initiation and signaling hardening.
@@ -188,7 +189,7 @@ function createAuditLog({ db = null }: { db?: import('../db/client.ts').Database
   function persist(entry: AuditEntry) {
     if (!db) return;
     try {
-      db
+      void runDetached(() => db
         .insert(auditLogTable)
         .values({
           auditId: entry.auditId,
@@ -201,7 +202,7 @@ function createAuditLog({ db = null }: { db?: import('../db/client.ts').Database
         })
         .catch((err: unknown) => {
           console.error('[security] failed to persist audit event to DB:', describeError(err));
-        });
+        }));
     } catch (err) {
       console.error('[security] failed to persist audit event to DB:', describeError(err));
     }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
 import { resolveReachableChannels, hasKnownUser } from '../lib/state.ts';
+import { runDetached } from '../lib/queryTiming.ts';
 import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from '../callPersistence.ts';
 
 /**
@@ -28,7 +29,7 @@ export type ServerState = import('../stores/contracts.ts').ServerState;
  */
 function mirrorCallToShared(state: ServerState, call: CallRecord): void {
   if (!state.callState) return;
-  void state.callState.save(call).catch((error: unknown) => {
+  void runDetached(() => state.callState!.save(call)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[calls] failed to mirror call ${call.callId} to shared store: ${message}`);
   });

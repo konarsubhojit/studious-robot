@@ -11,6 +11,7 @@ import {
   describeSqlStatement,
   isQueryTimingEnabled,
   setQueryTimingSink,
+  runDetached,
   slowQueryThresholdMs,
   sqlTextOf,
   timeQuery,
@@ -45,6 +46,116 @@ async function withQuietConsole(run: () => Promise<void>) {
     console.warn = warn;
   }
 }
+
+/** {@link withQuietConsole}, but keeping the warnings it captured. */
+async function captureWarnings(run: () => Promise<void>): Promise<string[]> {
+  const warn = console.warn;
+  const lines: string[] = [];
+  console.warn = (...args: unknown[]) => lines.push(args.join(' '));
+  try {
+    await run();
+  } finally {
+    console.warn = warn;
+  }
+  return lines;
+}
+
+// ─── Blocking vs detached work ────────────────────────────────────────────────
+
+test('a query is reported as blocking unless it was started detached', async () => {
+  const records = await withSink(async () => {
+    await timeQuery({ backend: 'pg', operation: 'select', kind: 'read' }, async () => undefined);
+    await runDetached(() =>
+      timeQuery({ backend: 'pg', operation: 'insert', kind: 'write' }, async () => undefined)
+    );
+  });
+
+  assert.deepEqual(
+    records.map((record) => [record.operation, record.blocking]),
+    [
+      ['select', true],
+      ['insert', false],
+    ]
+  );
+});
+
+test('the detached label survives the async frames between the marker and the query', async () => {
+  const records = await withSink(async () => {
+    await runDetached(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      await timeQuery({ backend: 'pg', operation: 'insert', kind: 'write' }, async () => undefined);
+    });
+  });
+
+  assert.equal(records[0].blocking, false);
+});
+
+test('a slow detached query is recorded but does not warn; a slow blocking one warns', async () => {
+  process.env.DB_SLOW_QUERY_MS = '5';
+  let records: any[] = [];
+  let warnings: string[] = [];
+  try {
+    warnings = await captureWarnings(async () => {
+      records = await withSink(async () => {
+        await runDetached(() =>
+          timeQuery({ backend: 'pg', operation: 'insert', kind: 'write', target: 'audit_log' }, () =>
+            new Promise((resolve) => setTimeout(resolve, 25))
+          )
+        );
+        await timeQuery({ backend: 'pg', operation: 'select', kind: 'read', target: 'calls' }, () =>
+          new Promise((resolve) => setTimeout(resolve, 25))
+        );
+      });
+    });
+  } finally {
+    delete process.env.DB_SLOW_QUERY_MS;
+  }
+
+  assert.deepEqual(
+    records.map((record) => [record.target, record.slow, record.blocking]),
+    [
+      ['audit_log', true, false],
+      ['calls', true, true],
+    ],
+    'both are still measured and still reported to the sink'
+  );
+  assert.equal(warnings.length, 1, 'only the query a request waited for is warned about');
+  assert.match(warnings[0], /SLOW .*target=calls/);
+});
+
+test('a detached query that fails still warns, and says so', async () => {
+  const warnings = await captureWarnings(async () => {
+    await withSink(async () => {
+      await assert.rejects(() =>
+        runDetached(() =>
+          timeQuery({ backend: 'pg', operation: 'insert', kind: 'write', target: 'audit_log' }, () => {
+            throw Object.assign(new Error('nope'), { code: '23503' });
+          })
+        )
+      );
+    });
+  });
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /FAILED .*target=audit_log .*detached=true error=23503/);
+});
+
+test('telemetry separates slow work a request waited for from detached work', async () => {
+  const telemetry = createTelemetry();
+  telemetry.recordDbQuery({
+    backend: 'pg', operation: 'insert', kind: 'write', target: 'audit_log',
+    durationMs: 250, ok: true, errorCode: null, slow: true, blocking: false,
+  });
+  telemetry.recordDbQuery({
+    backend: 'pg', operation: 'select', kind: 'read', target: 'calls',
+    durationMs: 250, ok: true, errorCode: null, slow: true, blocking: true,
+  });
+
+  const { counters } = telemetry.getSnapshot();
+  assert.equal(counters.db_slow_queries_total, 2);
+  assert.equal(counters.db_blocking_slow_queries_total, 1);
+  assert.equal(counters.db_detached_queries_total, 1);
+});
 
 // ─── Slow-query threshold ─────────────────────────────────────────────────────
 

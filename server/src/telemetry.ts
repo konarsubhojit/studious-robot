@@ -161,6 +161,11 @@ function createTelemetry(): Telemetry {
     db_queries_total: 0, // every timed datastore round trip
     db_query_errors_total: 0, // timed round trips that threw
     db_slow_queries_total: 0, // round trips at/over the slow threshold
+    // Of those, the ones a user-facing operation actually waited for. The
+    // difference is deliberately unawaited work (audit, call persistence, read
+    // receipts): real database time, but not anybody's request latency.
+    db_blocking_slow_queries_total: 0,
+    db_detached_queries_total: 0, // round trips nobody awaited
     db_reads_total: 0, // timed round trips that only read
     db_writes_total: 0, // timed round trips that mutate
   };
@@ -325,6 +330,8 @@ function createTelemetry(): Telemetry {
     counters.db_queries_total += 1;
     if (!record.ok) counters.db_query_errors_total += 1;
     if (record.slow) counters.db_slow_queries_total += 1;
+    if (record.slow && record.blocking) counters.db_blocking_slow_queries_total += 1;
+    if (!record.blocking) counters.db_detached_queries_total += 1;
     if (record.kind === 'read') counters.db_reads_total += 1;
     else counters.db_writes_total += 1;
   }

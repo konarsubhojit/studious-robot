@@ -9,6 +9,7 @@
  */
 
 import { describeError } from '../lib/errors.ts';
+import { runDetached } from '../lib/queryTiming.ts';
 import { summariseConversations } from './conversations.ts';
 import { toStoredMessage, toStoredMessages } from './documents.ts';
 import { instrumentMongoStore } from './instrumentation.ts';
@@ -373,7 +374,7 @@ export function createMongoMessageStore({
           // The sender's copy of the receipt is not needed before answering the
           // reader, so it is not awaited; it is pushed to them over the socket
           // anyway. Same filter-as-guard trick: a no-op when it does not apply.
-          void conversationIndex
+          void runDetached(() => conversationIndex
             .updateOne(
               {
                 userId: resolvedPeerId,
@@ -382,7 +383,7 @@ export function createMongoMessageStore({
                 'lastMessage.readAt': null,
               },
               { $set: { 'lastMessage.readAt': readAt } }
-            )
+            ))
             .catch((error: unknown) => {
               console.error(
                 `[messages] conversation index read receipt failed` +

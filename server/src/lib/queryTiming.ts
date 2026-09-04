@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { performance } from 'node:perf_hooks';
 import { sanitizeForLog } from './normalize.ts';
 import { verboseLog } from './verbose.ts';
@@ -47,6 +48,16 @@ export type QueryTimingRecord = {
   /** Driver error code (or error name) when `ok` is false. */
   errorCode: string | null;
   slow: boolean;
+  /**
+   * Whether a user-facing operation actually waited for this query.
+   *
+   * `false` for work started inside {@link runDetached} — the fire-and-forget
+   * audit, call-persistence and read-receipt writes that are deliberately not
+   * awaited. Their duration is real, but nobody's request paid it, so counting
+   * them as slow queries made the slow log describe latency that no user
+   * experienced.
+   */
+  blocking: boolean;
 };
 
 export type QueryTimingSink = (record: QueryTimingRecord) => void;
@@ -63,6 +74,34 @@ const MAX_LABEL_LENGTH = 64;
 const noopSink: QueryTimingSink = () => {};
 
 let sink: QueryTimingSink = noopSink;
+
+/**
+ * Marks the async context of deliberately unawaited work.
+ *
+ * An async-context flag rather than an argument threaded through every call
+ * site: the queries being classified are issued by the drivers, several frames
+ * below the code that decided not to await them (`pool.query` is wrapped once,
+ * in `db/client.ts`, and has no idea who called it). Setting the flag once
+ * around the detached work labels every statement it goes on to issue, at any
+ * depth, including ones added later.
+ */
+const detachedStorage = new AsyncLocalStorage<true>();
+
+/**
+ * Run `start` as detached work: every query it issues, at any depth, is
+ * reported with `blocking: false`.
+ *
+ * Intended to wrap the *initiation* of fire-and-forget work, and it returns
+ * whatever `start` returns so a caller can still attach a `.catch`.
+ */
+function runDetached<T>(start: () => T): T {
+  return detachedStorage.run(true, start);
+}
+
+/** @returns whether the current async context is detached work. */
+function isDetached(): boolean {
+  return detachedStorage.getStore() === true;
+}
 
 /**
  * Install the sink that receives every timing record.  Called by
@@ -142,10 +181,17 @@ function report(record: QueryTimingRecord): void {
     // A broken sink must never fail the query it was measuring.
   }
 
-  if (record.slow || !record.ok) {
+  // A slow *detached* query is not a latency incident: no request waited for
+  // it. Warning about it buried the blocking slow queries — the ones that do
+  // describe user-visible latency — under a steady trickle of audit-log and
+  // call-persistence writes. It still reaches the verbose log and `/metrics`.
+  // A *failed* one is reported either way: a dropped audit write is a real
+  // audit-trail gap whether or not anybody was waiting for it.
+  if ((record.slow && record.blocking) || !record.ok) {
     const detail =
       `backend=${record.backend} op=${record.operation} kind=${record.kind}` +
       ` target=${record.target ?? 'unknown'} durationMs=${record.durationMs.toFixed(1)}` +
+      `${record.blocking ? '' : ' detached=true'}` +
       `${record.ok ? '' : ` error=${record.errorCode}`}`;
     // A fast query that threw is a failure, not a slow query: labelling both
     // `SLOW` would bury the actual latency evidence under failed queries when
@@ -160,6 +206,7 @@ function report(record: QueryTimingRecord): void {
     kind: record.kind,
     target: record.target,
     durationMs: Number(record.durationMs.toFixed(1)),
+    blocking: record.blocking,
   });
 }
 
@@ -183,6 +230,9 @@ async function timeQuery<T>(
   const startedAt = performance.now();
   const operation = normaliseLabel(descriptor.operation) ?? 'other';
   const target = normaliseLabel(descriptor.target);
+  // Captured before `run()` so a detached operation stays labelled detached
+  // even if it resolves after the context that started it has gone.
+  const blocking = !isDetached();
 
   try {
     const result = await run();
@@ -196,6 +246,7 @@ async function timeQuery<T>(
       ok: true,
       errorCode: null,
       slow: durationMs >= slowQueryThresholdMs(descriptor.backend),
+      blocking,
     });
     return result;
   } catch (error) {
@@ -209,6 +260,7 @@ async function timeQuery<T>(
       ok: false,
       errorCode: toErrorCode(error),
       slow: durationMs >= slowQueryThresholdMs(descriptor.backend),
+      blocking,
     });
     throw error;
   }
@@ -259,7 +311,9 @@ function sqlTextOf(query: unknown): string | null {
 export {
   DEFAULT_SLOW_QUERY_MS,
   describeSqlStatement,
+  isDetached,
   isQueryTimingEnabled,
+  runDetached,
   setQueryTimingSink,
   slowQueryThresholdMs,
   sqlTextOf,
