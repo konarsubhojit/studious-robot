@@ -553,6 +553,59 @@ Current production (`signal.kiyon.store`) runs as user `wetalk` from
 For a single-instance host, keep the systemd path (`deploy/robot-signal.service`)
 as fallback recovery, and set PM2 `instances: 1` (drop `increment_var`).
 
+### `deploy/wetalk-deploy` behaviour and overrides
+
+The script self-elevates to the `wetalk` service user, resets the checkout to
+`origin/$DEPLOY_BRANCH`, installs production dependencies **only when they
+changed**, runs a non-fatal schema check, reloads PM2, and health-checks every
+port in `PORTS` until `/health` reports `"status":"ok"` (and not
+`"status":"starting"`).
+
+Every variable below can be overridden on the command line; they are forwarded
+explicitly across the `sudo -u wetalk` re-exec (the environment stays explicit —
+`sudo -E` is deliberately not used):
+
+| Variable | Default |
+| --- | --- |
+| `REPO_DIR` | `/home/wetalk/repos/studious-robot` |
+| `DEPLOY_BRANCH` | `master` |
+| `SERVICE_NAME` | `robot-signal` |
+| `PM2_ECOSYSTEM` | `$REPO_DIR/deploy/ecosystem.config.js` |
+| `SERVER_DIR` | `$REPO_DIR/server` |
+| `PORTS` | `4173 4174 4175 4176 4177 4178` |
+| `HEALTH_PATH` | `/health` |
+| `MAX_ATTEMPTS` | `60` |
+| `SLEEP_SECONDS` | `2` |
+
+`deploy/ecosystem.config.js` declares `instances: 6` with
+`increment_var: 'PORT'`, but a host actually running a **single** instance only
+listens on 4173. Deploy such a host with the matching override, otherwise the
+health check waits `MAX_ATTEMPTS × SLEEP_SECONDS` on each port that nothing is
+listening on:
+
+```bash
+sudo PORTS=4173 wetalk-deploy
+```
+
+**Dependency install.** The blob SHA of `server/package-lock.json` is captured
+before `git reset --hard` and compared afterwards. `npm ci --omit=dev --no-audit
+--no-fund` runs only when the lockfile changed or `node_modules` is absent;
+otherwise the script logs `[deploy] lockfile unchanged; skipping install`.
+`npm install` is never used — `npm ci` guarantees production runs exactly the
+tree CI tested and cannot mutate the lockfile on the VM.
+
+**Schema check.** The check runs from `$SERVER_DIR` with `/etc/robot-signal/env`
+sourced in a subshell (its contents are never logged). It warns about pending
+migrations only on real drift; when `drizzle-kit` is absent (the normal
+production case, since `npm ci --omit=dev` skips dev dependencies) or no
+database URL is available, it logs a "skipped" line instead. It is never fatal,
+and the deploy script never runs migrations — those are applied from CI
+(`.github/workflows/backend-ci.yml`) against `DATABASE_URL_DIRECT`.
+
+**Reload semantics.** The script performs a rolling `pm2 reload`. That is *not*
+sufficient for the conversation-index backfill in §13, which requires every
+writer process to be fully **stopped** for the duration of the backfill.
+
 ### Production env file shape (no secrets committed)
 
 `/etc/robot-signal/env` is loaded server-side (mode `640 root:wetalk`). Keep real
