@@ -117,15 +117,18 @@ async function readFromDb(db: Database, { userId, statusFilter = null, limit, of
     ? and(participantFilter, eq(callsTable.status, statusFilter))
     : participantFilter;
 
-  const rows = await db
-    .select()
-    .from(callsTable)
-    .where(where)
-    .orderBy(desc(callsTable.updatedAt), desc(callsTable.createdAt), desc(callsTable.callId))
-    .limit(limit)
-    .offset(offset);
-
-  const totals = await db.select({ value: count() }).from(callsTable).where(where);
+  // Page and count are independent queries against a remote Postgres: issued
+  // together they cost one round trip instead of two.
+  const [rows, totals] = await Promise.all([
+    db
+      .select()
+      .from(callsTable)
+      .where(where)
+      .orderBy(desc(callsTable.updatedAt), desc(callsTable.createdAt), desc(callsTable.callId))
+      .limit(limit)
+      .offset(offset),
+    db.select({ value: count() }).from(callsTable).where(where),
+  ]);
 
   return {
     calls: (rows ?? []).map(callRecordFromRow),
