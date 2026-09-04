@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "$(id -un)" = wetalk ] || exec sudo -u wetalk -H env PATH="$PATH" "$0" "$@"
+cd /tmp
+
+REPO_DIR="${REPO_DIR:-/home/wetalk/repos/studious-robot}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-master}"
+SERVICE_NAME="${SERVICE_NAME:-robot-signal}"
+PM2_ECOSYSTEM="${PM2_ECOSYSTEM:-$REPO_DIR/deploy/ecosystem.config.js}"
+SERVER_DIR="${SERVER_DIR:-$REPO_DIR/server}"
+PORTS="${PORTS:-4173 4174 4175 4176 4177 4178}"
+HEALTH_PATH="${HEALTH_PATH:-/health}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-60}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-2}"
+
+echo "[deploy] user=$(id -un) repo=${REPO_DIR} branch=${DEPLOY_BRANCH}"
+
+if [[ ! -d "${REPO_DIR}/.git" ]]; then
+  echo "[deploy] ERROR: no git checkout at ${REPO_DIR}" >&2
+  exit 1
+fi
+
+on_failure() {
+  local rc=$?
+  echo "[deploy] ERROR: deploy failed with exit code ${rc}" >&2
+  pm2 ls || true
+  pm2 logs "${SERVICE_NAME}" --lines 200 --nostream || true
+  exit "${rc}"
+}
+trap on_failure ERR
+
+cd "${REPO_DIR}"
+git fetch --quiet origin "${DEPLOY_BRANCH}"
+git reset --hard "origin/${DEPLOY_BRANCH}"
+
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  sudo chown -R wetalk:wetalk "${REPO_DIR}"
+else
+  chown -R wetalk:wetalk "${REPO_DIR}" 2>/dev/null || true
+fi
+
+cd "${SERVER_DIR}"
+npm ci --omit=dev
+
+if ! npm run -s db:check >/dev/null 2>&1; then
+  echo "[deploy] WARNING: schema check failed; there may be pending migrations."
+fi
+
+cd "${REPO_DIR}"
+pm2 reload "${SERVICE_NAME}" --update-env || pm2 start "${PM2_ECOSYSTEM}" --update-env
+
+check_port_health() {
+  local port="$1"
+  local body
+  body="$(curl -fsS "http://127.0.0.1:${port}${HEALTH_PATH}")" || return 1
+  [[ "${body}" == *'"status":"ok"'* ]] || return 1
+  [[ "${body}" == *'"status":"starting"'* ]] && return 1
+  return 0
+}
+
+for port in ${PORTS}; do
+  ready=0
+  for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
+    if check_port_health "${port}"; then
+      ready=1
+      echo "[deploy] health ok on ${port}"
+      break
+    fi
+    sleep "${SLEEP_SECONDS}"
+  done
+  if [[ "${ready}" -ne 1 ]]; then
+    echo "[deploy] ERROR: health check failed on ${port}${HEALTH_PATH}" >&2
+    exit 1
+  fi
+done
+
+echo "[deploy] deploy complete"

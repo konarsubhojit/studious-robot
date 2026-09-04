@@ -457,3 +457,104 @@ Chat message history and conversation lists are persisted via `server/src/messag
 The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.ts` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
 
 > **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
+
+---
+
+## 14. Wetalk production PM2 snapshot (authoritative for host migration)
+
+Current production (`signal.kiyon.store`) runs as user `wetalk` from
+`/home/wetalk/repos/studious-robot`, supervised by `pm2-wetalk.service`.
+
+### Files now tracked in-repo
+
+- `deploy/start.sh` → wrapper that sources `/etc/robot-signal/env` but preserves
+  PM2-injected `PORT` (`increment_var` safety).
+- `deploy/ecosystem.config.js` → multi-instance PM2 profile (ports 4173–4178).
+- `deploy/nginx/robot-signal-upstream.conf` → upstream with
+  `max_fails=2 fail_timeout=10s` per backend.
+- `deploy/wetalk-deploy` → host deploy script snapshot (PM2 reload path, per-port
+  readiness checks, failure log dump, service-user re-exec guard).
+
+For a single-instance host, keep the systemd path (`deploy/robot-signal.service`)
+as fallback recovery, and set PM2 `instances: 1` (drop `increment_var`).
+
+### Production env file shape (no secrets committed)
+
+`/etc/robot-signal/env` is loaded server-side (mode `640 root:wetalk`). Keep real
+values only on host:
+
+```dotenv
+DATABASE_URL=<DATABASE_URL>
+REDIS_URL=<REDIS_URL>
+TURN_STATIC_AUTH_SECRET=<TURN_STATIC_AUTH_SECRET>
+AZURE_NOTIFICATION_HUB_CONNECTION_STRING=<AZURE_NOTIFICATION_HUB_CONNECTION_STRING>
+DATABASE_POOL_MAX=4
+PORT=4173
+HOST=127.0.0.1
+```
+
+### Nginx topology notes
+
+- Multi-instance host: include `deploy/nginx/robot-signal-upstream.conf` under
+  `/etc/nginx/conf.d/` and use `proxy_pass http://robot_signal;`.
+- Do **not** use `ip_hash` (state affinity is `shared` via Redis + Socket.IO
+  Redis adapter).
+- Single-instance host: skip upstream file and proxy directly to
+  `http://127.0.0.1:4173`.
+
+### Incident traps to avoid
+
+1. **`PORT` in env file can clobber PM2 `increment_var`.** If sourced directly,
+   all instances bind 4173 and crash-loop with `EADDRINUSE`. `deploy/start.sh`
+   preserves PM2's runtime `PORT`.
+2. **`sudo -u wetalk` from unreadable cwd causes misleading `EACCES`.** Always
+   `cd /tmp` before PM2/Node commands; inaccessible cwd can surface as
+   `spawn /usr/bin/node EACCES`.
+3. **`pm2 startup` can bake the wrong user PATH into systemd.** Avoid
+   `sudo env PATH=$PATH pm2 startup`; verify only `pm2-wetalk.service` exists:
+   `systemctl list-unit-files | grep pm2`.
+4. **Scale database pool with instance count.** Example: `DATABASE_POOL_MAX=4`
+   for six instances (~24 total). Restore to `20` for a single-instance host.
+5. **Orphan after reload can hold the port.** Compare
+   `ss -lntp | grep 4173` vs `ps -u wetalk -o pid,ppid,etime,args`; PPID `1` with
+   longer `etime` indicates orphan. Drain first (`kill <pid>`), then
+   `pm2 restart robot-signal` and `pm2 reset robot-signal`.
+
+### Additional operational notes
+
+- Do **not** `apt-get install npm`; NodeSource `nodejs` already includes npm.
+  Install PM2 with `sudo npm install -g pm2`.
+- Disable legacy supervisor before PM2: `sudo systemctl disable --now robot-signal.service`.
+- `wetalk` has no password; `su - wetalk` fails by design. Use
+  `sudo -u wetalk -H env PATH=... <cmd>`.
+- PM2 daemons are per-user. `pm2 ls` as `ubuntu` can be empty while `wetalk`
+  has active processes.
+- After reaching a known-good state, run `pm2 save` so `pm2 resurrect` restores
+  the current process list.
+
+### Verification commands
+
+Per-port health:
+
+```bash
+for p in 4173 4174 4175 4176 4177 4178; do
+  curl -fsS "http://127.0.0.1:${p}/health"
+done
+```
+
+Load-distribution check (parallel requests):
+
+```bash
+seq 30 | xargs -P 10 -I{} curl -s https://signal.kiyon.store/health \
+  | grep -o '"instanceId":"[^"]*"' | sort | uniq -c
+```
+
+Sequential curls are misleading because each nginx worker keeps its own
+round-robin cursor.
+
+### Region selection rule of thumb
+
+Database locality dominates end-to-end latency. In prior measurement runs from
+Paris, `mtr` to Cloud SQL/Cosmos was far higher than local hops, and write
+latency reflected that penalty. Before choosing a new region, run `mtr` from
+candidate hosts to each database endpoint and prioritize co-location with data.
