@@ -161,11 +161,14 @@ function createTelemetry(): Telemetry {
     db_queries_total: 0, // every timed datastore round trip
     db_query_errors_total: 0, // timed round trips that threw
     db_slow_queries_total: 0, // round trips at/over the slow threshold
-    // Of those, the ones a user-facing operation actually waited for. The
-    // difference is deliberately unawaited work (audit, call persistence, read
-    // receipts): real database time, but not anybody's request latency.
+    // Of the slow ones, the subset a user-facing operation actually waited
+    // for. The difference is deliberately unawaited work (audit, call
+    // persistence, read receipts): real database time, but not anybody's
+    // request latency.
     db_blocking_slow_queries_total: 0,
-    db_detached_queries_total: 0, // round trips nobody awaited
+    // Every round trip nobody awaited, slow or not — the denominator for how
+    // much of the load is background work.
+    db_detached_queries_total: 0,
     db_reads_total: 0, // timed round trips that only read
     db_writes_total: 0, // timed round trips that mutate
   };

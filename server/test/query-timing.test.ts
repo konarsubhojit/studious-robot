@@ -151,10 +151,17 @@ test('telemetry separates slow work a request waited for from detached work', as
     durationMs: 250, ok: true, errorCode: null, slow: true, blocking: true,
   });
 
+  // A fast detached query counts towards the detached total but not the slow
+  // ones: the detached counter is the denominator for background load.
+  telemetry.recordDbQuery({
+    backend: 'pg', operation: 'insert', kind: 'write', target: 'call_events',
+    durationMs: 3, ok: true, errorCode: null, slow: false, blocking: false,
+  });
+
   const { counters } = telemetry.getSnapshot();
   assert.equal(counters.db_slow_queries_total, 2);
   assert.equal(counters.db_blocking_slow_queries_total, 1);
-  assert.equal(counters.db_detached_queries_total, 1);
+  assert.equal(counters.db_detached_queries_total, 2);
 });
 
 // ─── Slow-query threshold ─────────────────────────────────────────────────────
