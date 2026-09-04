@@ -15,7 +15,7 @@
  */
 
 import { pgTable, uuid, integer, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
+import { desc, sql } from 'drizzle-orm';
 
 /**
  * Claimed identities.
@@ -50,9 +50,29 @@ const calls = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     ringTimeoutAt: timestamp('ring_timeout_at', { withTimezone: true }),
   },
+  // `GET /calls` is the only query that reads this table by predicate, and it
+  // reads it as `(caller_id = $1 OR callee_id = $1)` ordered by
+  // `updated_at DESC, created_at DESC, call_id DESC`. The indexes therefore
+  // carry the *sort* columns, in the query's own direction, behind each
+  // participant column: an index keyed on `created_at` could satisfy the
+  // participant half of that query but never its ordering, so every page still
+  // sorted the user's whole call history before discarding all but one page.
   (t) => [
-    index('idx_calls_caller_created').on(t.callerId, t.createdAt),
-    index('idx_calls_callee_created').on(t.calleeId, t.createdAt),
+    index('idx_calls_caller_updated').on(
+      t.callerId,
+      desc(t.updatedAt),
+      desc(t.createdAt),
+      desc(t.callId)
+    ),
+    index('idx_calls_callee_updated').on(
+      t.calleeId,
+      desc(t.updatedAt),
+      desc(t.createdAt),
+      desc(t.callId)
+    ),
+    // Retained for the status-filtered variant of the same query; deliberately
+    // not folded into the two indexes above, because `status` is optional and
+    // leading with it would make them useless to the unfiltered page.
     index('idx_calls_status').on(t.status),
   ],
 );
