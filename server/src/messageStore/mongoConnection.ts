@@ -141,7 +141,6 @@ export async function ensureMessageIndexes(messages: MessagesCollection): Promis
   // `searchMessages`), which is served identically on the in-memory store,
   // MongoDB/vCore and Cosmos RU.
   await createIndexOrWarn(messages, { conversationId: 1, body: 1 });
-  await createIndexOrWarn(messages, { conversationId: 1, recipientId: 1, readAt: 1 });
 }
 
 export async function ensureConversationIndex(

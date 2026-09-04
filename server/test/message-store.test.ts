@@ -502,7 +502,31 @@ test('mongo store connects with the real driver when no client is injected', asy
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
 function matchesFilter(doc: any, filter: any) {
-  return Object.entries(filter).every(([field, value]) => doc[field] === value);
+  return Object.entries(filter).every(([field, value]) => {
+    const actual = field.split('.').reduce((current, part) => current?.[part], doc);
+    return actual === value;
+  });
+}
+
+function setPath(doc: any, field: string, value: any) {
+  const parts = field.split('.');
+  const leaf = parts.pop() as string;
+  const parent = parts.reduce((current, part) => (current[part] ??= {}), doc);
+  parent[leaf] = value;
+}
+
+function applyFakeUpdate(existing: any, update: any) {
+  for (const [field, value] of Object.entries(update.$set ?? {})) {
+    setPath(existing, field, value);
+  }
+  for (const [field, value] of Object.entries(update.$inc ?? {})) {
+    setPath(existing, field, (existing[field] ?? 0) + (value as number));
+  }
+  for (const [field, value] of Object.entries(update.$max ?? {})) {
+    if (existing[field] === undefined || existing[field] < (value as string)) {
+      existing[field] = value;
+    }
+  }
 }
 
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
@@ -525,14 +549,7 @@ function createFakeMongoClient() {
       async updateOne(filter: any, update: any, options: any) {
         const existing = docs.find((d) => matchesFilter(d, filter));
         if (existing) {
-          if (update.$set) Object.assign(existing, update.$set);
-          if (update.$max) {
-            for (const [field, value] of Object.entries(update.$max)) {
-              if (existing[field] === undefined || existing[field] < (value as string)) {
-                existing[field] = value;
-              }
-            }
-          }
+          applyFakeUpdate(existing, update);
           return {
             matchedCount: 1,
             modifiedCount: update.$set ? 1 : 0,
@@ -640,6 +657,7 @@ function createFakeMongoClient() {
     },
     createdIndexes,
     findCalls,
+    conversationIndexDocs,
     isClosed: () => closed,
   };
 }
@@ -656,7 +674,6 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
     { conversationId: 1, body: 1 },
-    { conversationId: 1, recipientId: 1, readAt: 1 },
   ]);
   // Every index is prefixed with the shard key (`conversationId`), and the
   // unique guarantee is expressed on the shard-key-prefixed pair so it
@@ -689,7 +706,6 @@ test('mongo store readiness check connects before the first message operation', 
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
     { conversationId: 1, body: 1 },
-    { conversationId: 1, recipientId: 1, readAt: 1 },
   ]);
   await store.close?.();
 });
@@ -851,7 +867,9 @@ test('mongo store lists conversations through the user-partition routing index',
 
   const indexRead = fake.findCalls.find((call) => call.collection === 'conversation_index');
   assert.deepEqual(indexRead.query, { userId: 'alice' });
-  assert.deepEqual(indexRead.options, { projection: { _id: 0, conversationId: 1 } });
+  assert.deepEqual(indexRead.options, {
+    projection: { _id: 0, userId: 0, updatedAt: 0 },
+  });
   assert.deepEqual(indexRead.sort, {
     userId: 1,
     updatedAt: -1,
@@ -866,14 +884,46 @@ test('mongo store lists conversations through the user-partition routing index',
     ]
   );
 
-  const messageReads = fake.findCalls.filter(
-    (call) => call.collection === 'messages' && call.query.conversationId === 'alice:bob'
+  assert.equal(
+    fake.findCalls.filter((call) => call.collection === 'messages').length,
+    0,
+    'conversation listing is a single index-collection query'
   );
-  assert.equal(messageReads.length, 2);
-  assert.ok(messageReads.every((call) => !call.query.$or), 'every message read targets a partition');
-  assert.deepEqual(
-    messageReads.find((call) => call.query.recipientId === 'alice')?.options,
-    { projection: { _id: 0, messageId: 1 } }
+
+  await store.markDelivered(conversation.lastMessage.messageId, 'alice');
+  const [delivered] = await store.listConversations('alice');
+  assert.deepEqual(delivered.lastMessage.deliveredTo, ['alice']);
+
+  assert.equal(await store.markRead('alice:bob', 'alice'), 1);
+  const [read] = await store.listConversations('alice');
+  assert.equal(read.unreadCount, 0);
+  assert.ok(read.lastMessage.readAt);
+
+  const deleted = await store.deleteMessage(
+    'alice:bob',
+    conversation.lastMessage.messageId,
+    'bob'
+  );
+  assert.equal(deleted?.body, '');
+  assert.equal((await store.listConversations('alice'))[0].lastMessage.body, '');
+
+  fake.conversationIndexDocs.push({
+    userId: 'alice',
+    conversationId: 'mallory:eve',
+    peerId: 'mallory',
+    lastMessage: {
+      ...conversation.lastMessage,
+      conversationId: 'mallory:eve',
+      senderId: 'mallory',
+      recipientId: 'eve',
+    },
+    unreadCount: 1,
+    updatedAt: '2024-01-03T00:00:00.000Z',
+  });
+  assert.equal(
+    (await store.listConversations('alice')).length,
+    1,
+    'a malformed index row cannot expose another user conversation'
   );
 
   await store.close?.();

@@ -15,8 +15,6 @@ export const DEFAULT_MESSAGE_LIMIT = 50;
 export const MAX_MESSAGE_LIMIT = 100;
 /** Maximum number of conversations returned by one conversation-list request. */
 export const MAX_CONVERSATION_LIMIT = 100;
-/** Bound concurrent partition reads so a conversation list cannot create an RU spike. */
-export const CONVERSATION_READ_CONCURRENCY = 4;
 
 export const LIST_CONVERSATION_INDEX_SORT: MongoSortSpec = {
   userId: 1,
@@ -122,9 +120,4 @@ export function buildSearchMessagesFilter(
  */
 export function buildParticipantFilter(userId: string): MongoFilter {
   return { $or: [{ senderId: userId }, { recipientId: userId }] };
-}
-
-/** Filter for unread messages in one routed conversation partition. */
-export function buildUnreadFilter(conversationId: string, userId: string): MongoFilter {
-  return { conversationId, recipientId: userId, readAt: null };
 }

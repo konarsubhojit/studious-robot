@@ -21,11 +21,9 @@ import {
   LIST_MESSAGES_SORT,
   LIST_CONVERSATION_INDEX_SORT,
   MAX_CONVERSATION_LIMIT,
-  CONVERSATION_READ_CONCURRENCY,
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
-  buildUnreadFilter,
   clampLimit,
   normaliseSearchTerm,
 } from './queries.ts';
@@ -37,11 +35,84 @@ import {
   nextTimestamp,
 } from './records.ts';
 import type {
-  ConversationSummary,
+  ConversationIndexCollection,
   MessageStore,
   MessageDocument,
   MongoClientLike,
+  StoredMessage,
 } from './types.ts';
+
+async function updateConversationIndex(
+  conversationIndex: ConversationIndexCollection,
+  message: StoredMessage,
+  { incrementUnread = false }: { incrementUnread?: boolean; } = {}
+): Promise<void> {
+  const participants = new Set([message.senderId, message.recipientId]);
+  await Promise.all(
+    [...participants].map((userId) => {
+      const isUnreadRecipient = incrementUnread && message.recipientId === userId;
+      return conversationIndex.updateOne(
+          { userId, conversationId: message.conversationId },
+          {
+          $set: {
+            peerId: message.senderId === userId ? message.recipientId : message.senderId,
+            lastMessage: message,
+            updatedAt: message.createdAt,
+          },
+          $setOnInsert: {
+            userId,
+            conversationId: message.conversationId,
+            ...(!isUnreadRecipient ? { unreadCount: 0 } : {}),
+          },
+          ...(isUnreadRecipient ? { $inc: { unreadCount: 1 } } : {}),
+        },
+        { upsert: true }
+      );
+    })
+  );
+}
+
+async function updateIndexedLastMessage(
+  conversationIndex: ConversationIndexCollection,
+  message: StoredMessage
+): Promise<void> {
+  await Promise.all(
+    [...new Set([message.senderId, message.recipientId])].map((userId) =>
+      conversationIndex.updateOne(
+        {
+          userId,
+          conversationId: message.conversationId,
+          'lastMessage.messageId': message.messageId,
+        },
+        { $set: { lastMessage: message } }
+      )
+    )
+  );
+}
+
+async function ensureConversationIndexRows(
+  conversationIndex: ConversationIndexCollection,
+  message: StoredMessage
+): Promise<void> {
+  await Promise.all(
+    [...new Set([message.senderId, message.recipientId])].map((userId) =>
+      conversationIndex.updateOne(
+        { userId, conversationId: message.conversationId },
+        {
+          $setOnInsert: {
+            userId,
+            conversationId: message.conversationId,
+            peerId: message.senderId === userId ? message.recipientId : message.senderId,
+            lastMessage: message,
+            unreadCount: message.recipientId === userId && !message.readAt ? 1 : 0,
+            updatedAt: message.createdAt,
+          },
+        },
+        { upsert: true }
+      )
+    )
+  );
+}
 
 /**
  * Read the updated document out of a `findOneAndUpdate` result, which the
@@ -127,19 +198,10 @@ export function createMongoMessageStore({
           saved = toStoredMessage(existing);
         }
       }
-      if (conversationIndex) {
-        await Promise.all(
-          [saved.senderId, saved.recipientId].map((userId) =>
-            conversationIndex.updateOne(
-              { userId, conversationId: saved.conversationId },
-              {
-                $setOnInsert: { userId, conversationId: saved.conversationId },
-                $max: { updatedAt: saved.createdAt },
-              },
-              { upsert: true }
-            )
-          )
-        );
+      if (conversationIndex && result?.upsertedCount) {
+        await updateConversationIndex(conversationIndex, saved, { incrementUnread: true });
+      } else if (conversationIndex) {
+        await ensureConversationIndexRows(conversationIndex, saved);
       }
       return saved;
     },
@@ -171,7 +233,7 @@ export function createMongoMessageStore({
     },
 
     async markDelivered(messageId, userId) {
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
       // `$addToSet` gives idempotency for free.
       const result = await messages.findOneAndUpdate(
         { messageId },
@@ -180,7 +242,9 @@ export function createMongoMessageStore({
       );
       const updated = unwrapUpdatedDocument(result);
       if (!updated?.messageId) return null;
-      return toStoredMessage(updated);
+      const stored = toStoredMessage(updated);
+      if (conversationIndex) await updateIndexedLastMessage(conversationIndex, stored);
+      return stored;
     },
 
     async listConversations(userId) {
@@ -189,46 +253,29 @@ export function createMongoMessageStore({
         const indexed = await conversationIndex
           .find(
             { userId },
-            { projection: { _id: 0, conversationId: 1 } }
+            { projection: { _id: 0, userId: 0, updatedAt: 0 } }
           )
           .sort(LIST_CONVERSATION_INDEX_SORT)
           .limit(MAX_CONVERSATION_LIMIT)
           .toArray();
-        const candidates: Array<ConversationSummary | null> = [];
-        for (let offset = 0; offset < indexed.length; offset += CONVERSATION_READ_CONCURRENCY) {
-          const batch = indexed.slice(offset, offset + CONVERSATION_READ_CONCURRENCY);
-          candidates.push(
-            ...(await Promise.all(
-              batch.map(async ({ conversationId }) => {
-                const [latest, unread] = await Promise.all([
-                  messages
-                    .find({ conversationId })
-                    .sort(LIST_MESSAGES_SORT)
-                    .limit(1)
-                    .toArray(),
-                  messages
-                    .find(buildUnreadFilter(conversationId, userId), {
-                      projection: { _id: 0, messageId: 1 },
-                    })
-                    .toArray(),
-                ]);
-                const message = toStoredMessages(latest)[0];
-                return message
-                  ? {
-                      conversationId,
-                      peerId:
-                        message.senderId === userId ? message.recipientId : message.senderId,
-                      lastMessage: message,
-                      unreadCount: unread.length,
-                    }
-                  : null;
-              })
-            ))
+        const visible = indexed.filter(
+          (summary) =>
+            summary.lastMessage?.senderId === userId ||
+            summary.lastMessage?.recipientId === userId
+        );
+        if (visible.length !== indexed.length) {
+          console.error(
+            `[messages] conversation index dropped ${indexed.length - visible.length}` +
+              ` non-participant row(s)`
           );
         }
-        return candidates
-          .filter((summary): summary is ConversationSummary => summary !== null)
-          .sort((a, b) => byNewestFirst(a.lastMessage, b.lastMessage));
+        return visible
+          .map(({ conversationId, peerId, lastMessage, unreadCount }) => ({
+            conversationId,
+            peerId,
+            lastMessage,
+            unreadCount,
+          }));
       }
       // Deliberately no `.sort()`/`$sort`/`$group` at the database level: this
       // query fans out across every conversation the user is part of (i.e.
@@ -243,16 +290,39 @@ export function createMongoMessageStore({
     },
 
     async markRead(conversationId, userId) {
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
+      const readAt = nextTimestamp();
       const result = await messages.updateMany(
         { conversationId, recipientId: userId, readAt: null },
-        { $set: { readAt: nextTimestamp() } }
+        { $set: { readAt } }
       );
+      if (conversationIndex && result?.modifiedCount) {
+        const summary = await conversationIndex.findOne({ userId, conversationId });
+        const participants = summary ? [userId, summary.peerId] : [userId];
+        await conversationIndex.updateOne(
+          { userId, conversationId },
+          { $set: { unreadCount: 0 } }
+        );
+        if (summary?.lastMessage.recipientId === userId && !summary.lastMessage.readAt) {
+          await Promise.all(
+            participants.map((participantId) =>
+              conversationIndex.updateOne(
+                {
+                  userId: participantId,
+                  conversationId,
+                  'lastMessage.messageId': summary.lastMessage.messageId,
+                },
+                { $set: { 'lastMessage.readAt': readAt } }
+              )
+            )
+          );
+        }
+      }
       return result?.modifiedCount ?? 0;
     },
 
     async deleteMessage(conversationId, messageId, userId) {
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
       // The `senderId` in the filter is the authorisation check: a delete for
       // someone else's message matches nothing and reports "not found".
       // Shard-key (`conversationId`) prefixed so Cosmos can route the write.
@@ -272,11 +342,12 @@ export function createMongoMessageStore({
           },
         }
       );
+      if (conversationIndex) await updateIndexedLastMessage(conversationIndex, tombstone);
       return tombstone;
     },
 
     async reactToMessage({ conversationId, messageId, userId, emoji, action } = {}) {
-      const { messages } = await connect();
+      const { messages, conversationIndex } = await connect();
       const existing = await messages.findOne({ conversationId, messageId });
       if (!existing?.messageId || existing.deletedAt) return null;
       const rest = toStoredMessage(existing);
@@ -290,6 +361,7 @@ export function createMongoMessageStore({
         { conversationId, messageId },
         { $set: { reactions: rest.reactions } }
       );
+      if (conversationIndex) await updateIndexedLastMessage(conversationIndex, rest);
       return rest;
     },
 

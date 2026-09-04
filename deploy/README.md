@@ -464,11 +464,11 @@ cost, not network variance. No composite index can efficiently satisfy that
 participant filter plus a sort on the latest message computed by grouping.
 
 The optimized path uses a separate `conversation_index` collection partitioned
-by `userId`. It reads at most 100 recently active conversation IDs from one user
-partition, then fetches the latest message and projected unread IDs from each
-known `conversationId` partition, with at most four partitions in flight. New
-messages maintain both users' routing rows. The old fan-out remains the default
-until the index is completely backfilled, preserving existing data.
+by `userId`. Each row contains the latest message and unread count, so the
+conversation list is one projected, single-partition query for at most 100
+recently active conversations. Message writes and mutations maintain both
+users' summary rows. The old fan-out remains the default until the index is
+completely backfilled, preserving existing data.
 
 Provision and activate it in this order:
 
@@ -500,7 +500,6 @@ the flag before the backfill completes. Use
 The store also creates the exact supporting indexes:
 
 - `messages: {conversationId:1, createdAt:-1, messageId:-1}` for latest-message reads;
-- `messages: {conversationId:1, recipientId:1, readAt:1}` for unread reads;
 - `conversation_index: {userId:1, updatedAt:-1, conversationId:1}` for the bounded list;
 - unique `conversation_index: {userId:1, conversationId:1}` for idempotent writes.
 

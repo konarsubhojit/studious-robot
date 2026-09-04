@@ -26,10 +26,9 @@ export type StoredMessage = MessageRecord & {
 /** A stored message as it comes back from the driver, `_id` and all. */
 export type MessageDocument = StoredMessage & { _id?: unknown; };
 
-export type ConversationIndexDocument = {
+export type ConversationIndexDocument = ConversationSummary & {
   _id?: unknown;
   userId: string;
-  conversationId: string;
   updatedAt: string;
 };
 

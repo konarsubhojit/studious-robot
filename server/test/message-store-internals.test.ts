@@ -21,7 +21,6 @@ import {
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
-  buildUnreadFilter,
   clampLimit,
   deriveConversationId,
   escapeRegExp,
@@ -94,14 +93,6 @@ test('the search filter escapes the term and stays case-insensitive', () => {
 test('the participant filter matches either direction of a conversation', () => {
   assert.deepEqual(buildParticipantFilter('alice'), {
     $or: [{ senderId: 'alice' }, { recipientId: 'alice' }],
-  });
-});
-
-test('the unread filter is routed by conversation partition', () => {
-  assert.deepEqual(buildUnreadFilter('alice:bob', 'alice'), {
-    conversationId: 'alice:bob',
-    recipientId: 'alice',
-    readAt: null,
   });
 });
 

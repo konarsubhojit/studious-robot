@@ -6,8 +6,89 @@ import {
   DEFAULT_DB_NAME,
   mongoClientOptions,
 } from '../src/messageStore/mongoConnection.ts';
+import { toStoredMessage } from '../src/messageStore/documents.ts';
+import { byNewestFirst } from '../src/messageStore/records.ts';
+import type {
+  ConversationIndexDocument,
+  MessageDocument,
+} from '../src/messageStore/types.ts';
 
 const BATCH_SIZE = 500;
+
+function isIndexableMessage(message: Document): message is MessageDocument {
+  return (
+    typeof message.conversationId === 'string' &&
+    typeof message.messageId === 'string' &&
+    typeof message.senderId === 'string' &&
+    typeof message.recipientId === 'string' &&
+    typeof message.createdAt === 'string'
+  );
+}
+
+function addUserSummary(
+  summaries: Map<string, ConversationIndexDocument>,
+  message: MessageDocument,
+  userId: string
+): void {
+  const key = `${userId}\0${message.conversationId}`;
+  const current = summaries.get(key);
+  if (!current) {
+    summaries.set(key, {
+      userId,
+      conversationId: message.conversationId,
+      peerId: message.senderId === userId ? message.recipientId : message.senderId,
+      lastMessage: toStoredMessage(message),
+      unreadCount: message.recipientId === userId && !message.readAt ? 1 : 0,
+      updatedAt: message.createdAt,
+    });
+    return;
+  }
+  if (message.recipientId === userId && !message.readAt) current.unreadCount += 1;
+  const stored = toStoredMessage(message);
+  if (byNewestFirst(stored, current.lastMessage) < 0) {
+    current.lastMessage = stored;
+    current.updatedAt = stored.createdAt;
+  }
+}
+
+function addMessageToSummaries(
+  summaries: Map<string, ConversationIndexDocument>,
+  message: Document
+): boolean {
+  if (!isIndexableMessage(message)) return false;
+
+  for (const userId of new Set([message.senderId, message.recipientId])) {
+    addUserSummary(summaries, message, userId);
+  }
+  return true;
+}
+
+async function writeSummaries(
+  conversationIndex: import('mongodb').Collection,
+  summaries: Iterable<ConversationIndexDocument>
+): Promise<number> {
+  let operations: AnyBulkWriteOperation<Document>[] = [];
+  let indexed = 0;
+  async function flush(): Promise<void> {
+    if (operations.length === 0) return;
+    const result = await conversationIndex.bulkWrite(operations, { ordered: false });
+    indexed += result.upsertedCount + result.modifiedCount;
+    operations = [];
+  }
+
+  for (const summary of summaries) {
+    operations.push({
+      updateOne: {
+        filter: { userId: summary.userId, conversationId: summary.conversationId },
+        update: { $set: summary },
+        upsert: true,
+      },
+    });
+    if (operations.length >= BATCH_SIZE) await flush();
+  }
+  await flush();
+  return indexed;
+}
 
 async function main(): Promise<void> {
   const uri = process.env.MONGODB_URI?.trim();
@@ -36,57 +117,15 @@ async function main(): Promise<void> {
       conversationId: 1,
     });
 
-    const cursor = messages.find(
-      {},
-      {
-        projection: {
-          _id: 0,
-          conversationId: 1,
-          senderId: 1,
-          recipientId: 1,
-          createdAt: 1,
-        },
-      }
-    );
-    let operations: AnyBulkWriteOperation<Document>[] = [];
+    const cursor = messages.find({});
+    const summaries = new Map<string, ConversationIndexDocument>();
     let scanned = 0;
-    let indexed = 0;
-
-    async function flush(): Promise<void> {
-      if (operations.length === 0) return;
-      const result = await conversationIndex.bulkWrite(operations, { ordered: false });
-      indexed += result.upsertedCount + result.modifiedCount;
-      operations = [];
-    }
 
     for await (const message of cursor) {
-      if (
-        typeof message.conversationId !== 'string' ||
-        typeof message.senderId !== 'string' ||
-        typeof message.recipientId !== 'string'
-      ) {
-        continue;
-      }
-      const updatedAt =
-        typeof message.createdAt === 'string'
-          ? message.createdAt
-          : new Date(0).toISOString();
-      for (const userId of new Set([message.senderId, message.recipientId])) {
-        operations.push({
-          updateOne: {
-            filter: { userId, conversationId: message.conversationId },
-            update: {
-              $setOnInsert: { userId, conversationId: message.conversationId },
-              $max: { updatedAt },
-            },
-            upsert: true,
-          },
-        });
-      }
-      scanned += 1;
-      if (operations.length >= BATCH_SIZE) await flush();
+      if (addMessageToSummaries(summaries, message)) scanned += 1;
     }
-    await flush();
+
+    const indexed = await writeSummaries(conversationIndex, summaries.values());
     console.log(
       `[messages] conversation index backfill complete scanned=${scanned} updated=${indexed}`
     );
