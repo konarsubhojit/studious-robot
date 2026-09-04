@@ -274,11 +274,15 @@ export function createMongoMessageStore({
       return toStoredMessages(found).sort(byNewestFirst).slice(0, cap);
     },
 
-    async markDelivered(messageId, userId) {
+    async markDelivered(messageId, userId, conversationId) {
       const { messages, conversationIndex } = await connect();
+      // Shard-key (`conversationId`) prefixed when the caller knows it, so
+      // Cosmos routes the write to one partition instead of fanning out; the
+      // unique index is `{ conversationId, messageId }`.
+      const filter = conversationId ? { conversationId, messageId } : { messageId };
       // `$addToSet` gives idempotency for free.
       const result = await messages.findOneAndUpdate(
-        { messageId },
+        filter,
         { $addToSet: { deliveredTo: userId } },
         { returnDocument: 'after' }
       );

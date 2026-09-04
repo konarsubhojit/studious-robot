@@ -541,6 +541,8 @@ function createFakeMongoClient() {
   const conversationIndexDocs: any[] = [];
   const createdIndexes: any[] = [];
   const findCalls: any[] = [];
+  const findOneCalls: any[] = [];
+  const updateCalls: any[] = [];
   let closed = false;
 
   function makeCollection(name: string, docs: any[]) {
@@ -553,6 +555,7 @@ function createFakeMongoClient() {
         return { insertedId: doc.messageId };
       },
       async updateOne(filter: any, update: any, options: any) {
+        updateCalls.push({ collection: name, filter, update });
         const existing = docs.find((d) => matchesFilter(d, filter));
         if (existing) {
           applyFakeUpdate(existing, update);
@@ -569,6 +572,7 @@ function createFakeMongoClient() {
         return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
       },
       async findOne(filter: any) {
+        findOneCalls.push({ collection: name, filter });
         const found = docs.find((d) => matchesFilter(d, filter));
         return found ? { _id: 'oid', ...found } : null;
       },
@@ -619,7 +623,7 @@ function createFakeMongoClient() {
         };
       },
       async findOneAndUpdate(filter: any, update: any) {
-        const doc = docs.find((d) => d.messageId === filter.messageId);
+        const doc = docs.find((d) => matchesFilter(d, filter));
         if (!doc) return null;
         const userId = update.$addToSet.deliveredTo;
         if (!doc.deliveredTo.includes(userId)) doc.deliveredTo.push(userId);
@@ -663,6 +667,8 @@ function createFakeMongoClient() {
     },
     createdIndexes,
     findCalls,
+    findOneCalls,
+    updateCalls,
     conversationIndexDocs,
     isClosed: () => closed,
   };
@@ -1035,6 +1041,96 @@ test('mongo store markRead updates only the matching, still-unread messages', as
     (await store.listConversations('alice'))[0].unreadCount,
     1,
     'bob→alice reply still unread'
+  );
+
+  await store.close?.();
+});
+
+test('mongo store markRead with a known peer resets the index without reading it first', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexReady: true,
+  });
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  await store.saveMessage({ conversationId, senderId: 'alice', recipientId: 'bob', body: 'one' });
+  await store.saveMessage({ conversationId, senderId: 'alice', recipientId: 'bob', body: 'two' });
+  const indexUpdatesBefore = fake.updateCalls.filter(
+    (call) => call.collection === 'conversation_index'
+  ).length;
+
+  const updated = await store.markRead(conversationId, 'bob', 'alice');
+  assert.equal(updated, 2, 'the message count still reflects the first wave');
+
+  assert.deepEqual(
+    fake.findOneCalls.filter((call) => call.collection === 'conversation_index'),
+    [],
+    'the peer is supplied, so the index is not read to discover it'
+  );
+
+  const [reader] = await store.listConversations('bob');
+  assert.equal(reader.unreadCount, 0);
+  assert.ok(reader.lastMessage.readAt, "the reader's own row carries the receipt");
+
+  const readerUpdate = fake.updateCalls
+    .filter((call) => call.collection === 'conversation_index')
+    .slice(indexUpdatesBefore)[0];
+  assert.deepEqual(Object.keys(readerUpdate.update), ['$set']);
+  assert.deepEqual(Object.keys(readerUpdate.update.$set).sort(), [
+    'lastMessage.readAt',
+    'unreadCount',
+  ]);
+
+  // The peer's copy of the receipt is fire-and-forget: it lands a tick later,
+  // guarded entirely by its filter rather than by a preceding read.
+  await new Promise((resolve) => setImmediate(resolve));
+  const peerUpdate = fake.updateCalls
+    .filter((call) => call.collection === 'conversation_index')
+    .slice(indexUpdatesBefore)
+    .find((call) => call.filter.userId === 'alice');
+  assert.deepEqual(peerUpdate.filter, {
+    userId: 'alice',
+    conversationId,
+    'lastMessage.recipientId': 'bob',
+    'lastMessage.readAt': null,
+  });
+  assert.deepEqual(peerUpdate.update, { $set: { 'lastMessage.readAt': readerUpdate.update.$set['lastMessage.readAt'] } });
+
+  await store.close?.();
+});
+
+test('mongo store markDelivered is shard-key scoped when the conversation is known', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  const first = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'one',
+  });
+  const second = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'two',
+  });
+
+  const scoped = await store.markDelivered(first.messageId, 'bob', conversationId);
+  assert.deepEqual(scoped?.deliveredTo, ['bob']);
+  assert.equal(scoped?.messageId, first.messageId);
+
+  const unscoped = await store.markDelivered(second.messageId, 'bob');
+  assert.deepEqual(unscoped?.deliveredTo, ['bob']);
+  assert.equal(unscoped?.messageId, second.messageId);
+
+  assert.equal(
+    await store.markDelivered(first.messageId, 'bob', 'someone:else'),
+    null,
+    'a mismatched conversation matches nothing rather than fanning out'
   );
 
   await store.close?.();
