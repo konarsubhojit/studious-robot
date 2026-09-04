@@ -595,11 +595,12 @@ otherwise the script logs `[deploy] lockfile unchanged; skipping install`.
 tree CI tested and cannot mutate the lockfile on the VM.
 
 **Schema check.** The check runs from `$SERVER_DIR` with `/etc/robot-signal/env`
-sourced in a subshell (its contents are never logged). It warns about pending
-migrations only on real drift; when `drizzle-kit` is absent (the normal
-production case, since `npm ci --omit=dev` skips dev dependencies) or no
-database URL is available, it logs a "skipped" line instead. It is never fatal,
-and the deploy script never runs migrations — those are applied from CI
+sourced in a subshell (its contents are never logged). When the check cannot run
+— `drizzle-kit` absent (the normal production case, since `npm ci --omit=dev`
+skips dev dependencies), no database URL, or an unreadable env file — it logs a
+"skipped" line rather than warning. Only an actual failing check warns about
+possible drift/pending migrations. It is never fatal, and the deploy script
+never runs migrations — those are applied from CI
 (`.github/workflows/backend-ci.yml`) against `DATABASE_URL_DIRECT`.
 
 **Reload semantics.** The script performs a rolling `pm2 reload`. That is *not*
