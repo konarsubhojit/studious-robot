@@ -96,6 +96,15 @@ test('the participant filter matches either direction of a conversation', () => 
   });
 });
 
+test('Cosmos throttling detection recognises Mongo and HTTP codes', async () => {
+  const { isCosmosThrottle } = await import('../src/messageStore/mongoConnection.ts');
+
+  assert.equal(isCosmosThrottle({ code: 16500 }), true);
+  assert.equal(isCosmosThrottle({ failure: { code: 429 } }), true);
+  assert.equal(isCosmosThrottle({ errmsg: 'Request rate is large. RetryAfterMs=20' }), true);
+  assert.equal(isCosmosThrottle({ code: 11000 }), false);
+});
+
 // ─── Records ──────────────────────────────────────────────────────────────────
 
 test('a new record materialises every rich field', () => {

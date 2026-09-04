@@ -13,6 +13,14 @@ import type { MongoFilter, MongoSortSpec } from './types.ts';
 export const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for `listMessages`. */
 export const MAX_MESSAGE_LIMIT = 100;
+/** Maximum number of conversations returned by one conversation-list request. */
+export const MAX_CONVERSATION_LIMIT = 100;
+
+export const LIST_CONVERSATION_INDEX_SORT: MongoSortSpec = {
+  userId: 1,
+  updatedAt: -1,
+  conversationId: 1,
+};
 
 /**
  * Sort applied by `listMessages`: newest first, with `messageId` breaking ties.

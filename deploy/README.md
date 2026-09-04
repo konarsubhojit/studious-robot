@@ -454,7 +454,82 @@ Chat message history and conversation lists are persisted via `server/src/messag
 | Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 `BadRequest` |
 | Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
 
-The store's startup index creation, `saveMessage` upsert, and `listConversations` query shape are all written to satisfy the stricter Cosmos RU column, while remaining correct and unchanged on vCore, real MongoDB, and the in-memory store — see the comments in `server/src/messageStore.ts` for the details. At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
+The `messages` collection is partitioned by `conversationId`. The legacy
+`listConversations` filter is
+`{$or:[{senderId:userId},{recipientId:userId}]}` with no projection, sort, or
+limit; it therefore fans out to every conversation partition and downloads all
+matching message documents before grouping in the server. The 300–400 ms
+timings with a stable 13 ms RTT are consistent with that server-side RU/query
+cost, not network variance. No composite index can efficiently satisfy that
+participant filter plus a sort on the latest message computed by grouping.
+
+The optimized path uses a separate `conversation_index` collection partitioned
+by `userId`. Each row contains the latest message and unread count, so the
+conversation list is one projected, single-partition query for at most 100
+recently active conversations. Message writes and mutations maintain both
+users' summary rows. The old fan-out remains the default until the index is
+completely backfilled, preserving existing data.
+
+Provision and activate it in this order:
+
+```bash
+# Replace placeholders; omit --throughput when the database uses shared throughput.
+az cosmosdb mongodb collection create \
+  --account-name <account> \
+  --resource-group <resource-group> \
+  --database-name wetalk \
+  --name conversation_index \
+  --shard userId
+
+# Add MONGODB_CONVERSATION_INDEX_WRITES=true to /etc/robot-signal/env and
+# gracefully reload PM2. Reads still use the legacy path during this phase,
+# while every new message updates both stores.
+#
+# Before the command below, gracefully drain and stop every signaling-server
+# process that can write messages. Keep them stopped until the backfill and
+# index verification finish: the backfill is authoritative and must not race
+# a newer dual-write.
+
+cd /home/wetalk/repos/studious-robot/server
+set -a
+. /etc/robot-signal/env
+set +a
+npm run db:backfill-conversations
+
+# Verify both indexes before enabling reads.
+mongosh "$MONGODB_URI" --quiet --eval \
+  'db.getSiblingDB("wetalk").conversation_index.getIndexes()'
+```
+
+Then add `MONGODB_CONVERSATION_INDEX_READY=true` to
+`/etc/robot-signal/env` and restart the stopped PM2 processes. Do not set the
+read flag or restart any writer before the backfill completes. Keep
+`MONGODB_CONVERSATION_INDEX_WRITES=true`; the read flag also implies writes as
+a fail-safe. Use
+`MONGODB_CONVERSATION_INDEX_COLLECTION` if the provisioned name differs.
+
+The store also creates the exact supporting indexes:
+
+- `messages: {conversationId:1, createdAt:-1, messageId:-1}` for latest-message reads;
+- `conversation_index: {userId:1, updatedAt:-1, conversationId:1}` for the bounded list;
+- unique `conversation_index: {userId:1, conversationId:1}` for idempotent writes.
+
+Mongo command monitoring logs Cosmos `429` / Mongo `16500` responses as
+`[messages] THROTTLED` with command name and retry delay only; filters,
+documents, and credentials are never logged. The Mongo pool is reused and
+bounded to four connections per process by default.
+
+Postgres investigation found that `users.user_id` is the primary key and
+`users.auth_uid` is unique, while device/call/event lookup indexes already
+exist. The observed startup `users` select is a full hydration read, not an
+unindexed lookup. Device, call, and event writes are independent real-time
+durability events and cannot be safely batched without changing acknowledgement
+semantics. The singleton `pg` pool was already reused, but its default 10-second
+idle expiry caused sporadic operations to pay connection/TLS setup again; idle
+connections are now retained for five minutes with TCP keepalive. Override with
+`DATABASE_POOL_IDLE_TIMEOUT_MS` if the provider requires a shorter lifetime.
+
+At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
 
 > **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
 

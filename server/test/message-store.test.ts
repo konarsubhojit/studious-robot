@@ -501,122 +501,169 @@ test('mongo store connects with the real driver when no client is injected', asy
 // ─── Mongo store (driver stubbed) ─────────────────────────────────────────────
 
 /** Whether `doc` matches every field of an equality-only `filter`. */
-function matchesFilter(doc: any, filter: any) {
-  return Object.entries(filter).every(([field, value]) => doc[field] === value);
+function matchesFilter(doc: any, filter: any): boolean {
+  return Object.entries(filter).every(([field, value]) => {
+    if (field === '$or') {
+      return (value as any[]).some((clause) => matchesFilter(doc, clause));
+    }
+    const actual = field.split('.').reduce((current, part) => current?.[part], doc);
+    if (value && typeof value === 'object' && '$lt' in value) {
+      return actual < (value as { $lt: string }).$lt;
+    }
+    return actual === value;
+  });
+}
+
+function setPath(doc: any, field: string, value: any) {
+  const parts = field.split('.');
+  const leaf = parts.pop() as string;
+  const parent = parts.reduce((current, part) => (current[part] ??= {}), doc);
+  parent[leaf] = value;
+}
+
+function applyFakeUpdate(existing: any, update: any) {
+  for (const [field, value] of Object.entries(update.$set ?? {})) {
+    setPath(existing, field, value);
+  }
+  for (const [field, value] of Object.entries(update.$inc ?? {})) {
+    setPath(existing, field, (existing[field] ?? 0) + (value as number));
+  }
+  for (const [field, value] of Object.entries(update.$max ?? {})) {
+    if (existing[field] === undefined || existing[field] < (value as string)) {
+      existing[field] = value;
+    }
+  }
 }
 
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
 function createFakeMongoClient() {
-  const docs: any[] = [];
+  const messageDocs: any[] = [];
+  const conversationIndexDocs: any[] = [];
   const createdIndexes: any[] = [];
+  const findCalls: any[] = [];
   let closed = false;
 
-  const collection = {
-    async createIndex(spec: any, options: any) {
-      createdIndexes.push({ spec, options });
-    },
-    async insertOne(doc: any) {
-      docs.push(doc);
-      return { insertedId: doc.messageId };
-    },
-    async updateOne(filter: any, update: any, options: any) {
-      const existing = docs.find(
-        (d) => d.conversationId === filter.conversationId && d.messageId === filter.messageId
-      );
-      if (existing) {
-        // `$setOnInsert` is a no-op on an existing document; `$set` (used by
-        // the tombstone/reaction writes) is applied.
-        if (update.$set) Object.assign(existing, update.$set);
-        return {
-          matchedCount: 1,
-          modifiedCount: update.$set ? 1 : 0,
-          upsertedCount: 0,
-        };
-      }
-      if (options?.upsert) {
-        docs.push({ ...update.$setOnInsert });
-        return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
-      }
-      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
-    },
-    async findOne(filter: any) {
-      const found = docs.find((d) => matchesFilter(d, filter));
-      return found ? { _id: 'oid', ...found } : null;
-    },
-    async deleteOne(filter: any) {
-      const index = docs.findIndex((d) => matchesFilter(d, filter));
-      if (index === -1) return { deletedCount: 0 };
-      docs.splice(index, 1);
-      return { deletedCount: 1 };
-    },
-    find(query: any) {
-      let results = docs;
-      if (query?.conversationId !== undefined) {
-        results = results.filter((d) => d.conversationId === query.conversationId);
-      }
-      if (query?.createdAt?.$lt) {
-        results = results.filter((d) => d.createdAt < query.createdAt.$lt);
-      }
-      if (query?.$or) {
-        results = results.filter((doc) =>
-          query.$or.some((clause: any) => {
-            const [field, value] = Object.entries(clause)[0];
-            return doc[field] === value;
-          })
-        );
-      }
-      if (query?.body?.$regex) {
-        const pattern = new RegExp(query.body.$regex, query.body.$options ?? '');
-        results = results.filter((d) => pattern.test(d.body));
-      }
-      return {
-        sort() {
-          results = [...results].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-          return this;
-        },
-        limit(n: number) {
-          results = results.slice(0, n);
-          return this;
-        },
-        async toArray() {
-          return results.map((d) => ({ _id: 'oid', ...d }));
-        },
-      };
-    },
-    async findOneAndUpdate(filter: any, update: any) {
-      const doc = docs.find((d) => d.messageId === filter.messageId);
-      if (!doc) return null;
-      const userId = update.$addToSet.deliveredTo;
-      if (!doc.deliveredTo.includes(userId)) doc.deliveredTo.push(userId);
-      return { value: { _id: 'oid', ...doc } };
-    },
-    async updateMany(filter: any, update: any) {
-      let modifiedCount = 0;
-      for (const doc of docs) {
-        if (
-          doc.conversationId === filter.conversationId &&
-          doc.recipientId === filter.recipientId &&
-          doc.readAt === filter.readAt
-        ) {
-          Object.assign(doc, update.$set);
-          modifiedCount += 1;
+  function makeCollection(name: string, docs: any[]) {
+    return {
+      async createIndex(spec: any, options: any) {
+        createdIndexes.push({ collection: name, spec, options });
+      },
+      async insertOne(doc: any) {
+        docs.push(doc);
+        return { insertedId: doc.messageId };
+      },
+      async updateOne(filter: any, update: any, options: any) {
+        const existing = docs.find((d) => matchesFilter(d, filter));
+        if (existing) {
+          applyFakeUpdate(existing, update);
+          return {
+            matchedCount: 1,
+            modifiedCount: update.$set ? 1 : 0,
+            upsertedCount: 0,
+          };
         }
-      }
-      return { modifiedCount };
-    },
+        if (options?.upsert) {
+          docs.push({ ...update.$setOnInsert, ...update.$max });
+          return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+        }
+        return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+      },
+      async findOne(filter: any) {
+        const found = docs.find((d) => matchesFilter(d, filter));
+        return found ? { _id: 'oid', ...found } : null;
+      },
+      async deleteOne(filter: any) {
+        const index = docs.findIndex((d) => matchesFilter(d, filter));
+        if (index === -1) return { deletedCount: 0 };
+        docs.splice(index, 1);
+        return { deletedCount: 1 };
+      },
+      find(query: any, options?: any) {
+        const call: any = { collection: name, query, options };
+        findCalls.push(call);
+        let results = docs.filter((doc) =>
+          Object.entries(query ?? {})
+            .filter(([field]) => field !== '$or' && field !== 'createdAt' && field !== 'body')
+            .every(([field, value]) => doc[field] === value)
+        );
+        if (query?.createdAt?.$lt) {
+          results = results.filter((d) => d.createdAt < query.createdAt.$lt);
+        }
+        if (query?.$or) {
+          results = results.filter((doc) =>
+            query.$or.some((clause: any) => {
+              const [field, value] = Object.entries(clause)[0];
+              return doc[field] === value;
+            })
+          );
+        }
+        if (query?.body?.$regex) {
+          const pattern = new RegExp(query.body.$regex, query.body.$options ?? '');
+          results = results.filter((d) => pattern.test(d.body));
+        }
+        return {
+          sort(spec: any) {
+            call.sort = spec;
+            const sortField = 'updatedAt' in spec ? 'updatedAt' : 'createdAt';
+            results = [...results].sort((a, b) => (a[sortField] < b[sortField] ? 1 : -1));
+            return this;
+          },
+          limit(n: number) {
+            call.limit = n;
+            results = results.slice(0, n);
+            return this;
+          },
+          async toArray() {
+            return results.map((d) => ({ _id: 'oid', ...d }));
+          },
+        };
+      },
+      async findOneAndUpdate(filter: any, update: any) {
+        const doc = docs.find((d) => d.messageId === filter.messageId);
+        if (!doc) return null;
+        const userId = update.$addToSet.deliveredTo;
+        if (!doc.deliveredTo.includes(userId)) doc.deliveredTo.push(userId);
+        return { value: { _id: 'oid', ...doc } };
+      },
+      async updateMany(filter: any, update: any) {
+        let modifiedCount = 0;
+        for (const doc of docs) {
+          if (
+            doc.conversationId === filter.conversationId &&
+            doc.recipientId === filter.recipientId &&
+            doc.readAt === filter.readAt
+          ) {
+            Object.assign(doc, update.$set);
+            modifiedCount += 1;
+          }
+        }
+        return { modifiedCount };
+      },
+    };
+  }
+
+  const collections = {
+    messages: makeCollection('messages', messageDocs),
+    conversation_index: makeCollection('conversation_index', conversationIndexDocs),
   };
 
   return {
     client: {
       async connect() {},
       db() {
-        return { collection: () => collection };
+        return {
+          collection(name: string) {
+            return collections[name as keyof typeof collections];
+          },
+        };
       },
       async close() {
         closed = true;
       },
     },
     createdIndexes,
+    findCalls,
+    conversationIndexDocs,
     isClosed: () => closed,
   };
 }
@@ -627,7 +674,7 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
 
   await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
 
-  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
+  assert.deepEqual(fake.createdIndexes.filter((i) => i.collection === 'messages').map((i) => i.spec), [
     { conversationId: 1, createdAt: -1 },
     { conversationId: 1, createdAt: 1 },
     { conversationId: 1, messageId: 1 },
@@ -637,7 +684,10 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
   // Every index is prefixed with the shard key (`conversationId`), and the
   // unique guarantee is expressed on the shard-key-prefixed pair so it
   // satisfies Cosmos RU's "unique index must include the shard key" rule.
-  assert.deepEqual(fake.createdIndexes[2].options, { unique: true });
+  assert.deepEqual(
+    fake.createdIndexes.find((i) => i.spec.messageId)?.options,
+    { unique: true }
+  );
   // The search index stays a plain composite index: Cosmos RU supports no
   // `text` index / `$text` operator, so every backend serves the same query.
   assert.ok(
@@ -656,7 +706,7 @@ test('mongo store readiness check connects before the first message operation', 
 
   await store.ready?.();
 
-  assert.deepEqual(fake.createdIndexes.map((i) => i.spec), [
+  assert.deepEqual(fake.createdIndexes.filter((i) => i.collection === 'messages').map((i) => i.spec), [
     { conversationId: 1, createdAt: -1 },
     { conversationId: 1, createdAt: 1 },
     { conversationId: 1, messageId: 1 },
@@ -792,6 +842,131 @@ test('mongo store deleteMessage only tombstones the author own message', async (
   assert.equal(remaining.length, 1);
   assert.equal(remaining[0].body, '');
   assert.ok(remaining[0].deletedAt);
+
+  await store.close?.();
+});
+
+test('mongo store lists conversations through the user-partition routing index', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexReady: true,
+  });
+
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'older',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'alice',
+    body: 'newer',
+    createdAt: '2024-01-02T00:00:00.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'late replay',
+    createdAt: '2024-01-01T12:00:00.000Z',
+  });
+
+  const [conversation] = await store.listConversations('alice');
+  assert.equal(conversation.lastMessage.body, 'newer');
+  assert.equal(conversation.unreadCount, 1);
+
+  const indexRead = fake.findCalls.find((call) => call.collection === 'conversation_index');
+  assert.deepEqual(indexRead.query, { userId: 'alice' });
+  assert.deepEqual(indexRead.options, {
+    projection: { _id: 0, userId: 0, updatedAt: 0 },
+  });
+  assert.deepEqual(indexRead.sort, {
+    userId: 1,
+    updatedAt: -1,
+    conversationId: 1,
+  });
+  assert.equal(indexRead.limit, 100);
+  assert.deepEqual(
+    fake.createdIndexes.filter((i) => i.collection === 'conversation_index').map((i) => i.spec),
+    [
+      { userId: 1, conversationId: 1 },
+      { userId: 1, updatedAt: -1, conversationId: 1 },
+    ]
+  );
+
+  assert.equal(
+    fake.findCalls.filter((call) => call.collection === 'messages').length,
+    0,
+    'conversation listing is a single index-collection query'
+  );
+
+  await store.markDelivered(conversation.lastMessage.messageId, 'alice');
+  const [delivered] = await store.listConversations('alice');
+  assert.deepEqual(delivered.lastMessage.deliveredTo, ['alice']);
+
+  assert.equal(await store.markRead('alice:bob', 'alice'), 1);
+  const [read] = await store.listConversations('alice');
+  assert.equal(read.unreadCount, 0);
+  assert.ok(read.lastMessage.readAt);
+  fake.conversationIndexDocs.find((row) => row.userId === 'alice').unreadCount = 3;
+  assert.equal(await store.markRead('alice:bob', 'alice'), 0);
+  assert.equal((await store.listConversations('alice'))[0].unreadCount, 0);
+
+  const deleted = await store.deleteMessage(
+    'alice:bob',
+    conversation.lastMessage.messageId,
+    'bob'
+  );
+  assert.equal(deleted?.body, '');
+  assert.equal((await store.listConversations('alice'))[0].lastMessage.body, '');
+  fake.conversationIndexDocs.find((row) => row.userId === 'alice').lastMessage.body = 'stale';
+  assert.equal(
+    await store.deleteMessage('alice:bob', conversation.lastMessage.messageId, 'bob'),
+    null
+  );
+  assert.equal((await store.listConversations('alice'))[0].lastMessage.body, '');
+
+  fake.conversationIndexDocs.push({
+    userId: 'alice',
+    conversationId: 'mallory:eve',
+    peerId: 'mallory',
+    lastMessage: {
+      ...conversation.lastMessage,
+      conversationId: 'mallory:eve',
+      senderId: 'mallory',
+      recipientId: 'eve',
+    },
+    unreadCount: 1,
+    updatedAt: '2024-01-03T00:00:00.000Z',
+  });
+  assert.equal(
+    (await store.listConversations('alice')).length,
+    1,
+    'a malformed index row cannot expose another user conversation'
+  );
+
+  await store.close?.();
+});
+
+test('mongo store can dual-write the index before indexed reads are enabled', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexWrites: true,
+    conversationIndexReady: false,
+  });
+
+  await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
+  assert.equal(fake.conversationIndexDocs.length, 2);
+
+  await store.listConversations('alice');
+  assert.ok(
+    fake.findCalls.some((call) => call.collection === 'messages' && call.query.$or),
+    'legacy reads remain active during the dual-write migration phase'
+  );
 
   await store.close?.();
 });

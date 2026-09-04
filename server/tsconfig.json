@@ -21,6 +21,7 @@
   "include": [
     "src/**/*.ts",
     "db/**/*.ts",
+    "scripts/**/*.ts",
     "test/**/*.ts",
     "drizzle.config.ts",
     "../shared/**/*.ts"

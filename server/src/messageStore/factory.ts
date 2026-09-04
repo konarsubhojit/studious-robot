@@ -11,8 +11,9 @@ import { describeError } from '../lib/errors.ts';
 import { createMemoryMessageStore } from './memoryStore.ts';
 import {
   DEFAULT_COLLECTION_NAME,
+  DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME,
   DEFAULT_DB_NAME,
-  DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+  mongoClientOptions,
 } from './mongoConnection.ts';
 import { createMongoMessageStore } from './mongoStore.ts';
 import type { MessageStore, MongoClientLike } from './types.ts';
@@ -57,7 +58,7 @@ export function createMessageStore(opts: { messageStore?: MessageStore; } = {}):
   let client;
   try {
     client = new MongoClient(uri, {
-      serverSelectionTimeoutMS: DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
+      ...mongoClientOptions(),
     });
   } catch (error) {
     // Only the driver's own parse/validation errors say anything about the
@@ -73,6 +74,13 @@ export function createMessageStore(opts: { messageStore?: MessageStore; } = {}):
     uri,
     dbName: process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME,
     collectionName: process.env.MONGODB_MESSAGES_COLLECTION?.trim() || DEFAULT_COLLECTION_NAME,
+    conversationIndexCollectionName:
+      process.env.MONGODB_CONVERSATION_INDEX_COLLECTION?.trim() ||
+      DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME,
+    conversationIndexWrites:
+      process.env.MONGODB_CONVERSATION_INDEX_WRITES === 'true' ||
+      process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
+    conversationIndexReady: process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
     // The driver's client is a superset of the surface the store uses; see
     // `MongoClientLike` for why the store is typed structurally.
     client: (client as unknown) as MongoClientLike,
