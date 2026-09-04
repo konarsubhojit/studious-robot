@@ -23,6 +23,7 @@ import {
   LIST_MESSAGES_SORT,
   LIST_CONVERSATION_INDEX_SORT,
   MAX_CONVERSATION_LIMIT,
+  bodyLowerOf,
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
@@ -178,6 +179,8 @@ export function createMongoMessageStore({
   conversationIndexCollectionName,
   conversationIndexWrites,
   conversationIndexReady,
+  bodyLowerWrites,
+  bodyLowerReady,
   client,
 }: {
   uri?: string;
@@ -186,6 +189,8 @@ export function createMongoMessageStore({
   conversationIndexCollectionName?: string;
   conversationIndexWrites?: boolean;
   conversationIndexReady?: boolean;
+  bodyLowerWrites?: boolean;
+  bodyLowerReady?: boolean;
   client?: MongoClientLike;
 } = {}): MessageStore {
   if (!uri && !client) {
@@ -198,6 +203,10 @@ export function createMongoMessageStore({
     conversationIndexCollectionName || DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME;
   const useConversationIndex = conversationIndexReady ?? false;
   const writeConversationIndex = conversationIndexWrites ?? useConversationIndex;
+  // Same two-phase rollout as the conversation index: dual-write first, read
+  // from the new field only once the backfill has covered the old rows.
+  const searchOnBodyLower = bodyLowerReady ?? false;
+  const writeBodyLower = bodyLowerWrites ?? searchOnBodyLower;
 
   const connector = createMongoConnector({
     uri,
@@ -225,7 +234,12 @@ export function createMongoMessageStore({
       // shard-key mismatch it otherwise rejects).
       const result = await messages.updateOne(
         { conversationId: record.conversationId, messageId: record.messageId },
-        { $setOnInsert: { ...record } },
+        {
+          $setOnInsert: {
+            ...record,
+            ...(writeBodyLower ? { bodyLower: bodyLowerOf(record.body) } : {}),
+          },
+        },
         { upsert: true }
       );
       // The write was a replay of an already-stored message: return the stored
@@ -264,14 +278,33 @@ export function createMongoMessageStore({
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
       const cap = clampLimit(limit);
-      const { messages } = await connect();
-      // Deliberately no `.sort()`: the query fans out across every
-      // conversation the user takes part in (i.e. across shard-key
-      // partitions), which Cosmos DB for MongoDB (RU) rejects unless a
-      // matching composite index serves it — impossible for a cross-partition
-      // sort. Sorting happens in application code, exactly as
-      // `listConversations` does, and the page is cut afterwards.
-      const found = await messages.find(buildSearchMessagesFilter(userId, term, before)).toArray();
+      const { messages, conversationIndex } = await connect();
+      // Narrow to the user's own partitions when the conversation index can
+      // say what they are. `conversationId` is the shard key, so this is the
+      // difference between reading the user's conversations and fanning out
+      // across every partition in the collection. One extra single-partition
+      // index read buys that, and it is skipped entirely when the index is not
+      // in service.
+      let conversationIds: string[] | null = null;
+      if (useConversationIndex && conversationIndex) {
+        const rows = await conversationIndex.find({ userId }).toArray();
+        conversationIds = rows
+          .map((row) => row.conversationId)
+          .filter((id): id is string => typeof id === 'string' && id !== '');
+      }
+      // Deliberately no `.sort()`: the query still spans several shard-key
+      // partitions, which Cosmos DB for MongoDB (RU) rejects unless a matching
+      // composite index serves it — impossible for a cross-partition sort.
+      // Sorting happens in application code, exactly as `listConversations`
+      // does, and the page is cut afterwards.
+      const found = await messages
+        .find(
+          buildSearchMessagesFilter(userId, term, before, {
+            conversationIds,
+            useBodyLower: searchOnBodyLower,
+          })
+        )
+        .toArray();
       return toStoredMessages(found).sort(byNewestFirst).slice(0, cap);
     },
 
@@ -416,6 +449,7 @@ export function createMongoMessageStore({
         {
           $set: {
             body: tombstone.body,
+            ...(writeBodyLower ? { bodyLower: bodyLowerOf(tombstone.body) } : {}),
             attachment: tombstone.attachment,
             reactions: tombstone.reactions,
             deletedAt: tombstone.deletedAt,

@@ -587,8 +587,18 @@ function createFakeMongoClient() {
         findCalls.push(call);
         let results = docs.filter((doc) =>
           Object.entries(query ?? {})
-            .filter(([field]) => field !== '$or' && field !== 'createdAt' && field !== 'body')
-            .every(([field, value]) => doc[field] === value)
+            .filter(
+              ([field]) =>
+                field !== '$or' &&
+                field !== 'createdAt' &&
+                field !== 'body' &&
+                field !== 'bodyLower'
+            )
+            .every(([field, value]) =>
+              value && typeof value === 'object' && '$in' in value
+                ? (value as { $in: unknown[] }).$in.includes(doc[field])
+                : doc[field] === value
+            )
         );
         if (query?.createdAt?.$lt) {
           results = results.filter((d) => d.createdAt < query.createdAt.$lt);
@@ -601,9 +611,11 @@ function createFakeMongoClient() {
             })
           );
         }
-        if (query?.body?.$regex) {
-          const pattern = new RegExp(query.body.$regex, query.body.$options ?? '');
-          results = results.filter((d) => pattern.test(d.body));
+        for (const field of ['body', 'bodyLower'] as const) {
+          const clause = query?.[field];
+          if (!clause?.$regex) continue;
+          const pattern = new RegExp(clause.$regex, clause.$options ?? '');
+          results = results.filter((d) => pattern.test(d[field] ?? ''));
         }
         return {
           sort(spec: any) {
@@ -669,6 +681,7 @@ function createFakeMongoClient() {
     findCalls,
     findOneCalls,
     updateCalls,
+    messageDocs,
     conversationIndexDocs,
     isClosed: () => closed,
   };
@@ -686,6 +699,7 @@ test('mongo store creates its Cosmos-compatible indexes on first use', async () 
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
     { conversationId: 1, body: 1 },
+    { conversationId: 1, bodyLower: 1 },
   ]);
   // Every index is prefixed with the shard key (`conversationId`), and the
   // unique guarantee is expressed on the shard-key-prefixed pair so it
@@ -718,6 +732,7 @@ test('mongo store readiness check connects before the first message operation', 
     { conversationId: 1, messageId: 1 },
     { conversationId: 1, createdAt: -1, messageId: -1 },
     { conversationId: 1, body: 1 },
+    { conversationId: 1, bodyLower: 1 },
   ]);
   await store.close?.();
 });
@@ -776,6 +791,117 @@ test('mongo store searchMessages matches literally and sorts in application code
 
   // A term containing regex metacharacters is matched literally.
   assert.deepEqual(await store.searchMessages({ userId: 'alice', query: '.*' }), []);
+
+  await store.close?.();
+});
+
+test('mongo store dual-writes bodyLower and searches it once the backfill is done', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    bodyLowerReady: true,
+  });
+
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'Lunch At Noon',
+    messageId: 'm1',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+
+  const stored = fake.messageDocs.find((doc: any) => doc.messageId === 'm1');
+  assert.equal(stored.bodyLower, 'lunch at noon');
+
+  const results = await store.searchMessages({ userId: 'alice', query: 'LUNCH at' });
+  assert.deepEqual(
+    results.map((m) => m.body),
+    ['Lunch At Noon']
+  );
+  assert.equal((results[0] as any).bodyLower, undefined, 'the storage-only field is not leaked');
+
+  const search = fake.findCalls.filter((call: any) => call.collection === 'messages').at(-1);
+  assert.deepEqual(search.query.bodyLower, { $regex: 'lunch at' });
+  assert.equal(search.query.body, undefined);
+
+  // A delete keeps the folded copy in step with the emptied body, so the
+  // tombstone stops matching the term it used to.
+  await store.deleteMessage('alice:bob', 'm1', 'alice');
+  assert.equal(fake.messageDocs.find((doc: any) => doc.messageId === 'm1').bodyLower, '');
+  assert.deepEqual(await store.searchMessages({ userId: 'alice', query: 'lunch' }), []);
+
+  await store.close?.();
+});
+
+test('mongo store leaves bodyLower alone until the flag is on', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+
+  await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'Lunch', messageId: 'm1' });
+
+  assert.equal(fake.messageDocs[0].bodyLower, undefined);
+  // The un-migrated read path still finds it, case-insensitively.
+  const results = await store.searchMessages({ userId: 'alice', query: 'LUNCH' });
+  assert.equal(results.length, 1);
+  const search = fake.findCalls.filter((call: any) => call.collection === 'messages').at(-1);
+  assert.deepEqual(search.query.body, { $regex: 'LUNCH', $options: 'i' });
+
+  await store.close?.();
+});
+
+test('mongo store scopes a search to the conversations the index knows about', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexReady: true,
+  });
+
+  await store.saveMessage({
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'lunch at noon',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  });
+  await store.saveMessage({
+    senderId: 'bob',
+    recipientId: 'carol',
+    body: 'lunch without alice',
+    createdAt: '2024-01-01T00:00:01.000Z',
+  });
+
+  const results = await store.searchMessages({ userId: 'alice', query: 'lunch' });
+  assert.deepEqual(
+    results.map((m) => m.body),
+    ['lunch at noon']
+  );
+
+  const search = fake.findCalls.filter((call: any) => call.collection === 'messages').at(-1);
+  assert.deepEqual(
+    search.query.conversationId,
+    { $in: ['alice:bob'] },
+    'the shard key is in the filter, so the query does not fan out across every partition'
+  );
+
+  await store.close?.();
+});
+
+test('mongo store searches unscoped while the conversation index is not in service', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: fake.client });
+
+  await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'lunch at noon' });
+  const results = await store.searchMessages({ userId: 'alice', query: 'lunch' });
+  assert.equal(results.length, 1);
+
+  const search = fake.findCalls.filter((call: any) => call.collection === 'messages').at(-1);
+  assert.equal(search.query.conversationId, undefined);
+  assert.equal(
+    fake.findCalls.some((call: any) => call.collection === 'conversation_index'),
+    false,
+    'no extra round trip when the index cannot answer'
+  );
 
   await store.close?.();
 });

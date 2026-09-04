@@ -94,21 +94,55 @@ export function buildListMessagesFilter(
 }
 
 /**
+ * The case-folded copy of a message body that {@link buildSearchMessagesFilter}
+ * matches against once `bodyLower` has been backfilled.
+ *
+ * Folding at write time is what removes `$options: 'i'` from the read path: a
+ * case-insensitive regex cannot be served by an index, so every search
+ * otherwise degrades into a collection scan that also re-folds every body it
+ * touches.
+ */
+export function bodyLowerOf(body: unknown): string {
+  return String(body ?? '').toLowerCase();
+}
+
+/**
  * Filter for a user's message search.
  *
  * The body match is a literal, case-insensitive substring match: the term is
  * escaped so a user cannot inject a pattern, and no `$text` is used because
  * Cosmos RU does not implement it.
+ *
+ * Two optional narrowings make the query cheaper without changing which
+ * messages it selects:
+ *
+ * - `conversationIds` scopes the search to the conversations the user actually
+ *   takes part in. `conversationId` is the shard key, so this turns a
+ *   fan-out across every partition in the collection into a lookup against the
+ *   user's own partitions.
+ * - `bodyLower` matches the pre-folded copy of the body written by
+ *   `saveMessage`, dropping the un-indexable `$options: 'i'`. It is only
+ *   correct once every document has the field (see the backfill script), hence
+ *   the flag.
  */
 export function buildSearchMessagesFilter(
   userId: string,
   term: string,
-  before?: string
+  before?: string,
+  options: { conversationIds?: string[] | null; useBodyLower?: boolean; } = {}
 ): MongoFilter {
+  const { conversationIds = null, useBodyLower = false } = options;
   const filter: MongoFilter = {
     $or: [{ senderId: userId }, { recipientId: userId }],
-    body: { $regex: escapeRegExp(term), $options: 'i' },
   };
+  if (conversationIds) {
+    filter.conversationId = { $in: [...conversationIds] };
+  }
+  if (useBodyLower) {
+    filter.bodyLower = { $regex: escapeRegExp(term.toLowerCase()) };
+  } else {
+    filter.body = { $regex: escapeRegExp(term), $options: 'i' };
+  }
   if (before) {
     filter.createdAt = { $lt: before };
   }

@@ -18,6 +18,7 @@ import { toStoredMessage, toStoredMessages } from '../src/messageStore/documents
 import {
   DEFAULT_MESSAGE_LIMIT,
   MAX_MESSAGE_LIMIT,
+  bodyLowerOf,
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
@@ -88,6 +89,32 @@ test('the search filter escapes the term and stays case-insensitive', () => {
     buildSearchMessagesFilter('alice', 'lunch', '2024-01-01T00:00:00.000Z').createdAt,
     { $lt: '2024-01-01T00:00:00.000Z' }
   );
+});
+
+test('the search filter can scope to the caller\'s conversations', () => {
+  const filter = buildSearchMessagesFilter('alice', 'lunch', undefined, {
+    conversationIds: ['alice:bob', 'alice:carol'],
+  });
+  assert.deepEqual(filter.conversationId, { $in: ['alice:bob', 'alice:carol'] });
+  // A user with no conversations matches nothing rather than everything.
+  assert.deepEqual(
+    buildSearchMessagesFilter('alice', 'lunch', undefined, { conversationIds: [] }).conversationId,
+    { $in: [] }
+  );
+});
+
+test('the search filter matches the pre-folded body without a case-insensitive regex', () => {
+  const filter = buildSearchMessagesFilter('alice', 'Lunch.', undefined, { useBodyLower: true });
+  assert.deepEqual(filter.bodyLower, { $regex: 'lunch\\.' });
+  assert.equal(filter.body, undefined, 'the un-indexable body regex is dropped');
+  assert.equal((filter.bodyLower as { $options?: string; }).$options, undefined);
+});
+
+test('bodyLowerOf folds any body, including a missing one', () => {
+  assert.equal(bodyLowerOf('Lunch At Noon'), 'lunch at noon');
+  assert.equal(bodyLowerOf(''), '');
+  assert.equal(bodyLowerOf(undefined), '');
+  assert.equal(bodyLowerOf(null), '');
 });
 
 test('the participant filter matches either direction of a conversation', () => {

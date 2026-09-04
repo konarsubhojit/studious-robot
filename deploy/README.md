@@ -524,6 +524,42 @@ The store also creates the exact supporting indexes:
 - `conversation_index: {userId:1, updatedAt:-1, conversationId:1}` for the bounded list;
 - unique `conversation_index: {userId:1, conversationId:1}` for idempotent writes.
 
+#### Message search (`bodyLower`)
+
+`searchMessages` used to run a case-insensitive regex (`$options: 'i'`) over
+`body` across every partition in the collection: no index can serve such a
+regex, and without the shard key in the filter Cosmos fans the query out
+account-wide. Two changes fix that, both rolled out the same way as the
+conversation index:
+
+- Once the conversation index is in service (`MONGODB_CONVERSATION_INDEX_READY`)
+  the search filter is scoped with `conversationId: {$in: [...]}`, so it reads
+  only the caller's own partitions. No extra configuration and no backfill.
+- `bodyLower`, a storage-only case-folded copy of `body`, lets the read path
+  drop `$options: 'i'` and use the `{conversationId:1, bodyLower:1}` index. It
+  needs a backfill, so it is behind its own two flags.
+
+```bash
+# Phase 1 — dual-write. Add MONGODB_MESSAGE_BODY_LOWER_WRITES=true to
+# /etc/robot-signal/env and gracefully reload PM2. Reads are unchanged; every
+# new or deleted message now maintains bodyLower.
+
+# Phase 2 — backfill. Safe to run with writers up (each update is idempotent
+# and only touches documents whose bodyLower is missing or stale), and safe to
+# re-run. It also creates the {conversationId:1, bodyLower:1} index.
+cd /home/wetalk/repos/studious-robot/server
+set -a
+. /etc/robot-signal/env
+set +a
+npm run db:backfill-body-lower
+
+# Phase 3 — read. Add MONGODB_MESSAGE_BODY_LOWER_READY=true and reload.
+```
+
+Keep `MONGODB_MESSAGE_BODY_LOWER_WRITES=true` afterwards; as with the
+conversation index the read flag implies writes as a fail-safe. To roll back,
+clear the read flag — the `body` regex path is still correct at any time.
+
 Mongo command monitoring logs Cosmos `429` / Mongo `16500` responses as
 `[messages] THROTTLED` with command name and retry delay only; filters,
 documents, and credentials are never logged. The Mongo pool is reused and

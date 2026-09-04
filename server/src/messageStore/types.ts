@@ -24,7 +24,15 @@ export type StoredMessage = MessageRecord & {
 };
 
 /** A stored message as it comes back from the driver, `_id` and all. */
-export type MessageDocument = StoredMessage & { _id?: unknown; };
+export type MessageDocument = StoredMessage & {
+  _id?: unknown;
+  /**
+   * Storage-only, case-folded copy of `body`, maintained by the Mongo store so
+   * `searchMessages` can match without an un-indexable case-insensitive regex.
+   * Never exposed to callers — {@link toStoredMessage} strips it.
+   */
+  bodyLower?: string;
+};
 
 export type ConversationIndexDocument = ConversationSummary & {
   _id?: unknown;
