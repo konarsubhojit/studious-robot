@@ -2,6 +2,7 @@ import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
+import { runDetached } from './lib/queryTiming.ts';
 import { callRecordFromRow } from './domain/callHistory.ts';
 import type { Database } from '../db/client.ts';
 
@@ -26,7 +27,7 @@ function invalidateCallHistoryCache(state: import('./stores/contracts.ts').Serve
   if (!state?.cache || userIds.length === 0) return;
   const prefixes = userIds.filter(Boolean).map((userId) => callHistoryCachePrefix(userId));
   if (prefixes.length === 0) return;
-  invalidateCache(state, ...prefixes).catch((error: unknown) => {
+  runDetached(() => invalidateCache(state, ...prefixes)).catch((error: unknown) => {
     console.error(`[calls] call history cache invalidation failed: ${describeError(error)}`);
   });
 }
@@ -46,7 +47,7 @@ function toDateOrNull(value: unknown): Date | null {
  */
 function persistCallRecord(db: Database | null, call: import('./stores/contracts.ts').CallRecord) {
   if (!db || !call?.callId) return;
-  return db
+  return runDetached(() => db
     .insert(callsTable)
     .values({
       callId: call.callId,
@@ -83,7 +84,7 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
         `[calls] failed to persist call to DB: callId=${call.callId}` +
           ` code=${errorCode(error)} ${describeError(error)}`
       );
-    });
+    }));
 }
 
 /**
@@ -92,7 +93,7 @@ function persistCallRecord(db: Database | null, call: import('./stores/contracts
 function persistCallEvent(db: Database | null, event: import('./stores/contracts.ts').CallEvent) {
   if (!db || !event?.eventId) return;
   // Runtime call events expose `timestamp`; persist it as `createdAt`.
-  return db
+  return runDetached(() => db
     .insert(callEventsTable)
     .values({
       eventId: event.eventId,
@@ -113,7 +114,7 @@ function persistCallEvent(db: Database | null, event: import('./stores/contracts
           ` callId=${event.callId} event=${event.event}` +
           ` code=${errorCode(error)} ${describeError(error)}`
       );
-    });
+    }));
 }
 
 /**

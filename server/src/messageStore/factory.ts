@@ -81,6 +81,10 @@ export function createMessageStore(opts: { messageStore?: MessageStore; } = {}):
       process.env.MONGODB_CONVERSATION_INDEX_WRITES === 'true' ||
       process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
     conversationIndexReady: process.env.MONGODB_CONVERSATION_INDEX_READY === 'true',
+    bodyLowerWrites:
+      process.env.MONGODB_MESSAGE_BODY_LOWER_WRITES === 'true' ||
+      process.env.MONGODB_MESSAGE_BODY_LOWER_READY === 'true',
+    bodyLowerReady: process.env.MONGODB_MESSAGE_BODY_LOWER_READY === 'true',
     // The driver's client is a superset of the surface the store uses; see
     // `MongoClientLike` for why the store is typed structurally.
     client: (client as unknown) as MongoClientLike,

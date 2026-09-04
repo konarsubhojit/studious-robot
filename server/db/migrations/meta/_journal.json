@@ -57,6 +57,13 @@
       "when": 1787109631354,
       "tag": "0007_call_duration_and_missed_read",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788539350770,
+      "tag": "0008_calls_history_indexes",
+      "breakpoints": true
     }
   ]
 }

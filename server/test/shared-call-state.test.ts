@@ -11,10 +11,14 @@ function createSharedBackends() {
   let leaseExpiry = 0;
   const terminal = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
+  const saves: string[] = [];
+
   return {
+    saves,
     callState: {
       get: async (callId: string) => calls.get(callId) ?? null,
       save: async (call: import('../src/stores/contracts.ts').CallRecord) => {
+        saves.push(call.callId);
         calls.set(call.callId, { ...call });
       },
       transitionAtomic: async ({
@@ -156,5 +160,43 @@ test('shared atomic transitions: exactly one concurrent conflicting transition w
   } finally {
     await a.teardown();
     await b.teardown();
+  }
+});
+
+// Regression: creating a call and transitioning it each used to write the same
+// record to the shared store twice — once fire-and-forget from the domain
+// helper, once awaited by its `…WithShared` wrapper — so every call action paid
+// two shared-store round trips for one logical save. The awaited save is the
+// one another instance depends on, so it is the fire-and-forget copy that went.
+test('a call create and a transition each write the shared store exactly once', async () => {
+  const shared = createSharedBackends();
+  const stores = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    instanceId: 'instance-a',
+    callState: shared.callState,
+    sessionState: shared.sessionState,
+  });
+
+  const a = await startServer(stores);
+  try {
+    const callerSession = (await postJson(a.url, '/session', { userId: 'user-a', deviceId: 'dev-a' })).body.sessionId;
+    const calleeSession = (await postJson(a.url, '/session', { userId: 'user-b', deviceId: 'dev-b' })).body.sessionId;
+
+    shared.saves.length = 0;
+    const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
+    assert.equal(created.status, 201);
+    const callId = created.body.callId;
+    assert.deepEqual(shared.saves, [callId], 'create writes the shared store once');
+
+    shared.saves.length = 0;
+    const accepted = await postJson(a.url, `/calls/${callId}/accept`, {}, calleeSession);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(shared.saves, [callId], 'the transition writes the shared store once');
+
+    // The awaited save is still the one that lands before the response, so a
+    // peer on another instance can resolve the call immediately.
+    assert.equal((await shared.callState.get(callId))?.status, 'accepted');
+  } finally {
+    await a.teardown();
   }
 });

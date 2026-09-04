@@ -24,7 +24,15 @@ export type StoredMessage = MessageRecord & {
 };
 
 /** A stored message as it comes back from the driver, `_id` and all. */
-export type MessageDocument = StoredMessage & { _id?: unknown; };
+export type MessageDocument = StoredMessage & {
+  _id?: unknown;
+  /**
+   * Storage-only, case-folded copy of `body`, maintained by the Mongo store so
+   * `searchMessages` can match without an un-indexable case-insensitive regex.
+   * Never exposed to callers — {@link toStoredMessage} strips it.
+   */
+  bodyLower?: string;
+};
 
 export type ConversationIndexDocument = ConversationSummary & {
   _id?: unknown;
@@ -71,12 +79,22 @@ export type MessageStore = {
   saveMessage: (message: NewMessageInput) => Promise<StoredMessage>;
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
+  /**
+   * `conversationId` is the shard key of the messages collection: supplying it
+   * keeps the update single-partition on Cosmos. It stays optional so callers
+   * that only hold a message id (and the in-memory store) still work.
+   */
   markDelivered: (
     messageId: string,
-    userId: string
+    userId: string,
+    conversationId?: string
   ) => Promise<StoredMessage | null>;
   listConversations: (userId: string) => Promise<ConversationSummary[]>;
-  markRead: (conversationId: string, userId: string) => Promise<number>;
+  /**
+   * `peerId` saves the store a round trip it would otherwise spend looking the
+   * peer up in the conversation index; optional for callers that do not know it.
+   */
+  markRead: (conversationId: string, userId: string, peerId?: string) => Promise<number>;
   deleteMessage: (
     conversationId: string,
     messageId: string,
@@ -104,6 +122,7 @@ export type MongoSortSpec = Record<string, 1 | -1>;
 /** The counters this store reads off a write result. */
 export type MongoWriteResult = {
   upsertedCount?: number;
+  matchedCount?: number;
   modifiedCount?: number;
 };
 

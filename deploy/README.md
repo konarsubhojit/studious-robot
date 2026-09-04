@@ -258,6 +258,16 @@ after verifying `/health` reports `stateAffinity: "shared"`.
 Secure self-hosted Redis by binding to localhost (or a private subnet) and/or
 setting `requirepass`; never expose it publicly.
 
+**Startup guard.** Running more than one instance without `REDIS_URL` is a
+silent correctness bug: each process keeps its own sessions, presence, call
+registry and read cache, so a cache invalidation published by one process never
+reaches the other five and clients can read stale data for a full TTL. To make
+that impossible to miss, a process whose PM2 ordinal (`NODE_APP_INSTANCE`, or
+`pm_id`) is greater than zero refuses to start when `REDIS_URL` is unset and
+`NODE_ENV=production`, and logs a warning otherwise (see
+`server/src/lib/instances.ts`). Instance `0` is never faulted — it cannot tell
+whether it is alone — so a single-instance host is unaffected.
+
 ---
 
 ## 7. Sudoers — passwordless restart for the deploy script
@@ -513,6 +523,42 @@ The store also creates the exact supporting indexes:
 - `messages: {conversationId:1, createdAt:-1, messageId:-1}` for latest-message reads;
 - `conversation_index: {userId:1, updatedAt:-1, conversationId:1}` for the bounded list;
 - unique `conversation_index: {userId:1, conversationId:1}` for idempotent writes.
+
+#### Message search (`bodyLower`)
+
+`searchMessages` used to run a case-insensitive regex (`$options: 'i'`) over
+`body` across every partition in the collection: no index can serve such a
+regex, and without the shard key in the filter Cosmos fans the query out
+account-wide. Two changes fix that, both rolled out the same way as the
+conversation index:
+
+- Once the conversation index is in service (`MONGODB_CONVERSATION_INDEX_READY`)
+  the search filter is scoped with `conversationId: {$in: [...]}`, so it reads
+  only the caller's own partitions. No extra configuration and no backfill.
+- `bodyLower`, a storage-only case-folded copy of `body`, lets the read path
+  drop `$options: 'i'` and use the `{conversationId:1, bodyLower:1}` index. It
+  needs a backfill, so it is behind its own two flags.
+
+```bash
+# Phase 1 — dual-write. Add MONGODB_MESSAGE_BODY_LOWER_WRITES=true to
+# /etc/robot-signal/env and gracefully reload PM2. Reads are unchanged; every
+# new or deleted message now maintains bodyLower.
+
+# Phase 2 — backfill. Safe to run with writers up (each update is idempotent
+# and only touches documents whose bodyLower is missing or stale), and safe to
+# re-run. It also creates the {conversationId:1, bodyLower:1} index.
+cd /home/wetalk/repos/studious-robot/server
+set -a
+. /etc/robot-signal/env
+set +a
+npm run db:backfill-body-lower
+
+# Phase 3 — read. Add MONGODB_MESSAGE_BODY_LOWER_READY=true and reload.
+```
+
+Keep `MONGODB_MESSAGE_BODY_LOWER_WRITES=true` afterwards; as with the
+conversation index the read flag implies writes as a fail-safe. To roll back,
+clear the read flag — the `body` regex path is still correct at any time.
 
 Mongo command monitoring logs Cosmos `429` / Mongo `16500` responses as
 `[messages] THROTTLED` with command name and retry delay only; filters,

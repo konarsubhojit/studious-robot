@@ -2,7 +2,7 @@ import { RTC_ACTIVE_CALL_STATES, SIGNALING_VERSION, CONNECTED_CALL_STATUS } from
 import { normaliseId } from '../lib/normalize.ts';
 import { recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
-import { hydrateCallFromShared, persistCallToShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
+import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
 import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 
@@ -259,8 +259,11 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
   // is toggled but never send beats, and stamping those would arm the
   // heartbeat deadline on a call that will never satisfy it.
   if (options.recordsHeartbeat && value?.heartbeat === true) {
+    // `recordCallHeartbeat` already mirrors the stamped record to the shared
+    // store fire-and-forget. Awaiting a second, identical save here put a
+    // shared-store round trip in front of every heartbeat ack — for a liveness
+    // signal that is explicitly best-effort and has no ordering requirement.
     recordCallHeartbeat(options.state, callId);
-    await persistCallToShared(options.state, options.state.calls.get(callId)!);
   }
 
   const peerUserId = call.callerId === userId ? call.calleeId : call.callerId;

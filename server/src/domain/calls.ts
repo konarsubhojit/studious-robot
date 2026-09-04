@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
 import { resolveReachableChannels, hasKnownUser } from '../lib/state.ts';
+import { runDetached } from '../lib/queryTiming.ts';
 import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from '../callPersistence.ts';
 
 /**
@@ -13,9 +14,22 @@ import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from 
 export type CallRecord = import('../stores/contracts.ts').CallRecord;
 export type ServerState = import('../stores/contracts.ts').ServerState;
 
+/**
+ * Mirror `call` into the shared (cross-instance) call store.
+ *
+ * Fire-and-forget, and used only by the server-initiated cleanups that have no
+ * caller to await them — `finalizeCall` and the ringing-timeout sweep. The two
+ * request paths, `createCallRecordWithShared` and `transitionCallWithShared`,
+ * deliberately do *not* mirror here: they await `persistCallToShared` on the
+ * same record immediately afterwards, so mirroring as well spent a second,
+ * redundant shared-store round trip per call create and per state transition.
+ * The awaited save is the one with the ordering guarantee (a callee on another
+ * instance must be able to resolve the call the moment it is told about it), so
+ * it is the duplicate that goes.
+ */
 function mirrorCallToShared(state: ServerState, call: CallRecord): void {
   if (!state.callState) return;
-  void state.callState.save(call).catch((error: unknown) => {
+  void runDetached(() => state.callState!.save(call)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[calls] failed to mirror call ${call.callId} to shared store: ${message}`);
   });
@@ -75,7 +89,8 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
   };
 
   state.calls.set(callId, call);
-  mirrorCallToShared(state, call);
+  // No `mirrorCallToShared` here: `createCallRecordWithShared` awaits the same
+  // save, and it is the awaited one the callee's instance depends on.
   state.callEvents.set(callId, []);
   invalidateCallHistoryCache(state, callerId, calleeId);
   const persistedCall = persistCallRecord(state.db, call);
@@ -173,7 +188,8 @@ function transitionCall(state: ServerState, callId: string, toStatus: string, { 
 
   invalidateCallHistoryCache(state, call.callerId, call.calleeId);
   void persistCallRecord(state.db, call);
-  mirrorCallToShared(state, call);
+  // No `mirrorCallToShared` here either: `transitionCallWithShared` awaits the
+  // same save on the transitioned record.
   appendCallEvent(state, callId, toStatus, actor, reason);
 
   return { ok: true, call };

@@ -8,6 +8,8 @@
  * method performs, and the Cosmos-specific reasons behind them.
  */
 
+import { describeError } from '../lib/errors.ts';
+import { runDetached } from '../lib/queryTiming.ts';
 import { summariseConversations } from './conversations.ts';
 import { toStoredMessage, toStoredMessages } from './documents.ts';
 import { instrumentMongoStore } from './instrumentation.ts';
@@ -21,6 +23,7 @@ import {
   LIST_MESSAGES_SORT,
   LIST_CONVERSATION_INDEX_SORT,
   MAX_CONVERSATION_LIMIT,
+  bodyLowerOf,
   buildListMessagesFilter,
   buildParticipantFilter,
   buildSearchMessagesFilter,
@@ -176,6 +179,8 @@ export function createMongoMessageStore({
   conversationIndexCollectionName,
   conversationIndexWrites,
   conversationIndexReady,
+  bodyLowerWrites,
+  bodyLowerReady,
   client,
 }: {
   uri?: string;
@@ -184,6 +189,8 @@ export function createMongoMessageStore({
   conversationIndexCollectionName?: string;
   conversationIndexWrites?: boolean;
   conversationIndexReady?: boolean;
+  bodyLowerWrites?: boolean;
+  bodyLowerReady?: boolean;
   client?: MongoClientLike;
 } = {}): MessageStore {
   if (!uri && !client) {
@@ -196,6 +203,10 @@ export function createMongoMessageStore({
     conversationIndexCollectionName || DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME;
   const useConversationIndex = conversationIndexReady ?? false;
   const writeConversationIndex = conversationIndexWrites ?? useConversationIndex;
+  // Same two-phase rollout as the conversation index: dual-write first, read
+  // from the new field only once the backfill has covered the old rows.
+  const searchOnBodyLower = bodyLowerReady ?? false;
+  const writeBodyLower = bodyLowerWrites ?? searchOnBodyLower;
 
   const connector = createMongoConnector({
     uri,
@@ -223,7 +234,12 @@ export function createMongoMessageStore({
       // shard-key mismatch it otherwise rejects).
       const result = await messages.updateOne(
         { conversationId: record.conversationId, messageId: record.messageId },
-        { $setOnInsert: { ...record } },
+        {
+          $setOnInsert: {
+            ...record,
+            ...(writeBodyLower ? { bodyLower: bodyLowerOf(record.body) } : {}),
+          },
+        },
         { upsert: true }
       );
       // The write was a replay of an already-stored message: return the stored
@@ -262,22 +278,45 @@ export function createMongoMessageStore({
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
       const cap = clampLimit(limit);
-      const { messages } = await connect();
-      // Deliberately no `.sort()`: the query fans out across every
-      // conversation the user takes part in (i.e. across shard-key
-      // partitions), which Cosmos DB for MongoDB (RU) rejects unless a
-      // matching composite index serves it — impossible for a cross-partition
-      // sort. Sorting happens in application code, exactly as
-      // `listConversations` does, and the page is cut afterwards.
-      const found = await messages.find(buildSearchMessagesFilter(userId, term, before)).toArray();
+      const { messages, conversationIndex } = await connect();
+      // Narrow to the user's own partitions when the conversation index can
+      // say what they are. `conversationId` is the shard key, so this is the
+      // difference between reading the user's conversations and fanning out
+      // across every partition in the collection. One extra single-partition
+      // index read buys that, and it is skipped entirely when the index is not
+      // in service.
+      let conversationIds: string[] | null = null;
+      if (useConversationIndex && conversationIndex) {
+        const rows = await conversationIndex.find({ userId }).toArray();
+        conversationIds = rows
+          .map((row) => row.conversationId)
+          .filter((id): id is string => typeof id === 'string' && id !== '');
+      }
+      // Deliberately no `.sort()`: the query still spans several shard-key
+      // partitions, which Cosmos DB for MongoDB (RU) rejects unless a matching
+      // composite index serves it — impossible for a cross-partition sort.
+      // Sorting happens in application code, exactly as `listConversations`
+      // does, and the page is cut afterwards.
+      const found = await messages
+        .find(
+          buildSearchMessagesFilter(userId, term, before, {
+            conversationIds,
+            useBodyLower: searchOnBodyLower,
+          })
+        )
+        .toArray();
       return toStoredMessages(found).sort(byNewestFirst).slice(0, cap);
     },
 
-    async markDelivered(messageId, userId) {
+    async markDelivered(messageId, userId, conversationId) {
       const { messages, conversationIndex } = await connect();
+      // Shard-key (`conversationId`) prefixed when the caller knows it, so
+      // Cosmos routes the write to one partition instead of fanning out; the
+      // unique index is `{ conversationId, messageId }`.
+      const filter = conversationId ? { conversationId, messageId } : { messageId };
       // `$addToSet` gives idempotency for free.
       const result = await messages.findOneAndUpdate(
-        { messageId },
+        filter,
         { $addToSet: { deliveredTo: userId } },
         { returnDocument: 'after' }
       );
@@ -330,7 +369,7 @@ export function createMongoMessageStore({
       return summariseConversations(toStoredMessages(found), userId);
     },
 
-    async markRead(conversationId, userId) {
+    async markRead(conversationId, userId, peerId) {
       const { messages, conversationIndex } = await connect();
       const readAt = nextTimestamp();
       const result = await messages.updateMany(
@@ -338,25 +377,52 @@ export function createMongoMessageStore({
         { $set: { readAt } }
       );
       if (conversationIndex) {
-        const summary = await conversationIndex.findOne({ userId, conversationId });
-        const participants = summary ? [userId, summary.peerId] : [userId];
-        await conversationIndex.updateOne(
-          { userId, conversationId },
-          { $set: { unreadCount: 0 } }
+        // Without a `peerId` from the caller the peer's row can only be found
+        // the old way — one extra round trip — rather than left unpatched.
+        const resolvedPeerId =
+          peerId ?? (await conversationIndex.findOne({ userId, conversationId }))?.peerId;
+        // The reader's unread reset and the read receipt on their own row are
+        // one write. The `lastMessage.*` conditions are in the *filter* rather
+        // than checked by a prior read: when the last message is the reader's
+        // own (or already read) the update matches nothing, and the plain reset
+        // below runs instead — never both.
+        const merged = await conversationIndex.updateOne(
+          {
+            userId,
+            conversationId,
+            'lastMessage.recipientId': userId,
+            'lastMessage.readAt': null,
+          },
+          { $set: { unreadCount: 0, 'lastMessage.readAt': readAt } }
         );
-        if (summary?.lastMessage.recipientId === userId && !summary.lastMessage.readAt) {
-          await Promise.all(
-            participants.map((participantId) =>
-              conversationIndex.updateOne(
-                {
-                  userId: participantId,
-                  conversationId,
-                  'lastMessage.messageId': summary.lastMessage.messageId,
-                },
-                { $set: { 'lastMessage.readAt': readAt } }
-              )
-            )
+        // `matchedCount`, not `modifiedCount`: a row the guard matched but left
+        // unchanged (its `unreadCount` was already 0) needs no second write.
+        if (!(merged?.matchedCount ?? merged?.modifiedCount)) {
+          await conversationIndex.updateOne(
+            { userId, conversationId },
+            { $set: { unreadCount: 0 } }
           );
+        }
+        if (resolvedPeerId) {
+          // The sender's copy of the receipt is not needed before answering the
+          // reader, so it is not awaited; it is pushed to them over the socket
+          // anyway. Same filter-as-guard trick: a no-op when it does not apply.
+          void runDetached(() => conversationIndex
+            .updateOne(
+              {
+                userId: resolvedPeerId,
+                conversationId,
+                'lastMessage.recipientId': userId,
+                'lastMessage.readAt': null,
+              },
+              { $set: { 'lastMessage.readAt': readAt } }
+            ))
+            .catch((error: unknown) => {
+              console.error(
+                `[messages] conversation index read receipt failed` +
+                  ` conversationId=${conversationId}: ${describeError(error)}`
+              );
+            });
         }
       }
       return result?.modifiedCount ?? 0;
@@ -383,6 +449,7 @@ export function createMongoMessageStore({
         {
           $set: {
             body: tombstone.body,
+            ...(writeBodyLower ? { bodyLower: bodyLowerOf(tombstone.body) } : {}),
             attachment: tombstone.attachment,
             reactions: tombstone.reactions,
             deletedAt: tombstone.deletedAt,

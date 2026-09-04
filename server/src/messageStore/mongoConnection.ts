@@ -141,6 +141,10 @@ export async function ensureMessageIndexes(messages: MessagesCollection): Promis
   // `searchMessages`), which is served identically on the in-memory store,
   // MongoDB/vCore and Cosmos RU.
   await createIndexOrWarn(messages, { conversationId: 1, body: 1 });
+  // The same lookup once `MONGODB_MESSAGE_BODY_LOWER_READY` is on: the search
+  // then matches the pre-folded `bodyLower` without `$options: 'i'`, which the
+  // `body` index above cannot serve.
+  await createIndexOrWarn(messages, { conversationId: 1, bodyLower: 1 });
 }
 
 export async function ensureConversationIndex(

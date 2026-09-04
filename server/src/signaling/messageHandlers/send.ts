@@ -248,7 +248,11 @@ async function handleMessageSend(
   if ((state.userConnections.get(validated.recipientId)?.size ?? 0) > 0) {
     try {
       deliveredMessage =
-        (await state.messageStore.markDelivered(message.messageId, validated.recipientId)) ?? message;
+        (await state.messageStore.markDelivered(
+          message.messageId,
+          validated.recipientId,
+          message.conversationId
+        )) ?? message;
       await invalidateCache(state, messagesCachePrefix(message.conversationId));
     } catch (error) {
       console.error(`[messages] failed to mark message delivered: ${describeError(error)}`);
