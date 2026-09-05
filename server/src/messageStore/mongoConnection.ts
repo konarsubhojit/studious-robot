@@ -180,6 +180,12 @@ function instrumentMongoCursor<T>(
   return cursor;
 }
 
+/**
+ * Patch the narrow collection object in place so every driver call is timed.
+ *
+ * The connector owns these collection handles, and the WeakSet makes the patch
+ * idempotent if a test or retry path hands the same object back again.
+ */
 function instrumentMongoCollection<T>(
   collection: import('./types.ts').MongoCollection<T>,
   collectionName: string

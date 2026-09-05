@@ -100,6 +100,9 @@ const MAX_TRACKED_QUERY_OPERATIONS = 100;
  */
 const MAX_TRACKED_SIGNALING_ERROR_CODES = 50;
 
+/** Event-loop delay sampling cadence for the `/metrics` histogram. */
+const EVENT_LOOP_DELAY_SAMPLE_MS = 1_000;
+
 /**
  * Running totals for one `backend:kind:operation`.  Separate from the wire
  * type: `meanMs` is derived at snapshot time, so keeping a field for it here
@@ -207,11 +210,15 @@ function createTelemetry(): Telemetry {
     mongo_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Redis cache round-trip duration, in ms. */
     redis_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
-    /** Event-loop scheduling lag, in ms, sampled from node:perf_hooks. */
+    /** Per-sample maximum event-loop scheduling lag, in ms. */
     event_loop_lag_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
   };
   const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
   eventLoopDelay.enable();
+  const eventLoopDelaySampleTimer = setInterval(() => {
+    observeEventLoopDelay();
+  }, EVENT_LOOP_DELAY_SAMPLE_MS);
+  eventLoopDelaySampleTimer.unref();
 
   /**
    * `backend:kind:operation` → running totals, so `/metrics` can answer "which
@@ -443,7 +450,6 @@ function createTelemetry(): Telemetry {
    * returned verbatim from a `/metrics` HTTP endpoint.
    */
   function getSnapshot(): MetricsSnapshot {
-    observeEventLoopDelay();
     const snap = ({
       collectedAt: new Date().toISOString(),
       counters: { ...counters },

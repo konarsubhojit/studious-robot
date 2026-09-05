@@ -50,10 +50,9 @@ function isDuplicateKeyError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 11000);
 }
 
-async function updateConversationIndex(
-  conversationIndex: ConversationIndexCollection,
+function conversationIndexOperationsFor(
   message: StoredMessage
-): Promise<void> {
+): { upserts: MongoBulkWriteOperation[]; followUps: MongoBulkWriteOperation[] } {
   const upserts: MongoBulkWriteOperation[] = [];
   const followUps: MongoBulkWriteOperation[] = [];
   for (const userId of new Set([message.senderId, message.recipientId])) {
@@ -104,10 +103,23 @@ async function updateConversationIndex(
       },
     });
   }
+  return { upserts, followUps };
+}
+
+async function updateConversationIndex(
+  conversationIndex: ConversationIndexCollection,
+  message: StoredMessage
+): Promise<void> {
+  const { upserts, followUps } = conversationIndexOperationsFor(message);
   try {
     await conversationIndex.bulkWrite([...upserts, ...followUps], { ordered: true });
   } catch (error) {
     if (!isDuplicateKeyError(error)) throw error;
+    try {
+      await conversationIndex.bulkWrite(upserts, { ordered: false });
+    } catch (retryError) {
+      if (!isDuplicateKeyError(retryError)) throw retryError;
+    }
     await conversationIndex.bulkWrite(followUps, { ordered: false });
   }
 }
@@ -238,14 +250,14 @@ export function createMongoMessageStore({
   }
 
   async function flushDeliveryReceipts(): Promise<void> {
-    if (deliveryFlushPromise) {
+    while (deliveryFlushPromise) {
       try {
         await deliveryFlushPromise;
       } catch {
         // The in-flight flush already logged and requeued its receipts.
       }
-      if (pendingDeliveryReceipts.size === 0) return;
     }
+    if (pendingDeliveryReceipts.size === 0) return;
     const receipts = [...pendingDeliveryReceipts.values()];
     pendingDeliveryReceipts.clear();
     if (receipts.length === 0) return;
