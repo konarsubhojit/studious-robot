@@ -1,0 +1,21 @@
+{
+  "name": "@wetalk/loadrig",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Socket.IO load-testing harness for the WeTalk signaling server.",
+  "type": "module",
+  "bin": {
+    "wetalk-loadrig": "./rig.mjs"
+  },
+  "scripts": {
+    "check": "node --check rig.mjs",
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
