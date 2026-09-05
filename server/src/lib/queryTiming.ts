@@ -227,13 +227,13 @@ async function timeQuery<T>(
 ): Promise<T> {
   if (!isQueryTimingEnabled()) return await run();
 
-  const startedAt = performance.now();
   const operation = normaliseLabel(descriptor.operation) ?? 'other';
   const target = normaliseLabel(descriptor.target);
   // Captured before `run()` so a detached operation stays labelled detached
   // even if it resolves after the context that started it has gone.
   const blocking = !isDetached();
 
+  const startedAt = performance.now();
   try {
     const result = await run();
     const durationMs = performance.now() - startedAt;

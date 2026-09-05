@@ -224,22 +224,22 @@ function createRedisCache({ client, ownsClient = false, keyPrefix = REDIS_KEY_PR
       if (closed) return;
       // Escape glob metacharacters so ids can never widen the match pattern.
       const pattern = `${keyPrefix}${prefix}`.replace(/([[\]?*\\])/g, '\\$1') + '*';
-      // One timing for the whole scan+delete sweep: it is a single logical
-      // invalidation, however many round trips it takes.
-      await timeQuery(
-        { backend: 'redis', operation: 'delByPrefix', kind: 'write', target: 'cache' },
-        async () => {
-          let batch: string[] = [];
-          for await (const key of scanKeys(client, pattern)) {
-            batch.push(key);
-            if (batch.length >= 100) {
-              await client.del(batch);
-              batch = [];
-            }
-          }
-          if (batch.length > 0) await client.del(batch);
+      const deleteBatch = (keys: string[]) =>
+        timeQuery(
+          { backend: 'redis', operation: 'del', kind: 'write', target: 'cache' },
+          () => client.del(keys)
+        );
+      let batch: string[] = [];
+      for await (const key of scanKeys(client, pattern)) {
+        batch.push(key);
+        if (batch.length >= 100) {
+          await deleteBatch(batch);
+          batch = [];
         }
-      );
+      }
+      if (batch.length > 0) {
+        await deleteBatch(batch);
+      }
     },
 
     async close() {

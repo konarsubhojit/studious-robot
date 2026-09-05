@@ -8,7 +8,7 @@
 import test from 'node:test';
 import { pushSenders } from '../src/push.ts';
 import assert from 'node:assert/strict';
-import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
+import { asMessageStore, closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
 
@@ -76,6 +76,25 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 
 const VERSION = 1;
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForCondition(assertion: () => boolean | Promise<boolean>, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await assertion()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(await assertion(), 'condition was not met before timeout');
+}
+
 // ─── message.send ─────────────────────────────────────────────────────────────
 
 test('message.send delivers to the recipient and acks the sender', async (t) => {
@@ -116,6 +135,116 @@ test('message.send delivers to the recipient and acks the sender', async (t) => 
 
   const confirmation = await delivered;
   assert.equal(confirmation.messageId, ack.message.messageId);
+});
+
+test('message.send acks after fan-out without waiting for persistence', async (t) => {
+  const deferred = createDeferred<void>();
+  const saved: any[] = [];
+  const messageStore = asMessageStore({
+    type: 'memory' as const,
+    async saveMessage(message: any) {
+      await deferred.promise;
+      saved.push(message);
+      return message;
+    },
+    async listMessages() {
+      return saved;
+    },
+    async searchMessages() {
+      return [];
+    },
+    markDelivered: async () => null,
+    enqueueDeliveryReceipt() {},
+    async flushDeliveryReceipts() {},
+    async listConversations() {
+      return [];
+    },
+    async markRead() {
+      return 0;
+    },
+    async deleteMessage() {
+      return null;
+    },
+    async reactToMessage() {
+      return null;
+    },
+  });
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'ack-alice');
+  const bobSession = await createSession(url, 'ack-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const received = new Promise<any>((resolve) => bob.once('message.received', resolve));
+  const ackPromise = emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'ack-bob',
+    body: 'fast ack',
+  });
+
+  const envelope = await received;
+  const ack = await Promise.race([
+    ackPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('ack waited for persistence')), 100)),
+  ]);
+  assert.equal((ack as any).ok, true);
+  assert.equal((ack as any).message.messageId, envelope.message.messageId);
+  assert.equal(saved.length, 0, 'saveMessage has not completed when the ack is emitted');
+
+  deferred.resolve(undefined);
+  await waitForCondition(() => saved.length === 1);
+});
+
+test('message.send surfaces asynchronous persistence failures in telemetry', async (t) => {
+  const messageStore = asMessageStore({
+    type: 'memory' as const,
+    async saveMessage() {
+      throw new Error('store down');
+    },
+    async listMessages() {
+      return [];
+    },
+    async searchMessages() {
+      return [];
+    },
+    markDelivered: async () => null,
+    enqueueDeliveryReceipt() {},
+    async flushDeliveryReceipts() {},
+    async listConversations() {
+      return [];
+    },
+    async markRead() {
+      return 0;
+    },
+    async deleteMessage() {
+      return null;
+    },
+    async reactToMessage() {
+      return null;
+    },
+  });
+  const { url, teardown, getMetrics } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'persist-alice');
+  await createSession(url, 'persist-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'persist-bob',
+    body: 'accepted despite store outage',
+  });
+  assert.equal(ack.ok, true);
+
+  await waitForCondition(() => getMetrics().counters.message_persist_errors === 1);
 });
 
 test('message.send records a delivery receipt when the recipient is connected', async (t) => {
@@ -193,8 +322,8 @@ test('message.send stores a replayed client messageId exactly once', async (t) =
   assert.equal(history.body.messages.length, 1, 'the replay must not duplicate the message');
 });
 
-test('message.send rejects a messageId already used by another message', async (t) => {
-  const { url, teardown } = await startServer();
+test('message.send surfaces a messageId already used by another message after accept', async (t) => {
+  const { url, teardown, getMetrics } = await startServer();
   t.after(teardown);
 
   const aliceSession = await createSession(url, 'msg-alice');
@@ -213,6 +342,10 @@ test('message.send rejects a messageId already used by another message', async (
     body: 'the original',
     messageId: 'client-uuid-2',
   });
+  await waitForCondition(async () => {
+    const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
+    return history.body.messages.length === 1;
+  });
   // Bob tries to overwrite Alice's message by reusing its id.
   const ack = await emitWithAck(bob, 'message.send', {
     version: VERSION,
@@ -221,8 +354,9 @@ test('message.send rejects a messageId already used by another message', async (
     messageId: 'client-uuid-2',
   });
 
-  assert.equal(ack.ok, false);
-  assert.equal(ack.error.code, 'bad_request');
+  assert.equal(ack.ok, true);
+  assert.equal(ack.message.messageId, 'client-uuid-2');
+  await waitForCondition(() => getMetrics().counters.message_persist_errors === 1);
 
   const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
   assert.equal(history.body.messages.length, 1);

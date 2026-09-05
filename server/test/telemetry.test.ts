@@ -56,6 +56,7 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.equal(typeof snap.collectedAt, 'string');
     assert.ok(typeof snap.counters === 'object' && snap.counters !== null);
     assert.ok(typeof snap.histograms === 'object' && snap.histograms !== null);
+    assert.ok(snap.histograms.event_loop_lag_ms, 'event loop lag histogram is exposed');
     assert.ok(typeof snap.derived === 'object' && snap.derived !== null);
 
     // Counters should all start at 0
@@ -71,6 +72,7 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.equal(snap.counters.calls_unreachable, 0);
     assert.equal(snap.counters.calls_failed, 0);
     assert.equal(snap.counters.signaling_errors, 0);
+    assert.equal(snap.counters.message_persist_errors, 0);
 
     // The per-code breakdown starts empty, alongside the aggregate counter.
     assert.deepEqual(snap.signaling_errors_by_code, {});
