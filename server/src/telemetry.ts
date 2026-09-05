@@ -39,6 +39,12 @@ export type QueryOperationSnapshot = {
 export type MetricsSnapshot = {
   collectedAt: string;
   counters: Record<string, number>;
+  /**
+   * Signaling acknowledgement errors broken down by error code, so a spike in
+   * the aggregate `signaling_errors` counter can be attributed without having
+   * to correlate against the journal.
+   */
+  signaling_errors_by_code: Record<string, number>;
   histograms: Record<string, HistogramSnapshot>;
   derived: Record<string, number | null>;
   /**
@@ -82,6 +88,14 @@ const QUERY_LATENCY_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, I
  * label set can then never grow the snapshot without limit.
  */
 const MAX_TRACKED_QUERY_OPERATIONS = 100;
+
+/**
+ * Upper bound on distinct signaling error codes tracked individually.  Codes
+ * come from a small frozen taxonomy, but the recorder accepts a free-form
+ * string, so anything past the cap is folded into an `other` bucket rather
+ * than growing the snapshot without limit.
+ */
+const MAX_TRACKED_SIGNALING_ERROR_CODES = 50;
 
 /**
  * Running totals for one `backend:kind:operation`.  Separate from the wire
@@ -198,6 +212,12 @@ function createTelemetry(): Telemetry {
    */
   const queryOperations: Map<string, QueryOperationTotals> = new Map();
 
+  /**
+   * Error code → count, the per-code breakdown behind the aggregate
+   * `signaling_errors` counter.
+   */
+  const signalingErrorsByCode: Map<string, number> = new Map();
+
   // ── Per-call timestamp tracking (for latency calculations) ───────────────
   const callTimestamps: Map<string, CallTimestamp> = new Map();
 
@@ -304,12 +324,22 @@ function createTelemetry(): Telemetry {
   }
 
   /**
-   * Increment the signaling error counter.
+   * Increment the signaling error counter, both in aggregate and per code.
    *
-   * @param _code - Error code (reserved for future per-code breakdown).
+   * @param code - Error code from the acknowledgement envelope.  A missing or
+   *   empty code is bucketed as `unknown` so the per-code breakdown always
+   *   sums to the aggregate `signaling_errors` counter.
    */
-  function recordSignalingError(_code?: string) {
+  function recordSignalingError(code?: string) {
     counters.signaling_errors += 1;
+
+    const label = typeof code === 'string' && code.length > 0 ? code : 'unknown';
+    const key =
+      signalingErrorsByCode.has(label) ||
+      signalingErrorsByCode.size < MAX_TRACKED_SIGNALING_ERROR_CODES
+        ? label
+        : 'other';
+    signalingErrorsByCode.set(key, (signalingErrorsByCode.get(key) ?? 0) + 1);
   }
 
   /**
@@ -394,6 +424,7 @@ function createTelemetry(): Telemetry {
     const snap = ({
       collectedAt: new Date().toISOString(),
       counters: { ...counters },
+      signaling_errors_by_code: Object.fromEntries(signalingErrorsByCode),
       histograms: {},
       derived: {},
       dbQueries: [],

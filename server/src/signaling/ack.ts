@@ -58,11 +58,6 @@ function parseInboundPayload(socket: import('socket.io').Socket, ack: Function |
     return result.data;
   }
 
-  console.warn(
-    `[signaling] rejected malformed payload event=${eventName}` +
-      ` socket=${socket?.id ?? 'unknown'} user=${socket?.data?.identity?.userId ?? 'unknown'}` +
-      ` reason=${result.error.message}`
-  );
   acknowledgeError(
     socket,
     ack,
@@ -88,7 +83,12 @@ function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | 
 }
 
 /**
- * Send an error acknowledgement and record a signaling error in telemetry.
+ * Send an error acknowledgement, log it, and record a signaling error in
+ * telemetry.
+ *
+ * Every rejection is logged with its code, event, socket id and user id: the
+ * telemetry counters alone made error bursts (for example during socket
+ * reconnect churn) invisible in the journal.
  *
  * `state` is intentionally optional: early guards like `requireSocketSession`
  * and `validateSignalingVersion` call this helper before they have access to a
@@ -101,6 +101,12 @@ function acknowledgeError(socket: import('socket.io').Socket, ack: Function | un
   if (state) {
     state.telemetry.recordSignalingError(code);
   }
+
+  console.warn(
+    `[signaling] error ack code=${code} event=${eventName}` +
+      ` socket=${socket?.id ?? 'unknown'} user=${socket?.data?.identity?.userId ?? 'unknown'}` +
+      ` reason=${message}`
+  );
 
   const payload = {
     ok: false,

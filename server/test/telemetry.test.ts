@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { io as ioClient } from 'socket.io-client';
 import { createServer, CALL_END_REASONS } from '../src/index.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
@@ -69,6 +70,9 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.equal(snap.counters.calls_unreachable, 0);
     assert.equal(snap.counters.calls_failed, 0);
     assert.equal(snap.counters.signaling_errors, 0);
+
+    // The per-code breakdown starts empty, alongside the aggregate counter.
+    assert.deepEqual(snap.signaling_errors_by_code, {});
 
     // Derived rates are null before any calls
     assert.equal(snap.derived.call_connect_rate, null);
@@ -398,6 +402,114 @@ test('getMetrics() returns the same data as GET /metrics', async () => {
     // Core counters must agree (ignoring the collectedAt timestamp difference)
     assert.deepEqual(direct.counters, viaHttp.counters);
   } finally {
+    await teardown();
+  }
+});
+
+// ─── signaling_errors_by_code ─────────────────────────────────────────────────
+
+/**
+ * Capture `console.warn` output for assertions.  Callers must `restore()` in a
+ * `finally` block so later tests see the real implementation again.
+ */
+function captureConsoleWarn() {
+  const original = console.warn;
+  const lines: string[] = [];
+  console.warn = (...args) => {
+    lines.push(args.join(' '));
+  };
+  return {
+    lines,
+    restore: () => {
+      console.warn = original;
+    },
+  };
+}
+
+function connectSocket(url: string, sessionId: string): Promise<import('socket.io-client').Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = ioClient(url, {
+      auth: { sessionId },
+      forceNew: true,
+      transports: ['websocket'],
+    });
+    socket.once('connect', () => resolve(socket));
+    socket.once('connect_error', reject);
+  });
+}
+
+/**
+ * @returns the server's acknowledgement
+ */
+function emitWithAck(socket: import('socket.io-client').Socket, event: string, payload: unknown): Promise<any> {
+  return new Promise((resolve) => {
+    socket.emit(event, payload, resolve);
+  });
+}
+
+test('GET /metrics breaks signaling errors down by code', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'alice');
+  await createSession(url, 'bob');
+  const caller = await connectSocket(url, callerSession);
+  const warned = captureConsoleWarn();
+
+  try {
+    // Unknown call id → call_not_found, twice.
+    for (let i = 0; i < 2; i += 1) {
+      const ack = await emitWithAck(caller, 'rtc.offer', {
+        version: 1,
+        callId: '00000000-0000-4000-8000-000000000000',
+        sdp: { type: 'offer', sdp: 'mock-offer' },
+      });
+      assert.equal(ack.error.code, 'call_not_found');
+    }
+
+    // A ringing (not yet accepted) call → stale_call_state.
+    const callRes = await postJson(url, '/calls', { calleeId: 'bob' }, callerSession);
+    const staleAck = await emitWithAck(caller, 'rtc.offer', {
+      version: 1,
+      callId: callRes.body.callId,
+      sdp: { type: 'offer', sdp: 'mock-offer' },
+    });
+    assert.equal(staleAck.error.code, 'stale_call_state');
+
+    const snap = (await getMetricsHttp(url)).body;
+    // The aggregate counter stays, for backwards compatibility.
+    assert.equal(snap.counters.signaling_errors, 3);
+    assert.deepEqual(snap.signaling_errors_by_code, {
+      call_not_found: 2,
+      stale_call_state: 1,
+    });
+  } finally {
+    warned.restore();
+    caller.disconnect();
+    await teardown();
+  }
+});
+
+test('acknowledgeError logs the code, event, socket and user', async () => {
+  const { url, teardown } = await startServer();
+  const callerSession = await createSession(url, 'alice');
+  const caller = await connectSocket(url, callerSession);
+  const warned = captureConsoleWarn();
+
+  try {
+    const ack = await emitWithAck(caller, 'rtc.offer', {
+      version: 1,
+      callId: '00000000-0000-4000-8000-000000000000',
+      sdp: { type: 'offer', sdp: 'mock-offer' },
+    });
+    assert.equal(ack.ok, false);
+
+    const line = warned.lines.find((entry) => entry.includes('code=call_not_found'));
+    assert.ok(line, `expected a warning for the rejected event, got ${JSON.stringify(warned.lines)}`);
+    assert.ok(line.includes('event=rtc.offer'), line);
+    assert.ok(line.includes(`socket=${caller.id}`), line);
+    assert.ok(line.includes('user=alice'), line);
+  } finally {
+    warned.restore();
+    caller.disconnect();
     await teardown();
   }
 });
