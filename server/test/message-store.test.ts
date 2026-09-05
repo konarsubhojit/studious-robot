@@ -545,6 +545,19 @@ function applyFakeUpdate(existing: any, update: any) {
   }
 }
 
+function createFakeUpsertDocument(filter: any, update: any) {
+  const doc: any = {};
+  for (const [field, value] of Object.entries(filter ?? {})) {
+    if (field.startsWith('$') || (value && typeof value === 'object')) continue;
+    setPath(doc, field, value);
+  }
+  for (const [field, value] of Object.entries(update.$setOnInsert ?? {})) {
+    setPath(doc, field, value);
+  }
+  applyFakeUpdate(doc, update);
+  return doc;
+}
+
 /** Minimal in-memory stand-in for the pieces of the driver the store uses. */
 function createFakeMongoClient() {
   const messageDocs: any[] = [];
@@ -577,7 +590,7 @@ function createFakeMongoClient() {
           };
         }
         if (options?.upsert) {
-          docs.push({ ...update.$setOnInsert, ...update.$max });
+          docs.push(createFakeUpsertDocument(filter, update));
           return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
         }
         return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
@@ -598,7 +611,7 @@ function createFakeMongoClient() {
             modifiedCount += 1;
           }
           if (operation.updateOne && targets.length === 0 && spec.upsert) {
-            docs.push({ ...spec.update.$setOnInsert, ...spec.update.$max });
+            docs.push(createFakeUpsertDocument(spec.filter, spec.update));
             upsertedCount += 1;
           }
         }

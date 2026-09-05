@@ -365,6 +365,9 @@ function createTelemetry(): Telemetry {
     counters.cache_hits += 1;
   }
 
+  /**
+   * Record an accepted message whose asynchronous durable persistence failed.
+   */
   function recordMessagePersistenceFailure() {
     counters.message_persist_errors += 1;
   }

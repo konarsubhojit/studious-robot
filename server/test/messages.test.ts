@@ -138,14 +138,14 @@ test('message.send delivers to the recipient and acks the sender', async (t) => 
 });
 
 test('message.send acks after fan-out without waiting for persistence', async (t) => {
-  const deferred = createDeferred<any>();
+  const deferred = createDeferred<void>();
   const saved: any[] = [];
   const messageStore = asMessageStore({
     type: 'memory' as const,
     async saveMessage(message: any) {
-      const resolved = await deferred.promise;
-      saved.push(resolved);
-      return resolved;
+      await deferred.promise;
+      saved.push(message);
+      return message;
     },
     async listMessages() {
       return saved;
@@ -197,7 +197,7 @@ test('message.send acks after fan-out without waiting for persistence', async (t
   assert.equal((ack as any).message.messageId, envelope.message.messageId);
   assert.equal(saved.length, 0, 'saveMessage has not completed when the ack is emitted');
 
-  deferred.resolve(envelope.message);
+  deferred.resolve(undefined);
   await waitForCondition(() => saved.length === 1);
 });
 
