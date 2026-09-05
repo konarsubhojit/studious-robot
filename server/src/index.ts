@@ -130,44 +130,44 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       console.log(`[signaling] worker ${process.pid} booting`);
     }
     bootstrap()
-    .then(({ httpServer, shutdown, stores }) => {
-      httpServer.listen(port, host, () => {
-        console.log(`[signaling] listening on http://${host}:${port}`);
-        console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
-      });
+      .then(({ httpServer, shutdown, stores }) => {
+        httpServer.listen(port, host, () => {
+          console.log(`[signaling] listening on http://${host}:${port}`);
+          console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
+        });
 
-      // Graceful shutdown for rolling deploys: drain in-flight connections, then
-      // exit cleanly so systemd can restart/replace the instance.
-      let exiting = false;
-      const handleSignal = (signal: string) => {
-        if (exiting) return;
-        exiting = true;
-        console.log(`[signaling] received ${signal}; draining connections...`);
-        shutdown({ reason: signal })
-          .then(() =>
-            // Close Redis connections after draining; log close failures
-            // specifically but don't abort the exit on them.
-            Promise.resolve(
-              ((stores ?? {}) as { close?: () => Promise<void> }).close?.()
-            ).catch((err: unknown) => {
-              console.error('[signaling] error closing Redis stores:', describeError(err));
+        // Graceful shutdown for rolling deploys: drain in-flight connections, then
+        // exit cleanly so systemd can restart/replace the instance.
+        let exiting = false;
+        const handleSignal = (signal: string) => {
+          if (exiting) return;
+          exiting = true;
+          console.log(`[signaling] received ${signal}; draining connections...`);
+          shutdown({ reason: signal })
+            .then(() =>
+              // Close Redis connections after draining; log close failures
+              // specifically but don't abort the exit on them.
+              Promise.resolve(
+                ((stores ?? {}) as { close?: () => Promise<void> }).close?.()
+              ).catch((err: unknown) => {
+                console.error('[signaling] error closing Redis stores:', describeError(err));
+              })
+            )
+            .then(() => {
+              console.log('[signaling] shutdown complete; exiting');
+              process.exit(0);
             })
-          )
-          .then(() => {
-            console.log('[signaling] shutdown complete; exiting');
-            process.exit(0);
-          })
-          .catch((err: unknown) => {
-            console.error('[signaling] error during shutdown:', err);
-            process.exit(1);
-          });
-      };
-      process.on('SIGTERM', () => handleSignal('SIGTERM'));
-      process.on('SIGINT', () => handleSignal('SIGINT'));
-    })
-    .catch((err) => {
-      console.error('[signaling] fatal startup error:', err);
-      process.exit(1);
-    });
+            .catch((err: unknown) => {
+              console.error('[signaling] error during shutdown:', err);
+              process.exit(1);
+            });
+        };
+        process.on('SIGTERM', () => handleSignal('SIGTERM'));
+        process.on('SIGINT', () => handleSignal('SIGINT'));
+      })
+      .catch((err) => {
+        console.error('[signaling] fatal startup error:', err);
+        process.exit(1);
+      });
   }
 }

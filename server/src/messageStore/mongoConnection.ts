@@ -28,6 +28,8 @@ export const DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 5_000;
 export const DEFAULT_MONGO_POOL_MAX = 4;
 export const DEFAULT_MONGO_MAX_IDLE_TIME_MS = 120_000;
 
+const instrumentedCollections = new WeakSet<object>();
+
 function positiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -182,6 +184,9 @@ function instrumentMongoCollection<T>(
   collection: import('./types.ts').MongoCollection<T>,
   collectionName: string
 ): import('./types.ts').MongoCollection<T> {
+  if (instrumentedCollections.has(collection)) return collection;
+  instrumentedCollections.add(collection);
+
   if (typeof collection.find === 'function') {
     const originalFind = collection.find.bind(collection);
     collection.find = ((filter: MongoFilter, options?: object) =>

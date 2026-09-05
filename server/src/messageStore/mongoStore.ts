@@ -54,9 +54,10 @@ async function updateConversationIndex(
   conversationIndex: ConversationIndexCollection,
   message: StoredMessage
 ): Promise<void> {
-  const operations: MongoBulkWriteOperation[] = [];
+  const upserts: MongoBulkWriteOperation[] = [];
+  const followUps: MongoBulkWriteOperation[] = [];
   for (const userId of new Set([message.senderId, message.recipientId])) {
-    operations.push({
+    upserts.push({
       updateOne: {
         filter: { userId, conversationId: message.conversationId },
         update: {
@@ -73,14 +74,14 @@ async function updateConversationIndex(
       },
     });
     if (message.recipientId === userId && !message.readAt) {
-      operations.push({
+      followUps.push({
         updateOne: {
           filter: { userId, conversationId: message.conversationId },
           update: { $inc: { unreadCount: 1 } },
         },
       });
     }
-    operations.push({
+    followUps.push({
       updateOne: {
         filter: {
           userId,
@@ -104,9 +105,10 @@ async function updateConversationIndex(
     });
   }
   try {
-    await conversationIndex.bulkWrite(operations, { ordered: true });
+    await conversationIndex.bulkWrite([...upserts, ...followUps], { ordered: true });
   } catch (error) {
     if (!isDuplicateKeyError(error)) throw error;
+    await conversationIndex.bulkWrite(followUps, { ordered: false });
   }
 }
 
@@ -237,8 +239,12 @@ export function createMongoMessageStore({
 
   async function flushDeliveryReceipts(): Promise<void> {
     if (deliveryFlushPromise) {
-      await deliveryFlushPromise;
-      return flushDeliveryReceipts();
+      try {
+        await deliveryFlushPromise;
+      } catch {
+        // The in-flight flush already logged and requeued its receipts.
+      }
+      if (pendingDeliveryReceipts.size === 0) return;
     }
     const receipts = [...pendingDeliveryReceipts.values()];
     pendingDeliveryReceipts.clear();
@@ -273,6 +279,7 @@ export function createMongoMessageStore({
         pendingDeliveryReceipts.set(receiptKey(receipt), receipt);
       }
       console.error(`[messages] failed to flush delivery receipts: ${describeError(error)}`);
+      scheduleDeliveryReceiptFlush();
       throw error;
     }).finally(() => {
       deliveryFlushPromise = null;
@@ -553,8 +560,18 @@ export function createMongoMessageStore({
         clearTimeout(deliveryFlushTimer);
         deliveryFlushTimer = null;
       }
-      await flushDeliveryReceipts();
-      await connector.close();
+      try {
+        await flushDeliveryReceipts();
+      } catch {
+        // The flush path already logged and requeued; closing the client must
+        // still run during shutdown so a transient write error cannot leak it.
+        if (deliveryFlushTimer) {
+          clearTimeout(deliveryFlushTimer);
+          deliveryFlushTimer = null;
+        }
+      } finally {
+        await connector.close();
+      }
     },
   };
 

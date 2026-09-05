@@ -22,12 +22,6 @@ type MessageSendContext = {
   state: import('../../stores/contracts.ts').ServerState;
 };
 
-function recordMessagePersistenceFailure(
-  state: import('../../stores/contracts.ts').ServerState
-) {
-  state.telemetry.recordMessagePersistenceFailure();
-}
-
 async function persistAcceptedMessage(
   state: import('../../stores/contracts.ts').ServerState,
   message: import('../../messageStore.ts').StoredMessage,
@@ -36,7 +30,9 @@ async function persistAcceptedMessage(
   try {
     const saved = await state.messageStore.saveMessage(message);
     if (saved.senderId !== message.senderId || saved.recipientId !== message.recipientId) {
-      recordMessagePersistenceFailure(state);
+      state.telemetry.recordMessagePersistenceFailure();
+      // The client was already acked on accept, so a durable idempotency
+      // collision is surfaced operationally rather than as a late negative ack.
       console.error(
         `[messages] messageId collision after accept messageId=${message.messageId}` +
           ` conversationId=${message.conversationId}`
@@ -66,7 +62,7 @@ async function persistAcceptedMessage(
       await invalidateCache(state, messagesCachePrefix(message.conversationId));
     }
   } catch (error) {
-    recordMessagePersistenceFailure(state);
+    state.telemetry.recordMessagePersistenceFailure();
     console.error(`[messages] failed to persist accepted message: ${describeError(error)}`);
   }
 }

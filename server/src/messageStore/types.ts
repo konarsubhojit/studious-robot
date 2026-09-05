@@ -150,11 +150,7 @@ export type MongoBulkWriteOperation =
       };
     };
 
-export type MongoBulkWriteResult = MongoWriteResult & {
-  upsertedCount?: number;
-  matchedCount?: number;
-  modifiedCount?: number;
-};
+export type MongoBulkWriteResult = MongoWriteResult;
 
 /**
  * `findOneAndUpdate` returns the document directly on driver v6+, and wrapped
