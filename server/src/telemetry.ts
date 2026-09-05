@@ -327,8 +327,9 @@ function createTelemetry(): Telemetry {
    * Increment the signaling error counter, both in aggregate and per code.
    *
    * @param code - Error code from the acknowledgement envelope.  A missing or
-   *   empty code is bucketed as `unknown` so the per-code breakdown always
-   *   sums to the aggregate `signaling_errors` counter.
+   *   empty code is bucketed as `unknown`, and anything past
+   *   {@link MAX_TRACKED_SIGNALING_ERROR_CODES} distinct codes as `other`, so
+   *   the breakdown always sums to the aggregate `signaling_errors` counter.
    */
   function recordSignalingError(code?: string) {
     counters.signaling_errors += 1;

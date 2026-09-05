@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer, CALL_END_REASONS } from '../src/index.ts';
+import { createTelemetry } from '../src/telemetry.ts';
 import { DEFAULT_RINGING_TIMEOUT_MS } from '../src/config.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 
@@ -452,7 +453,6 @@ test('GET /metrics breaks signaling errors down by code', async () => {
   const callerSession = await createSession(url, 'alice');
   await createSession(url, 'bob');
   const caller = await connectSocket(url, callerSession);
-  const warned = captureConsoleWarn();
 
   try {
     // Unknown call id → call_not_found, twice.
@@ -482,7 +482,6 @@ test('GET /metrics breaks signaling errors down by code', async () => {
       stale_call_state: 1,
     });
   } finally {
-    warned.restore();
     caller.disconnect();
     await teardown();
   }
@@ -512,4 +511,32 @@ test('acknowledgeError logs the code, event, socket and user', async () => {
     caller.disconnect();
     await teardown();
   }
+});
+
+test('recordSignalingError buckets a missing code and caps distinct codes', () => {
+  const telemetry = createTelemetry();
+
+  telemetry.recordSignalingError();
+  telemetry.recordSignalingError('');
+
+  // Fill the per-code map to its cap, then overflow it.
+  for (let i = 0; i < 60; i += 1) {
+    telemetry.recordSignalingError(`code_${i}`);
+  }
+
+  const snap = telemetry.getSnapshot();
+  const breakdown = snap.signaling_errors_by_code;
+
+  assert.equal(breakdown.unknown, 2);
+  assert.equal(breakdown.code_0, 1);
+  // Everything past the cap is folded into a single `other` row, and the
+  // breakdown still sums to the aggregate counter.
+  assert.equal(breakdown.code_59, undefined);
+  assert.ok(breakdown.other > 0);
+  // The cap bounds the tracked codes; `other` is the one extra overflow row.
+  assert.equal(Object.keys(breakdown).length, 51);
+  assert.equal(
+    Object.values(breakdown).reduce((total, count) => total + count, 0),
+    snap.counters.signaling_errors
+  );
 });
