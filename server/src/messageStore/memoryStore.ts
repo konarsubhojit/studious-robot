@@ -73,6 +73,15 @@ export function createMemoryMessageStore(): MessageStore {
       return { ...message };
     },
 
+    enqueueDeliveryReceipt({ messageId, userId }) {
+      const message = messages.find((candidate) => candidate.messageId === messageId);
+      if (message && !message.deliveredTo.includes(userId)) {
+        message.deliveredTo.push(userId);
+      }
+    },
+
+    async flushDeliveryReceipts() {},
+
     async listConversations(userId) {
       // The summaries reference the live records, so each is copied on the way
       // out — a caller must not be able to mutate the store through them.

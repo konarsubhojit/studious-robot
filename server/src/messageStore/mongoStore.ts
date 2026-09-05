@@ -12,7 +12,6 @@ import { describeError } from '../lib/errors.ts';
 import { runDetached } from '../lib/queryTiming.ts';
 import { summariseConversations } from './conversations.ts';
 import { toStoredMessage, toStoredMessages } from './documents.ts';
-import { instrumentMongoStore } from './instrumentation.ts';
 import {
   DEFAULT_COLLECTION_NAME,
   DEFAULT_CONVERSATION_INDEX_COLLECTION_NAME,
@@ -39,9 +38,11 @@ import {
 } from './records.ts';
 import type {
   ConversationIndexCollection,
+  DeliveryReceiptInput,
   MessageStore,
   MessageDocument,
   MongoClientLike,
+  MongoBulkWriteOperation,
   StoredMessage,
 } from './types.ts';
 
@@ -53,81 +54,78 @@ async function updateConversationIndex(
   conversationIndex: ConversationIndexCollection,
   message: StoredMessage
 ): Promise<void> {
-  const participants = new Set([message.senderId, message.recipientId]);
-  await Promise.all(
-    [...participants].map(async (userId) => {
-      const isUnreadRecipient = message.recipientId === userId && !message.readAt;
-      let inserted = false;
-      try {
-        const initial = await conversationIndex.updateOne(
-          { userId, conversationId: message.conversationId },
-          {
-            $setOnInsert: {
-              userId,
-              conversationId: message.conversationId,
-              peerId: message.senderId === userId ? message.recipientId : message.senderId,
-              lastMessage: message,
-              unreadCount: isUnreadRecipient ? 1 : 0,
-              updatedAt: message.createdAt,
-            },
-          },
-          { upsert: true }
-        );
-        inserted = Boolean(initial.upsertedCount);
-      } catch (error) {
-        if (!isDuplicateKeyError(error)) throw error;
-      }
-      if (inserted) return;
-
-      await Promise.all([
-        ...(isUnreadRecipient
-          ? [
-              conversationIndex.updateOne(
-                { userId, conversationId: message.conversationId },
-                { $inc: { unreadCount: 1 } }
-              ),
-            ]
-          : []),
-        conversationIndex.updateOne(
-          {
+  const operations: MongoBulkWriteOperation[] = [];
+  for (const userId of new Set([message.senderId, message.recipientId])) {
+    operations.push({
+      updateOne: {
+        filter: { userId, conversationId: message.conversationId },
+        update: {
+          $setOnInsert: {
             userId,
             conversationId: message.conversationId,
-            $or: [
-              { updatedAt: { $lt: message.createdAt } },
-              {
-                updatedAt: message.createdAt,
-                'lastMessage.messageId': { $lt: message.messageId },
-              },
-            ],
+            peerId: message.senderId === userId ? message.recipientId : message.senderId,
+            lastMessage: message,
+            unreadCount: 0,
+            updatedAt: message.createdAt,
           },
-          {
-            $set: {
-              peerId: message.senderId === userId ? message.recipientId : message.senderId,
-              lastMessage: message,
+        },
+        upsert: true,
+      },
+    });
+    if (message.recipientId === userId && !message.readAt) {
+      operations.push({
+        updateOne: {
+          filter: { userId, conversationId: message.conversationId },
+          update: { $inc: { unreadCount: 1 } },
+        },
+      });
+    }
+    operations.push({
+      updateOne: {
+        filter: {
+          userId,
+          conversationId: message.conversationId,
+          $or: [
+            { updatedAt: { $lt: message.createdAt } },
+            {
               updatedAt: message.createdAt,
+              'lastMessage.messageId': { $lt: message.messageId },
             },
-          }
-        ),
-      ]);
-    })
-  );
+          ],
+        },
+        update: {
+          $set: {
+            peerId: message.senderId === userId ? message.recipientId : message.senderId,
+            lastMessage: message,
+            updatedAt: message.createdAt,
+          },
+        },
+      },
+    });
+  }
+  try {
+    await conversationIndex.bulkWrite(operations, { ordered: true });
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
+  }
 }
 
 async function updateIndexedLastMessage(
   conversationIndex: ConversationIndexCollection,
   message: StoredMessage
 ): Promise<void> {
-  await Promise.all(
-    [...new Set([message.senderId, message.recipientId])].map((userId) =>
-      conversationIndex.updateOne(
-        {
+  await conversationIndex.bulkWrite(
+    [...new Set([message.senderId, message.recipientId])].map((userId) => ({
+      updateOne: {
+        filter: {
           userId,
           conversationId: message.conversationId,
           'lastMessage.messageId': message.messageId,
         },
-        { $set: { lastMessage: message } }
-      )
-    )
+        update: { $set: { lastMessage: message } },
+      },
+    })),
+    { ordered: false }
   );
 }
 
@@ -135,11 +133,11 @@ async function ensureConversationIndexRows(
   conversationIndex: ConversationIndexCollection,
   message: StoredMessage
 ): Promise<void> {
-  await Promise.all(
-    [...new Set([message.senderId, message.recipientId])].map((userId) =>
-      conversationIndex.updateOne(
-        { userId, conversationId: message.conversationId },
-        {
+  await conversationIndex.bulkWrite(
+    [...new Set([message.senderId, message.recipientId])].map((userId) => ({
+      updateOne: {
+        filter: { userId, conversationId: message.conversationId },
+        update: {
           $setOnInsert: {
             userId,
             conversationId: message.conversationId,
@@ -149,10 +147,17 @@ async function ensureConversationIndexRows(
             updatedAt: message.createdAt,
           },
         },
-        { upsert: true }
-      )
-    )
+        upsert: true,
+      },
+    })),
+    { ordered: false }
   );
+}
+
+const DELIVERY_FLUSH_INTERVAL_MS = 100;
+
+function receiptKey({ conversationId, messageId, userId }: DeliveryReceiptInput): string {
+  return `${conversationId ?? ''}\0${messageId}\0${userId}`;
 }
 
 /**
@@ -217,6 +222,63 @@ export function createMongoMessageStore({
     client,
   });
   const connect = connector.connect;
+  const pendingDeliveryReceipts: Map<string, DeliveryReceiptInput> = new Map();
+  let deliveryFlushTimer: NodeJS.Timeout | null = null;
+  let deliveryFlushPromise: Promise<void> | null = null;
+
+  function scheduleDeliveryReceiptFlush(): void {
+    if (deliveryFlushTimer) return;
+    deliveryFlushTimer = setTimeout(() => {
+      deliveryFlushTimer = null;
+      void flushDeliveryReceipts().catch(() => {});
+    }, DELIVERY_FLUSH_INTERVAL_MS);
+    deliveryFlushTimer.unref();
+  }
+
+  async function flushDeliveryReceipts(): Promise<void> {
+    if (deliveryFlushPromise) {
+      await deliveryFlushPromise;
+      return flushDeliveryReceipts();
+    }
+    const receipts = [...pendingDeliveryReceipts.values()];
+    pendingDeliveryReceipts.clear();
+    if (receipts.length === 0) return;
+
+    deliveryFlushPromise = (async () => {
+      const { messages, conversationIndex } = await connect();
+      await messages.bulkWrite(
+        receipts.map(({ messageId, userId, conversationId }) => ({
+          updateOne: {
+            filter: conversationId ? { conversationId, messageId } : { messageId },
+            update: { $addToSet: { deliveredTo: userId } },
+          },
+        })),
+        { ordered: false }
+      );
+      if (conversationIndex) {
+        const indexOperations = receipts
+          .filter((receipt) => receipt.conversationId)
+          .map(({ messageId, userId, conversationId }) => ({
+            updateMany: {
+              filter: { conversationId, 'lastMessage.messageId': messageId },
+              update: { $addToSet: { 'lastMessage.deliveredTo': userId } },
+            },
+          }));
+        if (indexOperations.length > 0) {
+          await conversationIndex.bulkWrite(indexOperations, { ordered: false });
+        }
+      }
+    })().catch((error: unknown) => {
+      for (const receipt of receipts) {
+        pendingDeliveryReceipts.set(receiptKey(receipt), receipt);
+      }
+      console.error(`[messages] failed to flush delivery receipts: ${describeError(error)}`);
+      throw error;
+    }).finally(() => {
+      deliveryFlushPromise = null;
+    });
+    await deliveryFlushPromise;
+  }
 
   const store: MessageStore = {
     type: 'mongo',
@@ -326,6 +388,13 @@ export function createMongoMessageStore({
       if (conversationIndex) await updateIndexedLastMessage(conversationIndex, stored);
       return stored;
     },
+
+    enqueueDeliveryReceipt(receipt) {
+      pendingDeliveryReceipts.set(receiptKey(receipt), receipt);
+      scheduleDeliveryReceiptFlush();
+    },
+
+    flushDeliveryReceipts,
 
     async listConversations(userId) {
       const { messages, conversationIndex } = await connect();
@@ -479,8 +548,15 @@ export function createMongoMessageStore({
       return rest;
     },
 
-    close: connector.close,
+    async close() {
+      if (deliveryFlushTimer) {
+        clearTimeout(deliveryFlushTimer);
+        deliveryFlushTimer = null;
+      }
+      await flushDeliveryReceipts();
+      await connector.close();
+    },
   };
 
-  return instrumentMongoStore(store, { collection, ensureReady: connect });
+  return store;
 }

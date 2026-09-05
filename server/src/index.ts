@@ -16,6 +16,8 @@
  */
 
 import { pathToFileURL } from 'node:url';
+import cluster from 'node:cluster';
+import { availableParallelism } from 'node:os';
 import { createServer } from './createServer.ts';
 import { createFirebaseTokenVerifier } from './firebaseAuth.ts';
 import { getDb } from '../db/client.ts';
@@ -41,6 +43,15 @@ export {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.PORT) || 4173;
   const host = process.env.HOST || '0.0.0.0';
+
+  function configuredWorkerCount(): number {
+    const raw = process.env.SIGNALING_CLUSTER_WORKERS ?? process.env.WEB_CONCURRENCY;
+    const parsed = Number(raw);
+    if (Number.isSafeInteger(parsed) && parsed > 0) return parsed;
+    return process.env.REDIS_URL && process.env.NODE_ENV === 'production'
+      ? Math.max(1, availableParallelism())
+      : 1;
+  }
 
   /**
    * Build the server, wiring a Redis-backed store bundle when `REDIS_URL` is
@@ -90,7 +101,35 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     return server;
   }
 
-  bootstrap()
+  const workerCount = configuredWorkerCount();
+  if (cluster.isPrimary && workerCount > 1) {
+    console.log(`[signaling] primary ${process.pid} starting ${workerCount} workers`);
+    let exiting = false;
+    for (let i = 0; i < workerCount; i += 1) {
+      cluster.fork();
+    }
+    cluster.on('exit', (worker, code, signal) => {
+      console.warn(
+        `[signaling] worker ${worker.process.pid ?? 'unknown'} exited` +
+          ` code=${code ?? 'null'} signal=${signal ?? 'null'}`
+      );
+      if (!exiting) cluster.fork();
+    });
+    const stopWorkers = (signal: string) => {
+      if (exiting) return;
+      exiting = true;
+      console.log(`[signaling] primary received ${signal}; draining workers...`);
+      for (const worker of Object.values(cluster.workers ?? {})) {
+        worker?.process.kill(signal as NodeJS.Signals);
+      }
+    };
+    process.on('SIGTERM', () => stopWorkers('SIGTERM'));
+    process.on('SIGINT', () => stopWorkers('SIGINT'));
+  } else {
+    if (!cluster.isPrimary) {
+      console.log(`[signaling] worker ${process.pid} booting`);
+    }
+    bootstrap()
     .then(({ httpServer, shutdown, stores }) => {
       httpServer.listen(port, host, () => {
         console.log(`[signaling] listening on http://${host}:${port}`);
@@ -130,4 +169,5 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       console.error('[signaling] fatal startup error:', err);
       process.exit(1);
     });
+  }
 }

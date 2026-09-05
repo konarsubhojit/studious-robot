@@ -74,6 +74,12 @@ export type ReactToMessageOptions = {
   action?: 'add' | 'remove';
 };
 
+export type DeliveryReceiptInput = {
+  messageId: string;
+  userId: string;
+  conversationId?: string;
+};
+
 export type MessageStore = {
   type: 'memory' | 'mongo';
   saveMessage: (message: NewMessageInput) => Promise<StoredMessage>;
@@ -89,6 +95,8 @@ export type MessageStore = {
     userId: string,
     conversationId?: string
   ) => Promise<StoredMessage | null>;
+  enqueueDeliveryReceipt?: (receipt: DeliveryReceiptInput) => void;
+  flushDeliveryReceipts?: () => Promise<void>;
   listConversations: (userId: string) => Promise<ConversationSummary[]>;
   /**
    * `peerId` saves the store a round trip it would otherwise spend looking the
@@ -121,6 +129,28 @@ export type MongoSortSpec = Record<string, 1 | -1>;
 
 /** The counters this store reads off a write result. */
 export type MongoWriteResult = {
+  upsertedCount?: number;
+  matchedCount?: number;
+  modifiedCount?: number;
+};
+
+export type MongoBulkWriteOperation =
+  | {
+      updateOne: {
+        filter: MongoFilter;
+        update: MongoUpdate;
+        upsert?: boolean;
+      };
+    }
+  | {
+      updateMany: {
+        filter: MongoFilter;
+        update: MongoUpdate;
+        upsert?: boolean;
+      };
+    };
+
+export type MongoBulkWriteResult = MongoWriteResult & {
   upsertedCount?: number;
   matchedCount?: number;
   modifiedCount?: number;
@@ -159,6 +189,10 @@ export type MongoCollection<T = MessageDocument> = {
     options?: object
   ) => Promise<MongoWriteResult>;
   updateMany: (filter: MongoFilter, update: MongoUpdate) => Promise<MongoWriteResult>;
+  bulkWrite: (
+    operations: MongoBulkWriteOperation[],
+    options?: object
+  ) => Promise<MongoBulkWriteResult>;
 };
 
 export type MessagesCollection = MongoCollection<MessageDocument>;

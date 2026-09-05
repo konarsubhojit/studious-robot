@@ -475,7 +475,13 @@ function createStubMongoClient() {
     async updateMany() {
       return { modifiedCount: 0 };
     },
+    async bulkWrite() {
+      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+    },
     async findOne() {
+      return null;
+    },
+    async findOneAndUpdate() {
       return null;
     },
     find() {
@@ -501,7 +507,7 @@ function createStubMongoClient() {
   };
 }
 
-test('every mongo store method reports one timing labelled read or write', async () => {
+test('mongo store timings are recorded around driver calls', async () => {
   const { createMongoMessageStore } = await import('../src/messageStore.ts');
   const store = createMongoMessageStore({ uri: 'mongodb://stub', client: createStubMongoClient() });
 
@@ -515,10 +521,10 @@ test('every mongo store method reports one timing labelled read or write', async
   assert.deepEqual(
     records.map((entry) => [entry.backend, entry.operation, entry.kind]),
     [
-      ['mongo', 'listMessages', 'read'],
-      ['mongo', 'listConversations', 'read'],
-      ['mongo', 'saveMessage', 'write'],
-      ['mongo', 'markRead', 'write'],
+      ['mongo', 'find', 'read'],
+      ['mongo', 'find', 'read'],
+      ['mongo', 'updateOne', 'write'],
+      ['mongo', 'updateMany', 'write'],
     ]
   );
   assert.ok(records.every((entry) => entry.target === 'messages' && entry.ok));

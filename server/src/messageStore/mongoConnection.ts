@@ -9,12 +9,16 @@
 
 import { MongoClient } from 'mongodb';
 import { describeError } from '../lib/errors.ts';
+import { timeQuery } from '../lib/queryTiming.ts';
 import type {
   MessagesCollection,
   ConversationIndexCollection,
   MongoClientLike,
   MongoConnection,
+  MongoFindCursor,
+  MongoFilter,
   MongoIndexSpec,
+  MongoUpdate,
 } from './types.ts';
 
 export const DEFAULT_DB_NAME = 'wetalk';
@@ -162,6 +166,72 @@ export async function ensureConversationIndex(
   });
 }
 
+function instrumentMongoCursor<T>(
+  cursor: MongoFindCursor<T>,
+  collectionName: string
+): MongoFindCursor<T> {
+  const originalToArray = cursor.toArray.bind(cursor);
+  cursor.toArray = () =>
+    timeQuery({ backend: 'mongo', operation: 'find', kind: 'read', target: collectionName }, () =>
+      originalToArray()
+    );
+  return cursor;
+}
+
+function instrumentMongoCollection<T>(
+  collection: import('./types.ts').MongoCollection<T>,
+  collectionName: string
+): import('./types.ts').MongoCollection<T> {
+  if (typeof collection.find === 'function') {
+    const originalFind = collection.find.bind(collection);
+    collection.find = ((filter: MongoFilter, options?: object) =>
+      instrumentMongoCursor(originalFind(filter, options), collectionName)) as typeof collection.find;
+  }
+
+  if (typeof collection.findOne === 'function') {
+    const originalFindOne = collection.findOne.bind(collection);
+    collection.findOne = ((filter: MongoFilter) =>
+      timeQuery({ backend: 'mongo', operation: 'findOne', kind: 'read', target: collectionName }, () =>
+        originalFindOne(filter)
+      )) as typeof collection.findOne;
+  }
+
+  if (typeof collection.findOneAndUpdate === 'function') {
+    const originalFindOneAndUpdate = collection.findOneAndUpdate.bind(collection);
+    collection.findOneAndUpdate = ((filter: MongoFilter, update: MongoUpdate, options?: object) =>
+      timeQuery(
+        { backend: 'mongo', operation: 'findOneAndUpdate', kind: 'write', target: collectionName },
+        () => originalFindOneAndUpdate(filter, update, options)
+      )) as typeof collection.findOneAndUpdate;
+  }
+
+  if (typeof collection.updateOne === 'function') {
+    const originalUpdateOne = collection.updateOne.bind(collection);
+    collection.updateOne = ((filter: MongoFilter, update: MongoUpdate, options?: object) =>
+      timeQuery({ backend: 'mongo', operation: 'updateOne', kind: 'write', target: collectionName }, () =>
+        originalUpdateOne(filter, update, options)
+      )) as typeof collection.updateOne;
+  }
+
+  if (typeof collection.updateMany === 'function') {
+    const originalUpdateMany = collection.updateMany.bind(collection);
+    collection.updateMany = ((filter: MongoFilter, update: MongoUpdate) =>
+      timeQuery({ backend: 'mongo', operation: 'updateMany', kind: 'write', target: collectionName }, () =>
+        originalUpdateMany(filter, update)
+      )) as typeof collection.updateMany;
+  }
+
+  if (typeof collection.bulkWrite === 'function') {
+    const originalBulkWrite = collection.bulkWrite.bind(collection);
+    collection.bulkWrite = ((operations: import('./types.ts').MongoBulkWriteOperation[], options?: object) =>
+      timeQuery({ backend: 'mongo', operation: 'bulkWrite', kind: 'write', target: collectionName }, () =>
+        originalBulkWrite(operations, options)
+      )) as typeof collection.bulkWrite;
+  }
+
+  return collection;
+}
+
 /**
  * Best-effort extraction of the Mongo host(s) for startup logging, without
  * ever logging credentials embedded in the connection string.
@@ -240,11 +310,17 @@ export function createMongoConnector({
         if (typeof mongoClient.connect === 'function') {
           await mongoClient.connect();
         }
-        const messages = mongoClient.db(database).collection(collection) as MessagesCollection;
+        const messages = instrumentMongoCollection(
+          mongoClient.db(database).collection(collection) as MessagesCollection,
+          collection
+        ) as MessagesCollection;
         const conversationIndex = enableConversationIndex
-          ? (mongoClient
-              .db(database)
-              .collection(conversationIndexCollection) as ConversationIndexCollection)
+          ? (instrumentMongoCollection(
+              mongoClient
+                .db(database)
+                .collection(conversationIndexCollection) as ConversationIndexCollection,
+              conversationIndexCollection
+            ) as ConversationIndexCollection)
           : null;
 
         await ensureMessageIndexes(messages);

@@ -521,16 +521,26 @@ function setPath(doc: any, field: string, value: any) {
   parent[leaf] = value;
 }
 
+function getPath(doc: any, field: string) {
+  return field.split('.').reduce((current, part) => current?.[part], doc);
+}
+
 function applyFakeUpdate(existing: any, update: any) {
   for (const [field, value] of Object.entries(update.$set ?? {})) {
     setPath(existing, field, value);
   }
   for (const [field, value] of Object.entries(update.$inc ?? {})) {
-    setPath(existing, field, (existing[field] ?? 0) + (value as number));
+    setPath(existing, field, (getPath(existing, field) ?? 0) + (value as number));
+  }
+  for (const [field, value] of Object.entries(update.$addToSet ?? {})) {
+    const current = getPath(existing, field);
+    const next = Array.isArray(current) ? current : [];
+    if (!next.includes(value)) next.push(value);
+    setPath(existing, field, next);
   }
   for (const [field, value] of Object.entries(update.$max ?? {})) {
-    if (existing[field] === undefined || existing[field] < (value as string)) {
-      existing[field] = value;
+    if (getPath(existing, field) === undefined || getPath(existing, field) < (value as string)) {
+      setPath(existing, field, value);
     }
   }
 }
@@ -543,6 +553,7 @@ function createFakeMongoClient() {
   const findCalls: any[] = [];
   const findOneCalls: any[] = [];
   const updateCalls: any[] = [];
+  const bulkWriteCalls: any[] = [];
   let closed = false;
 
   function makeCollection(name: string, docs: any[]) {
@@ -570,6 +581,28 @@ function createFakeMongoClient() {
           return { matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
         }
         return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+      },
+      async bulkWrite(operations: any[], options: any) {
+        bulkWriteCalls.push({ collection: name, operations, options });
+        let matchedCount = 0;
+        let modifiedCount = 0;
+        let upsertedCount = 0;
+        for (const operation of operations) {
+          const spec = operation.updateOne ?? operation.updateMany;
+          if (!spec) continue;
+          const matches = docs.filter((d) => matchesFilter(d, spec.filter));
+          const targets = operation.updateOne ? matches.slice(0, 1) : matches;
+          for (const target of targets) {
+            applyFakeUpdate(target, spec.update);
+            matchedCount += 1;
+            modifiedCount += 1;
+          }
+          if (operation.updateOne && targets.length === 0 && spec.upsert) {
+            docs.push({ ...spec.update.$setOnInsert, ...spec.update.$max });
+            upsertedCount += 1;
+          }
+        }
+        return { matchedCount, modifiedCount, upsertedCount };
       },
       async findOne(filter: any) {
         findOneCalls.push({ collection: name, filter });
@@ -681,6 +714,7 @@ function createFakeMongoClient() {
     findCalls,
     findOneCalls,
     updateCalls,
+    bulkWriteCalls,
     messageDocs,
     conversationIndexDocs,
     isClosed: () => closed,
@@ -1261,4 +1295,85 @@ test('mongo store markDelivered is shard-key scoped when the conversation is kno
   );
 
   await store.close?.();
+});
+
+test('mongo store maintains the conversation index with one bulkWrite per saved message', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexWrites: true,
+  });
+  const conversationId = deriveConversationId('alice', 'bob');
+
+  await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'bulk indexed',
+  });
+
+  const indexBulkWrites = fake.bulkWriteCalls.filter(
+    (call) => call.collection === 'conversation_index'
+  );
+  assert.equal(indexBulkWrites.length, 1);
+  assert.equal(
+    fake.updateCalls.filter((call) => call.collection === 'conversation_index').length,
+    0,
+    'per-participant index maintenance should not issue individual updateOne calls'
+  );
+  assert.deepEqual(
+    fake.conversationIndexDocs.map((doc) => [doc.userId, doc.unreadCount]).sort(),
+    [
+      ['alice', 0],
+      ['bob', 1],
+    ]
+  );
+
+  await store.close?.();
+});
+
+test('mongo store batches delivery receipts and flushes them on close', async () => {
+  const fake = createFakeMongoClient();
+  const store = createMongoMessageStore({
+    uri: 'mongodb://stub',
+    client: fake.client,
+    conversationIndexWrites: true,
+  });
+  const conversationId = deriveConversationId('alice', 'bob');
+  const message = await store.saveMessage({
+    conversationId,
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'queued receipt',
+  });
+  fake.bulkWriteCalls.length = 0;
+
+  store.enqueueDeliveryReceipt?.({
+    messageId: message.messageId,
+    userId: 'bob',
+    conversationId,
+  });
+  store.enqueueDeliveryReceipt?.({
+    messageId: message.messageId,
+    userId: 'bob',
+    conversationId,
+  });
+
+  assert.deepEqual(fake.messageDocs[0].deliveredTo, [], 'receipt is buffered before flush');
+  await store.close?.();
+
+  const messageBulkWrites = fake.bulkWriteCalls.filter((call) => call.collection === 'messages');
+  assert.equal(messageBulkWrites.length, 1);
+  assert.equal(messageBulkWrites[0].operations.length, 1, 'duplicate receipts are coalesced');
+  assert.deepEqual(fake.messageDocs[0].deliveredTo, ['bob']);
+
+  const indexBulkWrites = fake.bulkWriteCalls.filter(
+    (call) => call.collection === 'conversation_index'
+  );
+  assert.equal(indexBulkWrites.length, 1);
+  assert.deepEqual(
+    fake.conversationIndexDocs.map((doc) => doc.lastMessage.deliveredTo).sort(),
+    [['bob'], ['bob']]
+  );
 });

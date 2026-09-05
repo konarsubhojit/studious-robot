@@ -1,3 +1,5 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+
 /**
  * In-process call telemetry and QoS metrics.
  *
@@ -65,6 +67,7 @@ export type Telemetry = {
     previousStatus: string
   ) => void;
   recordSignalingError: (code?: string) => void;
+  recordMessagePersistenceFailure: () => void;
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
   recordDbQuery: (record: import('./lib/queryTiming.ts').QueryTimingRecord) => void;
@@ -170,6 +173,7 @@ function createTelemetry(): Telemetry {
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
     signaling_errors: 0, // acknowledgeError / error ack responses
+    message_persist_errors: 0, // accepted messages that failed durable persistence
     cache_hits: 0, // read served from the shared read cache
     cache_misses: 0, // read that fell through to the store
     db_queries_total: 0, // every timed datastore round trip
@@ -203,7 +207,11 @@ function createTelemetry(): Telemetry {
     mongo_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Redis cache round-trip duration, in ms. */
     redis_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
+    /** Event-loop scheduling lag, in ms, sampled from node:perf_hooks. */
+    event_loop_lag_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
   };
+  const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  eventLoopDelay.enable();
 
   /**
    * `backend:kind:operation` → running totals, so `/metrics` can answer "which
@@ -350,6 +358,10 @@ function createTelemetry(): Telemetry {
     counters.cache_hits += 1;
   }
 
+  function recordMessagePersistenceFailure() {
+    counters.message_persist_errors += 1;
+  }
+
   /**
    * Record a read that missed the shared cache and hit the underlying store.
    */
@@ -415,6 +427,15 @@ function createTelemetry(): Telemetry {
     if (record.durationMs > entry.maxMs) entry.maxMs = record.durationMs;
   }
 
+  function observeEventLoopDelay() {
+    if (eventLoopDelay.count === 0) return;
+    const maxMs = eventLoopDelay.max / 1_000_000;
+    if (Number.isFinite(maxMs)) {
+      observeHistogram(histograms.event_loop_lag_ms, maxMs);
+    }
+    eventLoopDelay.reset();
+  }
+
   /**
    * Return a point-in-time snapshot of all metrics.
    *
@@ -422,6 +443,7 @@ function createTelemetry(): Telemetry {
    * returned verbatim from a `/metrics` HTTP endpoint.
    */
   function getSnapshot(): MetricsSnapshot {
+    observeEventLoopDelay();
     const snap = ({
       collectedAt: new Date().toISOString(),
       counters: { ...counters },
@@ -471,6 +493,7 @@ function createTelemetry(): Telemetry {
     recordCallCreated,
     recordCallTransition,
     recordSignalingError,
+    recordMessagePersistenceFailure,
     recordCacheHit,
     recordCacheMiss,
     recordDbQuery,
