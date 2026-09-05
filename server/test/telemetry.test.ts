@@ -532,7 +532,9 @@ test('recordSignalingError buckets a missing code and caps distinct codes', () =
   // Everything past the cap is folded into a single `other` row, and the
   // breakdown still sums to the aggregate counter.
   assert.equal(breakdown.code_59, undefined);
-  assert.ok(breakdown.other > 0);
+  // 60 codes were recorded after `unknown` filled the first row, so the last
+  // 11 (`code_49`…`code_59`) land in the overflow bucket.
+  assert.equal(breakdown.other, 11);
   // The cap bounds the tracked codes; `other` is the one extra overflow row.
   assert.equal(Object.keys(breakdown).length, 51);
   assert.equal(

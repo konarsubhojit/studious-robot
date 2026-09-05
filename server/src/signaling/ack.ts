@@ -12,6 +12,9 @@ import { ERROR_CODES, SERVER_EVENTS, parseEventPayload } from '../../../shared/i
 
 export type SignalingState = { telemetry: { recordSignalingError: (code: string) => void; }; };
 
+/** Upper bound on each client-controlled field written to a log line. */
+const MAX_LOGGED_CHARS = 200;
+
 function requireSocketSession(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string): boolean {
   if (socket.data.identity?.sessionId) {
     return true;
@@ -69,6 +72,17 @@ function parseInboundPayload(socket: import('socket.io').Socket, ack: Function |
   return null;
 }
 
+/**
+ * Flatten a value for a single-line log entry.
+ *
+ * Event names, error messages and user ids can all carry client-controlled
+ * text, so control characters (newlines above all) are replaced and the result
+ * is truncated: a hostile payload can then never forge extra journal lines.
+ */
+function sanitizeForLog(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, MAX_LOGGED_CHARS);
+}
+
 function acknowledgeSuccess(socket: import('socket.io').Socket, ack: Function | undefined, eventName: string, data?: object) {
   const payload = {
     ok: true,
@@ -103,9 +117,9 @@ function acknowledgeError(socket: import('socket.io').Socket, ack: Function | un
   }
 
   console.warn(
-    `[signaling] error ack code=${code} event=${eventName}` +
-      ` socket=${socket?.id ?? 'unknown'} user=${socket?.data?.identity?.userId ?? 'unknown'}` +
-      ` reason=${message}`
+    `[signaling] error ack code=${sanitizeForLog(code)} event=${sanitizeForLog(eventName)}` +
+      ` socket=${socket?.id ?? 'unknown'} user=${sanitizeForLog(socket?.data?.identity?.userId ?? 'unknown')}` +
+      ` reason=${sanitizeForLog(message)}`
   );
 
   const payload = {

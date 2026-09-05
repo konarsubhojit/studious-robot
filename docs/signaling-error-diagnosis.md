@@ -46,7 +46,7 @@ That path, however, does **not** explain the observed 60: guard failures are not
 | `call_not_found` | `:209` — `hydrateCallFromShared` returned nothing | yes | High. The record is gone from the local map and the shared store lookup misses. |
 | `forbidden` | `:221` — requester is neither participant | yes | Low; requires an identity mismatch, e.g. a guest-downgraded reconnect getting a fresh anonymous `userId`. |
 | `rate_limited` | `:187` | yes | Low, but plausible: ICE candidates from two peers re-offering repeatedly. |
-| `unauthorized` | `:169` guard | **no** | Common in fact, invisible in metrics. |
+| `unauthorized` | `:169` guard | **no** | Common in fact, but invisible in metrics. |
 | `unsupported_version` | `:172` guard | **no** | Negligible. |
 
 Given ~60 errors in a 9.5 s setup, per-code attribution is exactly the missing datum — the
