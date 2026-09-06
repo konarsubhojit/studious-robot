@@ -354,3 +354,43 @@ test('timeline: a full page of calls still pages without skipping entries', asyn
     await teardown();
   }
 });
+
+test('read: acknowledging does not reorder the call log', async () => {
+  const db = createFakeCallsDb();
+  const { url, teardown } = await startServer({ db });
+  try {
+    const session = await createSession(url, 'user-tl-order');
+    const missed = db.seedCall({
+      callerId: 'user-tl-orderpeer',
+      calleeId: 'user-tl-order',
+      status: 'missed',
+      endReason: null,
+      missedReadAt: null,
+      createdAt: isoAgo(600_000),
+      updatedAt: isoAgo(600_000),
+    });
+    const newer = db.seedCall({
+      callerId: 'user-tl-order',
+      calleeId: 'user-tl-othepeer',
+      createdAt: isoAgo(1_000),
+      updatedAt: isoAgo(1_000),
+    });
+
+    const before = await getJson(url, '/calls', session);
+    assert.equal(before.body.calls[0].callId, newer.callId);
+
+    await postJson(url, '/messages/read', { peerId: 'user-tl-orderpeer' }, session);
+
+    // Acknowledging is not a state transition, so it must not touch the column
+    // the call log is ordered by.
+    const after = await getJson(url, '/calls', session);
+    assert.equal(
+      after.body.calls[0].callId,
+      newer.callId,
+      'the acknowledged call must not jump to the top of the log',
+    );
+    assert.ok(db.rows.get(missed.callId).missedReadAt, 'but it must still be acknowledged');
+  } finally {
+    await teardown();
+  }
+});

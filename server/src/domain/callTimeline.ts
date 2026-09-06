@@ -189,7 +189,10 @@ async function markMissedCallsRead(state: ServerState, userId: string, peerId: s
       // which therefore used to resurrect unread on the next restart.
       const rows = await state.db
         .update(callsTable)
-        .set({ missedReadAt: new Date(readAt), updatedAt: new Date(readAt) })
+        // `missedReadAt` only: `updatedAt` orders `GET /calls`, so bumping it
+        // here would make opening a conversation jump that call to the top of
+        // the call log. Acknowledging is not a state transition.
+        .set({ missedReadAt: new Date(readAt) })
         .where(
           and(
             eq(callsTable.calleeId, userId),
