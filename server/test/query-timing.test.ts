@@ -169,20 +169,18 @@ test('telemetry separates slow work a request waited for from detached work', as
 test('the default slow-query threshold is 100ms for every backend', () => {
   assert.equal(DEFAULT_SLOW_QUERY_MS, 100);
   assert.equal(slowQueryThresholdMs('pg'), 100);
-  assert.equal(slowQueryThresholdMs('mongo'), 100);
   assert.equal(slowQueryThresholdMs('redis'), 100);
 });
 
 test('the slow-query threshold is configurable per backend', () => {
   process.env.DB_SLOW_QUERY_MS = '250';
-  process.env.MONGO_SLOW_QUERY_MS = '500';
+  process.env.REDIS_SLOW_QUERY_MS = '500';
   try {
     assert.equal(slowQueryThresholdMs('pg'), 250);
-    assert.equal(slowQueryThresholdMs('mongo'), 500);
-    assert.equal(slowQueryThresholdMs('redis'), 100);
+    assert.equal(slowQueryThresholdMs('redis'), 500);
   } finally {
     delete process.env.DB_SLOW_QUERY_MS;
-    delete process.env.MONGO_SLOW_QUERY_MS;
+    delete process.env.REDIS_SLOW_QUERY_MS;
   }
 });
 
@@ -259,7 +257,7 @@ test('timeQuery flags a query at or over the threshold as slow', async () => {
 
 test('timeQuery labels a blank operation as "other" and a missing target as null', async () => {
   const records = await withSink(async () => {
-    await timeQuery({ backend: 'mongo', operation: '   ', kind: 'read' }, async () => undefined);
+    await timeQuery({ backend: 'redis', operation: '   ', kind: 'read' }, async () => undefined);
   });
 
   assert.equal(records[0].operation, 'other');

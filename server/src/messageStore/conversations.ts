@@ -2,8 +2,8 @@
  * Conversation grouping: turning a user's messages into one summary per
  * conversation.
  *
- * Both backends group in application code — the Mongo store because Cosmos DB
- * for MongoDB (RU) rejects a cross-partition `$group`/`$sort`, the memory store
+ * Only the memory store groups in application code; the Postgres store does
+ * the same work in a single `DISTINCT ON` query. The memory store
  * because it has no query engine at all — so the rule that decides the peer,
  * the last message and the unread count lives here once, and neither backend
  * can drift from the other.
@@ -20,7 +20,7 @@ import type { ConversationSummary, StoredMessage } from './types.ts';
  * caller that pre-filtered by participant and one that did not.
  *
  * The returned `lastMessage` is the caller's own object, not a copy: the memory
- * store owns live records and copies them on the way out, while the Mongo store
+ * store owns live records and copies them on the way out, while a database
  * hands over documents it has already detached from the driver.
  */
 export function summariseConversations(

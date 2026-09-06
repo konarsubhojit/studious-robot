@@ -206,8 +206,6 @@ function createTelemetry(): Telemetry {
     call_ring_duration_ms: createHistogram(LATENCY_BUCKETS_MS),
     /** Postgres round-trip duration, in ms. */
     pg_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
-    /** MongoDB round-trip duration, in ms. */
-    mongo_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Redis cache round-trip duration, in ms. */
     redis_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Per-sample maximum event-loop scheduling lag, in ms. */
@@ -394,7 +392,6 @@ function createTelemetry(): Telemetry {
 
   function queryHistogramFor(record: import('./lib/queryTiming.ts').QueryTimingRecord) {
     if (record.backend === 'pg') return histograms.pg_query_duration_ms;
-    if (record.backend === 'mongo') return histograms.mongo_query_duration_ms;
     return histograms.redis_query_duration_ms;
   }
 

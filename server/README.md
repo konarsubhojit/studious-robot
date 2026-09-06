@@ -77,8 +77,8 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 #### Text chat contract
 
 Text chat reuses the same versioned envelope and ack conventions as the call
-contract. Messages are persisted through `src/messageStore.ts` (in-memory by
-default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
+contract. Messages are persisted through `src/messageStore.ts` (Postgres when a
+database handle is configured, in-memory otherwise).
 
 ##### Client → Server
 
@@ -163,15 +163,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md). |
 | `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
-| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md)). Required when `NODE_ENV=production` unless the memory store is explicitly enabled. |
-| `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
-| `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
-| `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
-| `MONGODB_CONVERSATION_INDEX_COLLECTION` | `conversation_index` | User-partitioned routing collection for bounded conversation-list reads. |
-| `MONGODB_CONVERSATION_INDEX_WRITES` | `false` | Enables dual writes during the conversation-index backfill phase. |
-| `MONGODB_CONVERSATION_INDEX_READY` | `false` | Set to `true` only after provisioning and backfilling the routing collection. |
-| `MONGODB_POOL_MAX` | `4` | Maximum Mongo connections per server process. |
-| `MONGODB_MAX_IDLE_TIME_MS` | `120000` | Maximum idle lifetime for Mongo connections. |
+| `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Chat history lives in the same Postgres database as everything else, so this is only needed when `DATABASE_URL` is deliberately absent. Development and tests still default to memory. |
 | `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
 | `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
@@ -285,26 +277,39 @@ and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
 
 ## Text-message persistence
 
-`src/messageStore.ts` provides a transport-agnostic store with two
-implementations, selected by environment:
+Chat history lives in the **same Postgres database** as users, devices and
+calls. `src/messageStore.ts` provides a transport-agnostic store with two
+implementations:
 
-- `createMemoryMessageStore()` — array-backed, used when `MONGODB_URI` is unset
-  and throughout the test suite.
-- `createMongoMessageStore({ uri, dbName, collectionName })` — the official
-  `mongodb` driver against **Azure Cosmos DB for MongoDB**.
+- `createPgMessageStore({ db })` — the `messages` table, via the Drizzle handle
+  the rest of the server already shares. Selected whenever `createServer` is
+  given a `db`.
+- `createMemoryMessageStore()` — array-backed; used when there is no database
+  handle, and throughout the test suite.
 
 Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
-(newest-first, `limit` clamped to 1–100, default 50), `markDelivered`, and
-`close()`. The store is created by the composition root (`src/createServer.ts`),
-hung off the shared `state` object next to `messageBus`/`telemetry`, and closed
-during the graceful-shutdown drain.
+(newest-first, `limit` clamped to 1–100, default 50), `searchMessages`,
+`listConversations`, `markDelivered`, `markRead`, `deleteMessage`,
+`reactToMessage` and `close()`. The store is created by the composition root
+(`src/createServer.ts`) and hung off the shared `state` object next to
+`messageBus`/`telemetry`.
 
-On first connect the Mongo store creates a compound
-`{ conversationId: 1, createdAt: -1 }` index and a unique `{ messageId: 1 }`
-index. Index creation failures are logged and ignored rather than taking the
-server down.
+The `messages` table carries five indexes, each serving one access path:
 
-See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md) for provisioning the Cosmos DB account.
+| Index | Serves |
+| ----- | ------ |
+| `idx_messages_conversation_created` | A conversation's newest-first page, including the `created_at` cursor. |
+| `idx_messages_sender_created` / `idx_messages_recipient_created` | Search and conversation listing, which match either end of a conversation. |
+| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread counts — it indexes only the rows that can contribute one. |
+| `idx_messages_body_trgm` (GIN, `pg_trgm`) | The case-insensitive substring search `GET /messages/search` performs. |
+
+`pg_trgm` is created by migration `0010`, which therefore needs the owner
+connection (`DATABASE_URL_DIRECT`).
+
+> This replaced a separate MongoDB deployment. A second datastore bought
+> nothing a table and five indexes do not, while costing a second connection
+> pool, a second backup story, and a hand-maintained `conversation_index`
+> collection that could silently disagree with the messages it summarised.
 
 ## Database (Drizzle ORM)
 

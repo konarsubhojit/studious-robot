@@ -145,7 +145,7 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/identity.test.ts`               | Session, device registration, and presence APIs              |
 | `server` | `test/directory.test.ts`              | Contact directory (`GET /users`) search, paging, block filtering |
 | `server` | `test/telemetry.test.ts`              | Metrics counters and derived rates                           |
-| `server` | `test/query-timing.test.ts`           | SQL/Mongo/Redis query timing, slow-query threshold, per-operation breakdown |
+| `server` | `test/query-timing.test.ts`           | SQL/Redis query timing, slow-query threshold, per-operation breakdown |
 | `server` | `test/security.test.ts`               | Rate limiting and blocklist                                  |
 | `server` | `test/signaling.test.ts`              | Legacy join-room signaling                                   |
 | `server` | `test/health.test.ts`                 | Health endpoint                                              |

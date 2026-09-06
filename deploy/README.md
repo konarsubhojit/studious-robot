@@ -584,131 +584,36 @@ The job **fails** (and you get a GitHub notification) if the service does not be
 
 ---
 
-## 13. Message store (MongoDB / Cosmos DB) — provider notes
+## 13. Message store — Postgres
 
-Chat message history and conversation lists are persisted via `server/src/messageStore.ts` when `MONGODB_URI` is set (Postgres/Neon remains the store for users/devices/calls/events; this is a separate, optional store). Two Azure-hosted Mongo-compatible providers are supported and behave differently:
+Chat message history and conversation lists are persisted via
+`server/src/messageStore.ts` into the **same Postgres database** as users,
+devices, calls and events. There is nothing extra to provision, connect or back
+up: if `DATABASE_URL` works, chat history works.
 
-| Concern | DocumentDB (vCore) | Cosmos DB for MongoDB (RU) |
-|---|---|---|
-| Connection string | standard `mongodb://…` / `mongodb+srv://…` | requires `retrywrites=false` in the connection string |
-| Unique indexes | any field | must include the shard key (`conversationId`) |
-| Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 `BadRequest` |
-| Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
-
-The `messages` collection is partitioned by `conversationId`. The legacy
-`listConversations` filter is
-`{$or:[{senderId:userId},{recipientId:userId}]}` with no projection, sort, or
-limit; it therefore fans out to every conversation partition and downloads all
-matching message documents before grouping in the server. The 300–400 ms
-timings with a stable 13 ms RTT are consistent with that server-side RU/query
-cost, not network variance. No composite index can efficiently satisfy that
-participant filter plus a sort on the latest message computed by grouping.
-
-The optimized path uses a separate `conversation_index` collection partitioned
-by `userId`. Each row contains the latest message and unread count, so the
-conversation list is one projected, single-partition query for at most 100
-recently active conversations. Message writes and mutations maintain both
-users' summary rows. The old fan-out remains the default until the index is
-completely backfilled, preserving existing data.
-
-Provision and activate it in this order:
+One migration-time requirement: `0010_messages_table.sql` runs
+`CREATE EXTENSION IF NOT EXISTS pg_trgm`, which needs privileges the runtime
+role may not have. Run migrations with the owner connection —
+`DATABASE_URL_DIRECT`, which `drizzle.config.ts` already prefers:
 
 ```bash
-# Replace placeholders; omit --throughput when the database uses shared throughput.
-az cosmosdb mongodb collection create \
-  --account-name <account> \
-  --resource-group <resource-group> \
-  --database-name wetalk \
-  --name conversation_index \
-  --shard userId
-
-# Add MONGODB_CONVERSATION_INDEX_WRITES=true to /etc/robot-signal/env and
-# restart the service. Reads still use the legacy path during this phase,
-# while every new message updates both stores.
-#
-# Before the command below, stop the signaling service
-# (`sudo systemctl stop robot-signal`). Keep them stopped until the backfill and
-# index verification finish: the backfill is authoritative and must not race
-# a newer dual-write.
-
-cd ~/repos/studious-robot/server
-set -a
-. /etc/robot-signal/env
-set +a
-npm run db:backfill-conversations
-
-# Verify both indexes before enabling reads.
-mongosh "$MONGODB_URI" --quiet --eval \
-  'db.getSiblingDB("wetalk").conversation_index.getIndexes()'
+cd /opt/robot-signal/server && npm run db:migrate
 ```
 
-Then add `MONGODB_CONVERSATION_INDEX_READY=true` to
-`/etc/robot-signal/env` and start the service again. Do not set the
-read flag or start any writer before the backfill completes. Keep
-`MONGODB_CONVERSATION_INDEX_WRITES=true`; the read flag also implies writes as
-a fail-safe. Use
-`MONGODB_CONVERSATION_INDEX_COLLECTION` if the provisioned name differs.
-
-The store also creates the exact supporting indexes:
-
-- `messages: {conversationId:1, createdAt:-1, messageId:-1}` for latest-message reads;
-- `conversation_index: {userId:1, updatedAt:-1, conversationId:1}` for the bounded list;
-- unique `conversation_index: {userId:1, conversationId:1}` for idempotent writes.
-
-#### Message search (`bodyLower`)
-
-`searchMessages` used to run a case-insensitive regex (`$options: 'i'`) over
-`body` across every partition in the collection: no index can serve such a
-regex, and without the shard key in the filter Cosmos fans the query out
-account-wide. Two changes fix that, both rolled out the same way as the
-conversation index:
-
-- Once the conversation index is in service (`MONGODB_CONVERSATION_INDEX_READY`)
-  the search filter is scoped with `conversationId: {$in: [...]}`, so it reads
-  only the caller's own partitions. No extra configuration and no backfill.
-- `bodyLower`, a storage-only case-folded copy of `body`, lets the read path
-  drop `$options: 'i'` and use the `{conversationId:1, bodyLower:1}` index. It
-  needs a backfill, so it is behind its own two flags.
+Verify the extension and the table afterwards:
 
 ```bash
-# Phase 1 — dual-write. Add MONGODB_MESSAGE_BODY_LOWER_WRITES=true to
-# /etc/robot-signal/env and restart the service. Reads are unchanged; every
-# new or deleted message now maintains bodyLower.
-
-# Phase 2 — backfill. Safe to run with writers up (each update is idempotent
-# and only touches documents whose bodyLower is missing or stale), and safe to
-# re-run. It also creates the {conversationId:1, bodyLower:1} index.
-cd ~/repos/studious-robot/server
-set -a
-. /etc/robot-signal/env
-set +a
-npm run db:backfill-body-lower
-
-# Phase 3 — read. Add MONGODB_MESSAGE_BODY_LOWER_READY=true and restart.
+psql "$DATABASE_URL_DIRECT" -c "select extname from pg_extension where extname = 'pg_trgm';"
+psql "$DATABASE_URL_DIRECT" -c "\\d messages"
 ```
 
-Keep `MONGODB_MESSAGE_BODY_LOWER_WRITES=true` afterwards; as with the
-conversation index the read flag implies writes as a fail-safe. To roll back,
-clear the read flag — the `body` regex path is still correct at any time.
+Chat retention is enforced by the same sweep as call history (§ retention
+settings in `server/README.md`), so the table does not grow without bound.
 
-Mongo command monitoring logs Cosmos `429` / Mongo `16500` responses as
-`[messages] THROTTLED` with command name and retry delay only; filters,
-documents, and credentials are never logged. The Mongo pool is reused and
-bounded to four connections per process by default.
-
-Postgres investigation found that `users.user_id` is the primary key and
-`users.auth_uid` is unique, while device/call/event lookup indexes already
-exist. The observed startup `users` select is a full hydration read, not an
-unindexed lookup. Device, call, and event writes are independent real-time
-durability events and cannot be safely batched without changing acknowledgement
-semantics. The singleton `pg` pool was already reused, but its default 10-second
-idle expiry caused sporadic operations to pay connection/TLS setup again; idle
-connections are now retained for five minutes with TCP keepalive. Override with
-`DATABASE_POOL_IDLE_TIMEOUT_MS` if the provider requires a shorter lifetime.
-
-At startup the server logs the active Mongo host, database, collection, and whether `retryWrites` is disabled, so you can confirm which backend is live from `journalctl` without inspecting the connection string (credentials are never logged).
-
-> **Switching `MONGODB_URI` between providers does not migrate data.** The target starts empty — there is no automatic copy of existing message history between DocumentDB, Cosmos DB, or a from-scratch MongoDB instance.
+> **This replaced a separate MongoDB/Cosmos deployment.** Any `MONGODB_*`
+> variables left in `/etc/robot-signal/env` are now ignored and should be
+> deleted. Existing Mongo message history is *not* migrated — the `messages`
+> table starts empty.
 
 ---
 

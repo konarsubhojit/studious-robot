@@ -61,7 +61,7 @@ The server listens on `PORT` (default **4173**) and exposes:
 
 - `GET /health` — liveness probe
 - `GET /metrics` — call funnel counters, latency histograms, and per-operation
-  SQL/Mongo/Redis query timings (see *Query timing* below). Requires
+  SQL/Redis query timings (see *Query timing* below). Requires
   `x-debug-token` to match `DEBUG_API_TOKEN`.
 - `POST /session` — create / refresh a session token
 - WebSocket (Socket.IO) signaling on the same port
@@ -135,15 +135,11 @@ APNS_TEAM_ID=XXXXXXXXXX        # 10-char Team ID from Apple Developer portal
 APNS_BUNDLE_ID=com.example.tcalling
 APNS_PRODUCTION=false          # set to true for App Store / TestFlight builds
 
-# ── Message store (MongoDB / Cosmos DB) ─────────────────────────────────────
-# When set, chat message history and conversation lists are persisted to a
-# MongoDB-compatible backend instead of the in-memory store. See "Message
-# store (MongoDB / Cosmos DB)" below for provider-specific notes.
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DB_NAME=wetalk                    # optional, default shown
-MONGODB_MESSAGES_COLLECTION=messages      # optional, default shown
-# Production fails closed without MONGODB_URI. Only set this when ephemeral
-# chat history is an intentional operational choice:
+# ── Message store ───────────────────────────────────────────────────────────
+# Chat history lives in the `messages` table of the same Postgres database as
+# everything else, so DATABASE_URL above is all the configuration it needs.
+# Production fails closed without it. Only set this when ephemeral chat history
+# is an intentional operational choice:
 ALLOW_IN_MEMORY_MESSAGE_STORE=false
 
 # ── Chat attachments (Cloudflare R2) ────────────────────────────────────────
@@ -159,13 +155,12 @@ R2_PUBLIC_BASE_URL=https://media.example.com   # bucket's public/CDN origin
 # R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com  # optional override
 R2_PRESIGN_TTL_SECONDS=300     # optional, default shown (max 3600)
 
-# ── Query timing (SQL / Mongo / Redis) ──────────────────────────────────────
+# ── Query timing (SQL / Redis) ──────────────────────────────────────────────
 # Every datastore round trip is timed, counted per operation on GET /metrics,
 # and logged to the console. Queries at/over the slow threshold are logged as
 # warnings; the rest are logged only when VERBOSE_LOGGING / LOG_LEVEL=debug.
 DB_QUERY_TIMING=true           # optional, default shown (false disables timing)
 DB_SLOW_QUERY_MS=100           # Postgres slow-query threshold, default shown
-MONGO_SLOW_QUERY_MS=100        # MongoDB slow-query threshold, default shown
 REDIS_SLOW_QUERY_MS=100        # Redis cache slow-query threshold, default shown
 ```
 
@@ -188,24 +183,23 @@ The schema lives in `server/db/schema.ts`; migrations are in `server/db/migratio
 
 ### Query timing
 
-Every Postgres, MongoDB and Redis round trip is measured and reported in two
-places:
+Every Postgres and Redis round trip is measured and reported in two places:
 
 - **Server console.** A query at or over the slow threshold (default **100 ms**)
   logs `[db-timing] SLOW backend=… op=… kind=read|write target=… durationMs=…`,
   as does every failed query. Set `VERBOSE_LOGGING=true` (or `LOG_LEVEL=debug`)
   to log *every* query through the redacting verbose logger instead of only the
   slow ones. Only the shape of a query is ever logged — never statement
-  parameters, filter documents or message bodies.
+  parameters or message bodies.
 - **`GET /metrics`.** `counters.db_*` give the totals (queries, reads, writes,
-  slow, errors), `histograms.{pg,mongo,redis}_query_duration_ms` give the
+  slow, errors), `histograms.{pg,redis}_query_duration_ms` give the
   latency distribution, and `dbQueries` lists every operation sorted by total
   time spent — so the costliest operation is the first row:
 
 ```json
 {
   "dbQueries": [
-    { "backend": "mongo", "operation": "listConversations", "kind": "read",
+    { "backend": "pg", "operation": "select", "kind": "read",
       "count": 42, "errors": 0, "slow": 3, "totalMs": 5120, "meanMs": 121.9, "maxMs": 480.2 },
     { "backend": "pg", "operation": "insert", "kind": "write",
       "count": 190, "errors": 0, "slow": 0, "totalMs": 812, "meanMs": 4.27, "maxMs": 31.5 }
@@ -266,42 +260,30 @@ APNS_BUNDLE_ID=com.example.tcalling     # must match your app's Bundle Identifie
 APNS_PRODUCTION=false                    # true for production / TestFlight
 ```
 
-### Message store (MongoDB / Cosmos DB)
+### Message store
 
-Chat message history and conversation lists (`server/src/messageStore.ts`) use
-an in-memory store by default. Setting `MONGODB_URI` switches to a durable
-MongoDB-compatible backend. Two Azure providers have materially different
-behaviour — pick the right connection-string shape and be aware of the
-differences below:
+Chat message history and conversation lists (`server/src/messageStore.ts`) live
+in the `messages` table of the **same Postgres database** as users, devices and
+calls. No extra configuration is needed: if `createServer` gets a `db` handle,
+messages are durable. Without one the server falls back to an in-memory store,
+which production refuses unless `ALLOW_IN_MEMORY_MESSAGE_STORE=true` says the
+loss of history on restart is intentional.
 
-| Concern | DocumentDB (vCore) | Cosmos DB for MongoDB (RU) |
-|---|---|---|
-| Connection string | standard `mongodb://…` / `mongodb+srv://…` | requires `retrywrites=false` in the connection string |
-| Unique indexes | any field | must include the shard key (`conversationId`) |
-| Sorted queries | falls back to a collection scan | require a matching, direction-specific composite index — otherwise HTTP 400 |
-| Text search | `text` indexes / `$text` supported | not supported — message search uses a literal, case-insensitive `$regex` on `body` instead |
-| Throughput | per-cluster | RU/s cap; heavy load returns `429` (throttled) |
+`saveMessage` inserts with `ON CONFLICT (conversation_id, message_id) DO
+NOTHING`, so a client replaying a send from its outbox can never create a second
+message — and, because the conflicting insert is discarded rather than applied,
+never overwrites the reactions and receipts the original has since accumulated.
 
-The store creates all indexes with `conversationId` (the shard key) as a
-prefix so they satisfy Cosmos RU's constraints while remaining valid on
-vCore, real MongoDB, and the in-memory store. `saveMessage` also upserts on
-`{ conversationId, messageId }` so duplicate client sends (e.g. a mobile
-retry) never create a second message, even on a backend where the unique
-index could not be created.
+Search (`GET /messages/search`) is a literal, case-insensitive substring match,
+served by a `pg_trgm` GIN index on `lower(body)`. Migration `0010` creates the
+extension, so it must run with the owner connection — `DATABASE_URL_DIRECT`,
+which `drizzle.config.ts` already prefers.
 
-`GET /messages/search` is served by the `{ conversationId: 1, body: 1 }`
-index and sorts its (bounded) result page in application code, because a
-search fans out across every conversation the caller takes part in and
-Cosmos RU rejects a cross-partition sort — the same reasoning
-`listConversations` already follows.
-
-At startup, the server logs the active Mongo host, database, collection, and
-whether `retryWrites` is disabled, so you can confirm which backend is live
-without inspecting the connection string (credentials are never logged).
-
-> **Switching providers does not migrate data.** Changing `MONGODB_URI` to
-> point at a different database/provider starts from an empty collection —
-> existing message history is not copied over automatically.
+> Chat history used to live in a separate MongoDB/Cosmos deployment. It was
+> consolidated into Postgres: the second datastore bought nothing that a table
+> and five indexes do not, while costing a second connection pool, a second
+> backup story, and a hand-maintained `conversation_index` collection that could
+> silently disagree with the messages it summarised.
 
 ### Deploying to a VM (GCP + Ubuntu)
 
