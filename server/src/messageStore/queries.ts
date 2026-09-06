@@ -1,13 +1,13 @@
 /**
- * Query construction: conversation identity, pagination bounds, search-term
- * handling, and the Mongo filters/sorts the store issues.
+ * Query vocabulary shared by every backend: conversation identity, pagination
+ * bounds and search-term handling.
  *
- * Building the filters here rather than inline in the store means the shape of
- * a query — including the escaping that keeps a user-supplied search term from
- * being interpreted as a pattern — is assertable without a database.
+ * Keeping these here rather than inline in a store means the rules that define
+ * what a query *means* — how a conversation id is derived, what a page size
+ * clamps to, whether a search term matches — are asserted once and cannot drift
+ * between the Postgres store and the in-memory one.
  */
 
-import type { MongoFilter, MongoSortSpec } from './types.ts';
 
 /** Default page size for `listMessages`. */
 export const DEFAULT_MESSAGE_LIMIT = 50;
@@ -16,30 +16,6 @@ export const MAX_MESSAGE_LIMIT = 100;
 /** Maximum number of conversations returned by one conversation-list request. */
 export const MAX_CONVERSATION_LIMIT = 100;
 
-export const LIST_CONVERSATION_INDEX_SORT: MongoSortSpec = {
-  userId: 1,
-  updatedAt: -1,
-  conversationId: 1,
-};
-
-/**
- * Sort applied by `listMessages`: newest first, with `messageId` breaking ties.
- *
- * Prefixed with the shard key and matching a composite index exactly, because
- * Cosmos DB for MongoDB (RU) will not serve a sort that no index covers.
- */
-export const LIST_MESSAGES_SORT: MongoSortSpec = {
-  conversationId: 1,
-  createdAt: -1,
-  messageId: -1,
-};
-
-/**
- * Derive a deterministic conversation id from the two participant ids.
- *
- * The ids are sorted before joining so both participants — and both directions
- * of a send — always resolve to the same conversation.
- */
 export function deriveConversationId(userA: string, userB: string): string {
   return [String(userA), String(userB)].sort().join(':');
 }
@@ -51,16 +27,6 @@ export function clampLimit(limit: unknown): number {
   const requested = Number(limit);
   if (!Number.isFinite(requested)) return DEFAULT_MESSAGE_LIMIT;
   return Math.min(Math.max(Math.floor(requested), 1), MAX_MESSAGE_LIMIT);
-}
-
-/**
- * Escape every regular-expression metacharacter in `value`, so a user-supplied
- * search term is only ever matched literally.  Without this a term such as
- * `.*` would match every message, and a pathological one could make the
- * database evaluate a catastrophically backtracking pattern.
- */
-export function escapeRegExp(value: string): string {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -77,81 +43,4 @@ export function bodyMatches(message: { body?: string; }, term: string): boolean 
   return String(message?.body ?? '')
     .toLowerCase()
     .includes(term.toLowerCase());
-}
-
-/**
- * Filter for one conversation's page of messages, optionally before a cursor.
- */
-export function buildListMessagesFilter(
-  conversationId: string | undefined,
-  before?: string
-): MongoFilter {
-  const query: MongoFilter = { conversationId };
-  if (before) {
-    query.createdAt = { $lt: before };
-  }
-  return query;
-}
-
-/**
- * The case-folded copy of a message body that {@link buildSearchMessagesFilter}
- * matches against once `bodyLower` has been backfilled.
- *
- * Folding at write time is what removes `$options: 'i'` from the read path: a
- * case-insensitive regex cannot be served by an index, so every search
- * otherwise degrades into a collection scan that also re-folds every body it
- * touches.
- */
-export function bodyLowerOf(body: unknown): string {
-  return String(body ?? '').toLowerCase();
-}
-
-/**
- * Filter for a user's message search.
- *
- * The body match is a literal, case-insensitive substring match: the term is
- * escaped so a user cannot inject a pattern, and no `$text` is used because
- * Cosmos RU does not implement it.
- *
- * Two optional narrowings make the query cheaper without changing which
- * messages it selects:
- *
- * - `conversationIds` scopes the search to the conversations the user actually
- *   takes part in. `conversationId` is the shard key, so this turns a
- *   fan-out across every partition in the collection into a lookup against the
- *   user's own partitions.
- * - `bodyLower` matches the pre-folded copy of the body written by
- *   `saveMessage`, dropping the un-indexable `$options: 'i'`. It is only
- *   correct once every document has the field (see the backfill script), hence
- *   the flag.
- */
-export function buildSearchMessagesFilter(
-  userId: string,
-  term: string,
-  before?: string,
-  options: { conversationIds?: string[] | null; useBodyLower?: boolean; } = {}
-): MongoFilter {
-  const { conversationIds = null, useBodyLower = false } = options;
-  const filter: MongoFilter = {
-    $or: [{ senderId: userId }, { recipientId: userId }],
-  };
-  if (conversationIds) {
-    filter.conversationId = { $in: [...conversationIds] };
-  }
-  if (useBodyLower) {
-    filter.bodyLower = { $regex: escapeRegExp(term.toLowerCase()) };
-  } else {
-    filter.body = { $regex: escapeRegExp(term), $options: 'i' };
-  }
-  if (before) {
-    filter.createdAt = { $lt: before };
-  }
-  return filter;
-}
-
-/**
- * Filter selecting every message a user takes part in, in either direction.
- */
-export function buildParticipantFilter(userId: string): MongoFilter {
-  return { $or: [{ senderId: userId }, { recipientId: userId }] };
 }

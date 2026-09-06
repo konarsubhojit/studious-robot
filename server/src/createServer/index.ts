@@ -153,9 +153,10 @@ function createServer(opts: CreateServerOptions = {}) {
   // in-memory and skips all DB writes.
   const db = opts.db ?? null;
 
-  // Durable store for text-chat messages.  Defaults to an in-process store, so
-  // the server runs unchanged when MONGODB_URI is not configured.
-  const messageStore = createMessageStore({ messageStore: opts.messageStore });
+  // Durable store for text-chat messages.  Backed by the same Postgres
+  // database as the rest of the durable state; falls back to an in-process
+  // store so the server runs unchanged when no `db` handle is provided.
+  const messageStore = createMessageStore({ messageStore: opts.messageStore, db });
 
   // Shared read cache for hot queries (conversation lists, first-page message
   // history, call history).  Defaults to the in-process backend; `index.js`
@@ -197,12 +198,18 @@ function createServer(opts: CreateServerOptions = {}) {
     messageSearchRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
-    /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
+    /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
     messageStore,
     /** Shared read cache for conversation lists, message pages and call history. */
     cache,
-    /** Current asynchronous readiness state for the message store. */
-    messageStoreStatus: messageStore.type === 'mongo' ? 'starting' : 'ready',
+    /**
+     * Readiness state for the message store.  Both backends are usable the
+     * moment they are constructed — the Postgres store borrows the pool
+     * `db/client.ts` has already established, so there is no separate
+     * connection to wait on and no window in which the store exists but cannot
+     * serve reads.
+     */
+    messageStoreStatus: 'ready',
     /**
      * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
      * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
@@ -233,18 +240,6 @@ function createServer(opts: CreateServerOptions = {}) {
       console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
     });
 
-  if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
-    Promise.resolve(messageStore.ready())
-      .then(() => {
-        state.messageStoreStatus = 'ready';
-      })
-      .catch((error: unknown) => {
-        state.messageStoreStatus = 'unavailable';
-        console.error(
-          `[messages] Mongo message store health check failed: ${describeError(error)}`
-        );
-      });
-  }
   verboseLog('server', 'state.initialized', {
     storeNames: Object.entries(stores)
       .filter(([, value]) => value instanceof Map)
