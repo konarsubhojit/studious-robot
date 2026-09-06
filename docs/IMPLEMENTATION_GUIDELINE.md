@@ -111,8 +111,9 @@ verified Firebase account:
   "TURN unavailable" diagnostics; document setup.
 - **Lobby network-error recovery**: retry button + persistent offline banner.
 - **iOS support**: CallKit, APNs token collection, an iOS CI workflow.
-- **Session expiry**: default `SESSION_TTL_MS` to a finite value; call
-  `POST /session/refresh` from the app.
+- ~~**Session expiry**~~: ✅ `SESSION_TTL_MS` defaults to 7 days, expired
+  sessions are swept out of the in-memory map, every shared-store key is
+  written with an expiry, and the app re-mints on `401` / `session.invalid`.
 - **Replace emoji icons** with `react-native-vector-icons` for consistent
   cross-device rendering (`IconButton`, Lobby gear, redial, presence dot).
 - **Bitrate / codec control**: `RTCRtpSender.setParameters()` caps + `getStats()`

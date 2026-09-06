@@ -501,8 +501,26 @@ test('POST /calls: rejects an expired session', async () => {
   }
 });
 
-test('session without TTL has no expiresAt', async () => {
+// A session id is a bearer token, so the default is a finite lifetime: the
+// previous default of `SESSION_TTL_MS=0` meant a leaked token stayed valid for
+// ever and `state.sessions` only ever grew.
+test('sessions expire by default', async () => {
   const { url, teardown } = await startServer();
+  try {
+    const res = await postJson(url, '/session', { userId: 'user-alice' });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.expiresAt, 'a default session carries an expiry');
+    const ttlMs = Date.parse(res.body.expiresAt) - Date.parse(res.body.createdAt);
+    assert.ok(ttlMs > 0 && ttlMs <= 7 * 24 * 60 * 60 * 1000, `unexpected default TTL: ${ttlMs}ms`);
+  } finally {
+    await teardown();
+  }
+});
+
+// `0` is still honoured for the deployments (and tests) that want it, but it
+// now has to be asked for explicitly.
+test('an explicit SESSION_TTL_MS of 0 restores non-expiring sessions', async () => {
+  const { url, teardown } = await startServer({ sessionTtlMs: 0 });
   try {
     const res = await postJson(url, '/session', { userId: 'user-alice' });
     assert.equal(res.status, 201);

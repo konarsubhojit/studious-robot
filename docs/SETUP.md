@@ -95,9 +95,10 @@ DB_POOL_SIZE=4
 # REDIS_URL=redis://localhost:6379
 
 # ── Session ──────────────────────────────────────────────────────────────────
-# Token lifetime in milliseconds.  Clients refresh at ~83 % of this interval.
-# 0 = infinite (not recommended for production).
-SESSION_TTL_MS=3600000         # 1 hour
+# Token lifetime in milliseconds.  Defaults to 7 days when unset; the client
+# re-mints transparently on a 401 or a `session.invalid` socket event.
+# 0 = infinite (leaks one immortal bearer token per login; tests only).
+# SESSION_TTL_MS=3600000       # 1 hour
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
 CALL_RATE_LIMIT=10             # max call initiations per window per user

@@ -7,8 +7,8 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from '../config.ts';
-import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from '../lib/state.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from '../domain/calls.ts';
 import { notifyCallTransition } from '../domain/notifications.ts';
@@ -92,9 +92,15 @@ function createServer(opts: CreateServerOptions = {}) {
     );
 
   // ── Session TTL ──────────────────────────────────────────────────────────
-  // When non-zero, sessions expire after this many milliseconds.  Pass via
-  // opts (tests) or SESSION_TTL_MS env var (production).
-  const sessionTtlMs = opts.sessionTtlMs ?? parseEnv('SESSION_TTL_MS', 0);
+  // Sessions expire after this many milliseconds.  Pass via opts (tests) or
+  // SESSION_TTL_MS env var (production).  `0` restores the old non-expiring
+  // behaviour and is deliberately not the default: see DEFAULT_SESSION_TTL_MS.
+  //
+  // `parseNonNegativeNumber` rather than `parseEnv` so an explicit
+  // `SESSION_TTL_MS=0` survives instead of being treated as unset.
+  const sessionTtlMs =
+    opts.sessionTtlMs ??
+    parseNonNegativeNumber('SESSION_TTL_MS', process.env.SESSION_TTL_MS, DEFAULT_SESSION_TTL_MS);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const callInitRateLimiter = createRateLimiter({
@@ -359,6 +365,18 @@ function createServer(opts: CreateServerOptions = {}) {
   }, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS);
   deviceSweepTimer.unref();
 
+  // Background worker: drop expired sessions. Expiry is already enforced on
+  // every read, so this only bounds `state.sessions`, which otherwise grows
+  // for the lifetime of the process.
+  const sessionSweepTimer = setInterval(() => {
+    try {
+      pruneExpiredSessions(state);
+    } catch (error) {
+      console.error(`[sessions] expired-session sweep failed: ${describeError(error)}`);
+    }
+  }, DEFAULT_SESSION_SWEEP_INTERVAL_MS);
+  sessionSweepTimer.unref();
+
   const shutdownDrainMs =
     opts.shutdownDrainMs ?? parseEnv('SHUTDOWN_DRAIN_MS', DEFAULT_SHUTDOWN_DRAIN_MS);
 
@@ -383,6 +401,7 @@ function createServer(opts: CreateServerOptions = {}) {
       // Stop the background worker.
       clearInterval(pollTimer);
       clearInterval(deviceSweepTimer);
+      clearInterval(sessionSweepTimer);
 
       // Tell connected clients to reconnect elsewhere.
       io.emit(SERVER_EVENTS.SERVER_DRAINING, { reason, ts: new Date().toISOString() });

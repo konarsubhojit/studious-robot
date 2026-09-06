@@ -178,7 +178,8 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
-| `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. |
+| `SESSION_TTL_MS` | `604800000` (7 days) | Session (bearer token) lifetime. Expired sessions are rejected on every read and swept from memory every 10 minutes; shared-store keys always carry an expiry. `0` restores non-expiring sessions — tests only. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. Unset for the single-process deployment, where the in-memory bus and cache are equivalent. |
 | `DB_POOL_SIZE` | `4` | Per-instance Postgres pool size (fallback: `DATABASE_POOL_MAX`). For N instances, divide Neon pooler budget across instances. |
 | `DATABASE_POOL_IDLE_TIMEOUT_MS` | `300000` | Keep idle Postgres connections reusable to avoid a new TLS handshake on sporadic writes. |
 
