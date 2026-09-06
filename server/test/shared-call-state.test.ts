@@ -200,3 +200,69 @@ test('a call create and a transition each write the shared store exactly once', 
     await a.teardown();
   }
 });
+
+// Decision 2: the deployment is a single systemd unit, so `REDIS_URL` is unset
+// and `state.callState` is absent. In that shape the in-memory registry plus
+// Postgres is the *only* authority — the Lua transition machine in
+// `stores/redis.ts` must not be consulted at all, so it cannot drift from the
+// TypeScript state machine in `domain/calls.ts`. This asserts the single
+// authority directly: a spying shared store that is never wired in is never
+// touched, and the local transition still succeeds end to end.
+test('without shared call state the local registry is the only transition authority', async () => {
+  const shared = createSharedBackends();
+  const touched: string[] = [];
+  const spy = {
+    ...shared.callState,
+    get: async (callId: string) => {
+      touched.push('get');
+      return shared.callState.get(callId);
+    },
+    save: async (call: import('../src/stores/contracts.ts').CallRecord) => {
+      touched.push('save');
+      return shared.callState.save(call);
+    },
+    transitionAtomic: async (args: Parameters<typeof shared.callState.transitionAtomic>[0]) => {
+      touched.push('transitionAtomic');
+      return shared.callState.transitionAtomic(args);
+    },
+  };
+
+  // Deliberately *not* wired into the stores bundle: this is the no-Redis shape.
+  const stores = createMemoryStores();
+  assert.equal(stores.callState, undefined, 'memory stores carry no shared call state');
+
+  const a = await startServer(stores);
+  try {
+    const health = await readJson(await fetch(`${a.url}/health`));
+    assert.equal(health.stateAffinity, 'sticky');
+    assert.equal(health.sharedState.calls, false);
+    assert.equal(health.sharedState.messageBus, false);
+
+    const callerSession = (await postJson(a.url, '/session', { userId: 'user-a', deviceId: 'dev-a' })).body.sessionId;
+    const calleeSession = (await postJson(a.url, '/session', { userId: 'user-b', deviceId: 'dev-b' })).body.sessionId;
+
+    const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
+    assert.equal(created.status, 201);
+    const callId = created.body.callId;
+
+    const accepted = await postJson(a.url, `/calls/${callId}/accept`, {}, calleeSession);
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.status, 'accepted');
+
+    const ended = await postJson(a.url, `/calls/${callId}/end`, {}, callerSession);
+    assert.equal(ended.status, 200);
+    assert.equal(ended.body.status, 'ended');
+
+    // Re-ending is idempotent, but re-accepting a terminal call is rejected —
+    // the state machine is enforced locally, not by the Lua copy.
+    assert.equal((await postJson(a.url, `/calls/${callId}/end`, {}, callerSession)).status, 200);
+    const reaccept = await postJson(a.url, `/calls/${callId}/accept`, {}, calleeSession);
+    assert.equal(reaccept.status, 409);
+    assert.match(String(reaccept.body.error), /terminal state/);
+
+    assert.deepEqual(touched, [], 'the shared store is never consulted without REDIS_URL');
+    assert.deepEqual(shared.saves, []);
+  } finally {
+    await a.teardown();
+  }
+});

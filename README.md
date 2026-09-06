@@ -52,15 +52,23 @@ In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
 `/health` from a browser.
 
-### Deployment topology: horizontal with Redis shared state
+### Deployment topology: one process, no Redis
 
-With `REDIS_URL` configured, runtime call/session state is coordinated through
-Redis-backed store primitives and `/health` reports `stateAffinity: "shared"`.
-That allows **round-robin (non-sticky)** load balancing for multi-instance
-deployments.
-
-When `REDIS_URL` is unset, the server stays in single-instance in-memory mode
+The deployment is a **single systemd unit** on an OCI VM (see
+[`deploy/README.md`](./deploy/README.md)). `REDIS_URL` is deliberately unset:
+with one process the in-memory message bus and read cache are exactly
+equivalent to their Redis counterparts — a publish and its subscriber are the
+same object — and the Socket.IO Redis adapter has nothing to adapt. In that
+mode the in-memory call registry plus Postgres is the single source of truth,
 and `/health` reports `stateAffinity: "sticky"`.
+
+**The one trigger for reintroducing Redis is running more than one process.**
+With `REDIS_URL` configured, runtime call/session state is coordinated through
+Redis-backed store primitives, `/health` reports `stateAffinity: "shared"`, and
+**round-robin (non-sticky)** load balancing becomes correct. The systemd-native
+way to get there is the `robot-signal@.service` template unit described in
+`deploy/README.md` §5a; the server refuses to start a template instance above
+ordinal 0 without `REDIS_URL` in production.
 
 ## Run the mobile app
 

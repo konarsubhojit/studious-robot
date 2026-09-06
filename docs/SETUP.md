@@ -89,8 +89,10 @@ DATABASE_URL=******host/dbname?sslmode=require
 DB_POOL_SIZE=4
 
 # ── Redis ────────────────────────────────────────────────────────────────────
-# When set, session/presence state is Redis-backed (required for multi-instance).
-REDIS_URL=redis://localhost:6379
+# Leave UNSET for the standard single-process deployment: the in-memory bus and
+# cache are equivalent to Redis for one process.  Set it only when running more
+# than one instance, where it is mandatory.
+# REDIS_URL=redis://localhost:6379
 
 # ── Session ──────────────────────────────────────────────────────────────────
 # Token lifetime in milliseconds.  Clients refresh at ~83 % of this interval.
@@ -209,8 +211,12 @@ Redis is required for multi-instance signaling and optional for single-instance:
 - Enables cross-instance session/presence fan-out via the Socket.IO Redis adapter.
 - Persists sessions and presence maps across server restarts.
 
+Neither is needed for a single process, which is how the server is deployed —
+so `REDIS_URL` is normally left unset and `/health` reports
+`stateAffinity: "sticky"`.
+
 ```bash
-# Quick local Redis via Docker
+# Only when you actually run more than one instance:
 docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```
