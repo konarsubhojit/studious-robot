@@ -192,6 +192,121 @@ describe('ChatConversationScreen', () => {
     expect(inputAfter.props.value).toBe('');
   });
 
+  // Rapid-fire sending: the change event for the text being sent can still be
+  // crossing the bridge when the send fires, so it lands after the composer was
+  // cleared and carries the sent text. Accepting it re-filled the box, and the
+  // next send appended to that — the composer grew instead of resetting.
+  test('a change event echoing the text just sent does not refill the composer', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('first');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+    // The in-flight keystroke, delivered late.
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('first');
+    });
+
+    expect(findByTestId(tree, 'chat-message-input').props.value).toBe('');
+    expect(findByTestId(tree, 'chat-message-send').props.disabled).toBe(true);
+    expect(onSendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test('typing resumes normally after the stale echo is dropped', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('first');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('first');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('second');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenNthCalledWith(2, 'second', { replyTo: null });
+    expect(findByTestId(tree, 'chat-message-input').props.value).toBe('');
+  });
+
+  // Only the echo of the *last* send is dropped, so deliberately sending the
+  // same word twice in a row still goes through twice.
+  test('retyping the same message after a send still sends it', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('ok');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+    // First 'ok' after the send is the stale echo; the second is real typing.
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('ok');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('ok');
+    });
+    act(() => {
+      findByTestId(tree, 'chat-message-send').props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenCalledTimes(2);
+    expect(onSendMessage).toHaveBeenNthCalledWith(2, 'ok', { replyTo: null });
+  });
+
+  test('two send taps in the same frame send the message once', () => {
+    const onSendMessage = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [],
+      onSendMessage,
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-message-input').props.onChangeText('once');
+    });
+    const sendButton = findByTestId(tree, 'chat-message-send');
+    act(() => {
+      sendButton.props.onPress();
+      sendButton.props.onPress();
+    });
+
+    expect(onSendMessage).toHaveBeenCalledTimes(1);
+  });
+
   test('send button is disabled when the draft is empty/whitespace', () => {
     const tree = render({
       peerId: 'user-bob',

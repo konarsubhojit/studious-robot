@@ -214,6 +214,90 @@ describe('chatDb', () => {
   });
 });
 
+// The load is asynchronous, a save is not: the composer can queue a send before
+// the disk read resolves. The cache the save left behind used to satisfy the
+// load outright, so the file was never read and every persisted conversation,
+// message and draft was silently discarded — then overwritten with nothing.
+describe('chatDb load/save ordering', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetChatDbCache();
+  });
+
+  test('a save before the first load does not stop the file being read', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(
+      JSON.stringify({
+        conversations: [{ peerId: 'bob', unreadCount: 2 }],
+        messagesByPeer: { bob: makeMessages(3) },
+        outbox: [],
+        drafts: {},
+      }),
+    );
+
+    saveChatSnapshot({ outbox: [{ messageId: 'queued', recipientId: 'bob', body: 'hi' } as any] });
+    const snapshot = await loadChatSnapshot();
+
+    expect(RNFS.readFile).toHaveBeenCalled();
+    expect(snapshot.conversations).toHaveLength(1);
+    expect(snapshot.messagesByPeer.bob).toHaveLength(3);
+  });
+
+  test('the pre-load write wins over the file for the table it owns', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(
+      JSON.stringify({
+        conversations: [],
+        messagesByPeer: {},
+        outbox: [{ messageId: 'stale', recipientId: 'bob', body: 'old' }],
+        drafts: {},
+      }),
+    );
+
+    saveChatSnapshot({ outbox: [{ messageId: 'queued', recipientId: 'bob', body: 'hi' } as any] });
+    const snapshot = await loadChatSnapshot();
+
+    expect(snapshot.outbox.map(item => item.messageId)).toEqual(['queued']);
+  });
+
+  test('concurrent loads share one read of the file', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify({ conversations: [] }));
+
+    const [first, second] = await Promise.all([loadChatSnapshot(), loadChatSnapshot()]);
+
+    expect(RNFS.readFile).toHaveBeenCalledTimes(1);
+    expect(first).toBe(second);
+  });
+
+  test('a load after clearing does not resurrect the deleted file', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    (RNFS.readFile as jest.Mock).mockResolvedValue(
+      JSON.stringify({ conversations: [{ peerId: 'bob', unreadCount: 1 }] }),
+    );
+    (RNFS.unlink as jest.Mock).mockResolvedValue(undefined);
+
+    await clearChatDb();
+    const snapshot = await loadChatSnapshot();
+
+    expect(snapshot.conversations).toEqual([]);
+  });
+
+  // An outbox-only write must not re-sort every conversation's history: that
+  // runs on the JS thread for every message acknowledgement.
+  test('a save re-prunes only the tables it was given', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(false);
+    await loadChatSnapshot();
+
+    const history = makeMessages(MAX_MESSAGES_PER_CONVERSATION + 10);
+    saveChatSnapshot({ messagesByPeer: { bob: history } });
+    const pruned = (await loadChatSnapshot()).messagesByPeer.bob;
+
+    saveChatSnapshot({ outbox: [] });
+    expect((await loadChatSnapshot()).messagesByPeer.bob).toBe(pruned);
+  });
+});
+
 describe('chatDb drafts', () => {
   test('round-trips a draft and drops empty ones', async () => {
     (RNFS.exists as jest.Mock).mockResolvedValue(false);
