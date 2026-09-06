@@ -1,12 +1,17 @@
 # WeTalk — Azure Setup Guide
 
-Complete step-by-step instructions for wiring the two Azure services WeTalk uses:
-**Azure Notification Hubs** (the preferred push transport) and **Azure Cosmos DB
-for MongoDB** (persistent storage for text chat).
+Complete step-by-step instructions for wiring the one Azure service WeTalk uses:
+**Azure Notification Hubs**, the preferred push transport.
 
-Both are **entirely optional**. With none of the environment variables in this
+It is **entirely optional**. With none of the environment variables in this
 guide set, the server behaves exactly as it did before: pushes fall back to
-direct FCM/APNs, and chat messages are kept in an in-process memory store.
+direct FCM/APNs.
+
+> **Chat persistence is no longer an Azure concern.** Message history used to
+> live in Azure Cosmos DB for MongoDB; it now lives in the `messages` table of
+> the same Postgres database as everything else. See
+> [`SETUP.md`](SETUP.md#message-store). Any `MONGODB_*` variables still set are
+> ignored.
 
 ---
 
@@ -21,14 +26,7 @@ direct FCM/APNs, and chat messages are kept in an in-process memory store.
    - [Configure the server](#15-configure-the-server)
    - [Free tier limits](#16-free-tier-limits)
    - [Troubleshooting](#17-troubleshooting)
-3. [Part 2 — Azure Cosmos DB for MongoDB](#part-2--azure-cosmos-db-for-mongodb)
-   - [Locate the account](#21-locate-the-account)
-   - [Copy the connection string](#22-copy-the-connection-string)
-   - [Create the database and collection](#23-create-the-database-and-collection)
-   - [Configure the server](#24-configure-the-server)
-   - [Free tier limits](#25-free-tier-limits)
-   - [Troubleshooting](#26-troubleshooting)
-4. [Verifying the setup](#verifying-the-setup)
+3. [Verifying the setup](#verifying-the-setup)
 
 ---
 
@@ -37,12 +35,10 @@ direct FCM/APNs, and chat messages are kept in an in-process memory store.
 | Component | Azure resource | Resource group | Env vars |
 |-----------|---------------|----------------|----------|
 | Push notifications (calls + messages) | Notification Hubs namespace `apns-kiyon`, hub `storeman` | `sql` | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING`, `AZURE_NOTIFICATION_HUB_NAME`, `AZURE_NOTIFICATION_HUB_API_VERSION` |
-| Text-chat persistence | Cosmos DB account `doctor-pps` (Mongo API) | `sql` | `MONGODB_URI`, `MONGODB_DB_NAME`, `MONGODB_MESSAGES_COLLECTION` |
 
 The signaling server talks to Notification Hubs over its **REST API**, signing
 requests with a SAS token it mints from the connection string. There is **no
-Azure SDK dependency** — only Node's built-in `crypto` and `https`. Cosmos DB is
-reached with the standard `mongodb` driver.
+Azure SDK dependency** — only Node's built-in `crypto` and `https`.
 
 > **Notification Hubs does not replace your Firebase/Apple credentials — it
 > proxies them.** You still need the APNs `.p8` key and the Firebase
@@ -194,105 +190,6 @@ prove the hub credentials work independently of the server.
 
 ---
 
-## Part 2 — Azure Cosmos DB for MongoDB vCore
-
-### 2.1 Locate the account
-
-1. In the [Azure portal](https://portal.azure.com) search for **Azure Cosmos DB**.
-2. Open the account **`doctor-pps`** (resource group **`sql`**).
-3. Confirm the cluster is **Azure Cosmos DB for MongoDB vCore**. This deployment
-   uses MongoDB's SRV connection format and SCRAM-SHA-256 authentication; it is
-   not the RU-based Cosmos DB Mongo API.
-
-> Do not use the `mongodb://…:10255/?ssl=true&replicaSet=globaldb` string from
-> the RU-based API documentation. It is for a different Cosmos product.
-
-### 2.2 Copy the connection string
-
-1. In the cluster's left menu choose **Settings → Connection strings**.
-2. Copy the vCore connection string. It has this form:
-
-   ```
-   mongodb+srv://doctor-pps:<password>@doctor-pps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retryWrites=false
-   ```
-
-   There is no explicit port or `replicaSet=globaldb`: SRV resolves the vCore
-   host to port 10260.
-
-> ⚠️ **Percent-encode reserved password characters.** An `@` in a password is
-> parsed as the end of user information and produces `Invalid connection string`
-> before any network I/O. Encode `@` → `%40`, `:` → `%3A`, `/` → `%2F`, `?` →
-> `%3F`, `#` → `%23`, `&` → `%26`, and `%` → `%25`. Prefer alphanumeric-only
-> passwords/keys where possible to avoid this trap.
-
-### 2.3 Create the database and collection
-
-You can let the driver create both on first write, or create them in the vCore
-cluster's Data Explorer ahead of time.
-
-1. In the account's left menu choose **Data Explorer**.
-2. Click **New Collection**.
-3. Create database **`wetalk`** and collection **`messages`**.
-4. Click **OK**.
-
-On first connect the server creates two indexes idempotently:
-
-- compound `{ conversationId: 1, createdAt: -1 }` — backs the newest-first
-  history query;
-- unique `{ messageId: 1 }` — makes message persistence idempotent.
-
-If index creation fails (e.g. insufficient permissions) the server logs a warning
-and keeps running.
-
-### 2.4 Configure the server
-
-```bash
-MONGODB_URI='mongodb+srv://doctor-pps:<percent-encoded-password>@doctor-pps.global.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retryWrites=false'
-# Optional — these are the defaults
-# MONGODB_DB_NAME='wetalk'
-# MONGODB_MESSAGES_COLLECTION='messages'
-```
-
-The single quotes are required in a systemd environment assignment when the URI
-contains `&`; otherwise systemd/the shell treats it as a separator. Add
-`MONGODB_URI` as a **GitHub Actions secret** exactly as in §1.5 — it embeds a
-credential with full read/write access.
-
-When `MONGODB_URI` is unset the server uses `createMemoryMessageStore()`. Chat
-still works end-to-end; history simply does not survive a restart. This is the
-configuration the test suite runs in. A malformed URI is logged loudly at
-startup and uses the same memory-store fallback. A valid URI is checked
-asynchronously at startup with a bounded five-second server-selection timeout;
-the signaling server continues serving calls if that check fails. `/health`
-includes the message-store type and `ready`, `starting`, or `unavailable` status.
-
-### 2.5 Networking
-
-vCore denies public network access by default. Its DNS commonly resolves through
-`global.privatelink.mongocluster.cosmos.azure.com`; DNS can succeed while TCP to
-port 10260 times out. Verify the route from the server:
-
-```bash
-dig +short SRV _mongodb._tcp.doctor-pps.global.mongocluster.cosmos.azure.com
-nc -zv <resolved-host> 10260
-```
-
-To permit a public server, open the Azure portal → cluster → **Settings** →
-**Networking**, then add the server's egress IP. Prefer private networking where
-available.
-
-### 2.6 Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| `[messages] INVALID MONGODB_URI` at startup | Reserved password character was not encoded, or the URI is not `mongodb+srv://` | Percent-encode the password and use the vCore URI in §2.2. This is a parse error, not a network error. |
-| `[messages] Mongo message store health check failed` after about 5 seconds | Public networking/firewall path to vCore is blocked | Verify SRV and TCP as in §2.5, then add the server egress IP in **Networking**. |
-| `/health` reports `messageStore.status: "unavailable"` | The startup connectivity check failed | Calls/signaling remain available; correct the URI or network path before relying on persistent chat. |
-| Server logs `[messages] index creation skipped` | The account credential lacks index privileges | Non-fatal. Create the indexes manually with a suitably privileged vCore user. |
-| History is empty after a restart | The memory store is active | Check the explicit memory-store startup log and correct `MONGODB_URI` if persistence is required. |
-
----
-
 ## Verifying the setup
 
 Start the server with the new variables and watch the startup logs — the
@@ -320,11 +217,12 @@ curl -s -X POST $BASE/devices/register -H 'content-type: application/json' \
   -d "{\"sessionId\":\"$BOB\",\"provider\":\"fcm\",\"pushToken\":\"<real-device-token>\"}"
 
 # 3. Send a message over the socket (message.send), then read the history back
-curl -s "$BASE/messages?peerId=bob&limit=10&sessionId=$ALICE" | jq
+curl -s -H "Authorization: Bearer $ALICE" "$BASE/messages?peerId=bob&limit=10" | jq
 ```
 
-If `MONGODB_URI` is configured, restart the server and re-run the last command —
-the history must still be there. If it disappears, the memory store is in use.
+If `DATABASE_URL` is configured, restart the server and re-run the last command
+— the history must still be there. If it disappears, the memory store is in use;
+see [`SETUP.md`](SETUP.md#message-store).
 
 ### Push delivery
 

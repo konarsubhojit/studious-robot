@@ -1618,6 +1618,14 @@ function ChatConversationScreen({
   // Seeded from the persisted draft so re-opening a conversation restores the
   // half-typed message instead of silently discarding it.
   const [draft, setDraft] = useState(() => initialDraft?.text ?? '');
+  // The composer text as the native input last reported it. `draft` is the
+  // React copy of the same value; this one exists so a send can reason about
+  // keystrokes that have not been rendered yet.
+  const draftRef = useRef(initialDraft?.text ?? '');
+  // The text a send consumed, held until the change event that was already in
+  // flight when the user tapped send has been discarded. `null` when there is
+  // no send to reconcile against.
+  const sentEchoRef = useRef((null as string | null));
   // The message the composer is currently replying to, if any.
   const [replyTarget, setReplyTarget] = useState((null as ChatMessage | null));
   // A bubble briefly emphasised because its quote was tapped; takes precedence
@@ -1848,6 +1856,19 @@ function ChatConversationScreen({
 
   const handleChangeText = useCallback(
       (text: string) => {
+      // A keystroke that was already crossing the bridge when the user tapped
+      // send is delivered *after* the composer was cleared, and it carries the
+      // text that was just sent. Accepting it re-fills the box with the message
+      // that has already gone — and because the next send clears it again from
+      // there, rapid-fire sending made the composer grow instead of resetting.
+      // It is dropped exactly once, so genuinely retyping the same message
+      // still works.
+      if (sentEchoRef.current !== null && text === sentEchoRef.current) {
+        sentEchoRef.current = null;
+        return;
+      }
+      sentEchoRef.current = null;
+      draftRef.current = text;
       setDraft(text);
       reportTyping(Boolean(text.trim()));
     },
@@ -1857,8 +1878,13 @@ function ChatConversationScreen({
   const draftStateRef = useRef({ text: draft, replyToId: replyTarget?.messageId ?? null });
 
   const handleSend = useCallback(() => {
-    const trimmed = draft.trim();
+    // Read the ref rather than this render's `draft`: two taps within one frame
+    // both close over the pre-send value, and the second would send it twice.
+    const pending = draftRef.current;
+    const trimmed = pending.trim();
     if (!trimmed) return;
+    sentEchoRef.current = pending;
+    draftRef.current = '';
     onSendMessage?.(trimmed, { replyTo: replyTarget?.messageId ?? null });
     setDraft('');
     setReplyTarget(null);
@@ -1867,7 +1893,7 @@ function ChatConversationScreen({
     draftStateRef.current = { text: '', replyToId: null };
     onClearDraft?.();
     reportTyping(false);
-  }, [draft, onClearDraft, onSendMessage, replyTarget, reportTyping]);
+  }, [onClearDraft, onSendMessage, replyTarget, reportTyping]);
 
   // The reply target is restored separately: it is stored by id, and the
   // message it points at may not have been loaded yet when the screen mounts.

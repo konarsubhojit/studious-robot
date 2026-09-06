@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
+import { SHARED_SESSION_MAX_TTL_MS } from '../config.ts';
 
 type SocketIoAdapterFactory = (
   pub: unknown,
@@ -205,13 +206,19 @@ async function createRedisPgStores(
     },
     save: async (session: import('./contracts.ts').SessionRecord) => {
       const payload = JSON.stringify(session);
-      const ttlMs = session.expiresAt ? Date.parse(session.expiresAt) - Date.now() : Number.NaN;
+      const declared = session.expiresAt ? Date.parse(session.expiresAt) - Date.now() : Number.NaN;
+      // Every session key is written with an expiry, without exception. A key
+      // written without `PX` outlives the process that created it forever, so
+      // a deployment with `SESSION_TTL_MS=0` used to leak one immortal key per
+      // login. Where the session declares no expiry, the keyspace is still
+      // bounded by SHARED_SESSION_MAX_TTL_MS; an already-expired session is
+      // clamped to the shortest expiry Redis accepts rather than written
+      // without one.
+      const ttlMs = Number.isFinite(declared)
+        ? Math.min(Math.max(declared, 1), SHARED_SESSION_MAX_TTL_MS)
+        : SHARED_SESSION_MAX_TTL_MS;
       if (typeof busPub.set === 'function') {
-        if (Number.isFinite(ttlMs) && ttlMs > 0) {
-          await busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs });
-          return;
-        }
-        await busPub.set(sessionKey(session.sessionId), payload);
+        await busPub.set(sessionKey(session.sessionId), payload, { PX: ttlMs });
         return;
       }
       sessionFallback.set(session.sessionId, { ...session });

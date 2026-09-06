@@ -4,7 +4,7 @@ import { sanitizeForLog } from './normalize.ts';
 import { verboseLog } from './verbose.ts';
 
 /**
- * Wall-clock timing for every datastore round trip (Postgres, MongoDB, Redis).
+ * Wall-clock timing for every datastore round trip (Postgres, Redis).
  *
  * The goal is answering two operational questions without an external APM:
  *   1. how long does each query take, and
@@ -26,12 +26,12 @@ import { verboseLog } from './verbose.ts';
  * deployment gets the slow-query trail and a debugging session gets everything.
  *
  * Only the *shape* of a query is ever recorded or logged — backend, operation
- * name, target (table/collection), duration, and error code.  Statement
- * parameters, filter documents and message bodies never reach a log line.
+ * name, target table, duration, and error code.  Statement parameters and
+ * message bodies never reach a log line.
  */
 
 /** Datastore behind a timed operation. */
-export type QueryBackend = 'pg' | 'mongo' | 'redis';
+export type QueryBackend = 'pg' | 'redis';
 
 /** Whether the operation reads or mutates data. */
 export type QueryKind = 'read' | 'write';
@@ -141,11 +141,7 @@ function isQueryTimingEnabled(): boolean {
  */
 function slowQueryThresholdMs(backend: QueryBackend): number {
   const raw =
-    backend === 'mongo'
-      ? process.env.MONGO_SLOW_QUERY_MS
-      : backend === 'redis'
-        ? process.env.REDIS_SLOW_QUERY_MS
-        : process.env.DB_SLOW_QUERY_MS;
+    backend === 'redis' ? process.env.REDIS_SLOW_QUERY_MS : process.env.DB_SLOW_QUERY_MS;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SLOW_QUERY_MS;
 }

@@ -3,6 +3,7 @@ import {
   totalUnread,
   withConversationRead,
   withIncomingMessage,
+  withOutgoingMessage,
 } from '../../src/messaging/conversations';
 import { withDraft, withoutDraft } from '../../src/messaging/drafts';
 
@@ -120,5 +121,54 @@ describe('drafts', () => {
     const drafts = withDraft({}, 'bob', 'typing', null, now);
     expect(withoutDraft(drafts, 'carol')).toBe(drafts);
     expect(withoutDraft(drafts, 'bob')).toEqual({});
+  });
+});
+
+describe('withOutgoingMessage', () => {
+  const sent = (overrides: any = {}): any => ({
+    messageId: 'm9',
+    senderId: 'alice',
+    recipientId: 'bob',
+    body: 'just sent',
+    createdAt: '2026-08-25T11:00:00.000Z',
+    ...overrides,
+  });
+
+  // The chat list is keyed by the *other* participant, so an outgoing message
+  // has to be filed under its recipient rather than its sender.
+  test('a sent message becomes the recipient row', () => {
+    const next = withOutgoingMessage(
+      [{ peerId: 'bob', unreadCount: 0, lastMessage: { body: 'older' } } as any],
+      sent(),
+    );
+    expect(next[0].peerId).toBe('bob');
+    expect(next[0].lastMessage?.body).toBe('just sent');
+  });
+
+  test('the conversation moves to the top of the list', () => {
+    const next = withOutgoingMessage(
+      [
+        { peerId: 'carol', unreadCount: 0 } as any,
+        { peerId: 'bob', unreadCount: 0 } as any,
+      ],
+      sent(),
+    );
+    expect(next.map(c => c.peerId)).toEqual(['bob', 'carol']);
+  });
+
+  test('a message the user typed never bumps their own unread count', () => {
+    const next = withOutgoingMessage([{ peerId: 'bob', unreadCount: 3 } as any], sent());
+    expect(next[0].unreadCount).toBe(3);
+  });
+
+  test('the first message to a new peer creates its row', () => {
+    const next = withOutgoingMessage([], sent({ conversationId: 'alice:bob' }));
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ peerId: 'bob', conversationId: 'alice:bob', unreadCount: 0 });
+  });
+
+  test('a message with no recipient leaves the list untouched', () => {
+    const list = [{ peerId: 'bob', unreadCount: 0 } as any];
+    expect(withOutgoingMessage(list, sent({ recipientId: undefined }))).toBe(list);
   });
 });

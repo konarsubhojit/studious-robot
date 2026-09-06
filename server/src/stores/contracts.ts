@@ -144,7 +144,6 @@ export type ServerState = Stores & {
   telemetry: import('../telemetry.ts').Telemetry;
   messageStore: import('../messageStore.ts').MessageStore;
   cache: import('../cache.ts').Cache;
-  messageStoreStatus: string;
   messageBus: import('../messageBus.ts').MessageBus | null;
   draining: boolean;
   incomingCallPushState?: Map<string, IncomingCallPushEntry>;

@@ -44,13 +44,12 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 /**
  * @param url - Base URL of the server under test.
  * @param path - Request path, including the leading slash.
- * @param sessionId - Appended as `?sessionId=` when present.
+ * @param sessionId - Sent as `Authorization: Bearer <id>` when present.
  */
 async function getJson(url: string, path: string, sessionId?: string, headers: Record<string, string> = {}): Promise<{ status: number; body: any; }> {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`, { headers });
+  const response = await fetch(`${url}${path}`, {
+    headers: { ...headers, ...(sessionId ? { authorization: `Bearer ${sessionId}` } : {}) },
+  });
   return { status: response.status, body: await readJson(response) };
 }
 
@@ -243,7 +242,18 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
       return {
         /** @param table */
         from(table: unknown) {
-          return Promise.resolve(table === schema.calls ? callRows : []);
+          const rows = table === schema.calls ? callRows : [];
+          // Hydration narrows its reads (`.where()` on events, `.orderBy()` /
+          // `.limit()` on calls), so the double is chainable as well as
+          // awaitable.
+          const chain: any = {
+            where: () => chain,
+            orderBy: () => chain,
+            limit: () => chain,
+            then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+              Promise.resolve(rows).then(resolve, reject),
+          };
+          return chain;
         },
       };
     },

@@ -195,6 +195,58 @@ const DEFAULT_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
  */
 const DEFAULT_MAX_RETAINED_CALLS = 500;
 
+/**
+ * How long a terminal call row (and, by FK cascade, its `call_events`) is kept
+ * in Postgres before the retention sweep deletes it.
+ *
+ * The in-memory window (`CALL_RETENTION_MS`, a day) bounds working set; this
+ * bounds *storage*, and is deliberately much longer because the durable record
+ * is what `GET /calls` pages over after a restart.  Without it the table only
+ * ever grows, and boot hydration — which reads it — grows with it.
+ * Override with `DB_CALL_RETENTION_MS`; `0` disables the sweep.
+ */
+const DEFAULT_DB_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long an `audit_log` row is kept before the retention sweep deletes it.
+ *
+ * Longer than the call window: the audit trail's whole purpose is answering
+ * questions after the fact.  Override with `AUDIT_RETENTION_MS`; `0` disables
+ * the sweep.
+ */
+const DEFAULT_AUDIT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long a `messages` row is kept before the retention sweep deletes it.
+ *
+ * Zero — retention off — is the only defensible default.  A call record is
+ * operational data the server produced; a message is the user's own content,
+ * and silently deleting it because a background sweep decided it was old is a
+ * data-loss bug wearing a feature's clothes.  Operators who need a bounded
+ * table (or a retention policy to point a regulator at) set
+ * `MESSAGE_RETENTION_MS` explicitly, and get exactly the window they asked for.
+ */
+const DEFAULT_MESSAGE_RETENTION_MS = 0;
+
+/**
+ * How often the retention sweep runs.
+ *
+ * Deletion is by age, so the interval only decides how far past the window a
+ * row may survive — hours are ample, and a long interval keeps the delete off
+ * the hot path.  Override with `DB_RETENTION_SWEEP_INTERVAL_MS`.
+ */
+const DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Rows deleted per retention-sweep statement, per table.
+ *
+ * The sweep deletes in bounded batches rather than one unbounded `DELETE`, so
+ * a first run against a table that has never been pruned cannot hold a lock
+ * over millions of rows or blow out the transaction.  Remaining rows are
+ * collected by the next tick.
+ */
+const DB_RETENTION_DELETE_BATCH = 5_000;
+
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;
 
@@ -233,6 +285,36 @@ const DEFAULT_STALE_DEVICE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * Default session lifetime.
+ *
+ * A session id is a bearer token: anyone holding it can act as the user until
+ * it is revoked. The previous default of `0` meant "never expires", so a
+ * leaked token stayed valid forever and `state.sessions` only ever grew — the
+ * wrong default at any scale.
+ *
+ * Seven days is long enough that a normal user is never interrupted (and, when
+ * they are, `POST /session/refresh` and the `session.invalid` socket event both
+ * re-mint transparently), and short enough that a stolen token has a horizon.
+ * Set `SESSION_TTL_MS=0` to restore non-expiring sessions; nothing but a test
+ * should want that.
+ */
+const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Upper bound applied to a shared-store session key that carries no explicit
+ * expiry (`SESSION_TTL_MS=0`).
+ *
+ * Redis has no "expire eventually" mode, so a key written without `PX` is
+ * immortal even after the process that created it is gone. Writing every key
+ * with *some* expiry keeps the keyspace bounded by construction rather than by
+ * a sweep that a crash can skip.
+ */
+const SHARED_SESSION_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How often expired sessions are swept out of the in-memory map. */
+const DEFAULT_SESSION_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
  * Maximum number of push-registered devices a single user's notification fans
  * out to, most recently registered first.  A backstop for the accumulation
  * above: even before a sweep runs, one message must not push to an unbounded
@@ -269,6 +351,11 @@ export {
   DEFAULT_JSON_BODY_LIMIT,
   DEFAULT_CALL_RETENTION_MS,
   DEFAULT_MAX_RETAINED_CALLS,
+  DEFAULT_DB_CALL_RETENTION_MS,
+  DEFAULT_AUDIT_RETENTION_MS,
+  DEFAULT_MESSAGE_RETENTION_MS,
+  DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS,
+  DB_RETENTION_DELETE_BATCH,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   SHUTDOWN_DRAIN_POLL_MS,
@@ -276,6 +363,9 @@ export {
   USER_DIRECTORY_MAX_LIMIT,
   DEFAULT_STALE_DEVICE_MAX_AGE_MS,
   DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS,
+  DEFAULT_SESSION_TTL_MS,
+  DEFAULT_SESSION_SWEEP_INTERVAL_MS,
+  SHARED_SESSION_MAX_TTL_MS,
   DEFAULT_MAX_PUSH_DEVICES_PER_USER,
   DEVICE_FANOUT_ALERT_THRESHOLD,
 };

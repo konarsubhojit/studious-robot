@@ -3,7 +3,7 @@ import { isBlocked } from '../security.ts';
 import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { deriveConversationId, clampMessageLimit } from '../messageStore.ts';
-import { toCallTimelineEntry, listCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
+import { toCallTimelineEntry, readCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
 import { readCached, writeCached, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesCachePrefix } from '../cache.ts';
 import { emitToUserSockets } from '../domain/notifications.ts';
 import { getPresenceSnapshot } from '../lib/state.ts';
@@ -77,10 +77,15 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     // Only the first page is cacheable: deep pagination (`before` present) is
     // rare, unbounded in key space and the least latency-sensitive path.
-    // The merged timeline is not cached at all: it mixes in live call state,
-    // which is invalidated on its own schedule.
+    //
+    // `include=calls` deliberately does *not* disable the cache. What is cached
+    // is the message page, which is identical either way and is invalidated by
+    // the send path (`messagesCachePrefix`); the call entries are merged in
+    // below, live, on every request. Keying the cache off `include` instead made
+    // the entry unreachable, because the app always asks for the merged
+    // timeline — a cache with no possible reader.
     const limit = clampMessageLimit(req.query?.limit);
-    const cacheKey = before || includeCalls ? null : messagesCacheKey(conversationId, limit);
+    const cacheKey = before ? null : messagesCacheKey(conversationId, limit);
 
     let messages: MessageRecord[] | undefined = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {
@@ -123,9 +128,9 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       isBlocked(state.blocks, peerId, session.userId);
     const callEntries = hidden
       ? []
-      : listCallsBetween(state, session.userId, peerId)
-          .filter((call) => (before ? call.createdAt < before : true))
-          .map((call) => toCallTimelineEntry(call, session.userId));
+      : (await readCallsBetween(state, session.userId, peerId, before)).map((call) =>
+          toCallTimelineEntry(call, session.userId),
+        );
 
     const timeline = mergeTimeline(participantMessages, callEntries, limit);
 
@@ -271,7 +276,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     // Calls are part of the same relationship: fold them in so the preview and
     // the unread badge reflect the newest activity, message or call.
-    const visible = augmentConversationsWithCalls(state, session.userId, conversations)
+    const visible = (await augmentConversationsWithCalls(state, session.userId, conversations))
       .filter(
         (conversation) =>
           !isBlocked(state.blocks, session.userId, conversation.peerId) &&
@@ -350,7 +355,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       });
     }
 
-    const missedCallsRead = markMissedCallsRead(state, session.userId, peerId);
+    const missedCallsRead = await markMissedCallsRead(state, session.userId, peerId);
 
     res.status(200).json({ conversationId, updated, missedCallsRead });
   });

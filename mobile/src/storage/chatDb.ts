@@ -76,6 +76,16 @@ function emptySnapshot(): ChatSnapshot {
  * a load after a save does not have to hit the disk.
  */
 let cache: ChatSnapshot | null = null;
+/** The in-flight read of the file, so concurrent callers share one read. */
+let loadPromise: Promise<void> | null = null;
+/** Whether the file has been folded into {@link cache} yet. */
+let hasLoaded = false;
+/**
+ * Tables written before the file had been read.  A write that happened first
+ * is newer than the file's copy of the same table, so it survives the read
+ * instead of being overwritten by it.
+ */
+let preloadWrites = new Set<keyof ChatSnapshot>();
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 /** Resolves once every scheduled write has been flushed. */
 let pendingWrite = Promise.resolve();
@@ -173,22 +183,47 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
  *
  * Never rejects: an unreadable or corrupt file yields an empty snapshot, which
  * simply means the app starts as it did before anything was cached.
+ *
+ * Concurrent callers share a single read, and a save that lands while the read
+ * is in flight is preserved — see {@link preloadWrites}.  Both matter because
+ * the load is asynchronous but a save is not: the composer can queue a send
+ * before the disk read resolves, and treating the resulting cache as
+ * authoritative discarded every conversation, message and draft on disk.
  */
 export async function loadChatSnapshot(): Promise<ChatSnapshot> {
-  if (cache) return cache;
+  if (!loadPromise) loadPromise = readSnapshotFile();
+  await loadPromise;
+  // Deliberately the live cache rather than whatever the read resolved to: a
+  // save between two loads must be visible to the second, as it was when this
+  // returned `cache` directly.
+  return cache ?? emptySnapshot();
+}
+
+/** Read and sanitise the file, folding it under anything already written. */
+async function readSnapshotFile(): Promise<void> {
+  let fromDisk = emptySnapshot();
   try {
     const exists = await RNFS.exists(CHAT_DB_FILE);
-    if (!exists) {
-      cache = emptySnapshot();
-      return cache;
+    if (exists) {
+      const content = await RNFS.readFile(CHAT_DB_FILE, 'utf8');
+      fromDisk = sanitizeSnapshot(JSON.parse(content));
     }
-    const content = await RNFS.readFile(CHAT_DB_FILE, 'utf8');
-    cache = sanitizeSnapshot(JSON.parse(content));
   } catch (error) {
     logWarn('[ChatDb] Failed to load chat snapshot', { message: errorMessage(error) });
-    cache = emptySnapshot();
+    fromDisk = emptySnapshot();
   }
-  return cache;
+
+  const written = cache;
+  if (written) {
+    preloadWrites.forEach(table => {
+      // A pre-load write is the newer of the two copies, so it replaces the
+      // file's; every other table comes from the file.
+      (fromDisk as Record<string, unknown>)[table] = written[table];
+    });
+  }
+  preloadWrites = new Set();
+  cache = fromDisk;
+  hasLoaded = true;
 }
 
 /** Write the cached snapshot to disk now. Failures are logged, never thrown. */
@@ -205,21 +240,41 @@ async function flushToDisk() {
  * Merge `partial` into the cached snapshot and schedule a (debounced) write.
  * The in-memory cache is updated synchronously, so a read immediately after a
  * save observes the new state whether or not the write has landed yet.
+ *
+ * Only the tables the caller actually supplied are re-pruned: everything else
+ * is already at its retention limit from when it was stored, and re-sorting
+ * every conversation's history on an outbox-only write put a full sort of the
+ * entire local store on the JS thread for each message acknowledgement.
  */
 export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
   const base = cache ?? emptySnapshot();
-  const messagesByPeer = partial.messagesByPeer ?? base.messagesByPeer;
-  const pruned: Record<string, ChatMessage[]> = {};
-  Object.keys(messagesByPeer).forEach(peerId => {
-    pruned[peerId] = pruneMessages(messagesByPeer[peerId]);
-  });
+
+  let messagesByPeer = base.messagesByPeer;
+  if (partial.messagesByPeer) {
+    messagesByPeer = {};
+    Object.keys(partial.messagesByPeer).forEach(peerId => {
+      messagesByPeer[peerId] = pruneMessages(partial.messagesByPeer![peerId]);
+    });
+  }
 
   cache = {
-    conversations: (partial.conversations ?? base.conversations).slice(0, MAX_CONVERSATIONS),
-    messagesByPeer: pruned,
+    conversations: partial.conversations
+      ? partial.conversations.slice(0, MAX_CONVERSATIONS)
+      : base.conversations,
+    messagesByPeer,
     outbox: partial.outbox ?? base.outbox,
     drafts: partial.drafts ?? base.drafts ?? {},
   };
+
+  // Until the file has been folded in, remember which tables this write owns so
+  // the read folds itself in underneath them rather than over them.  The test
+  // is "has the read finished", not "has one started": a save landing *during*
+  // the read is exactly the case this exists for.
+  if (!hasLoaded) {
+    (Object.keys(partial) as Array<keyof ChatSnapshot>).forEach(table =>
+      preloadWrites.add(table),
+    );
+  }
 
   if (writeTimer) return;
   pendingWrite = new Promise(resolve => {
@@ -252,6 +307,11 @@ export async function clearChatDb(): Promise<void> {
     writeTimer = null;
   }
   cache = emptySnapshot();
+  // A cleared store is a known-empty one, so a later load must not go looking
+  // for the file this just deleted.
+  loadPromise = Promise.resolve();
+  hasLoaded = true;
+  preloadWrites = new Set();
   try {
     const exists = await RNFS.exists(CHAT_DB_FILE);
     if (exists) await RNFS.unlink(CHAT_DB_FILE);
@@ -267,6 +327,9 @@ export function resetChatDbCache() {
     writeTimer = null;
   }
   cache = null;
+  loadPromise = null;
+  hasLoaded = false;
+  preloadWrites = new Set();
   pendingWrite = Promise.resolve();
 }
 

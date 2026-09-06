@@ -47,10 +47,19 @@ function buildMockDb({ selectRows = ([] as any[]), selectRowsByTable = new Map()
     select() {
       return {
         from(table: any) {
-          if (selectRowsByTable.has(table)) {
-            return Promise.resolve(selectRowsByTable.get(table));
-          }
-          return Promise.resolve(selectRows);
+          const rows = selectRowsByTable.has(table)
+            ? selectRowsByTable.get(table)
+            : selectRows;
+          // Thenable *and* chainable: hydration narrows its reads with
+          // `.where()` / `.orderBy()` / `.limit()`, and callers that need none
+          // of those still just await the `.from()`.
+          const chain: any = {
+            where: () => chain,
+            orderBy: () => chain,
+            limit: () => chain,
+            then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject),
+          };
+          return chain;
         },
       };
     },

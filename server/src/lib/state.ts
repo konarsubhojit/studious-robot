@@ -64,6 +64,40 @@ function addSessionToUser(state: Stores, session: SessionRecord): void {
   sessionIds.add(session.sessionId);
 }
 
+/**
+ * Drop expired sessions from the in-memory map and the per-user index.
+ *
+ * `getSessionFromRequest*` already refuses an expired session, so this changes
+ * no authorisation decision — it bounds storage. Without it `state.sessions`
+ * grows for the lifetime of the process: every login, every refresh rotation
+ * and every shared-store hydration adds an entry that nothing removes until
+ * the user explicitly refreshes that exact token.
+ *
+ * Sessions with no `expiresAt` (`SESSION_TTL_MS=0`) are immortal by
+ * construction and are left alone; that configuration is the reason the
+ * default changed.
+ *
+ * @returns how many sessions were removed.
+ */
+function pruneExpiredSessions(state: Stores, { now = Date.now() }: { now?: number } = {}): number {
+  let removed = 0;
+  for (const [sessionId, session] of state.sessions) {
+    const expiresAtMs = session.expiresAt ? Date.parse(session.expiresAt) : Number.NaN;
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs > now) continue;
+
+    state.sessions.delete(sessionId);
+    removed += 1;
+
+    const owned = state.userSessions.get(session.userId);
+    if (!owned) continue;
+    owned.delete(sessionId);
+    // Leave no empty Set behind: `userSessions` is iterated by presence and
+    // would otherwise keep a key per user who ever logged in.
+    if (owned.size === 0) state.userSessions.delete(session.userId);
+  }
+  return removed;
+}
+
 // ─── Devices ────────────────────────────────────────────────────────────────
 
 /**
@@ -478,6 +512,7 @@ function userRoom(userId: string): string {
 export {
   ensurePresenceRecord,
   addSessionToUser,
+  pruneExpiredSessions,
   upsertDevice,
   removeDevice,
   unlinkDeviceFromUser,

@@ -203,8 +203,29 @@ describe('useSession', () => {
 
     expect(caughtError).toBeInstanceOf(Error);
     expect(caughtError.message).toContain('Session creation failed');
+    // `identity_claimed` means someone *else* holds the name. Saying it is
+    // "already bound to <name>" described the opposite situation - the account
+    // owning a different name - and named the user's own choice while doing so.
     expect(params.updateStatus).toHaveBeenCalledWith(
-      expect.stringContaining('bound'),
+      'That username is already taken. Choose a different one.',
+      'error',
+    );
+  });
+
+  test('createOrGetSession distinguishes an account already bound to another name', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({ code: 'account_already_bound', userId: 'alice-real' }),
+    });
+    const { resultRef, params } = setup();
+
+    await act(async () => {
+      await resultRef.current.createOrGetSession().catch(() => {});
+    });
+
+    expect(params.updateStatus).toHaveBeenCalledWith(
+      expect.stringContaining('alice-real'),
       'error',
     );
   });
@@ -274,15 +295,15 @@ describe('useSession', () => {
     let response: any;
     await act(async () => {
       response = await resultRef.current.authedFetch((sessionId: any) => ({
-        url: `https://signal.example.com/thing?sessionId=${sessionId}`,
+        url: 'https://signal.example.com/thing',
+        options: { headers: { Authorization: `Bearer ${sessionId}` } },
       }));
     });
 
     expect(response.status).toBe(200);
-    expect(global.fetch).toHaveBeenLastCalledWith(
-      'https://signal.example.com/thing?sessionId=sess-2',
-      undefined,
-    );
+    expect(global.fetch).toHaveBeenLastCalledWith('https://signal.example.com/thing', {
+      headers: { Authorization: 'Bearer sess-2' },
+    });
   });
 
   test('authedFetch returns null when no session can be established', async () => {
@@ -292,7 +313,7 @@ describe('useSession', () => {
     let response: any;
     await act(async () => {
       response = await resultRef.current.authedFetch((sessionId: any) => ({
-        url: `https://signal.example.com/thing?sessionId=${sessionId}`,
+        url: `https://signal.example.com/thing#${sessionId}`,
       }));
     });
 

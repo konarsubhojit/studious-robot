@@ -136,6 +136,7 @@ import {
   describeDegradedMedia,
 } from '../call/answerPath';
 import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
+import { bearerAuthHeaders } from '../authHeaders';
 import {
   decideIceConnectionState,
 } from '../call/iceRestartLadder';
@@ -553,7 +554,15 @@ export default function useCallFlow({
     userId,
     updateStatus,
   });
-  const { sessionIdRef, deviceIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
+  const { sessionIdRef, deviceIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch, verifyIdentity } = session;
+
+  // `useIdentity` runs before `useSession` and knows nothing about it, so the
+  // verifier is handed over through the ref it exposes for the purpose — the
+  // same seam, and the same effect-driven hand-off, as `authedFetchRef`.
+  const { verifyIdentityRef } = identity;
+  useEffect(() => {
+    verifyIdentityRef.current = verifyIdentity;
+  }, [verifyIdentityRef, verifyIdentity]);
 
   const callHistory = useCallHistory({
     authedFetchRef,
@@ -1906,9 +1915,9 @@ export default function useCallFlow({
       try {
         const sessionId = await createOrGetSession();
 
-        const response = await fetch(
-          buildCallLookupUrl({ signalingUrl, callId, sessionId }),
-        );
+        const response = await fetch(buildCallLookupUrl({ signalingUrl, callId }), {
+          headers: bearerAuthHeaders(sessionId),
+        });
 
         if (!response.ok) {
           const failure = classifyLookupFailure(response.status);
@@ -2388,8 +2397,8 @@ export default function useCallFlow({
         url: buildCallActionUrl({ signalingUrl: signalingUrl ?? '', callId, action: 'accept' }),
         options: {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId }),
+          headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+          body: '{}',
         },
       }));
       const verdict = classifyHttpAccept(response);
@@ -2669,8 +2678,8 @@ export default function useCallFlow({
           }),
           options: {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId }),
+            headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+            body: '{}',
           },
         }));
         if (response?.ok) return true;

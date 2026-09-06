@@ -7,8 +7,9 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS } from '../config.ts';
-import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence } from '../lib/state.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
+import { runRetentionSweep } from '../lib/retention.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from '../domain/calls.ts';
 import { notifyCallTransition } from '../domain/notifications.ts';
@@ -92,9 +93,15 @@ function createServer(opts: CreateServerOptions = {}) {
     );
 
   // ── Session TTL ──────────────────────────────────────────────────────────
-  // When non-zero, sessions expire after this many milliseconds.  Pass via
-  // opts (tests) or SESSION_TTL_MS env var (production).
-  const sessionTtlMs = opts.sessionTtlMs ?? parseEnv('SESSION_TTL_MS', 0);
+  // Sessions expire after this many milliseconds.  Pass via opts (tests) or
+  // SESSION_TTL_MS env var (production).  `0` restores the old non-expiring
+  // behaviour and is deliberately not the default: see DEFAULT_SESSION_TTL_MS.
+  //
+  // `parseNonNegativeNumber` rather than `parseEnv` so an explicit
+  // `SESSION_TTL_MS=0` survives instead of being treated as unset.
+  const sessionTtlMs =
+    opts.sessionTtlMs ??
+    parseNonNegativeNumber('SESSION_TTL_MS', process.env.SESSION_TTL_MS, DEFAULT_SESSION_TTL_MS);
 
   // ── Rate limiters ────────────────────────────────────────────────────────
   const callInitRateLimiter = createRateLimiter({
@@ -146,9 +153,10 @@ function createServer(opts: CreateServerOptions = {}) {
   // in-memory and skips all DB writes.
   const db = opts.db ?? null;
 
-  // Durable store for text-chat messages.  Defaults to an in-process store, so
-  // the server runs unchanged when MONGODB_URI is not configured.
-  const messageStore = createMessageStore({ messageStore: opts.messageStore });
+  // Durable store for text-chat messages.  Backed by the same Postgres
+  // database as the rest of the durable state; falls back to an in-process
+  // store so the server runs unchanged when no `db` handle is provided.
+  const messageStore = createMessageStore({ messageStore: opts.messageStore, db });
 
   // Shared read cache for hot queries (conversation lists, first-page message
   // history, call history).  Defaults to the in-process backend; `index.js`
@@ -190,12 +198,10 @@ function createServer(opts: CreateServerOptions = {}) {
     messageSearchRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
-    /** Persistent store for text-chat messages (in-memory unless Mongo is configured). */
+    /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
     messageStore,
     /** Shared read cache for conversation lists, message pages and call history. */
     cache,
-    /** Current asynchronous readiness state for the message store. */
-    messageStoreStatus: messageStore.type === 'mongo' ? 'starting' : 'ready',
     /**
      * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
      * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
@@ -226,18 +232,6 @@ function createServer(opts: CreateServerOptions = {}) {
       console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
     });
 
-  if (messageStore.type === 'mongo' && typeof messageStore.ready === 'function') {
-    Promise.resolve(messageStore.ready())
-      .then(() => {
-        state.messageStoreStatus = 'ready';
-      })
-      .catch((error: unknown) => {
-        state.messageStoreStatus = 'unavailable';
-        console.error(
-          `[messages] Mongo message store health check failed: ${describeError(error)}`
-        );
-      });
-  }
   verboseLog('server', 'state.initialized', {
     storeNames: Object.entries(stores)
       .filter(([, value]) => value instanceof Map)
@@ -359,6 +353,45 @@ function createServer(opts: CreateServerOptions = {}) {
   }, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS);
   deviceSweepTimer.unref();
 
+  // Background worker: drop expired sessions. Expiry is already enforced on
+  // every read, so this only bounds `state.sessions`, which otherwise grows
+  // for the lifetime of the process.
+  const sessionSweepTimer = setInterval(() => {
+    try {
+      pruneExpiredSessions(state);
+    } catch (error) {
+      console.error(`[sessions] expired-session sweep failed: ${describeError(error)}`);
+    }
+  }, DEFAULT_SESSION_SWEEP_INTERVAL_MS);
+  sessionSweepTimer.unref();
+
+  // Background worker: bound the append-only tables. `calls`, `call_events`,
+  // `audit_log` and `messages` are written on every call, every audited action
+  // and every chat message and were never deleted from, so storage — and,
+  // because boot hydration reads `calls`, startup — grew with history. A
+  // retention of 0 disables that table's sweep, which is the default for
+  // `messages`: it holds the user's own content, not a record the server made
+  // about them.
+  const dbCallRetentionMs =
+    opts.dbCallRetentionMs ??
+    parseNonNegativeNumber('DB_CALL_RETENTION_MS', process.env.DB_CALL_RETENTION_MS, DEFAULT_DB_CALL_RETENTION_MS);
+  const auditRetentionMs =
+    opts.auditRetentionMs ??
+    parseNonNegativeNumber('AUDIT_RETENTION_MS', process.env.AUDIT_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS);
+  const messageRetentionMs =
+    opts.messageRetentionMs ??
+    parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
+  const retentionSweepTimer = setInterval(() => {
+    runRetentionSweep(db, {
+      callRetentionMs: dbCallRetentionMs,
+      auditRetentionMs,
+      messageRetentionMs,
+    }).catch((error) => {
+      console.error(`[retention] sweep failed: ${describeError(error)}`);
+    });
+  }, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS);
+  retentionSweepTimer.unref();
+
   const shutdownDrainMs =
     opts.shutdownDrainMs ?? parseEnv('SHUTDOWN_DRAIN_MS', DEFAULT_SHUTDOWN_DRAIN_MS);
 
@@ -383,6 +416,8 @@ function createServer(opts: CreateServerOptions = {}) {
       // Stop the background worker.
       clearInterval(pollTimer);
       clearInterval(deviceSweepTimer);
+      clearInterval(sessionSweepTimer);
+      clearInterval(retentionSweepTimer);
 
       // Tell connected clients to reconnect elsewhere.
       io.emit(SERVER_EVENTS.SERVER_DRAINING, { reason, ts: new Date().toISOString() });

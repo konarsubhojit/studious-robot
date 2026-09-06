@@ -1,7 +1,7 @@
 /**
  * In-process, array-backed message store.
  *
- * Used when Mongo is not configured and by the test suite.  History does not
+ * Used when no database handle is configured and by the test suite.  History does not
  * survive a restart, which matches the pre-existing behaviour of the rest of
  * the in-memory state.
  */
@@ -28,7 +28,7 @@ export function createMemoryMessageStore(): MessageStore {
     async saveMessage(message) {
       const record = createMessageRecord(message);
       // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
-      // mirroring the Mongo store's upsert: a client replaying a send from its
+      // mirroring the Postgres store's insert: a client replaying a send from its
       // durable outbox must not create a second copy of the same message.
       const existing = messages.find(
         (candidate) =>

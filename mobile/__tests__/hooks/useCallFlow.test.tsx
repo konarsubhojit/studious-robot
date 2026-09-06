@@ -431,11 +431,52 @@ describe('useCallFlow', () => {
     });
   });
 
-  test('identity conflicts surface a user-friendly status message', async () => {
+  // A username the account may not have is a failed registration, not a
+  // successful one with a warning: committing it admitted the user to a chat
+  // list that could never load, and told them why on a different tab.
+  test('a rejected username fails registration instead of admitting the user', async () => {
     global.fetch = (jest.fn(async () => ({
       ok: false,
       status: 409,
       json: async () => ({ code: 'identity_claimed' }),
+    })) as any);
+
+    const { resultRef, tree } = renderHook();
+    let caught: any;
+    await act(async () => {
+      await resultRef.current
+        .registerUser({
+          userId: 'alice',
+          method: 'email-register',
+          email: 'alice@example.com',
+          password: 'secret12',
+        })
+        .catch((error: unknown) => {
+          caught = error;
+        });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(caught).toBeInstanceOf(Error);
+    expect(resultRef.current.isRegistered).toBe(false);
+    expect(resultRef.current.userId).toBe('');
+    expect(resultRef.current.status.severity).toBe('error');
+    expect(resultRef.current.status.message).toBe(
+      'That username is already taken. Choose a different one.',
+    );
+  });
+
+  test('an accepted username registers the user', async () => {
+    global.fetch = (jest.fn(async () => ({
+      ok: true,
+      status: 201,
+      json: async () => ({ sessionId: 'sess-9', userId: 'alice' }),
     })) as any);
 
     const { resultRef, tree } = renderHook();
@@ -450,13 +491,36 @@ describe('useCallFlow', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
-    await act(async () => {});
+
+    expect(resultRef.current.userId).toBe('alice');
+    expect(resultRef.current.status.severity).toBe('success');
+  });
+
+  // Registration is meaningless without a server session, so an unreachable
+  // server must keep the user on the registration screen with a retryable
+  // error rather than dropping them into an app that cannot work.
+  test('an unreachable server does not register the user', async () => {
+    global.fetch = (jest.fn(async () => {
+      throw new Error('network down');
+    }) as any);
+
+    const { resultRef, tree } = renderHook();
+    await act(async () => {
+      await resultRef.current
+        .registerUser({
+          userId: 'alice',
+          method: 'email-register',
+          email: 'alice@example.com',
+          password: 'secret12',
+        })
+        .catch(() => {});
+    });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
+    expect(resultRef.current.isRegistered).toBe(false);
     expect(resultRef.current.status.severity).toBe('error');
-    expect(resultRef.current.status.message).toMatch(/bound/i);
   });
 
   test('setCalleeId updates the calleeId state', () => {
@@ -569,7 +633,7 @@ describe('useCallFlow', () => {
       }
       if (url.includes('/users')) {
         userRequests += 1;
-        if (url.includes('sessionId=s1')) {
+        if (options?.headers?.Authorization === 'Bearer s1') {
           return {
             ok: false,
             status: 401,
@@ -604,7 +668,7 @@ describe('useCallFlow', () => {
       users = await resultRef.current.searchUsers('bob');
     });
 
-    // The first request (sessionId=s1) 401s; after a refresh to s2 the retry
+    // The first request (bearer s1) 401s; after a refresh to s2 the retry
     // succeeds, so searchUsers returns the directory entry.
     expect(users).toEqual([{ userId: 'bob', status: 'online', online: true }]);
     expect(userRequests).toBe(2);
@@ -2101,7 +2165,7 @@ describe('useCallFlow chat', () => {
     const { resultRef, tree } = await renderWithSocket();
 
     global.fetch = (jest.fn(async url => {
-      expect(url).toContain('/conversations?sessionId=');
+      expect(url).toContain('/conversations');
       return {
         ok: true,
         status: 200,
@@ -2129,7 +2193,7 @@ describe('useCallFlow chat', () => {
     const { resultRef, tree } = await renderWithSocket();
 
     const conversationsFetchSpy = jest.fn(async url => {
-      expect(url).toContain('/conversations?sessionId=');
+      expect(url).toContain('/conversations');
       return {
         ok: true,
         status: 200,
@@ -2280,10 +2344,8 @@ describe('useCallFlow chat', () => {
     global.fetch = (jest.fn(async (url, options) => {
       expect(url).toContain('/messages/read');
       expect(options.method).toBe('POST');
-      expect(JSON.parse(options.body)).toEqual({
-        sessionId: 'sess-chat',
-        peerId: 'bob',
-      });
+      expect(options.headers.Authorization).toBe('Bearer sess-chat');
+      expect(JSON.parse(options.body)).toEqual({ peerId: 'bob' });
       return {
         ok: true,
         status: 200,
@@ -2523,7 +2585,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(readRequestBody).toEqual({ sessionId: 'sess-chat', peerId: 'bob' });
+    expect(readRequestBody).toEqual({ peerId: 'bob' });
     expect(resultRef.current.conversations.find((c: any) => c.peerId === 'bob').unreadCount).toBe(0);
   });
 

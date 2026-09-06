@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { logInfo } from '../appLogger';
+import { logInfo, logWarn } from '../appLogger';
 import {
   isGoogleSignInConfigured,
   isMicrosoftSignInConfigured,
@@ -17,8 +17,18 @@ import type { User } from '@react-native-firebase/auth';
 /**
  * @returns the user-facing text for a failed sign-in / registration.
  */
+/**
+ * Error code for a username the server refused to bind.  Carried on the thrown
+ * error so the single reporting path below passes the server's explanation
+ * through verbatim rather than re-deriving one from a bare `Error`.
+ */
+const IDENTITY_UNAVAILABLE_CODE = 'identity/username-unavailable';
+
 function getAuthenticationErrorMessage(error: any): string {
   const code = error?.code;
+  if (code === IDENTITY_UNAVAILABLE_CODE) {
+    return error?.message;
+  }
   if (code === 'auth/email-already-in-use') {
     return 'That email is already in use. Try signing in instead.';
   }
@@ -55,6 +65,14 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
   );
 
   const committedIdentityRef = useRef({ userId: '' });
+  // Confirms a username with the server before it is committed. Supplied by
+  // whoever composes this hook with `useSession` (see `useCallFlow`), so
+  // identity still knows nothing about sessions — only that something can
+  // answer "may this account have this name?". Absent, registration proceeds
+  // unverified, which is what the tests that exercise identity alone rely on.
+  const verifyIdentityRef = useRef(
+    (null as ((userId: string) => Promise<{ ok: boolean; message?: string; }>) | null),
+  );
 
   const isRegistered = userId.trim().length > 0 && Boolean(authUser);
   const canUseGoogleSignIn = isGoogleSignInConfigured();
@@ -121,6 +139,14 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
   /**
    * Register the local user with the given userId.  Persists the identity to
    * disk and updates the in-memory state so the presence socket connects.
+   *
+   * Authenticating is only half of registering: the username is bound by the
+   * server, not by the account, so it is verified *before* it is committed.
+   * Committing first admitted a user whose chosen name was already taken into
+   * an app that could not create a session — no chats, no calls — with the
+   * refusal reported only as a status message on another screen.  Now the
+   * rejection throws, `isRegistered` stays false, and the registration screen
+   * they are still on shows why.
    */
   const registerUser = useCallback(
     async (registration: { userId: string; method: string; email?: string; password?: string; }) => {
@@ -145,6 +171,13 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
         } else {
           throw new Error('Unsupported sign-in method');
         }
+        const verification = await verifyIdentityRef.current?.(trimmed);
+        if (verification && !verification.ok) {
+          const message = verification.message ?? 'That username is unavailable.';
+          logWarn('[Identity] Username rejected by the server', { message });
+          throw Object.assign(new Error(message), { code: IDENTITY_UNAVAILABLE_CODE });
+        }
+
         const identity = await commitIdentity(trimmed);
         updateStatus('Account authenticated.', 'success');
         logInfo('[Identity] User registered', {
@@ -197,6 +230,7 @@ export default function useIdentity(updateStatus: (message: string, severity?: C
     isLoadingIdentity,
     isAuthenticating,
     isRegistered,
+    verifyIdentityRef,
     canUseGoogleSignIn,
     canUseMicrosoftSignIn,
     committedIdentityRef,

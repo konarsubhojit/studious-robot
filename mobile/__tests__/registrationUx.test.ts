@@ -6,10 +6,12 @@ import {
   USERNAME_MIN_LENGTH,
   USERNAME_UNIQUENESS_NOTE,
   checkUsername,
+  describeIdentityRejection,
   describeRegistrationStep,
   describeStepPosition,
   describeUsernameRule,
   stepForFailure,
+  IDENTITY_REJECTION_CODES,
 } from '../src/registrationUx';
 import type { UsernameRuleId, UsernameRuleState } from '../src/registrationUx';
 
@@ -155,5 +157,50 @@ describe('stepForFailure', () => {
     expect(stepForFailure('')).toBeNull();
     expect(stepForFailure(null)).toBeNull();
     expect(stepForFailure(undefined)).toBeNull();
+  });
+});
+
+// The server refuses a username claim with a `code`; the screen only has a
+// sentence to work with. These two have to agree, or a user is told the wrong
+// thing and left on the wrong step.
+describe('describeIdentityRejection', () => {
+  test('tells someone whose chosen name is taken to choose another', () => {
+    const message = describeIdentityRejection(IDENTITY_REJECTION_CODES.IDENTITY_CLAIMED, 'alice');
+
+    expect(message).toBe('That username is already taken. Choose a different one.');
+    // The payload names the *existing* owner, which is the name just typed;
+    // quoting it back would read as though the user already owned it.
+    expect(message).not.toContain('alice');
+  });
+
+  test('names the username an already-bound account actually owns', () => {
+    expect(
+      describeIdentityRejection(IDENTITY_REJECTION_CODES.ACCOUNT_ALREADY_BOUND, 'alice-real'),
+    ).toContain('alice-real');
+  });
+
+  test('copes with an already-bound account whose name is missing', () => {
+    expect(describeIdentityRejection(IDENTITY_REJECTION_CODES.ACCOUNT_ALREADY_BOUND, null)).toBe(
+      'This account already uses a different username.',
+    );
+  });
+
+  test('asks for a username when none was sent', () => {
+    expect(describeIdentityRejection(IDENTITY_REJECTION_CODES.USERNAME_REQUIRED)).toContain(
+      'Choose a username',
+    );
+  });
+
+  test('stays actionable for a code it does not recognise', () => {
+    expect(describeIdentityRejection('something_new')).toContain('username');
+    expect(describeIdentityRejection(null)).toContain('username');
+  });
+
+  test('every rejection routes to the step that owns the username', () => {
+    const codes = [...Object.values(IDENTITY_REJECTION_CODES), 'something_new', null];
+
+    codes.forEach(code => {
+      expect(stepForFailure(describeIdentityRejection(code, 'alice-real'))).toBe('username');
+    });
   });
 });

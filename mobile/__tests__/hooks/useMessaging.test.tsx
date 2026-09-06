@@ -939,7 +939,10 @@ describe('useMessaging searchMessages', () => {
     });
 
     const request = params.authedFetchRef.current.mock.calls[0][0]('sess-1');
-    expect(request.options).toEqual({ signal: controller.signal });
+    expect(request.options).toEqual({
+      headers: { Authorization: 'Bearer sess-1' },
+      signal: controller.signal,
+    });
   });
 
   test('returns nothing for a blank term, without calling the server', async () => {

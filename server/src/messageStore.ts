@@ -2,25 +2,31 @@
  * Persistent store for text-chat messages.
  *
  * Mirrors the transport-agnostic style of `messageBus.ts` and `stores/`: a tiny
- * interface with an in-process default and an optional durable backend, chosen
- * by environment configuration.  When no `MONGODB_URI` is configured the server
- * uses the in-memory implementation and behaves exactly as it did before chat
- * persistence existed.
+ * interface with an in-process default and a durable backend.  When the server
+ * is built without a database handle it uses the in-memory implementation and
+ * behaves exactly as it did before chat persistence existed.
+ *
+ * The durable backend is Postgres — the same database that already holds users,
+ * devices and calls.  It replaced MongoDB: a second datastore bought nothing
+ * that a table and three indexes do not, while costing a second connection
+ * pool, a second backup story, and a hand-maintained `conversation_index`
+ * collection that could silently disagree with the messages it summarised.
  *
  * This module is the package's public face; the implementation lives in
  * `messageStore/`, one module per concern:
  *
  *  | Module                            | Responsibility                        |
  *  | --------------------------------- | ------------------------------------- |
- *  | `messageStore/types.ts`           | Domain shapes, the store interface and the typed Mongo surface. |
- *  | `messageStore/queries.ts`         | Pagination bounds, search terms and Mongo filters (pure). |
+ *  | `messageStore/types.ts`           | Domain shapes and the store interface. |
+ *  | `messageStore/queries.ts`         | Pagination bounds and search terms (pure). |
  *  | `messageStore/records.ts`         | Record creation, tombstones and reactions (pure). |
- *  | `messageStore/conversations.ts`   | Conversation grouping shared by both backends (pure). |
- *  | `messageStore/documents.ts`       | Document ↔ domain mapping.            |
+ *  | `messageStore/conversations.ts`   | Conversation grouping for the memory store (pure). |
  *  | `messageStore/memoryStore.ts`     | The array-backed store.               |
- *  | `messageStore/mongoConnection.ts` | Connecting, indexes and shutdown.     |
- *  | `messageStore/mongoStore.ts`      | The Mongo store's operations.         |
- *  | `messageStore/instrumentation.ts` | Query timing for `/metrics`.          |
+ *  | `messageStore/pgStore.ts`         | The Postgres store's operations.      |
+ *
+ * There is no store-level timing wrapper any more: every statement the
+ * Postgres store issues goes through the instrumented pool in `db/client.ts`,
+ * so `/metrics` sees it without a second layer that could disagree.
  *  | `messageStore/factory.ts`         | Which store this process gets.        |
  *
  * Interface
@@ -68,10 +74,10 @@
  *   }
  *
  * Two implementations are provided:
- *   - {@link createMemoryMessageStore} — array-backed; the default for
- *     single-instance deployments and tests.
- *   - {@link createMongoMessageStore} — Azure Cosmos DB for MongoDB (or any
- *     MongoDB-compatible endpoint) via the official `mongodb` driver.
+ *   - {@link createMemoryMessageStore} — array-backed; the default for tests
+ *     and for a process built without a database handle.
+ *   - {@link createPgMessageStore} — the `messages` table, via the Drizzle
+ *     handle the rest of the server already shares.
  */
 
 // Maximum accepted message body length, in characters: part of the wire
@@ -95,8 +101,6 @@ export {
 
 export { applyReaction, createMessageRecord } from './messageStore/records.ts';
 
-export { DEFAULT_SERVER_SELECTION_TIMEOUT_MS } from './messageStore/mongoConnection.ts';
-
 export { createMemoryMessageStore } from './messageStore/memoryStore.ts';
-export { createMongoMessageStore } from './messageStore/mongoStore.ts';
+export { createPgMessageStore } from './messageStore/pgStore.ts';
 export { createMessageStore } from './messageStore/factory.ts';

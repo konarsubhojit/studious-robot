@@ -169,20 +169,18 @@ test('telemetry separates slow work a request waited for from detached work', as
 test('the default slow-query threshold is 100ms for every backend', () => {
   assert.equal(DEFAULT_SLOW_QUERY_MS, 100);
   assert.equal(slowQueryThresholdMs('pg'), 100);
-  assert.equal(slowQueryThresholdMs('mongo'), 100);
   assert.equal(slowQueryThresholdMs('redis'), 100);
 });
 
 test('the slow-query threshold is configurable per backend', () => {
   process.env.DB_SLOW_QUERY_MS = '250';
-  process.env.MONGO_SLOW_QUERY_MS = '500';
+  process.env.REDIS_SLOW_QUERY_MS = '500';
   try {
     assert.equal(slowQueryThresholdMs('pg'), 250);
-    assert.equal(slowQueryThresholdMs('mongo'), 500);
-    assert.equal(slowQueryThresholdMs('redis'), 100);
+    assert.equal(slowQueryThresholdMs('redis'), 500);
   } finally {
     delete process.env.DB_SLOW_QUERY_MS;
-    delete process.env.MONGO_SLOW_QUERY_MS;
+    delete process.env.REDIS_SLOW_QUERY_MS;
   }
 });
 
@@ -259,7 +257,7 @@ test('timeQuery flags a query at or over the threshold as slow', async () => {
 
 test('timeQuery labels a blank operation as "other" and a missing target as null', async () => {
   const records = await withSink(async () => {
-    await timeQuery({ backend: 'mongo', operation: '   ', kind: 'read' }, async () => undefined);
+    await timeQuery({ backend: 'redis', operation: '   ', kind: 'read' }, async () => undefined);
   });
 
   assert.equal(records[0].operation, 'other');
@@ -461,99 +459,6 @@ test('a non-finite duration is ignored rather than corrupting the totals', () =>
   const telemetry = createTelemetry();
   telemetry.recordDbQuery(record({ durationMs: Number.NaN }));
   assert.equal(telemetry.getSnapshot().counters.db_queries_total, 0);
-});
-
-// ─── Mongo store instrumentation ──────────────────────────────────────────────
-
-/** Minimal stand-in for the driver surface the message store touches. */
-function createStubMongoClient() {
-  const collection = {
-    async createIndex() {},
-    async updateOne() {
-      return { upsertedCount: 1 };
-    },
-    async updateMany() {
-      return { modifiedCount: 0 };
-    },
-    async bulkWrite() {
-      return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
-    },
-    async findOne() {
-      return null;
-    },
-    async findOneAndUpdate() {
-      return null;
-    },
-    find() {
-      return {
-        sort() {
-          return this;
-        },
-        limit() {
-          return this;
-        },
-        async toArray() {
-          return [];
-        },
-      };
-    },
-  };
-  return {
-    async connect() {},
-    db() {
-      return { collection: () => collection };
-    },
-    async close() {},
-  };
-}
-
-test('mongo store timings are recorded around driver calls', async () => {
-  const { createMongoMessageStore } = await import('../src/messageStore.ts');
-  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: createStubMongoClient() });
-
-  const records = await withSink(async () => {
-    await store.listMessages({ conversationId: 'alice:bob' });
-    await store.listConversations('alice');
-    await store.saveMessage({ senderId: 'alice', recipientId: 'bob', body: 'hi' });
-    await store.markRead('alice:bob', 'bob');
-  });
-
-  assert.deepEqual(
-    records.map((entry) => [entry.backend, entry.operation, entry.kind]),
-    [
-      ['mongo', 'find', 'read'],
-      ['mongo', 'find', 'read'],
-      ['mongo', 'updateOne', 'write'],
-      ['mongo', 'updateMany', 'write'],
-    ]
-  );
-  assert.ok(records.every((entry) => entry.target === 'messages' && entry.ok));
-
-  await store.close?.();
-});
-
-test('the one-time mongo connect/index build is not billed to the first query', async () => {
-  const { createMongoMessageStore } = await import('../src/messageStore.ts');
-  const client = createStubMongoClient();
-  const slowConnect = {
-    ...client,
-    async connect() {
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    },
-  };
-  const store = createMongoMessageStore({ uri: 'mongodb://stub', client: slowConnect });
-
-  const records = await withSink(async () => {
-    await store.listMessages({ conversationId: 'alice:bob' });
-  });
-
-  assert.equal(records.length, 1);
-  assert.ok(
-    records[0].durationMs < 50,
-    `connect time leaked into the query timing: ${records[0].durationMs}ms`
-  );
-
-  await store.close?.();
 });
 
 // ─── Postgres pool instrumentation ────────────────────────────────────────────

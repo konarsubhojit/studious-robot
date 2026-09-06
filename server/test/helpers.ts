@@ -89,17 +89,19 @@ async function postJson(url: string, path: string, body: Record<string, unknown>
 }
 
 /**
- * GET a JSON body, optionally appending the session id as a query parameter.
+ * GET a JSON body, authenticating with the `Authorization` bearer header.
+ *
+ * The session id is a bearer token, so it never travels in the query string —
+ * `getSessionFromRequest` no longer looks there, and neither does the app.
  *
  * @param url - Base URL of the server under test.
  * @param path - Request path, including the leading slash.
- * @param sessionId - Appended as `?sessionId=` when present.
+ * @param sessionId - Sent as `Authorization: Bearer <id>` when present.
  */
 async function getJson(url: string, path: string, sessionId?: string): Promise<{ status: number; body: any; }> {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
+  const response = await fetch(`${url}${path}`, {
+    headers: sessionId ? { authorization: `Bearer ${sessionId}` } : {},
+  });
   return { status: response.status, body: await readJson(response) };
 }
 
@@ -111,9 +113,8 @@ async function getJson(url: string, path: string, sessionId?: string): Promise<{
  * server — each of which is far wider than the subset any one suite exercises.
  * A double therefore cannot be checked against them structurally, so the
  * assertion is made once, here at the injection point, rather than with an
- * `as any` scattered through every suite (the same reasoning as
- * `src/messageStore/types.ts`'s `MongoClientLike`).  The double's own shape is
- * preserved so suites can still assert against the calls it recorded.
+ * `as any` scattered through every suite.  The double's own shape is preserved
+ * so suites can still assert against the calls it recorded.
  */
 function asDatabase<T>(double: T): T & import('../db/client.ts').Database {
   return double as T & import('../db/client.ts').Database;

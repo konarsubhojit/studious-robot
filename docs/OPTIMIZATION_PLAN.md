@@ -11,10 +11,12 @@ These were confirmed before work started and they materially shape the scope:
 
 | Question | Answer | Consequence |
 | -------- | ------ | ----------- |
-| Instance count | **Single instance** today | P3.1 is a documentation + startup-assertion task, not a Redis state refactor |
-| Concurrent users | **~10** | P1.4 (directory paging / lazy boot hydration) is premature; descoped to a documented note |
+| Instance count | ~~Single instance~~ → **two signaling VMs** behind a load balancer, plus a separate host for Postgres and Redis | `REDIS_URL` is **mandatory**, not optional. Sessions, presence, call state, the read cache and socket fan-out must all be shared, and each VM needs a distinct `INSTANCE_ID` |
+| Process manager | ~~PM2~~ → **plain systemd** on Oracle Cloud (Oracle Linux, service user `opc`) | See Phase 7 / Decision 3 |
+| Concurrent users | **~10** | ~~P1.4 descoped~~ → boot hydration *was* bounded after all, in Phase 7 / Decision 4.3, because it is the one unbounded read that has to finish before the process serves anything — on both VMs |
 
-Everything else in the original plan stands.
+The first two answers changed after this document was written and they invalidate
+anything below that assumes a single PM2-managed process. Phase 7 supersedes it.
 
 ## Status
 
@@ -75,8 +77,8 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 | ID | Task | Reason |
 | -- | ---- | ------ |
-| P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do |
-| P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today |
+| P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do. **Re-raised as Phase 7 / D5.1** — it is now the last thing between the project and a shippable artifact |
+| P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today. **Re-raised as Phase 7 / D5.2** |
 
 ### Phase 6 — Chat & calling UX pass
 
@@ -112,6 +114,333 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
 | D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass |
 | E1–E3 | `useCallFlow` decomposition, SQLite, i18n | E1 (`useCallFlow` decomposition) is now done — see P1.2 above, device QA pending; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
+
+## Phase 7 — Target-architecture rebuild
+
+A separate, later pass. Its five decisions came out of a full review of the DB
+split, the Redis role and the Android client, and they supersede the
+single-instance/PM2 assumptions above. Sequenced so each step is independently
+verifiable behind the existing CI gates.
+
+| ID | Decision | Status |
+| -- | -------- | ------ |
+| D3 | Deployment surface: plain systemd on Oracle Cloud | ✅ |
+| D2 | Redis role | ✅ **reversed mid-flight** — the fleet is two VMs, so shared state is mandatory |
+| D4.1 | Session TTL, sweep, and a Redis key that always expires | ✅ |
+| D4.2 | Session id out of URLs | ✅ |
+| D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅ |
+| D4.4 | Stop the client opting out of the server cache | ✅ |
+| D1 | Consolidate messages into Postgres, delete Mongo | ✅ — including the `callTimeline` reads it unlocked |
+| D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | 🟡 **partly done** — the state/storage defects below are fixed; the release build, the storage-engine swap, permissions and i18n are not |
+
+### D3 — Deployment surface (done)
+
+Deleted `deploy/ecosystem.config.js`, `deploy/start.sh`, `deploy/wetalk-deploy`
+and `deploy/nginx/robot-signal-upstream.conf`. `deploy/robot-signal.service` was
+retargeted from "GCP e2-micro / Ubuntu / `User=ubuntu`" to Oracle Linux
+(`User=opc`, `/home/opc/repos/...`, `After=network-online.target`) and gained the
+sandboxing it never had: `NoNewPrivileges`, `ProtectSystem=strict`,
+`ProtectHome=read-only`, `PrivateTmp`, `PrivateDevices`, the `ProtectKernel*`
+family, `RestrictAddressFamilies`, `SystemCallFilter=@system-service`, and
+`MemoryHigh=768M` / `MemoryMax=1G`.
+
+`ProtectHome` is `read-only`, not `true`: `WorkingDirectory` lives under
+`/home/opc`, so `true` breaks the unit. Moving the checkout to `/srv` would let
+it be tightened.
+
+`server/src/lib/instances.ts` keyed off `NODE_APP_INSTANCE` / `pm_id` /
+`PM2_INSTANCE_ID`, none of which systemd will ever set — it was dead code
+guarding a topology no longer run. It now reads `INSTANCE_ID` /
+`SIGNAL_INSTANCE_ID`, declared per VM in `/etc/robot-signal/env`.
+
+**Known gap, deliberately left:** because instance `0` is never faulted (it
+cannot tell whether it is alone), the guard only arms if the *second* VM sets
+`INSTANCE_ID`. A fleet that forgot the variable is indistinguishable from a
+single host. A startup warning when `REDIS_URL` is set but `INSTANCE_ID` is not
+would close this; it is documented in `deploy/README.md` §5a but not enforced.
+
+### D2 — Redis (done, after a reversal)
+
+The original decision was to retire Redis, on the premise that one systemd unit
+means one process. That premise was wrong: the deployment is **two** signaling
+VMs plus a separate data host. The code half needed no change — `sharedCalls.ts`
+already branches on `state.callState`, so the "dual call-state authority" only
+exists when Redis is wired — and a regression test now pins that the local
+registry is the sole transition authority when it is not. The documentation half
+was written for the wrong topology and then rewritten across `README.md`,
+`deploy/README.md` (§5a, the architecture diagram, §14), `docs/SETUP.md` and
+`server/README.md`.
+
+Load balancing must be **round-robin, not `ip_hash`**: with Redis the affinity is
+`shared`, so pinning a user to a VM buys nothing and costs an uneven fleet.
+
+### D4.1 — Session lifetime (done)
+
+Sessions were non-expiring bearer tokens in an unbounded map. Now:
+`SESSION_TTL_MS` (7 days by default), a sweep on the same 10-minute cadence as
+the other sweeps, and `sessionState.save` in `stores/redis.ts` **always** writes
+`PX` — Redis has no "expire eventually", so a key written without one is
+immortal. `SESSION_TTL_MS=0` still restores the old behaviour, which the tests
+rely on; note this needs `parseNonNegativeNumber`, because `parseEnv` treats `0`
+as unset.
+
+Safe end to end because the client already recovers twice over: `authedFetch`
+retries once on a 401 via `refreshSession()`, and `useCallFlow` re-mints on the
+`session.invalid` socket event.
+
+### D4.2 — Session id out of URLs (done)
+
+A session id is a bearer token, and a query string is written to the reverse
+proxy's access log, kept in intermediaries' history and attached to a `Referer` —
+none of which the client can clear afterwards. Every `?sessionId=` call site in
+the app now sends `Authorization: Bearer` via the new single-purpose
+`mobile/src/authHeaders.ts`, and both resolvers in `server/src/lib/auth.ts` have
+dropped the `req.query.sessionId` branch.
+
+The **body** fallback is still accepted, by design: the server test suite leans on
+it heavily, and two client paths still use it (`pushNotifications.ts`
+registration/unregistration, and `useSession.ts`'s `/session/refresh`).
+
+### D4.3 — Retention and bounded hydration (done)
+
+`calls`, `call_events` and `audit_log` were append-only and never deleted from.
+That is a storage problem, but on a two-VM fleet it was first a *boot* problem:
+`hydrateCallsAndEventsFromDb` read both tables in full before either process
+could serve a request, so startup time was a function of history.
+
+- `src/lib/retention.ts` sweeps in bounded batches (`DB_RETENTION_DELETE_BATCH`,
+  5 000) every 6 hours. `DB_CALL_RETENTION_MS` defaults to 90 days,
+  `AUDIT_RETENTION_MS` to 180; `0` disables either.
+- Only **terminal** calls are eligible, whatever their age — a `ringing` or
+  `connected` row is live state, and deleting it would strand the peers. This
+  mirrors `pruneOldCalls`.
+- `call_events` is never swept directly: its FK is `ON DELETE CASCADE`, so
+  pruning the parent removes the timeline in the same statement and the two can
+  never disagree about whether they exist.
+- Migration `0009_retention_indexes.sql` adds `idx_audit_ts` and
+  `idx_calls_updated_at`. Neither predicate could use the existing indexes:
+  `idx_calls_caller_updated` / `idx_calls_callee_updated` lead with a participant
+  the sweep does not have, and `idx_audit_actor` / `idx_audit_target` lead with a
+  nullable column.
+- Hydration now reads the newest `MAX_RETAINED_CALLS` rows ordered
+  `updated_at DESC`, and scopes the event read to exactly those call ids. Reading
+  more only ever produced rows for `pruneOldCalls` to discard.
+
+**Testing note for the next session:** two suites built their Drizzle double so
+`.from()` returned a bare `Promise`. Bounded hydration chains `.where()` /
+`.orderBy()` / `.limit()`, so the doubles in `db-persistence.test.ts` and
+`stale-calls.test.ts` are now *thenable and chainable*. Any future narrowing of a
+hydration read needs the same treatment.
+
+### D4.4 — The unreachable cache (done)
+
+`GET /messages` keyed its cache off `before || includeCalls`. The app always sends
+`include=calls`, so the entry had no possible reader — a cache that could only
+ever miss. The key is now `before` alone: what is cached is the *message* page,
+which is identical either way and is already invalidated by the send path via
+`messagesCachePrefix`; the call entries are merged in live on every request, so
+no call staleness is introduced. The participant filter and the block check both
+still run after the cache read, so nothing leaks.
+
+### D1 — Postgres consolidation (done)
+
+The large one, and the one that deleted more code than it added. Chat history
+now lives in the `messages` table of the same Postgres database as users,
+devices and calls; MongoDB is gone.
+
+**What went in.** A `messages` table (migration `0010`) keyed on
+`(conversation_id, message_id)` with five indexes, each serving exactly one
+access path: the conversation page and its cursor, the two directions a search
+or conversation list matches on, a *partial* index over `read_at IS NULL` for
+unread counts, and a `pg_trgm` GIN index over `lower(body)` for search.
+`src/messageStore/pgStore.ts` implements the interface unchanged.
+
+**What came out.** The `conversation_index` collection with its
+`MONGODB_CONVERSATION_INDEX_WRITES`/`_READY` flag pair, compare-and-set ordering
+and duplicate-key retries; the `bodyLower` field with its own flag pair; both
+backfill scripts; both directional composite indexes and the "sort must match
+the index exactly" constraint; the unbounded `find(participantFilter).toArray()`
+conversation fallback; the fetch-everything-then-slice search; the whole
+`mongoConnection` / `documents` / `MongoCollection` structural-type layer; the
+store-level timing wrapper (the pool already times every statement); the
+`mongodb` dependency; one connection pool; one `/health` failure mode; and
+`deploy/README.md` §13.
+
+**Both open design questions resolved.**
+
+1. **Search: `pg_trgm`, not `tsvector`.** The existing semantics are a literal,
+   case-insensitive *substring* match — that is what `bodyMatches` does in the
+   memory store, and what the API has always returned. `pg_trgm` on
+   `lower(body)` preserves them exactly. `tsvector` is faster but matches word
+   *stems*, which would have silently changed what the endpoint returns and put
+   the two backends into disagreement, quietly invalidating the store suite
+   rather than failing it.
+2. **Data migration: none.** The user confirmed the dev-stage dataset is
+   disposable. The `messages` table starts empty.
+
+**One thing the plan did not anticipate.** Consolidating created a *new*
+unbounded table, so the retention sweep grew a third target — but
+`MESSAGE_RETENTION_MS` defaults to `0`, meaning off. Chat is the user's own
+content rather than a record the server made about them, and a background job
+that silently deletes it is a data-loss bug wearing a feature's clothes.
+Operators who need a bounded table set the window explicitly. Sweeping
+`messages` also needs a row-at-a-time delete rather than the `IN (...)` batch
+the other tables use, because the key is composite and `message_id` alone is
+only unique within its conversation.
+
+**Testing.** `test/message-store-pg.test.ts` (17 tests) drives the store through
+a real Drizzle handle bound to a recording fake `pg` client, so what is asserted
+is the *SQL actually issued*. That matters here specifically: if
+`listConversations` stopped emitting `DISTINCT ON`, or the search predicate
+stopped matching the shape of the trigram index, the queries would still run and
+still return plausible rows — just by scanning the table. Only the statement text
+catches that. Backend-independent behaviour stayed in
+`message-store-internals.test.ts` over plain data.
+
+**Collected.** `src/domain/callTimeline.ts` now reads the durable `calls`
+table, closing the last place where a memory bound was mistaken for a history
+horizon. Three reads moved, each keeping the in-memory path as its fallback for
+a deployment with no `DATABASE_URL` and for a failed query, exactly as
+`callHistory.ts` does — a database outage degrades the timeline to whatever is
+resident rather than failing the request:
+
+- **`readCallsBetween`** — the conversation timeline. A call that aged out of
+  `state.calls` used to still appear in `GET /calls` while having silently
+  vanished from the chat, contradicting `toCallTimelineEntry`'s own promise that
+  "the two views can never disagree". The `before` cursor is pushed into SQL
+  rather than applied after the fact, so deep paging no longer depends on the
+  whole pair history being resident.
+- **`readCallActivityByPeer`** — the chat list. Two bounded queries rather than
+  one scan: the newest calls decide each peer's `lastActivity`, while
+  *unacknowledged missed* calls decide the unread badge and may be arbitrarily
+  old — an unread badge that expired with the retention window would be a worse
+  lie than a slightly shallow preview. The two results overlap, so they are
+  folded by `callId` before counting; counting a call twice would double the
+  badge.
+- **`markMissedCallsRead`** — acknowledgement. Now a single
+  `UPDATE … WHERE callee_id = $1 AND caller_id = $2 AND status = 'missed' AND
+  missed_read_at IS NULL … RETURNING`, which reaches the evicted rows the old
+  loop over `state.calls` could not see. Those were unacknowledgeable, so they
+  came back unread on the next restart. Resident records are still marked and
+  persisted first, so a call missed moments ago whose write has not landed yet
+  is covered too, and the returned ids are unioned with them so the count is of
+  distinct calls.
+
+The paging bug is closed by construction rather than by coincidence:
+`mergeTimeline` takes the newest `limit` of the two lists combined, which is
+only correct when each input already holds the newest `limit` of its own kind,
+so the call fetch bound is now *derived from* `MAX_MESSAGE_LIMIT` instead of
+being a hand-picked number that happened to be larger.
+
+A single SQL join over `messages` and `calls` remains possible and would save a
+round trip, but it is not required for correctness and would put the two very
+different retention rules above into one statement. Deferred deliberately.
+
+`test/call-timeline.test.ts` covers this with 11 tests that seed rows *only*
+into the `calls` table — the state an evicted or pre-restart call is actually
+in. Eight of them were confirmed to fail against the previous memory-only
+implementation. The fake Drizzle harness moved to `test/fakeCallsDb.ts` so both
+call suites share one stand-in; it gained `isNull`, `lt` and a real
+`UPDATE … RETURNING`, and still throws on any query shape it does not model so
+a query change cannot silently degrade into "matches everything".
+
+### D5 — Android (partly done)
+
+#### Fixed: state management, local storage and error surfacing
+
+Found by reviewing the client against reported on-device behaviour. The first
+four share a shape: state written from two places that did not agree about who
+owned it. The next two are a gate that opened before the thing it guards had
+succeeded. The last is the mirror image of the first four — one slot shared by
+subsystems that should not have been sharing a surface.
+
+- **A history refetch deleted live messages.** `mergeHistoryPage` treated a
+  first page as a wholesale replacement, so anything arriving over the socket
+  during the fetch was erased from `messagesByPeer` while `conversations` — and
+  therefore the tab badge — had already counted it. That is exactly the reported
+  "badge says 1, the conversation shows nothing". It also collapsed history
+  already paged in back to a single page on every re-open. The page is now
+  authoritative only over the window it reports on: entries outside that window,
+  and everything still unsent, survive.
+- **The chat list lagged the conversation.** `sendMessage` and
+  `beginAttachmentUpload` updated only `messagesByPeer`; `withIncomingMessage`
+  keys on `senderId` and so cannot serve an outgoing message. A
+  `withOutgoingMessage` sibling now updates the list in the same commit, so the
+  row's preview matches what the open conversation shows.
+- **The composer grew under rapid sending.** With a controlled `TextInput`, the
+  change event for the text being sent can land *after* the clear, restoring it
+  — and the next send appends to it. The one echo immediately following a send
+  is now dropped, and the send reads the ref rather than the render's `draft`,
+  which also stops two taps in one frame sending twice.
+- **`chatDb` could discard the whole local store.** `loadChatSnapshot` returned
+  the cache if one existed, and `saveChatSnapshot` created one from
+  `emptySnapshot()`. `persistOutbox` is reachable from a send before the disk
+  read resolves, so a save could beat the first load, and the load would then
+  return empty — dropping every persisted conversation, message and draft, and
+  writing that emptiness back over the file. Loads now share one promise (which
+  also dedupes concurrent reads) and fold the file in *underneath* any table
+  already written. Separately, an outbox-only save no longer re-sorts every
+  conversation's history: that ran on the JS thread on every message ack.
+- **A failed registration still let the user into the app.** `registerUser`
+  treated "the identity provider accepted the credentials" as registration
+  complete, persisted the username and flipped `isRegistered`. But the username
+  is not the account's to give — `resolveIdentityClaim` on the server binds it,
+  and answers `409` when it is already taken. That happened *after* the user had
+  been admitted, so someone whose name was taken landed on a chat list that
+  could never load, with the refusal reported only as a status message on
+  another tab. The username is now verified with the server before it is
+  committed, so a rejection leaves `isRegistered` false and the registration
+  screen — which already routes a failure to the step that owns it — shows why.
+  The same applies to an unreachable server: registration that cannot produce a
+  session is a failed registration, and is retried where the user stands.
+- **The conflict message described the wrong conflict.** The client branched on
+  whether the `409` payload carried a `userId`, but `identity_claimed` carries
+  one too — the *existing* owner of the name, which is the name the user just
+  typed. Someone whose chosen name was taken was told "this account is already
+  bound to <their own choice>", which describes the opposite situation. It now
+  branches on the server's `code`, via `describeIdentityRejection`.
+- **App-level failures sat inside the call log.** There is one global `status`
+  slot and every subsystem writes it, so session, identity and outbox errors
+  were rendered inline by `CallsScreen` and pushed the history down the screen.
+  Warnings and errors now float over the list as a self-dismissing top bar
+  (`StatusToast`); the persistent "server unreachable" *condition* stays an
+  inline `Banner`, because it stays true until something changes. The Chats tab
+  shows the same bar — messaging failures are raised there and previously had
+  nowhere to appear.
+
+#### Still to do, ordered by payoff:
+
+1. **Make the release build releasable.** Enable R8 and `shrinkResources`,
+   generate a real upload keystore held outside the repo, and move the release
+   variant off the debug signing config. This is the last thing between the
+   project and a shippable artifact — and it is gated on device QA of the shrunk
+   APK, which cannot be done in the agent sandbox. Tracked historically as P1.6c.
+2. **Replace the `chatDb` JSON document** with SQLite or MMKV, removing the full
+   re-serialise per flush and the full parse on cold start. Everything already
+   routes through that one module, so the swap is contained. Priced in the P1.7
+   note above: ≈ 7.9 MB and ≈ 24 ms per flush at the ceiling.
+3. **Drop `CALL_PHONE` and `READ_PHONE_STATE`** unless something concretely needs
+   them; `MANAGE_OWN_CALLS` covers self-managed CallKeep.
+4. **i18n before more copy.** Every string added now is a string to extract later.
+5. **`getItemLayout`** on the message list, if bubble heights can be made
+   predictable, so jump-to-quote stops relying on the scroll-failure fallback.
+6. Split `useCallFlow` and `ChatConversationPresentation` further along the seams
+   already established.
+
+### Working notes for whoever picks this up
+
+- Run `npm install` in **both** `server/` and `mobile/` first; the checked-out
+  `node_modules` is incomplete and `@types` are missing.
+- Server: `npm run typecheck`, `npm run lint` (resolves from the repo root),
+  `npm test` (~70 s). One file:
+  `node --experimental-test-module-mocks --test test/<file>.test.ts`.
+- Mobile: `npx tsc --noEmit`; lint **must** run from inside `mobile/` (legacy
+  `.eslintrc.js`); Jest **must** be `npx jest --ci --forceExit` or it hangs.
+- Server test doubles go through `test/helpers.ts`' `asDatabase` / `asMessageStore`
+  / `asSocketIoServer`, never a per-suite `as any`.
+- Baseline at handoff: server 529 passing / 1 skipped (the count *fell* because
+  the Mongo-driver suites went with the driver), mobile 2145 passing, typecheck
+  and lint clean in both packages.
 
 ## Notes and deviations
 

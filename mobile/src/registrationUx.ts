@@ -199,3 +199,49 @@ export function stepForFailure(message: string | null | undefined): Registration
   if (/email|password|sign[-\s]?in/.test(text)) return 'method';
   return null;
 }
+
+/**
+ * The server's reasons for refusing to bind a username to an account.
+ *
+ * Mirrors `IdentityClaimDenied['reason']` in `server/src/identity.ts`, which is
+ * returned as the `code` of a `409` from `POST /session`.
+ */
+export const IDENTITY_REJECTION_CODES = {
+  ACCOUNT_ALREADY_BOUND: 'account_already_bound',
+  USERNAME_REQUIRED: 'username_required',
+  IDENTITY_CLAIMED: 'identity_claimed',
+} as const;
+
+/**
+ * Explain a refused username claim in the terms the user has to act on.
+ *
+ * Keyed on the server's `code`, not on whether the payload happens to carry a
+ * `userId`: `identity_claimed` also carries one — the *existing* owner of the
+ * name, which is the name the user just typed — so testing for its presence
+ * told someone whose chosen name was taken that "this account is already bound
+ * to <their own choice>", which describes the opposite situation.
+ *
+ * Every sentence names the username, so `stepForFailure` routes all of them to
+ * the step that owns the fix.
+ *
+ * @param code - The `code` field of the 409 payload.
+ * @param boundUserId - The `userId` field, meaningful only for
+ *   `account_already_bound`, where it is the name the account already owns.
+ */
+export function describeIdentityRejection(
+  code: string | null | undefined,
+  boundUserId?: string | null,
+): string {
+  if (code === IDENTITY_REJECTION_CODES.ACCOUNT_ALREADY_BOUND) {
+    return boundUserId
+      ? `This account already uses the username "${boundUserId}". Sign in with that username instead.`
+      : 'This account already uses a different username.';
+  }
+  if (code === IDENTITY_REJECTION_CODES.USERNAME_REQUIRED) {
+    return 'Choose a username to finish setting up your account.';
+  }
+  if (code === IDENTITY_REJECTION_CODES.IDENTITY_CLAIMED) {
+    return 'That username is already taken. Choose a different one.';
+  }
+  return 'That username could not be confirmed with the server. Try a different one.';
+}

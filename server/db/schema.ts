@@ -11,7 +11,11 @@
  *   - call_events  per-call ordered event timeline
  *   - devices      push-notification device registrations
  *   - audit_log    security/audit events
+ *
+ * `calls`, `call_events` and `audit_log` are append-only and are bounded by the
+ * retention sweep in `src/lib/retention.ts`, not by anything in the schema.
  *   - blocks       per-user call blocklist
+ *   - messages     durable chat history
  */
 
 import { pgTable, uuid, integer, text, timestamp, jsonb, index, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
@@ -74,6 +78,11 @@ const calls = pgTable(
     // not folded into the two indexes above, because `status` is optional and
     // leading with it would make them useless to the unfiltered page.
     index('idx_calls_status').on(t.status),
+    // Serves both the retention sweep (`status IN (terminal) AND updated_at <
+    // cutoff`) and bounded boot hydration, which reads the newest page rather
+    // than the whole table. Neither can use the participant indexes: they lead
+    // with `caller_id`/`callee_id`, and neither query has a participant.
+    index('idx_calls_updated_at').on(desc(t.updatedAt), desc(t.callId)),
   ],
 );
 
@@ -157,6 +166,9 @@ const auditLog = pgTable(
   (t) => [
     index('idx_audit_actor').on(t.actor, t.ts),
     index('idx_audit_target').on(t.target, t.ts),
+    // The retention sweep's only predicate is `ts < cutoff`; the two indexes
+    // above lead with a nullable actor/target and cannot serve it.
+    index('idx_audit_ts').on(t.ts),
   ],
 );
 
@@ -170,4 +182,74 @@ const blocks = pgTable(
   (t) => [primaryKey({ columns: [t.blockerId, t.blockeeId] })],
 );
 
-export { users, calls, callEvents, devices, auditLog, blocks };
+/**
+ * Durable chat history.
+ *
+ * Replaces the MongoDB `messages` collection.  The move to Postgres is what
+ * lets the chat list and the conversation timeline be *joins* over `messages`
+ * and `calls` in one query, rather than two independently-limited reads merged
+ * in application code — which is what made missed calls vanish and the merged
+ * timeline page incorrectly.
+ *
+ * Column notes:
+ *
+ *   - `messageId` is client-supplied (an outbox replay resends the same id), so
+ *     it is `text`, not `uuid`: the server must not reject or rewrite an id it
+ *     did not mint.  `(conversationId, messageId)` is the primary key, which is
+ *     exactly the upsert conflict target `saveMessage` needs to stay idempotent.
+ *   - `deliveredTo` is a `text[]` rather than a join table.  It is only ever
+ *     read whole, written by appending, and bounded at two entries by the 1:1
+ *     conversation model; a second table would add a join to every read to
+ *     model a list that never grows.
+ *   - `reactions` is `jsonb` (emoji → user ids) for the same reason.
+ *   - `deletedAt` marks a tombstone: the row survives a delete so a reply that
+ *     quotes it still resolves.  `body` is emptied rather than the row removed.
+ */
+const messages = pgTable(
+  'messages',
+  {
+    conversationId: text('conversation_id').notNull(),
+    messageId: text('message_id').notNull(),
+    senderId: text('sender_id').notNull(),
+    recipientId: text('recipient_id').notNull(),
+    body: text('body').notNull(),
+    type: text('type').notNull(),
+    attachment: jsonb('attachment'),
+    replyTo: text('reply_to'),
+    reactions: jsonb('reactions').notNull().default({}),
+    deliveredTo: text('delivered_to').array().notNull().default(sql`'{}'::text[]`),
+    readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.messageId] }),
+    // `listMessages` reads one conversation newest-first, tie-broken by
+    // `messageId`, and pages with a `created_at <` cursor. The index carries
+    // the sort columns in the query's own direction so a page is an index scan
+    // rather than a sort of the whole conversation.
+    index('idx_messages_conversation_created').on(
+      t.conversationId,
+      desc(t.createdAt),
+      desc(t.messageId)
+    ),
+    // `listConversations` and `searchMessages` select on participation in
+    // either direction, then sort newest-first.
+    index('idx_messages_sender_created').on(t.senderId, desc(t.createdAt)),
+    index('idx_messages_recipient_created').on(t.recipientId, desc(t.createdAt)),
+    // Unread counting reads `(recipient_id, conversation_id)` where `read_at IS
+    // NULL`; partial, because a read message is never counted and there are far
+    // more of those than unread ones.
+    index('idx_messages_unread')
+      .on(t.recipientId, t.conversationId)
+      .where(sql`${t.readAt} is null`),
+    // Search is a literal, case-insensitive *substring* match — the semantics
+    // the memory store implements and the API has always had. A btree cannot
+    // serve an unanchored `LIKE '%term%'`, so this is a trigram GIN index over
+    // the folded body; see migration 0010 for the extension it requires.
+    index('idx_messages_body_trgm')
+      .using('gin', sql`lower(${t.body}) gin_trgm_ops`),
+  ],
+);
+
+export { users, calls, callEvents, devices, auditLog, blocks, messages };

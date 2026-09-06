@@ -377,7 +377,7 @@ export async function exportDiagnosticLogs(context: {
     logInfo('Export Logs button press');
     const signalingUrl = (context.signalingUrl ?? '').trim();
     const header = buildExportHeader({ ...context, signalingUrl });
-    // The server keeps the SQL/Mongo/Redis query timings in-process, so the
+    // The server keeps the SQL/Redis query timings in-process, so the
     // export pulls them in: the written file is then the single artefact that
     // answers "which query is slow?" without shell access to the server.
     // This deliberately blocks the export for up to

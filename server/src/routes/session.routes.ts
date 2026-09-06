@@ -9,6 +9,28 @@ import { addSessionToUser, upsertDevice, ensurePresenceRecord } from '../lib/sta
 import { persistUser, persistDevice } from '../lib/persistence.ts';
 
 /**
+ * Timestamps for a newly issued session, derived from a **single** clock read.
+ *
+ * `createdAt` and `expiresAt` used to call the clock independently, one
+ * statement apart, so a session issued across a millisecond boundary advertised
+ * a lifetime of `sessionTtlMs + 1` — the pair disagreed about when the session
+ * began. On a loaded host the gap is not bounded at one millisecond; anything
+ * that preempts the event loop between the two reads widens it.
+ *
+ * @param sessionTtlMs - Session lifetime; `0` means "never expires".
+ */
+function issueSessionTimestamps(sessionTtlMs: number): {
+  createdAt: string;
+  expiresAt: string | null;
+} {
+  const issuedAt = Date.now();
+  return {
+    createdAt: new Date(issuedAt).toISOString(),
+    expiresAt: sessionTtlMs > 0 ? new Date(issuedAt + sessionTtlMs).toISOString() : null,
+  };
+}
+
+/**
  * Session lifecycle: create, inspect, and rotate signaling sessions.
  *
  * @param ctx
@@ -85,14 +107,14 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
 
     const deviceId = normaliseId(req.body?.deviceId) || `device-${randomUUID()}`;
     const platform = normaliseOptionalString(req.body?.platform);
-    const createdAt = new Date().toISOString();
+    const { createdAt, expiresAt } = issueSessionTimestamps(sessionTtlMs);
     const session = {
       sessionId: randomUUID(),
       userId,
       deviceId,
       platform,
       createdAt,
-      expiresAt: sessionTtlMs > 0 ? new Date(Date.now() + sessionTtlMs).toISOString() : null,
+      expiresAt,
     };
 
     state.sessions.set(session.sessionId, session);
@@ -151,8 +173,7 @@ function createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }: {
       userId: session.userId,
       deviceId: session.deviceId,
       platform: session.platform,
-      createdAt: new Date().toISOString(),
-      expiresAt: sessionTtlMs > 0 ? new Date(Date.now() + sessionTtlMs).toISOString() : null,
+      ...issueSessionTimestamps(sessionTtlMs),
     };
     state.sessions.set(newSession.sessionId, newSession);
     await state.sessionState?.save(newSession);

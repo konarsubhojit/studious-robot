@@ -23,15 +23,15 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
 /**
  * @param url - Base URL of the server under test.
  * @param path - Request path, including the leading slash.
- * @param sessionId - Appended as `?sessionId=` when present.
+ * @param sessionId - Sent as `Authorization: Bearer <id>` when present.
  */
 async function deleteJson(url: string, path: string, sessionId?: string): Promise<{ status: number; body: any; }> {
-  const fullPath = sessionId
-    ? `${url}${path}?sessionId=${encodeURIComponent(sessionId)}`
-    : `${url}${path}`;
-  const response = await fetch(fullPath, {
+  const response = await fetch(`${url}${path}`, {
     method: 'DELETE',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(sessionId ? { authorization: `Bearer ${sessionId}` } : {}),
+    },
   });
   return { status: response.status, body: await readJson(response) };
 }
@@ -501,8 +501,32 @@ test('POST /calls: rejects an expired session', async () => {
   }
 });
 
-test('session without TTL has no expiresAt', async () => {
+// A session id is a bearer token, so the default is a finite lifetime: the
+// previous default of `SESSION_TTL_MS=0` meant a leaked token stayed valid for
+// ever and `state.sessions` only ever grew.
+//
+// The TTL is asserted *exactly* rather than as a bound.  `createdAt` and
+// `expiresAt` are derived from one clock read, so the difference between them
+// is the configured lifetime and nothing else; a range check here previously
+// let a second clock read drift the pair by a millisecond and turned that
+// defect into an intermittent failure instead of a reproducible one.
+test('sessions expire by default', async () => {
   const { url, teardown } = await startServer();
+  try {
+    const res = await postJson(url, '/session', { userId: 'user-alice' });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.expiresAt, 'a default session carries an expiry');
+    const ttlMs = Date.parse(res.body.expiresAt) - Date.parse(res.body.createdAt);
+    assert.equal(ttlMs, 7 * 24 * 60 * 60 * 1000, `unexpected default TTL: ${ttlMs}ms`);
+  } finally {
+    await teardown();
+  }
+});
+
+// `0` is still honoured for the deployments (and tests) that want it, but it
+// now has to be asked for explicitly.
+test('an explicit SESSION_TTL_MS of 0 restores non-expiring sessions', async () => {
+  const { url, teardown } = await startServer({ sessionTtlMs: 0 });
   try {
     const res = await postJson(url, '/session', { userId: 'user-alice' });
     assert.equal(res.status, 201);

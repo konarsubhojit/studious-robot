@@ -29,7 +29,7 @@ Besides the call/session/contact routes, the chat surface adds:
 
 | Method & path | Query | Response | Notes |
 | ------------- | ----- | -------- | ----- |
-| `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (bearer `Authorization` header, request body, or `?sessionId=`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
+| `GET /messages` | `peerId` (required), `limit` (1–100, default `50`), `before` (ISO `createdAt` cursor, exclusive), `include` (`calls` to merge in call records) | `200 { conversationId, messages }` | History of the conversation between the authenticated user and `peerId`, **newest-first**. Session resolved by `getSessionFromRequest` (`Authorization: Bearer <id>` header, or the request body for POSTs — **never the query string**, which would leak the token into access logs, proxies and `Referer`). `401` without a valid session, `400` when `peerId` is missing or equals your own id, `403` if a returned message does not involve you, `503` if the store is unavailable. |
 | `GET /calls` | `limit` (1–100, default `20`), `offset` (default `0`), `status` (optional filter) | `200 { calls, total, limit, offset, hasMore }` | Call history for the authenticated user, **most recently active first** (`updatedAt` descending). Read from the durable `calls` table, so it survives a restart and is not bounded by the in-memory retention window (`CALL_RETENTION_MS` / `MAX_RETAINED_CALLS`); when no `DATABASE_URL` is configured — or the query fails — it degrades to the calls still resident in memory. `401` without a valid session. |
 
 | `POST /attachments/presign` | body `{ peerId, type, mimeType, sizeBytes }` | `200 { conversationId, key, uploadUrl, publicUrl, expiresAt, headers }` | Mints a short-lived Cloudflare R2 upload URL for a chat attachment (see [Attachments](#attachments)). `401` without a valid session, `400` for a disallowed `type`/`mimeType` or an oversized `sizeBytes`, `429` when the message rate limit is exhausted, `503` when R2 is not configured. |
@@ -77,8 +77,8 @@ Ack failures return `{ ok: false, version, event, error: { code, message } }` wi
 #### Text chat contract
 
 Text chat reuses the same versioned envelope and ack conventions as the call
-contract. Messages are persisted through `src/messageStore.ts` (in-memory by
-default, Cosmos DB for MongoDB when `MONGODB_URI` is set).
+contract. Messages are persisted through `src/messageStore.ts` (Postgres when a
+database handle is configured, in-memory otherwise).
 
 ##### Client → Server
 
@@ -151,6 +151,9 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `SOCKET_PING_TIMEOUT_MS` | `10000` | Time (ms) to wait for a client's heartbeat response before considering the socket dead. |
 | `RINGING_TIMEOUT_MS` | `120000` | How long a call may ring before it is marked `missed`. The incoming-call push TTL is derived from the time *remaining* in this window, so a late-delivered push expires exactly when the call does. |
 | `STALE_DEVICE_MAX_AGE_MS` | `5184000000` (60d) | How long a device row may go without a push re-registration before the background sweep removes it. The app re-registers on every launch, so an older row belongs to an install that no longer exists (an app reinstall wipes the client-persisted `device_id` and registers a brand-new row). A row backing a live socket or an unexpired session is never swept. |
+| `DB_CALL_RETENTION_MS` | `7776000000` (90d) | How long a **terminal** `calls` row is kept in Postgres before the retention sweep deletes it; its `call_events` cascade with it. Non-terminal calls are never swept, whatever their age. Much longer than the in-memory `CALL_RETENTION_MS` because the durable row is what `GET /calls` pages over after a restart. `0` disables the sweep. |
+| `AUDIT_RETENTION_MS` | `15552000000` (180d) | How long an `audit_log` row is kept before the retention sweep deletes it. Longer than the call window: the audit trail exists to answer questions after the fact. `0` disables the sweep. |
+| `MESSAGE_RETENTION_MS` | `0` (disabled) | How long a `messages` row is kept before the retention sweep deletes it. Off by default — unlike the other swept tables, `messages` holds the user's own content rather than a record the server made about them, so deleting it has to be an explicit operator decision. |
 | `MAX_PUSH_DEVICES_PER_USER` | `3` | Maximum push-registered devices one user's notification fans out to, most recently registered first. Truncation is logged at `warn`, since it means stale rows are accumulating. |
 | `DATABASE_URL` | _(unset)_ | Postgres connection string for **runtime** queries. On Neon, use the **pooled** endpoint (`...-pooler.neon.tech`). |
 | `DATABASE_URL_DIRECT` | _(unset)_ | Postgres connection string for **migrations/DDL**. On Neon, use the **direct (unpooled)** endpoint. Falls back to `DATABASE_URL` when unset. |
@@ -161,15 +164,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` | _(unset)_ | Azure Notification Hubs `DefaultFullSharedAccessSignature` connection string (`Endpoint=sb://…;SharedAccessKeyName=…;SharedAccessKey=…`). Enables the **preferred** push transport. Absent or unparseable ⇒ `notification_hub_not_configured` and the direct FCM/APNs path is used. See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md). |
 | `AZURE_NOTIFICATION_HUB_NAME` | _(unset)_ | Notification hub name (e.g. `storeman`). Required alongside the connection string. |
 | `AZURE_NOTIFICATION_HUB_API_VERSION` | `2015-04` | Notification Hubs REST API version used in the `api-version` query parameter. |
-| `MONGODB_URI` | _(unset)_ | Azure Cosmos DB for MongoDB connection string for text-message persistence. Must include `retrywrites=false` (see [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md)). Required when `NODE_ENV=production` unless the memory store is explicitly enabled. |
-| `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Development and tests still default to memory. |
-| `MONGODB_DB_NAME` | `wetalk` | Database holding the chat collection. |
-| `MONGODB_MESSAGES_COLLECTION` | `messages` | Collection holding chat messages. |
-| `MONGODB_CONVERSATION_INDEX_COLLECTION` | `conversation_index` | User-partitioned routing collection for bounded conversation-list reads. |
-| `MONGODB_CONVERSATION_INDEX_WRITES` | `false` | Enables dual writes during the conversation-index backfill phase. |
-| `MONGODB_CONVERSATION_INDEX_READY` | `false` | Set to `true` only after provisioning and backfilling the routing collection. |
-| `MONGODB_POOL_MAX` | `4` | Maximum Mongo connections per server process. |
-| `MONGODB_MAX_IDLE_TIME_MS` | `120000` | Maximum idle lifetime for Mongo connections. |
+| `ALLOW_IN_MEMORY_MESSAGE_STORE` | `false` | Set to `true` to explicitly allow non-durable messages in production. Chat history lives in the same Postgres database as everything else, so this is only needed when `DATABASE_URL` is deliberately absent. Development and tests still default to memory. |
 | `R2_ACCOUNT_ID` | _(unset)_ | Cloudflare account id, used to derive the R2 S3 endpoint (`https://<id>.r2.cloudflarestorage.com`). Not needed when `R2_ENDPOINT` is set explicitly. |
 | `R2_BUCKET` | _(unset)_ | R2 bucket holding chat media. |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | _(unset)_ | R2 API token credentials used to sign upload URLs. |
@@ -178,7 +173,9 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `R2_PRESIGN_TTL_SECONDS` | `300` | Lifetime of a presigned upload URL, capped at `3600`. |
 | `MESSAGE_RATE_LIMIT` | `30` | Maximum `message.send` events per authenticated user per window. |
 | `MESSAGE_RATE_WINDOW_MS` | `60000` | Message-send rate-limit window in milliseconds. |
-| `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. |
+| `SESSION_TTL_MS` | `604800000` (7 days) | Session (bearer token) lifetime. Expired sessions are rejected on every read and swept from memory every 10 minutes; shared-store keys always carry an expiry. `0` restores non-expiring sessions — tests only. |
+| `INSTANCE_ID` | _(unset)_ | This instance's ordinal, declared per VM (`SIGNAL_INSTANCE_ID` is an alias). Setting it on the second and subsequent instances arms the startup guard that faults a multi-instance fleet running without `REDIS_URL`. |
+| `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. **Required in production** — the fleet is two signaling VMs, so without it each VM has its own private sessions, presence, call state and cache. Optional for local single-process work, where the in-memory bus and cache are equivalent. |
 | `DB_POOL_SIZE` | `4` | Per-instance Postgres pool size (fallback: `DATABASE_POOL_MAX`). For N instances, divide Neon pooler budget across instances. |
 | `DATABASE_POOL_IDLE_TIMEOUT_MS` | `300000` | Keep idle Postgres connections reusable to avoid a new TLS handshake on sporadic writes. |
 
@@ -281,26 +278,39 @@ and `APNS_BUNDLE_ID`; toggle `APNS_PRODUCTION=true` for the production gateway.
 
 ## Text-message persistence
 
-`src/messageStore.ts` provides a transport-agnostic store with two
-implementations, selected by environment:
+Chat history lives in the **same Postgres database** as users, devices and
+calls. `src/messageStore.ts` provides a transport-agnostic store with two
+implementations:
 
-- `createMemoryMessageStore()` — array-backed, used when `MONGODB_URI` is unset
-  and throughout the test suite.
-- `createMongoMessageStore({ uri, dbName, collectionName })` — the official
-  `mongodb` driver against **Azure Cosmos DB for MongoDB**.
+- `createPgMessageStore({ db })` — the `messages` table, via the Drizzle handle
+  the rest of the server already shares. Selected whenever `createServer` is
+  given a `db`.
+- `createMemoryMessageStore()` — array-backed; used when there is no database
+  handle, and throughout the test suite.
 
 Both expose `saveMessage`, `listMessages({ conversationId, limit, before })`
-(newest-first, `limit` clamped to 1–100, default 50), `markDelivered`, and
-`close()`. The store is created by the composition root (`src/createServer.ts`),
-hung off the shared `state` object next to `messageBus`/`telemetry`, and closed
-during the graceful-shutdown drain.
+(newest-first, `limit` clamped to 1–100, default 50), `searchMessages`,
+`listConversations`, `markDelivered`, `markRead`, `deleteMessage`,
+`reactToMessage` and `close()`. The store is created by the composition root
+(`src/createServer.ts`) and hung off the shared `state` object next to
+`messageBus`/`telemetry`.
 
-On first connect the Mongo store creates a compound
-`{ conversationId: 1, createdAt: -1 }` index and a unique `{ messageId: 1 }`
-index. Index creation failures are logged and ignored rather than taking the
-server down.
+The `messages` table carries five indexes, each serving one access path:
 
-See [`AZURE_SETUP.md`](../docs/AZURE_SETUP.md) for provisioning the Cosmos DB account.
+| Index | Serves |
+| ----- | ------ |
+| `idx_messages_conversation_created` | A conversation's newest-first page, including the `created_at` cursor. |
+| `idx_messages_sender_created` / `idx_messages_recipient_created` | Search and conversation listing, which match either end of a conversation. |
+| `idx_messages_unread` (partial, `read_at IS NULL`) | Unread counts — it indexes only the rows that can contribute one. |
+| `idx_messages_body_trgm` (GIN, `pg_trgm`) | The case-insensitive substring search `GET /messages/search` performs. |
+
+`pg_trgm` is created by migration `0010`, which therefore needs the owner
+connection (`DATABASE_URL_DIRECT`).
+
+> This replaced a separate MongoDB deployment. A second datastore bought
+> nothing a table and five indexes do not, while costing a second connection
+> pool, a second backup story, and a hand-maintained `conversation_index`
+> collection that could silently disagree with the messages it summarised.
 
 ## Database (Drizzle ORM)
 
@@ -345,8 +355,10 @@ of cross-instance coordination, both backed by Redis:
   observers.
 - **Read cache** (`src/cache.ts`) — a shared cache in front of the hottest
   reads: `GET /conversations` (`conv::<userId>`), the first page of
-  `GET /messages` (`msg::<conversationId>::<limit>`, excluding the
-  `include=calls` timeline, which mixes in live call state) and the first page
+  `GET /messages` (`msg::<conversationId>::<limit>` — the message page only;
+  an `include=calls` request shares the same entry and merges live call state
+  on top, so the cache is reachable by the timeline the app actually asks for)
+  and the first page
   of `GET /calls` (`callhist::<userId>::<status>::<limit>`; paged requests,
   i.e. `offset > 0`, are not cached), each with a 30s TTL. Writes
   (`message.send`, delivery receipts, `POST /messages/read`, call transitions)

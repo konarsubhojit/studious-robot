@@ -139,6 +139,40 @@ test('GET /messages first page is cached but deep pagination is not', async (t) 
   assert.equal(counts.listMessages, afterFirst + 2, 'paginated reads always hit the store');
 });
 
+test('the merged timeline is served from the same message cache', async (t) => {
+  const { store, counts } = createCountingMessageStore();
+  const { url, teardown } = await startServer({ messageStore: store });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'cache-alice');
+  await createSession(url, 'cache-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'cache-bob',
+    body: 'hello',
+  });
+
+  // The app always asks for the merged timeline, so this is the only shape of
+  // request the cache will ever see in production. It used to opt the request
+  // out of the cache entirely, which made the entry unreachable.
+  const first = await getJson(url, '/messages?peerId=cache-bob&include=calls', aliceSession);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.messages.length, 1);
+  const afterFirst = counts.listMessages;
+
+  const second = await getJson(url, '/messages?peerId=cache-bob&include=calls', aliceSession);
+  assert.deepEqual(second.body.messages, first.body.messages);
+  assert.equal(counts.listMessages, afterFirst, 'repeat merged read must not hit the store');
+
+  // The cache holds messages only, so a plain read shares the same entry.
+  const plain = await getJson(url, '/messages?peerId=cache-bob', aliceSession);
+  assert.equal(plain.status, 200);
+  assert.equal(counts.listMessages, afterFirst, 'both shapes read one cached message page');
+});
+
 test('cache hits and misses are exposed through the telemetry counters', async (t) => {
   const previousDebugToken = process.env.DEBUG_API_TOKEN;
   process.env.DEBUG_API_TOKEN = METRICS_TOKEN;

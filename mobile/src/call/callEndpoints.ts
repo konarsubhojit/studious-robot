@@ -20,19 +20,18 @@ function callResourceUrl(signalingUrl: string, callId: string): string {
 /**
  * Where to ask the server about a call named by a push.
  *
- * The sessionId is escaped for the same reason as the callId: it travels in the
- * query string, where an unescaped `&` would silently become another parameter.
+ * The session id is deliberately *not* in this URL: it is a bearer token, and a
+ * URL is written to proxy access logs and request history that neither the app
+ * nor the user can clear. Callers authenticate with `bearerAuthHeaders`.
  */
 export function buildCallLookupUrl({
   signalingUrl,
   callId,
-  sessionId,
 }: {
   signalingUrl: string;
   callId: string;
-  sessionId: string;
 }): string {
-  return `${callResourceUrl(signalingUrl, callId)}?sessionId=${encodeURIComponent(sessionId)}`;
+  return callResourceUrl(signalingUrl, callId);
 }
 
 /** Where to POST a call action taken by this device. */

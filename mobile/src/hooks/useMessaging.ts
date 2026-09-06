@@ -17,6 +17,7 @@ import {
   totalUnread,
   withConversationRead,
   withIncomingMessage,
+  withOutgoingMessage,
 } from '../messaging/conversations';
 import { withDraft, withoutDraft } from '../messaging/drafts';
 import {
@@ -58,6 +59,7 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { SignalingClient } from '../signalingClient';
 import type { Socket } from 'socket.io-client';
 import { errorMessage } from '../errors';
+import { bearerAuthHeaders } from '../authHeaders';
 
 /**
  * The messaging vocabulary lives in `../messaging/types`, so the pure modules
@@ -250,7 +252,8 @@ export default function useMessaging({
     try {
       const trimmedUrl = signalingUrl.trim();
       const response = await authedFetchRef.current?.((sid: string) => ({
-        url: `${trimmedUrl}${API_ROUTES.CONVERSATIONS}?sessionId=${encodeURIComponent(sid)}`,
+        url: `${trimmedUrl}${API_ROUTES.CONVERSATIONS}`,
+        options: { headers: bearerAuthHeaders(sid) },
       }));
       if (!response?.ok) return;
       const data = await response.json();
@@ -283,13 +286,13 @@ export default function useMessaging({
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => {
-          const params = new URLSearchParams({
-            sessionId: sid,
-            peerId: trimmedPeerId,
-          });
+          const params = new URLSearchParams({ peerId: trimmedPeerId });
           if (before) params.set('before', before);
           params.set('include', 'calls');
-          return { url: `${trimmedUrl}${API_ROUTES.MESSAGES}?${params.toString()}` };
+          return {
+            url: `${trimmedUrl}${API_ROUTES.MESSAGES}?${params.toString()}`,
+            options: { headers: bearerAuthHeaders(sid) },
+          };
         });
         if (!response?.ok) return [];
         const data = await response.json();
@@ -325,8 +328,8 @@ export default function useMessaging({
           url: `${trimmedUrl}${API_ROUTES.MESSAGES_READ}`,
           options: {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: sid, peerId: trimmedPeerId }),
+            headers: bearerAuthHeaders(sid, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ peerId: trimmedPeerId }),
           },
         }));
         if (!response?.ok) return;
@@ -356,14 +359,10 @@ export default function useMessaging({
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => {
-          const params = new URLSearchParams({
-            sessionId: sid,
-            q: term,
-            limit: String(limit),
-          });
+          const params = new URLSearchParams({ q: term, limit: String(limit) });
           return {
             url: `${trimmedUrl}${API_ROUTES.MESSAGES_SEARCH}?${params.toString()}`,
-            options: signal ? { signal } : undefined,
+            options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
           };
         });
         if (!response?.ok) return [];
@@ -570,9 +569,13 @@ export default function useMessaging({
         replyTo,
       };
 
-      setMessagesByPeer(prev =>
-        prependMessage(prev, trimmedPeerId, buildOptimisticMessage(outgoing)),
-      );
+      // Built once and shared: the conversation and the chat-list row are two
+      // views of the same message and must not be able to drift apart.
+      const optimistic = buildOptimisticMessage(outgoing);
+      setMessagesByPeer(prev => prependMessage(prev, trimmedPeerId, optimistic));
+      // The chat list summarises the same conversation, so it has to learn
+      // about the send at the same moment the conversation does.
+      setConversations(prev => withOutgoingMessage(prev, optimistic));
       persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
 
       await drainOutbox();
@@ -599,6 +602,7 @@ export default function useMessaging({
       });
 
       setMessagesByPeer(prev => prependMessage(prev, trimmedPeerId, optimisticMessage));
+      setConversations(prev => withOutgoingMessage(prev, optimisticMessage));
       attachmentUploadMetaRef.current[messageId] = { conversationId, createdAt };
       return messageId;
     },

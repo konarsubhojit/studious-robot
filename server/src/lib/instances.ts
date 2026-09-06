@@ -9,9 +9,21 @@
  * invalidation published on the message bus never leaves the process, and a
  * conversation list can stay stale for a full TTL.
  *
- * That failure mode is silent, which is the dangerous part.  PM2 exposes the
- * instance ordinal in `NODE_APP_INSTANCE` (`pm_id` as a fallback), so a
- * process that knows it is not the first of several can say so loudly.
+ * That failure mode is silent, which is the dangerous part, so a process that
+ * knows it is not the first of several says so loudly.
+ *
+ * The deployment is two signaling VMs behind a load balancer, each running one
+ * `robot-signal.service` unit, so `REDIS_URL` is mandatory in production.
+ * Nothing supplies an ordinal automatically across separate hosts: it is
+ * declared per VM in `/etc/robot-signal/env` as `INSTANCE_ID`
+ * (`SIGNAL_INSTANCE_ID` is honoured as an alias).  A systemd *template* unit —
+ * `robot-signal@.service` with `Environment=INSTANCE_ID=%i` — supplies the same
+ * variable if the fleet is ever consolidated onto one host.
+ *
+ * Because instance `0` is never faulted (it cannot tell whether it is alone),
+ * setting `INSTANCE_ID` on the *second* and subsequent hosts is what arms this
+ * guard.  Leaving it unset everywhere disables the check entirely, which is why
+ * `deploy/README.md` §5a makes it part of provisioning.
  */
 
 /** Environment slice this module reads. */
@@ -21,7 +33,7 @@ export type InstanceEnv = Record<string, string | undefined>;
 export type MultiInstanceCheck = {
   /** `ok` when nothing is wrong, `warn` outside production, `fatal` in it. */
   level: 'ok' | 'warn' | 'fatal';
-  /** Zero-based instance ordinal, or `null` when not running under PM2. */
+  /** Zero-based instance ordinal, or `null` for a single un-templated unit. */
   instanceId: number | null;
   /** Whether cross-instance state (Redis) is configured. */
   sharedState: boolean;
@@ -30,11 +42,14 @@ export type MultiInstanceCheck = {
 };
 
 /**
- * Read this process's instance ordinal, or `null` when it is not running under
- * a process manager that publishes one.
+ * Read this process's declared instance ordinal, or `null` when none is set.
+ *
+ * `null` means "this process was not told it is one of several" — which is
+ * correct for local development and the test suite, and is a provisioning
+ * omission on a multi-VM host.
  */
 export function resolveInstanceId(env: InstanceEnv = process.env): number | null {
-  for (const key of ['NODE_APP_INSTANCE', 'pm_id', 'PM2_INSTANCE_ID']) {
+  for (const key of ['INSTANCE_ID', 'SIGNAL_INSTANCE_ID']) {
     const raw = env[key];
     if (raw === undefined || raw.trim() === '') continue;
     const parsed = Number(raw);
@@ -67,8 +82,8 @@ export function checkMultiInstanceState(env: InstanceEnv = process.env): MultiIn
     message:
       `this is process instance ${instanceId} but REDIS_URL is not set: sessions, presence, ` +
       'call state and the read cache would be private to each process, so cache invalidation ' +
-      'cannot reach the other instances and clients would see stale data. Set REDIS_URL, or ' +
-      'run a single instance (pm2 `instances: 1`).',
+      'cannot reach the other instances and clients would see stale data. Set REDIS_URL on ' +
+      'every instance (see deploy/README.md §5a), or run a genuinely single instance.',
   };
 }
 
