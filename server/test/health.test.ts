@@ -14,7 +14,7 @@ test('GET /health returns ok status', async () => {
     const body = await readJson(res);
     assert.equal(body.status, 'ok');
     assert.equal(body.service, 'wetalk-signaling');
-    assert.deepEqual(body.messageStore, { type: 'memory', status: 'ready' });
+    assert.deepEqual(body.messageStore, { type: 'memory' });
     // Sessions/calls/presence are per-process maps, so a deployment must pin a
     // client to one instance. Asserted here so the guarantee is not quietly
     // dropped from the probe payload deployments read it from.
@@ -42,7 +42,7 @@ test('GET /health names the message-store backend and reports it ready', async (
     // store borrows the pool `db/client.ts` has already established, so there
     // is no separate connection to wait on and no "starting" window in which
     // the store exists but cannot serve reads.
-    assert.deepEqual(body.messageStore, { type: 'postgres', status: 'ready' });
+    assert.deepEqual(body.messageStore, { type: 'postgres' });
   } finally {
     await new Promise((resolve) => httpServer.close(() => resolve(undefined)));
   }

@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt } from 'drizzle-orm';
+import { and, inArray, lt, sql } from 'drizzle-orm';
 import {
   auditLog as auditLogTable,
   calls as callsTable,
@@ -13,10 +13,11 @@ import type { Database } from '../../db/client.ts';
  *
  * `calls`, `call_events`, `audit_log` and `messages` are written on every call,
  * every security-relevant action and every chat message, and were never deleted
- * from, so they grew without bound.  That is a storage problem, but on this deployment it is first a
- * *boot* problem: `hydrateCallsAndEventsFromDb` reads `calls` and `call_events`
- * in full at startup, so an unbounded table becomes an unbounded startup read
- * on both signaling VMs, and the process is not serving until it finishes.
+ * from, so they grew without bound.  That is a storage problem, but on this
+ * deployment it is first a *boot* problem: `hydrateCallsAndEventsFromDb` reads
+ * `calls` and `call_events` in full at startup, so an unbounded table becomes
+ * an unbounded startup read on both signaling VMs, and the process is not
+ * serving until it finishes.
  *
  * `call_events` is not swept directly — its FK to `calls` is
  * `ON DELETE CASCADE`, so pruning the parent row removes the timeline with it,
@@ -108,6 +109,12 @@ async function pruneExpiredAuditLog(db: Database, cutoff: Date, batchSize: numbe
  * resolvable, which stops mattering once the reply is gone too, and exempting
  * them would leave the one class of row that can never be reclaimed.
  *
+ * `messages` has a *composite* key, so the batch cannot be re-expressed as an
+ * `IN (...)` over one column the way the other two prunes are — matching on
+ * `messageId` alone could take a row from a different conversation.  It is
+ * bounded by `ctid` instead, which is unique per row without reference to any
+ * key at all, so this stays a single bounded statement like its siblings.
+ *
  * @returns the number of rows deleted.
  */
 async function pruneExpiredMessages(
@@ -115,32 +122,13 @@ async function pruneExpiredMessages(
   cutoff: Date,
   batchSize: number
 ): Promise<number> {
-  const doomed = db
-    .select({ messageId: messagesTable.messageId, conversationId: messagesTable.conversationId })
-    .from(messagesTable)
-    .where(lt(messagesTable.createdAt, cutoff.toISOString()))
-    .limit(batchSize);
-
-  // `messages` has a *composite* key, so the batch is re-expressed as a join
-  // against the sub-select rather than an `IN (...)` over one column — matching
-  // on `messageId` alone could delete a row from a different conversation.
-  const doomedRows = await doomed;
-  if (doomedRows.length === 0) return 0;
-
-  let deleted = 0;
-  for (const row of doomedRows) {
-    const removed = await db
-      .delete(messagesTable)
-      .where(
-        and(
-          eq(messagesTable.conversationId, row.conversationId),
-          eq(messagesTable.messageId, row.messageId)
-        )
-      )
-      .returning({ messageId: messagesTable.messageId });
-    deleted += removed.length;
-  }
-  return deleted;
+  const deleted = await db
+    .delete(messagesTable)
+    .where(
+      sql`ctid in (select ctid from ${messagesTable} where ${lt(messagesTable.createdAt, cutoff.toISOString())} limit ${batchSize})`
+    )
+    .returning({ messageId: messagesTable.messageId });
+  return deleted.length;
 }
 
 /**

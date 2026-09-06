@@ -188,18 +188,7 @@ test('messages are kept forever unless an operator sets a retention window', asy
 });
 
 test('an explicit message retention window prunes expired messages', async () => {
-  const db = buildDeleteRecorder({
-    deleted: new Map<unknown, number>([[schema.messages, 1]]),
-    selected: new Map<unknown, unknown[]>([
-      [
-        schema.messages,
-        [
-          { conversationId: 'alice:bob', messageId: 'm-1' },
-          { conversationId: 'alice:carol', messageId: 'm-2' },
-        ],
-      ],
-    ]),
-  });
+  const db = buildDeleteRecorder({ deleted: new Map<unknown, number>([[schema.messages, 2]]) });
 
   const result = await runRetentionSweep(asDatabase(db), {
     now: NOW,
@@ -208,13 +197,14 @@ test('an explicit message retention window prunes expired messages', async () =>
     messageRetentionMs: 30 * DAY_MS,
   });
 
-  assert.equal(result.messages, 2, 'both selected rows are deleted');
-  // One delete per row, each keyed by the *composite* key: `messageId` is
-  // client-supplied and only unique within its conversation.
-  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages, schema.messages]);
+  assert.equal(result.messages, 2, 'the delete reports the rows it removed');
+  // One bounded statement, exactly like the call and audit sweeps: the batch is
+  // limited by a `ctid` sub-select, so the composite key needs no per-row
+  // round trip and the whole batch stays a single transaction.
+  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages]);
 });
 
-test('a message sweep that finds nothing issues no deletes', async () => {
+test('a message sweep that matches nothing reports nothing pruned', async () => {
   const db = buildDeleteRecorder();
 
   const result = await runRetentionSweep(asDatabase(db), {
@@ -225,7 +215,6 @@ test('a message sweep that finds nothing issues no deletes', async () => {
   });
 
   assert.equal(result.messages, 0);
-  assert.equal(db.calls.length, 0);
 });
 
 // ─── Bounded hydration ───────────────────────────────────────────────────────

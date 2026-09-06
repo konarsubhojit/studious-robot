@@ -8,7 +8,6 @@
  * between the Postgres store and the in-memory one.
  */
 
-
 /** Default page size for `listMessages`. */
 export const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for `listMessages`. */
@@ -16,6 +15,12 @@ export const MAX_MESSAGE_LIMIT = 100;
 /** Maximum number of conversations returned by one conversation-list request. */
 export const MAX_CONVERSATION_LIMIT = 100;
 
+/**
+ * Derive a deterministic conversation id from the two participant ids.
+ *
+ * The ids are sorted before joining so both participants — and both directions
+ * of a send — always resolve to the same conversation.
+ */
 export function deriveConversationId(userA: string, userB: string): string {
   return [String(userA), String(userB)].sort().join(':');
 }

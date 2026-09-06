@@ -11,13 +11,20 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * state and `'shared'` when runtime call/session state is coordinated through
  * Redis-backed store primitives.
  *
+ * `messageStore` reports only which backend is in use.  It deliberately does
+ * *not* carry a readiness flag: the store is constructed synchronously over the
+ * pool `db/client.ts` already owns, so any such flag could only ever be a
+ * constant `'ready'` — a field that always says yes is worse than no field,
+ * because it reads like a live signal during the outage it would be consulted
+ * for.  Database reachability is observable through the query-timing and error
+ * counters on `/metrics`.
+ *
  * @param ctx
  */
 function createHealthRouter({ state }: {
         state: {
             draining: boolean;
             messageStore: { type: string; };
-            messageStoreStatus: string;
             stateAffinity?: 'sticky' | 'shared';
             instanceId?: string;
             callState?: object;
@@ -49,7 +56,6 @@ function createHealthRouter({ state }: {
       },
       messageStore: {
         type: state.messageStore.type,
-        status: state.messageStoreStatus,
       },
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),

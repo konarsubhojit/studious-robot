@@ -203,14 +203,6 @@ function createServer(opts: CreateServerOptions = {}) {
     /** Shared read cache for conversation lists, message pages and call history. */
     cache,
     /**
-     * Readiness state for the message store.  Both backends are usable the
-     * moment they are constructed — the Postgres store borrows the pool
-     * `db/client.ts` has already established, so there is no separate
-     * connection to wait on and no window in which the store exists but cannot
-     * serve reads.
-     */
-    messageStoreStatus: 'ready',
-    /**
      * Optional cross-instance message bus (Redis Pub/Sub).  Supplied via
      * `opts.messageBus` or by a Redis-backed store bundle (`stores.messageBus`).
      * Used to broadcast call-state transitions to other instances / observers.
