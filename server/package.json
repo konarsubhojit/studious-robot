@@ -40,6 +40,6 @@
     "eslint-plugin-sonarjs": "^4.2.0",
     "socket.io-client": "^4.8.3",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.68.0"
+    "typescript-eslint": "^8.69.0"
   }
 }
