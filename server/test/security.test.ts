@@ -504,6 +504,12 @@ test('POST /calls: rejects an expired session', async () => {
 // A session id is a bearer token, so the default is a finite lifetime: the
 // previous default of `SESSION_TTL_MS=0` meant a leaked token stayed valid for
 // ever and `state.sessions` only ever grew.
+//
+// The TTL is asserted *exactly* rather than as a bound.  `createdAt` and
+// `expiresAt` are derived from one clock read, so the difference between them
+// is the configured lifetime and nothing else; a range check here previously
+// let a second clock read drift the pair by a millisecond and turned that
+// defect into an intermittent failure instead of a reproducible one.
 test('sessions expire by default', async () => {
   const { url, teardown } = await startServer();
   try {
@@ -511,7 +517,7 @@ test('sessions expire by default', async () => {
     assert.equal(res.status, 201);
     assert.ok(res.body.expiresAt, 'a default session carries an expiry');
     const ttlMs = Date.parse(res.body.expiresAt) - Date.parse(res.body.createdAt);
-    assert.ok(ttlMs > 0 && ttlMs <= 7 * 24 * 60 * 60 * 1000, `unexpected default TTL: ${ttlMs}ms`);
+    assert.equal(ttlMs, 7 * 24 * 60 * 60 * 1000, `unexpected default TTL: ${ttlMs}ms`);
   } finally {
     await teardown();
   }
