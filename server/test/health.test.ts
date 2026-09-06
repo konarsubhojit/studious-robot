@@ -28,14 +28,8 @@ test('GET /health returns ok status', async () => {
   }
 });
 
-test('GET /health reports a failed Mongo startup check without blocking the server', async () => {
-  const messageStore = asMessageStore({
-    type: 'mongo' as const,
-    ready: async () => {
-      throw new Error('network unavailable');
-    },
-    close: async () => {},
-  });
+test('GET /health names the message-store backend and reports it ready', async () => {
+  const messageStore = asMessageStore({ type: 'postgres' as const, close: async () => {} });
   const { httpServer } = createServer({ messageStore });
   const port = await listenOnRandomPort(httpServer);
 
@@ -44,27 +38,11 @@ test('GET /health reports a failed Mongo startup check without blocking the serv
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     assert.equal(res.status, 200);
     const body = await readJson(res);
-    assert.deepEqual(body.messageStore, { type: 'mongo', status: 'unavailable' });
-  } finally {
-    await new Promise((resolve) => httpServer.close(() => resolve(undefined)));
-  }
-});
-
-test('GET /health reports a successful Mongo startup check', async () => {
-  const messageStore = asMessageStore({
-    type: 'mongo' as const,
-    ready: async () => {},
-    close: async () => {},
-  });
-  const { httpServer } = createServer({ messageStore });
-  const port = await listenOnRandomPort(httpServer);
-
-  try {
-    await new Promise((resolve) => setImmediate(resolve));
-    const res = await fetch(`http://127.0.0.1:${port}/health`);
-    assert.equal(res.status, 200);
-    const body = await readJson(res);
-    assert.deepEqual(body.messageStore, { type: 'mongo', status: 'ready' });
+    // Both backends are usable the moment they are constructed: the Postgres
+    // store borrows the pool `db/client.ts` has already established, so there
+    // is no separate connection to wait on and no "starting" window in which
+    // the store exists but cannot serve reads.
+    assert.deepEqual(body.messageStore, { type: 'postgres', status: 'ready' });
   } finally {
     await new Promise((resolve) => httpServer.close(() => resolve(undefined)));
   }

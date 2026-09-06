@@ -3,28 +3,23 @@
  *
  * These rules — how a page is bounded, what a search term is turned into before
  * it reaches the database, how a conversation list is grouped, and what a
- * tombstone leaves behind — used to be observable only by driving a store: the
- * memory implementation for some, a fake Mongo client for the rest. Extracting
- * them made each a function over plain data, and a filter that quietly stops
- * escaping a user's search term is now a failing assertion rather than a
- * silently expensive query.
+ * tombstone leaves behind — used to be observable only by driving a store.
+ * Extracting them made each a function over plain data, so an escape that
+ * quietly stops covering a metacharacter is a failing assertion rather than a
+ * user-supplied `%` that matches every message on the instance.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { summariseConversations } from '../src/messageStore/conversations.ts';
-import { toStoredMessage, toStoredMessages } from '../src/messageStore/documents.ts';
+import { escapeLikePattern } from '../src/messageStore/pgStore.ts';
 import {
   DEFAULT_MESSAGE_LIMIT,
   MAX_MESSAGE_LIMIT,
-  bodyLowerOf,
-  buildListMessagesFilter,
-  buildParticipantFilter,
-  buildSearchMessagesFilter,
+  bodyMatches,
   clampLimit,
   deriveConversationId,
-  escapeRegExp,
   normaliseSearchTerm,
 } from '../src/messageStore/queries.ts';
 import {
@@ -35,7 +30,7 @@ import {
   nextTimestamp,
   normaliseReactions,
 } from '../src/messageStore/records.ts';
-import type { MessageDocument, StoredMessage } from '../src/messageStore/types.ts';
+import type { StoredMessage } from '../src/messageStore/types.ts';
 
 /** A stored message with only the fields a given case cares about set. */
 function message(overrides: Partial<StoredMessage> & { messageId: string; }): StoredMessage {
@@ -67,69 +62,30 @@ test('a search term is trimmed and matched literally', () => {
   assert.equal(normaliseSearchTerm('  lunch  '), 'lunch');
   assert.equal(normaliseSearchTerm(null), '');
   assert.equal(normaliseSearchTerm(undefined), '');
-  // Every metacharacter is escaped: `.*` must match the two characters, not
-  // every message the user can see.
-  assert.equal(escapeRegExp('.*+?^${}()|[]\\'), '\\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\');
 });
 
-test('the list filter pages backwards from a cursor', () => {
-  assert.deepEqual(buildListMessagesFilter('alice:bob'), { conversationId: 'alice:bob' });
-  assert.deepEqual(buildListMessagesFilter('alice:bob', '2024-01-01T00:00:00.000Z'), {
-    conversationId: 'alice:bob',
-    createdAt: { $lt: '2024-01-01T00:00:00.000Z' },
-  });
+test('a search term cannot smuggle a LIKE wildcard into the query', () => {
+  // `%` and `_` are the only metacharacters `LIKE` has, plus the escape
+  // character itself.  Unescaped, a search for `%` would match every message
+  // the caller can see rather than the literal percent sign they typed.
+  assert.equal(escapeLikePattern('100%'), '100\\%');
+  assert.equal(escapeLikePattern('a_b'), 'a\\_b');
+  assert.equal(escapeLikePattern('back\\slash'), 'back\\\\slash');
+  // Regex metacharacters are *not* escaped: LIKE does not interpret them, so
+  // they already match literally.
+  assert.equal(escapeLikePattern('.*+?[]()'), '.*+?[]()');
 });
 
-test('the search filter escapes the term and stays case-insensitive', () => {
-  assert.deepEqual(buildSearchMessagesFilter('alice', '.*'), {
-    $or: [{ senderId: 'alice' }, { recipientId: 'alice' }],
-    body: { $regex: '\\.\\*', $options: 'i' },
-  });
-  assert.deepEqual(
-    buildSearchMessagesFilter('alice', 'lunch', '2024-01-01T00:00:00.000Z').createdAt,
-    { $lt: '2024-01-01T00:00:00.000Z' }
-  );
-});
-
-test('the search filter can scope to the caller\'s conversations', () => {
-  const filter = buildSearchMessagesFilter('alice', 'lunch', undefined, {
-    conversationIds: ['alice:bob', 'alice:carol'],
-  });
-  assert.deepEqual(filter.conversationId, { $in: ['alice:bob', 'alice:carol'] });
-  // A user with no conversations matches nothing rather than everything.
-  assert.deepEqual(
-    buildSearchMessagesFilter('alice', 'lunch', undefined, { conversationIds: [] }).conversationId,
-    { $in: [] }
-  );
-});
-
-test('the search filter matches the pre-folded body without a case-insensitive regex', () => {
-  const filter = buildSearchMessagesFilter('alice', 'Lunch.', undefined, { useBodyLower: true });
-  assert.deepEqual(filter.bodyLower, { $regex: 'lunch\\.' });
-  assert.equal(filter.body, undefined, 'the un-indexable body regex is dropped');
-  assert.equal((filter.bodyLower as { $options?: string; }).$options, undefined);
-});
-
-test('bodyLowerOf folds any body, including a missing one', () => {
-  assert.equal(bodyLowerOf('Lunch At Noon'), 'lunch at noon');
-  assert.equal(bodyLowerOf(''), '');
-  assert.equal(bodyLowerOf(undefined), '');
-  assert.equal(bodyLowerOf(null), '');
-});
-
-test('the participant filter matches either direction of a conversation', () => {
-  assert.deepEqual(buildParticipantFilter('alice'), {
-    $or: [{ senderId: 'alice' }, { recipientId: 'alice' }],
-  });
-});
-
-test('Cosmos throttling detection recognises Mongo and HTTP codes', async () => {
-  const { isCosmosThrottle } = await import('../src/messageStore/mongoConnection.ts');
-
-  assert.equal(isCosmosThrottle({ code: 16500 }), true);
-  assert.equal(isCosmosThrottle({ failure: { code: 429 } }), true);
-  assert.equal(isCosmosThrottle({ errmsg: 'Request rate is large. RetryAfterMs=20' }), true);
-  assert.equal(isCosmosThrottle({ code: 11000 }), false);
+test('the Postgres pattern and the in-memory matcher agree on what matches', () => {
+  // The two backends must not disagree about search results, so the pattern
+  // built for Postgres is the same literal, case-insensitive substring test
+  // `bodyMatches` applies in memory.
+  const term = normaliseSearchTerm('  Lunch  ');
+  assert.equal(bodyMatches({ body: 'about lunch today' }, term), true);
+  assert.equal(bodyMatches({ body: 'LUNCHTIME' }, term), true);
+  assert.equal(bodyMatches({ body: 'dinner' }, term), false);
+  assert.equal(bodyMatches({}, term), false);
+  assert.equal(escapeLikePattern(term.toLowerCase()), 'lunch');
 });
 
 // ─── Records ──────────────────────────────────────────────────────────────────
@@ -213,19 +169,6 @@ test('messages sort newest first, with messageId breaking a tie', () => {
   assert.ok(byNewestFirst(older, newer) > 0);
   assert.ok(byNewestFirst(older, tied) < 0, 'the higher messageId wins a tie');
   assert.equal(byNewestFirst(older, older), 0);
-});
-
-// ─── Document mapping ─────────────────────────────────────────────────────────
-
-test('the driver-managed _id never reaches a caller', () => {
-  const document = { ...message({ messageId: 'm-1' }), _id: 'oid' } as MessageDocument;
-
-  assert.equal((toStoredMessage(document) as MessageDocument)._id, undefined);
-  assert.equal(toStoredMessage(document).messageId, 'm-1');
-  assert.deepEqual(
-    toStoredMessages([document]).map((m) => (m as MessageDocument)._id),
-    [undefined]
-  );
 });
 
 // ─── Conversation grouping ────────────────────────────────────────────────────

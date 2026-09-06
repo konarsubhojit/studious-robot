@@ -23,7 +23,10 @@
  *  | `messageStore/conversations.ts`   | Conversation grouping for the memory store (pure). |
  *  | `messageStore/memoryStore.ts`     | The array-backed store.               |
  *  | `messageStore/pgStore.ts`         | The Postgres store's operations.      |
- *  | `messageStore/instrumentation.ts` | Query timing for `/metrics`.          |
+ *
+ * There is no store-level timing wrapper any more: every statement the
+ * Postgres store issues goes through the instrumented pool in `db/client.ts`,
+ * so `/metrics` sees it without a second layer that could disagree.
  *  | `messageStore/factory.ts`         | Which store this process gets.        |
  *
  * Interface
