@@ -8,6 +8,24 @@ import { SIGNALING_VERSION as SHARED_SIGNALING_VERSION } from '../../shared';
 export const SIGNALING_VERSION = SHARED_SIGNALING_VERSION;
 
 /**
+ * A rejected acknowledgement, carrying the server's error code.
+ *
+ * The code is what tells a caller *why* the request was refused — a call that
+ * cannot be placed because the user is already in one needs a different
+ * response from any other failure — and it used to be discarded, leaving the
+ * client with only a human-readable message to guess from.
+ */
+export class SignalingAckError extends Error {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = 'SignalingAckError';
+    this.code = code;
+  }
+}
+
+/**
  * Wrap a socket.io emit-with-ack in a Promise.
  * Rejects if the server responds with `ok: false` or after a 10 s timeout.
  */
@@ -19,7 +37,12 @@ export function emitWithAck(socket: { emit: (event: string, payload: any, ack: (
       if (ack?.ok) {
         resolve(ack);
       } else {
-        reject(new Error(ack?.error?.message || 'server error'));
+        reject(
+          new SignalingAckError(
+            ack?.error?.message || 'server error',
+            typeof ack?.error?.code === 'string' ? ack.error.code : null
+          )
+        );
       }
     });
   });

@@ -76,6 +76,7 @@ import {
   TRANSPORT_EVENTS,
   createSignalingClient,
 } from '../signalingClient';
+import { ERROR_CODES } from '../../../shared';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import {
   ICE_TRANSPORT_POLICIES,
@@ -91,10 +92,13 @@ import type {
 import {
   buildCallEndSummary,
   callDurationSeconds,
+  callPeerId,
   classifyCallDelivery,
   decideAcceptIncomingCall,
   decideIncomingOffer,
+  describeCallOnAnotherDevice,
   describeCallStateEnding,
+  describeDialBlocked,
   isLiveCallStatus,
   isMissedCall,
   isStateChangeForOtherCall,
@@ -108,7 +112,7 @@ import {
   shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../call/callDecisions';
-import type { CallDelivery, CallEndSummary } from '../call/callDecisions';
+import type { CallDelivery, CallElsewhere, CallEndSummary } from '../call/callDecisions';
 import {
   SESSION_EXPIRED_MESSAGE,
   SESSION_REFRESH_FAILED_MESSAGE,
@@ -168,9 +172,10 @@ import { shouldVibrateForRing } from '../ringerMode';
 export type { CallRecord };
 
 /**
- * An accept failure annotated with the canonical reason reported to the server.
+ * An accept failure annotated with the canonical reason reported to the server,
+ * and — when the server named one — its own error code.
  */
-export type AnswerError = Error & { answerFailureReason?: string; };
+export type AnswerError = Error & { answerFailureReason?: string; code?: string | null; };
 export type { CallStatus };
 
 /**
@@ -211,6 +216,13 @@ const STATS_POLL_INTERVAL_MS = 7000;
  * must never stall the call itself.
  */
 const ICE_SESSION_WAIT_MS = 5000;
+
+/**
+ * How long a placement waits for the server to confirm it reconciled this
+ * device's call state. The ack is only sent on success, so a failed report
+ * must not leave the user's call attempt hanging on it forever.
+ */
+const CALL_STATE_REPORT_ACK_TIMEOUT_MS = 2000;
 
 // How long the answer path waits for a socket, how many times it retries over
 // one, which HTTP failures mean what, how a media-less answer describes itself
@@ -334,6 +346,87 @@ function reportOwnCallState(
 }
 
 /**
+ * `reportOwnCallState`, awaited.
+ *
+ * The report is a fire-and-forget emit whose ack is only delivered on success,
+ * so a caller that must not act until the server has reconciled needs both the
+ * ack and a bound on waiting for one.
+ */
+function reportOwnCallStateAsync(
+  signaling: ReturnType<typeof createSignalingClient>,
+  activeCallIds: string[],
+  reason: string
+): Promise<void> {
+  return new Promise(resolve => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      logWarn('[CallFlow] call.state.report ack timed out', { reason });
+      settle();
+    }, CALL_STATE_REPORT_ACK_TIMEOUT_MS);
+    reportOwnCallState(signaling, activeCallIds, { reason, onServerState: settle });
+  });
+}
+
+/**
+ * Whether a rejection is the server refusing to place a call because this user
+ * is already in one.
+ *
+ * Read structurally rather than by class so a rejection that crossed a module
+ * or test boundary is still recognised for what it is.
+ */
+function isCallInProgressRejection(error: unknown): boolean {
+  return (error as { code?: unknown; })?.code === ERROR_CODES.CALL_IN_PROGRESS;
+}
+
+/**
+ * Whether a rejection means another of this user's devices already answered.
+ */
+function isAnsweredElsewhereRejection(error: unknown): boolean {
+  const candidate = error as { code?: unknown; answerFailureReason?: unknown; };
+  return (
+    candidate?.code === ERROR_CODES.ANSWERED_ELSEWHERE ||
+    candidate?.answerFailureReason === ERROR_CODES.ANSWERED_ELSEWHERE
+  );
+}
+
+/**
+ * The `error` code from a failed JSON response, or `null` when the body is
+ * missing, unreadable or not the shape the API documents. Never throws: this
+ * only ever enriches a failure that is already being reported.
+ */
+async function readErrorCode(response: { json?: () => Promise<unknown>; } | null | undefined): Promise<string | null> {
+  try {
+    const body = await response?.json?.();
+    const code = (body as { error?: unknown; })?.error;
+    return typeof code === 'string' ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What to tell the user when a placement fails.
+ *
+ * "Already in a call" is only useful with the peer's name attached, which the
+ * rejection itself does not carry — the device knows it from the call events it
+ * has been receiving all along.
+ */
+function describePlacementFailure(error: unknown, callElsewhere: CallElsewhere | null): string {
+  if (!isCallInProgressRejection(error)) {
+    return `Failed to place call: ${errorMessage(error)}`;
+  }
+  return callElsewhere
+    ? `You are in a call with ${callElsewhere.peerId} on another device`
+    : 'You are already in a call';
+}
+
+/**
  * Manages the full lifecycle of a server-authoritative call:
  *
  *   1. User identity / session (POST /session)
@@ -383,6 +476,12 @@ export default function useCallFlow({
   const [activeCall, setActiveCall] = useState((null as CallRecord | null));
   
   const [incomingCall, setIncomingCall] = useState((null as CallRecord | null));
+
+  // A call this user is on, on one of their *other* devices. Every call event
+  // reaches every device of a participant, so this device knows about the
+  // conversation without being part of it — and must say so rather than
+  // silently refusing to dial.
+  const [callElsewhere, setCallElsewhere] = useState((null as CallElsewhere | null));
 
   // callId received from a push-notification deep link before the user identity
   // is fully established.  Cleared once rehydration is attempted.
@@ -518,6 +617,7 @@ export default function useCallFlow({
   // where capturing the value via a React closure would otherwise be stale.
   const activeCallRef = useRef((null as CallRecord | null));
   const incomingCallRef = useRef((null as CallRecord | null));
+  const callElsewhereRef = useRef((null as CallElsewhere | null));
   // Tracks callIds for which the incoming-call UI has already been shown so
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef((new Set() as Set<string>));
@@ -1279,6 +1379,30 @@ export default function useCallFlow({
     ],
   );
 
+  /**
+   * Take down this device's incoming-call UI for a call another of the user's
+   * devices answered.
+   *
+   * Deliberately *not* `endActiveCall`: the call is not over, it simply is not
+   * this device's. Ending it here would write a duplicate history entry and
+   * show a call-summary card for a conversation still in progress across the
+   * room.
+   */
+  const dismissIncomingCallElsewhere = useCallback(
+    (callId: string, peerId: string) => {
+      logInfo('[CallFlow] Incoming call answered on another device', { callId, peerId });
+      clearPendingAnswer(callId, 'answered_elsewhere');
+      displayedIncomingCallIdsRef.current.delete(callId);
+      endCallKeepCall(callId);
+      stopIncomingRingtone();
+      incomingCallRef.current = null;
+      setIncomingCall(null);
+      dispatchCallEvent(CALL_EVENTS.END);
+      updateStatus(`Answered on another device`, 'info');
+    },
+    [updateStatus],
+  );
+
   // ─── Socket connection ────────────────────────────────────────────────────
 
   /**
@@ -1528,6 +1652,48 @@ export default function useCallFlow({
             return;
           }
 
+          // `busy` means the server still believes one of the participants is
+          // in a call. When this device holds no live call of its own, saying
+          // so lets the server clear the phantom that is blocking every new
+          // call, instead of the user being stuck forever. Reconciliation is
+          // device-scoped server-side, so this can no longer end a call another
+          // of this user's devices is holding.
+          if (
+            callStatus === 'busy' &&
+            shouldReportEmptyCallState({
+              eventCallId,
+              activeCallId: activeCallIdRef.current,
+              incomingCallId: incomingCallRef.current?.callId,
+            })
+          ) {
+            reportOwnCallState(signaling, [], { reason: 'busy-rejection' });
+          }
+
+          // A call being held by another of this user's devices: track who it
+          // is with so the UI can say so, and otherwise stay out of its way.
+          // Acting on these events is what tore down a live conversation from
+          // an idle device and painted call results on a screen with no call.
+          const elsewhere = describeCallOnAnotherDevice({
+            call,
+            userId: userIdRef.current,
+            deviceId: deviceIdRef.current,
+          });
+          if (elsewhere) {
+            logInfo('[CallFlow] Call is held by another device of this user', elsewhere);
+            callElsewhereRef.current = elsewhere;
+            setCallElsewhere(elsewhere);
+            // The incoming-call UI on this device is for a call it can no
+            // longer answer: another device picked it up.
+            if (incomingCallRef.current?.callId === elsewhere.callId) {
+              dismissIncomingCallElsewhere(elsewhere.callId, elsewhere.peerId);
+            }
+            return;
+          }
+          if (callElsewhereRef.current?.callId === eventCallId) {
+            callElsewhereRef.current = null;
+            setCallElsewhere(null);
+          }
+
           if (call) {
             activeCallRef.current = call;
             setActiveCall(call);
@@ -1543,21 +1709,6 @@ export default function useCallFlow({
               await sendInitialOffer(signaling, call.callId);
             }
             return;
-          }
-
-          // `busy` means the server still believes one of the participants is
-          // in a call. When this device holds no live call of its own, saying
-          // so lets the server clear the phantom that is blocking every new
-          // call, instead of the user being stuck forever.
-          if (
-            callStatus === 'busy' &&
-            shouldReportEmptyCallState({
-              eventCallId,
-              activeCallId: activeCallIdRef.current,
-              incomingCallId: incomingCallRef.current?.callId,
-            })
-          ) {
-            reportOwnCallState(signaling, [], { reason: 'busy-rejection' });
           }
 
           const ending = describeCallStateEnding({ status: callStatus, reason });
@@ -1857,6 +2008,7 @@ export default function useCallFlow({
     [
       createOrGetSession,
       disconnectSocket,
+      dismissIncomingCallElsewhere,
       sendInitialOffer,
       updateStatus,
       showIncomingCallUi,
@@ -2207,10 +2359,57 @@ export default function useCallFlow({
 
   // ─── Place outgoing call ──────────────────────────────────────────────────
 
+  /**
+   * Ask the server to ring `calleeIdToRing`, self-healing once from a stale
+   * call this device left behind.
+   *
+   * A `call_in_progress` rejection means the server has a call for this user
+   * that this device is not holding. When no other device claims one either,
+   * that call is a phantom — the usual cause is a cancel that never reached
+   * the server, which then blocked every subsequent call. Reporting this
+   * device's (empty) call state clears the calls it owns, and the placement is
+   * retried exactly once.
+   */
+  const requestCallPlacement = useCallback(async (calleeIdToRing: string) => {
+    const initiate = () =>
+      signalingRef.current?.request(CLIENT_EVENTS.CALL_INITIATE, {
+        version: SIGNALING_VERSION,
+        calleeId: calleeIdToRing,
+      });
+
+    try {
+      return await initiate();
+    } catch (error) {
+      const signaling = signalingRef.current;
+      if (!isCallInProgressRejection(error) || callElsewhereRef.current || !signaling) {
+        throw error;
+      }
+      logWarn('[CallFlow] Placement blocked by a call this device does not hold', {
+        calleeId: calleeIdToRing,
+      });
+      await reportOwnCallStateAsync(signaling, [], 'placement-blocked');
+      return await initiate();
+    }
+  }, []);
+
   const placeCall = useCallback(
     /** @param [explicitCalleeId] */
     async (explicitCalleeId?: string) => {
       if (isPlacingCallRef.current) return;
+
+      // One call at a time — including one held by another of this user's
+      // devices. Dialling over a live call used to be accepted locally and then
+      // collide with the call already up.
+      const blocked = describeDialBlocked({
+        activeCall: activeCallRef.current,
+        callElsewhere: callElsewhereRef.current,
+        incomingCall: incomingCallRef.current,
+      });
+      if (blocked) {
+        logWarn('[CallFlow] placeCall refused', { reason: blocked });
+        updateStatus(blocked, 'error');
+        return;
+      }
 
       const callee = resolveOutgoingCallee({
         explicitCalleeId,
@@ -2253,23 +2452,42 @@ export default function useCallFlow({
         }
 
         updateStatus(`Calling ${trimmedCalleeId}…`);
-        const ack = await signalingRef.current?.request(CLIENT_EVENTS.CALL_INITIATE, {
-          version: SIGNALING_VERSION,
-          calleeId: trimmedCalleeId,
-        });
+        const ack = await requestCallPlacement(trimmedCalleeId);
 
         isCallerRef.current = true;
         activeCallIdRef.current = ack.call.callId;
         activeCallRef.current = ack.call;
         setActiveCall(ack.call);
+
+        // The server answers a placement with a verdict, and `busy` /
+        // `unreachable` are answers, not ringing calls. Painting "Ringing…"
+        // over them is what left the user watching a call screen for a call
+        // that was already refused, with no message at all.
+        const verdict = describeCallStateEnding({
+          status: ack.call.status,
+          reason: ack.call.endReason,
+        });
+        if (verdict) {
+          logInfo('[CallFlow] Call rejected at placement', {
+            callId: ack.call.callId,
+            status: ack.call.status,
+          });
+          dispatchCallEvent(CALL_EVENTS.PLACE);
+          endActiveCall(verdict.message, verdict.severity, verdict.endReason);
+          return;
+        }
+
         dispatchCallEvent(CALL_EVENTS.PLACE);
         updateStatus(`Ringing ${trimmedCalleeId}…`);
         Telemetry.trackCallStart(ack.call.callId, sessionIdRef.current);
         emitEvent('info', 'call.started', { callId: ack.call.callId, direction: 'outgoing' });
       } catch (error) {
         logError('[CallFlow] placeCall failed', error);
-        updateStatus(`Failed to place call: ${errorMessage(error)}`, 'error');
-        endActiveCall();
+        // The message must outlive the teardown: `endActiveCall`'s own status
+        // used to overwrite it, so a failed placement said "Call ended" and
+        // never why.
+        endActiveCall('', 'info', null);
+        updateStatus(describePlacementFailure(error, callElsewhereRef.current), 'error');
       } finally {
         isPlacingCallRef.current = false;
         setIsPlacingCall(false);
@@ -2280,6 +2498,7 @@ export default function useCallFlow({
       connectSocket,
       createOrGetSession,
       endActiveCall,
+      requestCallPlacement,
       updateStatus,
       startLocalPreview,
       userId,
@@ -2289,25 +2508,76 @@ export default function useCallFlow({
 
   // ─── Cancel outgoing call ─────────────────────────────────────────────────
 
-  const cancelOutgoingCall = useCallback(async () => {
-    const callId = activeCallIdRef.current;
+  /**
+   * Tell the server a call is over, preferring the socket and falling back to
+   * the authenticated HTTP endpoint. Never throws.
+   *
+   * The fallback is the whole point: a cancel or hang-up sent over a socket
+   * that is not actually connected reached nobody, so the call went on ringing
+   * server-side for its full two-minute window and made the caller "busy" —
+   * against their own dead call — for every attempt in between.
+   *
+   * @param action - `cancel` for an unanswered outgoing call, `end` otherwise.
+   * @returns whether the server was told
+   */
+  const releaseCallOnServer = useCallback(
+    async (callId: string, action: 'cancel' | 'end'): Promise<boolean> => {
+      if (!callId) return false;
+      const event = action === 'cancel' ? CLIENT_EVENTS.CALL_CANCEL : CLIENT_EVENTS.CALL_END;
 
-    if (callId && socketRef.current?.connected) {
+      if (socketRef.current?.connected) {
+        try {
+          await signalingRef.current?.request(event, { version: SIGNALING_VERSION, callId });
+          return true;
+        } catch (error) {
+          // The server may already have transitioned the call; log and fall
+          // through so a genuinely undelivered request still gets its retry.
+          logWarn('[CallFlow] call release ack failed (call may already be terminal)', {
+            action,
+            message: errorMessage(error),
+          });
+        }
+      }
+
       try {
-        await signalingRef.current?.request(CLIENT_EVENTS.CALL_CANCEL, {
-          version: SIGNALING_VERSION,
+        const response = await authedFetchRef.current?.(sessionId => ({
+          url: buildCallActionUrl({
+            signalingUrl: signalingUrl ?? '',
+            callId,
+            action,
+          }),
+          options: {
+            method: 'POST',
+            headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+            body: '{}',
+          },
+        }));
+        if (response?.ok) return true;
+        logWarn('[CallFlow] HTTP call release failed', {
           callId,
+          action,
+          status: response?.status ?? null,
         });
       } catch (error) {
-        // Server may already have transitioned; log and continue cleanup.
-        logWarn('[CallFlow] cancel ack failed (call may already be terminal)', {
+        logWarn('[CallFlow] HTTP call release threw', {
+          callId,
+          action,
           message: errorMessage(error),
         });
       }
+      return false;
+    },
+    [authedFetchRef, signalingUrl],
+  );
+
+  const cancelOutgoingCall = useCallback(async () => {
+    const callId = activeCallIdRef.current;
+    if (callId) {
+      await releaseCallOnServer(callId, 'cancel');
     }
 
     endActiveCall('Call cancelled', 'info', 'cancelled');
-  }, [endActiveCall]);
+  }, [endActiveCall, releaseCallOnServer]);
 
   // ─── Accept incoming call ─────────────────────────────────────────────────
 
@@ -2405,6 +2675,10 @@ export default function useCallFlow({
       if (verdict.outcome === 'failed') {
         const error = (new Error(verdict.message) as AnswerError);
         error.answerFailureReason = verdict.answerFailureReason;
+        // The status alone cannot tell "another device answered" from any other
+        // conflict, and the two need opposite handling, so the server's own
+        // code is carried on the rejection.
+        error.code = await readErrorCode(response);
         throw error;
       }
       return verdict.response.json();
@@ -2428,6 +2702,10 @@ export default function useCallFlow({
             });
             return { call: ack.call, transport: 'socket' };
           } catch (error) {
+            // Another of this user's devices picked the call up. Retrying — or
+            // falling back to HTTP — would only ask the same refused question
+            // again, so this rejection ends the answer attempt here.
+            if (isAnsweredElsewhereRejection(error)) throw error;
             logWarn('[CallFlow] call.accept over socket failed', {
               callId,
               attempt,
@@ -2608,6 +2886,15 @@ export default function useCallFlow({
       reportAnswerStage(call.callId, 'answer_failed', reason);
       clearPendingAnswer(call.callId, reason);
 
+      // Answered on another device: nothing failed, the call simply is not
+      // this device's. Take the incoming UI down without ending the call the
+      // other device is now on.
+      if (isAnsweredElsewhereRejection(error)) {
+        activeCallIdRef.current = null;
+        dismissIncomingCallElsewhere(call.callId, callPeerId(call, userIdRef.current) ?? '');
+        return;
+      }
+
       // Never tear down a call that is already up. The accept can fail simply
       // because it lost a race with an earlier accept for the same call, in
       // which case the call is connected and ending it here is exactly the
@@ -2633,6 +2920,7 @@ export default function useCallFlow({
     }
   }, [
     acquireMediaForAcceptedCall,
+    dismissIncomingCallElsewhere,
     endActiveCall,
     incomingCall,
     rememberAnsweredCall,
@@ -2640,6 +2928,7 @@ export default function useCallFlow({
     sendCallAccept,
     updateStatus,
     sessionIdRef,
+    userIdRef,
   ]);
 
   // ─── Decline incoming call ────────────────────────────────────────────────
@@ -2889,20 +3178,12 @@ export default function useCallFlow({
 
   const handleEndCall = useCallback(async () => {
     const callId = activeCallIdRef.current;
-
-    if (callId && socketRef.current?.connected) {
-      try {
-        await signalingRef.current?.request(CLIENT_EVENTS.CALL_END, {
-          version: SIGNALING_VERSION,
-          callId,
-        });
-      } catch (error) {
-        logWarn('[CallFlow] end call ack failed', { message: errorMessage(error) });
-      }
+    if (callId) {
+      await releaseCallOnServer(callId, 'end');
     }
 
     endActiveCall('Call ended', 'info', 'ended');
-  }, [endActiveCall]);
+  }, [endActiveCall, releaseCallOnServer]);
 
   // ─── Media controls ───────────────────────────────────────────────────────
 
@@ -3378,6 +3659,7 @@ export default function useCallFlow({
     callPhase,
     activeCall,
     incomingCall,
+    callElsewhere,
     isPlacingCall,
 
     // UI status
