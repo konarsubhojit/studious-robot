@@ -334,10 +334,6 @@ function ChatListScreen({
 
   return (
     <View style={styles.root} testID="chat-list-root">
-      {/* Messaging failures are raised into the same global status slot as call
-          errors, so without this the tab that caused them is the one tab that
-          never showed them. */}
-      <StatusToast status={status} testID="chat-list-status-toast" />
       <View style={styles.titleRow}>
         {/* Identity, not a control: Settings is a tab, and the ⚙️ that used to
             sit here was a second door into the same room. */}
@@ -400,6 +396,12 @@ function ChatListScreen({
         onSelect={startChat}
         testID="chat-list-people-picker"
       />
+
+      {/* Last, so it paints over the list without relying on `zIndex`.
+          Messaging failures are raised into the same global status slot as call
+          errors, so without this the tab that causes them is the one tab that
+          never showed them. */}
+      <StatusToast status={status} testID="chat-list-status-toast" />
     </View>
   );
 }

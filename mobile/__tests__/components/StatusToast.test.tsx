@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import StatusToast from '../../src/components/StatusToast';
+import StatusToast, { alertStatus } from '../../src/components/StatusToast';
 import { TOAST_DURATION_MS } from '../../src/components/primitives/Toast';
 
 /** @param status */
@@ -98,5 +98,24 @@ describe('StatusToast', () => {
 
     expect(bar(tree)).not.toHaveLength(0);
     expect(messages(tree)).toContain('Authentication failed');
+  });
+});
+
+describe('alertStatus', () => {
+  it('passes through the severities the bar shows', () => {
+    const warning = { message: 'Rate limited', severity: 'warning' as const };
+    const error = { message: 'Auth failed', severity: 'error' as const };
+    expect(alertStatus(warning)).toBe(warning);
+    expect(alertStatus(error)).toBe(error);
+  });
+
+  it('drops the severities that belong to the screen that caused them', () => {
+    expect(alertStatus({ message: 'Calling bob…', severity: 'info' })).toBeUndefined();
+    expect(alertStatus({ message: 'Connected', severity: 'success' })).toBeUndefined();
+    expect(alertStatus(undefined)).toBeUndefined();
+  });
+
+  it('drops an alert with no message to say', () => {
+    expect(alertStatus({ message: '', severity: 'error' })).toBeUndefined();
   });
 });

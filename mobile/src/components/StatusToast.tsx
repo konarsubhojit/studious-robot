@@ -25,6 +25,19 @@ import type { CallStatus } from './StatusBanner';
  * here; those stay as an inline `Banner`, because they remain true until
  * something changes and must not fade away.
  */
+/**
+ * The status if it is one this bar shows, otherwise `undefined`.
+ *
+ * Exported so a caller can narrow before passing it down: the status slot is
+ * rewritten constantly during a call, and a screen that takes the raw value as
+ * a prop re-renders for every "Calling bob…" it is going to ignore anyway.
+ */
+export function alertStatus(status?: CallStatus): CallStatus | undefined {
+  const severity = status?.severity;
+  if (severity !== 'warning' && severity !== 'error') return undefined;
+  return status?.message ? status : undefined;
+}
+
 export default function StatusToast({
   status,
   testID = 'status-toast',
@@ -32,8 +45,7 @@ export default function StatusToast({
   status?: CallStatus;
   testID?: string;
 }) {
-  const severity = status?.severity;
-  const message = severity === 'warning' || severity === 'error' ? status?.message ?? '' : '';
+  const message = alertStatus(status)?.message ?? '';
   // Held separately from `status` so dismissing hides the toast without having
   // to clear state this screen does not own; a new message re-arms it.
   const [dismissed, setDismissed] = useState('');

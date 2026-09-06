@@ -414,13 +414,6 @@ export default function CallsScreen({
         />
       </View>
 
-      {/* Floated over the log rather than inserted above it. The single
-          `status` slot carries failures from every subsystem — session refresh,
-          identity, the message outbox — and an inline banner let each of them
-          push the call history down the screen to report something that has
-          nothing to do with calls. */}
-      <StatusToast status={status} testID="calls-status-toast" />
-
       <CallsScreenResults
         isServerUnreachable={isServerUnreachable}
         onRetryConnect={onRetryConnect}
@@ -476,6 +469,13 @@ export default function CallsScreen({
           testID="calls-modality-video"
         />
       </Sheet>
+
+      {/* Last, so it paints over the log without relying on `zIndex`, and
+          floated rather than inserted above it: the single `status` slot
+          carries failures from every subsystem — session refresh, identity, the
+          message outbox — and an inline banner let each of them push the call
+          history down to report something unrelated to calls. */}
+      <StatusToast status={status} testID="calls-status-toast" />
     </View>
   );
 }

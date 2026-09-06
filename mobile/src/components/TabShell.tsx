@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
@@ -6,6 +6,7 @@ import { describeAttachmentDownloadResult, downloadAttachment } from '../attachm
 import { useCallSelector } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
+import { alertStatus } from './StatusToast';
 import useRecentSearches from '../hooks/useRecentSearches';
 import useStorageUsage from '../hooks/useStorageUsage';
 import {
@@ -236,6 +237,18 @@ function TabShell() {
     updateStatus,
   ]);
 
+  // Narrowed and memoised on its parts, not on the status object: `status` is
+  // rewritten throughout a call ("Calling bob…", "Connected"), none of which
+  // this bar shows, and taking the raw value as a prop re-rendered the whole
+  // chat list for each one.
+  const alert = alertStatus(status);
+  const alertMessage = alert?.message;
+  const alertSeverity = alert?.severity;
+  const chatAlert = useMemo(
+    () => (alertMessage ? { message: alertMessage, severity: alertSeverity } : undefined),
+    [alertMessage, alertSeverity],
+  );
+
   const renderChatList = useCallback(() => (
     <ChatListScreen
       conversations={chat.conversations}
@@ -252,7 +265,7 @@ function TabShell() {
       drafts={chat.drafts}
       isPeerMuted={isPeerMuted}
       onSetPeerMuted={setPeerMuted}
-      status={status}
+      status={chatAlert}
     />
   ), [
     chat.currentUserId,
@@ -265,7 +278,7 @@ function TabShell() {
     chat.isRefreshingConversations,
     chat.markConversationRead,
     chat.searchUsers,
-    status,
+    chatAlert,
   ]);
 
   const renderSearch = useCallback(() => (
