@@ -23,6 +23,11 @@ import type { Database } from '../../db/client.ts';
  * `ringing` or `connected` is live state, and deleting it would strand the
  * peers.  This mirrors `pruneOldCalls`, which applies the same rule to the
  * in-memory map.
+ *
+ * Every instance runs this, so on a multi-VM fleet two sweeps can select the
+ * same batch.  That is harmless rather than coordinated away: the loser blocks
+ * briefly on the row lock and then deletes nothing, and no reader depends on a
+ * terminal row that is already past its retention window.
  */
 
 /** Terminal statuses, as an array for the SQL `IN (...)` predicate. */
