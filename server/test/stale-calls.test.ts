@@ -228,8 +228,12 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
     },
     {
       callId: freshCallId,
-      callerId: 'user-zen',
-      calleeId: 'user-nez',
+      // Deliberately between two other users: `user-zen` must be left holding
+      // nothing but the stale record, so the busy assertion below tests the
+      // stale record alone. (A live call of their own would legitimately block
+      // a new one — see the one-call-at-a-time rule.)
+      callerId: 'user-fresh-caller',
+      calleeId: 'user-fresh-callee',
       status: 'connecting_media',
       endReason: null,
       createdAt: new Date(),

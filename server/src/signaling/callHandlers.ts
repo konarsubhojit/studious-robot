@@ -36,10 +36,19 @@ type SocketCallTransitionBase = {
   state: import('../stores/contracts.ts').ServerState;
   io: any;
   eventName: string;
+  /**
+   * Reject the request, or return `null` to allow it.
+   *
+   * A plain string is a `forbidden` rejection with that message. Guards whose
+   * refusal the client must react to differently — "another of your devices
+   * already answered" is not the same as "you are not the callee" — return an
+   * explicit code instead.
+   */
   authorize: (
     call: import('../stores/contracts.ts').CallRecord,
-    userId: string
-  ) => string | null;
+    userId: string,
+    context: { deviceId: string | null }
+  ) => string | { code: string; message: string } | null;
   onSuccess?: (
     call: import('../stores/contracts.ts').CallRecord,
     transition: CallTransition
@@ -105,16 +114,16 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
     return;
   }
 
-  const authorizationError = options.authorize(call, socket.data.identity.userId);
+  const actorDeviceId = normaliseId(socket.data.identity?.deviceId) ?? null;
+  const authorizationError = options.authorize(call, socket.data.identity.userId, {
+    deviceId: actorDeviceId,
+  });
   if (authorizationError) {
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      ERROR_CODES.FORBIDDEN,
-      authorizationError,
-      options.state
-    );
+    const { code, message } =
+      typeof authorizationError === 'string'
+        ? { code: ERROR_CODES.FORBIDDEN, message: authorizationError }
+        : authorizationError;
+    acknowledgeError(socket, ack, options.eventName, code, message, options.state);
     return;
   }
 
@@ -126,6 +135,7 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
   const result = await transitionCallWithShared(options.state, callId, transition.nextStatus, {
     actor: socket.data.identity.userId,
     reason: transition.reason ?? null,
+    actorDeviceId,
   });
   if (!result.ok) {
     const errorCode = result.error === 'stale_call_state' ? 'stale_call_state' : 'invalid_state';
