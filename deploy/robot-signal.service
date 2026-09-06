@@ -1,18 +1,23 @@
 [Unit]
 Description=robot-signal signaling server
-After=network.target
+# network-online (not just network) so the process does not race DNS/route
+# setup for its outbound Postgres connection on a cold VM boot.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-# Verified deployment target: GCP e2-micro running Ubuntu, service user `ubuntu`.
-# Adjust `User=` (and `WorkingDirectory=` below) if your VM user/distro differs
-# (e.g. `opc` on Oracle Linux).
-User=ubuntu
+# Deployment target: an Oracle Cloud Infrastructure VM running Oracle Linux,
+# whose default service user is `opc`. Adjust `User=`/`Group=` (and
+# `WorkingDirectory=` below) if your VM user/distro differs (e.g. `ubuntu` on
+# an Ubuntu image).
+User=opc
+Group=opc
 # `%h` is NOT usable here: in a *system* unit it resolves to /root regardless
 # of `User=` above, not the service user's home directory — this silently
 # breaks the working directory unless you use an absolute path. Replace
-# `/home/ubuntu` below if the repo lives elsewhere or the service user differs.
-WorkingDirectory=/home/ubuntu/repos/studious-robot/server
+# `/home/opc` below if the repo lives elsewhere or the service user differs.
+WorkingDirectory=/home/opc/repos/studious-robot/server
 # The server is TypeScript and runs directly on Node's built-in type stripping,
 # so Node >= 22.18 is required on the VM.
 # Adjust the node path if Node is installed elsewhere (e.g. /usr/local/bin/node).
@@ -28,10 +33,57 @@ KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=30
 
+# ── Sandboxing ───────────────────────────────────────────────────────────────
+# The process needs exactly three things: a read-only checkout, outbound
+# network sockets, and the env file — which systemd itself reads, as root,
+# before dropping privileges. Everything below removes something it does not
+# need, so a compromised dependency has less to reach for.
+#
+# `ProtectSystem=strict` mounts the entire filesystem read-only, including the
+# checkout. That is correct here: the server never writes to disk (logs go to
+# the journal via stdout/stderr; it only ever *reads* an optional FCM
+# service-account file). If you add something that writes a file, do not
+# weaken this to `full` — add a `ReadWritePaths=` entry for that one directory.
+#
+# `ProtectHome=read-only` rather than `true`, because `WorkingDirectory=` lives
+# under /home/opc; `true` makes /home an empty tmpfs and the unit fails to
+# start. Move the checkout outside /home (e.g. /srv/robot-signal) if you want
+# the stronger setting.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Outbound TCP to Postgres/Redis/FCM/APNs plus the listening socket. No other
+# socket family is used.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# ── Resource bounds ──────────────────────────────────────────────────────────
+# In-memory state (sessions, presence, live calls, the read cache) is bounded
+# by the sweeps in `server/src/domain/calls.ts` and `server/src/cache.ts`, so
+# steady-state RSS sits far below this. The cap exists to turn a leak into a
+# restart the journal records, rather than an OOM kill of whatever else shares
+# the VM. Raise both values on a larger shape.
+MemoryHigh=768M
+MemoryMax=1G
+
 # Environment configuration: `Environment=` below sets sane defaults; the
 # documented mechanism for real (and secret) config is the env file at
-# /etc/robot-signal/env (see deploy/README.md §5) — create and populate it on
-# the VM.
+# /etc/robot-signal/env (see deploy/README.md §5). Create it on the VM as
+# mode 0600, owner root:root — it holds every database credential, and
+# systemd reads it as root *before* dropping to `User=`, so the service user
+# neither needs nor should have read access to it.
 #
 # IMPORTANT: systemd applies `Environment=` and `EnvironmentFile=` in the
 # order they appear in the unit, with *later* declarations overriding earlier

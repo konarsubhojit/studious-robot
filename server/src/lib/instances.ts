@@ -9,9 +9,17 @@
  * invalidation published on the message bus never leaves the process, and a
  * conversation list can stay stale for a full TTL.
  *
- * That failure mode is silent, which is the dangerous part.  PM2 exposes the
- * instance ordinal in `NODE_APP_INSTANCE` (`pm_id` as a fallback), so a
- * process that knows it is not the first of several can say so loudly.
+ * That failure mode is silent, which is the dangerous part, so a process that
+ * knows it is not the first of several says so loudly.
+ *
+ * Deployment is a single systemd unit (`deploy/robot-signal.service`), and a
+ * lone process needs no shared state at all: the in-memory bus and cache are
+ * exactly equivalent to Redis for one process.  The systemd-native way to run
+ * more than one is a *template* unit — `robot-signal@.service`, instantiated
+ * as `robot-signal@0`, `robot-signal@1`, … behind an nginx upstream — which
+ * makes the ordinal available as `%i`.  The unit is expected to surface it as
+ * `INSTANCE_ID=%i` (`SIGNAL_INSTANCE_ID` is honoured as an alias), and the
+ * moment such a unit exists `REDIS_URL` becomes mandatory.
  */
 
 /** Environment slice this module reads. */
@@ -21,7 +29,7 @@ export type InstanceEnv = Record<string, string | undefined>;
 export type MultiInstanceCheck = {
   /** `ok` when nothing is wrong, `warn` outside production, `fatal` in it. */
   level: 'ok' | 'warn' | 'fatal';
-  /** Zero-based instance ordinal, or `null` when not running under PM2. */
+  /** Zero-based instance ordinal, or `null` for a single un-templated unit. */
   instanceId: number | null;
   /** Whether cross-instance state (Redis) is configured. */
   sharedState: boolean;
@@ -30,11 +38,14 @@ export type MultiInstanceCheck = {
 };
 
 /**
- * Read this process's instance ordinal, or `null` when it is not running under
- * a process manager that publishes one.
+ * Read this process's instance ordinal, or `null` when it is not running as an
+ * instance of a systemd template unit.
+ *
+ * A plain `robot-signal.service` sets neither variable, so a single-instance
+ * host reports `null` and is never faulted.
  */
 export function resolveInstanceId(env: InstanceEnv = process.env): number | null {
-  for (const key of ['NODE_APP_INSTANCE', 'pm_id', 'PM2_INSTANCE_ID']) {
+  for (const key of ['INSTANCE_ID', 'SIGNAL_INSTANCE_ID']) {
     const raw = env[key];
     if (raw === undefined || raw.trim() === '') continue;
     const parsed = Number(raw);
@@ -68,7 +79,7 @@ export function checkMultiInstanceState(env: InstanceEnv = process.env): MultiIn
       `this is process instance ${instanceId} but REDIS_URL is not set: sessions, presence, ` +
       'call state and the read cache would be private to each process, so cache invalidation ' +
       'cannot reach the other instances and clients would see stale data. Set REDIS_URL, or ' +
-      'run a single instance (pm2 `instances: 1`).',
+      'run a single instance (the plain robot-signal.service unit, not the robot-signal@ template).',
   };
 }
 

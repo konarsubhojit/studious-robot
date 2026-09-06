@@ -18,16 +18,14 @@
 #   REPO_DIR      Path to the git checkout (default: ~/repos/studious-robot)
 #   DEPLOY_BRANCH Branch to deploy            (default: master)
 #   SERVICE_NAME  systemd unit to restart     (default: robot-signal)
-#   DEPLOY_RUNTIME process manager: systemd|pm2 (default: systemd)
 #
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$HOME/repos/studious-robot}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-master}"
 SERVICE_NAME="${SERVICE_NAME:-robot-signal}"
-DEPLOY_RUNTIME="${DEPLOY_RUNTIME:-systemd}"
 
-echo "[deploy] repo=${REPO_DIR} branch=${DEPLOY_BRANCH} runtime=${DEPLOY_RUNTIME} service=${SERVICE_NAME}"
+echo "[deploy] repo=${REPO_DIR} branch=${DEPLOY_BRANCH} service=${SERVICE_NAME}"
 
 # 1. Pull the latest code.
 cd "${REPO_DIR}"
@@ -39,23 +37,13 @@ cd server
 npm ci --omit=dev
 
 # 3. Restart the service after pulling changes.
-if [[ "${DEPLOY_RUNTIME}" == "pm2" ]]; then
-  pm2 reload "${REPO_DIR}/deploy/ecosystem.config.js" --update-env || pm2 start "${REPO_DIR}/deploy/ecosystem.config.js"
-  sleep 2
-  if pm2 describe "${SERVICE_NAME}" >/dev/null 2>&1; then
-    echo "[deploy] ${SERVICE_NAME} is running under pm2"
-  else
-    echo "[deploy] ERROR: ${SERVICE_NAME} did not become active under pm2" >&2
-    exit 1
-  fi
+#    `reload-or-restart` is graceful (the app drains on SIGTERM) and starts the
+#    unit if it was not already running.
+sudo systemctl reload-or-restart "${SERVICE_NAME}"
+sleep 2
+if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
+  echo "[deploy] ${SERVICE_NAME} is running"
 else
-  # systemd path (default): graceful, rolling-friendly.
-  sudo systemctl reload-or-restart "${SERVICE_NAME}"
-  sleep 2
-  if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
-    echo "[deploy] ${SERVICE_NAME} is running"
-  else
-    echo "[deploy] ERROR: ${SERVICE_NAME} did not become active" >&2
-    exit 1
-  fi
+  echo "[deploy] ERROR: ${SERVICE_NAME} did not become active" >&2
+  exit 1
 fi
