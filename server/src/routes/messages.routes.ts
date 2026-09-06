@@ -77,10 +77,15 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
 
     // Only the first page is cacheable: deep pagination (`before` present) is
     // rare, unbounded in key space and the least latency-sensitive path.
-    // The merged timeline is not cached at all: it mixes in live call state,
-    // which is invalidated on its own schedule.
+    //
+    // `include=calls` deliberately does *not* disable the cache. What is cached
+    // is the message page, which is identical either way and is invalidated by
+    // the send path (`messagesCachePrefix`); the call entries are merged in
+    // below, live, on every request. Keying the cache off `include` instead made
+    // the entry unreachable, because the app always asks for the merged
+    // timeline — a cache with no possible reader.
     const limit = clampMessageLimit(req.query?.limit);
-    const cacheKey = before || includeCalls ? null : messagesCacheKey(conversationId, limit);
+    const cacheKey = before ? null : messagesCacheKey(conversationId, limit);
 
     let messages: MessageRecord[] | undefined = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {

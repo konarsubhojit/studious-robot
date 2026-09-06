@@ -349,8 +349,10 @@ of cross-instance coordination, both backed by Redis:
   observers.
 - **Read cache** (`src/cache.ts`) — a shared cache in front of the hottest
   reads: `GET /conversations` (`conv::<userId>`), the first page of
-  `GET /messages` (`msg::<conversationId>::<limit>`, excluding the
-  `include=calls` timeline, which mixes in live call state) and the first page
+  `GET /messages` (`msg::<conversationId>::<limit>` — the message page only;
+  an `include=calls` request shares the same entry and merges live call state
+  on top, so the cache is reachable by the timeline the app actually asks for)
+  and the first page
   of `GET /calls` (`callhist::<userId>::<status>::<limit>`; paged requests,
   i.e. `offset > 0`, are not cached), each with a 30s TTL. Writes
   (`message.send`, delivery receipts, `POST /messages/read`, call transitions)
