@@ -484,6 +484,36 @@ export function callOwnerDeviceId(call: DeviceOwnedCall, userId: string | null |
 }
 
 /**
+ * Whether `call` is one this user is on, held by a *different* device of
+ * theirs.
+ *
+ * Ignores the call's status deliberately: it answers "was this device ever in
+ * this call?", which stays true once the call is over. That is what lets a
+ * device drop a finished call's verdict on the floor instead of announcing the
+ * result of a call it had no part in.
+ *
+ * Ownership is only ever asserted from a device id the server recorded: an
+ * unclaimed ring is not "somebody else's", it is a call this device may still
+ * answer.
+ */
+export function isCallOwnedByAnotherDevice({
+  call,
+  userId,
+  deviceId,
+}: {
+  call: DeviceOwnedCall | null | undefined;
+  userId: string | null | undefined;
+  deviceId: string | null | undefined;
+}): boolean {
+  const thisDevice = (deviceId ?? '').trim();
+  if (!call?.callId || !thisDevice) return false;
+  if (!callPeerId(call, userId)) return false;
+
+  const owner = callOwnerDeviceId(call, userId);
+  return Boolean(owner) && owner !== thisDevice;
+}
+
+/**
  * Describe a live call that another of this user's devices is holding.
  *
  * Every call event fans out to *all* of a user's devices, so an idle second
@@ -491,10 +521,6 @@ export function callOwnerDeviceId(call: DeviceOwnedCall, userId: string | null |
  * events is what let it paint "Callee is busy" over an empty screen and — far
  * worse — report "I hold no calls", ending the conversation running on the
  * other device.
- *
- * Ownership is only ever asserted from a device id the server recorded: an
- * unclaimed ring is not "somebody else's", it is a call this device may still
- * answer.
  *
  * @returns the call and who it is with, or `null` when it is not another
  *   device's live call.
@@ -508,19 +534,15 @@ export function describeCallOnAnotherDevice({
   userId: string | null | undefined;
   deviceId: string | null | undefined;
 }): CallElsewhere | null {
-  const thisDevice = (deviceId ?? '').trim();
-  if (!call?.callId || !thisDevice) return null;
+  if (!isCallOwnedByAnotherDevice({ call, userId, deviceId })) return null;
 
-  const status = call.status ?? '';
+  const status = call?.status ?? '';
   if (!status || isTerminalCallStatus(status)) return null;
 
-  const peerId = callPeerId(call, userId);
+  const peerId = callPeerId(call as DeviceOwnedCall, userId);
   if (!peerId) return null;
 
-  const owner = callOwnerDeviceId(call, userId);
-  if (!owner || owner === thisDevice) return null;
-
-  return { callId: call.callId, peerId, status };
+  return { callId: (call as DeviceOwnedCall).callId as string, peerId, status };
 }
 
 /**

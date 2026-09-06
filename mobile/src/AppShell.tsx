@@ -26,6 +26,7 @@ import { getDegradations } from './observability';
 import { useTheme, useThemedStyles } from './ThemeContext';
 import { spacing } from './theme';
 import type { RecoveryAnnouncementState } from './accessibilityAnnouncer';
+import type { StyleProp, ViewStyle } from 'react-native';
 import type { CallContextValue } from './call/CallProvider';
 import type { CallEndSummary as CallEndSummaryData } from './hooks/useCallFlow';
 import type { ThemeColors } from './theme';
@@ -273,6 +274,7 @@ export default function AppShell() {
       {callEndSummary ? (
         <CallEndSummary summary={callEndSummary} onDismiss={dismissCallSummary} />
       ) : null}
+      <CallElsewhereBanner isVisible={isTabShellActive} style={styles.degradedBanner} />
       {isCallMinimizedInShell ? <MinimizedCallBanner /> : null}
       {screenContent}
       {isBubbleVisible ? <MinimizedCallBubble /> : null}
@@ -475,6 +477,46 @@ const selectBubbleSlice = (state: CallContextValue) => ({
   handleScreenShareToggle: state.callFlow.handleScreenShareToggle,
   dismissBubble: state.dismissBubble,
 });
+
+/**
+ * What the "call elsewhere" banner reads: the call another of this user's
+ * devices is holding, and this device's own phase — the banner is for a device
+ * with no call of its own to show.
+ *
+ * @param state the call snapshot
+ * @returns the banner's slice of it
+ */
+const selectCallElsewhereSlice = (state: CallContextValue) => ({
+  callElsewhere: state.callFlow.callElsewhere,
+  callState: state.callState,
+});
+
+/**
+ * A call this user is on, on one of their *other* devices.
+ *
+ * This device is not in that call and cannot place one of its own while it
+ * runs, so it says who the call is with rather than leaving the user to work
+ * that out from a refused dial attempt. Read-only by nature: there is nothing
+ * to mute, time or hang up from here.
+ *
+ * @param props.isVisible whether the tab shell — which this sits above — is up
+ * @param props.style layout for the banner
+ */
+function CallElsewhereBanner({ isVisible, style }: { isVisible: boolean; style: StyleProp<ViewStyle>; }) {
+  const { callElsewhere, callState } = useCallSelector(selectCallElsewhereSlice);
+  if (!isVisible || !callElsewhere || callState !== CALL_STATES.IDLE) return null;
+
+  return (
+    <Banner
+      tone="accent"
+      icon="callActive"
+      message={`In a call with ${callElsewhere.peerId} on another device`}
+      accessibilityRole="alert"
+      style={style}
+      testID="call-elsewhere-banner"
+    />
+  );
+}
 
 /** Banner shown above the tab shell while a call is minimized. */
 function MinimizedCallBanner() {

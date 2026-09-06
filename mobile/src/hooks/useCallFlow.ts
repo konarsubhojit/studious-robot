@@ -100,6 +100,7 @@ import {
   describeCallStateEnding,
   describeDialBlocked,
   isLiveCallStatus,
+  isCallOwnedByAnotherDevice,
   isMissedCall,
   isStateChangeForOtherCall,
   isTerminalCallStatus,
@@ -112,7 +113,7 @@ import {
   shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../call/callDecisions';
-import type { CallDelivery, CallElsewhere, CallEndSummary } from '../call/callDecisions';
+import type { CallDelivery, CallElsewhere, CallEndSummary, DeviceOwnedCall } from '../call/callDecisions';
 import {
   SESSION_EXPIRED_MESSAGE,
   SESSION_REFRESH_FAILED_MESSAGE,
@@ -1403,6 +1404,57 @@ export default function useCallFlow({
     [updateStatus],
   );
 
+  /**
+   * Deal with a transition for a call one of this user's *other* devices
+   * holds, if that is what this is.
+   *
+   * Every call event fans out to all of a user's devices, so an idle one sees
+   * the whole lifecycle of a call it has no part in. Acting on those events is
+   * what tore down a live conversation from an idle device and painted call
+   * results on a screen with no call.
+   *
+   * @param call - the call the transition is about
+   * @param eventCallId - its id, or `null` when the event named no call
+   * @param knownCallId - the call *this* device is in, if any
+   * @returns whether the event was consumed and must not be acted on further
+   */
+  const consumeForeignDeviceCallEvent = useCallback(
+    (call: DeviceOwnedCall | null | undefined, eventCallId: string | null, knownCallId: string | null): boolean => {
+      const owner = { userId: userIdRef.current, deviceId: deviceIdRef.current };
+      const elsewhere = describeCallOnAnotherDevice({ call, ...owner });
+      if (elsewhere) {
+        logInfo('[CallFlow] Call is held by another device of this user', elsewhere);
+        callElsewhereRef.current = elsewhere;
+        setCallElsewhere(elsewhere);
+        // The incoming-call UI on this device is for a call it can no longer
+        // answer: another device picked it up.
+        if (incomingCallRef.current?.callId === elsewhere.callId) {
+          dismissIncomingCallElsewhere(elsewhere.callId, elsewhere.peerId);
+        }
+        return true;
+      }
+
+      if (callElsewhereRef.current?.callId === eventCallId) {
+        callElsewhereRef.current = null;
+        setCallElsewhere(null);
+      }
+
+      // A call that ended on another of this user's devices, seen by a device
+      // that was never in it. Its verdict — "Callee is busy", "Call ended" —
+      // belongs on the device that placed the call, not on this one's idle
+      // screen. `knownCallId` is the test for "was never in it": a device still
+      // ringing for this call keeps the verdict, so the ring always stops.
+      if (!knownCallId && isCallOwnedByAnotherDevice({ call, ...owner })) {
+        logInfo("[CallFlow] Ignoring a transition for another device's call", {
+          callId: eventCallId,
+        });
+        return true;
+      }
+      return false;
+    },
+    [deviceIdRef, dismissIncomingCallElsewhere],
+  );
+
   // ─── Socket connection ────────────────────────────────────────────────────
 
   /**
@@ -1671,28 +1723,7 @@ export default function useCallFlow({
 
           // A call being held by another of this user's devices: track who it
           // is with so the UI can say so, and otherwise stay out of its way.
-          // Acting on these events is what tore down a live conversation from
-          // an idle device and painted call results on a screen with no call.
-          const elsewhere = describeCallOnAnotherDevice({
-            call,
-            userId: userIdRef.current,
-            deviceId: deviceIdRef.current,
-          });
-          if (elsewhere) {
-            logInfo('[CallFlow] Call is held by another device of this user', elsewhere);
-            callElsewhereRef.current = elsewhere;
-            setCallElsewhere(elsewhere);
-            // The incoming-call UI on this device is for a call it can no
-            // longer answer: another device picked it up.
-            if (incomingCallRef.current?.callId === elsewhere.callId) {
-              dismissIncomingCallElsewhere(elsewhere.callId, elsewhere.peerId);
-            }
-            return;
-          }
-          if (callElsewhereRef.current?.callId === eventCallId) {
-            callElsewhereRef.current = null;
-            setCallElsewhere(null);
-          }
+          if (consumeForeignDeviceCallEvent(call, eventCallId, knownCallId)) return;
 
           if (call) {
             activeCallRef.current = call;
@@ -2006,9 +2037,9 @@ export default function useCallFlow({
       return socket;
     },
     [
+      consumeForeignDeviceCallEvent,
       createOrGetSession,
       disconnectSocket,
-      dismissIncomingCallElsewhere,
       sendInitialOffer,
       updateStatus,
       showIncomingCallUi,
