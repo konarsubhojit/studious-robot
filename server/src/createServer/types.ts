@@ -27,6 +27,8 @@ export type CreateServerOptions = {
   dbCallRetentionMs?: number;
   /** Age past which an `audit_log` row is deleted; `0` disables. */
   auditRetentionMs?: number;
+  /** Age past which a `messages` row is deleted; `0` (the default) disables. */
+  messageRetentionMs?: number;
   callRetentionMs?: number;
   maxRetainedCalls?: number;
   turnFetch?: typeof fetch;

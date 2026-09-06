@@ -607,8 +607,12 @@ psql "$DATABASE_URL_DIRECT" -c "select extname from pg_extension where extname =
 psql "$DATABASE_URL_DIRECT" -c "\\d messages"
 ```
 
-Chat retention is enforced by the same sweep as call history (§ retention
-settings in `server/README.md`), so the table does not grow without bound.
+Chat history is **not** pruned by default: the retention sweep skips
+`messages` unless `MESSAGE_RETENTION_MS` is set to a non-zero window. That is
+deliberate — chat is the user's own content, not something the server recorded
+about them — but it does mean the table grows for as long as the deployment
+lives. Set a window if you need a bounded table or a retention policy to point
+at.
 
 > **This replaced a separate MongoDB/Cosmos deployment.** Any `MONGODB_*`
 > variables left in `/etc/robot-signal/env` are now ignored and should be

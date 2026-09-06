@@ -1,8 +1,8 @@
 /**
  * Tests for the Postgres retention sweep and for bounded boot hydration.
  *
- * `calls`, `call_events` and `audit_log` are append-only.  Before the sweep
- * existed they grew without bound, and because `hydrateCallsAndEventsFromDb`
+ * `calls`, `call_events`, `audit_log` and `messages` are append-only.  Before
+ * the sweep existed they grew without bound, and because `hydrateCallsAndEventsFromDb`
  * read `calls` and `call_events` in full, an unbounded table also meant an
  * unbounded startup read on every instance.  These tests pin both halves: what
  * the sweep deletes (and, just as importantly, what it must not), and that
@@ -36,6 +36,7 @@ const NOW = Date.parse('2026-01-01T00:00:00.000Z');
 function buildDeleteRecorder({
   deleted = new Map<unknown, number>(),
   failFor = new Set<unknown>(),
+  selected = new Map<unknown, unknown[]>(),
 } = {}) {
   const calls: { table: unknown; limit: number | null; }[] = [];
 
@@ -44,6 +45,9 @@ function buildDeleteRecorder({
     select() {
       return {
         from(table: unknown) {
+          // Thenable as well as chainable: the composite-key `messages` sweep
+          // awaits its sub-select and then deletes row by row, because matching
+          // on `messageId` alone could take a row from another conversation.
           const chain: any = {
             table,
             where: () => chain,
@@ -51,6 +55,9 @@ function buildDeleteRecorder({
             limit(n: number) {
               chain.limitValue = n;
               return chain;
+            },
+            then(resolve: (rows: unknown[]) => unknown) {
+              return Promise.resolve(selected.get(table) ?? []).then(resolve);
             },
           };
           return chain;
@@ -90,9 +97,10 @@ test('the retention sweep prunes calls and the audit log, and reports what it de
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
     auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 3, auditLog: 7 });
+  assert.deepEqual(result, { calls: 3, auditLog: 7, messages: 0 });
   assert.deepEqual(
     db.calls.map((entry) => entry.table),
     [schema.calls, schema.auditLog],
@@ -107,6 +115,7 @@ test('call_events is never swept directly — it cascades with its call', async 
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
     auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
   });
 
   assert.ok(
@@ -122,9 +131,10 @@ test('a retention of 0 disables that table\'s sweep without disabling the other'
     now: NOW,
     callRetentionMs: 0,
     auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, auditLog: 2 });
+  assert.deepEqual(result, { calls: 0, auditLog: 2, messages: 0 });
   assert.deepEqual(db.calls.map((entry) => entry.table), [schema.auditLog]);
 });
 
@@ -138,6 +148,7 @@ test('a failing table does not stop the other from being swept', async () => {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
     auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
   });
 
   assert.equal(result.calls, 0, 'the failure is absorbed, not propagated');
@@ -149,9 +160,72 @@ test('the sweep is a no-op without Postgres', async () => {
     now: NOW,
     callRetentionMs: 90 * DAY_MS,
     auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
   });
 
-  assert.deepEqual(result, { calls: 0, auditLog: 0 });
+  assert.deepEqual(result, { calls: 0, auditLog: 0, messages: 0 });
+});
+
+test('messages are kept forever unless an operator sets a retention window', async () => {
+  const db = buildDeleteRecorder({
+    selected: new Map<unknown, unknown[]>([
+      [schema.messages, [{ conversationId: 'alice:bob', messageId: 'm-1' }]],
+    ]),
+  });
+
+  const result = await runRetentionSweep(asDatabase(db), {
+    now: NOW,
+    callRetentionMs: 90 * DAY_MS,
+    auditRetentionMs: 180 * DAY_MS,
+    messageRetentionMs: 0,
+  });
+
+  // Chat is the user's own content, not a record the server made about them;
+  // deleting it because a background job decided it was old is data loss, so
+  // the default has to be "keep".
+  assert.equal(result.messages, 0);
+  assert.ok(!db.calls.some((entry) => entry.table === schema.messages));
+});
+
+test('an explicit message retention window prunes expired messages', async () => {
+  const db = buildDeleteRecorder({
+    deleted: new Map<unknown, number>([[schema.messages, 1]]),
+    selected: new Map<unknown, unknown[]>([
+      [
+        schema.messages,
+        [
+          { conversationId: 'alice:bob', messageId: 'm-1' },
+          { conversationId: 'alice:carol', messageId: 'm-2' },
+        ],
+      ],
+    ]),
+  });
+
+  const result = await runRetentionSweep(asDatabase(db), {
+    now: NOW,
+    callRetentionMs: 0,
+    auditRetentionMs: 0,
+    messageRetentionMs: 30 * DAY_MS,
+  });
+
+  assert.equal(result.messages, 2, 'both selected rows are deleted');
+  // One delete per row, each keyed by the *composite* key: `messageId` is
+  // client-supplied and only unique within its conversation.
+  assert.deepEqual(db.calls.map((entry) => entry.table), [schema.messages, schema.messages]);
+});
+
+test('a message sweep that finds nothing issues no deletes', async () => {
+  const db = buildDeleteRecorder();
+
+  const result = await runRetentionSweep(asDatabase(db), {
+    now: NOW,
+    callRetentionMs: 0,
+    auditRetentionMs: 0,
+    messageRetentionMs: 30 * DAY_MS,
+  });
+
+  assert.equal(result.messages, 0);
+  assert.equal(db.calls.length, 0);
 });
 
 // ─── Bounded hydration ───────────────────────────────────────────────────────

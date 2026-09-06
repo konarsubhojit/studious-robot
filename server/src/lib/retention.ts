@@ -1,5 +1,9 @@
-import { and, inArray, lt } from 'drizzle-orm';
-import { calls as callsTable, auditLog as auditLogTable } from '../../db/schema.ts';
+import { and, eq, inArray, lt } from 'drizzle-orm';
+import {
+  auditLog as auditLogTable,
+  calls as callsTable,
+  messages as messagesTable,
+} from '../../db/schema.ts';
 import { TERMINAL_CALL_STATES, DB_RETENTION_DELETE_BATCH } from '../config.ts';
 import { describeError } from './errors.ts';
 import type { Database } from '../../db/client.ts';
@@ -7,9 +11,9 @@ import type { Database } from '../../db/client.ts';
 /**
  * Retention sweep for the append-only Postgres tables.
  *
- * `calls`, `call_events` and `audit_log` are written on every call and every
- * security-relevant action and were never deleted from, so they grew without
- * bound.  That is a storage problem, but on this deployment it is first a
+ * `calls`, `call_events`, `audit_log` and `messages` are written on every call,
+ * every security-relevant action and every chat message, and were never deleted
+ * from, so they grew without bound.  That is a storage problem, but on this deployment it is first a
  * *boot* problem: `hydrateCallsAndEventsFromDb` reads `calls` and `call_events`
  * in full at startup, so an unbounded table becomes an unbounded startup read
  * on both signaling VMs, and the process is not serving until it finishes.
@@ -24,6 +28,10 @@ import type { Database } from '../../db/client.ts';
  * peers.  This mirrors `pruneOldCalls`, which applies the same rule to the
  * in-memory map.
  *
+ * `messages` is swept only when an operator asks for it
+ * (`MESSAGE_RETENTION_MS`), because unlike the other three it holds the user's
+ * own content rather than something the server generated about them.
+ *
  * Every instance runs this, so on a multi-VM fleet two sweeps can select the
  * same batch.  That is harmless rather than coordinated away: the loser blocks
  * briefly on the row lock and then deletes nothing, and no reader depends on a
@@ -37,12 +45,14 @@ const TERMINAL_STATUS_LIST = [...TERMINAL_CALL_STATES];
 type RetentionSweepResult = {
   calls: number;
   auditLog: number;
+  messages: number;
 };
 
 type RetentionOptions = {
   now?: number;
   callRetentionMs: number;
   auditRetentionMs: number;
+  messageRetentionMs: number;
   batchSize?: number;
 };
 
@@ -92,6 +102,48 @@ async function pruneExpiredAuditLog(db: Database, cutoff: Date, batchSize: numbe
 }
 
 /**
+ * Delete at most `batchSize` expired messages.
+ *
+ * Already-tombstoned rows are *not* exempt: a tombstone keeps a quoted reply
+ * resolvable, which stops mattering once the reply is gone too, and exempting
+ * them would leave the one class of row that can never be reclaimed.
+ *
+ * @returns the number of rows deleted.
+ */
+async function pruneExpiredMessages(
+  db: Database,
+  cutoff: Date,
+  batchSize: number
+): Promise<number> {
+  const doomed = db
+    .select({ messageId: messagesTable.messageId, conversationId: messagesTable.conversationId })
+    .from(messagesTable)
+    .where(lt(messagesTable.createdAt, cutoff.toISOString()))
+    .limit(batchSize);
+
+  // `messages` has a *composite* key, so the batch is re-expressed as a join
+  // against the sub-select rather than an `IN (...)` over one column — matching
+  // on `messageId` alone could delete a row from a different conversation.
+  const doomedRows = await doomed;
+  if (doomedRows.length === 0) return 0;
+
+  let deleted = 0;
+  for (const row of doomedRows) {
+    const removed = await db
+      .delete(messagesTable)
+      .where(
+        and(
+          eq(messagesTable.conversationId, row.conversationId),
+          eq(messagesTable.messageId, row.messageId)
+        )
+      )
+      .returning({ messageId: messagesTable.messageId });
+    deleted += removed.length;
+  }
+  return deleted;
+}
+
+/**
  * Run one retention sweep.
  *
  * Each table is swept independently so a failure on one — a lock timeout, say —
@@ -104,9 +156,15 @@ async function pruneExpiredAuditLog(db: Database, cutoff: Date, batchSize: numbe
  */
 async function runRetentionSweep(
   db: Database | null,
-  { now = Date.now(), callRetentionMs, auditRetentionMs, batchSize = DB_RETENTION_DELETE_BATCH }: RetentionOptions
+  {
+    now = Date.now(),
+    callRetentionMs,
+    auditRetentionMs,
+    messageRetentionMs,
+    batchSize = DB_RETENTION_DELETE_BATCH,
+  }: RetentionOptions
 ): Promise<RetentionSweepResult> {
-  const result: RetentionSweepResult = { calls: 0, auditLog: 0 };
+  const result: RetentionSweepResult = { calls: 0, auditLog: 0, messages: 0 };
   if (!db) return result;
 
   if (callRetentionMs > 0) {
@@ -125,10 +183,22 @@ async function runRetentionSweep(
     }
   }
 
-  if (result.calls > 0 || result.auditLog > 0) {
+  if (messageRetentionMs > 0) {
+    try {
+      result.messages = await pruneExpiredMessages(
+        db,
+        new Date(now - messageRetentionMs),
+        batchSize
+      );
+    } catch (error) {
+      console.error(`[retention] message sweep failed: ${describeError(error)}`);
+    }
+  }
+
+  if (result.calls > 0 || result.auditLog > 0 || result.messages > 0) {
     console.log(
       `[retention] pruned calls=${result.calls} auditLog=${result.auditLog}` +
-        ` (call events cascade with their call)`
+        ` messages=${result.messages} (call events cascade with their call)`
     );
   }
 

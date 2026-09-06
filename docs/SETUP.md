@@ -111,6 +111,7 @@ INSTANCE_ID=0
 # `call_events` cascades with its call. 0 disables that table's sweep.
 # DB_CALL_RETENTION_MS=7776000000   # 90 days (default)
 # AUDIT_RETENTION_MS=15552000000    # 180 days (default)
+# MESSAGE_RETENTION_MS=0            # 0 = keep chat history forever (default)
 
 # ── Rate limiting ────────────────────────────────────────────────────────────
 CALL_RATE_LIMIT=10             # max call initiations per window per user

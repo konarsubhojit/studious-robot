@@ -7,7 +7,7 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
@@ -373,18 +373,28 @@ function createServer(opts: CreateServerOptions = {}) {
   }, DEFAULT_SESSION_SWEEP_INTERVAL_MS);
   sessionSweepTimer.unref();
 
-  // Background worker: bound the append-only tables. `calls`, `call_events`
-  // and `audit_log` are written on every call and every audited action and were
-  // never deleted from, so storage — and, because boot hydration reads `calls`,
-  // startup — grew with history. A retention of 0 disables that table's sweep.
+  // Background worker: bound the append-only tables. `calls`, `call_events`,
+  // `audit_log` and `messages` are written on every call, every audited action
+  // and every chat message and were never deleted from, so storage — and,
+  // because boot hydration reads `calls`, startup — grew with history. A
+  // retention of 0 disables that table's sweep, which is the default for
+  // `messages`: it holds the user's own content, not a record the server made
+  // about them.
   const dbCallRetentionMs =
     opts.dbCallRetentionMs ??
     parseNonNegativeNumber('DB_CALL_RETENTION_MS', process.env.DB_CALL_RETENTION_MS, DEFAULT_DB_CALL_RETENTION_MS);
   const auditRetentionMs =
     opts.auditRetentionMs ??
     parseNonNegativeNumber('AUDIT_RETENTION_MS', process.env.AUDIT_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS);
+  const messageRetentionMs =
+    opts.messageRetentionMs ??
+    parseNonNegativeNumber('MESSAGE_RETENTION_MS', process.env.MESSAGE_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS);
   const retentionSweepTimer = setInterval(() => {
-    runRetentionSweep(db, { callRetentionMs: dbCallRetentionMs, auditRetentionMs }).catch((error) => {
+    runRetentionSweep(db, {
+      callRetentionMs: dbCallRetentionMs,
+      auditRetentionMs,
+      messageRetentionMs,
+    }).catch((error) => {
       console.error(`[retention] sweep failed: ${describeError(error)}`);
     });
   }, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS);

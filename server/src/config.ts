@@ -217,6 +217,18 @@ const DEFAULT_DB_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_AUDIT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 
 /**
+ * How long a `messages` row is kept before the retention sweep deletes it.
+ *
+ * Zero — retention off — is the only defensible default.  A call record is
+ * operational data the server produced; a message is the user's own content,
+ * and silently deleting it because a background sweep decided it was old is a
+ * data-loss bug wearing a feature's clothes.  Operators who need a bounded
+ * table (or a retention policy to point a regulator at) set
+ * `MESSAGE_RETENTION_MS` explicitly, and get exactly the window they asked for.
+ */
+const DEFAULT_MESSAGE_RETENTION_MS = 0;
+
+/**
  * How often the retention sweep runs.
  *
  * Deletion is by age, so the interval only decides how far past the window a
@@ -341,6 +353,7 @@ export {
   DEFAULT_MAX_RETAINED_CALLS,
   DEFAULT_DB_CALL_RETENTION_MS,
   DEFAULT_AUDIT_RETENTION_MS,
+  DEFAULT_MESSAGE_RETENTION_MS,
   DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS,
   DB_RETENTION_DELETE_BATCH,
   RINGING_POLL_MS,
