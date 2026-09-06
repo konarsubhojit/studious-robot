@@ -242,7 +242,18 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
       return {
         /** @param table */
         from(table: unknown) {
-          return Promise.resolve(table === schema.calls ? callRows : []);
+          const rows = table === schema.calls ? callRows : [];
+          // Hydration narrows its reads (`.where()` on events, `.orderBy()` /
+          // `.limit()` on calls), so the double is chainable as well as
+          // awaitable.
+          const chain: any = {
+            where: () => chain,
+            orderBy: () => chain,
+            limit: () => chain,
+            then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+              Promise.resolve(rows).then(resolve, reject),
+          };
+          return chain;
         },
       };
     },

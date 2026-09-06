@@ -1,9 +1,11 @@
+import { desc, inArray } from 'drizzle-orm';
 import { invalidateCache, callHistoryCachePrefix } from './cache.ts';
 import { calls as callsTable } from '../db/schema.ts';
 import { callEvents as callEventsTable } from '../db/schema.ts';
 import { describeError } from './lib/errors.ts';
 import { runDetached } from './lib/queryTiming.ts';
 import { callRecordFromRow } from './domain/callHistory.ts';
+import { DEFAULT_MAX_RETAINED_CALLS } from './config.ts';
 import type { Database } from '../db/client.ts';
 
 /**
@@ -119,26 +121,60 @@ function persistCallEvent(db: Database | null, event: import('./stores/contracts
 
 /**
  * Load persisted calls and call events into the in-memory stores at boot.
+ *
+ * Bounded on purpose.  This used to be `select().from(calls)` — the whole
+ * table, however large — which made startup time a function of history, on
+ * every instance, before the process could serve a request.  The in-memory map
+ * is itself capped at `MAX_RETAINED_CALLS` and pruned by age, so reading more
+ * than that only ever produced rows for `pruneOldCalls` to discard.
+ *
+ * The newest page is the right one to keep: `GET /calls` is ordered
+ * `updated_at DESC`, and anything older is served from Postgres.
+ *
+ * @returns the hydrated call ids, so the event hydration can scope itself to
+ *   the same set instead of reading every event ever recorded.
  */
-async function hydrateCallRecords(db: Database, state: import('./stores/contracts.ts').Stores) {
+async function hydrateCallRecords(db: Database, state: import('./stores/contracts.ts').Stores): Promise<string[]> {
   try {
-    const rows = await db.select().from(callsTable);
+    const rows = await db
+      .select()
+      .from(callsTable)
+      .orderBy(desc(callsTable.updatedAt), desc(callsTable.callId))
+      .limit(DEFAULT_MAX_RETAINED_CALLS);
+    const callIds: string[] = [];
     for (const row of rows) {
       if (!row?.callId || !row?.callerId || !row?.calleeId || !row?.status) continue;
       state.calls.set(row.callId, callRecordFromRow(row));
+      callIds.push(row.callId);
       if (!state.callEvents.has(row.callId)) {
         state.callEvents.set(row.callId, []);
       }
     }
     console.log(`[signaling] hydrated ${rows.length} call record(s) from DB`);
+    return callIds;
   } catch (err) {
     console.error('[signaling] failed to hydrate calls from DB:', describeError(err));
+    return [];
   }
 }
 
-async function hydrateCallEvents(db: Database, state: import('./stores/contracts.ts').Stores) {
+/**
+ * Load the event timelines of the calls that were hydrated.
+ *
+ * Scoped to `callIds` for the same reason the call read is capped: an event
+ * whose call is not in memory can never be read, because every consumer of
+ * `state.callEvents` reaches it through a call.
+ */
+async function hydrateCallEvents(db: Database, state: import('./stores/contracts.ts').Stores, callIds: string[]) {
+  if (callIds.length === 0) {
+    console.log('[signaling] hydrated 0 call event(s) from DB');
+    return;
+  }
   try {
-    const rows = await db.select().from(callEventsTable);
+    const rows = await db
+      .select()
+      .from(callEventsTable)
+      .where(inArray(callEventsTable.callId, callIds));
     for (const row of rows) {
       if (!row?.callId || !row?.eventId || !row?.event) continue;
       if (!state.callEvents.has(row.callId)) {
@@ -167,8 +203,8 @@ async function hydrateCallEvents(db: Database, state: import('./stores/contracts
 
 async function hydrateCallsAndEventsFromDb(db: Database | null, state: import('./stores/contracts.ts').Stores) {
   if (!db) return;
-  await hydrateCallRecords(db, state);
-  await hydrateCallEvents(db, state);
+  const callIds = await hydrateCallRecords(db, state);
+  await hydrateCallEvents(db, state, callIds);
 }
 
 export {

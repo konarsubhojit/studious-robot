@@ -64,6 +64,13 @@
       "when": 1788539350770,
       "tag": "0008_calls_history_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788700358099,
+      "tag": "0009_retention_indexes",
+      "breakpoints": true
     }
   ]
 }

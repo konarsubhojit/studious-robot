@@ -23,6 +23,10 @@ export type CreateServerOptions = {
   messageSearchRateWindowMs?: number;
   shutdownDrainMs?: number;
   staleDeviceMaxAgeMs?: number;
+  /** Age past which a terminal `calls` row (and its cascaded events) is deleted; `0` disables. */
+  dbCallRetentionMs?: number;
+  /** Age past which an `audit_log` row is deleted; `0` disables. */
+  auditRetentionMs?: number;
   callRetentionMs?: number;
   maxRetainedCalls?: number;
   turnFetch?: typeof fetch;

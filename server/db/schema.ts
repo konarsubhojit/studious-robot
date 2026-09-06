@@ -11,6 +11,9 @@
  *   - call_events  per-call ordered event timeline
  *   - devices      push-notification device registrations
  *   - audit_log    security/audit events
+ *
+ * `calls`, `call_events` and `audit_log` are append-only and are bounded by the
+ * retention sweep in `src/lib/retention.ts`, not by anything in the schema.
  *   - blocks       per-user call blocklist
  */
 
@@ -74,6 +77,11 @@ const calls = pgTable(
     // not folded into the two indexes above, because `status` is optional and
     // leading with it would make them useless to the unfiltered page.
     index('idx_calls_status').on(t.status),
+    // Serves both the retention sweep (`status IN (terminal) AND updated_at <
+    // cutoff`) and bounded boot hydration, which reads the newest page rather
+    // than the whole table. Neither can use the participant indexes: they lead
+    // with `caller_id`/`callee_id`, and neither query has a participant.
+    index('idx_calls_updated_at').on(desc(t.updatedAt), desc(t.callId)),
   ],
 );
 
@@ -157,6 +165,9 @@ const auditLog = pgTable(
   (t) => [
     index('idx_audit_actor').on(t.actor, t.ts),
     index('idx_audit_target').on(t.target, t.ts),
+    // The retention sweep's only predicate is `ts < cutoff`; the two indexes
+    // above lead with a nullable actor/target and cannot serve it.
+    index('idx_audit_ts').on(t.ts),
   ],
 );
 

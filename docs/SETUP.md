@@ -104,6 +104,14 @@ INSTANCE_ID=0
 # 0 = infinite (leaks one immortal bearer token per login; tests only).
 # SESSION_TTL_MS=3600000       # 1 hour
 
+# ── Postgres retention ───────────────────────────────────────────────────────
+# `calls`, `call_events` and `audit_log` are append-only. The retention sweep
+# is what bounds them — and, because boot hydration reads `calls`, what keeps
+# startup from growing with history. Only *terminal* calls are eligible;
+# `call_events` cascades with its call. 0 disables that table's sweep.
+# DB_CALL_RETENTION_MS=7776000000   # 90 days (default)
+# AUDIT_RETENTION_MS=15552000000    # 180 days (default)
+
 # ── Rate limiting ────────────────────────────────────────────────────────────
 CALL_RATE_LIMIT=10             # max call initiations per window per user
 CALL_RATE_WINDOW_MS=60000

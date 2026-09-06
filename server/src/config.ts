@@ -195,6 +195,46 @@ const DEFAULT_CALL_RETENTION_MS = 24 * 60 * 60 * 1000;
  */
 const DEFAULT_MAX_RETAINED_CALLS = 500;
 
+/**
+ * How long a terminal call row (and, by FK cascade, its `call_events`) is kept
+ * in Postgres before the retention sweep deletes it.
+ *
+ * The in-memory window (`CALL_RETENTION_MS`, a day) bounds working set; this
+ * bounds *storage*, and is deliberately much longer because the durable record
+ * is what `GET /calls` pages over after a restart.  Without it the table only
+ * ever grows, and boot hydration — which reads it — grows with it.
+ * Override with `DB_CALL_RETENTION_MS`; `0` disables the sweep.
+ */
+const DEFAULT_DB_CALL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long an `audit_log` row is kept before the retention sweep deletes it.
+ *
+ * Longer than the call window: the audit trail's whole purpose is answering
+ * questions after the fact.  Override with `AUDIT_RETENTION_MS`; `0` disables
+ * the sweep.
+ */
+const DEFAULT_AUDIT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * How often the retention sweep runs.
+ *
+ * Deletion is by age, so the interval only decides how far past the window a
+ * row may survive — hours are ample, and a long interval keeps the delete off
+ * the hot path.  Override with `DB_RETENTION_SWEEP_INTERVAL_MS`.
+ */
+const DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Rows deleted per retention-sweep statement, per table.
+ *
+ * The sweep deletes in bounded batches rather than one unbounded `DELETE`, so
+ * a first run against a table that has never been pruned cannot hold a lock
+ * over millions of rows or blow out the transaction.  Remaining rows are
+ * collected by the next tick.
+ */
+const DB_RETENTION_DELETE_BATCH = 5_000;
+
 /** How often the background worker polls for timed-out ringing calls. */
 const RINGING_POLL_MS = 5_000;
 
@@ -299,6 +339,10 @@ export {
   DEFAULT_JSON_BODY_LIMIT,
   DEFAULT_CALL_RETENTION_MS,
   DEFAULT_MAX_RETAINED_CALLS,
+  DEFAULT_DB_CALL_RETENTION_MS,
+  DEFAULT_AUDIT_RETENTION_MS,
+  DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS,
+  DB_RETENTION_DELETE_BATCH,
   RINGING_POLL_MS,
   DEFAULT_SHUTDOWN_DRAIN_MS,
   SHUTDOWN_DRAIN_POLL_MS,
