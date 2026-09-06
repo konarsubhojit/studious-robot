@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
 import { resolveReachableChannels, hasKnownUser } from '../lib/state.ts';
 import { runDetached } from '../lib/queryTiming.ts';
+import { sanitizeForLog } from '../lib/normalize.ts';
 import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from '../callPersistence.ts';
 
 /**
@@ -291,11 +292,17 @@ function isSupersededRedial(call: CallRecord, callerId: string, calleeId: string
  * it was missing entirely, so a second call placed from a second device (or
  * from a stale screen) was accepted and immediately collided with the first.
  *
+ * An *unanswered* incoming ring does not block: being rung is not being in a
+ * call, and a ring nobody answered lives for the full ring timeout, so counting
+ * it would lock the user out of dialling for two minutes because someone else
+ * called them. Declining first is a client-side courtesy, not a server rule.
+ *
  * @returns the blocking call, or `null` when the caller is free.
  */
 function findCallerBlockingCall(state: ServerState, callerId: string, calleeId: string): CallRecord | null {
   for (const call of getActiveCallsForUser(state, callerId)) {
     if (isSupersededRedial(call, callerId, calleeId)) continue;
+    if (call.status === 'ringing' && call.calleeId === callerId) continue;
     return call;
   }
   return null;
@@ -317,7 +324,7 @@ function supersedeRedialledCalls(state: ServerState, callerId: string, calleeId:
     state.telemetry?.recordCallTransition(call, previousStatus);
     console.log(
       `[calls] call.superseded callId=${call.callId} ${previousStatus}->ended` +
-        ` reason=superseded actor=${callerId}`
+        ` reason=superseded actor=${sanitizeForLog(callerId)}`
     );
     onTransition?.(call, previousStatus, 'superseded');
     superseded.push(call);

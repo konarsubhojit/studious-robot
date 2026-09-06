@@ -1,5 +1,5 @@
 import { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
-import { normaliseId } from '../../lib/normalize.ts';
+import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
@@ -234,8 +234,9 @@ function registerSocketHandlers(
 
       if (!result.ok) {
         console.log(
-          `[calls] call.initiate rejected callerId=${socket.data.identity.userId} calleeId=${calleeId}` +
-            ` reason=call_in_progress activeCallId=${result.call.callId} peerId=${result.peerId}`
+          `[calls] call.initiate rejected callerId=${sanitizeForLog(socket.data.identity.userId)}` +
+            ` calleeId=${sanitizeForLog(calleeId)} reason=call_in_progress` +
+            ` activeCallId=${result.call.callId} peerId=${sanitizeForLog(result.peerId)}`
         );
         acknowledgeError(
           socket,

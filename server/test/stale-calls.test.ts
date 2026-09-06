@@ -752,6 +752,26 @@ test('placement: a caller already in a call cannot dial someone else', async () 
   }
 });
 
+test('placement: an unanswered incoming ring does not stop the user dialling out', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const aliceSession = await createSession(url, 'user-alice');
+    const bobSession = await createSession(url, 'user-bob');
+    await createSession(url, 'user-carol');
+
+    // Bob is being rung and has neither answered nor declined. A ring lives for
+    // the full ring timeout, so counting it as "already in a call" would lock
+    // Bob out of dialling for minutes because somebody else called him.
+    await postJson(url, '/calls', { calleeId: 'user-bob' }, aliceSession);
+
+    const outgoing = await postJson(url, '/calls', { calleeId: 'user-carol' }, bobSession);
+    assert.equal(outgoing.status, 201);
+    assert.equal(outgoing.body.status, 'ringing');
+  } finally {
+    await teardown();
+  }
+});
+
 test('placement: a second device of the caller cannot dial while the first holds a call', async () => {
   const { url, teardown } = await startServer();
   let second;

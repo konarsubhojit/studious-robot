@@ -141,6 +141,7 @@ import {
   describeDegradedMedia,
 } from '../call/answerPath';
 import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
+import type { CallAction } from '../call/callEndpoints';
 import { bearerAuthHeaders } from '../authHeaders';
 import {
   decideIceConnectionState,
@@ -1399,7 +1400,7 @@ export default function useCallFlow({
       incomingCallRef.current = null;
       setIncomingCall(null);
       dispatchCallEvent(CALL_EVENTS.END);
-      updateStatus(`Answered on another device`, 'info');
+      updateStatus('Answered on another device', 'info');
     },
     [updateStatus],
   );
@@ -2552,7 +2553,7 @@ export default function useCallFlow({
    * @returns whether the server was told
    */
   const releaseCallOnServer = useCallback(
-    async (callId: string, action: 'cancel' | 'end'): Promise<boolean> => {
+    async (callId: string, action: Extract<CallAction, 'cancel' | 'end'>): Promise<boolean> => {
       if (!callId) return false;
       const event = action === 'cancel' ? CLIENT_EVENTS.CALL_CANCEL : CLIENT_EVENTS.CALL_END;
 

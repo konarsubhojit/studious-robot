@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'crypto';
 import { isBlocked } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
-import { normaliseId } from '../lib/normalize.ts';
+import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
 import { describeActiveCallsForUser, ownerDeviceIdForUser } from '../domain/calls.ts';
 import {
   hydrateCallFromShared,
@@ -103,8 +103,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
 
     if (!result.ok) {
       console.log(
-        `[calls] POST /calls rejected callerId=${session.userId} calleeId=${calleeId}` +
-          ` reason=call_in_progress activeCallId=${result.call.callId} peerId=${result.peerId}`
+        `[calls] POST /calls rejected callerId=${sanitizeForLog(session.userId)}` +
+          ` calleeId=${sanitizeForLog(calleeId)} reason=call_in_progress` +
+          ` activeCallId=${result.call.callId} peerId=${sanitizeForLog(result.peerId)}`
       );
       res.status(409).json({
         error: 'call_in_progress',
