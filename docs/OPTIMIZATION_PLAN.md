@@ -130,7 +130,7 @@ verifiable behind the existing CI gates.
 | D4.2 | Session id out of URLs | ✅ |
 | D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅ |
 | D4.4 | Stop the client opting out of the server cache | ✅ |
-| D1 | Consolidate messages into Postgres, delete Mongo | ✅ — the `callTimeline` join it unlocks is still to write |
+| D1 | Consolidate messages into Postgres, delete Mongo | ✅ — including the `callTimeline` reads it unlocked |
 | D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | 🟡 **partly done** — the state/storage defects below are fixed; the release build, the storage-engine swap, permissions and i18n are not |
 
 ### D3 — Deployment surface (done)
@@ -297,12 +297,52 @@ still return plausible rows — just by scanning the table. Only the statement t
 catches that. Backend-independent behaviour stayed in
 `message-store-internals.test.ts` over plain data.
 
-**Still outstanding.** The prize this unlocks has *not* been collected:
-`src/domain/callTimeline.ts` still reads the in-memory `state.calls` at lines
-51, 78 and 163 (so missed calls vanish once the in-memory window prunes them),
-and `mergeTimeline` still slices *after* merging two independently-limited lists
-(the paging bug). Both are now expressible as one SQL join over `messages` and
-`calls` — the table is there, the join is not written.
+**Collected.** `src/domain/callTimeline.ts` now reads the durable `calls`
+table, closing the last place where a memory bound was mistaken for a history
+horizon. Three reads moved, each keeping the in-memory path as its fallback for
+a deployment with no `DATABASE_URL` and for a failed query, exactly as
+`callHistory.ts` does — a database outage degrades the timeline to whatever is
+resident rather than failing the request:
+
+- **`readCallsBetween`** — the conversation timeline. A call that aged out of
+  `state.calls` used to still appear in `GET /calls` while having silently
+  vanished from the chat, contradicting `toCallTimelineEntry`'s own promise that
+  "the two views can never disagree". The `before` cursor is pushed into SQL
+  rather than applied after the fact, so deep paging no longer depends on the
+  whole pair history being resident.
+- **`readCallActivityByPeer`** — the chat list. Two bounded queries rather than
+  one scan: the newest calls decide each peer's `lastActivity`, while
+  *unacknowledged missed* calls decide the unread badge and may be arbitrarily
+  old — an unread badge that expired with the retention window would be a worse
+  lie than a slightly shallow preview. The two results overlap, so they are
+  folded by `callId` before counting; counting a call twice would double the
+  badge.
+- **`markMissedCallsRead`** — acknowledgement. Now a single
+  `UPDATE … WHERE callee_id = $1 AND caller_id = $2 AND status = 'missed' AND
+  missed_read_at IS NULL … RETURNING`, which reaches the evicted rows the old
+  loop over `state.calls` could not see. Those were unacknowledgeable, so they
+  came back unread on the next restart. Resident records are still marked and
+  persisted first, so a call missed moments ago whose write has not landed yet
+  is covered too, and the returned ids are unioned with them so the count is of
+  distinct calls.
+
+The paging bug is closed by construction rather than by coincidence:
+`mergeTimeline` takes the newest `limit` of the two lists combined, which is
+only correct when each input already holds the newest `limit` of its own kind,
+so the call fetch bound is now *derived from* `MAX_MESSAGE_LIMIT` instead of
+being a hand-picked number that happened to be larger.
+
+A single SQL join over `messages` and `calls` remains possible and would save a
+round trip, but it is not required for correctness and would put the two very
+different retention rules above into one statement. Deferred deliberately.
+
+`test/call-timeline.test.ts` covers this with 11 tests that seed rows *only*
+into the `calls` table — the state an evicted or pre-restart call is actually
+in. Eight of them were confirmed to fail against the previous memory-only
+implementation. The fake Drizzle harness moved to `test/fakeCallsDb.ts` so both
+call suites share one stand-in; it gained `isNull`, `lt` and a real
+`UPDATE … RETURNING`, and still throws on any query shape it does not model so
+a query change cannot silently degrade into "matches everything".
 
 ### D5 — Android (partly done)
 
