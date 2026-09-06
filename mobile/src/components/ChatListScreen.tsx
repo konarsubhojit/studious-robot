@@ -4,6 +4,7 @@ import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
 import { fontScaleCaps, spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
+import StatusToast from './StatusToast';
 import SwipeableRow from './SwipeableRow';
 import {
   Avatar,
@@ -15,6 +16,7 @@ import {
   ListItem,
   SkeletonRow,
 } from './primitives';
+import type { CallStatus } from './StatusBanner';
 import type { CallActivity, ConversationActivity } from '../hooks/useMessaging';
 import type { ThemeColors } from '../theme';
 import type { ContactRow, ConversationRow } from '../types/directory';
@@ -106,6 +108,8 @@ export type ChatListScreenProps = {
   onStartChat?: (peerId: string) => void;
   /** The signed-in user, shown as the header avatar. */
   currentUserId?: string;
+  /** App-level status, floated over the list as a transient bar. */
+  status?: CallStatus;
 };
 
 function ConversationMeta({
@@ -268,6 +272,7 @@ function ChatListScreen({
   drafts,
   isPeerMuted,
   onSetPeerMuted,
+  status,
 }: ChatListScreenProps) {
   const styles = useThemedStyles(createStyles);
   const [isPickerVisible, setIsPickerVisible] = useState(false);
@@ -329,6 +334,10 @@ function ChatListScreen({
 
   return (
     <View style={styles.root} testID="chat-list-root">
+      {/* Messaging failures are raised into the same global status slot as call
+          errors, so without this the tab that caused them is the one tab that
+          never showed them. */}
+      <StatusToast status={status} testID="chat-list-status-toast" />
       <View style={styles.titleRow}>
         {/* Identity, not a control: Settings is a tab, and the ⚙️ that used to
             sit here was a second door into the same room. */}

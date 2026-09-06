@@ -252,6 +252,7 @@ function TabShell() {
       drafts={chat.drafts}
       isPeerMuted={isPeerMuted}
       onSetPeerMuted={setPeerMuted}
+      status={status}
     />
   ), [
     chat.currentUserId,
@@ -264,6 +265,7 @@ function TabShell() {
     chat.isRefreshingConversations,
     chat.markConversationRead,
     chat.searchUsers,
+    status,
   ]);
 
   const renderSearch = useCallback(() => (

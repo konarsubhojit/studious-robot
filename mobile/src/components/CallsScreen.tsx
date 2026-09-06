@@ -20,7 +20,7 @@ import { announceForAccessibility } from '../accessibilityAnnouncer';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
-import StatusBanner from './StatusBanner';
+import StatusToast from './StatusToast';
 import SwipeableRow from './SwipeableRow';
 import {
   Avatar,
@@ -173,7 +173,6 @@ function CallHistoryRow({
 function CallsScreenResults({
   isServerUnreachable,
   onRetryConnect,
-  status,
   isLoading,
   hasEntries,
   sections,
@@ -185,7 +184,6 @@ function CallsScreenResults({
 }: {
   isServerUnreachable?: boolean;
   onRetryConnect?: () => void;
-  status?: CallStatus;
   isLoading: boolean;
   hasEntries: boolean;
   sections: Array<CallLogSection & { data: CallHistoryEntry[]; }>;
@@ -212,7 +210,6 @@ function CallsScreenResults({
           testID="offline-banner"
         />
       ) : null}
-      <StatusBanner status={status} style={styles.bannerWrap} />
       {isLoading && !hasEntries ? (
         <View testID="calls-loading">
           {SKELETON_ROWS.map(row => <SkeletonRow key={row} />)}
@@ -417,10 +414,16 @@ export default function CallsScreen({
         />
       </View>
 
+      {/* Floated over the log rather than inserted above it. The single
+          `status` slot carries failures from every subsystem — session refresh,
+          identity, the message outbox — and an inline banner let each of them
+          push the call history down the screen to report something that has
+          nothing to do with calls. */}
+      <StatusToast status={status} testID="calls-status-toast" />
+
       <CallsScreenResults
         isServerUnreachable={isServerUnreachable}
         onRetryConnect={onRetryConnect}
-        status={status}
         isLoading={isLoading}
         hasEntries={hasEntries}
         sections={sections}
