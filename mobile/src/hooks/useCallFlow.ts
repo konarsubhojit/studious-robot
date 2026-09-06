@@ -554,7 +554,13 @@ export default function useCallFlow({
     userId,
     updateStatus,
   });
-  const { sessionIdRef, deviceIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch } = session;
+  const { sessionIdRef, deviceIdRef, authedFetchRef, createOrGetSession, refreshSession, authedFetch, verifyIdentity } = session;
+
+  // `useIdentity` runs before `useSession` and knows nothing about it, so the
+  // verifier is handed over through the ref it exposes for the purpose. Kept in
+  // sync on every render, in the same way `authedFetchRef` is, rather than
+  // captured once.
+  identity.verifyIdentityRef.current = verifyIdentity;
 
   const callHistory = useCallHistory({
     authedFetchRef,

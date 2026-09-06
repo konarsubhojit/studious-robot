@@ -4,8 +4,12 @@ import { logInfo, logWarn } from '../appLogger';
 import { getIdToken } from '../authService';
 import { loadDeviceId } from '../settingsStorage';
 import { API_ROUTES } from '../../../shared';
+import { describeIdentityRejection, IDENTITY_REJECTION_CODES } from '../registrationUx';
 import type { CallStatus } from '../components/StatusBanner';
 import { errorMessage } from '../errors';
+
+/** The outcome of asking the server to bind a username to the signed-in account. */
+export type IdentityVerification = { ok: true; } | { ok: false; message: string; };
 
 /**
  * Owns the server-side session lifecycle: creating/refreshing the
@@ -95,9 +99,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
         const errorPayload = await response.json().catch(() => null);
         if (response.status === 409) {
           updateStatus(
-            errorPayload.userId
-              ? `This account is already bound to ${errorPayload.userId}.`
-              : 'This username is already bound to another account.',
+            describeIdentityRejection(errorPayload?.code, errorPayload?.userId),
             'error',
           );
         }
@@ -131,6 +133,83 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
       }
     }
   }, [updateStatus, signalingUrl, userId]);
+
+  /**
+   * Ask the server to bind `candidateUserId` to the signed-in account, before
+   * the app commits to that identity.
+   *
+   * Registration used to be "Firebase accepted the credentials", after which
+   * the username was persisted and the user was let into the app.  The username
+   * is not the account's to give, though — `resolveIdentityClaim` on the server
+   * decides that — so someone choosing a name that was taken was admitted to a
+   * chat list that could never load, and found out only from an error message
+   * on another tab.  Verifying first keeps them on the registration screen,
+   * which is where the fix is.
+   *
+   * The session this mints is kept rather than discarded: it is the very
+   * session the app needs, and the context key is stamped with the verified
+   * username so the identity commit that follows reuses it instead of
+   * immediately minting a second one.
+   *
+   * Never throws — a caller deciding whether to admit the user needs an answer,
+   * not an exception to interpret.
+   *
+   * @returns whether the identity was granted, and if not, why in the user's terms.
+   */
+  const verifyIdentity = useCallback(
+    async (candidateUserId: string): Promise<IdentityVerification> => {
+      const trimmedUserId = (candidateUserId ?? '').trim();
+      if (!trimmedUserId) {
+        return {
+          ok: false,
+          message: describeIdentityRejection(IDENTITY_REJECTION_CODES.USERNAME_REQUIRED),
+        };
+      }
+      const trimmedUrl = signalingUrl.trim();
+      try {
+        if (!deviceIdRef.current) {
+          deviceIdRef.current = await loadDeviceId();
+        }
+        const idToken = await getIdToken();
+        const response = await fetch(`${trimmedUrl}${API_ROUTES.SESSION}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: trimmedUserId,
+            deviceId: deviceIdRef.current,
+            platform: Platform.OS,
+            idToken,
+          }),
+        });
+
+        if (response.status === 409) {
+          const payload = await response.json().catch(() => null);
+          return { ok: false, message: describeIdentityRejection(payload?.code, payload?.userId) };
+        }
+        if (!response.ok) {
+          logWarn('[Session] Identity verification rejected', { status: response.status });
+          return {
+            ok: false,
+            message: 'Could not reach the server to confirm your username. Try again.',
+          };
+        }
+
+        const data = await response.json();
+        sessionContextKeyRef.current = `${trimmedUrl}\n${trimmedUserId}`;
+        sessionIdRef.current = data.sessionId;
+        pendingSessionRef.current = null;
+        logInfo('[Session] Identity verified', { userId: trimmedUserId });
+        return { ok: true };
+      } catch (error) {
+        logWarn('[Session] Identity verification failed', { message: errorMessage(error) });
+        return {
+          ok: false,
+          message: 'Could not reach the server to confirm your username. Try again.',
+        };
+      }
+    },
+    [signalingUrl],
+  );
 
   /**
    * Refresh the current session via `POST /session/refresh`, rotating the
@@ -219,6 +298,7 @@ export default function useSession({ signalingUrl, userId, updateStatus }: {
     deviceIdRef,
     createOrGetSession,
     refreshSession,
+    verifyIdentity,
     authedFetch,
     authedFetchRef,
   };

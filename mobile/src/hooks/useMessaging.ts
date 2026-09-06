@@ -569,12 +569,13 @@ export default function useMessaging({
         replyTo,
       };
 
-      setMessagesByPeer(prev =>
-        prependMessage(prev, trimmedPeerId, buildOptimisticMessage(outgoing)),
-      );
+      // Built once and shared: the conversation and the chat-list row are two
+      // views of the same message and must not be able to drift apart.
+      const optimistic = buildOptimisticMessage(outgoing);
+      setMessagesByPeer(prev => prependMessage(prev, trimmedPeerId, optimistic));
       // The chat list summarises the same conversation, so it has to learn
       // about the send at the same moment the conversation does.
-      setConversations(prev => withOutgoingMessage(prev, buildOptimisticMessage(outgoing)));
+      setConversations(prev => withOutgoingMessage(prev, optimistic));
       persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
 
       await drainOutbox();

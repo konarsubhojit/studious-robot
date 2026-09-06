@@ -310,8 +310,9 @@ and `mergeTimeline` still slices *after* merging two independently-limited lists
 
 Found by reviewing the client against reported on-device behaviour. The first
 four share a shape: state written from two places that did not agree about who
-owned it. The fifth is the mirror image — one slot shared by subsystems that
-should not have been sharing a surface.
+owned it. The next two are a gate that opened before the thing it guards had
+succeeded. The last is the mirror image of the first four — one slot shared by
+subsystems that should not have been sharing a surface.
 
 - **A history refetch deleted live messages.** `mergeHistoryPage` treated a
   first page as a wholesale replacement, so anything arriving over the socket
@@ -340,6 +341,24 @@ should not have been sharing a surface.
   also dedupes concurrent reads) and fold the file in *underneath* any table
   already written. Separately, an outbox-only save no longer re-sorts every
   conversation's history: that ran on the JS thread on every message ack.
+- **A failed registration still let the user into the app.** `registerUser`
+  treated "the identity provider accepted the credentials" as registration
+  complete, persisted the username and flipped `isRegistered`. But the username
+  is not the account's to give — `resolveIdentityClaim` on the server binds it,
+  and answers `409` when it is already taken. That happened *after* the user had
+  been admitted, so someone whose name was taken landed on a chat list that
+  could never load, with the refusal reported only as a status message on
+  another tab. The username is now verified with the server before it is
+  committed, so a rejection leaves `isRegistered` false and the registration
+  screen — which already routes a failure to the step that owns it — shows why.
+  The same applies to an unreachable server: registration that cannot produce a
+  session is a failed registration, and is retried where the user stands.
+- **The conflict message described the wrong conflict.** The client branched on
+  whether the `409` payload carried a `userId`, but `identity_claimed` carries
+  one too — the *existing* owner of the name, which is the name the user just
+  typed. Someone whose chosen name was taken was told "this account is already
+  bound to <their own choice>", which describes the opposite situation. It now
+  branches on the server's `code`, via `describeIdentityRejection`.
 - **App-level failures sat inside the call log.** There is one global `status`
   slot and every subsystem writes it, so session, identity and outbox errors
   were rendered inline by `CallsScreen` and pushed the history down the screen.
