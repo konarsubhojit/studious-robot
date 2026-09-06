@@ -73,7 +73,7 @@ describe('StatusToast', () => {
   // remembered against that specific message - otherwise re-rendering for any
   // unrelated reason brings the same stale failure straight back.
   test('stays dismissed while the same status is still set', () => {
-    const status = { message: 'Rate limited', severity: 'error' };
+    const status = { message: 'Rate limited', severity: 'error' } as const;
     const tree = render(status);
 
     act(() => {

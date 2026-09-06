@@ -12,6 +12,26 @@ function entryTime(entry: { createdAt?: string; }): number | null {
 }
 
 /**
+ * The `[oldest, newest]` span a page covers, or `null` for a page that covers
+ * nothing — one that is empty, or whose entries all carry unusable timestamps.
+ *
+ * Folded in one pass rather than via `Math.min`/`Math.max` over a spread array:
+ * the page comes off the wire, and spreading an unbounded array into a call
+ * overflows the stack.
+ */
+function pageWindow(page: ChatMessage[]): { oldest: number; newest: number; } | null {
+  let oldest: number | null = null;
+  let newest: number | null = null;
+  for (const entry of page) {
+    const time = entryTime(entry);
+    if (time === null) continue;
+    if (oldest === null || time < oldest) oldest = time;
+    if (newest === null || time > newest) newest = time;
+  }
+  return oldest === null || newest === null ? null : { oldest, newest };
+}
+
+/**
  * Pure transforms over the per-peer message history.
  *
  * Every one of them returns the *same* object when nothing changed, so a React
@@ -123,17 +143,14 @@ export function mergeHistoryPage(
   const held = existing ?? [];
   if (!before) {
     const serverIds = new Set(page.map(timelineEntryId));
-    const times = page.map(entryTime).filter(time => time !== null) as number[];
-    // An empty page reports on nothing, so its window is empty and every held
-    // entry sits outside it.
-    const newest = times.length ? Math.max(...times) : null;
-    const oldest = times.length ? Math.min(...times) : null;
+    const window = pageWindow(page);
     const kept = held.filter(entry => {
       if (serverIds.has(timelineEntryId(entry))) return false;
       if (entry.syncState === 'pending' || entry.syncState === 'failed') return true;
-      if (newest === null || oldest === null) return true;
+      // A page that reports on nothing cannot contradict anything held.
+      if (!window) return true;
       const time = entryTime(entry);
-      return time === null || time > newest || time < oldest;
+      return time === null || time > window.newest || time < window.oldest;
     });
     return kept.length ? [...kept, ...page].sort(byNewestFirst) : page;
   }

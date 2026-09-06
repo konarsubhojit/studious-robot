@@ -283,15 +283,53 @@ describe('chatDb load/save ordering', () => {
     expect(snapshot.conversations).toEqual([]);
   });
 
+  // The first fix only guarded saves issued before the read *started*. A save
+  // landing while it is in flight is the same data loss, one tick later.
+  test('a save during the read is not overwritten when the read lands', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(true);
+    let releaseRead = (_: string) => {};
+    (RNFS.readFile as jest.Mock).mockReturnValue(
+      new Promise<string>(resolve => {
+        releaseRead = resolve;
+      }),
+    );
+
+    const loading = loadChatSnapshot();
+    saveChatSnapshot({ outbox: [{ messageId: 'queued', recipientId: 'bob', body: 'hi' } as any] });
+    releaseRead(
+      JSON.stringify({
+        conversations: [{ peerId: 'bob', unreadCount: 2 }],
+        outbox: [{ messageId: 'stale', recipientId: 'bob', body: 'old' }],
+      }),
+    );
+    const snapshot = await loading;
+
+    expect(snapshot.outbox.map(item => item.messageId)).toEqual(['queued']);
+    // …and the tables that write did not own still come from the file.
+    expect(snapshot.conversations).toHaveLength(1);
+  });
+
+  // The load used to resolve to the snapshot captured at read time, so a save
+  // between two loads was invisible to the second - contradicting the module's
+  // own promise that a read after a save observes the new state.
+  test('a load after a save sees the save', async () => {
+    (RNFS.exists as jest.Mock).mockResolvedValue(false);
+    await loadChatSnapshot();
+
+    saveChatSnapshot({ drafts: { bob: { text: 'later' } } });
+
+    expect((await loadChatSnapshot()).drafts.bob?.text).toBe('later');
+  });
+
   // An outbox-only write must not re-sort every conversation's history: that
   // runs on the JS thread for every message acknowledgement.
   test('a save re-prunes only the tables it was given', async () => {
     (RNFS.exists as jest.Mock).mockResolvedValue(false);
     await loadChatSnapshot();
 
-    const history = makeMessages(MAX_MESSAGES_PER_CONVERSATION + 10);
-    saveChatSnapshot({ messagesByPeer: { bob: history } });
+    saveChatSnapshot({ messagesByPeer: { bob: makeMessages(MAX_MESSAGES_PER_CONVERSATION + 10) } });
     const pruned = (await loadChatSnapshot()).messagesByPeer.bob;
+    expect(pruned).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
 
     saveChatSnapshot({ outbox: [] });
     expect((await loadChatSnapshot()).messagesByPeer.bob).toBe(pruned);

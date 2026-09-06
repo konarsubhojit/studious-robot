@@ -131,7 +131,7 @@ verifiable behind the existing CI gates.
 | D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅ |
 | D4.4 | Stop the client opting out of the server cache | ✅ |
 | D1 | Consolidate messages into Postgres, delete Mongo | ✅ — the `callTimeline` join it unlocks is still to write |
-| D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | ⬜ **not started** |
+| D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | 🟡 **partly done** — the state/storage defects below are fixed; the release build, the storage-engine swap, permissions and i18n are not |
 
 ### D3 — Deployment surface (done)
 
@@ -304,9 +304,52 @@ and `mergeTimeline` still slices *after* merging two independently-limited lists
 (the paging bug). Both are now expressible as one SQL join over `messages` and
 `calls` — the table is there, the join is not written.
 
-### D5 — Android (not started)
+### D5 — Android (partly done)
 
-Ordered by payoff:
+#### Fixed: state management, local storage and error surfacing
+
+Found by reviewing the client against reported on-device behaviour. The first
+four share a shape: state written from two places that did not agree about who
+owned it. The fifth is the mirror image — one slot shared by subsystems that
+should not have been sharing a surface.
+
+- **A history refetch deleted live messages.** `mergeHistoryPage` treated a
+  first page as a wholesale replacement, so anything arriving over the socket
+  during the fetch was erased from `messagesByPeer` while `conversations` — and
+  therefore the tab badge — had already counted it. That is exactly the reported
+  "badge says 1, the conversation shows nothing". It also collapsed history
+  already paged in back to a single page on every re-open. The page is now
+  authoritative only over the window it reports on: entries outside that window,
+  and everything still unsent, survive.
+- **The chat list lagged the conversation.** `sendMessage` and
+  `beginAttachmentUpload` updated only `messagesByPeer`; `withIncomingMessage`
+  keys on `senderId` and so cannot serve an outgoing message. A
+  `withOutgoingMessage` sibling now updates the list in the same commit, so the
+  row's preview matches what the open conversation shows.
+- **The composer grew under rapid sending.** With a controlled `TextInput`, the
+  change event for the text being sent can land *after* the clear, restoring it
+  — and the next send appends to it. The one echo immediately following a send
+  is now dropped, and the send reads the ref rather than the render's `draft`,
+  which also stops two taps in one frame sending twice.
+- **`chatDb` could discard the whole local store.** `loadChatSnapshot` returned
+  the cache if one existed, and `saveChatSnapshot` created one from
+  `emptySnapshot()`. `persistOutbox` is reachable from a send before the disk
+  read resolves, so a save could beat the first load, and the load would then
+  return empty — dropping every persisted conversation, message and draft, and
+  writing that emptiness back over the file. Loads now share one promise (which
+  also dedupes concurrent reads) and fold the file in *underneath* any table
+  already written. Separately, an outbox-only save no longer re-sorts every
+  conversation's history: that ran on the JS thread on every message ack.
+- **App-level failures sat inside the call log.** There is one global `status`
+  slot and every subsystem writes it, so session, identity and outbox errors
+  were rendered inline by `CallsScreen` and pushed the history down the screen.
+  Warnings and errors now float over the list as a self-dismissing top bar
+  (`StatusToast`); the persistent "server unreachable" *condition* stays an
+  inline `Banner`, because it stays true until something changes. The Chats tab
+  shows the same bar — messaging failures are raised there and previously had
+  nowhere to appear.
+
+#### Still to do, ordered by payoff:
 
 1. **Make the release build releasable.** Enable R8 and `shrinkResources`,
    generate a real upload keystore held outside the repo, and move the release
@@ -337,7 +380,7 @@ Ordered by payoff:
 - Server test doubles go through `test/helpers.ts`' `asDatabase` / `asMessageStore`
   / `asSocketIoServer`, never a per-suite `as any`.
 - Baseline at handoff: server 529 passing / 1 skipped (the count *fell* because
-  the Mongo-driver suites went with the driver), mobile 2114 passing, typecheck
+  the Mongo-driver suites went with the driver), mobile 2145 passing, typecheck
   and lint clean in both packages.
 
 ## Notes and deviations

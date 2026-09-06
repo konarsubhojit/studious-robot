@@ -76,11 +76,10 @@ function emptySnapshot(): ChatSnapshot {
  * a load after a save does not have to hit the disk.
  */
 let cache: ChatSnapshot | null = null;
-/**
- * The in-flight (or settled) read of the file, so concurrent callers share one
- * read and a save can tell whether the file has been folded in yet.
- */
-let loadPromise: Promise<ChatSnapshot> | null = null;
+/** The in-flight read of the file, so concurrent callers share one read. */
+let loadPromise: Promise<void> | null = null;
+/** Whether the file has been folded into {@link cache} yet. */
+let hasLoaded = false;
 /**
  * Tables written before the file had been read.  A write that happened first
  * is newer than the file's copy of the same table, so it survives the read
@@ -193,11 +192,15 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
  */
 export async function loadChatSnapshot(): Promise<ChatSnapshot> {
   if (!loadPromise) loadPromise = readSnapshotFile();
-  return loadPromise;
+  await loadPromise;
+  // Deliberately the live cache rather than whatever the read resolved to: a
+  // save between two loads must be visible to the second, as it was when this
+  // returned `cache` directly.
+  return cache ?? emptySnapshot();
 }
 
 /** Read and sanitise the file, folding it under anything already written. */
-async function readSnapshotFile(): Promise<ChatSnapshot> {
+async function readSnapshotFile(): Promise<void> {
   let fromDisk = emptySnapshot();
   try {
     const exists = await RNFS.exists(CHAT_DB_FILE);
@@ -220,7 +223,7 @@ async function readSnapshotFile(): Promise<ChatSnapshot> {
   }
   preloadWrites = new Set();
   cache = fromDisk;
-  return cache;
+  hasLoaded = true;
 }
 
 /** Write the cached snapshot to disk now. Failures are logged, never thrown. */
@@ -263,9 +266,11 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
     drafts: partial.drafts ?? base.drafts ?? {},
   };
 
-  // Before the file has been read, remember which tables this write owns so
-  // the read folds itself in underneath them rather than over them.
-  if (!loadPromise) {
+  // Until the file has been folded in, remember which tables this write owns so
+  // the read folds itself in underneath them rather than over them.  The test
+  // is "has the read finished", not "has one started": a save landing *during*
+  // the read is exactly the case this exists for.
+  if (!hasLoaded) {
     (Object.keys(partial) as Array<keyof ChatSnapshot>).forEach(table =>
       preloadWrites.add(table),
     );
@@ -304,7 +309,8 @@ export async function clearChatDb(): Promise<void> {
   cache = emptySnapshot();
   // A cleared store is a known-empty one, so a later load must not go looking
   // for the file this just deleted.
-  loadPromise = Promise.resolve(cache);
+  loadPromise = Promise.resolve();
+  hasLoaded = true;
   preloadWrites = new Set();
   try {
     const exists = await RNFS.exists(CHAT_DB_FILE);
@@ -322,6 +328,7 @@ export function resetChatDbCache() {
   }
   cache = null;
   loadPromise = null;
+  hasLoaded = false;
   preloadWrites = new Set();
   pendingWrite = Promise.resolve();
 }
