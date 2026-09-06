@@ -79,6 +79,49 @@ describe('mergeHistoryPage', () => {
     expect(mergeHistoryPage(held, page)).toEqual(page);
   });
 
+  // The regression this guards: `fetchMessagesForPeer` awaits a network round
+  // trip, and a message arriving over the socket during that window is newer
+  // than anything the response can contain. Replacing the history with the page
+  // dropped it from the conversation while the unread badge — fed from a
+  // different piece of state — had already counted it.
+  test('a message that arrived while the request was in flight is kept', () => {
+    const held = [
+      message({ messageId: 'live', syncState: 'synced', createdAt: '2026-08-25T10:40:00.000Z' }),
+      message({ messageId: 'm1', syncState: 'synced' }),
+    ];
+    const page = [message({ messageId: 'm1', syncState: 'synced' })];
+    expect(mergeHistoryPage(held, page).map((m: any) => m.messageId)).toEqual(['live', 'm1']);
+  });
+
+  test('history already paged in below the page window survives a refetch', () => {
+    const held = [
+      message({ messageId: 'm2', createdAt: '2026-08-25T10:30:00.000Z' }),
+      message({ messageId: 'm1', createdAt: '2026-08-25T09:00:00.000Z' }),
+    ];
+    const page = [message({ messageId: 'm2', createdAt: '2026-08-25T10:30:00.000Z' })];
+    expect(mergeHistoryPage(held, page).map((m: any) => m.messageId)).toEqual(['m2', 'm1']);
+  });
+
+  // The other half of the same rule: inside the window the server *is*
+  // authoritative, so a message deleted on another device must not linger.
+  test('a held entry inside the page window that the server dropped is discarded', () => {
+    const held = [
+      message({ messageId: 'newer', createdAt: '2026-08-25T10:40:00.000Z' }),
+      message({ messageId: 'gone', createdAt: '2026-08-25T10:20:00.000Z' }),
+      message({ messageId: 'older', createdAt: '2026-08-25T09:00:00.000Z' }),
+    ];
+    const page = [
+      message({ messageId: 'newer', createdAt: '2026-08-25T10:40:00.000Z' }),
+      message({ messageId: 'older', createdAt: '2026-08-25T09:00:00.000Z' }),
+    ];
+    expect(mergeHistoryPage(held, page).map((m: any) => m.messageId)).toEqual(['newer', 'older']);
+  });
+
+  test('an empty page reports on nothing, so it discards nothing', () => {
+    const held = [message({ messageId: 'm1', syncState: 'synced' })];
+    expect(mergeHistoryPage(held, []).map((m: any) => m.messageId)).toEqual(['m1']);
+  });
+
   test('an older page is appended, deduped by message or call id', () => {
     const held = [message({ messageId: 'm2' })];
     const page = [

@@ -17,6 +17,7 @@ import {
   totalUnread,
   withConversationRead,
   withIncomingMessage,
+  withOutgoingMessage,
 } from '../messaging/conversations';
 import { withDraft, withoutDraft } from '../messaging/drafts';
 import {
@@ -571,6 +572,9 @@ export default function useMessaging({
       setMessagesByPeer(prev =>
         prependMessage(prev, trimmedPeerId, buildOptimisticMessage(outgoing)),
       );
+      // The chat list summarises the same conversation, so it has to learn
+      // about the send at the same moment the conversation does.
+      setConversations(prev => withOutgoingMessage(prev, buildOptimisticMessage(outgoing)));
       persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
 
       await drainOutbox();
@@ -597,6 +601,7 @@ export default function useMessaging({
       });
 
       setMessagesByPeer(prev => prependMessage(prev, trimmedPeerId, optimisticMessage));
+      setConversations(prev => withOutgoingMessage(prev, optimisticMessage));
       attachmentUploadMetaRef.current[messageId] = { conversationId, createdAt };
       return messageId;
     },
