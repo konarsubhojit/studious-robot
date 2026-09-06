@@ -52,23 +52,33 @@ In Codespaces, forward port `4173` (the Ports panel handles this automatically
 the first time the port is bound) and use the generated public URL to reach
 `/health` from a browser.
 
-### Deployment topology: one process, no Redis
+### Deployment topology: two signaling VMs behind a load balancer
 
-The deployment is a **single systemd unit** on an OCI VM (see
-[`deploy/README.md`](./deploy/README.md)). `REDIS_URL` is deliberately unset:
-with one process the in-memory message bus and read cache are exactly
-equivalent to their Redis counterparts — a publish and its subscriber are the
-same object — and the Socket.IO Redis adapter has nothing to adapt. In that
-mode the in-memory call registry plus Postgres is the single source of truth,
-and `/health` reports `stateAffinity: "sticky"`.
+The signaling server runs as a single systemd unit **on each of two small VMs**,
+with Postgres and Redis on a separate host. That is a multi-instance
+deployment, so **`REDIS_URL` is mandatory on both VMs**: it is what makes the
+call registry, sessions, presence, the read cache and Socket.IO fan-out shared
+rather than private to each VM.
 
-**The one trigger for reintroducing Redis is running more than one process.**
-With `REDIS_URL` configured, runtime call/session state is coordinated through
-Redis-backed store primitives, `/health` reports `stateAffinity: "shared"`, and
-**round-robin (non-sticky)** load balancing becomes correct. The systemd-native
-way to get there is the `robot-signal@.service` template unit described in
-`deploy/README.md` §5a; the server refuses to start a template instance above
-ordinal 0 without `REDIS_URL` in production.
+With `REDIS_URL` configured, `/health` reports `stateAffinity: "shared"` and
+**round-robin (non-sticky)** load balancing is correct. Without it each VM
+keeps its own copy of everything: a cache invalidation published by one never
+reaches the other, a call created on VM A is invisible to VM B, and a client
+that reconnects to the other VM silently loses its session. The failure is
+silent, so the server refuses to start without `REDIS_URL` when it is told it
+is one of several (`INSTANCE_ID` > 0, see `server/src/lib/instances.ts`) and
+`NODE_ENV=production`.
+
+**Give each VM a distinct `INSTANCE_ID`** in `/etc/robot-signal/env`
+(`INSTANCE_ID=0` on the first, `1` on the second, …). Nothing sets it
+automatically for separate hosts, and without it the guard above cannot tell a
+two-VM fleet from a single machine.
+
+Only a genuinely single-instance deployment — local development, the test
+suite — may leave `REDIS_URL` unset, where `/health` reports
+`stateAffinity: "sticky"` and the in-memory bus and cache are equivalent.
+
+See [`deploy/README.md`](./deploy/README.md) for the full setup.
 
 ## Run the mobile app
 

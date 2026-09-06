@@ -136,6 +136,7 @@ import {
   describeDegradedMedia,
 } from '../call/answerPath';
 import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
+import { bearerAuthHeaders } from '../authHeaders';
 import {
   decideIceConnectionState,
 } from '../call/iceRestartLadder';
@@ -1906,9 +1907,9 @@ export default function useCallFlow({
       try {
         const sessionId = await createOrGetSession();
 
-        const response = await fetch(
-          buildCallLookupUrl({ signalingUrl, callId, sessionId }),
-        );
+        const response = await fetch(buildCallLookupUrl({ signalingUrl, callId }), {
+          headers: bearerAuthHeaders(sessionId),
+        });
 
         if (!response.ok) {
           const failure = classifyLookupFailure(response.status);
@@ -2388,8 +2389,8 @@ export default function useCallFlow({
         url: buildCallActionUrl({ signalingUrl: signalingUrl ?? '', callId, action: 'accept' }),
         options: {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId }),
+          headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+          body: '{}',
         },
       }));
       const verdict = classifyHttpAccept(response);
@@ -2669,8 +2670,8 @@ export default function useCallFlow({
           }),
           options: {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId }),
+            headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
+            body: '{}',
           },
         }));
         if (response?.ok) return true;

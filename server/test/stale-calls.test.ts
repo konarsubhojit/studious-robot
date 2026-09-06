@@ -44,13 +44,12 @@ async function startServer(opts?: import('../src/createServer.ts').CreateServerO
 /**
  * @param url - Base URL of the server under test.
  * @param path - Request path, including the leading slash.
- * @param sessionId - Appended as `?sessionId=` when present.
+ * @param sessionId - Sent as `Authorization: Bearer <id>` when present.
  */
 async function getJson(url: string, path: string, sessionId?: string, headers: Record<string, string> = {}): Promise<{ status: number; body: any; }> {
-  const pathname = sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`, { headers });
+  const response = await fetch(`${url}${path}`, {
+    headers: { ...headers, ...(sessionId ? { authorization: `Bearer ${sessionId}` } : {}) },
+  });
   return { status: response.status, body: await readJson(response) };
 }
 

@@ -23,15 +23,15 @@ async function startServer(opts: import('../src/createServer.ts').CreateServerOp
 /**
  * @param url - Base URL of the server under test.
  * @param path - Request path, including the leading slash.
- * @param sessionId - Appended as `?sessionId=` when present.
+ * @param sessionId - Sent as `Authorization: Bearer <id>` when present.
  */
 async function deleteJson(url: string, path: string, sessionId?: string): Promise<{ status: number; body: any; }> {
-  const fullPath = sessionId
-    ? `${url}${path}?sessionId=${encodeURIComponent(sessionId)}`
-    : `${url}${path}`;
-  const response = await fetch(fullPath, {
+  const response = await fetch(`${url}${path}`, {
     method: 'DELETE',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(sessionId ? { authorization: `Bearer ${sessionId}` } : {}),
+    },
   });
   return { status: response.status, body: await readJson(response) };
 }

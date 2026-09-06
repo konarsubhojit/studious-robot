@@ -2,9 +2,9 @@
 
 This document covers the **one-time VM setup** and explains how the automated SSH deploy works.
 
-The **deployment target** is an **Oracle Cloud Infrastructure (OCI) Ampere A1** VM running **Oracle Linux**, with the service user `opc`, **firewalld**, and **Caddy** terminating TLS. The server runs as **one plain systemd unit** — there is no process manager in front of it. A **GCP e2-micro / Ubuntu** host (user `ubuntu`, nginx + certbot) is also documented as an alternative; sections below call out where the two paths differ.
+The **deployment target** is **Oracle Cloud Infrastructure (OCI)** running **Oracle Linux**, with the service user `opc`, **firewalld**, and **Caddy** terminating TLS. The fleet is **two small signaling VMs behind a load balancer, plus a separate host running Postgres and Redis**. Each signaling VM runs **one plain systemd unit** — there is no process manager in front of it. A **GCP e2-micro / Ubuntu** host (user `ubuntu`, nginx + certbot) is also documented as an alternative; sections below call out where the two paths differ.
 
-> **PM2 is no longer used.** Everything below assumes systemd, and a single process. §5a describes the systemd-native path to more than one process, and what it obliges you to turn on.
+> **PM2 is no longer used.** Everything below assumes systemd. Because the fleet has more than one instance, **`REDIS_URL` is mandatory** — see §5a.
 
 ---
 
@@ -12,19 +12,30 @@ The **deployment target** is an **Oracle Cloud Infrastructure (OCI) Ampere A1** 
 
 ```
 GitHub Actions (push to master)
-  └─► appleboy/ssh-action → VM (OCI Ampere A1/Oracle Linux, or GCP e2-micro/Ubuntu)
+  └─► appleboy/ssh-action → each signaling VM (OCI / Oracle Linux)
           ├─ git fetch / reset
           ├─ npm ci --omit=dev
           └─ sudo systemctl reload-or-restart robot-signal
+
+                     load balancer (round-robin, no ip_hash)
+                       │
+      ┌────────────────┴────────────────┐
+   signal VM 0                       signal VM 1
+   robot-signal.service              robot-signal.service
+   INSTANCE_ID=0                     INSTANCE_ID=1
+      └────────────────┬────────────────┘
+                       │
+            data host: Postgres + Redis
 ```
 
-The `studious-robot` Node.js signaling server runs as a **systemd service** on the VM, managed by the unit file at `deploy/robot-signal.service`, and is fronted by a TLS-terminating reverse proxy (Caddy on OCI, nginx + certbot on the Ubuntu alternative).
+The `studious-robot` Node.js signaling server runs as a **systemd service** on each VM, managed by the unit file at `deploy/robot-signal.service`, and is fronted by a TLS-terminating reverse proxy (Caddy on OCI, nginx + certbot on the Ubuntu alternative). **Every step below is performed on each signaling VM**, with the per-VM differences (`INSTANCE_ID`, `PORT`) called out where they occur.
 
 ---
 
 ## 1. Prerequisites
 
-- A VM running Oracle Linux (target: **OCI Ampere A1**, arm64) or Ubuntu (alternative: GCP e2-micro).
+- Two VMs running Oracle Linux (target: **OCI**, arm64) or Ubuntu (alternative: GCP e2-micro), plus a host reachable from both running **Postgres** and **Redis**.
+- A load balancer (or reverse proxy) in front of the two signaling VMs.
 - A domain name (or a free **DuckDNS** subdomain) pointing at the VM's public IP (required for TLS; see §9).
 
 ---
@@ -173,61 +184,99 @@ TimeoutStopSec=30
 
 Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restart`** instead of a hard `restart`, which lets in-flight calls drain during a redeploy and starts the service if it was stopped. For a multi-instance (true rolling) setup, restart instances one at a time behind the load balancer, waiting for each `/health` to return `200` before moving to the next.
 
-## 5a. One process — and what changes if you ever need two
+## 5a. Two instances — and the shared state they oblige
 
-The default and current deployment is **one `robot-signal.service`, one Node
-process, no Redis**. That is a deliberate choice, not an unfinished one:
+The fleet is **two signaling VMs**, each running one `robot-signal.service`,
+behind a round-robin load balancer. A client's requests — and its WebSocket —
+can land on either VM, and may move between them on any reconnect. That single
+fact drives everything in this section.
 
-- With a single process, the in-memory message bus and the in-memory read cache
-  are *exactly equivalent* to their Redis counterparts — a publish and its
-  subscriber are the same object — and the Socket.IO Redis adapter has nothing
-  to adapt.
-- `GET /health` reports the resulting mode as `"stateAffinity": "sticky"`
-  (single process) versus `"shared"` (Redis configured). Use it to confirm which
-  mode is live.
-- Leaving `REDIS_URL` unset therefore removes a daemon, five client connections
-  and one `/health` failure mode without changing behaviour.
+### `REDIS_URL` is mandatory here
 
-**The trigger for bringing Redis back is exactly one thing: running more than
-one process.** Nothing else — not load, not memory, not uptime — changes the
-answer, because the failure it prevents (state private to each process) cannot
-occur while there is only one.
+Almost all cross-request state in this server is only shared between instances
+when `REDIS_URL` is configured:
 
-The systemd-native way to run several is a **template unit**. Copy
-`robot-signal.service` to `/etc/systemd/system/robot-signal@.service` and map
-the instance name onto the port and the ordinal:
+- the **call registry**, so a call created on VM 0 can be accepted on VM 1;
+- **sessions and presence**, so a reconnect to the other VM is not a silent
+  logout;
+- the **read cache** (conversation lists, first-page history, call history) and
+  the **Pub/Sub bus** that invalidates it, so an invalidation on one VM is not
+  invisible to the other for a full TTL;
+- the **Socket.IO Redis adapter**, so an event addressed to a user reaches
+  their socket whichever VM holds it.
+
+Without it each VM keeps a private copy of all four and the deployment is
+quietly wrong rather than loudly broken — clients read stale data, calls
+disappear, and nothing logs an error. Set `REDIS_URL` in
+`/etc/robot-signal/env` on **both** VMs, pointing at the shared data host.
+
+### Give each VM a distinct `INSTANCE_ID`
+
+The server refuses to start without `REDIS_URL` when it knows it is one of
+several — but with separate VMs nothing tells it that automatically. Declare it
+per host in `/etc/robot-signal/env`:
+
+```dotenv
+# VM 0
+INSTANCE_ID=0
+# VM 1
+INSTANCE_ID=1
+```
+
+A process with `INSTANCE_ID` greater than zero and no `REDIS_URL` throws at
+startup under `NODE_ENV=production`, and warns otherwise (see
+`server/src/lib/instances.ts`). Instance `0` is never faulted — it cannot tell
+whether it is alone — so **`INSTANCE_ID` on the second VM is what arms the
+guard**. Set it before you need it.
+
+The same variable is what a systemd *template* unit would supply if you ever
+consolidate onto one larger host: copy `robot-signal.service` to
+`/etc/systemd/system/robot-signal@.service` and map the instance name onto both
+the ordinal and the port —
 
 ```ini
-# In [Service], replacing the fixed Environment=PORT=4173 line:
+# In [Service], replacing the fixed Environment=PORT= line:
 Environment=INSTANCE_ID=%i
 Environment=PORT=417%i
 ```
 
 ```bash
-sudo systemctl enable --now robot-signal@0 robot-signal@1 robot-signal@2
+sudo systemctl enable --now robot-signal@0 robot-signal@1
 ```
 
-At that point **`REDIS_URL` becomes mandatory**, and the server enforces it: a
-process whose `INSTANCE_ID` is greater than zero refuses to start without it
-under `NODE_ENV=production`, and warns otherwise (see
-`server/src/lib/instances.ts`). Instance `0` is never faulted — it cannot tell
-whether it is alone — so the single-unit host above is unaffected.
+### Load balancing
 
-Front the instances with a round-robin upstream — **not `ip_hash`**, since with
-Redis the state affinity is `shared`:
+Use **round-robin — not `ip_hash`**. With Redis the state affinity is `shared`,
+so sticky routing buys nothing and costs you an uneven distribution. Confirm
+before switching:
+
+```bash
+curl -fsS https://signal.yourdomain.com/health | grep -o '"stateAffinity":"[^"]*"'
+# must print "stateAffinity":"shared" on BOTH VMs
+```
+
+nginx, with both VMs' private addresses:
 
 ```nginx
 upstream robot_signal {
-    server 127.0.0.1:4170;
-    server 127.0.0.1:4171;
-    server 127.0.0.1:4172;
+    server 10.0.0.11:4173 max_fails=2 fail_timeout=10s;
+    server 10.0.0.12:4173 max_fails=2 fail_timeout=10s;
 }
 ```
 
-Also scale `DATABASE_POOL_MAX` down per instance so the total stays within the
-provider's connection limit (e.g. `4` each for six instances rather than the
-single-instance default of `20`), and restart instances one at a time, waiting
-for each `/health` to return `200` before moving on.
+Socket.IO needs the `Upgrade`/`Connection` headers on the `proxy_pass` (§9),
+otherwise the WebSocket transport silently degrades to long-polling.
+
+### Sizing that follows from N = 2
+
+- **`DB_POOL_SIZE` is per instance.** Two VMs at the default of 4 open 8
+  Postgres connections in total; keep the sum inside the data host's limit.
+- **Restart one VM at a time**, waiting for its `/health` to return `200`
+  before touching the other, so the drain is a rolling one.
+- **Redis is a single point of failure for the fleet.** It holds live call
+  state and sessions; losing it costs in-flight calls, not durable data
+  (Postgres holds that). Bind it to the private subnet, set `requirepass`, and
+  never expose it publicly.
 
 ---
 
@@ -299,11 +348,7 @@ not on the VM.
 
 ### Redis (horizontal scaling) configuration
 
-**Not used by the current deployment.** One systemd unit means one process, and
-§5a explains why the in-memory bus and cache are equivalent to Redis in that
-shape. Leave `REDIS_URL` unset; `/health` will report
-`"stateAffinity": "sticky"`. Everything below applies only once you instantiate
-the `robot-signal@` template unit.
+**Required by this deployment** — the fleet is two signaling VMs (§5a).
 
 Redis is required for **N > 1 signaling instances** (multiple processes/VMs
 behind a load balancer). It provides:
@@ -317,22 +362,29 @@ behind a load balancer). It provides:
 
 Provision Redis and point the server at it with the `REDIS_URL` env var:
 
-- **Self-hosted on the VM** (simplest for a small deployment):
+- **On the shared data host** (what this deployment does — the same box as
+  Postgres, reachable from both signaling VMs over the private subnet):
 
   ```bash
-  # Oracle Linux
+  # Oracle Linux, on the data host
   sudo dnf install -y redis
   sudo systemctl enable --now redis
-  # Bind to localhost only (default) and set REDIS_URL=redis://127.0.0.1:6379
+  # Bind to the PRIVATE address, never 0.0.0.0, and set requirepass:
+  #   bind 10.0.0.10
+  #   requirepass <long-random-secret>
+  # Then, on each signaling VM:
+  #   REDIS_URL=redis://:<secret>@10.0.0.10:6379
   ```
+
+  Open 6379 to the signaling VMs' subnet only — in both the OCI Security List
+  and the data host's firewalld (§8b covers the same two-layer rule for 4173).
 
 - **Managed** (OCI Cache / Redis Cloud / Upstash): create an instance and use the
   provider's `rediss://…` URL (TLS).
 
-Then add `REDIS_URL=redis://127.0.0.1:6379` (or the managed URL) to
-`/etc/robot-signal/env` on **every** instance and reload the service. Use
-round-robin upstream routing (no `ip_hash`) after verifying `/health` reports
-`stateAffinity: "shared"`.
+Then add `REDIS_URL=…` to `/etc/robot-signal/env` on **both** signaling VMs
+and reload the service. Use round-robin upstream routing (no `ip_hash`) after
+verifying `/health` reports `stateAffinity: "shared"` on each.
 Secure self-hosted Redis by binding to localhost (or a private subnet) and/or
 setting `requirepass`; never expose it publicly.
 
@@ -340,11 +392,12 @@ setting `requirepass`; never expose it publicly.
 silent correctness bug: each process keeps its own sessions, presence, call
 registry and read cache, so a cache invalidation published by one process never
 reaches the others and clients can read stale data for a full TTL. To make that
-impossible to miss, a process whose systemd template ordinal (`INSTANCE_ID=%i`,
-or `SIGNAL_INSTANCE_ID`) is greater than zero refuses to start when `REDIS_URL`
-is unset and `NODE_ENV=production`, and logs a warning otherwise (see
+impossible to miss, a process whose declared ordinal (`INSTANCE_ID`, or
+`SIGNAL_INSTANCE_ID`) is greater than zero refuses to start when `REDIS_URL` is
+unset and `NODE_ENV=production`, and logs a warning otherwise (see
 `server/src/lib/instances.ts`). Instance `0` is never faulted — it cannot tell
-whether it is alone — so a single-instance host is unaffected.
+whether it is alone — so **the guard only arms once you set `INSTANCE_ID=1` on
+the second VM** (§5a). Set it as part of provisioning, not after an incident.
 
 ---
 
@@ -661,8 +714,10 @@ At startup the server logs the active Mongo host, database, collection, and whet
 
 ## 14. Production host snapshot (authoritative for host migration)
 
-Production (`signal.kiyon.store`) runs a **single** `robot-signal.service` unit
-from `~/repos/studious-robot`, with no process manager and no Redis.
+Production (`signal.kiyon.store`) runs one `robot-signal.service` unit per
+signaling VM from `~/repos/studious-robot`, with no process manager. There are
+two such VMs behind a load balancer, plus a separate host running Postgres and
+Redis (§5a).
 
 ### Files tracked in-repo
 
@@ -682,28 +737,35 @@ dropped (mode `600 root:root` — see §5). Keep real values only on the host:
 
 ```dotenv
 DATABASE_URL=<DATABASE_URL>
+REDIS_URL=<REDIS_URL>
 TURN_STATIC_AUTH_SECRET=<TURN_STATIC_AUTH_SECRET>
 AZURE_NOTIFICATION_HUB_CONNECTION_STRING=<AZURE_NOTIFICATION_HUB_CONNECTION_STRING>
 DEBUG_API_TOKEN=<DEBUG_API_TOKEN>
+# Distinct per VM — this is what arms the multi-instance guard (§5a).
+INSTANCE_ID=0
+DB_POOL_SIZE=4
 PORT=4173
 HOST=127.0.0.1
 ```
 
-`REDIS_URL` is deliberately absent (§5a). `DATABASE_POOL_MAX` is left at its
-single-instance default; only lower it if you instantiate the template unit.
+Only `INSTANCE_ID` differs between the two VMs. `DB_POOL_SIZE` is **per
+instance**: keep `instances × DB_POOL_SIZE` inside the data host's connection
+limit.
 
 ### Reverse-proxy topology
 
-Proxy straight to the single process — there is no upstream block:
+The load balancer fans out to both VMs; each VM's local proxy (if any) points
+at its own process. See §5a for the nginx upstream. A Caddy front end:
 
 ```caddy
 signal.yourdomain.com {
-    reverse_proxy 127.0.0.1:4173
+    reverse_proxy 10.0.0.11:4173 10.0.0.12:4173
 }
 ```
 
-nginx equivalent: `proxy_pass http://127.0.0.1:4173;` plus the
-`Upgrade`/`Connection` headers from §9.
+Caddy load-balances round-robin by default and upgrades WebSockets without
+extra configuration. Do **not** add a hash-based policy: state affinity is
+`shared`.
 
 ### Incident traps to avoid
 
@@ -726,6 +788,12 @@ nginx equivalent: `proxy_pass http://127.0.0.1:4173;` plus the
 6. **Do not reintroduce a process manager.** Node runs the TypeScript entry
    point directly and systemd already supplies restart, log capture, resource
    limits and the graceful-drain contract.
+7. **A missing `INSTANCE_ID` disarms the multi-instance guard.** Both VMs
+   reporting instance `null` means neither will refuse to start with `REDIS_URL`
+   missing, and the fleet degrades silently (§5a).
+8. **Restart one VM at a time.** Both at once drops every in-flight call; the
+   point of the drain window is that it overlaps with the other VM still
+   serving.
 
 ### Additional operational notes
 
@@ -739,13 +807,23 @@ nginx equivalent: `proxy_pass http://127.0.0.1:4173;` plus the
 ### Verification commands
 
 ```bash
+# On each signaling VM:
 curl -fsS http://127.0.0.1:4173/health
 systemctl is-active robot-signal
 systemd-analyze security robot-signal   # sandbox exposure score
 ```
 
-`/health` reports `"stateAffinity":"sticky"` on this shape; `"shared"` would
-mean Redis is configured, which only the template unit needs (§5a).
+`/health` must report `"stateAffinity":"shared"` on **both** VMs. `"sticky"`
+means that VM has no `REDIS_URL` and is keeping private state — fix it before
+sending it traffic.
+
+Load distribution through the balancer (parallel, not sequential — each proxy
+worker keeps its own round-robin cursor):
+
+```bash
+seq 30 | xargs -P 10 -I{} curl -s https://signal.yourdomain.com/health \
+  | grep -o '"instanceId":"[^"]*"' | sort | uniq -c
+```
 
 ### Region selection rule of thumb
 

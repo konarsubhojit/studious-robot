@@ -3,6 +3,7 @@ import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import { DEFAULT_CALL_MEDIA_TYPE } from '../callUx';
 import { errorMessage } from '../errors';
+import { bearerAuthHeaders } from '../authHeaders';
 import { loadCallMediaTypes, saveCallMediaTypes } from '../settingsStorage';
 import type { CallMediaType, CallMediaTypeMap } from '../settingsStorage';
 
@@ -145,9 +146,8 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         const trimmedUrl = signalingUrl.trim();
         const trimmedUserId = userId.trim();
         const response = await authedFetchRef.current?.((sid: string) => ({
-          url: `${trimmedUrl}${API_ROUTES.CALLS}?sessionId=${encodeURIComponent(
-            sid,
-          )}&limit=${limit}`,
+          url: `${trimmedUrl}${API_ROUTES.CALLS}?limit=${limit}`,
+          options: { headers: bearerAuthHeaders(sid) },
         }));
         if (!response?.ok) return;
         const data = await response.json();

@@ -12,14 +12,18 @@
  * That failure mode is silent, which is the dangerous part, so a process that
  * knows it is not the first of several says so loudly.
  *
- * Deployment is a single systemd unit (`deploy/robot-signal.service`), and a
- * lone process needs no shared state at all: the in-memory bus and cache are
- * exactly equivalent to Redis for one process.  The systemd-native way to run
- * more than one is a *template* unit — `robot-signal@.service`, instantiated
- * as `robot-signal@0`, `robot-signal@1`, … behind an nginx upstream — which
- * makes the ordinal available as `%i`.  The unit is expected to surface it as
- * `INSTANCE_ID=%i` (`SIGNAL_INSTANCE_ID` is honoured as an alias), and the
- * moment such a unit exists `REDIS_URL` becomes mandatory.
+ * The deployment is two signaling VMs behind a load balancer, each running one
+ * `robot-signal.service` unit, so `REDIS_URL` is mandatory in production.
+ * Nothing supplies an ordinal automatically across separate hosts: it is
+ * declared per VM in `/etc/robot-signal/env` as `INSTANCE_ID`
+ * (`SIGNAL_INSTANCE_ID` is honoured as an alias).  A systemd *template* unit —
+ * `robot-signal@.service` with `Environment=INSTANCE_ID=%i` — supplies the same
+ * variable if the fleet is ever consolidated onto one host.
+ *
+ * Because instance `0` is never faulted (it cannot tell whether it is alone),
+ * setting `INSTANCE_ID` on the *second* and subsequent hosts is what arms this
+ * guard.  Leaving it unset everywhere disables the check entirely, which is why
+ * `deploy/README.md` §5a makes it part of provisioning.
  */
 
 /** Environment slice this module reads. */
@@ -38,11 +42,11 @@ export type MultiInstanceCheck = {
 };
 
 /**
- * Read this process's instance ordinal, or `null` when it is not running as an
- * instance of a systemd template unit.
+ * Read this process's declared instance ordinal, or `null` when none is set.
  *
- * A plain `robot-signal.service` sets neither variable, so a single-instance
- * host reports `null` and is never faulted.
+ * `null` means "this process was not told it is one of several" — which is
+ * correct for local development and the test suite, and is a provisioning
+ * omission on a multi-VM host.
  */
 export function resolveInstanceId(env: InstanceEnv = process.env): number | null {
   for (const key of ['INSTANCE_ID', 'SIGNAL_INSTANCE_ID']) {
@@ -78,8 +82,8 @@ export function checkMultiInstanceState(env: InstanceEnv = process.env): MultiIn
     message:
       `this is process instance ${instanceId} but REDIS_URL is not set: sessions, presence, ` +
       'call state and the read cache would be private to each process, so cache invalidation ' +
-      'cannot reach the other instances and clients would see stale data. Set REDIS_URL, or ' +
-      'run a single instance (the plain robot-signal.service unit, not the robot-signal@ template).',
+      'cannot reach the other instances and clients would see stale data. Set REDIS_URL on ' +
+      'every instance (see deploy/README.md §5a), or run a genuinely single instance.',
   };
 }
 

@@ -81,7 +81,8 @@ describe('useBlocks', () => {
     const [url, options] = (global.fetch as jest.Mock).mock.calls[0];
     expect(url).toBe('https://signal.example.com/blocks');
     expect(options.method).toBe('POST');
-    expect(JSON.parse(options.body)).toEqual({ sessionId: 'sess-1', blockeeId: 'user-bob' });
+    expect(JSON.parse(options.body)).toEqual({ blockeeId: 'user-bob' });
+    expect(options.headers.Authorization).toBe('Bearer sess-1');
   });
 
   test('keeps the peer unblocked when the server rejects the block', async () => {
@@ -112,8 +113,9 @@ describe('useBlocks', () => {
     expect(removed).toBe(true);
     expect(resultRef.current.isUserBlocked('user-bob')).toBe(false);
     const [url, options] = (global.fetch as jest.Mock).mock.calls[1];
-    expect(url).toBe('https://signal.example.com/blocks/user-bob?sessionId=sess-1');
+    expect(url).toBe('https://signal.example.com/blocks/user-bob');
     expect(options.method).toBe('DELETE');
+    expect(options.headers.Authorization).toBe('Bearer sess-1');
   });
 
   test('ignores a blank peer id', async () => {

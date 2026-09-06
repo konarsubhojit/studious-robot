@@ -89,10 +89,14 @@ DATABASE_URL=******host/dbname?sslmode=require
 DB_POOL_SIZE=4
 
 # ── Redis ────────────────────────────────────────────────────────────────────
-# Leave UNSET for the standard single-process deployment: the in-memory bus and
-# cache are equivalent to Redis for one process.  Set it only when running more
-# than one instance, where it is mandatory.
-# REDIS_URL=redis://localhost:6379
+# REQUIRED in the deployed topology (two signaling VMs): it is what makes
+# sessions, presence, call state, the read cache and socket fan-out shared
+# rather than private to each VM.  Optional for local single-process work.
+REDIS_URL=redis://localhost:6379
+
+# Distinct ordinal per instance.  Nothing sets this automatically across
+# separate hosts, and it is what arms the "multi-instance without Redis" guard.
+INSTANCE_ID=0
 
 # ── Session ──────────────────────────────────────────────────────────────────
 # Token lifetime in milliseconds.  Defaults to 7 days when unset; the client
@@ -212,12 +216,12 @@ Redis is required for multi-instance signaling and optional for single-instance:
 - Enables cross-instance session/presence fan-out via the Socket.IO Redis adapter.
 - Persists sessions and presence maps across server restarts.
 
-Neither is needed for a single process, which is how the server is deployed —
-so `REDIS_URL` is normally left unset and `/health` reports
-`stateAffinity: "sticky"`.
+Both are required by the deployed topology (two signaling VMs). A single local
+process may omit `REDIS_URL`, where `/health` reports `stateAffinity: "sticky"`
+and the in-memory bus and cache are equivalent.
 
 ```bash
-# Only when you actually run more than one instance:
+# Quick local Redis via Docker
 docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```

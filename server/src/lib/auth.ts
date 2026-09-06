@@ -40,15 +40,20 @@ function parseBearerToken(header: unknown): string | null {
 /**
  * Resolve the authenticated session for an HTTP request.
  *
- * The session id is taken (in priority order) from the `Authorization` bearer
- * header, the request body, or the query string.  Returns `null` when there is
- * no matching, unexpired session.
+ * The session id is taken from the `Authorization` bearer header, falling back
+ * to the request body.  Returns `null` when there is no matching, unexpired
+ * session.
+ *
+ * `?sessionId=` is deliberately **not** accepted. A session id is a bearer
+ * token, and a query string is written to the reverse proxy's access log, kept
+ * in intermediaries' request history and attached to a `Referer` — none of
+ * which the client can clear afterwards. The mobile app sends the header on
+ * every authenticated call.
  */
 function getSessionFromRequest(req: import('express').Request, sessions: import('../stores/contracts.ts').SessionStore): import('../stores/contracts.ts').SessionRecord | null {
   const sessionId =
     normaliseId(parseBearerToken(req.headers.authorization)) ||
-    normaliseId(req.body?.sessionId) ||
-    normaliseId(req.query?.sessionId);
+    normaliseId(req.body?.sessionId);
 
   if (!sessionId) return null;
   const session = sessions.get(sessionId) || null;
@@ -63,8 +68,7 @@ async function getSessionFromRequestAsync(
 ): Promise<import('../stores/contracts.ts').SessionRecord | null> {
   const sessionId =
     normaliseId(parseBearerToken(req.headers.authorization)) ||
-    normaliseId(req.body?.sessionId) ||
-    normaliseId(req.query?.sessionId);
+    normaliseId(req.body?.sessionId);
   if (!sessionId) return null;
 
   const local = state.sessions.get(sessionId);

@@ -42,7 +42,9 @@ async function createSession(url: string): Promise<string> {
  * @param url - Base URL of the server under test.
  */
 async function getCredentials(url: string, sessionId: string): Promise<{ response: Response; body: any; }> {
-  const response = await fetch(`${url}/turn-credentials?sessionId=${encodeURIComponent(sessionId)}`);
+  const response = await fetch(`${url}/turn-credentials`, {
+    headers: { authorization: `Bearer ${sessionId}` },
+  });
   return { response, body: await readJson(response) };
 }
 

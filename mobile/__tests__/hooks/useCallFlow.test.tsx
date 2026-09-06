@@ -569,7 +569,7 @@ describe('useCallFlow', () => {
       }
       if (url.includes('/users')) {
         userRequests += 1;
-        if (url.includes('sessionId=s1')) {
+        if (options?.headers?.Authorization === 'Bearer s1') {
           return {
             ok: false,
             status: 401,
@@ -604,7 +604,7 @@ describe('useCallFlow', () => {
       users = await resultRef.current.searchUsers('bob');
     });
 
-    // The first request (sessionId=s1) 401s; after a refresh to s2 the retry
+    // The first request (bearer s1) 401s; after a refresh to s2 the retry
     // succeeds, so searchUsers returns the directory entry.
     expect(users).toEqual([{ userId: 'bob', status: 'online', online: true }]);
     expect(userRequests).toBe(2);
@@ -2101,7 +2101,7 @@ describe('useCallFlow chat', () => {
     const { resultRef, tree } = await renderWithSocket();
 
     global.fetch = (jest.fn(async url => {
-      expect(url).toContain('/conversations?sessionId=');
+      expect(url).toContain('/conversations');
       return {
         ok: true,
         status: 200,
@@ -2129,7 +2129,7 @@ describe('useCallFlow chat', () => {
     const { resultRef, tree } = await renderWithSocket();
 
     const conversationsFetchSpy = jest.fn(async url => {
-      expect(url).toContain('/conversations?sessionId=');
+      expect(url).toContain('/conversations');
       return {
         ok: true,
         status: 200,
@@ -2280,10 +2280,8 @@ describe('useCallFlow chat', () => {
     global.fetch = (jest.fn(async (url, options) => {
       expect(url).toContain('/messages/read');
       expect(options.method).toBe('POST');
-      expect(JSON.parse(options.body)).toEqual({
-        sessionId: 'sess-chat',
-        peerId: 'bob',
-      });
+      expect(options.headers.Authorization).toBe('Bearer sess-chat');
+      expect(JSON.parse(options.body)).toEqual({ peerId: 'bob' });
       return {
         ok: true,
         status: 200,
@@ -2523,7 +2521,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(readRequestBody).toEqual({ sessionId: 'sess-chat', peerId: 'bob' });
+    expect(readRequestBody).toEqual({ peerId: 'bob' });
     expect(resultRef.current.conversations.find((c: any) => c.peerId === 'bob').unreadCount).toBe(0);
   });
 

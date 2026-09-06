@@ -320,7 +320,7 @@ curl -s -X POST $BASE/devices/register -H 'content-type: application/json' \
   -d "{\"sessionId\":\"$BOB\",\"provider\":\"fcm\",\"pushToken\":\"<real-device-token>\"}"
 
 # 3. Send a message over the socket (message.send), then read the history back
-curl -s "$BASE/messages?peerId=bob&limit=10&sessionId=$ALICE" | jq
+curl -s -H "Authorization: Bearer $ALICE" "$BASE/messages?peerId=bob&limit=10" | jq
 ```
 
 If `MONGODB_URI` is configured, restart the server and re-run the last command —

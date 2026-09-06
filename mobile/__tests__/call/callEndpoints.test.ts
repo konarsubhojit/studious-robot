@@ -11,33 +11,32 @@ import {
 } from '../../src/call/callEndpoints';
 
 describe('buildCallLookupUrl', () => {
-  it('asks the signaling host about the call, carrying the session', () => {
+  it('asks the signaling host about the call', () => {
     expect(
-      buildCallLookupUrl({
-        signalingUrl: 'https://s.example',
-        callId: 'call-1',
-        sessionId: 'sess-1',
-      }),
-    ).toBe('https://s.example/calls/call-1?sessionId=sess-1');
+      buildCallLookupUrl({ signalingUrl: 'https://s.example', callId: 'call-1' }),
+    ).toBe('https://s.example/calls/call-1');
   });
 
   it('tolerates a stored URL with surrounding whitespace', () => {
     expect(
-      buildCallLookupUrl({
-        signalingUrl: '  https://s.example  ',
-        callId: 'c',
-        sessionId: 's',
-      }),
-    ).toBe('https://s.example/calls/c?sessionId=s');
+      buildCallLookupUrl({ signalingUrl: '  https://s.example  ', callId: 'c' }),
+    ).toBe('https://s.example/calls/c');
   });
 
-  it('escapes both ids, so a payload cannot reshape the request', () => {
+  it('escapes the callId, so a payload cannot reshape the request', () => {
     const url = buildCallLookupUrl({
       signalingUrl: 'https://s.example',
       callId: '../admin',
-      sessionId: 'a&b=c',
     });
-    expect(url).toBe('https://s.example/calls/..%2Fadmin?sessionId=a%26b%3Dc');
+    expect(url).toBe('https://s.example/calls/..%2Fadmin');
+  });
+
+  // The session id is a bearer token and must never reach a URL, where proxy
+  // access logs and request history keep it beyond the app's reach.
+  it('never carries the session id', () => {
+    const url = buildCallLookupUrl({ signalingUrl: 'https://s.example', callId: 'c' });
+    expect(url).not.toContain('sessionId');
+    expect(url).not.toContain('?');
   });
 });
 

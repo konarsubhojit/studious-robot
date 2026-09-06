@@ -274,15 +274,15 @@ describe('useSession', () => {
     let response: any;
     await act(async () => {
       response = await resultRef.current.authedFetch((sessionId: any) => ({
-        url: `https://signal.example.com/thing?sessionId=${sessionId}`,
+        url: 'https://signal.example.com/thing',
+        options: { headers: { Authorization: `Bearer ${sessionId}` } },
       }));
     });
 
     expect(response.status).toBe(200);
-    expect(global.fetch).toHaveBeenLastCalledWith(
-      'https://signal.example.com/thing?sessionId=sess-2',
-      undefined,
-    );
+    expect(global.fetch).toHaveBeenLastCalledWith('https://signal.example.com/thing', {
+      headers: { Authorization: 'Bearer sess-2' },
+    });
   });
 
   test('authedFetch returns null when no session can be established', async () => {
@@ -292,7 +292,7 @@ describe('useSession', () => {
     let response: any;
     await act(async () => {
       response = await resultRef.current.authedFetch((sessionId: any) => ({
-        url: `https://signal.example.com/thing?sessionId=${sessionId}`,
+        url: `https://signal.example.com/thing#${sessionId}`,
       }));
     });
 

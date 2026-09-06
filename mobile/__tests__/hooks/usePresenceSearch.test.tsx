@@ -55,10 +55,9 @@ describe('usePresenceSearch', () => {
     });
 
     expect(presence).toEqual({ status: 'online', online: true });
-    expect(global.fetch).toHaveBeenCalledWith(
-      'https://signal.example.com/presence/bob?sessionId=sess-1',
-      undefined,
-    );
+    expect(global.fetch).toHaveBeenCalledWith('https://signal.example.com/presence/bob', {
+      headers: { Authorization: 'Bearer sess-1' },
+    });
   });
 
   test('checkPresence returns unknown:true for a 404', async () => {
@@ -117,8 +116,9 @@ describe('usePresenceSearch', () => {
     expect(params.authedFetchRef.current).toHaveBeenCalledWith(expect.any(Function));
     const buildRequest = params.authedFetchRef.current.mock.calls[0][0];
     expect(buildRequest('sess-1').url).toBe(
-      'https://signal.example.com/users?sessionId=sess-1&limit=10&search=bo',
+      'https://signal.example.com/users?limit=10&search=bo',
     );
+    expect(buildRequest('sess-1').options.headers.Authorization).toBe('Bearer sess-1');
   });
 
   test('searchUsers rejects on a failed response or network error', async () => {

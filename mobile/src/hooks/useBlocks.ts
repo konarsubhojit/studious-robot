@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import { errorMessage } from '../errors';
+import { bearerAuthHeaders } from '../authHeaders';
 
 /**
  * Owns the authenticated user's blocklist: the ids they have blocked, and the
@@ -45,7 +46,8 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
     try {
       const trimmedUrl = signalingUrl.trim();
       const response = await authedFetchRef.current?.((sid: string) => ({
-        url: `${trimmedUrl}${API_ROUTES.BLOCKS}?sessionId=${encodeURIComponent(sid)}`,
+        url: `${trimmedUrl}${API_ROUTES.BLOCKS}`,
+        options: { headers: bearerAuthHeaders(sid) },
       }));
       if (!response?.ok) return;
       const data = await response.json();
@@ -71,8 +73,8 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
           url: `${trimmedUrl}${API_ROUTES.BLOCKS}`,
           options: {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: sid, blockeeId: trimmedPeerId }),
+            headers: bearerAuthHeaders(sid, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ blockeeId: trimmedPeerId }),
           },
         }));
         if (!response?.ok) return false;
@@ -101,10 +103,8 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => ({
-          url: `${trimmedUrl}${API_ROUTES.BLOCKS}/${encodeURIComponent(
-            trimmedPeerId,
-          )}?sessionId=${encodeURIComponent(sid)}`,
-          options: { method: 'DELETE' },
+          url: `${trimmedUrl}${API_ROUTES.BLOCKS}/${encodeURIComponent(trimmedPeerId)}`,
+          options: { method: 'DELETE', headers: bearerAuthHeaders(sid) },
         }));
         if (!response || (!response.ok && response.status !== 404)) return false;
         setBlockedUsers((prev: string[]) =>

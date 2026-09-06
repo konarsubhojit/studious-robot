@@ -3,6 +3,7 @@ import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import type { PeerPresence } from '../types/directory';
 import { errorMessage } from '../errors';
+import { bearerAuthHeaders } from '../authHeaders';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
@@ -81,9 +82,8 @@ export default function usePresenceSearch({
       if (!trimmedId || !trimmedUrl) return null;
       try {
         const response = await authedFetchRef.current?.((sessionId: string) => ({
-          url: `${trimmedUrl}/presence/${encodeURIComponent(
-            trimmedId,
-          )}?sessionId=${encodeURIComponent(sessionId)}`,
+          url: `${trimmedUrl}/presence/${encodeURIComponent(trimmedId)}`,
+          options: { headers: bearerAuthHeaders(sessionId) },
         }));
         if (!response) return null;
         if (response.status === 404) return { status: 'offline', online: false, unknown: true };
@@ -127,14 +127,11 @@ export default function usePresenceSearch({
       try {
         const trimmedQuery = (query ?? '').trim();
         const response = await authedFetchRef.current?.((sid: string) => {
-          const params = new URLSearchParams({
-            sessionId: sid,
-            limit: String(limit),
-          });
+          const params = new URLSearchParams({ limit: String(limit) });
           if (trimmedQuery) params.set('search', trimmedQuery);
           return {
             url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}`,
-            options: signal ? { signal } : undefined,
+            options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
           };
         });
         if (!response?.ok) {

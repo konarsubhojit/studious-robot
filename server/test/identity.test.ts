@@ -66,10 +66,9 @@ async function postJson(url: string, path: string, body: Record<string, any>, op
  * @param path - Request path, including the leading slash.
  */
 async function getJson(url: string, path: string, options: { sessionId?: string; } = {}): Promise<{ status: number; body: any; }> {
-  const pathname = options.sessionId
-    ? `${path}${path.includes('?') ? '&' : '?'}sessionId=${encodeURIComponent(options.sessionId)}`
-    : path;
-  const response = await fetch(`${url}${pathname}`);
+  const response = await fetch(`${url}${path}`, {
+    headers: options.sessionId ? { authorization: `Bearer ${options.sessionId}` } : {},
+  });
 
   return {
     status: response.status,

@@ -51,7 +51,9 @@ async function completeCall(url: string, callerSession: string, calleeSession: s
 }
 
 async function getCalls(url: string, sessionId: string): Promise<any[]> {
-  const response = await fetch(`${url}/calls?sessionId=${encodeURIComponent(sessionId)}`);
+  const response = await fetch(`${url}/calls`, {
+    headers: { authorization: `Bearer ${sessionId}` },
+  });
   assert.equal(response.status, 200);
   const body = await readJson(response);
   return body.calls ?? body;
