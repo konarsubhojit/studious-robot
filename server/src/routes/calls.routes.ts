@@ -3,11 +3,11 @@ import { timingSafeEqual } from 'crypto';
 import { isBlocked } from '../security.ts';
 import { callHistoryCacheKey, readCached, writeCached } from '../cache.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
-import { normaliseId } from '../lib/normalize.ts';
-import { describeActiveCallsForUser } from '../domain/calls.ts';
+import { normaliseId, sanitizeForLog } from '../lib/normalize.ts';
+import { describeActiveCallsForUser, ownerDeviceIdForUser } from '../domain/calls.ts';
 import {
-  createCallRecordWithShared,
   hydrateCallFromShared,
+  placeCallWithShared,
   transitionCallWithShared,
 } from '../domain/sharedCalls.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
@@ -87,11 +87,36 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
-    const call = await createCallRecordWithShared(state, {
+    const result = await placeCallWithShared(state, {
       callerId: session.userId,
       calleeId,
       ringingTimeoutMs,
+      callerDeviceId: session.deviceId ?? null,
+      onSuperseded: (superseded, previousStatus, reason) => {
+        notifyCallTransition(io, state, superseded, {
+          previousStatus,
+          actor: session.userId,
+          reason,
+        });
+      },
     });
+
+    if (!result.ok) {
+      console.log(
+        `[calls] POST /calls rejected callerId=${sanitizeForLog(session.userId)}` +
+          ` calleeId=${sanitizeForLog(calleeId)} reason=call_in_progress` +
+          ` activeCallId=${result.call.callId} peerId=${sanitizeForLog(result.peerId)}`
+      );
+      res.status(409).json({
+        error: 'call_in_progress',
+        message: 'you are already in a call',
+        activeCallId: result.call.callId,
+        peerId: result.peerId,
+      });
+      return;
+    }
+
+    const call = result.call;
     notifyCallCreated(io, state, call);
 
     res.status(201).json(call);
@@ -251,9 +276,19 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
       return;
     }
 
+    const owner = ownerDeviceIdForUser(call, session.userId);
+    if (owner && session.deviceId && owner !== session.deviceId) {
+      res.status(409).json({
+        error: 'answered_elsewhere',
+        message: 'this call was answered on another device',
+      });
+      return;
+    }
+
     const previousStatus = call.status;
     const result = await transitionCallWithShared(state, call.callId, 'accepted', {
       actor: session.userId,
+      actorDeviceId: session.deviceId ?? null,
     });
     if (!result.ok) {
       res.status(result.status).json({ error: result.message || result.error });

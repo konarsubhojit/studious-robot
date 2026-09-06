@@ -1,4 +1,10 @@
-import { transitionCall, createCallRecord } from './calls.ts';
+import {
+  transitionCall,
+  createCallRecord,
+  callPeerId,
+  findCallerBlockingCall,
+  supersedeRedialledCalls,
+} from './calls.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type CallRecord = import('../stores/contracts.ts').CallRecord;
@@ -32,18 +38,96 @@ async function persistCallToShared(state: ServerState, call: CallRecord): Promis
 
 async function createCallRecordWithShared(
   state: ServerState,
-  args: { callerId: string; calleeId: string; ringingTimeoutMs: number }
+  args: {
+    callerId: string;
+    calleeId: string;
+    ringingTimeoutMs: number;
+    callerDeviceId?: string | null;
+  }
 ): Promise<CallRecord> {
   const call = createCallRecord(state, args);
   await persistCallToShared(state, call);
   return call;
 }
 
+/**
+ * The outcome of a placement request: either a call record (which may itself be
+ * a terminal `busy`/`unreachable` verdict about the *callee*) or a refusal
+ * because the *caller* is already on a call.
+ */
+type PlaceCallResult =
+  | { ok: true; call: CallRecord; superseded: CallRecord[] }
+  | { ok: false; error: 'call_in_progress'; call: CallRecord; peerId: string };
+
+/**
+ * Place a call on behalf of `callerId`, enforcing that a user may only hold one
+ * call at a time.
+ *
+ * Two failures used to be conflated into a `busy` record, and both left the
+ * caller stuck:
+ *
+ * 1. A stale ring the caller themselves had placed to the same callee made
+ *    every retry report the callee as busy — "busy with myself". Those rings
+ *    are now superseded so the redial goes through.
+ * 2. A caller already talking to someone else could still place a second call,
+ *    from this device or another one, and the two immediately fought over the
+ *    same media session. That is now refused with `call_in_progress`, naming
+ *    the peer so the client can say who the user is already talking to.
+ *
+ * @param onSuperseded - Invoked for each stale ring closed out, so the caller
+ *   can notify participants exactly as any other server-side ending does.
+ */
+async function placeCallWithShared(
+  state: ServerState,
+  {
+    callerId,
+    calleeId,
+    ringingTimeoutMs,
+    callerDeviceId = null,
+    onSuperseded,
+  }: {
+    callerId: string;
+    calleeId: string;
+    ringingTimeoutMs: number;
+    callerDeviceId?: string | null;
+    onSuperseded?: (call: CallRecord, previousStatus: string, reason: string) => void;
+  }
+): Promise<PlaceCallResult> {
+  const blocking = findCallerBlockingCall(state, callerId, calleeId);
+  if (blocking) {
+    return {
+      ok: false,
+      error: 'call_in_progress',
+      call: blocking,
+      peerId: callPeerId(blocking, callerId),
+    };
+  }
+
+  const superseded = supersedeRedialledCalls(state, callerId, calleeId, {
+    onTransition: onSuperseded,
+  });
+  for (const call of superseded) {
+    await persistCallToShared(state, call);
+  }
+
+  const call = await createCallRecordWithShared(state, {
+    callerId,
+    calleeId,
+    ringingTimeoutMs,
+    callerDeviceId,
+  });
+  return { ok: true, call, superseded };
+}
+
 async function transitionCallWithShared(
   state: ServerState,
   callId: string,
   toStatus: string,
-  { actor = null, reason = null }: { actor?: string | null; reason?: string | null } = {}
+  {
+    actor = null,
+    reason = null,
+    actorDeviceId = null,
+  }: { actor?: string | null; reason?: string | null; actorDeviceId?: string | null } = {}
 ): Promise<
   | { ok: true; call: CallRecord; stale: boolean }
   | { ok: false; status: number; error: string; message?: string }
@@ -54,7 +138,7 @@ async function transitionCallWithShared(
   }
 
   if (!state.callState) {
-    const local = transitionCall(state, callId, toStatus, { actor, reason });
+    const local = transitionCall(state, callId, toStatus, { actor, reason, actorDeviceId });
     return local.ok
       ? { ok: true, call: local.call, stale: false }
       : local;
@@ -78,7 +162,7 @@ async function transitionCallWithShared(
   }
 
   primeLocalCallForTransition(state, callId, atomic.call, fromStatus);
-  const transitioned = transitionCall(state, callId, toStatus, { actor, reason });
+  const transitioned = transitionCall(state, callId, toStatus, { actor, reason, actorDeviceId });
   if (!transitioned.ok) {
     return transitioned;
   }
@@ -138,5 +222,7 @@ export {
   hydrateCallFromShared,
   persistCallToShared,
   createCallRecordWithShared,
+  placeCallWithShared,
   transitionCallWithShared,
 };
+export type { PlaceCallResult };

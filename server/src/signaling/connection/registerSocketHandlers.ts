@@ -1,10 +1,10 @@
 import { MAX_ROOM_SIZE, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS } from '../../config.ts';
-import { normaliseId } from '../../lib/normalize.ts';
+import { normaliseId, sanitizeForLog } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
 import { resolveSocketIdentityAsync } from '../../lib/auth.ts';
 import { ensurePresenceRecord, upsertDevice, addConnection, removeConnection, userRoom } from '../../lib/state.ts';
-import { reconcileClientCallState, describeActiveCallsForUser } from '../../domain/calls.ts';
-import { createCallRecordWithShared } from '../../domain/sharedCalls.ts';
+import { reconcileClientCallState, describeActiveCallsForUser, ownerDeviceIdForUser } from '../../domain/calls.ts';
+import { placeCallWithShared } from '../../domain/sharedCalls.ts';
 import { notifyCallCreated, notifyIncomingCallAcknowledged, markIncomingCallAcknowledged, notifyRingingCallsForDisconnectedDevice, notifyCallTransition } from '../../domain/notifications.ts';
 import { handleSocketCallTransition, handleRtcRelay, handleCallConnected } from '../callHandlers.ts';
 import { registerMessageHandlers } from '../messageHandlers.ts';
@@ -218,14 +218,48 @@ function registerSocketHandlers(
         return;
       }
 
-      const call = await createCallRecordWithShared(state, {
+      const result = await placeCallWithShared(state, {
         callerId: socket.data.identity.userId,
         calleeId,
         ringingTimeoutMs,
+        callerDeviceId: socket.data.identity.deviceId ?? null,
+        onSuperseded: (superseded, previousStatus, reason) => {
+          notifyCallTransition(io, state, superseded, {
+            previousStatus,
+            actor: socket.data.identity.userId,
+            reason,
+          });
+        },
       });
+
+      if (!result.ok) {
+        console.log(
+          `[calls] call.initiate rejected callerId=${sanitizeForLog(socket.data.identity.userId)}` +
+            ` calleeId=${sanitizeForLog(calleeId)} reason=call_in_progress` +
+            ` activeCallId=${result.call.callId} peerId=${sanitizeForLog(result.peerId)}`
+        );
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.CALL_INITIATE,
+          ERROR_CODES.CALL_IN_PROGRESS,
+          'you are already in a call',
+          state
+        );
+        return;
+      }
+
+      const call = result.call;
       logCallCorrelation(socket, call.callId, CLIENT_EVENTS.CALL_INITIATE);
-      notifyCallCreated(io, state, call);
+      // Acknowledge before notifying. `notifyCallCreated` fans a
+      // `call.state_changed` out to the caller's own devices, and for a
+      // terminal verdict (`busy`/`unreachable`) that arrived while the caller
+      // was still awaiting this ack: the client ended the call it did not know
+      // it had yet, then the ack resolved and painted a ringing screen over the
+      // rejection. Acking first means the caller learns the verdict from the
+      // reply and the notification only confirms it.
       acknowledgeSuccess(socket, ack, CLIENT_EVENTS.CALL_INITIATE, { call });
+      notifyCallCreated(io, state, call);
     });
 
     socket.on(CLIENT_EVENTS.CALL_INCOMING_ACK, (payload = {}, ack) => {
@@ -259,8 +293,21 @@ function registerSocketHandlers(
         io,
         eventName: CLIENT_EVENTS.CALL_ACCEPT,
         nextStatus: 'accepted',
-        authorize: (call, userId) =>
-          call.calleeId === userId ? null : 'only the callee can accept a call',
+        authorize: (call, userId, { deviceId }) => {
+          if (call.calleeId !== userId) return 'only the callee can accept a call';
+          const owner = ownerDeviceIdForUser(call, userId);
+          // `transitionCall` treats accepted→accepted as success, so without
+          // this a second device answering the same ring was told it had joined
+          // a call it would never receive media for — the "accept does nothing"
+          // symptom — while its stray `rtc.answer` broke the real one.
+          if (owner && deviceId && owner !== deviceId) {
+            return {
+              code: ERROR_CODES.ANSWERED_ELSEWHERE,
+              message: 'this call was answered on another device',
+            };
+          }
+          return null;
+        },
       }).catch((error) => {
         console.error('[signaling] call.accept handler failed:', (error as any)?.message);
       });
@@ -380,6 +427,7 @@ function registerSocketHandlers(
       const userId = socket.data.identity.userId;
       const activeCallIds = normaliseReportedActiveCallIds(parsed);
       const cleared = reconcileClientCallState(state, userId, activeCallIds, {
+        deviceId: socket.data.identity.deviceId ?? null,
         onTransition: (call, previousStatus, reason) =>
           notifyCallTransition(io, state, call, { previousStatus, actor: userId, reason }),
       });

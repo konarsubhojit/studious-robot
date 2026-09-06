@@ -228,8 +228,12 @@ test('hydration: a stale non-terminal call from the DB is closed, not restored a
     },
     {
       callId: freshCallId,
-      callerId: 'user-zen',
-      calleeId: 'user-nez',
+      // Deliberately between two other users: `user-zen` must be left holding
+      // nothing but the stale record, so the busy assertion below tests the
+      // stale record alone. (A live call of their own would legitimately block
+      // a new one — see the one-call-at-a-time rule.)
+      callerId: 'user-fresh-caller',
+      calleeId: 'user-fresh-callee',
       status: 'connecting_media',
       endReason: null,
       createdAt: new Date(),
@@ -680,5 +684,225 @@ test('guard: the connected steady state is never subject to the media-connect ti
   // Only a status that is still setting up media may carry that reason.
   for (const status of ['accepted', 'connecting_media']) {
     assert.equal(getCallExpiry({ ...call, status }, {})?.reason, 'media_connect_timeout');
+  }
+});
+
+// ─── 7. One call at a time, per device ───────────────────────────────────────
+
+test('redial: the caller\'s own unfinished ring to the same callee is superseded, not reported busy', async () => {
+  const { url, getCall, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    await createSession(url, 'user-bob');
+
+    // The first ring is never cancelled — the caller's socket died mid-ring.
+    const first = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    assert.equal(first.body.status, 'ringing');
+
+    const redial = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    assert.equal(redial.status, 201);
+    assert.equal(redial.body.status, 'ringing', 'a redial must not be blocked by the caller\'s own ring');
+    assert.notEqual(redial.body.callId, first.body.callId);
+
+    const superseded = getCall(first.body.callId);
+    assert.equal(superseded?.status, 'ended');
+    assert.equal(superseded?.endReason, 'superseded');
+  } finally {
+    await teardown();
+  }
+});
+
+test('redial: the superseded ring is announced so the callee stops ringing for it', async () => {
+  const { url, teardown } = await startServer();
+  let callee;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    callee = await connect(url, { sessionId: calleeSession });
+
+    const first = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    const ended = waitForStatus(callee, 'ended');
+    await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+
+    const payload = await ended;
+    assert.equal(payload.callId, first.body.callId);
+    assert.equal(payload.reason, 'superseded');
+  } finally {
+    await teardown(callee);
+  }
+});
+
+test('placement: a caller already in a call cannot dial someone else', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    await createSession(url, 'user-carol');
+
+    const live = await startConnectingMediaCall(url, callerSession, calleeSession);
+
+    const second = await postJson(url, '/calls', { calleeId: 'user-carol' }, callerSession);
+    assert.equal(second.status, 409);
+    assert.equal(second.body.error, 'call_in_progress');
+    // The peer is named so the client can say *who* the user is talking to.
+    assert.equal(second.body.peerId, 'user-bob');
+    assert.equal(second.body.activeCallId, live);
+  } finally {
+    await teardown();
+  }
+});
+
+test('placement: an unanswered incoming ring does not stop the user dialling out', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    const aliceSession = await createSession(url, 'user-alice');
+    const bobSession = await createSession(url, 'user-bob');
+    await createSession(url, 'user-carol');
+
+    // Bob is being rung and has neither answered nor declined. A ring lives for
+    // the full ring timeout, so counting it as "already in a call" would lock
+    // Bob out of dialling for minutes because somebody else called him.
+    await postJson(url, '/calls', { calleeId: 'user-bob' }, aliceSession);
+
+    const outgoing = await postJson(url, '/calls', { calleeId: 'user-carol' }, bobSession);
+    assert.equal(outgoing.status, 201);
+    assert.equal(outgoing.body.status, 'ringing');
+  } finally {
+    await teardown();
+  }
+});
+
+test('placement: a second device of the caller cannot dial while the first holds a call', async () => {
+  const { url, teardown } = await startServer();
+  let second;
+  try {
+    const firstDevice = await createSession(url, 'user-alice');
+    const secondDevice = await createSession(url, 'user-alice', 'device-alice-2');
+    const calleeSession = await createSession(url, 'user-bob');
+    await createSession(url, 'user-carol');
+    second = await connect(url, { sessionId: secondDevice });
+
+    await startConnectingMediaCall(url, firstDevice, calleeSession);
+
+    const ack = await emitWithAck(second, 'call.initiate', { version: 1, calleeId: 'user-carol' });
+    assert.equal(ack.ok, false);
+    assert.equal(ack.error.code, 'call_in_progress');
+  } finally {
+    await teardown(second);
+  }
+});
+
+test('call.initiate: a busy verdict is acknowledged, not only broadcast', async () => {
+  const { url, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const carolSession = await createSession(url, 'user-carol');
+    await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    // Bob is occupied by someone else, so Alice's call is rejected as busy.
+    await postJson(url, '/calls', { calleeId: 'user-bob' }, carolSession);
+
+    const ack = await emitWithAck(caller, 'call.initiate', { version: 1, calleeId: 'user-bob' });
+    assert.equal(ack.ok, true);
+    // The verdict must be readable from the ack itself: the caller acts on it
+    // there, and a `call.state_changed` that arrives first must not be the only
+    // notice of it.
+    assert.equal(ack.call.status, 'busy');
+    assert.equal(ack.call.endReason, 'busy');
+  } finally {
+    await teardown(caller);
+  }
+});
+
+test('accept: a second device cannot answer a call the first already took', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let secondDevice;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    const calleeSecondSession = await createSession(url, 'user-bob', 'device-bob-2');
+    secondDevice = await connect(url, { sessionId: calleeSecondSession });
+
+    const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    const callId = created.body.callId;
+    const accepted = await postJson(url, `/calls/${callId}/accept`, {}, calleeSession);
+    assert.equal(accepted.status, 200);
+
+    const ack = await emitWithAck(secondDevice, 'call.accept', { version: 1, callId });
+    assert.equal(ack.ok, false);
+    assert.equal(ack.error.code, 'answered_elsewhere');
+
+    // The live call is untouched by the refused second answer.
+    assert.equal(getCall(callId)?.status, 'accepted');
+
+    const overHttp = await postJson(url, `/calls/${callId}/accept`, {}, calleeSecondSession);
+    assert.equal(overHttp.status, 409);
+    assert.equal(overHttp.body.error, 'answered_elsewhere');
+  } finally {
+    await teardown(secondDevice);
+  }
+});
+
+test('accept: the answering device may re-send its own accept', async () => {
+  const { url, teardown } = await startServer();
+  let callee;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    callee = await connect(url, { sessionId: calleeSession });
+
+    const created = await postJson(url, '/calls', { calleeId: 'user-bob' }, callerSession);
+    const callId = created.body.callId;
+
+    assert.equal((await emitWithAck(callee, 'call.accept', { version: 1, callId })).ok, true);
+    // A retry after a flaky ack must still succeed: same device, same call.
+    assert.equal((await emitWithAck(callee, 'call.accept', { version: 1, callId })).ok, true);
+  } finally {
+    await teardown(callee);
+  }
+});
+
+test('call.state.report: an idle second device does not end the call held by the first', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let idleDevice;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const idleSession = await createSession(url, 'user-alice', 'device-alice-2');
+    const calleeSession = await createSession(url, 'user-bob');
+    idleDevice = await connect(url, { sessionId: idleSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+
+    const ack = await emitWithAck(idleDevice, 'call.state.report', {
+      version: 1,
+      activeCallIds: [],
+    });
+    assert.equal(ack.ok, true);
+    assert.deepEqual(ack.clearedCallIds, []);
+    // The other device is still on the call, and can see that it is.
+    assert.equal(ack.activeCalls.length, 1);
+    assert.equal(getCall(callId)?.status, 'accepted');
+  } finally {
+    await teardown(idleDevice);
+  }
+});
+
+test('call.state.report: the owning device can still clear its own phantom call', async () => {
+  const { url, getCall, teardown } = await startServer();
+  let caller;
+  try {
+    const callerSession = await createSession(url, 'user-alice');
+    const calleeSession = await createSession(url, 'user-bob');
+    caller = await connect(url, { sessionId: callerSession });
+
+    const callId = await startConnectingMediaCall(url, callerSession, calleeSession);
+
+    const ack = await emitWithAck(caller, 'call.state.report', { version: 1, activeCallIds: [] });
+    assert.deepEqual(ack.clearedCallIds, [callId]);
+    assert.equal(getCall(callId)?.endReason, 'client_state_reconciled');
+  } finally {
+    await teardown(caller);
   }
 });

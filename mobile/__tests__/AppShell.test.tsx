@@ -551,4 +551,37 @@ describe('AppShell accessibility and error states', () => {
     });
     expect(openSettings).toHaveBeenCalled();
   });
+
+  test('says who this user is in a call with on their other device', async () => {
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({
+        callElsewhere: { callId: 'call-far', peerId: 'bob', status: 'accepted' },
+      }),
+    );
+    const tree = await renderShell();
+
+    const [banner] = findByTestID(tree, 'call-elsewhere-banner');
+    expect(banner).toBeDefined();
+    const texts = tree.root
+      .findAll((node: any) => typeof node.type === 'string')
+      .flatMap((node: any) =>
+        (Array.isArray(node.props?.children) ? node.props.children : [node.props?.children]).filter(
+          (child: unknown) => typeof child === 'string',
+        ),
+      );
+    expect(texts).toContain('In a call with bob on another device');
+  });
+
+  test('does not repeat the other device when this device is the one in the call', async () => {
+    useCallFlowMock.mockReturnValue(
+      makeCallFlow({
+        callPhase: CALL_STATES.IN_CALL,
+        isInCall: true,
+        callElsewhere: { callId: 'call-far', peerId: 'bob', status: 'accepted' },
+      }),
+    );
+    const tree = await renderShell();
+
+    expect(findByTestID(tree, 'call-elsewhere-banner')).toHaveLength(0);
+  });
 });

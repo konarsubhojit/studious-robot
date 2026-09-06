@@ -60,6 +60,9 @@ const CALL_END_REASONS: Record<string, string> = {
   media_failed: 'call_media_failed',
   heartbeat_timeout: 'call_heartbeat_timeout',
   client_state_reconciled: 'call_state_reconciled',
+  // The caller dialled the same callee again while their previous ring to that
+  // callee was still open, so the old one is closed in favour of the new one.
+  superseded: 'call_superseded',
 };
 
 /**

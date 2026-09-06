@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { TERMINAL_CALL_STATES, CALL_TRANSITIONS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, CONNECTED_CALL_STATUS } from '../config.ts';
 import { resolveReachableChannels, hasKnownUser } from '../lib/state.ts';
 import { runDetached } from '../lib/queryTiming.ts';
+import { sanitizeForLog } from '../lib/normalize.ts';
 import { invalidateCallHistoryCache, persistCallRecord, persistCallEvent } from '../callPersistence.ts';
 
 /**
@@ -42,7 +43,7 @@ function mirrorCallToShared(state: ServerState, call: CallRecord): void {
  * (non-terminal) call, or to `unreachable` when the callee has no reachable
  * channels at all; otherwise starts in `ringing`.
  */
-function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeoutMs }: { callerId: string; calleeId: string; ringingTimeoutMs: number; }): CallRecord {
+function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeoutMs, callerDeviceId = null }: { callerId: string; calleeId: string; ringingTimeoutMs: number; callerDeviceId?: string | null; }): CallRecord {
   const callId = randomUUID();
   const now = new Date().toISOString();
 
@@ -86,6 +87,10 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
     missedReadAt: null,
     ringTimeoutAt:
       status === 'ringing' ? new Date(Date.now() + ringingTimeoutMs).toISOString() : null,
+    // The device that dialled owns the caller's half of the call until it says
+    // otherwise; the callee's half is claimed by whichever device answers.
+    callerDeviceId,
+    calleeDeviceId: null,
   };
 
   state.calls.set(callId, call);
@@ -136,8 +141,13 @@ function computeDurationSeconds(call: CallRecord, previousStatus: string, endedA
  * Idempotent: if the call is already in `toStatus`, returns `{ ok: true }`.
  * Terminal states are immutable: any other transition out of a terminal state
  * returns `{ ok: false, status: 409 }`.
+ *
+ * `actorDeviceId` is the device the actor is acting from. It is recorded as the
+ * callee's device on `accepted`, which is what later tells a second device of
+ * the same user that the call is not its to answer, relay media for, or report
+ * as gone.
  */
-function transitionCall(state: ServerState, callId: string, toStatus: string, { actor = null, reason = null }: { actor?: string | null; reason?: string | null; } = {}): { ok: true; call: CallRecord; } |
+function transitionCall(state: ServerState, callId: string, toStatus: string, { actor = null, reason = null, actorDeviceId = null }: { actor?: string | null; reason?: string | null; actorDeviceId?: string | null; } = {}): { ok: true; call: CallRecord; } |
 { ok: false; status: number; error: string; message?: string; } {
   const call = state.calls.get(callId);
   if (!call) {
@@ -180,6 +190,7 @@ function transitionCall(state: ServerState, callId: string, toStatus: string, { 
   call.updatedAt = new Date(nowMs).toISOString();
   if (toStatus === 'accepted') {
     call.answeredAt = call.updatedAt;
+    if (actorDeviceId) call.calleeDeviceId = actorDeviceId;
   }
   if (isTerminal) {
     call.ringTimeoutAt = null;
@@ -236,6 +247,89 @@ function getActiveCallsForUser(state: ServerState, userId: string): CallRecord[]
     }
   }
   return active;
+}
+
+/**
+ * The other participant in `call`, from `userId`'s point of view.
+ */
+function callPeerId(call: CallRecord, userId: string): string {
+  return call.callerId === userId ? call.calleeId : call.callerId;
+}
+
+/**
+ * The device `userId` is holding `call` on, when it is known.
+ *
+ * `null` means "no device has claimed this half of the call" — an unanswered
+ * ring for the callee, or a record created before device ownership was
+ * tracked. Callers must treat that as *unknown*, never as "no device".
+ */
+function ownerDeviceIdForUser(call: CallRecord, userId: string): string | null {
+  if (call.callerId === userId) return call.callerDeviceId ?? null;
+  if (call.calleeId === userId) return call.calleeDeviceId ?? null;
+  return null;
+}
+
+/**
+ * Whether `call` is the very ring `callerId` is now placing again.
+ *
+ * A user cannot be ringing the same person twice, so an open ring from this
+ * caller to this callee is the previous attempt — one whose cancellation never
+ * reached the server (a hang-up over a dead socket, or an app killed mid-ring).
+ * Reporting the callee as `busy` because of it told the caller their peer was
+ * on another call when the only thing in the way was their own dead ring, and
+ * left them with no way to get through until it timed out.
+ */
+function isSupersededRedial(call: CallRecord, callerId: string, calleeId: string): boolean {
+  return call.status === 'ringing' && call.callerId === callerId && call.calleeId === calleeId;
+}
+
+/**
+ * The call that stops `callerId` from placing a new call to `calleeId`.
+ *
+ * Only the *caller's* own calls are considered here: a call the callee is on is
+ * a `busy` answer, which is the callee's business and is decided when the
+ * record is created. This is the other half — "you are already on a call" — and
+ * it was missing entirely, so a second call placed from a second device (or
+ * from a stale screen) was accepted and immediately collided with the first.
+ *
+ * An *unanswered* incoming ring does not block: being rung is not being in a
+ * call, and a ring nobody answered lives for the full ring timeout, so counting
+ * it would lock the user out of dialling for two minutes because someone else
+ * called them. Declining first is a client-side courtesy, not a server rule.
+ *
+ * @returns the blocking call, or `null` when the caller is free.
+ */
+function findCallerBlockingCall(state: ServerState, callerId: string, calleeId: string): CallRecord | null {
+  for (const call of getActiveCallsForUser(state, callerId)) {
+    if (isSupersededRedial(call, callerId, calleeId)) continue;
+    if (call.status === 'ringing' && call.calleeId === callerId) continue;
+    return call;
+  }
+  return null;
+}
+
+/**
+ * Close out the caller's own open rings to `calleeId` so a redial can go
+ * through, and report which ones were closed.
+ *
+ * @returns the calls that were ended.
+ */
+function supersedeRedialledCalls(state: ServerState, callerId: string, calleeId: string, { onTransition }: { onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void; } = {}): CallRecord[] {
+  const superseded: CallRecord[] = [];
+  const now = Date.now();
+  for (const call of getActiveCallsForUser(state, callerId)) {
+    if (!isSupersededRedial(call, callerId, calleeId)) continue;
+
+    const previousStatus = finalizeCall(state, call, 'ended', 'superseded', now);
+    state.telemetry?.recordCallTransition(call, previousStatus);
+    console.log(
+      `[calls] call.superseded callId=${call.callId} ${previousStatus}->ended` +
+        ` reason=superseded actor=${sanitizeForLog(callerId)}`
+    );
+    onTransition?.(call, previousStatus, 'superseded');
+    superseded.push(call);
+  }
+  return superseded;
 }
 
 /**
@@ -454,10 +548,18 @@ function sanitizeHydratedCalls(state: ServerState, { now = Date.now(), ...timeou
  * not initiate are left alone so a genuine concurrent incoming ring survives
  * (the ring timeout bounds it anyway).
  *
+ * Reconciliation is scoped to one *device*, not one user.  A user's second
+ * device knows nothing about the call running on the first, so letting it
+ * report an empty set on the user's behalf tore down a live conversation from
+ * across the room.  When `deviceId` is given, calls another device of this user
+ * demonstrably owns are left to that device.
+ *
  * @param activeCallIds - Call ids the client still considers live.
+ * @param deviceId - The reporting device; when omitted (a legacy client that
+ *   does not send one) reconciliation stays user-wide, as before.
  * @returns The calls that were closed out.
  */
-function reconcileClientCallState(state: ServerState, userId: string, activeCallIds: Iterable<string>, { onTransition }: { onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void; } = {}): CallRecord[] {
+function reconcileClientCallState(state: ServerState, userId: string, activeCallIds: Iterable<string>, { onTransition, deviceId = null }: { onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void; deviceId?: string | null; } = {}): CallRecord[] {
   if (!userId) return [];
   const claimed = new Set(activeCallIds ?? []);
   const now = Date.now();
@@ -465,6 +567,10 @@ function reconcileClientCallState(state: ServerState, userId: string, activeCall
   for (const call of getActiveCallsForUser(state, userId)) {
     if (claimed.has(call.callId)) continue;
     if (call.status === 'ringing' && call.callerId !== userId) continue;
+    if (deviceId) {
+      const owner = ownerDeviceIdForUser(call, userId);
+      if (owner && owner !== deviceId) continue;
+    }
 
     const previousStatus = finalizeCall(state, call, 'ended', 'client_state_reconciled', now);
     state.telemetry?.recordCallTransition(call, previousStatus);
@@ -598,6 +704,10 @@ export {
   appendCallEvent,
   getActiveCallsForUser,
   describeActiveCallsForUser,
+  callPeerId,
+  ownerDeviceIdForUser,
+  findCallerBlockingCall,
+  supersedeRedialledCalls,
   isCalleeUnreachable,
   isSingleInstanceMode,
   recordCallHeartbeat,

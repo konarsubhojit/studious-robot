@@ -435,3 +435,140 @@ export function resolveOutgoingCallee({
   }
   return { ok: true, calleeId };
 }
+
+// ─── Multi-device ownership ──────────────────────────────────────────────────
+
+/** The parts of a call record the device-ownership rules read. */
+export type DeviceOwnedCall = {
+  callId?: string | null;
+  status?: string | null;
+  callerId?: string | null;
+  calleeId?: string | null;
+  callerDeviceId?: string | null;
+  calleeDeviceId?: string | null;
+};
+
+/** A call this user is on, described for a device that is not on it. */
+export type CallElsewhere = {
+  callId: string;
+  peerId: string;
+  status: string;
+};
+
+/**
+ * The other participant in `call`, from `userId`'s point of view.
+ *
+ * `null` when `userId` is not a participant, so a caller can never present a
+ * bystander's call as the user's own.
+ */
+export function callPeerId(call: DeviceOwnedCall, userId: string | null | undefined): string | null {
+  const me = (userId ?? '').trim();
+  if (!me) return null;
+  if (call.callerId === me) return call.calleeId ?? null;
+  if (call.calleeId === me) return call.callerId ?? null;
+  return null;
+}
+
+/**
+ * The device `userId` is holding `call` on, when the server knows it.
+ *
+ * `null` means *unknown* — an unanswered ring, or a server that predates
+ * per-device ownership — never "no device".
+ */
+export function callOwnerDeviceId(call: DeviceOwnedCall, userId: string | null | undefined): string | null {
+  const me = (userId ?? '').trim();
+  if (!me) return null;
+  if (call.callerId === me) return call.callerDeviceId ?? null;
+  if (call.calleeId === me) return call.calleeDeviceId ?? null;
+  return null;
+}
+
+/**
+ * Whether `call` is one this user is on, held by a *different* device of
+ * theirs.
+ *
+ * Ignores the call's status deliberately: it answers "was this device ever in
+ * this call?", which stays true once the call is over. That is what lets a
+ * device drop a finished call's verdict on the floor instead of announcing the
+ * result of a call it had no part in.
+ *
+ * Ownership is only ever asserted from a device id the server recorded: an
+ * unclaimed ring is not "somebody else's", it is a call this device may still
+ * answer.
+ */
+export function isCallOwnedByAnotherDevice({
+  call,
+  userId,
+  deviceId,
+}: {
+  call: DeviceOwnedCall | null | undefined;
+  userId: string | null | undefined;
+  deviceId: string | null | undefined;
+}): boolean {
+  const thisDevice = (deviceId ?? '').trim();
+  if (!call?.callId || !thisDevice) return false;
+  if (!callPeerId(call, userId)) return false;
+
+  const owner = callOwnerDeviceId(call, userId);
+  return Boolean(owner) && owner !== thisDevice;
+}
+
+/**
+ * Describe a live call that another of this user's devices is holding.
+ *
+ * Every call event fans out to *all* of a user's devices, so an idle second
+ * device sees the whole lifecycle of a call it has no part in. Acting on those
+ * events is what let it paint "Callee is busy" over an empty screen and — far
+ * worse — report "I hold no calls", ending the conversation running on the
+ * other device.
+ *
+ * @returns the call and who it is with, or `null` when it is not another
+ *   device's live call.
+ */
+export function describeCallOnAnotherDevice({
+  call,
+  userId,
+  deviceId,
+}: {
+  call: DeviceOwnedCall | null | undefined;
+  userId: string | null | undefined;
+  deviceId: string | null | undefined;
+}): CallElsewhere | null {
+  if (!isCallOwnedByAnotherDevice({ call, userId, deviceId })) return null;
+
+  const status = call?.status ?? '';
+  if (!status || isTerminalCallStatus(status)) return null;
+
+  const peerId = callPeerId(call as DeviceOwnedCall, userId);
+  if (!peerId) return null;
+
+  return { callId: (call as DeviceOwnedCall).callId as string, peerId, status };
+}
+
+/**
+ * Why a dial attempt must not be made, or `null` when it may go ahead.
+ *
+ * One call at a time, and the message names the peer: "you are already in a
+ * call" with no clue who with is what made the multi-device behaviour so
+ * confusing to begin with.
+ */
+export function describeDialBlocked({
+  activeCall,
+  callElsewhere,
+  incomingCall,
+}: {
+  activeCall?: DeviceOwnedCall | null;
+  callElsewhere?: CallElsewhere | null;
+  incomingCall?: DeviceOwnedCall | null;
+}): string | null {
+  if (incomingCall?.callId) {
+    return 'Answer or decline the incoming call first';
+  }
+  if (activeCall?.callId && !isTerminalCallStatus(activeCall.status ?? '')) {
+    return 'End the current call before placing another';
+  }
+  if (callElsewhere) {
+    return `You are in a call with ${callElsewhere.peerId} on another device`;
+  }
+  return null;
+}

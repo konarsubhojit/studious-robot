@@ -46,6 +46,19 @@ export type CallRecord = {
   ringTimeoutAt?: string | null;
   answeredAt?: string | null;
   lastHeartbeatAt?: string | null;
+  /**
+   * The device each participant is holding the call on: the one that placed it
+   * and the one that answered it.
+   *
+   * Live routing state, not history — which is why neither is a column in the
+   * `calls` table. A user may be signed in on several devices, and every
+   * call-scoped decision that used to be made per *user* was wrong for all but
+   * the simplest account: a second device could answer a call that was already
+   * up, or report "I hold no calls" and have the server end the call running on
+   * the first one.
+   */
+  callerDeviceId?: string | null;
+  calleeDeviceId?: string | null;
 };
 export type CallStore = Map<string, CallRecord>;
 export type CallEvent = {

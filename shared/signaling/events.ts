@@ -93,6 +93,19 @@ const ERROR_CODES = Object.freeze({
   RATE_LIMITED: 'rate_limited',
   UNAUTHORIZED: 'unauthorized',
   UNSUPPORTED_VERSION: 'unsupported_version',
+  /**
+   * The caller is already in a call, so a new one was not created.
+   *
+   * Distinct from a `busy` call record, which says the *callee* is occupied: a
+   * caller who is told "busy" about their own call has no way to tell the two
+   * apart, and the client needs to name the peer it is already talking to.
+   */
+  CALL_IN_PROGRESS: 'call_in_progress',
+  /**
+   * Another of this user's devices already answered the call, so this one must
+   * dismiss its incoming-call UI rather than join.
+   */
+  ANSWERED_ELSEWHERE: 'answered_elsewhere',
 });
 
 /** Protocol version carried by every `call.*`, `rtc.*` and `message.*` payload. */

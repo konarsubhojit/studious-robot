@@ -1985,6 +1985,253 @@ describe('useCallFlow incoming-call ringing', () => {
     );
     expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
   });
+
+  // ── Multi-device: one user, several devices ───────────────────────────────
+
+  /** Drive `placeCall` with a scripted `call.initiate` ack or rejection. */
+  function scriptInitiate(reply: (payload: any) => any) {
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]
+      .value;
+    socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
+      cb?.(event === 'call.initiate' ? reply(payload) : { ok: true });
+    });
+    return socketMock;
+  }
+
+  /** A local stream, so `placeCall` gets past `startLocalPreview`. */
+  function stubLocalMedia() {
+    const { mediaDevices } = require('react-native-webrtc');
+    (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    });
+  }
+
+  test('a busy verdict at placement is reported, not painted as ringing', async () => {
+    stubLocalMedia();
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    scriptInitiate(() => ({
+      ok: true,
+      call: {
+        callId: 'call-busy-verdict',
+        callerId: 'alice',
+        calleeId: 'bob',
+        status: 'busy',
+        endReason: 'busy',
+      },
+    }));
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.status.message).toBe('Callee is busy');
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('a placement blocked by a phantom call clears it and retries once', async () => {
+    stubLocalMedia();
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    let attempts = 0;
+    const socketMock = scriptInitiate(() => {
+      attempts += 1;
+      return attempts === 1
+        ? { ok: false, error: { code: 'call_in_progress', message: 'Already in a call' } }
+        : {
+            ok: true,
+            call: { callId: 'call-retry', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+          };
+    });
+
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const report = socketMock.emit.mock.calls.find(([event]: any) => event === 'call.state.report');
+    expect(report).toBeDefined();
+    expect(report[1].activeCallIds).toEqual([]);
+    expect(attempts).toBe(2);
+    expect(resultRef.current.status.message).toBe('Ringing bob…');
+  });
+
+  test('a placement blocked by another device says who the call is with', async () => {
+    stubLocalMedia();
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId('carol');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // The other device's call arrives as a normal fan-out event.
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'accepted',
+        call: {
+          callId: 'call-other-device',
+          callerId: 'alice',
+          calleeId: 'bob',
+          status: 'accepted',
+          callerDeviceId: 'device-other',
+        },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.callElsewhere).toEqual({
+      callId: 'call-other-device',
+      peerId: 'bob',
+      status: 'accepted',
+    });
+
+    const socketMock = scriptInitiate(() => ({ ok: true, call: {} }));
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.status.message).toBe(
+      'You are in a call with bob on another device',
+    );
+    expect(socketMock.emit.mock.calls.some(([event]: any) => event === 'call.initiate')).toBe(
+      false,
+    );
+  });
+
+  test("an idle device leaves another device's call alone", async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]
+      .value;
+    socketMock.emit.mockImplementation((_event: any, _payload: any, cb: any) => cb?.({ ok: true }));
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'busy',
+        call: {
+          callId: 'call-far',
+          callerId: 'alice',
+          calleeId: 'bob',
+          status: 'busy',
+          callerDeviceId: 'device-other',
+        },
+        reason: 'busy',
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // A terminal verdict for somebody else's call must not be shown here, and
+    // above all must not end it.
+    expect(resultRef.current.status.message).not.toBe('Callee is busy');
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
+
+  test('answering elsewhere dismisses this device’s incoming call', async () => {
+    const { stopIncomingRingtone } = require('../../src/ringtone');
+    const { endCall: endCallKeep } = require('../../src/callKeep');
+    const { resultRef, tree } = await renderWithSocket();
+
+    const incomingHandler = getSocketHandler('call.incoming');
+    await act(async () => {
+      await incomingHandler({ call: { callId: 'call-shared', callerId: 'irene' } });
+    });
+    await act(async () => {});
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+    expect(resultRef.current.incomingCall).not.toBeNull();
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'accepted',
+        call: {
+          callId: 'call-shared',
+          callerId: 'irene',
+          calleeId: 'alice',
+          status: 'accepted',
+          calleeDeviceId: 'device-other',
+        },
+      });
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(resultRef.current.incomingCall).toBeNull();
+    expect(resultRef.current.status.message).toBe('Answered on another device');
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(stopIncomingRingtone).toHaveBeenCalled();
+    expect(endCallKeep).toHaveBeenCalledWith('call-shared');
+  });
+
+  test('cancelling over a dead socket still reaches the server over HTTP', async () => {
+    stubLocalMedia();
+    const { resultRef, tree } = await renderWithSocket();
+    act(() => {
+      resultRef.current.setCalleeId('bob');
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    const socketMock = scriptInitiate(() => ({
+      ok: true,
+      call: { callId: 'call-dead-socket', callerId: 'alice', calleeId: 'bob', status: 'ringing' },
+    }));
+    await act(async () => {
+      await resultRef.current.placeCall();
+    });
+
+    // The socket dies between placing the call and cancelling it.
+    socketMock.connected = false;
+    const fetchMock = jest.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    global.fetch = fetchMock as any;
+
+    await act(async () => {
+      await resultRef.current.cancelOutgoingCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([url]: any) =>
+        String(url).endsWith('/calls/call-dead-socket/cancel'),
+      ),
+    ).toBe(true);
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+  });
 });
 
 // ─── Session lifecycle (session.invalid) ───────────────────────────────────

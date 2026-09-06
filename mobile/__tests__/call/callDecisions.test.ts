@@ -2,10 +2,15 @@ import {
   ANSWERED_CALL_HISTORY_LIMIT,
   buildCallEndSummary,
   callDurationSeconds,
+  callOwnerDeviceId,
+  callPeerId,
   classifyCallDelivery,
   decideAcceptIncomingCall,
   decideIncomingOffer,
+  describeCallOnAnotherDevice,
   describeCallStateEnding,
+  describeDialBlocked,
+  isCallOwnedByAnotherDevice,
   isLiveCallStatus,
   isStateChangeForOtherCall,
   isMissedCall,
@@ -503,5 +508,165 @@ describe('resolveOutgoingCallee', () => {
       ok: false,
       message: 'Enter a callee ID to call',
     });
+  });
+});
+
+/**
+ * Multi-device ownership: every call event fans out to all of a user's
+ * devices, so these rules are what stops an idle second device from acting on
+ * — and ending — a call running on the first.
+ */
+describe('callPeerId', () => {
+  it.each([
+    ['the caller sees the callee', 'alice', 'bob'],
+    ['the callee sees the caller', 'bob', 'alice'],
+  ])('%s', (_label, userId, expected) => {
+    expect(callPeerId({ callerId: 'alice', calleeId: 'bob' }, userId)).toBe(expected);
+  });
+
+  it.each([
+    ['a bystander', 'carol'],
+    ['no identity', undefined],
+    ['a blank identity', '  '],
+  ])('has no peer for %s', (_label, userId) => {
+    expect(callPeerId({ callerId: 'alice', calleeId: 'bob' }, userId)).toBeNull();
+  });
+});
+
+describe('callOwnerDeviceId', () => {
+  const call = {
+    callerId: 'alice',
+    calleeId: 'bob',
+    callerDeviceId: 'device-a',
+    calleeDeviceId: 'device-b',
+  };
+
+  it.each([
+    ['the caller reads their own device', 'alice', 'device-a'],
+    ['the callee reads their own device', 'bob', 'device-b'],
+  ])('%s', (_label, userId, expected) => {
+    expect(callOwnerDeviceId(call, userId)).toBe(expected);
+  });
+
+  it('reports an unclaimed side as unknown rather than as a device', () => {
+    expect(callOwnerDeviceId({ callerId: 'alice', calleeId: 'bob' }, 'bob')).toBeNull();
+  });
+
+  it('has no owner for a bystander', () => {
+    expect(callOwnerDeviceId(call, 'carol')).toBeNull();
+  });
+});
+
+describe('describeCallOnAnotherDevice', () => {
+  const base = {
+    callId: 'call-1',
+    status: 'connecting_media',
+    callerId: 'alice',
+    calleeId: 'bob',
+    callerDeviceId: 'device-a',
+  };
+
+  it("names the peer of a live call held by this user's other device", () => {
+    expect(
+      describeCallOnAnotherDevice({ call: base, userId: 'alice', deviceId: 'device-b' }),
+    ).toEqual({ callId: 'call-1', peerId: 'bob', status: 'connecting_media' });
+  });
+
+  it.each([
+    ['this device holds it', { call: base, userId: 'alice', deviceId: 'device-a' }],
+    [
+      'the owning device is unknown',
+      {
+        call: { ...base, callerDeviceId: null },
+        userId: 'alice',
+        deviceId: 'device-b',
+      },
+    ],
+    [
+      'the call is already over',
+      { call: { ...base, status: 'ended' }, userId: 'alice', deviceId: 'device-b' },
+    ],
+    ['this user is not in it', { call: base, userId: 'carol', deviceId: 'device-c' }],
+    ['there is no call', { call: null, userId: 'alice', deviceId: 'device-b' }],
+    [
+      'the call has no id',
+      { call: { ...base, callId: '' }, userId: 'alice', deviceId: 'device-b' },
+    ],
+    [
+      'the call has no status',
+      { call: { ...base, status: '' }, userId: 'alice', deviceId: 'device-b' },
+    ],
+    ['this device has no id yet', { call: base, userId: 'alice', deviceId: null }],
+  ])('is not another device\'s call when %s', (_label, input) => {
+    expect(describeCallOnAnotherDevice(input)).toBeNull();
+  });
+});
+
+describe('isCallOwnedByAnotherDevice', () => {
+  const base = {
+    callId: 'call-1',
+    callerId: 'alice',
+    calleeId: 'bob',
+    callerDeviceId: 'device-a',
+  };
+
+  it.each([
+    ['a live call', 'connecting_media'],
+    ['a call that has already ended', 'ended'],
+  ])("still recognises %s as another device's", (_label, status) => {
+    expect(
+      isCallOwnedByAnotherDevice({
+        call: { ...base, status },
+        userId: 'alice',
+        deviceId: 'device-b',
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['this device owns it', { call: base, userId: 'alice', deviceId: 'device-a' }],
+    [
+      'no device has claimed it',
+      { call: { ...base, callerDeviceId: null }, userId: 'alice', deviceId: 'device-b' },
+    ],
+    ['this user is not in it', { call: base, userId: 'carol', deviceId: 'device-c' }],
+    ['there is no call', { call: null, userId: 'alice', deviceId: 'device-b' }],
+    ['this device has no id yet', { call: base, userId: 'alice', deviceId: '' }],
+  ])('is not another device\'s call when %s', (_label, input) => {
+    expect(isCallOwnedByAnotherDevice(input)).toBe(false);
+  });
+});
+
+describe('describeDialBlocked', () => {
+  it('lets an idle device dial', () => {
+    expect(describeDialBlocked({})).toBeNull();
+  });
+
+  it('sends the user to the incoming call before anything else', () => {
+    expect(
+      describeDialBlocked({
+        incomingCall: { callId: 'call-in' },
+        activeCall: { callId: 'call-live', status: 'connecting_media' },
+        callElsewhere: { callId: 'call-far', peerId: 'bob', status: 'accepted' },
+      }),
+    ).toBe('Answer or decline the incoming call first');
+  });
+
+  it('refuses a second call from this device', () => {
+    expect(
+      describeDialBlocked({ activeCall: { callId: 'call-live', status: 'connecting_media' } }),
+    ).toBe('End the current call before placing another');
+  });
+
+  it('names the peer when another device holds the call', () => {
+    expect(
+      describeDialBlocked({
+        callElsewhere: { callId: 'call-far', peerId: 'bob', status: 'accepted' },
+      }),
+    ).toBe('You are in a call with bob on another device');
+  });
+
+  it('does not count a finished call as a call in progress', () => {
+    expect(describeDialBlocked({ activeCall: { callId: 'call-old', status: 'ended' } })).toBeNull();
   });
 });

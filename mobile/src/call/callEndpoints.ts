@@ -34,6 +34,16 @@ export function buildCallLookupUrl({
   return callResourceUrl(signalingUrl, callId);
 }
 
+/**
+ * A call action this device can take over HTTP.
+ *
+ * The full set the server exposes: answering and refusing an incoming call, and
+ * releasing an outgoing or connected one. Every action needs the HTTP route,
+ * because a socket that is not actually connected is exactly when a hang-up
+ * must still reach the server.
+ */
+export type CallAction = 'accept' | 'decline' | 'cancel' | 'end';
+
 /** Where to POST a call action taken by this device. */
 export function buildCallActionUrl({
   signalingUrl,
@@ -42,7 +52,7 @@ export function buildCallActionUrl({
 }: {
   signalingUrl: string;
   callId: string;
-  action: 'accept' | 'decline';
+  action: CallAction;
 }): string {
   return `${callResourceUrl(signalingUrl, callId)}/${action}`;
 }
