@@ -130,7 +130,7 @@ verifiable behind the existing CI gates.
 | D4.2 | Session id out of URLs | ✅ |
 | D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅ |
 | D4.4 | Stop the client opting out of the server cache | ✅ |
-| D1 | Consolidate messages into Postgres, delete Mongo | ⬜ **not started** |
+| D1 | Consolidate messages into Postgres, delete Mongo | ✅ — the `callTimeline` join it unlocks is still to write |
 | D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | ⬜ **not started** |
 
 ### D3 — Deployment surface (done)
@@ -242,45 +242,67 @@ which is identical either way and is already invalidated by the send path via
 no call staleness is introduced. The participant filter and the block check both
 still run after the cache read, so nothing leaks.
 
-### D1 — Postgres consolidation (not started)
+### D1 — Postgres consolidation (done)
 
-The large one, and the one that deletes more code than it adds. Land the schema
-and a Postgres `MessageStore` behind the **unchanged** interface, run it against
-the existing memory-store suite first, then cut over and delete the Mongo layer
-in one commit.
+The large one, and the one that deleted more code than it added. Chat history
+now lives in the `messages` table of the same Postgres database as users,
+devices and calls; MongoDB is gone.
 
-What a cutover removes: the `conversation_index` collection with its
+**What went in.** A `messages` table (migration `0010`) keyed on
+`(conversation_id, message_id)` with five indexes, each serving exactly one
+access path: the conversation page and its cursor, the two directions a search
+or conversation list matches on, a *partial* index over `read_at IS NULL` for
+unread counts, and a `pg_trgm` GIN index over `lower(body)` for search.
+`src/messageStore/pgStore.ts` implements the interface unchanged.
+
+**What came out.** The `conversation_index` collection with its
 `MONGODB_CONVERSATION_INDEX_WRITES`/`_READY` flag pair, compare-and-set ordering
-and duplicate-key retries; the `bodyLower` field with its own flag pair;
-`scripts/backfill-conversation-index.ts` and
-`scripts/backfill-message-body-lower.ts`; both directional composite indexes and
-the "sort must match the index exactly" constraint; the unbounded
-`find(participantFilter).toArray()` conversation fallback; the
-fetch-everything-then-slice search; `summariseConversations` in application code;
-the whole `mongoConnection` / `documents` / `records` / `MongoCollection`
-structural-type layer; the `mongodb` dependency; one connection pool; one
-`/health` failure mode; and `deploy/README.md` §13.
+and duplicate-key retries; the `bodyLower` field with its own flag pair; both
+backfill scripts; both directional composite indexes and the "sort must match
+the index exactly" constraint; the unbounded `find(participantFilter).toArray()`
+conversation fallback; the fetch-everything-then-slice search; the whole
+`mongoConnection` / `documents` / `MongoCollection` structural-type layer; the
+store-level timing wrapper (the pool already times every statement); the
+`mongodb` dependency; one connection pool; one `/health` failure mode; and
+`deploy/README.md` §13.
 
-Preserve `src/messageStore/types.ts`'s `MessageStore` verbatim — it is already the
-right seam, and `memoryStore.ts` must stay for tests. Note `type: 'memory' |
-'mongo'` needs a third member, and `/health` reports it.
+**Both open design questions resolved.**
 
-**Two open design questions, both undecided:**
+1. **Search: `pg_trgm`, not `tsvector`.** The existing semantics are a literal,
+   case-insensitive *substring* match — that is what `bodyMatches` does in the
+   memory store, and what the API has always returned. `pg_trgm` on
+   `lower(body)` preserves them exactly. `tsvector` is faster but matches word
+   *stems*, which would have silently changed what the endpoint returns and put
+   the two backends into disagreement, quietly invalidating the store suite
+   rather than failing it.
+2. **Data migration: none.** The user confirmed the dev-stage dataset is
+   disposable. The `messages` table starts empty.
 
-1. **Search semantics.** `pg_trgm` preserves Mongo's current literal
-   case-insensitive substring matching; `tsvector` + GIN is faster but changes
-   the semantics to word-stem matching. `test/message-store.test.ts` (48 tests)
-   encodes the current behaviour and will tell you which you picked.
-2. **Data migration.** `deploy/README.md` already documents that switching
-   providers does not migrate data. Confirm whether existing messages must be
-   carried over or whether the dev-stage dataset can be dropped.
+**One thing the plan did not anticipate.** Consolidating created a *new*
+unbounded table, so the retention sweep grew a third target — but
+`MESSAGE_RETENTION_MS` defaults to `0`, meaning off. Chat is the user's own
+content rather than a record the server made about them, and a background job
+that silently deletes it is a data-loss bug wearing a feature's clothes.
+Operators who need a bounded table set the window explicitly. Sweeping
+`messages` also needs a row-at-a-time delete rather than the `IN (...)` batch
+the other tables use, because the key is composite and `message_id` alone is
+only unique within its conversation.
 
-**The prize beyond deletion** is that two known bugs stop needing patches:
-`src/domain/callTimeline.ts` reads the in-memory `state.calls` at lines 51, 78
-and 163 (hence missed calls vanishing once the in-memory window prunes them), and
-`mergeTimeline` slices *after* merging two independently-limited lists (hence the
-paging bug). Both become correct as a single SQL join over `messages` and
-`calls`.
+**Testing.** `test/message-store-pg.test.ts` (17 tests) drives the store through
+a real Drizzle handle bound to a recording fake `pg` client, so what is asserted
+is the *SQL actually issued*. That matters here specifically: if
+`listConversations` stopped emitting `DISTINCT ON`, or the search predicate
+stopped matching the shape of the trigram index, the queries would still run and
+still return plausible rows — just by scanning the table. Only the statement text
+catches that. Backend-independent behaviour stayed in
+`message-store-internals.test.ts` over plain data.
+
+**Still outstanding.** The prize this unlocks has *not* been collected:
+`src/domain/callTimeline.ts` still reads the in-memory `state.calls` at lines
+51, 78 and 163 (so missed calls vanish once the in-memory window prunes them),
+and `mergeTimeline` still slices *after* merging two independently-limited lists
+(the paging bug). Both are now expressible as one SQL join over `messages` and
+`calls` — the table is there, the join is not written.
 
 ### D5 — Android (not started)
 
@@ -314,8 +336,9 @@ Ordered by payoff:
   `.eslintrc.js`); Jest **must** be `npx jest --ci --forceExit` or it hangs.
 - Server test doubles go through `test/helpers.ts`' `asDatabase` / `asMessageStore`
   / `asSocketIoServer`, never a per-suite `as any`.
-- Baseline at handoff: server 540 passing / 1 skipped, mobile 2114 passing,
-  typecheck and lint clean in both packages.
+- Baseline at handoff: server 529 passing / 1 skipped (the count *fell* because
+  the Mongo-driver suites went with the driver), mobile 2114 passing, typecheck
+  and lint clean in both packages.
 
 ## Notes and deviations
 

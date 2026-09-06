@@ -113,9 +113,8 @@ async function getJson(url: string, path: string, sessionId?: string): Promise<{
  * server — each of which is far wider than the subset any one suite exercises.
  * A double therefore cannot be checked against them structurally, so the
  * assertion is made once, here at the injection point, rather than with an
- * `as any` scattered through every suite (the same reasoning as
- * `src/messageStore/types.ts`'s `MongoClientLike`).  The double's own shape is
- * preserved so suites can still assert against the calls it recorded.
+ * `as any` scattered through every suite.  The double's own shape is preserved
+ * so suites can still assert against the calls it recorded.
  */
 function asDatabase<T>(double: T): T & import('../db/client.ts').Database {
   return double as T & import('../db/client.ts').Database;
