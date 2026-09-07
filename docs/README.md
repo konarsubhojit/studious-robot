@@ -11,4 +11,4 @@
 | [Setup guide](./SETUP.md) | Set up local development and deployment environments. |
 | [Task 5 report](./history/TASK_5_REPORT.md) | Historical investigation report for completed Task 5 work. |
 | [TypeScript migration](./history/TYPESCRIPT_MIGRATION.md) | Historical record of the completed TypeScript migration. |
-| [VM redeploy](./VM_REDEPLOY.md) | Update and restart the signaling server on a VM with the `redeploy` function. |
+| [VM redeploy and recovery](./VM_REDEPLOY.md) | Redeploy the three-host fleet, diagnose database traps, and verify backups and restores. |
