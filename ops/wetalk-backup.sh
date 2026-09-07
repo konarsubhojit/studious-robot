@@ -4,6 +4,7 @@ set -Eeuo pipefail
 export OCI_CLI_AUTH=instance_principal
 OCI_BIN=/home/ubuntu/bin/oci
 BUCKET=kiyonbucket
+# Healthy small-dataset dumps are 24-32 KB; 15 KB catches known stale copies.
 MIN_SIZE="${MIN_SIZE:-15000}"
 STAMP=$(date -u +%Y/%m/%d/%H%M%SZ)
 TMP=$(mktemp)
@@ -18,7 +19,10 @@ if [[ ! "$MIN_SIZE" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-pg_dump -Fc -d "${DATABASE_URL:?}" > "$TMP"
+if ! pg_dump -Fc -d "${DATABASE_URL:?}" > "$TMP"; then
+  echo "backup aborted: pg_dump failed" >&2
+  exit 1
+fi
 SIZE=$(stat -c%s "$TMP")
 
 # A stale duplicate database can dump successfully but contain little data.
