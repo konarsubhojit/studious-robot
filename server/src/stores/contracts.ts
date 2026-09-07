@@ -159,6 +159,8 @@ export type ServerState = Stores & {
   cache: import('../cache.ts').Cache;
   messageBus: import('../messageBus.ts').MessageBus | null;
   draining: boolean;
+  /** Active Socket.IO fan-out transport (see `lib/socketAdapter.ts`). */
+  socketTransport?: import('../lib/socketAdapter.ts').SocketTransport;
   incomingCallPushState?: Map<string, IncomingCallPushEntry>;
 };
 

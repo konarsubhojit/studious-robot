@@ -19,6 +19,10 @@ test('GET /health returns ok status', async () => {
     // client to one instance. Asserted here so the guarantee is not quietly
     // dropped from the probe payload deployments read it from.
     assert.equal(body.stateAffinity, 'sticky');
+    // The Socket.IO fan-out transport is reported separately from
+    // `stateAffinity`: Redis remains the default fan-out path and stays
+    // load-bearing for the call registry, sessions and the cache regardless.
+    assert.equal(body.socketTransport, 'redis-adapter');
     assert.equal(typeof body.instanceId, 'string');
     assert.deepEqual(body.sharedState, { calls: false, messageBus: false });
     assert.equal(typeof body.uptime, 'number');
@@ -67,9 +71,34 @@ test('GET /health reports shared affinity metadata when shared stores are config
     assert.equal(res.status, 200);
     const body = await readJson(res);
     assert.equal(body.stateAffinity, 'shared');
+    assert.equal(body.socketTransport, 'redis-adapter');
     assert.equal(body.instanceId, 'instance-test');
     assert.deepEqual(body.sharedState, { calls: true, messageBus: false });
   } finally {
     await new Promise((resolve) => httpServer.close(() => resolve(undefined)));
+  }
+});
+
+test('GET /health reports the Web PubSub transport while stateAffinity still tracks Redis', async () => {
+  const previous = process.env.WEB_PUBSUB_CONNECTION_STRING;
+  process.env.WEB_PUBSUB_CONNECTION_STRING = 'Endpoint=https://example;AccessKey=k;';
+  const server = createServer({ useAzureSocketIO: () => {} });
+  const port = await listenOnRandomPort(server.httpServer);
+  try {
+    await server.socketAdapterReady;
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(res.status, 200);
+    const body = await readJson(res);
+    assert.equal(body.socketTransport, 'web-pubsub');
+    // Swapping the socket adapter says nothing about where call/session state
+    // lives, so the affinity field must not move with it.
+    assert.equal(body.stateAffinity, 'sticky');
+  } finally {
+    if (previous === undefined) {
+      delete process.env.WEB_PUBSUB_CONNECTION_STRING;
+    } else {
+      process.env.WEB_PUBSUB_CONNECTION_STRING = previous;
+    }
+    await new Promise((resolve) => server.httpServer.close(() => resolve(undefined)));
   }
 });

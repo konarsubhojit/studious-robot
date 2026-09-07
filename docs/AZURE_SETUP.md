@@ -26,7 +26,12 @@ direct FCM/APNs.
    - [Configure the server](#15-configure-the-server)
    - [Free tier limits](#16-free-tier-limits)
    - [Troubleshooting](#17-troubleshooting)
-3. [Verifying the setup](#verifying-the-setup)
+3. [Part 2 — Azure Web PubSub for Socket.IO (optional)](#part-2--azure-web-pubsub-for-socketio-optional)
+   - [Create the resource in Socket.IO mode](#21-create-the-resource-in-socketio-mode)
+   - [Retrieve the connection string](#22-retrieve-the-connection-string)
+   - [Configure the hub and the server](#23-configure-the-hub-and-the-server)
+   - [What this does and does not replace](#24-what-this-does-and-does-not-replace)
+4. [Verifying the setup](#verifying-the-setup)
 
 ---
 
@@ -35,6 +40,7 @@ direct FCM/APNs.
 | Component | Azure resource | Resource group | Env vars |
 |-----------|---------------|----------------|----------|
 | Push notifications (calls + messages) | Notification Hubs namespace `apns-kiyon`, hub `storeman` | `sql` | `AZURE_NOTIFICATION_HUB_CONNECTION_STRING`, `AZURE_NOTIFICATION_HUB_NAME`, `AZURE_NOTIFICATION_HUB_API_VERSION` |
+| Socket.IO fan-out (optional, default-off) | Web PubSub resource **in Socket.IO mode** | your choice | `WEB_PUBSUB_CONNECTION_STRING`, `WEB_PUBSUB_HUB` |
 
 The signaling server talks to Notification Hubs over its **REST API**, signing
 requests with a SAS token it mints from the connection string. There is **no
@@ -190,6 +196,96 @@ prove the hub credentials work independently of the server.
 
 ---
 
+## Part 2 — Azure Web PubSub for Socket.IO (optional)
+
+> **Optional and off by default.** Unset `WEB_PUBSUB_CONNECTION_STRING` and the
+> server keeps using the Socket.IO **Redis adapter**, exactly as before. This
+> part is only for evaluating Azure-hosted socket fan-out; see
+> [`deploy/README.md` §5a](../deploy/README.md#5a-two-instances--and-the-shared-state-they-oblige)
+> for the deployment view.
+
+### 2.1 Create the resource in Socket.IO mode
+
+1. In the [Azure portal](https://portal.azure.com), choose **Create a resource**
+   and search for **Web PubSub**.
+2. Select **Web PubSub for Socket.IO** (not plain "Web PubSub"). The service
+   mode is chosen at creation time and **cannot be changed afterwards** — a
+   resource created in the default mode will not work with this server.
+3. Fill in the basics:
+   - **Subscription / Resource group** — the same ones you use for the
+     Notification Hubs namespace keeps billing in one place.
+   - **Resource name** — e.g. `wetalk-signaling`.
+   - **Region** — pick the region closest to the signaling VMs. Every signaling
+     event now makes an OCI → Azure round trip, so this choice is the single
+     biggest lever on added latency.
+   - **Pricing tier** — `Free` is enough to evaluate (limited concurrent
+     connections and daily messages); `Standard` for anything else.
+4. **Review + create**.
+
+### 2.2 Retrieve the connection string
+
+1. Open the resource, and under **Settings** click **Keys**.
+2. Copy the **Connection string** for the primary key. It looks like:
+
+   ```
+   Endpoint=https://wetalk-signaling.webpubsub.azure.com;AccessKey=AbCdEf...=;Version=1.0;
+   ```
+
+> ⚠️ **This string is a credential with full rights on the resource.** Never
+> commit it, never ship it in the mobile app, and never paste it into an issue
+> or PR. On the VMs it belongs in `/etc/robot-signal/env` (mode `600
+> root:root`), like every other secret.
+
+### 2.3 Configure the hub and the server
+
+A *hub* is a namespace within the resource. The server attaches to
+`WEB_PUBSUB_HUB` (default `signaling`); no portal configuration is required for
+Socket.IO mode — the hub is created on first use — but both VMs must name the
+**same** hub or they will not see each other's events.
+
+Install the optional integration on the signaling VMs (it is deliberately not a
+dependency of `server/package.json`, so default deployments install nothing
+new):
+
+```bash
+cd ~/repos/studious-robot/server
+npm install @azure/web-pubsub-socket.io
+```
+
+Then set, on **both** VMs:
+
+```bash
+WEB_PUBSUB_CONNECTION_STRING='Endpoint=https://wetalk-signaling.webpubsub.azure.com;AccessKey=...;Version=1.0;'
+# Optional — defaults to `signaling`
+# WEB_PUBSUB_HUB='signaling'
+```
+
+Restart the unit and confirm which transport actually attached:
+
+```bash
+curl -fsS https://signal.yourdomain.com/health | grep -o '"socketTransport":"[^"]*"'
+# "web-pubsub"      ← Web PubSub is live
+# "redis-adapter"   ← flag unset, or initialisation failed (check the journal)
+```
+
+If the package is missing or the resource rejects the negotiation, the server
+logs `reason=web_pubsub_dependency_missing` / `reason=web_pubsub_init_failed`
+and **falls back to the Redis adapter** rather than failing to boot.
+
+### 2.4 What this does and does not replace
+
+- It replaces **one** of Redis's four roles: the Socket.IO adapter. `REDIS_URL`
+  remains **mandatory** for the call registry, sessions/presence and the read
+  cache + invalidation bus, and the multi-instance startup guard stays armed.
+- It does **not** replace Notification Hubs. Web PubSub cannot wake a killed
+  app, so offline delivery still goes through Part 1.
+- It does **not** touch WebRTC media or TURN.
+- Graceful drain changes shape: Azure holds the client connections, so a
+  restart no longer tears them down — `server.draining` is still emitted, but
+  there are no local sockets left for the drain window to wait on.
+
+---
+
 ## Verifying the setup
 
 Start the server with the new variables and watch the startup logs — the
@@ -249,5 +345,7 @@ data-only payload.
 
 - [`FIREBASE_SETUP.md`](./FIREBASE_SETUP.md) — obtaining the FCM and APNs
   credentials that both Notification Hubs and the direct fallback path need.
+- [`deploy/README.md`](../deploy/README.md) — the two-VM deployment, where
+  `REDIS_URL` is mandatory and the Web PubSub transport above is optional.
 - [`server/README.md`](../server/README.md) — the full environment-variable table,
   the push provider chain, and the `message.*` socket contract.

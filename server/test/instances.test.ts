@@ -82,3 +82,16 @@ test('a healthy configuration neither throws nor warns', () => {
   }
   assert.deepEqual(lines, []);
 });
+
+test('Web PubSub does not disarm the shared-state guard: Redis still backs sessions and calls', () => {
+  const env = {
+    INSTANCE_ID: '1',
+    NODE_ENV: 'production',
+    WEB_PUBSUB_CONNECTION_STRING: 'Endpoint=https://example;AccessKey=k;',
+  };
+  assert.equal(hasSharedState(env), false);
+  const check = checkMultiInstanceState(env);
+  assert.equal(check.level, 'fatal');
+  assert.match(check.message, /REDIS_URL/);
+  assert.throws(() => assertSharedStateForMultiInstance(env), /REDIS_URL is not set/);
+});

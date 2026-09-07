@@ -11,6 +11,12 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * state and `'shared'` when runtime call/session state is coordinated through
  * Redis-backed store primitives.
  *
+ * `socketTransport` names the Socket.IO fan-out transport in use —
+ * `'redis-adapter'` (the default) or `'web-pubsub'` when the optional Azure Web
+ * PubSub integration is configured and initialised (see
+ * `src/lib/socketAdapter.ts`).  It is orthogonal to `stateAffinity`: Redis
+ * still backs the call registry, sessions and the read cache either way.
+ *
  * `messageStore` reports only which backend is in use.  It deliberately does
  * *not* carry a readiness flag: the store is constructed synchronously over the
  * pool `db/client.ts` already owns, so any such flag could only ever be a
@@ -26,6 +32,7 @@ function createHealthRouter({ state }: {
             draining: boolean;
             messageStore: { type: string; };
             stateAffinity?: 'sticky' | 'shared';
+            socketTransport?: import('../lib/socketAdapter.ts').SocketTransport;
             instanceId?: string;
             callState?: object;
             messageBus?: object | null;
@@ -49,6 +56,7 @@ function createHealthRouter({ state }: {
       status: 'ok',
       service: 'wetalk-signaling',
       stateAffinity: state.stateAffinity ?? 'sticky',
+      socketTransport: state.socketTransport ?? 'redis-adapter',
       instanceId: state.instanceId ?? `${process.pid}`,
       sharedState: {
         calls: Boolean(state.callState),

@@ -74,6 +74,12 @@ is one of several (`INSTANCE_ID` > 0, see `server/src/lib/instances.ts`) and
 automatically for separate hosts, and without it the guard above cannot tell a
 two-VM fleet from a single machine.
 
+Socket fan-out can optionally be moved off the Redis adapter to **Azure Web
+PubSub for Socket.IO** behind `WEB_PUBSUB_CONNECTION_STRING` (default-off; Redis
+stays mandatory for everything else) — see
+[`deploy/README.md` §5a](deploy/README.md#optional-azure-web-pubsub-for-socketio-experimental-default-off)
+and [`docs/AZURE_SETUP.md`](docs/AZURE_SETUP.md#part-2--azure-web-pubsub-for-socketio-optional).
+
 Only a genuinely single-instance deployment — local development, the test
 suite — may leave `REDIS_URL` unset, where `/health` reports
 `stateAffinity: "sticky"` and the in-memory bus and cache are equivalent.

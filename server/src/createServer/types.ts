@@ -33,4 +33,9 @@ export type CreateServerOptions = {
   maxRetainedCalls?: number;
   turnFetch?: typeof fetch;
   turnEnv?: NodeJS.ProcessEnv;
+  /**
+   * Test seam for the Azure Web PubSub Socket.IO integration; production
+   * resolves `useAzureSocketIO` from `@azure/web-pubsub-socket.io` itself.
+   */
+  useAzureSocketIO?: import('../lib/socketAdapter.ts').UseAzureSocketIO;
 };

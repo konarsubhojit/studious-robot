@@ -11,6 +11,7 @@ import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_M
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
+import { attachSocketAdapter } from '../lib/socketAdapter.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from '../domain/calls.ts';
 import { notifyCallTransition } from '../domain/notifications.ts';
 import { loadPersistedStateFromDb, pruneStaleDevices } from '../lib/persistence.ts';
@@ -219,6 +220,13 @@ function createServer(opts: CreateServerOptions = {}) {
      * during a rolling deploy.
      */
     draining: false,
+    /**
+     * Which socket fan-out transport is attached (see `lib/socketAdapter.ts`).
+     * Reported by `/health` as `socketTransport`; orthogonal to
+     * `stateAffinity`, which describes the Redis-backed call registry,
+     * sessions and cache.
+     */
+    socketTransport: 'redis-adapter',
   };
   // Drop locally cached entries when another instance reports a write.
   // The resolved unsubscribe handle is retained so `shutdown()` can release
@@ -266,12 +274,32 @@ function createServer(opts: CreateServerOptions = {}) {
       parseEnv('SOCKET_MAX_BUFFER_BYTES', DEFAULT_SOCKET_MAX_BUFFER_BYTES),
   });
 
-  // When a Redis-backed store bundle is supplied, attach the Socket.IO Redis
-  // adapter so room / per-user emits fan out to sockets on every instance.
-  if (typeof stores.attachAdapter === 'function') {
-    stores.attachAdapter(io);
-    console.log('[signaling] Socket.IO Redis adapter attached (multi-instance mode)');
-  }
+  // Attach the socket fan-out adapter. `lib/socketAdapter.ts` owns the choice
+  // between the Socket.IO Redis adapter (the default, attached synchronously
+  // when a Redis-backed store bundle is supplied) and Azure Web PubSub for
+  // Socket.IO (only when `WEB_PUBSUB_CONNECTION_STRING` is set, and falling
+  // back to Redis if it cannot be initialised). The emit path is identical
+  // either way, so nothing downstream branches on the result.
+  const socketAdapterReady = attachSocketAdapter({
+    io,
+    attachRedisAdapter: stores.attachAdapter,
+    env: process.env,
+    useAzureSocketIO: opts.useAzureSocketIO,
+  })
+    .then((result) => {
+      state.socketTransport = result.transport;
+      return result;
+    })
+    .catch((error: unknown) => {
+      // `attachSocketAdapter` degrades rather than throwing; this only guards
+      // against a programming error there leaving an unhandled rejection.
+      console.error(`[signaling] socket adapter selection failed: ${describeError(error)}`);
+      return {
+        transport: 'redis-adapter' as const,
+        reason: 'web_pubsub_init_failed' as const,
+        detail: describeError(error),
+      };
+    });
 
   // ── HTTP routes ────────────────────────────────────────────────────────────
   // Mounted after `io` is created so the calls router can emit realtime events.
@@ -426,6 +454,12 @@ function createServer(opts: CreateServerOptions = {}) {
       // offline promptly rather than waiting for socket teardown.
       drainLocalPresence(state);
 
+      // Under the optional Web PubSub transport the client's socket is held by
+      // Azure rather than by this process, so `server.draining` still reaches
+      // clients but there are no local sockets for the drain window to wait on
+      // and it returns early. The shutdown contract on the wire is unchanged;
+      // see `lib/socketAdapter.ts` and deploy/README.md §5a.
+      //
       // Keep the HTTP server listening during the drain window so health checks
       // observe the 503 `draining` status and load balancers stop routing new
       // traffic here; brand-new socket connections are rejected by the
@@ -492,6 +526,12 @@ function createServer(opts: CreateServerOptions = {}) {
      * directly (see `shutdown()`, which awaits it before closing stores).
      */
     cacheInvalidationSubscriptionReady: cacheInvalidationSubscription,
+    /**
+     * Resolves once the socket fan-out adapter has been chosen and attached.
+     * Exposed for deterministic testing; the Redis path is already attached
+     * synchronously by the time `createServer` returns.
+     */
+    socketAdapterReady,
     getCall: (callId: string) => state.calls.get(callId) || null,
     getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),

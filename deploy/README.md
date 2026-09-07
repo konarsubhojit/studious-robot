@@ -267,6 +267,60 @@ upstream robot_signal {
 Socket.IO needs the `Upgrade`/`Connection` headers on the `proxy_pass` (§9),
 otherwise the WebSocket transport silently degrades to long-polling.
 
+### Optional: Azure Web PubSub for Socket.IO (experimental, default-off)
+
+Only the **fourth** Redis role above — the Socket.IO adapter — can be moved to
+[Azure Web PubSub for Socket.IO](../docs/AZURE_SETUP.md#azure-web-pubsub-for-socketio-optional-signaling-fan-out).
+It is off unless you set a connection string, and **Redis stays mandatory**:
+the call registry, sessions/presence and the read cache + invalidation bus are
+untouched by this flag, and the `INSTANCE_ID` guard above stays armed exactly as
+described (a second VM with a Web PubSub connection string but no `REDIS_URL`
+still refuses to start under `NODE_ENV=production`).
+
+```dotenv
+# /etc/robot-signal/env — placeholders only; real values stay on the host
+WEB_PUBSUB_CONNECTION_STRING=<WEB_PUBSUB_CONNECTION_STRING>
+WEB_PUBSUB_HUB=signaling
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `WEB_PUBSUB_CONNECTION_STRING` | _(unset)_ | Connection string of a Web PubSub resource **in Socket.IO mode**. Unset ⇒ the Redis adapter, unchanged. |
+| `WEB_PUBSUB_HUB` | `signaling` | Hub name to attach to. Must match on both VMs. |
+
+Verify which transport a VM actually attached — the choice is reported on
+`/health` next to `stateAffinity`, which keeps its existing meaning (Redis for
+call/session/cache state) and does **not** move with the socket adapter:
+
+```bash
+curl -fsS https://signal.yourdomain.com/health | grep -o '"socketTransport":"[^"]*"'
+# "socketTransport":"redis-adapter"  ← default
+# "socketTransport":"web-pubsub"     ← flag set and initialised
+```
+
+If the optional `@azure/web-pubsub-socket.io` package is not installed, or the
+resource rejects the negotiation, the server **logs loudly and falls back to the
+Redis adapter** rather than failing to boot — so a `redis-adapter` reading with
+the flag set means the journal has a
+`reason=web_pubsub_dependency_missing` or `reason=web_pubsub_init_failed` line:
+
+```bash
+sudo journalctl -u robot-signal | grep -E 'web_pubsub_(dependency_missing|init_failed)'
+```
+
+The package is deliberately **not** a dependency of `server/package.json`, so
+`npm ci --omit=dev` (§12) installs nothing new on a default deployment. Install
+it explicitly on the VMs that are meant to use this path.
+
+**Draining behaves differently under Web PubSub.** On SIGTERM the server still
+emits `server.draining` and waits up to `SHUTDOWN_DRAIN_MS` (default 25s), but
+the client's WebSocket is held by Azure, not by the VM: clients are not
+disconnected by the restart, so the drain loop has no local sockets to wait for
+and returns early. Treat `server.draining` as advisory there — the shutdown
+contract on the wire is unchanged, but the socket-teardown part of it is a
+no-op. Cross-cloud (OCI → Azure) round-trips are also added to **every**
+signaling event, which is why this path is experimental rather than the default.
+
 ### Sizing that follows from N = 2
 
 - **`DB_POOL_SIZE` is per instance.** Two VMs at the default of 4 open 8
@@ -650,6 +704,9 @@ REDIS_URL=<REDIS_URL>
 TURN_STATIC_AUTH_SECRET=<TURN_STATIC_AUTH_SECRET>
 AZURE_NOTIFICATION_HUB_CONNECTION_STRING=<AZURE_NOTIFICATION_HUB_CONNECTION_STRING>
 DEBUG_API_TOKEN=<DEBUG_API_TOKEN>
+# Optional, default-off socket fan-out via Azure Web PubSub (§5a).
+# WEB_PUBSUB_CONNECTION_STRING=<WEB_PUBSUB_CONNECTION_STRING>
+# WEB_PUBSUB_HUB=signaling
 # Distinct per VM — this is what arms the multi-instance guard (§5a).
 INSTANCE_ID=0
 DB_POOL_SIZE=4
