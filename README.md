@@ -78,7 +78,9 @@ Only a genuinely single-instance deployment — local development, the test
 suite — may leave `REDIS_URL` unset, where `/health` reports
 `stateAffinity: "sticky"` and the in-memory bus and cache are equivalent.
 
-See [`deploy/README.md`](./deploy/README.md) for the full setup.
+See [`deploy/README.md`](./deploy/README.md) for the full setup. For the
+self-hosted three-host fleet, follow the
+[`VM redeploy and recovery` runbook](./docs/VM_REDEPLOY.md).
 
 ## Run the mobile app
 
