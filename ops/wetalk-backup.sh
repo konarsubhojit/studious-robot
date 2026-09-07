@@ -22,6 +22,7 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
 if ! pg_dump -Fc -d "${DATABASE_URL:?}" > "$TMP"; then
+  rm -f "$TMP"
   echo "backup aborted: pg_dump failed" >&2
   exit 1
 fi
@@ -34,9 +35,12 @@ if (( SIZE < MIN_SIZE )); then
   exit 1
 fi
 
-echo "uploading pg/${STAMP}.dump (${SIZE} bytes, md5 $(md5sum "$TMP" | cut -d' ' -f1))"
+MD5=$(md5sum "$TMP" | cut -d' ' -f1)
+CONTENT_MD5=$(openssl dgst -md5 -binary "$TMP" | base64)
+echo "uploading pg/${STAMP}.dump (${SIZE} bytes, md5 ${MD5})"
 if ! "$OCI_BIN" os object put -bn "$BUCKET" \
-  --name "pg/${STAMP}.dump" --file "$TMP" --auth instance_principal --force; then
+  --name "pg/${STAMP}.dump" --file "$TMP" --content-md5 "$CONTENT_MD5" \
+  --auth instance_principal --force; then
   echo "backup aborted: OCI upload failed" >&2
   exit 1
 fi

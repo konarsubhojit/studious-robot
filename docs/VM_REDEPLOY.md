@@ -223,6 +223,9 @@ sudo install -o root -g root -m 0750 \
 sudo -i env -i /usr/local/bin/wetalk-backup.sh
 ```
 
+`env -i` intentionally removes the ambient environment to prove the script can
+run under cron using only `/etc/robot-signal/env` and its internal OCI auth.
+
 The script explicitly uses instance-principal authentication, stages the dump,
 and refuses to upload files smaller than `MIN_SIZE` (default: 15000 bytes).
 Healthy dumps for the small observed dataset were approximately 24–32 KB. A
