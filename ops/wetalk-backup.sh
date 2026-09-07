@@ -17,6 +17,7 @@ if [[ ! "$MIN_SIZE" =~ ^[0-9]+$ ]]; then
 fi
 
 STAMP=$(date -u +%Y/%m/%d/%H%M%SZ)
+umask 077
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
@@ -34,5 +35,8 @@ if (( SIZE < MIN_SIZE )); then
 fi
 
 echo "uploading pg/${STAMP}.dump (${SIZE} bytes, md5 $(md5sum "$TMP" | cut -d' ' -f1))"
-"$OCI_BIN" os object put -bn "$BUCKET" \
-  --name "pg/${STAMP}.dump" --file "$TMP" --auth instance_principal --force
+if ! "$OCI_BIN" os object put -bn "$BUCKET" \
+  --name "pg/${STAMP}.dump" --file "$TMP" --auth instance_principal --force; then
+  echo "backup aborted: OCI upload failed" >&2
+  exit 1
+fi
