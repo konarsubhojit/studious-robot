@@ -105,40 +105,63 @@ reports shared state and inspect logs if a restart fails:
 sudo journalctl -u robot-signal.service -n 100 --no-pager
 ```
 
-## Database identity: duplicate `wetalk` databases
+## Migration diagnostics
 
-There may be a stale, partial local database also named `wetalk`. Bare `psql`,
-or `psql "$DATABASE_URL"` when the variable is unset, can connect through the
-local Unix socket using peer authentication. The application instead uses the
-real database over TCP at the A1 private IP.
+The host has one PostgreSQL 18 cluster on port 5432 and one `wetalk` database.
+Local Unix-socket and TCP connections reach that same database.
 
-Symptoms of querying the wrong database include:
+### `drizzle-kit migrate` is silent when it has nothing to do
 
-- `\dt` shows only some tables and omits `messages`; the application reports
-  `42P01 undefined_table`.
-- `drizzle-kit migrate` exits silently because the database it actually
-  selected is already migrated.
-- `drizzle.__drizzle_migrations` has a different row count between sessions.
+A no-op migration and a successful migration produce identical output: the
+configuration banner and nothing else. There is no "up to date" message or
+list of applied migrations. Never infer success from this output.
 
-**Always run `\conninfo` first:**
+Verify the migration journal and schema explicitly:
 
 ```bash
-sudo bash -c '
-  set -a
-  . /etc/robot-signal/env
-  set +a
-  echo "[$DATABASE_URL]"
-  test -n "$DATABASE_URL"
-  psql "$DATABASE_URL" -c "\conninfo"
-  psql "$DATABASE_URL" -c "\dt"
-  psql "$DATABASE_URL" -c "select count(*) from drizzle.__drizzle_migrations"
-'
+psql "$DATABASE_URL" -c "select id, hash, to_timestamp(created_at/1000)
+  from drizzle.__drizzle_migrations order by created_at;"
+psql "$DATABASE_URL" -c '\dt'
 ```
 
-If connection information reports `Socket Directory | /var/run/postgresql`
-and `Password Used | false`, it is the local socket database, not the TCP
-database. Never draw schema conclusions until the connection string is passed
-explicitly and `echo "[$DATABASE_URL]"` proves it is non-empty.
+The journal row count must match the number of migration SQL files in
+`server/db/migrations/`.
+
+### An unset `DATABASE_URL` fails open, not closed
+
+`psql "$DATABASE_URL"` does not error when the variable is empty. The empty
+argument makes psql silently use its defaults: the local Unix socket, peer
+authentication, and a database named after the current user. The connection
+can succeed and look legitimate even though its provenance is not what the
+operator assumed.
+
+Always confirm the variable before drawing conclusions:
+
+```bash
+echo "URL=[$DATABASE_URL]"       # empty brackets mean it is unset
+psql "$DATABASE_URL" -c '\conninfo'
+```
+
+If `\conninfo` reports `Socket Directory | /var/run/postgresql` and
+`Password Used | false` while the intended connection string specifies a host
+and password, the variable was not set in that shell.
+
+The same applies to `drizzle.config.ts`, which prefers
+`DATABASE_URL_DIRECT` and falls back to `DATABASE_URL`. Pass the connection
+string explicitly for a migration rather than relying on ambient shell state:
+
+```bash
+DATABASE_URL='postgresql://wetalk:<URL_ENCODED_DB_PASSWORD>@<A1_PRIVATE_IP>:5432/wetalk' npm run db:migrate
+```
+
+### Worked example
+
+The schema was genuinely behind: migrations `0009`–`0011` had not been
+applied. Migration `0010` could not run because `pg_trgm` was missing and the
+application role lacked superuser privileges. Creating the extension as
+`postgres`, then running `db:migrate` with `DATABASE_URL` explicitly set,
+applied all three migrations. The journal grew from 8 rows to 11 and the
+`messages` table reported by the application's `42P01` error was created.
 
 ## Prepare `pg_trgm`
 
