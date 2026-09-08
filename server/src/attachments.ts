@@ -117,10 +117,8 @@ function validateAttachmentRequest({ type, mimeType, sizeBytes }: { type?: unkno
 function createAttachmentKey({ conversationId, mimeType }: { conversationId: string; mimeType: string; }): string {
   const extension =
     (EXTENSION_BY_MIME_TYPE as Record<string, string>)[mimeType] ?? 'bin';
-  // The conversation id is derived from two user ids, which are already
-  // restricted to safe characters, but encode it anyway: the key ends up in a
-  // URL path.
-  const scope = encodeURIComponent(conversationId);
+  // Keep the raw object key path-safe; presigning performs the URL encoding.
+  const scope = conversationId.replace(/:/g, '_');
   return `${ATTACHMENT_PATH_PREFIX}/${scope}/${crypto.randomUUID()}.${extension}`;
 }
 
