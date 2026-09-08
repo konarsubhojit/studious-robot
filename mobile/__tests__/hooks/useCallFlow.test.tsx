@@ -3283,7 +3283,15 @@ describe('useCallFlow chat', () => {
     const mediaStateEmits: any = [];
     socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       if (event === 'call.accept') {
-        cb?.({ ok: true, call: { callId: 'call-share-1', callerId: 'bob', calleeId: 'alice' } });
+        cb?.({
+          ok: true,
+          call: {
+            callId: 'call-share-1',
+            callerId: 'bob',
+            calleeId: 'alice',
+            status: 'accepted',
+          },
+        });
       } else if (event === 'call.media-state') {
         mediaStateEmits.push(payload);
         cb?.({ ok: true });
@@ -3323,18 +3331,31 @@ describe('useCallFlow chat', () => {
     });
   });
 
-  test('relays one media-state snapshot when the call id appears, not only on a toggle', async () => {
+  test('holds the media-state snapshot until the call leaves ringing, then relays it once', async () => {
     // Local media starts — and therefore settles `isVideoEnabled` — before an
     // outgoing call has an id, so an implementation that only emitted on a
     // flag *change* would leave the peer with no frame at all for the call.
+    // Emitting the moment the id appears is just as wrong: the server refuses
+    // `call.media-state` while the call is still `ringing` and answers with a
+    // `stale_call_state` error ack.
     const { resultRef, tree } = await renderWithSocket();
 
-    const { mediaDevices } = require('react-native-webrtc');
+    const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
     (mediaDevices.getUserMedia as jest.Mock).mockResolvedValueOnce({
       getTracks: () => [],
       getVideoTracks: () => [],
       getAudioTracks: () => [],
     });
+    // The accepted transition makes the caller send the initial offer.
+    (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
+      addTrack: jest.fn(),
+      addIceCandidate: jest.fn(),
+      close: jest.fn(),
+      createOffer: jest.fn().mockResolvedValue({ type: 'offer', sdp: '' }),
+      setLocalDescription: jest.fn().mockResolvedValue(undefined),
+      localDescription: { type: 'offer', sdp: '' },
+      getSenders: jest.fn(() => []),
+    }));
 
     act(() => {
       resultRef.current.setCalleeId('bob');
@@ -3355,11 +3376,32 @@ describe('useCallFlow chat', () => {
       } else if (event === 'call.media-state') {
         mediaStateEmits.push(payload);
         cb?.({ ok: true });
+      } else {
+        cb?.({ ok: true });
       }
     });
 
     await act(async () => {
       await resultRef.current.placeCall();
+    });
+    act(() => {
+      tree.update(<TestHook resultRef={resultRef} />);
+    });
+
+    // Still ringing: nothing to tell the peer, and nothing the server accepts.
+    expect(mediaStateEmits).toEqual([]);
+
+    const stateHandler = getSocketHandler('call.state_changed');
+    await act(async () => {
+      await stateHandler({
+        status: 'accepted',
+        call: {
+          callId: 'call-snapshot-1',
+          callerId: 'alice',
+          calleeId: 'bob',
+          status: 'accepted',
+        },
+      });
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
@@ -3422,7 +3464,7 @@ describe('useCallFlow chat', () => {
     socketMock.emit.mockImplementation((event: any, payload: any, cb: any) => {
       emits.push({ event, payload });
       if (event === 'call.accept') {
-        cb?.({ ok: true, call: { callId, callerId, calleeId: 'alice' } });
+        cb?.({ ok: true, call: { callId, callerId, calleeId: 'alice', status: 'accepted' } });
       } else {
         cb?.({ ok: true });
       }

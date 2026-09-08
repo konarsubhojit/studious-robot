@@ -3391,10 +3391,20 @@ export default function useCallFlow({
   // while there is no id to address is dropped by the guard below and never
   // retried. Re-emitting when the id appears sends the peer one explicit
   // snapshot per call, so their view can never be stale by a whole call.
+  //
+  // The call *status* is a dependency for the same reason: an outgoing call
+  // has an id from the moment it is placed, but the server only accepts RTC
+  // frames — `call.media-state` among them — once the call has left `ringing`,
+  // and rejects the rest with `stale_call_state`. Emitting on the id alone
+  // therefore both lost the snapshot (there is no peer listening yet anyway)
+  // and logged an error ack on every ordinary call. Waiting for a live status
+  // sends the same single snapshot, at the first moment the peer can use it.
   const activeCallId = activeCall?.callId ?? null;
+  const activeCallStatus = activeCall?.status ?? null;
   useEffect(() => {
     isScreenSharingRef.current = isScreenSharing;
     if (!socketRef.current?.connected || !activeCallId) return;
+    if (!isLiveCallStatus(activeCallStatus)) return;
     signalingRef.current
       ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
         version: SIGNALING_VERSION,
@@ -3406,7 +3416,7 @@ export default function useCallFlow({
           message: errorMessage(error),
         });
       });
-  }, [activeCallId, isScreenSharing, isVideoEnabled]);
+  }, [activeCallId, activeCallStatus, isScreenSharing, isVideoEnabled]);
 
   // ─── Connection quality polling ───────────────────────────────────────────
 
