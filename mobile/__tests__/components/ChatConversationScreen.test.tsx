@@ -24,6 +24,12 @@ function findAllByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
+function findAllPressableByTestId(tree: any, testID: any) {
+  return tree.root.findAll(
+    (node: any) => node.props?.testID === testID && typeof node.props?.onPress === 'function',
+  );
+}
+
 /**
  * Performs the message row's long press the way assistive technology does:
  * through the `longpress` accessibility action the swipeable row publishes.
@@ -1545,7 +1551,159 @@ describe('ChatConversationScreen attachments', () => {
       download.props.onPress();
     });
 
-    expect(onDownloadAttachment).toHaveBeenCalledWith(fileMessage);
+    expect(onDownloadAttachment).toHaveBeenCalledWith(fileMessage, expect.any(Function));
+  });
+
+  test('shows download progress as a percentage, then idle again once the download succeeds', async () => {
+    let resolveDownload: ((result: any) => void) | undefined;
+    let reportProgress: ((fraction: number) => void) | undefined;
+    const onDownloadAttachment = jest.fn((_message: any, onProgress: any) => {
+      reportProgress = onProgress;
+      return new Promise(resolve => {
+        resolveDownload = resolve;
+      });
+    });
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-download')).toBeNull();
+    let progress = findByTestId(tree, 'chat-attachment-download-progress');
+    expect(progress).not.toBeNull();
+    expect(progress.props.accessibilityRole).toBe('progressbar');
+    expect(progress.props.accessibilityValue).toEqual({ now: 0, min: 0, max: 100 });
+
+    act(() => {
+      reportProgress?.(0.42);
+    });
+
+    progress = findByTestId(tree, 'chat-attachment-download-progress');
+    expect(progress.props.accessibilityValue).toEqual({ now: 42, min: 0, max: 100 });
+    const text = progress
+      .findAll((n: any) => typeof n.props?.children === 'string')
+      .map((n: any) => n.props.children);
+    expect(text.some((value: string) => value.includes('42%'))).toBe(true);
+
+    await act(async () => {
+      resolveDownload?.({ success: true });
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
+  });
+
+  test('shows a failed state when an attachment download fails', async () => {
+    const onDownloadAttachment = jest.fn(() => Promise.resolve({ success: false }));
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-download-failed')).not.toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download')).toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
+  });
+
+  test('tracks download progress per message, so two concurrent downloads never overwrite each other', async () => {
+    const progressCallbacks: Record<string, (fraction: number) => void> = {};
+    const resolvers: Record<string, (result: any) => void> = {};
+    const onDownloadAttachment = jest.fn((message: any, onProgress: any) => {
+      progressCallbacks[message.messageId] = onProgress;
+      return new Promise(resolve => {
+        resolvers[message.messageId] = resolve;
+      });
+    });
+    const fileA = makeMessage({
+      messageId: 'file-a',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: { url: 'https://media.test/a.pdf', name: 'a.pdf', mimeType: 'application/pdf' },
+    });
+    const fileB = makeMessage({
+      messageId: 'file-b',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: { url: 'https://media.test/b.pdf', name: 'b.pdf', mimeType: 'application/pdf' },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileA, fileB],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findAllPressableByTestId(tree, 'chat-attachment-download').forEach((button: any) => button.props.onPress());
+    });
+
+    act(() => {
+      progressCallbacks['file-a'](0.25);
+      progressCallbacks['file-b'](0.75);
+    });
+
+    const percentagesOf = () =>
+      findAllByTestId(tree, 'chat-attachment-download-progress').map(
+        (node: any) => node.props.accessibilityValue.now,
+      );
+    expect(percentagesOf().sort()).toEqual([25, 75]);
+
+    await act(async () => {
+      resolvers['file-a']({ success: true });
+    });
+
+    // file-a is back to idle; file-b keeps its own, unaffected progress.
+    expect(findAllByTestId(tree, 'chat-attachment-download')).toHaveLength(1);
+    expect(percentagesOf()).toEqual([75]);
+
+    await act(async () => {
+      resolvers['file-b']({ success: false });
+    });
+
+    expect(findAllByTestId(tree, 'chat-attachment-download-progress')).toHaveLength(0);
+    expect(findAllByTestId(tree, 'chat-attachment-download-failed')).toHaveLength(1);
   });
 
   test('tapping a received photo opens it in the fullscreen viewer, and closing returns to the chat', () => {

@@ -159,16 +159,18 @@ function TabShell() {
         onReactToMessage={(message, emoji, action) =>
           reactToMessage(peerId, message.messageId, emoji, action)
         }
-        onDownloadAttachment={async message => {
+        onDownloadAttachment={async (message, onProgress) => {
           const result = await downloadAttachment({
             url: message?.attachment?.url,
             name: message?.attachment?.name,
             mimeType: message?.attachment?.mimeType,
+            onProgress,
           });
           updateStatus(
             describeAttachmentDownloadResult(result),
             result.success ? 'success' : 'error',
           );
+          return result;
         }}
         isOffline={chat.isChatOffline}
         onLoadOlder={chat.handleLoadOlderMessages}
