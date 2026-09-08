@@ -7,6 +7,8 @@ jest.mock('react-native-fs', () => ({
   ExternalDirectoryPath: '/external',
   DocumentDirectoryPath: '/docs',
   downloadFile: jest.fn(),
+  stopDownload: jest.fn(),
+  unlink: jest.fn(() => Promise.resolve()),
 }));
 
 import RNFS from 'react-native-fs';
@@ -14,6 +16,7 @@ import {
   attachmentDownloadFileName,
   describeAttachmentDownloadResult,
   downloadAttachment,
+  isAttachmentDownloadRetryable,
 } from '../src/attachmentDownload';
 
 describe('attachmentDownload', () => {
@@ -126,5 +129,71 @@ describe('attachmentDownload', () => {
 
     expect(onProgress).toHaveBeenCalledWith(0.5);
     expect(onProgress).toHaveBeenLastCalledWith(1);
+  });
+
+  test('cancelling an in-flight download stops it, cleans up the partial file, and reports cancelled', async () => {
+    let rejectJob: (error: unknown) => void = () => {};
+    (RNFS.downloadFile as jest.Mock).mockReturnValueOnce({
+      jobId: 42,
+      promise: new Promise((_resolve, reject) => {
+        rejectJob = reject;
+      }),
+    });
+    (RNFS.stopDownload as jest.Mock).mockImplementationOnce(() => {
+      rejectJob(new Error('Download has been aborted'));
+    });
+
+    let abort: (() => void) | undefined;
+    const resultPromise = downloadAttachment({
+      url: 'https://media.test/chatblobs/c/big.zip',
+      name: 'big.zip',
+      onAbortHandle: fn => {
+        abort = fn;
+      },
+    });
+
+    // Give the abort handle a tick to be wired up before cancelling.
+    await Promise.resolve();
+    abort?.();
+
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({ success: false, reason: 'cancelled', message: 'Download cancelled' });
+    expect(RNFS.stopDownload).toHaveBeenCalledWith(42);
+    expect(RNFS.unlink).toHaveBeenCalledWith('/downloads/big.zip');
+    // A cancel must not fall back and retry in another directory.
+    expect(RNFS.downloadFile).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ['unauthorized', 403],
+    ['server-error', 503],
+    ['network', undefined],
+  ] as const)('retries a %s failure the same way as the first attempt', async (reason, statusCode) => {
+    (RNFS.downloadFile as jest.Mock).mockReturnValue(
+      statusCode
+        ? { promise: Promise.resolve({ statusCode }) }
+        : { promise: Promise.reject(new Error('Unable to resolve host')) },
+    );
+
+    const first = await downloadAttachment({ url: 'https://media.test/chatblobs/c/a.pdf' });
+    expect(first).toMatchObject({ success: false, reason });
+
+    (RNFS.downloadFile as jest.Mock).mockClear();
+    (RNFS.downloadFile as jest.Mock).mockReturnValue({ promise: Promise.resolve({ statusCode: 200 }) });
+
+    const retry = await downloadAttachment({ url: 'https://media.test/chatblobs/c/a.pdf' });
+    expect(retry).toMatchObject({ success: true });
+  });
+
+  test('does not offer a retry for unsupported-url or not-found failures', () => {
+    expect(isAttachmentDownloadRetryable('unsupported-url')).toBe(false);
+    expect(isAttachmentDownloadRetryable('not-found')).toBe(false);
+    expect(isAttachmentDownloadRetryable('network')).toBe(true);
+    expect(isAttachmentDownloadRetryable('unauthorized')).toBe(true);
+    expect(isAttachmentDownloadRetryable('server-error')).toBe(true);
+    expect(isAttachmentDownloadRetryable('storage')).toBe(true);
+    expect(isAttachmentDownloadRetryable('cancelled')).toBe(true);
+    expect(isAttachmentDownloadRetryable(undefined)).toBe(false);
   });
 });

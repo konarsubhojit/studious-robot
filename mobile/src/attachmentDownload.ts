@@ -102,7 +102,25 @@ export type AttachmentDownloadReason =
   | 'not-found'
   | 'server-error'
   | 'network'
-  | 'storage';
+  | 'storage'
+  | 'cancelled';
+
+/**
+ * Reasons where trying again cannot succeed: the URL scheme is not
+ * downloadable, or the object is gone from the server. Every other reason
+ * (including a user cancel) is worth another tap.
+ */
+const NON_RETRYABLE_DOWNLOAD_REASONS: ReadonlySet<AttachmentDownloadReason> = new Set([
+  'unsupported-url',
+  'not-found',
+]);
+
+/**
+ * @returns whether a failed download is worth offering a retry for.
+ */
+export function isAttachmentDownloadRetryable(reason?: AttachmentDownloadReason | null): boolean {
+  return Boolean(reason) && !NON_RETRYABLE_DOWNLOAD_REASONS.has(reason as AttachmentDownloadReason);
+}
 
 export type AttachmentDownloadResult = {
   success: boolean;
@@ -155,10 +173,14 @@ function hostOf(url: string): string {
  */
 async function downloadToTarget(
   target: { directory: string; label: string; primary: boolean; },
-  { url, fileName, onProgress }: {
+  { url, fileName, onProgress, registerAbort, isCancelled }: {
     url: string;
     fileName: string;
     onProgress?: (fraction: number) => void;
+    /** Told the job's cancel function, so an outer abort can reach it. */
+    registerAbort?: (abort: () => void) => void;
+    /** Whether this attempt's abort has already been triggered. */
+    isCancelled?: () => boolean;
   },
 ): Promise<AttachmentDownloadResult> {
   const path = `${target.directory}/${fileName}`;
@@ -174,7 +196,12 @@ async function downloadToTarget(
         onProgress?.(fraction);
       },
     });
+    registerAbort?.(() => RNFS.stopDownload(job.jobId));
     const result = await job.promise;
+    if (isCancelled?.()) {
+      await RNFS.unlink(path).catch(() => {});
+      return { success: false, path, reason: 'cancelled' };
+    }
     const statusCode = result?.statusCode;
     if (!result || statusCode < 200 || statusCode >= 300) {
       throw Object.assign(new Error(`Download failed with status ${statusCode ?? 'unknown'}`), {
@@ -189,6 +216,10 @@ async function downloadToTarget(
     });
     return { success: true, path, label: target.label, usedFallback: !target.primary };
   } catch (error) {
+    if (isCancelled?.()) {
+      await RNFS.unlink(path).catch(() => {});
+      return { success: false, path, reason: 'cancelled' };
+    }
     const statusCode = (error as { statusCode?: number })?.statusCode;
     const reason = classifyFailure({ statusCode, error });
     logWarn('[Attachments] download attempt failed', {
@@ -202,6 +233,44 @@ async function downloadToTarget(
 }
 
 /**
+ * Try every writable directory in turn, stopping as soon as one attempt
+ * succeeds, is cancelled, or fails in a way another directory could not fix.
+ */
+async function downloadWithFallback({ url, fileName, onProgress, permission, isCancelled, registerAbort }: {
+  url: string;
+  fileName: string;
+  onProgress?: (fraction: number) => void;
+  permission: { granted: boolean; };
+  isCancelled: () => boolean;
+  registerAbort: (abort: () => void) => void;
+}): Promise<AttachmentDownloadResult> {
+  let firstFailure: AttachmentDownloadResult | null = null;
+
+  for (const target of downloadTargets()) {
+    if (isCancelled()) break;
+    if (!target.directory) continue;
+    // Without the grant the shared Downloads folder is not writable on legacy
+    // Android, so skip straight to a directory this app always owns.
+    if (target.shared && !permission.granted) continue;
+    const attempt = await downloadToTarget(target, { url, fileName, onProgress, registerAbort, isCancelled });
+    if (attempt.reason === 'cancelled' || attempt.success) return attempt;
+    if (!firstFailure) firstFailure = attempt;
+    // A rejected fetch fails identically wherever the bytes would land, so
+    // only a storage-side failure is worth retrying in another directory.
+    if (attempt.reason !== 'storage') break;
+  }
+
+  if (isCancelled()) return { success: false, reason: 'cancelled' };
+  return (
+    firstFailure ?? {
+      success: false,
+      reason: 'storage',
+      error: new Error('No writable download directory'),
+    }
+  );
+}
+
+/**
  * Download a previously sent/received chat attachment into the most accessible
  * device storage location available.
  *
@@ -212,13 +281,15 @@ async function downloadToTarget(
  *
  * @param [attachment]
  */
-export async function downloadAttachment({ url, name, mimeType, now = new Date(), onProgress }: {
+export async function downloadAttachment({ url, name, mimeType, now = new Date(), onProgress, onAbortHandle }: {
     url?: string | null;
     name?: string | null;
     mimeType?: string | null;
     now?: Date;
     /** Called with a 0..1 fraction as bytes arrive, for large files. */
     onProgress?: (fraction: number) => void;
+    /** Handed an abort function that cancels the in-flight attempt, if any. */
+    onAbortHandle?: (abort: () => void) => void;
 } = {}): Promise<AttachmentDownloadResult> {
   if (!url || typeof url !== 'string') {
     logWarn('[Attachments] download skipped: no URL on the attachment', { mimeType });
@@ -241,35 +312,40 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
 
   logInfo('[Attachments] download started', { host: hostOf(url), mimeType, fileName });
 
-  let firstFailure: AttachmentDownloadResult | null = null;
+  // Set once, for the lifetime of the whole call: cancelling must stop the
+  // download outright rather than letting the fallback loop retry it in
+  // another directory.
+  let cancelled = false;
+  let abortCurrentAttempt: (() => void) | null = null;
+  onAbortHandle?.(() => {
+    cancelled = true;
+    abortCurrentAttempt?.();
+  });
 
-  for (const target of downloadTargets()) {
-    if (!target.directory) continue;
-    // Without the grant the shared Downloads folder is not writable on legacy
-    // Android, so skip straight to a directory this app always owns.
-    if (target.shared && !permission.granted) continue;
-    const attempt = await downloadToTarget(target, { url, fileName, onProgress });
-    if (attempt.success) return attempt;
-    if (!firstFailure) firstFailure = attempt;
-    // A rejected fetch fails identically wherever the bytes would land, so
-    // only a storage-side failure is worth retrying in another directory.
-    if (attempt.reason !== 'storage') break;
+  const result = await downloadWithFallback({
+    url,
+    fileName,
+    onProgress,
+    permission,
+    isCancelled: () => cancelled,
+    registerAbort: abort => {
+      abortCurrentAttempt = abort;
+    },
+  });
+
+  if (result.reason === 'cancelled') {
+    logInfo('[Attachments] download cancelled', { host: hostOf(url) });
+    return { ...result, message: describeAttachmentDownloadResult(result) };
   }
+  if (result.success) return result;
 
-  const failure =
-    firstFailure ??
-    ({
-      success: false,
-      reason: 'storage',
-      error: new Error('No writable download directory'),
-    } as AttachmentDownloadResult);
   logError('[Attachments] download failed', {
     host: hostOf(url),
-    reason: failure.reason,
-    statusCode: failure.statusCode,
-    error: failure.error,
+    reason: result.reason,
+    statusCode: result.statusCode,
+    error: result.error,
   });
-  return { ...failure, message: describeAttachmentDownloadResult(failure) };
+  return { ...result, message: describeAttachmentDownloadResult(result) };
 }
 
 const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
@@ -280,6 +356,7 @@ const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
   'server-error': 'The file server could not deliver this attachment. Try again later.',
   network: 'Could not reach the file server. Check your connection and try again.',
   storage: 'Could not save the file to device storage. Free up space and try again.',
+  cancelled: 'Download cancelled',
 };
 
 /**

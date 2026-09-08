@@ -1551,7 +1551,11 @@ describe('ChatConversationScreen attachments', () => {
       download.props.onPress();
     });
 
-    expect(onDownloadAttachment).toHaveBeenCalledWith(fileMessage, expect.any(Function));
+    expect(onDownloadAttachment).toHaveBeenCalledWith(
+      fileMessage,
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 
   test('shows download progress as a percentage, then idle again once the download succeeds', async () => {
@@ -1642,6 +1646,131 @@ describe('ChatConversationScreen attachments', () => {
     expect(findByTestId(tree, 'chat-attachment-download')).toBeNull();
     expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
   });
+
+  test('offers a cancel control while a download is in flight, and returns to idle once cancelled', async () => {
+    let resolveDownload: ((result: any) => void) | undefined;
+    let abort: (() => void) | undefined;
+    const onDownloadAttachment = jest.fn(
+      (_message: any, _onProgress: any, onAbortHandle: any) => {
+        onAbortHandle?.(() => abort?.());
+        return new Promise(resolve => {
+          resolveDownload = resolve;
+        });
+      },
+    );
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+
+    const cancel = findByTestId(tree, 'chat-attachment-download-cancel');
+    expect(cancel).not.toBeNull();
+
+    act(() => {
+      cancel.props.onPress();
+    });
+
+    await act(async () => {
+      resolveDownload?.({ success: false, reason: 'cancelled' });
+    });
+
+    expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download-failed')).toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
+  });
+
+  test('offers a retry for a network failure but not for an unsupported-url/not-found failure', async () => {
+    const onDownloadAttachment = jest
+      .fn()
+      .mockResolvedValueOnce({ success: false, reason: 'network' });
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+
+    const retryable = findByTestId(tree, 'chat-attachment-download-failed');
+    expect(retryable).not.toBeNull();
+    expect(typeof retryable.props.onPress).toBe('function');
+
+    onDownloadAttachment.mockResolvedValueOnce({ success: true });
+    await act(async () => {
+      retryable.props.onPress();
+    });
+    expect(onDownloadAttachment).toHaveBeenCalledTimes(2);
+    expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
+  });
+
+  test.each(['unsupported-url', 'not-found'])(
+    'does not offer a retry for a %s failure',
+    async reason => {
+      const onDownloadAttachment = jest.fn(() => Promise.resolve({ success: false, reason }));
+      const fileMessage = makeMessage({
+        messageId: 'file-1',
+        senderId: 'user-alice',
+        body: '',
+        type: 'file',
+        attachment: {
+          url: 'https://media.test/chatblobs/c/report.pdf',
+          name: 'report.pdf',
+          mimeType: 'application/pdf',
+        },
+      });
+      const tree = render({
+        peerId: 'user-bob',
+        messages: [fileMessage],
+        onSendMessage: jest.fn(),
+        onBack: jest.fn(),
+        currentUserId: 'user-alice',
+        onDownloadAttachment,
+      });
+
+      await act(async () => {
+        findByTestId(tree, 'chat-attachment-download').props.onPress();
+      });
+
+      const failed = findByTestId(tree, 'chat-attachment-download-failed');
+      expect(failed).not.toBeNull();
+      expect(failed.props.onPress).toBeUndefined();
+    },
+  );
 
   test('tracks download progress per message, so two concurrent downloads never overwrite each other', async () => {
     const progressCallbacks: Record<string, (fraction: number) => void> = {};
