@@ -177,6 +177,22 @@ test('shutdown() closes pluggable stores that expose close()', async () => {
   assert.equal(closed, true, 'stores.close() was awaited during shutdown');
 });
 
+// `shutdown()` owns the store teardown; a caller that closed the bundle again
+// afterwards used to hit already-quit Redis clients and log
+// "error closing Redis stores: The client is closed" on every stop.
+test('shutdown() closes pluggable stores exactly once', async () => {
+  const stores = createMemoryStores();
+  let closeCalls = 0;
+  stores.close = async () => {
+    closeCalls += 1;
+  };
+
+  const server = await startServer({ stores });
+  await server.shutdown();
+  await server.shutdown();
+  assert.equal(closeCalls, 1, 'stores.close() ran once across repeated shutdowns');
+});
+
 // ─── cache-invalidation subscription is released ────────────────────────────
 
 test('shutdown() unsubscribes from cache invalidations before closing stores', async () => {
