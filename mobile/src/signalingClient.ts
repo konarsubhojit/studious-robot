@@ -23,6 +23,10 @@ import type { Socket } from 'socket.io-client';
  *     `connect`, instead of vanishing or growing without limit.
  *   - **Structured logging.** Drops, queue overflows and flushes are logged
  *     with the event name so a mismatch is visible in the exported log.
+ *   - **Listener ownership.** Every handler registered through `on` is
+ *     remembered, so `on` can hand back an unsubscribe and `dispose` can
+ *     remove exactly this client's handlers — no caller has to reach for the
+ *     indiscriminate `socket.off()` to clean up after it.
  *
  * Reconnect/backoff itself is delegated to Socket.IO's own reconnection
  * manager (see `getSocketOptions` in `socketConfig.js`), which already applies
@@ -38,7 +42,7 @@ export const MAX_QUEUED_EVENTS = 32;
 
 export type SignalingClient = {
   socket: object;
-  on: (event: string, handler: (...args: any[]) => void) => void;
+  on: (event: string, handler: (...args: any[]) => void) => () => void;
   emit: (
     event: string,
     payload?: object,
@@ -48,6 +52,7 @@ export type SignalingClient = {
   flushQueue: () => number;
   dropQueuedEvents: (predicate: (item: QueuedEvent) => boolean) => number;
   getQueuedEventCount: () => number;
+  dispose: () => void;
 };
 
 /** A fire-and-forget emit held for the next connection. */
@@ -61,14 +66,16 @@ export type QueuedEvent = {
  */
 export function createSignalingClient(socket: Socket): SignalingClient {
   const queue: QueuedEvent[] = [];
+  const registered: [string, (...args: any[]) => void][] = [];
 
   /**
    * Register a handler for a server event, validating the payload first.
    *
    * @param event one of `SERVER_EVENTS` / `TRANSPORT_EVENTS`
+   * @returns an unsubscribe function removing just this handler
    */
-  function on(event: string, handler: Function) {
-    socket.on(event, (payload, ...rest) => {
+  function on(event: string, handler: Function): () => void {
+    const wrapped = (payload: any, ...rest: any[]) => {
       const result = parseEventPayload(event, payload, 'server');
       if (!result.success) {
         logWarn('[Signaling] Dropped malformed inbound event', {
@@ -78,7 +85,17 @@ export function createSignalingClient(socket: Socket): SignalingClient {
         return undefined;
       }
       return handler(result.data, ...rest);
-    });
+    };
+    socket.on(event, wrapped);
+    registered.push([event, wrapped]);
+    return () => {
+      const index = registered.findIndex(
+        ([name, listener]) => name === event && listener === wrapped,
+      );
+      if (index === -1) return;
+      registered.splice(index, 1);
+      socket.off(event, wrapped);
+    };
   }
 
   /**
@@ -183,6 +200,18 @@ export function createSignalingClient(socket: Socket): SignalingClient {
     return dropped;
   }
 
+  /**
+   * Remove every handler this client registered, leaving listeners registered
+   * elsewhere on the same socket untouched. Callers tearing a socket down call
+   * this instead of the blanket `socket.off()`.
+   */
+  function dispose(): void {
+    for (const [event, wrapped] of registered) {
+      socket.off(event, wrapped);
+    }
+    registered.length = 0;
+  }
+
   return {
     socket,
     on,
@@ -191,6 +220,7 @@ export function createSignalingClient(socket: Socket): SignalingClient {
     flushQueue,
     dropQueuedEvents,
     getQueuedEventCount: () => queue.length,
+    dispose,
   };
 }
 

@@ -17,6 +17,9 @@ function makeSocket(
     on: jest.fn((event: string, handler: any) => {
       handlers[event] = handler;
     }),
+    off: jest.fn((event: string, handler: any) => {
+      if (handlers[event] === handler) delete handlers[event];
+    }),
     emit: jest.fn((event: string, payload: any, callback: any) => {
       if (typeof callback === 'function') callback(ack);
     }),
@@ -57,6 +60,49 @@ describe('createSignalingClient inbound validation', () => {
       '[Signaling] Dropped malformed inbound event',
       expect.objectContaining({ event: SERVER_EVENTS.CALL_INCOMING }),
     );
+  });
+});
+
+describe('createSignalingClient listener ownership', () => {
+  test('the function returned by on removes just that handler', () => {
+    const socket = makeSocket();
+    const client = createSignalingClient((socket as any));
+    const handler = jest.fn();
+
+    const unsubscribe = client.on(SERVER_EVENTS.CALL_INCOMING, handler);
+    const wrapped = socket.handlers[SERVER_EVENTS.CALL_INCOMING];
+    unsubscribe();
+
+    expect(socket.off).toHaveBeenCalledWith(SERVER_EVENTS.CALL_INCOMING, wrapped);
+    expect(socket.handlers[SERVER_EVENTS.CALL_INCOMING]).toBeUndefined();
+
+    // A second call is a no-op rather than removing a later registration.
+    client.on(SERVER_EVENTS.CALL_INCOMING, handler);
+    (socket.off as jest.Mock).mockClear();
+    unsubscribe();
+    expect(socket.off).not.toHaveBeenCalled();
+  });
+
+  test('dispose removes every handler this client registered', () => {
+    const socket = makeSocket();
+    const client = createSignalingClient((socket as any));
+
+    client.on(SERVER_EVENTS.CALL_INCOMING, jest.fn());
+    client.on(SERVER_EVENTS.MESSAGE_RECEIVED, jest.fn());
+    // A listener owned by something else on the same socket.
+    const foreign = jest.fn();
+    socket.on('foreign', foreign);
+
+    client.dispose();
+
+    expect(socket.handlers[SERVER_EVENTS.CALL_INCOMING]).toBeUndefined();
+    expect(socket.handlers[SERVER_EVENTS.MESSAGE_RECEIVED]).toBeUndefined();
+    expect(socket.handlers.foreign).toBe(foreign);
+
+    // Disposing twice does not try to remove the same handlers again.
+    (socket.off as jest.Mock).mockClear();
+    client.dispose();
+    expect(socket.off).not.toHaveBeenCalled();
   });
 });
 
