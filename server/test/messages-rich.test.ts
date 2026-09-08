@@ -144,11 +144,14 @@ test('presign returns a chatblobs URL and binds the size and MIME type', async (
     res.body.publicUrl
   );
   assert.match(res.body.publicUrl, /\.jpg$/);
-  assert.ok(res.body.key.startsWith('chatblobs/'));
+  assert.match(res.body.key, /^chatblobs\/rich-alice_rich-bob\/[^/]+\.jpg$/);
+  assert.ok(!res.body.key.includes('%'));
 
   const uploadUrl = new URL(res.body.uploadUrl);
+  const publicUrl = new URL(res.body.publicUrl);
   assert.equal(uploadUrl.host, 'test-account.r2.cloudflarestorage.com');
-  assert.ok(uploadUrl.pathname.startsWith('/wetalk-media/chatblobs/'));
+  assert.equal(uploadUrl.pathname, `/${R2_ENV.R2_BUCKET}${publicUrl.pathname}`);
+  assert.equal(publicUrl.pathname, `/${res.body.key}`);
   assert.equal(uploadUrl.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
   // Size and MIME type are part of the signature, so object storage — not just
   // this server or the client — rejects an upload that changes either.
