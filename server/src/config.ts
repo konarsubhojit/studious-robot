@@ -331,6 +331,22 @@ const DEFAULT_MAX_PUSH_DEVICES_PER_USER = 3;
  */
 const DEVICE_FANOUT_ALERT_THRESHOLD = 3;
 
+/**
+ * How often each instance announces itself to its peers over the Socket.IO
+ * adapter (`lib/fanoutProbe.ts`).  Frequent enough that a broken fan-out path
+ * is visible on `/health` within a minute, cheap enough to be irrelevant:
+ * one small message per instance.  Override with `FANOUT_PROBE_INTERVAL_MS`
+ * (`0` disables the probe).
+ */
+const DEFAULT_FANOUT_PROBE_INTERVAL_MS = 15 * 1000;
+
+/**
+ * Missed probe intervals after which a peer is treated as no longer heard
+ * from.  Three tolerates a restart or a momentary Redis blip without flapping
+ * `fanout.healthy`.
+ */
+const DEFAULT_FANOUT_PROBE_STALE_INTERVALS = 3;
+
 export {
   MAX_ROOM_SIZE,
   PUSH_PROVIDERS,
@@ -371,4 +387,6 @@ export {
   SHARED_SESSION_MAX_TTL_MS,
   DEFAULT_MAX_PUSH_DEVICES_PER_USER,
   DEVICE_FANOUT_ALERT_THRESHOLD,
+  DEFAULT_FANOUT_PROBE_INTERVAL_MS,
+  DEFAULT_FANOUT_PROBE_STALE_INTERVALS,
 };

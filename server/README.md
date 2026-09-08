@@ -19,7 +19,7 @@ npm test           # node --test
 ```
 
 The server listens on `PORT` (default `4173`) and exposes:
-- `GET /health` — liveness/health probe returning JSON `{ status: "ok", ... }`
+- `GET /health` — liveness/health probe returning JSON `{ status: "ok", ... }`. Its `fanout` block is an *active* cross-instance check (`src/lib/fanoutProbe.ts`), deliberately separate from `stateAffinity`: the latter only says runtime state is Redis-backed, which does not prove an event emitted here reaches a socket held by another instance.
 - `GET /messages` — paginated text-chat history (see [REST endpoints](#rest-endpoints))
 - Socket.IO endpoint for WebRTC signaling (see events below)
 
@@ -176,6 +176,7 @@ Rooms hold at most **2 participants**. These legacy relay events remain availabl
 | `SESSION_TTL_MS` | `604800000` (7 days) | Session (bearer token) lifetime. Expired sessions are rejected on every read and swept from memory every 10 minutes; shared-store keys always carry an expiry. `0` restores non-expiring sessions — tests only. |
 | `INSTANCE_ID` | _(unset)_ | This instance's ordinal, declared per VM (`SIGNAL_INSTANCE_ID` is an alias). Setting it on the second and subsequent instances arms the startup guard that faults a multi-instance fleet running without `REDIS_URL`. |
 | `REDIS_URL` | _(unset)_ | Redis connection URL enabling shared runtime signaling state and multi-instance fanout (`stateAffinity: "shared"`), plus shared cache/message-bus wiring. **Required in production** — the fleet is two signaling VMs, so without it each VM has its own private sessions, presence, call state and cache. Optional for local single-process work, where the in-memory bus and cache are equivalent. |
+| `FANOUT_PROBE_INTERVAL_MS` | `15000` | How often this instance announces itself to its peers over the Socket.IO adapter so `/health` can report whether cross-instance socket fan-out actually works (`fanout`). `0` disables the probe. |
 | `DB_POOL_SIZE` | `4` | Per-instance Postgres pool size (fallback: `DATABASE_POOL_MAX`). For N instances, divide Neon pooler budget across instances. |
 | `DATABASE_POOL_IDLE_TIMEOUT_MS` | `300000` | Keep idle Postgres connections reusable to avoid a new TLS handshake on sporadic writes. |
 

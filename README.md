@@ -69,6 +69,12 @@ silent, so the server refuses to start without `REDIS_URL` when it is told it
 is one of several (`INSTANCE_ID` > 0, see `server/src/lib/instances.ts`) and
 `NODE_ENV=production`.
 
+`stateAffinity` is not the whole story: it says state is Redis-backed, not that
+a socket broadcast crosses instances. Each instance therefore probes the
+Socket.IO adapter periodically and reports what answered under `fanout` on
+`/health` (`peersSeen`, `healthy`, `mixedTransport`) — see
+[`deploy/README.md`](./deploy/README.md) §5a.
+
 **Give each VM a distinct `INSTANCE_ID`** in `/etc/robot-signal/env`
 (`INSTANCE_ID=0` on the first, `1` on the second, …). Nothing sets it
 automatically for separate hosts, and without it the guard above cannot tell a
@@ -151,6 +157,7 @@ any failure.  Run them before opening a pull request.
 | `server` | `test/security.test.ts`               | Rate limiting and blocklist                                  |
 | `server` | `test/signaling.test.ts`              | Legacy join-room signaling                                   |
 | `server` | `test/health.test.ts`                 | Health endpoint                                              |
+| `server` | `test/fanout-probe.test.ts`           | Cross-instance fan-out probe: peer discovery, staleness, mixed transports |
 | `mobile` | `__tests__/hooks/useCallFlow.test.tsx` | Call phases, push rehydration (all terminal + ringing states), camera switch |
 | `mobile` | `__tests__/call/callStateMachine.test.ts` | Call state machine transitions (idle → ringing → connected → ended) |
 | `mobile` | `__tests__/AppShell.test.tsx`          | Screen routing for each call state, minimize/restore          |

@@ -33,4 +33,6 @@ export type CreateServerOptions = {
   maxRetainedCalls?: number;
   turnFetch?: typeof fetch;
   turnEnv?: NodeJS.ProcessEnv;
+  /** Cross-instance fan-out probe period; `0` disables the timer (see lib/fanoutProbe.ts). */
+  fanoutProbeIntervalMs?: number;
 };
