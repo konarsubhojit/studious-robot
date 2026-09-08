@@ -1,8 +1,8 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { describeMessagePreview } from '../../../shared';
 import { useThemedStyles } from '../ThemeContext';
-import { fontScaleCaps, spacing, typography } from '../theme';
+import { fontScaleCaps, sizes, spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
 import StatusToast from './StatusToast';
 import SwipeableRow from './SwipeableRow';
@@ -23,6 +23,7 @@ import type { ContactRow, ConversationRow } from '../types/directory';
 
 /** Number of placeholder rows shown while the conversation list loads. */
 const SKELETON_ROW_COUNT = 6;
+const CONVERSATION_ROW_HEIGHT = sizes.row.twoLine;
 
 export type { ContactRow, ConversationRow };
 
@@ -180,30 +181,44 @@ function ConversationListRow({
   const unreadCount = conversation.unreadCount ?? 0;
   const hasUnread = unreadCount > 0;
   const isMuted = Boolean(isPeerMuted?.(conversation.peerId));
-  const actions = [
-    ...(onMarkRead && hasUnread
-      ? [{
-          key: 'mark-read',
-          label: 'Mark read',
-          accessibilityLabel: `Mark conversation with ${conversation.peerId} as read`,
-          testID: 'chat-list-mark-read',
-          onPress: () => onMarkRead(conversation.peerId),
-        }]
-      : []),
-    // Muting is otherwise buried in the person hub, which is two taps and a
-    // screen away from the row the notification actually came from.
-    ...(onSetPeerMuted
-      ? [{
-          key: 'mute',
-          label: isMuted ? 'Unmute' : 'Mute',
-          accessibilityLabel: isMuted
-            ? `Unmute notifications from ${conversation.peerId}`
-            : `Mute notifications from ${conversation.peerId}`,
-          testID: 'chat-list-mute',
-          onPress: () => onSetPeerMuted(conversation.peerId, !isMuted),
-        }]
-      : []),
-  ];
+  const peerId = conversation.peerId;
+  const handleMarkRead = useCallback(() => onMarkRead?.(peerId), [onMarkRead, peerId]);
+  const handleToggleMuted = useCallback(
+    () => onSetPeerMuted?.(peerId, !isMuted),
+    [isMuted, onSetPeerMuted, peerId],
+  );
+  const handleOpenConversation = useCallback(
+    () => onOpenConversation(peerId),
+    [onOpenConversation, peerId],
+  );
+  const handleOpenProfile = useCallback(() => onOpenProfile?.(peerId), [onOpenProfile, peerId]);
+  const actions = useMemo(
+    () => [
+      ...(onMarkRead && hasUnread
+        ? [{
+            key: 'mark-read',
+            label: 'Mark read',
+            accessibilityLabel: `Mark conversation with ${peerId} as read`,
+            testID: 'chat-list-mark-read',
+            onPress: handleMarkRead,
+          }]
+        : []),
+      // Muting is otherwise buried in the person hub, which is two taps and a
+      // screen away from the row the notification actually came from.
+      ...(onSetPeerMuted
+        ? [{
+            key: 'mute',
+            label: isMuted ? 'Unmute' : 'Mute',
+            accessibilityLabel: isMuted
+              ? `Unmute notifications from ${peerId}`
+              : `Mute notifications from ${peerId}`,
+            testID: 'chat-list-mute',
+            onPress: handleToggleMuted,
+          }]
+        : []),
+    ],
+    [handleMarkRead, handleToggleMuted, hasUnread, isMuted, onMarkRead, onSetPeerMuted, peerId],
+  );
   const activityIcon = activityIconFor(conversation);
   // An unsent draft outranks the last event in the preview line: it is the
   // one thing on the row the user still has to act on.
@@ -222,7 +237,7 @@ function ConversationListRow({
         subtitle={draftText ? `Draft: ${draftText}` : formatActivityPreview(conversation)}
         leading={
           <Avatar
-            id={conversation.peerId}
+            id={peerId}
             size="md"
             online={conversation.online}
             testID="chat-list-avatar"
@@ -237,8 +252,8 @@ function ConversationListRow({
             styles={styles}
           />
         }
-        onPress={() => onOpenConversation?.(conversation.peerId)}
-        onLongPress={onOpenProfile ? () => onOpenProfile(conversation.peerId) : undefined}
+        onPress={handleOpenConversation}
+        onLongPress={onOpenProfile ? handleOpenProfile : undefined}
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={onOpenProfile ? 'Long press for contact details' : undefined}
         testID="chat-list-row"
@@ -278,6 +293,8 @@ function ChatListScreen({
   const [isPickerVisible, setIsPickerVisible] = useState(false);
 
   const startChat = onStartChat ?? onOpenConversation;
+  const openPicker = useCallback(() => setIsPickerVisible(true), []);
+  const closePicker = useCallback(() => setIsPickerVisible(false), []);
 
   const renderConversationRow = useCallback(
     (conversation: ConversationRow) => (
@@ -306,6 +323,14 @@ function ChatListScreen({
   const renderItem = useCallback(
     ({ item }: { item: ConversationRow; }) => renderConversationRow(item),
     [renderConversationRow],
+  );
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<ConversationRow> | null | undefined, index: number) => ({
+      length: CONVERSATION_ROW_HEIGHT,
+      offset: CONVERSATION_ROW_HEIGHT * index,
+      index,
+    }),
+    [],
   );
 
   const emptyComponent = isLoading ? (
@@ -358,6 +383,7 @@ function ChatListScreen({
         data={conversations}
         keyExtractor={item => item.conversationId ?? item.peerId}
         renderItem={renderItem}
+        getItemLayout={getItemLayout}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         // Virtualization tuning so a long conversation list mounts a bounded
@@ -381,7 +407,7 @@ function ChatListScreen({
           icon="newChat"
           accessibilityLabel="New chat"
           accessibilityHint="Opens the list of people you can message"
-          onPress={() => setIsPickerVisible(true)}
+          onPress={openPicker}
           style={styles.fab}
           testID="chat-list-new-chat"
         />
@@ -389,7 +415,7 @@ function ChatListScreen({
 
       <PeoplePickerSheet
         visible={isPickerVisible}
-        onClose={() => setIsPickerVisible(false)}
+        onClose={closePicker}
         title="New chat"
         onSearchUsers={onSearchUsers}
         conversations={conversations}

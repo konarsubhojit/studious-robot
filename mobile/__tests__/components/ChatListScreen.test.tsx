@@ -1,7 +1,8 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import ChatListScreen from '../../src/components/ChatListScreen';
-import { fontScaleCaps } from '../../src/theme';
+import SwipeableRow from '../../src/components/SwipeableRow';
+import { fontScaleCaps, sizes } from '../../src/theme';
 
 function findByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID)[0] ?? null;
@@ -45,6 +46,20 @@ describe('ChatListScreen', () => {
     expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
   });
 
+  test('provides fixed conversation-row layout metadata to the list', () => {
+    const tree = render({
+      conversations: [makeConversation({ conversationId: 'conv-1' })],
+      onOpenConversation: jest.fn(),
+    });
+
+    const list = findByTestId(tree, 'chat-list');
+    expect(list.props.getItemLayout(null, 3)).toEqual({
+      length: sizes.row.twoLine,
+      offset: sizes.row.twoLine * 3,
+      index: 3,
+    });
+  });
+
   test('shows the empty state when there are no conversations', () => {
     const tree = render({ conversations: [], onOpenConversation: jest.fn() });
     expect(findByTestId(tree, 'chat-list-empty')).not.toBeNull();
@@ -70,6 +85,41 @@ describe('ChatListScreen', () => {
       row.props.onPress();
     });
     expect(onOpenConversation).toHaveBeenCalledWith('user-carol');
+  });
+
+  test('keeps row press handlers stable across parent rerenders', () => {
+    const conversations = [makeConversation({ peerId: 'user-carol', unreadCount: 2 })] as any;
+    const onOpenConversation = jest.fn();
+    const onOpenProfile = jest.fn();
+    const onMarkRead = jest.fn();
+    const tree = render({
+      conversations,
+      onOpenConversation,
+      onOpenProfile,
+      onMarkRead,
+      isRefreshing: false,
+    });
+    const row = findByTestId(tree, 'chat-list-row');
+    const swipeableRow = tree.root.findByType(SwipeableRow);
+    const onPress = row.props.onPress;
+    const onLongPress = row.props.onLongPress;
+    const onActionPress = swipeableRow.props.actions[0].onPress;
+
+    act(() => {
+      tree.update(
+        <ChatListScreen
+          conversations={conversations}
+          onOpenConversation={onOpenConversation}
+          onOpenProfile={onOpenProfile}
+          onMarkRead={onMarkRead}
+          isRefreshing
+        />,
+      );
+    });
+
+    expect(findByTestId(tree, 'chat-list-row').props.onPress).toBe(onPress);
+    expect(findByTestId(tree, 'chat-list-row').props.onLongPress).toBe(onLongPress);
+    expect(tree.root.findByType(SwipeableRow).props.actions[0].onPress).toBe(onActionPress);
   });
 
   test('shows skeleton rows while the conversation list is loading', () => {
