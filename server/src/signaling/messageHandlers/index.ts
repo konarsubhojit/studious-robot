@@ -4,6 +4,7 @@ import { normaliseId } from '../../lib/normalize.ts';
 import { isBlocked } from '../../security.ts';
 import { emitToUserSockets } from '../../domain/notifications.ts';
 import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '../../cache.ts';
+import { deleteAttachmentObject, loadR2Config } from '../../attachments.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from '../ack.ts';
 import { CLIENT_EVENTS, SERVER_EVENTS, ERROR_CODES, parseEventPayload } from '../../../../shared/index.ts';
 import { handleMessageSend } from './send.ts';
@@ -16,7 +17,7 @@ async function ensureCanDeleteMessage(
   requesterId: string,
   conversationId: string,
   messageId: string
-): Promise<{ ok: true; } | { ok: false; code: string; message: string; }> {
+): Promise<{ ok: true; attachmentUrl: unknown; } | { ok: false; code: string; message: string; }> {
   const existing = await state.messageStore.getMessage(conversationId, messageId);
   if (!existing || existing.deletedAt) {
     return { ok: false, code: ERROR_CODES.NOT_FOUND, message: 'message not found' };
@@ -28,7 +29,7 @@ async function ensureCanDeleteMessage(
       message: 'you can only delete your own messages',
     };
   }
-  return { ok: true };
+  return { ok: true, attachmentUrl: existing.attachment?.url };
 }
 
 function registerMessageHandlers(
@@ -98,8 +99,9 @@ function registerMessageHandlers(
     }
 
     const conversationId = deriveConversationId(requesterId, peerId);
+    let entitlement: Awaited<ReturnType<typeof ensureCanDeleteMessage>>;
     try {
-      const entitlement = await ensureCanDeleteMessage(
+      entitlement = await ensureCanDeleteMessage(
         state,
         requesterId,
         conversationId,
@@ -155,6 +157,21 @@ function registerMessageHandlers(
         state
       );
       return;
+    }
+
+    const r2Config = loadR2Config();
+    if (r2Config && entitlement.attachmentUrl) {
+      void deleteAttachmentObject({ config: r2Config, url: entitlement.attachmentUrl })
+        .then((removed) => {
+          if (!removed) {
+            console.error(`[messages] failed to delete attachment for messageId=${messageId}`);
+          }
+        })
+        .catch((error) => {
+          console.error(
+            `[messages] failed to delete attachment for messageId=${messageId}: ${describeError(error)}`
+          );
+        });
     }
 
     await invalidateCache(
