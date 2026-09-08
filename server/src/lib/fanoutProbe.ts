@@ -101,6 +101,9 @@ function parseProbe(payload: unknown): FanoutProbeMessage | null {
   return {
     instanceId,
     transport: typeof transport === 'string' && transport !== '' ? transport : 'unknown',
+    // Local receipt time, not the sender's `ts`: peer clocks are not
+    // comparable, and skew would otherwise show up as a negative or absurd
+    // `lastPeerEventAgeMs`.
     ts: Date.now(),
   };
 }
