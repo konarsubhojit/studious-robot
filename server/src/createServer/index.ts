@@ -7,9 +7,10 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS } from '../config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS, DEFAULT_ACCOUNT_DELETION_GRACE_MS, DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
+import { hydrateAccountDeletions, runAccountDeletionSweep } from '../domain/accountDeletion.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from '../domain/calls.ts';
 import { notifyCallTransition } from '../domain/notifications.ts';
@@ -142,6 +143,17 @@ function createServer(opts: CreateServerOptions = {}) {
       parseEnv('ACCOUNT_EXPORT_RATE_WINDOW_MS', 24 * 60 * 60 * 1000),
   });
 
+  // A deletion request is queued, not carried out inline, so the limit only has
+  // to stop a request storm; the erasure itself runs once however many times it
+  // is asked for.
+  const accountDeletionRateLimiter = createRateLimiter({
+    maxRequests:
+      opts.accountDeletionRateLimit ?? parseEnv('ACCOUNT_DELETION_RATE_LIMIT', 5),
+    windowMs:
+      opts.accountDeletionRateWindowMs ??
+      parseEnv('ACCOUNT_DELETION_RATE_WINDOW_MS', 60 * 60 * 1000),
+  });
+
   const telemetry = createTelemetry();
 
   // Route every timed datastore round trip (`lib/queryTiming.ts`) into this
@@ -189,6 +201,8 @@ function createServer(opts: CreateServerOptions = {}) {
     callEvents: stores.callEvents,
     /** @type blockerId → Set<blockedId> */
     blocks: stores.blocks,
+    /** userId → queued erasure (see domain/accountDeletion.ts) */
+    accountDeletions: stores.accountDeletions,
     /** Optional Drizzle DB handle for durable persistence. */
     db,
     /**
@@ -207,6 +221,7 @@ function createServer(opts: CreateServerOptions = {}) {
     /** Rate limiter for message search (`GET /messages/search`). */
     messageSearchRateLimiter,
     accountExportRateLimiter,
+    accountDeletionRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
@@ -302,6 +317,17 @@ function createServer(opts: CreateServerOptions = {}) {
   });
   state.fanout = fanoutProbe;
 
+  // ── Account erasure ──────────────────────────────────────────────────────
+  // `parseNonNegativeNumber` rather than `parseEnv` so an explicit grace of `0`
+  // (erase at the next sweep) survives instead of being read as unset.
+  const accountDeletionGraceMs =
+    opts.accountDeletionGraceMs ??
+    parseNonNegativeNumber(
+      'ACCOUNT_DELETION_GRACE_MS',
+      process.env.ACCOUNT_DELETION_GRACE_MS,
+      DEFAULT_ACCOUNT_DELETION_GRACE_MS
+    );
+
   // ── HTTP routes ────────────────────────────────────────────────────────────
   // Mounted after `io` is created so the calls router can emit realtime events.
   mountRoutes(app, {
@@ -309,6 +335,7 @@ function createServer(opts: CreateServerOptions = {}) {
     db,
     io,
     sessionTtlMs,
+    accountDeletionGraceMs,
     ringingTimeoutMs,
     turnFetch: opts.turnFetch ?? fetch,
     turnEnv: opts.turnEnv ?? process.env,
@@ -421,6 +448,29 @@ function createServer(opts: CreateServerOptions = {}) {
   }, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS);
   retentionSweepTimer.unref();
 
+  // Background worker: drain the queue of account erasures whose grace period
+  // has elapsed. The cascade spans Postgres, Redis and object storage, so it is
+  // run here rather than inside the request that asked for it; a failure leaves
+  // the row pending and the next tick retries it.
+  const accountDeletionSweepIntervalMs =
+    opts.accountDeletionSweepIntervalMs ??
+    parseNonNegativeNumber(
+      'ACCOUNT_DELETION_SWEEP_INTERVAL_MS',
+      process.env.ACCOUNT_DELETION_SWEEP_INTERVAL_MS,
+      DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS
+    );
+  const accountDeletionSweepTimer =
+    accountDeletionSweepIntervalMs > 0
+      ? setInterval(() => {
+          runAccountDeletionSweep(state, { io, fetchImpl: opts.attachmentFetch }).catch(
+            (error: unknown) => {
+              console.error(`[account-deletion] sweep failed: ${describeError(error)}`);
+            }
+          );
+        }, accountDeletionSweepIntervalMs)
+      : null;
+  accountDeletionSweepTimer?.unref();
+
   const shutdownDrainMs =
     opts.shutdownDrainMs ?? parseEnv('SHUTDOWN_DRAIN_MS', DEFAULT_SHUTDOWN_DRAIN_MS);
 
@@ -447,6 +497,7 @@ function createServer(opts: CreateServerOptions = {}) {
       clearInterval(deviceSweepTimer);
       clearInterval(sessionSweepTimer);
       clearInterval(retentionSweepTimer);
+      if (accountDeletionSweepTimer) clearInterval(accountDeletionSweepTimer);
       fanoutProbe.stop();
 
       // Tell connected clients to reconnect elsewhere.
@@ -542,6 +593,14 @@ function createServer(opts: CreateServerOptions = {}) {
     pruneTerminalCalls: (now: number = Date.now()): number =>
       pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now }),
     /**
+     * Erase every account whose grace period has elapsed.  Exposed for
+     * deterministic testing; the production server also runs this on a timer.
+     *
+     * @returns Number of accounts erased.
+     */
+    runAccountDeletionSweep: (now: number = Date.now()): Promise<number> =>
+      runAccountDeletionSweep(state, { now, io, fetchImpl: opts.attachmentFetch }),
+    /**
      * Populate the in-memory state from the Neon database.
      *
      * Loads persisted `users`, `devices`, `calls`, `call_events`, and `blocks`
@@ -551,6 +610,19 @@ function createServer(opts: CreateServerOptions = {}) {
      */
     loadPersistedState: async (): Promise<void> => {
       await loadPersistedStateFromDb(db, state);
+      // A deletion request outlives the process that accepted it: its grace
+      // period is measured in days, so the queue has to be reloaded or a
+      // restart would silently cancel every erasure in flight.
+      try {
+        const queued = await hydrateAccountDeletions(state);
+        if (queued > 0) {
+          console.log(`[account-deletion] hydrated ${queued} queued erasure(s) from DB`);
+        }
+      } catch (error) {
+        console.error(
+          `[account-deletion] failed to hydrate queued erasures: ${describeError(error)}`
+        );
+      }
       // A restart must never resurrect a dead call: close out anything that was
       // reloaded in a non-terminal state past its timeout window.
       const closed = sanitizeHydratedCalls(state, callTimeouts);

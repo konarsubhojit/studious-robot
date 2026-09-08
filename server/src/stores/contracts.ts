@@ -75,6 +75,21 @@ export type MessageRecord = import('../../../shared/signaling/schemas.ts').Messa
   readAt: string | null;
 };
 export type BlockStore = Map<string, Set<string>>;
+/**
+ * A queued account erasure.
+ *
+ * `pending` while the grace period runs, `completed` once the cascade has been
+ * carried out. A completed record holds no personal data: it is the receipt
+ * that the erasure ran, and the username it names has been released.
+ */
+export type AccountDeletionRecord = {
+  userId: string;
+  status: 'pending' | 'completed';
+  requestedAt: string;
+  scheduledFor: string;
+  completedAt: string | null;
+};
+export type AccountDeletionStore = Map<string, AccountDeletionRecord>;
 export type Stores = {
   rooms: RoomStore;
   users: UserStore;
@@ -87,6 +102,8 @@ export type Stores = {
   calls: CallStore;
   callEvents: CallEventStore;
   blocks: BlockStore;
+  /** userId → queued erasure; the deletion queue and its grace period. */
+  accountDeletions: AccountDeletionStore;
   messageBus?: import('../messageBus.ts').MessageBus | null;
   attachAdapter?: (io: import('socket.io').Server) => void;
   stateAffinity?: 'sticky' | 'shared';
@@ -144,6 +161,7 @@ export type ServerState = Stores & {
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
   accountExportRateLimiter: RateLimiter;
+  accountDeletionRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
   messageStore: import('../messageStore.ts').MessageStore;
   cache: import('../cache.ts').Cache;
@@ -174,6 +192,7 @@ const STORE_NAMES: readonly (keyof Stores)[] = Object.freeze([
   'calls',
   'callEvents',
   'blocks',
+  'accountDeletions',
 ]);
 
 export { STORE_NAMES };

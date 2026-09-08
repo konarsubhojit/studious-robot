@@ -252,4 +252,30 @@ const messages = pgTable(
   ],
 );
 
-export { users, calls, callEvents, devices, auditLog, blocks, messages };
+/**
+ * Queued account erasures (right to erasure).
+ *
+ * A deletion request is not carried out inside the request that made it: the
+ * cascade spans Postgres, Redis and R2, and a partial failure mid-request
+ * leaves an account half-erased with nothing to resume from. The row is the
+ * queue, and it also holds the grace period during which the owner (or an
+ * account they have recovered from a hijack) can still cancel.
+ *
+ * One row per user, so a repeated request is an upsert rather than a second
+ * queue entry. Completed rows are kept — with no personal data beyond the
+ * released username — as the record that the erasure ran.
+ */
+const accountDeletions = pgTable(
+  'account_deletions',
+  {
+    userId: text('user_id').primaryKey(),
+    status: text('status').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true, mode: 'string' }).notNull(),
+    scheduledFor: timestamp('scheduled_for', { withTimezone: true, mode: 'string' }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' }),
+  },
+  // The sweep's only predicate is `status = 'pending' AND scheduled_for <= now`.
+  (t) => [index('idx_account_deletions_due').on(t.status, t.scheduledFor)],
+);
+
+export { users, calls, callEvents, devices, auditLog, blocks, messages, accountDeletions };
