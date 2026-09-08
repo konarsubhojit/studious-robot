@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationSummary } from './types';
+import type { CallActivity, ChatMessage, ConversationSummary } from './types';
 
 /**
  * The conversation list and its unread accounting.
@@ -87,6 +87,33 @@ export function withOutgoingMessage(
 ): ConversationSummary[] {
   if (!message?.recipientId) return conversations;
   return withMessage(conversations, message, message.recipientId, false);
+}
+
+/**
+ * Fold a call into the conversation list and keep rows newest-activity first.
+ *
+ * A live call is just as much conversation activity as an optimistic outgoing
+ * message: the row preview, timestamp and ordering should change immediately,
+ * then the next `/conversations` response reconciles the same `callId`.
+ */
+export function withCallActivity(
+  conversations: ConversationSummary[],
+  peerId: string,
+  activity: CallActivity,
+): ConversationSummary[] {
+  if (!peerId || !activity?.callId) return conversations;
+  const index = conversations.findIndex(c => c.peerId === peerId);
+  const existing = index === -1 ? null : conversations[index];
+  const updated = {
+    ...(existing ?? {
+      conversationId: activity.conversationId,
+      peerId,
+      unreadCount: 0,
+    }),
+    lastActivity: activity,
+    unreadCount: existing?.unreadCount ?? 0,
+  };
+  return [updated, ...conversations.filter((_, conversationIndex) => conversationIndex !== index)];
 }
 
 /** Zero a conversation's unread badge locally, without waiting for a refetch. */

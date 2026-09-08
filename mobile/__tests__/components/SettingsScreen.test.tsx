@@ -453,9 +453,7 @@ describe('SettingsScreen', () => {
       expect(toastMessage(tree)).toBe('user-carol unblocked');
     });
 
-    test('a persistent condition stays on the banner, not the toast', () => {
-      // The three-level rule: a condition that is still true occupies layout
-      // until it stops being true; only completed events fade away.
+    test('app-wide status does not render inside Settings', () => {
       let tree: any;
       act(() => {
         tree = renderer.create(
@@ -467,7 +465,7 @@ describe('SettingsScreen', () => {
       });
 
       expect(toastMessage(tree)).toBeNull();
-      expect(findByTestID(tree, 'status-banner').length).toBeGreaterThan(0);
+      expect(findByTestID(tree, 'status-banner')).toHaveLength(0);
     });
 
     test('clears itself when the toast dismisses', () => {

@@ -12,11 +12,17 @@ function findAllByTestId(tree: any, testID: any) {
   return tree.root.findAll((node: any) => node.props?.testID === testID && typeof node.type === 'string');
 }
 
-function makeConversation(overrides = {}) {
+function makeConversation(overrides: any = {}): any {
   return {
     conversationId: 'conv-1',
     peerId: 'user-bob',
-    lastMessage: { body: 'Hey there!', createdAt: new Date().toISOString() },
+    lastMessage: {
+      messageId: 'msg-1',
+      senderId: 'user-bob',
+      recipientId: 'user-alice',
+      body: 'Hey there!',
+      createdAt: new Date().toISOString(),
+    },
     unreadCount: 0,
     ...overrides,
   };
@@ -44,6 +50,42 @@ describe('ChatListScreen', () => {
     const rows = findAllByTestId(tree, 'chat-list-row');
     expect(rows).toHaveLength(1);
     expect(findByTestId(tree, 'chat-list-empty')).toBeNull();
+  });
+
+  test('updates the row preview and ordering when a call becomes last activity', () => {
+    let tree = render({
+      conversations: [
+        makeConversation({ peerId: 'user-carol', lastMessage: { body: 'newer text', createdAt: '2026-08-25T10:00:00.000Z' } }),
+        makeConversation({ peerId: 'user-bob', lastMessage: { body: 'old text', createdAt: '2026-08-25T09:00:00.000Z' } }),
+      ],
+      onOpenConversation: jest.fn(),
+    });
+
+    act(() => {
+      tree.update(
+        <ChatListScreen
+          conversations={[
+            makeConversation({
+              peerId: 'user-bob',
+              lastMessage: { body: 'old text', createdAt: '2026-08-25T09:00:00.000Z' },
+              lastActivity: {
+                type: 'call',
+                callId: 'call-1',
+                direction: 'outgoing',
+                status: 'ended',
+                createdAt: '2026-08-25T11:00:00.000Z',
+              },
+            }),
+            makeConversation({ peerId: 'user-carol', lastMessage: { body: 'newer text', createdAt: '2026-08-25T10:00:00.000Z' } }),
+          ]}
+          onOpenConversation={jest.fn()}
+        />,
+      );
+    });
+
+    const rows = tree.root.findAll((n: any) => n.props?.testID === 'chat-list-row');
+    expect(rows[0].props.title).toBe('user-bob');
+    expect(rows[0].props.subtitle).toBe('Outgoing call');
   });
 
   test('provides fixed conversation-row layout metadata to the list', () => {

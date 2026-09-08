@@ -108,6 +108,26 @@ export function prependMessage(
 }
 
 /**
+ * Insert or replace one timeline entry in `peerId`'s newest-first history.
+ *
+ * Live calls use the same reconciliation rule as optimistic messages: the
+ * provisional local entry and the server entry share the call's `callId`, so
+ * whichever copy arrives later replaces the earlier one instead of duplicating
+ * it in the chat.
+ */
+export function upsertTimelineEntry(
+  state: MessagesByPeer,
+  peerId: string,
+  entry: ChatMessage,
+): MessagesByPeer {
+  const entryId = timelineEntryId(entry);
+  if (!entryId) return state;
+  const existing = state[peerId] ?? [];
+  const next = [entry, ...existing.filter(item => timelineEntryId(item) !== entryId)].sort(byNewestFirst);
+  return { ...state, [peerId]: next };
+}
+
+/**
  * Merge a fetched page of conversation history into what is already held.
  *
  * The server is authoritative, but only over the *window it reported on*.  A
@@ -155,5 +175,5 @@ export function mergeHistoryPage(
     return kept.length ? [...kept, ...page].sort(byNewestFirst) : page;
   }
   const existingIds = new Set(held.map(timelineEntryId));
-  return [...held, ...page.filter(entry => !existingIds.has(timelineEntryId(entry)))];
+  return [...held, ...page.filter(entry => !existingIds.has(timelineEntryId(entry)))].sort(byNewestFirst);
 }

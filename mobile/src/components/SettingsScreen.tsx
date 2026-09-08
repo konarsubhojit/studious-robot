@@ -19,8 +19,6 @@ import { ICE_TRANSPORT_POLICIES, normalizeIceTransportPolicy } from '../webrtcCo
 import AppButton from './AppButton';
 import AppearanceSettings from './AppearanceSettings';
 import { Avatar, Divider, IconAction, ListItem, SectionHeader, Sheet, Switch, Toast } from './primitives';
-import StatusBanner from './StatusBanner';
-import type { CallStatus } from './StatusBanner';
 import type { StorageUsage } from '../storageUsage';
 import type { ThemeColors } from '../theme';
 import type { ToastTone } from './primitives';
@@ -91,7 +89,6 @@ export type SettingsScreenProps = {
   onUnblockUser?: (peerId: string) => void;
   /** Open the person hub; every person-shaped row routes there. */
   onOpenProfile?: (peerId: string) => void;
-  status?: CallStatus;
 };
 
 function MutedPeopleSettings({
@@ -460,7 +457,6 @@ function SettingsScreen({
   blockedUsers = [],
   onUnblockUser,
   onOpenProfile,
-  status,
 }: SettingsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -525,8 +521,6 @@ function SettingsScreen({
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <StatusBanner status={status} style={styles.statusBanner} />
-
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <View style={styles.headerRow}>
           <IconAction
@@ -743,9 +737,6 @@ const createStyles = (colors: ThemeColors) =>
     content: {
       padding: spacing.lg,
       paddingBottom: spacing.xl,
-    },
-    statusBanner: {
-      marginBottom: spacing.sm,
     },
     toastLayer: {
       position: 'absolute',

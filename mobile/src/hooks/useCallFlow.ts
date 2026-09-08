@@ -152,6 +152,7 @@ import useCallRecovery from './useCallRecovery';
 import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
+import type { CallActivity } from '../messaging/types';
 import type { MediaStream } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
@@ -207,6 +208,32 @@ export type PeerConnection = RTCPeerConnection & {
   onconnectionstatechange: ((event: unknown) => void) | null;
 };
 export type WebrtcMediaStream = MediaStream;
+
+function callTimelineStatus(call: CallRecord): string {
+  return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
+}
+
+function projectCallTimelineActivity(
+  call: CallRecord | null | undefined,
+  userId: string | null | undefined,
+  durationSeconds?: number | null,
+): { peerId: string; activity: CallActivity } | null {
+  if (!call?.callId) return null;
+  const peerId = callPeerId(call, userId ?? '');
+  if (!peerId) return null;
+  return {
+    peerId,
+    activity: {
+      type: 'call',
+      callId: call.callId,
+      direction: call.callerId === userId ? 'outgoing' : 'incoming',
+      status: callTimelineStatus(call),
+      endReason: call.endReason ?? null,
+      durationSeconds: durationSeconds ?? (call as { durationSeconds?: number | null }).durationSeconds ?? null,
+      createdAt: call.createdAt ?? new Date().toISOString(),
+    },
+  };
+}
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
@@ -623,6 +650,10 @@ export default function useCallFlow({
   // Tracks callIds for which the incoming-call UI has already been shown so
   // duplicate socket or push events never trigger a second CallKeep display.
   const displayedIncomingCallIdsRef = useRef((new Set() as Set<string>));
+  const recordTimelineCallRef = useRef(
+    (_call: CallRecord | null | undefined, _durationSeconds?: number | null) => {},
+  );
+  const refreshCallTimelineRef = useRef(() => {});
   // Answer bookkeeping. The same tap can reach `acceptIncomingCall` through
   // several paths at once (CallKeep event, replayed queue entry, in-app
   // button), and a second accept for a call that is already up fails
@@ -675,7 +706,7 @@ export default function useCallFlow({
 
   const blocks = useBlocks({ authedFetchRef, sessionIdRef, signalingUrl });
   const { fetchBlocks } = blocks;
-  const { addToHistory } = callHistory;
+  const { addToHistory, fetchCallHistory: refreshCallHistory } = callHistory;
 
   /**
    * Modality the local user asked for when placing the *next* outgoing call.
@@ -718,6 +749,7 @@ export default function useCallFlow({
     activeChatPeerId,
     fetchConversations,
     markConversationRead,
+    recordCallActivity,
     resetTypingState,
     handleMessageReceived,
     handleMessageDeleted,
@@ -728,6 +760,17 @@ export default function useCallFlow({
     handleSocketConnected,
     handleSocketDisconnected,
   } = messaging;
+
+  useEffect(() => {
+    recordTimelineCallRef.current = (call, durationSeconds) => {
+      const projected = projectCallTimelineActivity(call, userIdRef.current, durationSeconds);
+      if (projected) recordCallActivity(projected.peerId, projected.activity);
+    };
+    refreshCallTimelineRef.current = () => {
+      void fetchConversations();
+      void refreshCallHistory();
+    };
+  }, [fetchConversations, recordCallActivity, refreshCallHistory]);
 
   const attachments = useAttachments({
     authedFetchRef,
@@ -1335,6 +1378,7 @@ export default function useCallFlow({
           isRead: !isMissed,
           mediaType: isCaller ? outgoingCallMediaTypeRef.current : DEFAULT_CALL_MEDIA_TYPE,
         });
+        recordTimelineCallRef.current(callRecord, durationSeconds);
       }
 
       callConnectedAtRef.current = null;
@@ -1366,6 +1410,7 @@ export default function useCallFlow({
       stopCallService();
       closePeerConnection();
       releaseLocalMedia();
+      if (callRecord?.callId) refreshCallTimelineRef.current();
       if (nextMessage) updateStatus(nextMessage, severity);
     },
     [
@@ -1647,6 +1692,7 @@ export default function useCallFlow({
         );
         incomingCallRef.current = call;
         setIncomingCall(call);
+        recordTimelineCallRef.current(call);
         dispatchCallEvent(CALL_EVENTS.RECEIVE);
         updateStatus(`Incoming call from ${call.callerId}`);
         // Show system-level incoming-call UI (CallKeep) and start the JS
@@ -1664,6 +1710,7 @@ export default function useCallFlow({
         logInfo('[CallFlow] Call ringing', { callId: call.callId, delivery });
         activeCallRef.current = call;
         setActiveCall(call);
+        recordTimelineCallRef.current(call);
         setCallDelivery(classifyCallDelivery(delivery));
       });
 
@@ -1732,6 +1779,7 @@ export default function useCallFlow({
           if (call) {
             activeCallRef.current = call;
             setActiveCall(call);
+            recordTimelineCallRef.current(call);
           }
 
           if (callStatus === 'accepted') {
@@ -2493,6 +2541,7 @@ export default function useCallFlow({
         activeCallIdRef.current = ack.call.callId;
         activeCallRef.current = ack.call;
         setActiveCall(ack.call);
+        recordTimelineCallRef.current(ack.call);
 
         // The server answers a placement with a verdict, and `busy` /
         // `unreachable` are answers, not ringing calls. Painting "Ringing…"
@@ -2893,6 +2942,7 @@ export default function useCallFlow({
       rememberAnsweredCall(call.callId);
       activeCallRef.current = nextCall;
       setActiveCall(nextCall);
+      recordTimelineCallRef.current(nextCall);
       incomingCallRef.current = null;
       setIncomingCall(null);
       clearPendingAnswer(call.callId, 'answered');
@@ -3745,6 +3795,7 @@ export default function useCallFlow({
     fetchConversations,
     fetchMessagesForPeer: messaging.fetchMessagesForPeer,
     searchMessages: messaging.searchMessages,
+    recordCallActivity: messaging.recordCallActivity,
     sendMessage: messaging.sendMessage,
     retryMessage: messaging.retryMessage,
     retryAttachmentUpload: attachments.retryUpload,
