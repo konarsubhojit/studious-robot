@@ -26,6 +26,7 @@ DATABASE_URL=postgresql://wetalk:<URL_ENCODED_DB_PASSWORD>@<A1_PRIVATE_IP>:5432/
 REDIS_URL=redis://<A1_PRIVATE_IP>:6379
 INSTANCE_ID=<UNIQUE_INTEGER>
 NODE_ENV=production
+BACKUP_HEALTHCHECKS_URL=https://hc-ping.com/<backup-check-uuid>
 ```
 
 ## Deploy or redeploy
@@ -213,23 +214,62 @@ sudo systemctl restart robot-signal.service
 
 ## Backups
 
-Install [`ops/wetalk-backup.sh`](../ops/wetalk-backup.sh) as
-`/usr/local/bin/wetalk-backup.sh` on `oci`:
+Install [`ops/wetalk-backup.sh`](../ops/wetalk-backup.sh) and the systemd
+units in [`ops/systemd/`](../ops/systemd/) on `oci`:
 
 ```bash
 sudo install -o root -g root -m 0750 \
   /home/wetalk/repos/studious-robot/ops/wetalk-backup.sh \
   /usr/local/bin/wetalk-backup.sh
-sudo -i env -i /usr/local/bin/wetalk-backup.sh
+sudo install -o root -g root -m 0644 \
+  /home/wetalk/repos/studious-robot/ops/systemd/wetalk-backup.service \
+  /etc/systemd/system/wetalk-backup.service
+sudo install -o root -g root -m 0644 \
+  /home/wetalk/repos/studious-robot/ops/systemd/wetalk-backup.timer \
+  /etc/systemd/system/wetalk-backup.timer
+sudo install -o root -g root -m 0644 \
+  /home/wetalk/repos/studious-robot/ops/systemd/wetalk-backup-failure.service \
+  /etc/systemd/system/wetalk-backup-failure.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now wetalk-backup.timer
+sudo systemctl list-timers wetalk-backup.timer --all
 ```
 
 `env -i` intentionally removes the ambient environment to prove the script can
-run under cron using only `/etc/robot-signal/env` and its internal OCI auth.
+run non-interactively using only `/etc/robot-signal/env` and its internal OCI
+auth:
+
+```bash
+sudo -i env -i /usr/local/bin/wetalk-backup.sh
+```
+
+Remove and standardise on the timer (do not run cron and timer together):
+
+```bash
+sudo rm -f /etc/cron.d/pg-backup
+sudo systemctl daemon-reload
+```
+
+Use the timer as the single scheduler: it provides journald logs,
+`systemctl status`, failure state, and `OnFailure=` hooks. The cron entry sends
+stderr to root's local mail spool, which is usually unread.
 
 The script explicitly uses instance-principal authentication, stages the dump,
 and refuses to upload files smaller than `MIN_SIZE` (default: 15000 bytes).
-Healthy dumps for the small observed dataset were approximately 24–32 KB. A
-sudden drop indicates that the wrong or an empty database is being dumped.
+It also compares the new dump against the previous successful object size and
+aborts if the new file is dramatically smaller than
+`MIN_PREVIOUS_SIZE_PERCENT` (default: `50`). If the previous size cannot be
+read, the script logs a warning and falls back to the static `MIN_SIZE` guard.
+
+### Monitoring (healthchecks.io)
+
+`wetalk-backup.service` pings healthchecks.io only after successful completion
+(`ExecStartPost=`). Failures or never-started runs therefore miss the success
+ping and alert via dead-man's-switch behavior. `OnFailure=` additionally pings
+`/fail` for faster explicit failure signaling.
+
+Set `BACKUP_HEALTHCHECKS_URL` in `/etc/robot-signal/env` (for example:
+`https://hc-ping.com/<backup-check-uuid>`). Do not commit the real URL.
 
 ### OCI CLI under `sudo -i`
 
@@ -249,6 +289,58 @@ sudo -i /home/ubuntu/bin/oci os object list \
 
 Alternatively, export `OCI_CLI_AUTH=instance_principal` in root's environment.
 The backup script already exports it internally.
+
+### Troubleshooting: `BucketNotFound` can mean unauthorized
+
+If backup commands from the VM return `BucketNotFound` or `NamespaceNotFound`
+while the Console still shows the bucket and objects, treat it as an IAM access
+problem first (Object Storage masks some authorization failures as 404).
+
+1. First, stop exposure growth: take a local dump immediately, independent of
+   fixing upload:
+   ```bash
+   sudo -i bash -c 'set -a; . /etc/robot-signal/env; set +a; pg_dump -Fc -d "$DATABASE_URL" >/var/backups/wetalk-emergency-$(date -u +%Y%m%dT%H%M%SZ).dump'
+   ```
+2. On the instance, read its OCID from metadata:
+   ```bash
+   curl -H "Authorization: Bearer Oracle" \
+     http://169.254.169.254/opc/v2/instance/
+   ```
+3. From Cloud Shell (user credentials), check dynamic-group matching rules are
+   non-empty and match the instance OCID:
+   ```bash
+   oci iam dynamic-group list --all \
+     --query 'data[].{name:name,rule:"matching-rule"}' \
+     --output table
+   ```
+4. Confirm IAM policy statements still reference that dynamic group and the
+   expected bucket.
+5. Wait 1-2 minutes after IAM edits for propagation, then retest.
+6. Use Audit (retention: one year) to see who/what changed the dynamic group or
+   policy.
+
+### Retention and incomplete multipart cleanup
+
+Prefer bucket-side lifecycle rules over client-side deletion. Lifecycle
+enforcement does not depend on instance-principal health.
+
+- Add an Object Lifecycle Policy for prefix `pg/` to delete objects older than
+  `N` days (operator decision; e.g. 30, 60, or 90 days).
+- Also clear incomplete multipart uploads (these are billable and do not appear
+  in normal object listings):
+
+```bash
+sudo -i /home/ubuntu/bin/oci os multipart list \
+  --auth instance_principal \
+  --bucket-name kiyonbucket \
+  --all
+
+sudo -i /home/ubuntu/bin/oci os multipart abort \
+  --auth instance_principal \
+  --bucket-name kiyonbucket \
+  --object-name '<OBJECT_NAME>' \
+  --upload-id '<UPLOAD_ID>'
+```
 
 ## Verified restore procedure
 
@@ -300,3 +392,13 @@ oci os object get --auth instance_principal ... --file - \
 `pg_restore` cannot auto-detect a custom-format dump from a non-seekable
 stream. Downloading first remains preferred because `pg_restore -l` validates
 the file before any restore operation.
+
+### Periodic restore verification
+
+Run the restore procedure into `wetalk_restore_test` on a fixed schedule (for
+example, monthly). Publish results in two places:
+
+- host evidence: `journalctl` output and row-count command output saved with the
+  run timestamp;
+- operator visibility: update the operations log/issue with pass/fail and the
+  restored object name.

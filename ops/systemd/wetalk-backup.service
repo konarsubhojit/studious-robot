@@ -1,0 +1,14 @@
+[Unit]
+Description=wetalk database backup to OCI Object Storage
+Wants=network-online.target
+After=network-online.target
+OnFailure=wetalk-backup-failure.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/robot-signal/env
+ExecStart=/usr/local/bin/wetalk-backup.sh
+ExecStartPost=-/bin/sh -c '[ -z "${BACKUP_HEALTHCHECKS_URL:-}" ] || /usr/bin/curl -fsS --max-time 10 --retry 2 --retry-delay 2 "${BACKUP_HEALTHCHECKS_URL%/}" >/dev/null'
+

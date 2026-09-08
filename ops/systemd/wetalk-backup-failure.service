@@ -1,0 +1,10 @@
+[Unit]
+Description=Notify healthchecks.io when wetalk backup fails
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/robot-signal/env
+ExecStart=-/bin/sh -c '[ -z "${BACKUP_HEALTHCHECKS_URL:-}" ] || /usr/bin/curl -fsS --max-time 10 --retry 2 --retry-delay 2 "${BACKUP_HEALTHCHECKS_URL%/}/fail" >/dev/null'
+
