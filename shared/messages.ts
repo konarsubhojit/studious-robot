@@ -86,6 +86,13 @@ const MAX_REACTION_LENGTH = 16;
 const MAX_VOICE_DURATION_MS = 10 * 60 * 1000;
 
 /**
+ * Number of amplitude samples a voice note's waveform is downsampled to
+ * before being sent as attachment metadata. Fixed so the player can lay out
+ * bars without knowing the recording's length in advance.
+ */
+const WAVEFORM_SAMPLE_COUNT = 48;
+
+/**
  * The effective type of a message, defaulting legacy rows to `"text"`.
  */
 function messageTypeOf(message: { type?: unknown; } | null | undefined): string {
@@ -167,6 +174,7 @@ export {
   MAX_REACTION_LENGTH,
   MAX_VOICE_DURATION_MS,
   MESSAGE_TYPES,
+  WAVEFORM_SAMPLE_COUNT,
   describeMessagePreview,
   isAllowedAttachmentMimeType,
   isAttachmentMessageType,

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
 import {
   cyclePlaybackRate,
@@ -22,9 +22,55 @@ import type { ThemeColors } from '../theme';
 /** Height (dp) of the scrubber track — small, but still comfortably tappable with the hit slop below. */
 const TRACK_HEIGHT = 4;
 
+/** Fewer bars than this and a waveform is more noise than signal — fall back to the flat track. */
+const MIN_WAVEFORM_BARS = 2;
+const WAVEFORM_BAR_MIN_HEIGHT = 3;
+const WAVEFORM_BAR_MAX_HEIGHT = 22;
+
 /** `1x` / `1.5x` / `2x`, without a trailing `.0` for whole-number speeds. */
 function formatPlaybackRate(rate: number): string {
   return `${Number(rate.toFixed(2)).toString()}x`;
+}
+
+/** Amplitude (`0..1`) to bar height (dp), clamped so a bad sample can't collapse or blow out a bar. */
+function waveformBarHeight(amplitude: number): number {
+  const clamped = Math.min(1, Math.max(0, Number(amplitude) || 0));
+  return WAVEFORM_BAR_MIN_HEIGHT + clamped * (WAVEFORM_BAR_MAX_HEIGHT - WAVEFORM_BAR_MIN_HEIGHT);
+}
+
+/**
+ * Renders pre-computed amplitude data as bars, the played portion tinted
+ * differently from the rest. `barHeights` is derived once per attachment (by
+ * the caller, keyed on the `amplitudes` array identity) so this never
+ * recomputes anything as `progress` ticks — only which bars count as played.
+ */
+function WaveformBars({
+  barHeights,
+  progress,
+  styles,
+  testID,
+}: {
+  barHeights: number[];
+  progress: number;
+  styles: ReturnType<typeof createStyles>;
+  testID: string;
+}) {
+  const playedCount = Math.round(progress * barHeights.length);
+  return (
+    <View style={styles.waveformBars} pointerEvents="none" testID={`${testID}-waveform`}>
+      {barHeights.map((height, index) => (
+        <View
+          // eslint-disable-next-line react/no-array-index-key -- bars are a fixed-length, order-stable layout
+          key={index}
+          style={[
+            styles.waveformBar,
+            { height },
+            index < playedCount ? styles.waveformBarFilled : styles.waveformBarEmpty,
+          ]}
+        />
+      ))}
+    </View>
+  );
 }
 
 function PlaybackIcon({
@@ -57,9 +103,16 @@ function PlaybackIcon({
  *
  * @param props
  */
-export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = false, testID = 'chat-audio-player' }: {
+export default function AudioAttachmentPlayer({
+  uri,
+  durationMs = 0,
+  waveform,
+  isOwn = false,
+  testID = 'chat-audio-player',
+}: {
         uri?: string | null;
         durationMs?: number | null;
+        waveform?: number[] | null;
         isOwn?: boolean;
         testID?: string;
     }) {
@@ -127,12 +180,41 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
     [isCurrent, totalMs],
   );
 
+  // `PanResponder.create` is only called once (below); it must read the
+  // latest `handleSeek` through a ref rather than closing over the one from
+  // whichever render created it.
+  const handleSeekRef = useRef(handleSeek);
+  handleSeekRef.current = handleSeek;
+
+  // A tap and a drag are the same gesture here — both move the scrubber to
+  // wherever the finger is — so grant and move share one handler. Attaching
+  // this to a plain `View` (rather than layering it onto `Pressable`, which
+  // owns the same low-level responder props) is what makes dragging work.
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: event => handleSeekRef.current(event.nativeEvent.locationX),
+        onPanResponderMove: event => handleSeekRef.current(event.nativeEvent.locationX),
+      }),
+    [],
+  );
+
   const progress = totalMs > 0 ? Math.min(1, positionMs / totalMs) : 0;
   const iconDefinition = ICONS[isPlaying ? 'mediaPause' : 'mediaPlay'];
   const VectorIcon = loadVectorIcons();
   const unavailable = !isAudioPlaybackAvailable();
   const rateSupported = isPlaybackRateSupported();
   const rateLabel = formatPlaybackRate(playback.playbackRate);
+  const hasWaveform = Array.isArray(waveform) && waveform.length >= MIN_WAVEFORM_BARS;
+  // The expensive part — mapping every amplitude to a bar height — only
+  // reruns when the attachment's own `waveform` array changes identity, not
+  // on every progress tick (which only changes which bars count as played).
+  const barHeights = useMemo(
+    () => (hasWaveform ? (waveform as number[]).map(waveformBarHeight) : null),
+    [hasWaveform, waveform],
+  );
 
   return (
     <View style={styles.container} testID={testID}>
@@ -155,7 +237,8 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
       </Pressable>
 
       <View style={styles.body}>
-        <Pressable
+        <View
+          accessible
           accessibilityRole="adjustable"
           accessibilityLabel="Seek audio"
           accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}
@@ -163,12 +246,18 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
           onLayout={(event: LayoutChangeEvent) => {
             trackWidthRef.current = event.nativeEvent.layout.width;
           }}
-          onPress={event => handleSeek(event.nativeEvent.locationX)}
-          style={styles.track}
-          testID={`${testID}-track`}>
-          <View style={[styles.trackFill, { flex: progress }]} />
-          <View style={{ flex: 1 - progress }} />
-        </Pressable>
+          style={[styles.track, hasWaveform && styles.waveformTrack]}
+          testID={`${testID}-track`}
+          {...panResponder.panHandlers}>
+          {hasWaveform && barHeights ? (
+            <WaveformBars barHeights={barHeights} progress={progress} styles={styles} testID={testID} />
+          ) : (
+            <>
+              <View style={[styles.trackFill, { flex: progress }]} />
+              <View style={{ flex: 1 - progress }} />
+            </>
+          )}
+        </View>
         <View style={styles.times}>
           <Text style={[styles.time, isOwn && styles.timeOwn]} testID={`${testID}-elapsed`}>
             {formatPlaybackTime(positionMs)}
@@ -240,6 +329,29 @@ const createStyles = (colors: ThemeColors) =>
     },
     trackFill: {
       backgroundColor: colors.accent,
+    },
+    waveformTrack: {
+      height: WAVEFORM_BAR_MAX_HEIGHT,
+      backgroundColor: 'transparent',
+      borderRadius: 0,
+      overflow: 'visible',
+    },
+    waveformBars: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 2,
+    },
+    waveformBar: {
+      flex: 1,
+      minWidth: 2,
+      borderRadius: 1,
+    },
+    waveformBarFilled: {
+      backgroundColor: colors.accent,
+    },
+    waveformBarEmpty: {
+      backgroundColor: colors.surfaceBanner,
     },
     times: {
       flexDirection: 'row',

@@ -219,6 +219,7 @@ export async function uploadAttachment({
   width,
   height,
   durationMs,
+  waveform,
   onProgress,
   onAbortHandle,
 }: {
@@ -233,11 +234,12 @@ export async function uploadAttachment({
         width?: number;
         height?: number;
         durationMs?: number;
+        waveform?: number[];
         onProgress?: (fraction: number) => void;
         onAbortHandle?: (abort: () => void) => void;
     }): Promise<{
     url: string; mimeType: string; sizeBytes: number;
-    name?: string; width?: number; height?: number; durationMs?: number;
+    name?: string; width?: number; height?: number; durationMs?: number; waveform?: number[];
 }> {
   const validation = validateAttachment({ type, mimeType, sizeBytes });
   if (!validation.ok) {
@@ -294,5 +296,6 @@ export async function uploadAttachment({
     ...(Number.isFinite(width) ? { width } : {}),
     ...(Number.isFinite(height) ? { height } : {}),
     ...(Number.isFinite(durationMs) ? { durationMs } : {}),
+    ...(Array.isArray(waveform) && waveform.length ? { waveform } : {}),
   };
 }
