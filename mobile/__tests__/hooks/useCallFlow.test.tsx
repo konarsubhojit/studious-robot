@@ -3407,11 +3407,28 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
-    expect(mediaStateEmits).toContainEqual({
-      version: 1,
-      callId: 'call-snapshot-1',
-      mediaState: { isScreenSharing: false, isVideoEnabled: true },
-    });
+    expect(mediaStateEmits).toEqual([
+      {
+        version: 1,
+        callId: 'call-snapshot-1',
+        mediaState: { isScreenSharing: false, isVideoEnabled: true },
+      },
+    ]);
+
+    // A live call still walks accepted → connecting_media → in_call; the peer
+    // learned this snapshot on the first of those and it has not changed.
+    for (const status of ['connecting_media', 'in_call']) {
+      await act(async () => {
+        await stateHandler({
+          status,
+          call: { callId: 'call-snapshot-1', callerId: 'alice', calleeId: 'bob', status },
+        });
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+    }
+    expect(mediaStateEmits).toHaveLength(1);
   });
 
   // ── call.connected ────────────────────────────────────────────────────────
