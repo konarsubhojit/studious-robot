@@ -86,13 +86,82 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function waitForCondition(assertion: () => boolean | Promise<boolean>, timeoutMs = 500): Promise<void> {
+/**
+ * A ceiling that only ever trips on a genuine hang, not on a slow CI runner.
+ *
+ * Every wait below is condition-based: it returns as soon as the condition
+ * holds, so the ceiling costs nothing when the code is correct and is generous
+ * enough that scheduling delays under load cannot exhaust it.
+ */
+const WAIT_CEILING_MS = 10_000;
+
+/**
+ * Poll until `assertion` holds, failing only if it never does.
+ *
+ * @param message - Included in the failure so a timeout names what was awaited.
+ */
+async function waitForCondition(
+  assertion: () => boolean | Promise<boolean>,
+  message: string,
+  timeoutMs = WAIT_CEILING_MS
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  for (;;) {
     if (await assertion()) return;
+    if (Date.now() >= deadline) {
+      assert.fail(`timed out after ${timeoutMs}ms waiting for: ${message}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.ok(await assertion(), 'condition was not met before timeout');
+}
+
+/**
+ * Reject if `promise` has not settled within a generous ceiling.
+ *
+ * Used where a regression would otherwise hang the test rather than fail it —
+ * the ceiling is a liveness backstop, never the assertion itself.
+ */
+function withCeiling<T>(promise: Promise<T>, message: string, timeoutMs = WAIT_CEILING_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out after ${timeoutMs}ms waiting for: ${message}`)),
+      timeoutMs
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+/**
+ * Round-trip a rejected `message.send` so the server has demonstrably finished
+ * with everything this socket emitted earlier.
+ *
+ * Socket.IO delivers packets on a single connection in order, so an ack for an
+ * event emitted *after* the code under test proves that any (unwanted) event
+ * the server had already emitted to this socket has arrived. That turns "sleep
+ * and hope" negative assertions into deterministic ones. Addressing the send to
+ * the sender themselves keeps the barrier side-effect free: it is rejected
+ * before anything is stored or fanned out — as is any send from an
+ * unauthenticated guest socket, which never gets that far.
+ */
+async function drainSocket(socket: import('socket.io-client').Socket, selfUserId: string): Promise<void> {
+  const ack = await withCeiling(
+    emitWithAck(socket, 'message.send', {
+      version: VERSION,
+      recipientId: selfUserId,
+      body: 'barrier',
+    }),
+    'the barrier round-trip to be acknowledged'
+  );
+  assert.equal(ack.ok, false, 'the barrier send must be rejected rather than delivered');
 }
 
 // ─── message.send ─────────────────────────────────────────────────────────────
@@ -189,16 +258,13 @@ test('message.send acks after fan-out without waiting for persistence', async (t
   });
 
   const envelope = await received;
-  const ack = await Promise.race([
-    ackPromise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('ack waited for persistence')), 100)),
-  ]);
+  const ack = await withCeiling(ackPromise, 'the send ack (it must not wait for persistence)');
   assert.equal((ack as any).ok, true);
   assert.equal((ack as any).message.messageId, envelope.message.messageId);
   assert.equal(saved.length, 0, 'saveMessage has not completed when the ack is emitted');
 
   deferred.resolve(undefined);
-  await waitForCondition(() => saved.length === 1);
+  await waitForCondition(() => saved.length === 1, 'the message to be persisted');
 });
 
 test('message.send surfaces asynchronous persistence failures in telemetry', async (t) => {
@@ -244,7 +310,10 @@ test('message.send surfaces asynchronous persistence failures in telemetry', asy
   });
   assert.equal(ack.ok, true);
 
-  await waitForCondition(() => getMetrics().counters.message_persist_errors === 1);
+  await waitForCondition(
+    () => getMetrics().counters.message_persist_errors === 1,
+    'the persistence failure to be counted in telemetry'
+  );
 });
 
 test('message.send records a delivery receipt when the recipient is connected', async (t) => {
@@ -345,7 +414,7 @@ test('message.send surfaces a messageId already used by another message after ac
   await waitForCondition(async () => {
     const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
     return history.body.messages.length === 1;
-  });
+  }, 'the original message to reach history');
   // Bob tries to overwrite Alice's message by reusing its id.
   const ack = await emitWithAck(bob, 'message.send', {
     version: VERSION,
@@ -356,7 +425,10 @@ test('message.send surfaces a messageId already used by another message after ac
 
   assert.equal(ack.ok, true);
   assert.equal(ack.message.messageId, 'client-uuid-2');
-  await waitForCondition(() => getMetrics().counters.message_persist_errors === 1);
+  await waitForCondition(
+    () => getMetrics().counters.message_persist_errors === 1,
+    'the messageId collision to be counted in telemetry'
+  );
 
   const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
   assert.equal(history.body.messages.length, 1);
@@ -661,9 +733,8 @@ test('message.send pushes to an offline recipient', async (t) => {
   });
   assert.equal(ack.ok, true);
 
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  await waitForCondition(() => spy.calls.length === 1, 'the offline push to be sent');
 
-  assert.equal(spy.calls.length, 1);
   assert.equal(spy.calls[0].channel.deviceId, 'device-off-bob');
   assert.equal(spy.calls[0].messageData.messageId, ack.message.messageId);
   assert.equal(spy.calls[0].messageData.senderId, 'off-alice');
@@ -688,12 +759,15 @@ test('message.send does not push to a recipient who is connected', async (t) => 
     bob.disconnect();
   });
 
+  const received = new Promise<any>((resolve) => bob.once('message.received', resolve));
   await emitWithAck(alice, 'message.send', {
     version: VERSION,
     recipientId: 'on-bob',
     body: 'hi',
   });
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Fan-out and the push decision share one synchronous pass, so once Bob has
+  // the message any push for it would already have been requested.
+  await withCeiling(received, "Bob's copy of the message");
 
   assert.equal(spy.calls.length, 0);
 });
@@ -1023,8 +1097,9 @@ test('POST /messages/read does not emit message.read when nothing was updated', 
   assert.equal(readRes.status, 200);
   assert.equal(readRes.body.updated, 0);
 
-  // Give any (unwanted) emit a moment to arrive before asserting it did not.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // The (unwanted) emit would have been written to Alice's connection before
+  // the response above, so this barrier arrives strictly after it.
+  await drainSocket(alice, 'readquiet-alice');
   assert.equal(received, false);
 });
 
@@ -1087,6 +1162,10 @@ test('message.typing is ignored for an unauthenticated socket, an unsupported ve
     isTyping: true,
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Draining the guest first proves the server has handled its emit, so any
+  // relay it should not have made is already on Alice's connection; draining
+  // Alice then proves nothing arrived there ahead of her own barrier.
+  await drainSocket(guest, 'typingguard-alice');
+  await drainSocket(alice, 'typingguard-alice');
   assert.equal(received, false);
 });
