@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 import { MESSAGE_TYPES, describeMessagePreview, messageTypeOf, parseEventPayload, SERVER_EVENTS } from '../../shared/index.ts';
+import { presignAttachmentUpload } from '../src/attachments.ts';
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
 
@@ -108,6 +109,29 @@ function imageAttachment(overrides = {}) {
 
 // ─── POST /attachments/presign ────────────────────────────────────────────────
 
+test('presign produces the known SigV4 signature with cache control', () => {
+  const result = presignAttachmentUpload({
+    config: {
+      accountId: 'test-account',
+      bucket: 'wetalk-media',
+      accessKeyId: 'test-key-id',
+      secretAccessKey: 'test-secret',
+      endpoint: 'https://test-account.r2.cloudflarestorage.com',
+      publicBaseUrl: 'https://media.example.test',
+      ttlSeconds: 300,
+    },
+    key: 'chatblobs/alice%3Abob/00000000-0000-4000-8000-000000000000.jpg',
+    mimeType: 'image/jpeg',
+    sizeBytes: 2048,
+    now: new Date('2026-09-08T09:22:15.000Z'),
+  });
+
+  assert.equal(
+    new URL(result.uploadUrl).searchParams.get('X-Amz-Signature'),
+    '9ac80309e68314bbbcdd64f982287dcad76c0dd20b0fe33435931e2bbe10038d'
+  );
+});
+
 test('presign rejects an unauthenticated caller', async (t) => {
   withR2Env(t);
   const { url, teardown } = await startServer();
@@ -150,14 +174,18 @@ test('presign returns a chatblobs URL and binds the size and MIME type', async (
   assert.equal(uploadUrl.host, 'test-account.r2.cloudflarestorage.com');
   assert.ok(uploadUrl.pathname.startsWith('/wetalk-media/chatblobs/'));
   assert.equal(uploadUrl.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
-  // Size and MIME type are part of the signature, so object storage — not just
-  // this server or the client — rejects an upload that changes either.
+  // Cache policy, size, and MIME type are part of the signature, so object
+  // storage rejects an upload that changes any of them.
   assert.equal(
     uploadUrl.searchParams.get('X-Amz-SignedHeaders'),
-    'content-length;content-type;host'
+    'cache-control;content-length;content-type;host'
   );
   assert.ok(uploadUrl.searchParams.get('X-Amz-Signature'));
-  assert.deepEqual(res.body.headers, { 'Content-Type': 'image/jpeg', 'Content-Length': '2048' });
+  assert.deepEqual(res.body.headers, {
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Type': 'image/jpeg',
+    'Content-Length': '2048',
+  });
   assert.ok(Date.parse(res.body.expiresAt) > Date.now());
 });
 
