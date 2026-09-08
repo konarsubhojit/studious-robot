@@ -175,6 +175,40 @@ test('a peer on a different transport is reported as a mixed fleet', () => {
   }
 });
 
+test('a malformed or hostile probe payload is truncated and sanitised', () => {
+  const hub = new EventEmitter();
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(' '));
+  };
+  const probe = createFanoutProbe({
+    io: createFakeServer({ hub, transport: 'RedisAdapter' }),
+    instanceId: '0',
+    intervalMs: 0,
+  });
+  const peer = createFakeServer({ hub, transport: 'RedisAdapter' }).of();
+  try {
+    peer.serverSideEmit(FANOUT_PROBE_EVENT, { instanceId: 42 });
+    peer.serverSideEmit(FANOUT_PROBE_EVENT, null);
+    assert.deepEqual(probe.getStatus().peersSeen, [], 'malformed probes are ignored');
+
+    peer.serverSideEmit(FANOUT_PROBE_EVENT, {
+      instanceId: 'x'.repeat(200),
+      transport: 'web-pubsub\ninjected log line',
+    });
+    const [peerId] = probe.getStatus().peersSeen;
+    assert.equal(peerId.length, 64, 'peer ids are bounded');
+    // Anything arriving over the adapter is only as trustworthy as Redis is,
+    // so it must not be able to forge log lines.
+    assert.equal(warnings.length, 1);
+    assert.doesNotMatch(warnings[0], /\n/);
+  } finally {
+    console.warn = originalWarn;
+    probe.stop();
+  }
+});
+
 test('stop() detaches the listener so a torn-down instance records nothing', () => {
   const hub = new EventEmitter();
   const first = createFanoutProbe({

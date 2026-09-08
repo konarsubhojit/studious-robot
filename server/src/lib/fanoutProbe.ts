@@ -26,6 +26,7 @@ import {
   DEFAULT_FANOUT_PROBE_STALE_INTERVALS,
 } from '../config.ts';
 import { describeError } from './errors.ts';
+import { sanitizeForLog } from './normalize.ts';
 
 /** Event name the probe travels under.  Namespaced so it cannot collide with a client event. */
 const FANOUT_PROBE_EVENT = 'fanout.probe';
@@ -93,14 +94,20 @@ function describeTransport(adapter: object | null | undefined): string {
   return name;
 }
 
+/** Longest peer-supplied string kept, so one malformed probe cannot bloat the peer map or a log line. */
+const MAX_PROBE_FIELD_CHARS = 64;
+
 /** Narrow an arriving payload; anything malformed is ignored rather than trusted. */
 function parseProbe(payload: unknown): FanoutProbeMessage | null {
   if (typeof payload !== 'object' || payload === null) return null;
   const { instanceId, transport } = payload as Record<string, unknown>;
   if (typeof instanceId !== 'string' || instanceId === '') return null;
   return {
-    instanceId,
-    transport: typeof transport === 'string' && transport !== '' ? transport : 'unknown',
+    instanceId: instanceId.slice(0, MAX_PROBE_FIELD_CHARS),
+    transport:
+      typeof transport === 'string' && transport !== ''
+        ? transport.slice(0, MAX_PROBE_FIELD_CHARS)
+        : 'unknown',
     // Local receipt time, not the sender's `ts`: peer clocks are not
     // comparable, and skew would otherwise show up as a negative or absurd
     // `lastPeerEventAgeMs`.
@@ -145,15 +152,19 @@ function createFanoutProbe({
     peers.set(probe.instanceId, { transport: probe.transport, lastSeenAt: probe.ts });
     if (probe.transport !== transport && !mismatchesLogged.has(probe.instanceId)) {
       mismatchesLogged.add(probe.instanceId);
+      // The payload crossed the adapter, so it is only as trustworthy as
+      // Redis is: sanitised like every other externally-sourced log field.
       console.warn(
-        `[fanout] instance ${probe.instanceId} reports transport "${probe.transport}" ` +
-          `but this instance uses "${transport}"; cross-instance socket delivery is broken`
+        `[fanout] instance ${sanitizeForLog(probe.instanceId)} reports transport ` +
+          `"${sanitizeForLog(probe.transport)}" but this instance uses "${transport}"; ` +
+          'cross-instance socket delivery is broken'
       );
     }
   };
 
   function emitProbe(): void {
     if (!probing) return;
+    prunePeers(Date.now());
     try {
       const message: FanoutProbeMessage = { instanceId, transport, ts: Date.now() };
       namespace.serverSideEmit(FANOUT_PROBE_EVENT, message);
@@ -162,15 +173,30 @@ function createFanoutProbe({
     }
   }
 
+  /**
+   * Drop peers not heard from within the staleness window.
+   *
+   * Called from the probe timer as well as `getStatus`, because an instance
+   * whose `INSTANCE_ID` is unset identifies itself by a fresh UUID on every
+   * restart: leaving eviction to `/health` alone would let the map grow with
+   * every peer restart on an instance nothing scrapes.
+   */
+  function prunePeers(now: number): void {
+    for (const [peerId, peer] of peers) {
+      if (now - peer.lastSeenAt > staleAfterMs) {
+        peers.delete(peerId);
+        // Retired peers must be able to warn again if they come back mixed.
+        mismatchesLogged.delete(peerId);
+      }
+    }
+  }
+
   function getStatus(now: number = Date.now()): FanoutStatus {
+    prunePeers(now);
     let lastPeerEventAgeMs: number | null = null;
     let mixedTransport = false;
     const peersSeen: string[] = [];
     for (const [peerId, peer] of peers) {
-      if (now - peer.lastSeenAt > staleAfterMs) {
-        peers.delete(peerId);
-        continue;
-      }
       peersSeen.push(peerId);
       if (peer.transport !== transport) mixedTransport = true;
       const age = Math.max(now - peer.lastSeenAt, 0);
