@@ -236,10 +236,17 @@ async function createRedisPgStores(
     io.adapter(createAdapter(adapterPub, adapterSub));
   };
 
-  bundle.close = async (): Promise<void> => {
-    await bundle.callState?.releaseSweepLease(bundle.instanceId);
-    await messageBus.close();
-    await Promise.allSettled(clients.map((client) => client.quit?.()));
+  // Idempotent: the same promise is returned for every call so a second close
+  // (from a caller that cannot know the first already ran) never issues
+  // commands against clients that have already quit.
+  let closePromise: Promise<void> | null = null;
+  bundle.close = (): Promise<void> => {
+    closePromise ??= (async () => {
+      await bundle.callState?.releaseSweepLease(bundle.instanceId);
+      await messageBus.close();
+      await Promise.allSettled(clients.map((client) => client.quit?.()));
+    })();
+    return closePromise;
   };
 
   return bundle as any;

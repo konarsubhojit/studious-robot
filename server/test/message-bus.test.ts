@@ -217,6 +217,36 @@ test('createRedisPgStores returns a complete store bundle plus bus/adapter/close
   await stores.close();
 });
 
+// A second close must not issue commands against clients that already quit:
+// node-redis rejects those with "The client is closed", which surfaced as an
+// error on every graceful shutdown.
+test('closing the redis store bundle twice quits each client only once', async () => {
+  const { makeClient } = createFakeRedis();
+  const quitAttempts: unknown[] = [];
+  const stores = await createRedisPgStores({
+    createClient: () => {
+      const client = makeClient();
+      const quit = client.quit.bind(client);
+      client.quit = async () => {
+        quitAttempts.push(client);
+        if (client.quit_called) throw new Error('The client is closed');
+        await quit();
+      };
+      return client;
+    },
+    createAdapter: () => asSocketIoAdapter({}),
+  });
+
+  const first = stores.close();
+  assert.equal(stores.close(), first, 'repeated close() calls share one promise');
+  await first;
+  const attempts = quitAttempts.length;
+  assert.ok(attempts > 0, 'the bundle quit its clients on the first close');
+
+  await stores.close();
+  assert.equal(quitAttempts.length, attempts, 'the second close issued no further quits');
+});
+
 test('createRedisPgStores throws without REDIS_URL or a client factory', async () => {
   const prev = process.env.REDIS_URL;
   delete process.env.REDIS_URL;

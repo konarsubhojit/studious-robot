@@ -60,7 +60,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
    * When `DATABASE_URL` is set, users and devices are persisted to (and
    * hydrated from) the Neon Postgres database at startup.
    */
-  async function bootstrap(): Promise<{ httpServer: import('http').Server; shutdown: Function; stores?: object; }> {
+  async function bootstrap(): Promise<{ httpServer: import('http').Server; shutdown: Function; }> {
     logNotificationHubStartupStatus();
     // Fail (or at least shout) before serving traffic if this process is one of
     // several but has no shared state to invalidate across.
@@ -85,7 +85,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         if (db) {
           await server.loadPersistedState();
         }
-        return { ...server, stores };
+        return server;
       } catch (err) {
         // Fail closed on an explicitly configured but unreachable Redis so the
         // operator notices rather than silently losing cross-instance state.
@@ -130,7 +130,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       console.log(`[signaling] worker ${process.pid} booting`);
     }
     bootstrap()
-      .then(({ httpServer, shutdown, stores }) => {
+      .then(({ httpServer, shutdown }) => {
         httpServer.listen(port, host, () => {
           console.log(`[signaling] listening on http://${host}:${port}`);
           console.log(`[signaling] health endpoint: http://${host}:${port}/health`);
@@ -143,16 +143,11 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
           if (exiting) return;
           exiting = true;
           console.log(`[signaling] received ${signal}; draining connections...`);
+          // `shutdown()` drains connections and then closes the store bundle
+          // (Redis/Postgres) itself, so nothing here may close it a second
+          // time: the redundant close used to run against already-quit
+          // clients and log "The client is closed" on every stop.
           shutdown({ reason: signal })
-            .then(() =>
-              // Close Redis connections after draining; log close failures
-              // specifically but don't abort the exit on them.
-              Promise.resolve(
-                ((stores ?? {}) as { close?: () => Promise<void> }).close?.()
-              ).catch((err: unknown) => {
-                console.error('[signaling] error closing Redis stores:', describeError(err));
-              })
-            )
             .then(() => {
               console.log('[signaling] shutdown complete; exiting');
               process.exit(0);
