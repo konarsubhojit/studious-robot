@@ -62,11 +62,25 @@ export type AttachmentDownloadAction = (
   message: ChatMessage,
   onProgress?: (fraction: number) => void,
   onAbortHandle?: (abort: () => void) => void,
-) => void | Promise<{ success?: boolean; reason?: AttachmentDownloadReason } | void>;
+) => void | Promise<AttachmentActionResult | void>;
+export type AttachmentActionResult = {
+  success?: boolean;
+  reason?: AttachmentDownloadReason;
+  message?: string;
+  retryable?: boolean;
+};
+export type AttachmentOpenAction = AttachmentDownloadAction;
+type AttachmentActionKind = 'download' | 'open';
 /** Per-message attachment download state: idle is the absence of an entry. */
 export type AttachmentDownloadState =
-  | { status: 'downloading'; progress: number }
-  | { status: 'failed'; reason?: AttachmentDownloadReason };
+  | { status: 'downloading'; progress: number; action?: AttachmentActionKind }
+  | {
+      status: 'failed';
+      reason?: AttachmentDownloadReason;
+      message?: string;
+      retryable?: boolean;
+      action?: AttachmentActionKind;
+    };
 /** Adds or removes an emoji reaction on a message. */
 export type ReactionAction = (
   message: ChatMessage,
@@ -386,6 +400,8 @@ type MessageContentProps = {
  isOwn: boolean;
  styles: ChatStyles;
  onDownloadAttachment?: (message: ChatMessage) => void;
+ onOpenAttachment?: (message: ChatMessage) => void;
+ isAttachmentOpenerSupported?: boolean;
  onOpenMedia?: (message: ChatMessage) => void;
  onCancelDownload?: (message: ChatMessage) => void;
  downloadState?: AttachmentDownloadState;
@@ -468,15 +484,148 @@ function TransferProgress({ label, progress, styles, progressTestID, onCancel, c
  );
 }
 
+function AttachmentIdleActions({
+ message,
+ textStyle,
+ styles,
+ onDownloadAttachment,
+ onOpenAttachment,
+ isAttachmentOpenerSupported,
+ showOpenAction,
+}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onOpenAttachment' |
+  'isAttachmentOpenerSupported'> & {
+ textStyle: object;
+ showOpenAction?: boolean;
+}) {
+  if (!showOpenAction) {
+   return (
+     <Pressable
+       onPress={() => onDownloadAttachment?.(message)}
+       accessibilityRole="button"
+       accessibilityLabel="Download attachment"
+       accessibilityHint="Saves this attachment to your device"
+       hitSlop={touchSlop(12)}
+       style={styles.attachmentDownloadButton}
+       testID="chat-attachment-download">
+       <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
+     </Pressable>
+   );
+  }
+
+  const canOpen = Boolean(onOpenAttachment) && Boolean(isAttachmentOpenerSupported);
+  return (
+   <View style={styles.attachmentActionRow}>
+     <Pressable
+       onPress={canOpen ? () => onOpenAttachment?.(message) : undefined}
+       disabled={!canOpen}
+       accessibilityRole="button"
+       accessibilityLabel={canOpen ? 'Open attachment' : 'Open attachment unavailable'}
+       accessibilityHint={
+         canOpen
+           ? 'Opens this attachment in another app'
+           : 'Opening attachments is not supported on this build'
+       }
+       hitSlop={touchSlop(12)}
+       style={[styles.attachmentOpenButton, !canOpen && styles.attachmentOpenButtonDisabled]}
+       testID={canOpen ? 'chat-attachment-open' : 'chat-attachment-open-disabled'}>
+       <Text style={[styles.attachmentOpenText, !canOpen && styles.attachmentOpenTextDisabled]}>
+         {canOpen ? 'Open' : 'Open unavailable'}
+       </Text>
+     </Pressable>
+     <Pressable
+       onPress={() => onDownloadAttachment?.(message)}
+       accessibilityRole="button"
+       accessibilityLabel="Download attachment"
+       accessibilityHint="Saves this attachment to your device"
+       hitSlop={touchSlop(12)}
+       style={styles.attachmentSecondaryButton}
+       testID="chat-attachment-download">
+       <Text style={[textStyle, styles.attachmentDownloadText, styles.attachmentSecondaryText]}>
+         Download
+       </Text>
+     </Pressable>
+   </View>
+  );
+}
+
+function AttachmentFailure({
+ message,
+ textStyle,
+ styles,
+ onDownloadAttachment,
+ onOpenAttachment,
+ downloadState,
+}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onOpenAttachment'> & {
+ textStyle: object;
+ downloadState: Extract<AttachmentDownloadState, { status: 'failed' }>;
+}) {
+  const failureMessage =
+    downloadState.message ??
+    describeAttachmentDownloadResult({
+      success: false,
+      reason: downloadState.reason,
+    });
+  const retryable =
+    downloadState.retryable ?? isAttachmentDownloadRetryable(downloadState.reason);
+  const retryAction = downloadState.action === 'open' ? onOpenAttachment : onDownloadAttachment;
+  if (retryable && retryAction) {
+    const retryLabel = downloadState.action === 'open' ? 'Retry open' : 'Retry download';
+    return (
+      <Pressable
+        onPress={() => retryAction(message)}
+        accessibilityRole="button"
+        accessibilityLabel={retryLabel}
+        accessibilityHint={
+          downloadState.action === 'open'
+            ? 'Tries opening this attachment again'
+            : 'Tries downloading this attachment again'
+        }
+        hitSlop={touchSlop(12)}
+        style={styles.attachmentDownloadButton}
+        testID="chat-attachment-download-failed">
+        <Text style={[textStyle, styles.failedText]}>{`${failureMessage} · Tap to retry`}</Text>
+      </Pressable>
+    );
+  }
+
+  const failure = (
+    <Text
+      style={[textStyle, styles.failedText]}
+      testID="chat-attachment-download-failed">
+      {failureMessage}
+    </Text>
+  );
+  if (downloadState.action !== 'open') return failure;
+  return (
+    <View style={styles.attachmentFailureStack}>
+      {failure}
+      <AttachmentIdleActions
+        message={message}
+        textStyle={textStyle}
+        styles={styles}
+        onDownloadAttachment={onDownloadAttachment}
+        onOpenAttachment={undefined}
+        isAttachmentOpenerSupported={false}
+        showOpenAction={false}
+      />
+    </View>
+  );
+}
+
 function AttachmentDownload({
  message,
  textStyle,
  styles,
  onDownloadAttachment,
+ onOpenAttachment,
+ isAttachmentOpenerSupported,
  onCancelDownload,
  downloadState,
-}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onCancelDownload' | 'downloadState'> & {
+ showOpenAction,
+}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onOpenAttachment' |
+  'isAttachmentOpenerSupported' | 'onCancelDownload' | 'downloadState'> & {
  textStyle: object;
+ showOpenAction?: boolean;
 }) {
  const attachmentUrl = message.attachment?.url;
  const isUploading =
@@ -491,62 +640,50 @@ function AttachmentDownload({
  if (!attachmentUrl || !onDownloadAttachment) return null;
 
  if (downloadState?.status === 'downloading') {
+   const isOpening = downloadState.action === 'open';
    return (
      <TransferProgress
-       label="Downloading…"
+       label={isOpening ? 'Opening…' : 'Downloading…'}
        progress={downloadState.progress}
        styles={styles}
        progressTestID="chat-attachment-download-progress"
        onCancel={onCancelDownload ? () => onCancelDownload(message) : undefined}
-       cancelLabel="Cancel download"
+       cancelLabel={isOpening ? 'Cancel open' : 'Cancel download'}
        cancelTestID="chat-attachment-download-cancel"
      />
    );
  }
 
  if (downloadState?.status === 'failed') {
-   const failureMessage = describeAttachmentDownloadResult({
-     success: false,
-     reason: downloadState.reason,
-   });
-   if (isAttachmentDownloadRetryable(downloadState.reason)) {
-     return (
-       <Pressable
-         onPress={() => onDownloadAttachment(message)}
-         accessibilityRole="button"
-         accessibilityLabel="Retry download"
-         accessibilityHint="Tries downloading this attachment again"
-         hitSlop={touchSlop(12)}
-         style={styles.attachmentDownloadButton}
-         testID="chat-attachment-download-failed">
-         <Text style={[textStyle, styles.failedText]}>{`${failureMessage} · Tap to retry`}</Text>
-       </Pressable>
-     );
-   }
    return (
-     <Text
-       style={[textStyle, styles.failedText]}
-       testID="chat-attachment-download-failed">
-       {failureMessage}
-     </Text>
+     <AttachmentFailure
+       message={message}
+       textStyle={textStyle}
+       styles={styles}
+       onDownloadAttachment={onDownloadAttachment}
+       onOpenAttachment={onOpenAttachment}
+       downloadState={downloadState}
+     />
    );
  }
 
  return (
-   <Pressable
-     onPress={() => onDownloadAttachment(message)}
-     accessibilityRole="button"
-     accessibilityLabel="Download attachment"
-     accessibilityHint="Saves this attachment to your device"
-     hitSlop={touchSlop(12)}
-     style={styles.attachmentDownloadButton}
-     testID="chat-attachment-download">
-     <Text style={[textStyle, styles.attachmentDownloadText]}>Download</Text>
-   </Pressable>
+   <AttachmentIdleActions
+     message={message}
+     textStyle={textStyle}
+     styles={styles}
+     onDownloadAttachment={onDownloadAttachment}
+     onOpenAttachment={onOpenAttachment}
+     isAttachmentOpenerSupported={isAttachmentOpenerSupported}
+     showOpenAction={showOpenAction}
+   />
  );
 }
 
-type RenderMessageBodyProps = Omit<MessageContentProps, 'onDownloadAttachment' | 'onCancelDownload'> & {
+type RenderMessageBodyProps = Omit<
+ MessageContentProps,
+ 'onDownloadAttachment' | 'onOpenAttachment' | 'isAttachmentOpenerSupported' | 'onCancelDownload'
+> & {
  downloadButton: ReactNode;
 };
 
@@ -727,20 +864,24 @@ function MessageBody({ kind, ...props }: RenderMessageBodyProps & { kind: Messag
 
 function MessageContent(props: MessageContentProps) {
  const textStyle = props.isOwn ? props.styles.bubbleTextOwn : props.styles.bubbleTextPeer;
+ const kind = messageContentKind(props.message);
  const downloadButton = (
    <AttachmentDownload
      message={props.message}
      textStyle={textStyle}
      styles={props.styles}
      onDownloadAttachment={props.onDownloadAttachment}
+     onOpenAttachment={props.onOpenAttachment}
+     isAttachmentOpenerSupported={props.isAttachmentOpenerSupported}
      onCancelDownload={props.onCancelDownload}
      downloadState={props.downloadState}
+     showOpenAction={kind === 'attachment'}
    />
  );
  return (
    <MessageBody
      {...props}
-     kind={messageContentKind(props.message)}
+     kind={kind}
      downloadButton={downloadButton}
    />
  );
@@ -894,6 +1035,8 @@ export type MessageRowProps = {
   onReact?: ReactionAction;
   onQuotePress?: (messageId: string) => void;
   onDownloadAttachment?: MessageAction;
+  onOpenAttachment?: MessageAction;
+  isAttachmentOpenerSupported?: boolean;
   onOpenMedia?: MessageAction;
   onCancelAttachmentUpload?: () => void;
   onCancelDownload?: MessageAction;
@@ -910,12 +1053,15 @@ function MessageBubble({
   accessibilityLabel,
   onQuotePress,
   onDownloadAttachment,
+  onOpenAttachment,
+  isAttachmentOpenerSupported,
   onOpenMedia,
   onCancelDownload,
   downloadState,
   styles,
 }: Pick<MessageRowProps, 'message' | 'quotedMessage' | 'isOwn' | 'isGroupEnd' | 'isHighlighted' |
-  'onQuotePress' | 'onDownloadAttachment' | 'onOpenMedia' | 'onCancelDownload' | 'downloadState'> & {
+  'onQuotePress' | 'onDownloadAttachment' | 'onOpenAttachment' | 'isAttachmentOpenerSupported' |
+  'onOpenMedia' | 'onCancelDownload' | 'downloadState'> & {
   canReact: boolean;
   accessibilityLabel: string;
   styles: ChatStyles;
@@ -946,6 +1092,8 @@ function MessageBubble({
         isOwn={isOwn}
         styles={styles}
         onDownloadAttachment={onDownloadAttachment}
+        onOpenAttachment={onOpenAttachment}
+        isAttachmentOpenerSupported={isAttachmentOpenerSupported}
         onOpenMedia={onOpenMedia}
         onCancelDownload={onCancelDownload}
         downloadState={downloadState}
@@ -1039,6 +1187,8 @@ function MessageRowLayout({
   onReact,
   onQuotePress,
   onDownloadAttachment,
+  onOpenAttachment,
+  isAttachmentOpenerSupported,
   onOpenMedia,
   onCancelAttachmentUpload,
   onCancelDownload,
@@ -1087,6 +1237,8 @@ function MessageRowLayout({
         accessibilityLabel={accessibilityLabel}
         onQuotePress={onQuotePress}
         onDownloadAttachment={onDownloadAttachment}
+        onOpenAttachment={onOpenAttachment}
+        isAttachmentOpenerSupported={isAttachmentOpenerSupported}
         onOpenMedia={onOpenMedia}
         onCancelDownload={onCancelDownload}
         downloadState={downloadState}
@@ -1146,6 +1298,8 @@ const MessageRow = memo(
   onReact,
   onQuotePress,
   onDownloadAttachment,
+  onOpenAttachment,
+  isAttachmentOpenerSupported,
   onOpenMedia,
   onCancelAttachmentUpload,
   onCancelDownload,
@@ -1209,6 +1363,8 @@ const MessageRow = memo(
       onReact={onReact}
       onQuotePress={onQuotePress}
       onDownloadAttachment={onDownloadAttachment}
+      onOpenAttachment={onOpenAttachment}
+      isAttachmentOpenerSupported={isAttachmentOpenerSupported}
       onOpenMedia={onOpenMedia}
       onCancelAttachmentUpload={onCancelAttachmentUpload}
       onCancelDownload={onCancelDownload}
@@ -1262,6 +1418,9 @@ export type ChatConversationScreenProps = {
   /** Adds or removes one of the user's emoji reactions, from the long-press reaction bar or by tapping an existing chip. */
   onReactToMessage?: ReactionAction;
   onDownloadAttachment?: AttachmentDownloadAction;
+  onOpenAttachment?: AttachmentOpenAction;
+  /** Whether the native Open-with module is linked on this build. */
+  isAttachmentOpenerSupported?: boolean;
   onLoadOlder?: () => void;
   onBack: () => void;
   currentUserId: string;
@@ -1688,6 +1847,7 @@ function ChatConversationScreen({
   onDeleteMessage,
   onReactToMessage,
   onDownloadAttachment,
+  onOpenAttachment,
   onLoadOlder,
   onBack,
   currentUserId,
@@ -1716,6 +1876,7 @@ function ChatConversationScreen({
   isRecordingVoiceNote = false,
   attachmentsAvailable = true,
   isVoiceNoteSupported = false,
+  isAttachmentOpenerSupported = false,
 }: ChatConversationScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -2130,21 +2291,23 @@ function ChatConversationScreen({
     if (messageId) setQuotedHighlightId(messageId);
   }, []);
 
-  const handleDownloadAttachment = useCallback(
-      (message: ChatMessage) => {
-      if (!onDownloadAttachment) return;
+  const runAttachmentAction = useCallback(
+      (message: ChatMessage, action: AttachmentActionKind) => {
+      const handler = action === 'open' ? onOpenAttachment : onDownloadAttachment;
+      if (!handler) return;
+      if (message.deletedAt) return;
       const messageId = message.messageId;
-      setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'downloading', progress: 0 } }));
+      setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'downloading', progress: 0, action } }));
       const onProgress = (fraction: number) => {
         if (!isMountedRef.current) return;
         setDownloadStates(prev =>
           prev[messageId]?.status === 'downloading'
-            ? { ...prev, [messageId]: { status: 'downloading', progress: fraction } }
+            ? { ...prev, [messageId]: { status: 'downloading', progress: fraction, action } }
             : prev,
         );
       };
       Promise.resolve(
-        onDownloadAttachment(message, onProgress, abort => {
+        handler(message, onProgress, abort => {
           downloadAbortRefs.current[messageId] = abort;
         }),
       )
@@ -2161,7 +2324,16 @@ function ChatConversationScreen({
                 delete next[messageId];
                 return next;
               }
-              return { ...prev, [messageId]: { status: 'failed', reason: result.reason } };
+              return {
+                ...prev,
+                [messageId]: {
+                  status: 'failed',
+                  reason: result.reason,
+                  message: result.message,
+                  retryable: result.retryable,
+                  action,
+                },
+              };
             }
             if (!(messageId in prev)) return prev;
             const next = { ...prev };
@@ -2172,10 +2344,20 @@ function ChatConversationScreen({
         .catch(() => {
           delete downloadAbortRefs.current[messageId];
           if (!isMountedRef.current) return;
-          setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'failed' } }));
+          setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'failed', action } }));
         });
     },
-    [onDownloadAttachment],
+    [onDownloadAttachment, onOpenAttachment],
+  );
+
+  const handleDownloadAttachment = useCallback(
+    (message: ChatMessage) => runAttachmentAction(message, 'download'),
+    [runAttachmentAction],
+  );
+
+  const handleOpenAttachment = useCallback(
+    (message: ChatMessage) => runAttachmentAction(message, 'open'),
+    [runAttachmentAction],
   );
 
   const handleCancelDownload = useCallback((message: ChatMessage) => {
@@ -2184,6 +2366,28 @@ function ChatConversationScreen({
     downloadAbortRefs.current[messageId] = undefined;
     abort?.();
   }, []);
+
+  useEffect(() => {
+    const openMessageIds = new Set(
+      messages
+        .filter((entry): entry is ChatMessage => !isCallEntry(entry))
+        .filter(entry => !entry.deletedAt)
+        .map(entry => entry.messageId),
+    );
+    Object.keys(downloadAbortRefs.current).forEach(messageId => {
+      if (!openMessageIds.has(messageId)) {
+        const abort = downloadAbortRefs.current[messageId];
+        downloadAbortRefs.current[messageId] = undefined;
+        abort?.();
+        setDownloadStates(prev => {
+          if (!(messageId in prev)) return prev;
+          const next = { ...prev };
+          delete next[messageId];
+          return next;
+        });
+      }
+    });
+  }, [messages]);
 
   const handleOpenMedia = useCallback(
     (message: ChatMessage) => {
@@ -2327,6 +2531,8 @@ function ChatConversationScreen({
           onReact={onReactToMessage ? handleReact : undefined}
           onQuotePress={handleQuotePress}
           onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
+          onOpenAttachment={onOpenAttachment ? handleOpenAttachment : undefined}
+          isAttachmentOpenerSupported={isAttachmentOpenerSupported}
           onOpenMedia={handleOpenMedia}
           onCancelAttachmentUpload={onCancelAttachmentUpload}
           onCancelDownload={onDownloadAttachment ? handleCancelDownload : undefined}
@@ -2343,6 +2549,7 @@ function ChatConversationScreen({
       handleReact,
       handleCancelDownload,
       handleDownloadAttachment,
+      handleOpenAttachment,
       handleOpenMedia,
       handleReply,
       handleRetry,
@@ -2352,9 +2559,11 @@ function ChatConversationScreen({
       onCancelAttachmentUpload,
       onDeleteMessage,
       onDownloadAttachment,
+      onOpenAttachment,
       onReactToMessage,
       onVideoCallBack,
       peerId,
+      isAttachmentOpenerSupported,
       styles,
     ],
   );
@@ -2648,9 +2857,45 @@ const createStyles = (colors: ThemeColors) =>
       alignSelf: 'flex-start',
       paddingVertical: 2,
     },
+    attachmentActionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginTop: spacing.xs,
+      flexWrap: 'wrap',
+    },
+    attachmentOpenButton: {
+      borderRadius: radius.pill,
+      backgroundColor: colors.accentButton,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+    },
+    attachmentOpenButtonDisabled: {
+      backgroundColor: colors.surfaceControl,
+      borderColor: colors.outline,
+      borderWidth: 1,
+    },
+    attachmentOpenText: {
+      ...typography.label,
+      color: colors.textOnAccent,
+      fontWeight: '700',
+    },
+    attachmentOpenTextDisabled: {
+      color: colors.textMuted,
+    },
+    attachmentSecondaryButton: {
+      paddingVertical: 2,
+    },
     attachmentDownloadText: {
       fontWeight: '700',
       textDecorationLine: 'underline',
+    },
+    attachmentSecondaryText: {
+      ...typography.hint,
+      opacity: 0.82,
+    },
+    attachmentFailureStack: {
+      gap: spacing.xs,
     },
     quote: {
       borderLeftWidth: 3,

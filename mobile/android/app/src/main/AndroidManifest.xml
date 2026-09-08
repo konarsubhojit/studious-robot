@@ -53,6 +53,13 @@
     <!-- Picture-in-Picture keeps the call video visible when the app is backgrounded. -->
     <uses-feature android:name="android.software.picture_in_picture" android:required="false" />
 
+    <queries>
+      <intent>
+        <action android:name="android.intent.action.VIEW" />
+        <data android:mimeType="*/*" />
+      </intent>
+    </queries>
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -90,6 +97,15 @@
             <data android:scheme="wetalk" android:host="chat" />
         </intent-filter>
       </activity>
+      <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.fileprovider"
+        android:exported="false"
+        android:grantUriPermissions="true">
+        <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/attachment_file_paths" />
+      </provider>
       <service
         android:name=".CallForegroundService"
         android:exported="false"

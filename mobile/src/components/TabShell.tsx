@@ -2,7 +2,15 @@ import { memo, useCallback, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { logError } from '../appLogger';
-import { describeAttachmentDownloadResult, downloadAttachment } from '../attachmentDownload';
+import {
+  describeAttachmentDownloadResult,
+  downloadAttachment,
+} from '../attachmentDownload';
+import {
+  describeAttachmentOpenResult,
+  isAttachmentOpenerAvailable,
+  openChatAttachment,
+} from '../attachmentOpen';
 import { useCallSelector } from '../call/CallProvider';
 import { useChat } from '../chat/ChatProvider';
 import AppNavigator from '../navigation/AppNavigator';
@@ -126,6 +134,7 @@ function TabShell() {
     stopRecordingVoiceNoteAndSend,
   } = chat;
   const insets = useSafeAreaInsets();
+  const isAttachmentOpenerSupported = isAttachmentOpenerAvailable();
   const { recentSearches, recordSearch, clearSearches } = useRecentSearches();
   // Storage accounting is owned here rather than by the Settings screen, so the
   // screen stays presentational like every other one in this shell.
@@ -174,6 +183,25 @@ function TabShell() {
           );
           return result;
         }}
+        onOpenAttachment={async (message, onProgress, onAbortHandle) => {
+          const currentMessage = () =>
+            (chat.messagesByPeer[peerId] ?? []).find(
+              candidate =>
+                !('callId' in candidate) && candidate.messageId === message?.messageId,
+            ) as typeof message | undefined;
+          const result = await openChatAttachment({
+            message,
+            onProgress,
+            onAbortHandle,
+            isStillOpenable: () => !currentMessage()?.deletedAt,
+          });
+          updateStatus(
+            result.message ?? describeAttachmentOpenResult({ success: false, reason: 'open-failed' }),
+            result.success ? 'success' : result.reason === 'cancelled' ? 'info' : 'error',
+          );
+          return result;
+        }}
+        isAttachmentOpenerSupported={isAttachmentOpenerSupported}
         isOffline={chat.isChatOffline}
         onLoadOlder={chat.handleLoadOlderMessages}
         onBack={closeChatConversation}
@@ -226,6 +254,7 @@ function TabShell() {
     clearDraft,
     deleteMessage,
     insets.top,
+    isAttachmentOpenerSupported,
     isPlacingCall,
     pickAndSendAttachment,
     reactToMessage,
