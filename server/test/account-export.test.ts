@@ -102,6 +102,8 @@ test('GET /account/export returns only session-owner data with sensitive credent
     status: 'ended',
     createdAt: '2026-09-08T07:00:00.000Z',
     updatedAt: '2026-09-08T07:01:00.000Z',
+    callerDeviceId: 'bob-private-device',
+    calleeDeviceId: 'alice-private-device',
   };
   stores.calls.set(ownCall.callId, ownCall);
   stores.callEvents.set(ownCall.callId, [
@@ -161,6 +163,7 @@ test('GET /account/export returns only session-owner data with sensitive credent
   );
   assert.equal(res.status, 200);
   assert.equal(res.body.schemaVersion, 1);
+  assert.equal(res.body.userId, 'export-alice');
   assert.equal(res.body.profile.userId, 'export-alice');
   assert.equal(res.body.profile.email, 'alice@example.test');
   assert.equal('authUid' in res.body.profile, false);
@@ -174,12 +177,13 @@ test('GET /account/export returns only session-owner data with sensitive credent
   assert.equal(tombstone.body, '');
   const attachment = res.body.messages.find((message: any) => message.messageId === ownLive.messageId);
   assert.equal(attachment.attachment.url, 'https://cdn.example/own.jpg');
-  assert.equal(attachment.attachment.thumbnailUrl, 'https://cdn.example/own-thumb.jpg');
-  assert.deepEqual(Object.keys(attachment.attachment).sort(), ['thumbnailUrl', 'url']);
+  assert.deepEqual(Object.keys(attachment.attachment), ['url']);
   assert.equal(JSON.stringify(res.body).includes('must-not-leave-the-server'), false);
   assert.equal(JSON.stringify(res.body).includes('not Alice data'), false);
 
   assert.deepEqual(res.body.calls.map((call: any) => call.callId), ['own-call']);
+  assert.equal('callerDeviceId' in res.body.calls[0], false);
+  assert.equal('calleeDeviceId' in res.body.calls[0], false);
   assert.deepEqual(res.body.callEvents.map((event: any) => event.eventId), ['own-event']);
 
   assert.deepEqual(
@@ -193,21 +197,21 @@ test('GET /account/export returns only session-owner data with sensitive credent
   assert.deepEqual(res.body.blocks, ['export-bob']);
 
   assert.ok(
-    res.body.audit.some(
+    res.body.auditLog.some(
       (entry: any) => entry.event === 'block.added' && entry.actor === 'export-alice'
     )
   );
   assert.ok(
-    res.body.audit.some(
+    res.body.auditLog.some(
       (entry: any) => entry.event === 'block.added' && entry.target === 'export-alice'
     )
   );
   assert.equal(
-    res.body.audit.some((entry: any) => entry.actor === 'export-carol'),
+    res.body.auditLog.some((entry: any) => entry.actor === 'export-carol'),
     false
   );
   assert.ok(
-    res.body.audit.some(
+    res.body.auditLog.some(
       (entry: any) => entry.event === 'account.exported' && entry.actor === 'export-alice'
     )
   );

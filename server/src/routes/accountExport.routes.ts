@@ -43,18 +43,29 @@ function exportDevice(device: DeviceRecord) {
 function exportMessage(message: import('../messageStore.ts').StoredMessage) {
   const attachment = message.attachment as {
     url?: unknown;
-    thumbnailUrl?: unknown;
   } | null;
   return {
     ...message,
     attachment: attachment
       ? {
           ...(typeof attachment.url === 'string' ? { url: attachment.url } : {}),
-          ...(typeof attachment.thumbnailUrl === 'string'
-            ? { thumbnailUrl: attachment.thumbnailUrl }
-            : {}),
         }
       : null,
+  };
+}
+
+function exportCall(call: import('../stores/contracts.ts').CallRecord) {
+  return {
+    callId: call.callId,
+    callerId: call.callerId,
+    calleeId: call.calleeId,
+    status: call.status,
+    endReason: call.endReason ?? null,
+    durationSeconds: call.durationSeconds ?? null,
+    createdAt: call.createdAt,
+    updatedAt: call.updatedAt ?? null,
+    missedReadAt: call.missedReadAt ?? null,
+    ringTimeoutAt: call.ringTimeoutAt ?? null,
   };
 }
 
@@ -126,9 +137,9 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
       limit: callLimit,
       offset: callOffset,
     });
-    const calls = callPage.calls.filter(
-      (call) => call.callerId === session.userId || call.calleeId === session.userId
-    );
+    const calls = callPage.calls
+      .filter((call) => call.callerId === session.userId || call.calleeId === session.userId)
+      .map(exportCall);
     const callEvents = await readAccountCallEvents(
       state,
       calls.map((call) => call.callId)
@@ -154,6 +165,7 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
     res.status(200).json({
       schemaVersion: 1,
       exportedAt: new Date().toISOString(),
+      userId: session.userId,
       profile: {
         userId: session.userId,
         email: profile?.email ?? null,
@@ -166,7 +178,7 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
       callEvents,
       devices,
       blocks,
-      audit,
+      auditLog: audit,
       pagination: {
         messages: {
           limit: messageLimit,
