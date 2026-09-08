@@ -49,6 +49,19 @@ export type ChatStyles = ReturnType<typeof createStyles>;
 export type ReactionChange = 'add' | 'remove';
 /** Anything acting on one message: retry, delete, reply, download. */
 export type MessageAction = (message: ChatMessage) => void;
+/**
+ * Starts an attachment download, optionally reporting a 0..1 progress
+ * fraction as bytes arrive. Resolves with a result carrying `success` (or
+ * rejects) so the bubble can tell a completed download from a failed one.
+ */
+export type AttachmentDownloadAction = (
+  message: ChatMessage,
+  onProgress?: (fraction: number) => void,
+) => void | Promise<{ success?: boolean } | void>;
+/** Per-message attachment download state: idle is the absence of an entry. */
+export type AttachmentDownloadState =
+  | { status: 'downloading'; progress: number }
+  | { status: 'failed' };
 /** Adds or removes an emoji reaction on a message. */
 export type ReactionAction = (
   message: ChatMessage,
@@ -369,6 +382,7 @@ type MessageContentProps = {
  styles: ChatStyles;
  onDownloadAttachment?: (message: ChatMessage) => void;
  onOpenMedia?: (message: ChatMessage) => void;
+ downloadState?: AttachmentDownloadState;
 };
 
 type MessageContentKind =
@@ -414,12 +428,47 @@ function BubbleContent({
  );
 }
 
+/**
+ * The percentage row shared by an in-flight upload and an in-flight download:
+ * one progress treatment, reused instead of duplicated with its own styling.
+ *
+ * @param props
+ */
+function TransferProgress({ label, progress, styles, progressTestID, onCancel, cancelLabel, cancelTestID }: {
+       label: string; progress: number; styles: ChatStyles; progressTestID: string;
+       onCancel?: () => void; cancelLabel?: string; cancelTestID?: string;
+   }) {
+ const percent = Math.round(Math.max(0, Math.min(1, progress)) * 100);
+ return (
+   <View style={styles.uploadFooter}>
+     <Text
+       style={styles.pendingText}
+       accessibilityRole="progressbar"
+       accessibilityValue={{ now: percent, min: 0, max: 100 }}
+       testID={progressTestID}>
+       {`${label} ${percent}%`}
+     </Text>
+     {onCancel ? (
+       <Pressable
+         onPress={onCancel}
+         accessibilityRole="button"
+         accessibilityLabel={cancelLabel}
+         hitSlop={touchSlop(20)}
+         testID={cancelTestID}>
+         <Text style={styles.failedText}>Cancel</Text>
+       </Pressable>
+     ) : null}
+   </View>
+ );
+}
+
 function AttachmentDownload({
  message,
  textStyle,
  styles,
  onDownloadAttachment,
-}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment'> & {
+ downloadState,
+}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'downloadState'> & {
  textStyle: object;
 }) {
  const attachmentUrl = message.attachment?.url;
@@ -433,6 +482,28 @@ function AttachmentDownload({
    );
  }
  if (!attachmentUrl || !onDownloadAttachment) return null;
+
+ if (downloadState?.status === 'downloading') {
+   return (
+     <TransferProgress
+       label="Downloading…"
+       progress={downloadState.progress}
+       styles={styles}
+       progressTestID="chat-attachment-download-progress"
+     />
+   );
+ }
+
+ if (downloadState?.status === 'failed') {
+   return (
+     <Text
+       style={[textStyle, styles.failedText]}
+       testID="chat-attachment-download-failed">
+       Download failed
+     </Text>
+   );
+ }
+
  return (
    <Pressable
      onPress={() => onDownloadAttachment(message)}
@@ -633,6 +704,7 @@ function MessageContent(props: MessageContentProps) {
      textStyle={textStyle}
      styles={props.styles}
      onDownloadAttachment={props.onDownloadAttachment}
+     downloadState={props.downloadState}
    />
  );
  return (
@@ -725,27 +797,16 @@ function DeliveryState({ status, isQueued, uploadState, uploadProgress, styles, 
         uploadProgress?: number; styles: ChatStyles; onRetry?: () => void; onCancelUpload?: () => void;
     }) {
   if (uploadState === 'uploading') {
-    const percent = Math.round((uploadProgress ?? 0) * 100);
     return (
-      <View style={styles.uploadFooter}>
-        <Text
-          style={styles.pendingText}
-          accessibilityRole="progressbar"
-          accessibilityValue={{ now: percent, min: 0, max: 100 }}
-          testID="chat-attachment-upload-progress">
-          {`Uploading… ${percent}%`}
-        </Text>
-        {onCancelUpload ? (
-          <Pressable
-            onPress={onCancelUpload}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel upload"
-            hitSlop={touchSlop(20)}
-            testID="chat-attachment-upload-cancel">
-            <Text style={styles.failedText}>Cancel</Text>
-          </Pressable>
-        ) : null}
-      </View>
+      <TransferProgress
+        label="Uploading…"
+        progress={uploadProgress ?? 0}
+        styles={styles}
+        progressTestID="chat-attachment-upload-progress"
+        onCancel={onCancelUpload}
+        cancelLabel="Cancel upload"
+        cancelTestID="chat-attachment-upload-cancel"
+      />
     );
   }
 
@@ -805,6 +866,7 @@ export type MessageRowProps = {
   onDownloadAttachment?: MessageAction;
   onOpenMedia?: MessageAction;
   onCancelAttachmentUpload?: () => void;
+  downloadState?: AttachmentDownloadState;
 };
 
 function MessageBubble({
@@ -818,9 +880,10 @@ function MessageBubble({
   onQuotePress,
   onDownloadAttachment,
   onOpenMedia,
+  downloadState,
   styles,
 }: Pick<MessageRowProps, 'message' | 'quotedMessage' | 'isOwn' | 'isGroupEnd' | 'isHighlighted' |
-  'onQuotePress' | 'onDownloadAttachment' | 'onOpenMedia'> & {
+  'onQuotePress' | 'onDownloadAttachment' | 'onOpenMedia' | 'downloadState'> & {
   canReact: boolean;
   accessibilityLabel: string;
   styles: ChatStyles;
@@ -852,6 +915,7 @@ function MessageBubble({
         styles={styles}
         onDownloadAttachment={onDownloadAttachment}
         onOpenMedia={onOpenMedia}
+        downloadState={downloadState}
       />
     </View>
   );
@@ -944,6 +1008,7 @@ function MessageRowLayout({
   onDownloadAttachment,
   onOpenMedia,
   onCancelAttachmentUpload,
+  downloadState,
   actions,
   toggleReactionBar,
   isReactionBarOpen,
@@ -989,6 +1054,7 @@ function MessageRowLayout({
         onQuotePress={onQuotePress}
         onDownloadAttachment={onDownloadAttachment}
         onOpenMedia={onOpenMedia}
+        downloadState={downloadState}
         styles={styles}
       />
       <ReactionPicker
@@ -1047,6 +1113,7 @@ const MessageRow = memo(
   onDownloadAttachment,
   onOpenMedia,
   onCancelAttachmentUpload,
+  downloadState,
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
   const status = getMessageStatus(message);
@@ -1108,6 +1175,7 @@ const MessageRow = memo(
       onDownloadAttachment={onDownloadAttachment}
       onOpenMedia={onOpenMedia}
       onCancelAttachmentUpload={onCancelAttachmentUpload}
+      downloadState={downloadState}
       actions={actions}
       toggleReactionBar={toggleReactionBar}
       isReactionBarOpen={isReactionBarOpen}
@@ -1156,7 +1224,7 @@ export type ChatConversationScreenProps = {
   onDeleteMessage?: MessageAction;
   /** Adds or removes one of the user's emoji reactions, from the long-press reaction bar or by tapping an existing chip. */
   onReactToMessage?: ReactionAction;
-  onDownloadAttachment?: MessageAction;
+  onDownloadAttachment?: AttachmentDownloadAction;
   onLoadOlder?: () => void;
   onBack: () => void;
   currentUserId: string;
@@ -1645,6 +1713,9 @@ function ChatConversationScreen({
   // the list so the day being read stays on screen while its inline separator
   // scrolls away (sticky date separator).
   const [stickyDateLabel, setStickyDateLabel] = useState((null as string | null));
+  // Attachment download progress/failure, keyed by message id: idle is the
+  // absence of an entry, so two concurrent downloads never share a slot.
+  const [downloadStates, setDownloadStates] = useState<Record<string, AttachmentDownloadState>>({});
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
@@ -1993,7 +2064,34 @@ function ChatConversationScreen({
 
   const handleDownloadAttachment = useCallback(
       (message: ChatMessage) => {
-      onDownloadAttachment?.(message);
+      if (!onDownloadAttachment) return;
+      const messageId = message.messageId;
+      setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'downloading', progress: 0 } }));
+      const onProgress = (fraction: number) => {
+        if (!isMountedRef.current) return;
+        setDownloadStates(prev =>
+          prev[messageId]?.status === 'downloading'
+            ? { ...prev, [messageId]: { status: 'downloading', progress: fraction } }
+            : prev,
+        );
+      };
+      Promise.resolve(onDownloadAttachment(message, onProgress))
+        .then(result => {
+          if (!isMountedRef.current) return;
+          setDownloadStates(prev => {
+            if (result && result.success === false) {
+              return { ...prev, [messageId]: { status: 'failed' } };
+            }
+            if (!(messageId in prev)) return prev;
+            const next = { ...prev };
+            delete next[messageId];
+            return next;
+          });
+        })
+        .catch(() => {
+          if (!isMountedRef.current) return;
+          setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'failed' } }));
+        });
     },
     [onDownloadAttachment],
   );
@@ -2142,12 +2240,14 @@ function ChatConversationScreen({
           onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
           onOpenMedia={handleOpenMedia}
           onCancelAttachmentUpload={onCancelAttachmentUpload}
+          downloadState={downloadStates[item.message.messageId]}
         />
       );
     },
     [
       activeHighlightId,
       currentUserId,
+      downloadStates,
       handleDelete,
       handleQuotePress,
       handleReact,
