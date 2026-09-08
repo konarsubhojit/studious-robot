@@ -58,7 +58,9 @@ const callRecord = s.object(
  * An attachment stored in object storage and referenced by a message.
  *
  * Only `url` and `mimeType` are required: the optional dimensions/duration are
- * rendering hints the sender supplies when it knows them.
+ * rendering hints the sender supplies when it knows them. `waveform`, when
+ * present, is a fixed-length array of amplitudes (0–1) captured at record
+ * time for voice notes; older messages and non-voice attachments omit it.
  */
 export type AttachmentRecord = {
   url: string;
@@ -69,6 +71,7 @@ export type AttachmentRecord = {
   height?: number | null;
   durationMs?: number | null;
   thumbnailUrl?: string | null;
+  waveform?: number[] | null;
 };
 const attachmentRecord = s.object(
   {
@@ -80,6 +83,10 @@ const attachmentRecord = s.object(
     height: s.number({ min: 0, integer: true }).optional().nullable(),
     durationMs: s.number({ min: 0, integer: true }).optional().nullable(),
     thumbnailUrl: s.string({ max: 2048 }).optional().nullable(),
+    waveform: s
+      .array(s.number({ min: 0, max: 1 }))
+      .optional()
+      .nullable(),
   },
   { passthrough: true }
 );

@@ -79,6 +79,7 @@ export default function useAttachments({
           width: picked.width,
           height: picked.height,
           durationMs: picked.durationMs,
+          waveform: picked.waveform,
         });
       if (!messageId) {
         setIsUploading(false);
@@ -97,6 +98,7 @@ export default function useAttachments({
           width: picked.width,
           height: picked.height,
           durationMs: picked.durationMs,
+          waveform: picked.waveform,
           onProgress: progress => {
             setUploadProgress(progress);
             updateAttachmentUploadProgress(peerId, messageId, progress);
@@ -147,6 +149,7 @@ export default function useAttachments({
           width: attachment.width,
           height: attachment.height,
           durationMs: attachment.durationMs,
+          waveform: attachment.waveform,
         },
         message.messageId,
       );

@@ -631,6 +631,7 @@ function AudioMessageBody({
        <AudioAttachmentPlayer
          uri={message.attachment?.url}
          durationMs={message.attachment?.durationMs ?? 0}
+         waveform={message.attachment?.waveform}
          isOwn={isOwn}
        />
      }
