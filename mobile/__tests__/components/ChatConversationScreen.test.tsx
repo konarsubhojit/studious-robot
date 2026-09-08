@@ -1544,8 +1544,9 @@ describe('ChatConversationScreen attachments', () => {
     expect(notice.props.accessibilityRole).toBe('progressbar');
   });
 
-  test('shows a download action for sent file attachments', () => {
+  test('shows Open as primary and keeps Download as a secondary action for sent file attachments', () => {
     const onDownloadAttachment = jest.fn();
+    const onOpenAttachment = jest.fn(() => new Promise(() => {}));
     const fileMessage = makeMessage({
       messageId: 'file-1',
       senderId: 'user-alice',
@@ -1564,20 +1565,161 @@ describe('ChatConversationScreen attachments', () => {
       onBack: jest.fn(),
       currentUserId: 'user-alice',
       onDownloadAttachment,
+      onOpenAttachment,
+      isAttachmentOpenerSupported: true,
     });
 
+    const open = findByTestId(tree, 'chat-attachment-open');
+    expect(open).not.toBeNull();
     const download = findByTestId(tree, 'chat-attachment-download');
     expect(download).not.toBeNull();
+    expect(download.props.accessibilityLabel).toBe('Download attachment');
 
     act(() => {
-      download.props.onPress();
+      open.props.onPress();
+    });
+    expect(onOpenAttachment).toHaveBeenCalledWith(
+      fileMessage,
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  test('leaves Download usable when the Open native module is not linked', async () => {
+    const onDownloadAttachment = jest.fn();
+    const onOpenAttachment = jest.fn();
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment,
+      onOpenAttachment,
+      isAttachmentOpenerSupported: false,
     });
 
+    const disabledOpen = findByTestId(tree, 'chat-attachment-open-disabled');
+    expect(disabledOpen).not.toBeNull();
+    expect(disabledOpen.props.accessibilityHint).toContain('not supported');
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download').props.onPress();
+    });
+    expect(onOpenAttachment).not.toHaveBeenCalled();
     expect(onDownloadAttachment).toHaveBeenCalledWith(
       fileMessage,
       expect.any(Function),
       expect.any(Function),
     );
+  });
+
+  test('uses the shared progress and cancel UI while Open fetches bytes', async () => {
+    let resolveOpen: ((result: any) => void) | undefined;
+    let reportProgress: ((fraction: number) => void) | undefined;
+    let abort: (() => void) | undefined;
+    const onOpenAttachment = jest.fn(
+      (_message: any, onProgress: any, onAbortHandle: any) => {
+        reportProgress = onProgress;
+        onAbortHandle?.(() => abort?.());
+        return new Promise(resolve => {
+          resolveOpen = resolve;
+        });
+      },
+    );
+    abort = jest.fn(() => resolveOpen?.({ success: false, reason: 'cancelled' }));
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.pdf',
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment: jest.fn(),
+      onOpenAttachment,
+      isAttachmentOpenerSupported: true,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-open').props.onPress();
+    });
+    expect(findByTestId(tree, 'chat-attachment-open')).toBeNull();
+    let progress = findByTestId(tree, 'chat-attachment-download-progress');
+    expect(progress.props.accessibilityValue).toEqual({ now: 0, min: 0, max: 100 });
+
+    act(() => {
+      reportProgress?.(0.36);
+    });
+    progress = findByTestId(tree, 'chat-attachment-download-progress');
+    expect(progress.props.accessibilityValue).toEqual({ now: 36, min: 0, max: 100 });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-download-cancel').props.onPress();
+    });
+    expect(abort).toHaveBeenCalled();
+    expect(findByTestId(tree, 'chat-attachment-download-progress')).toBeNull();
+    expect(findByTestId(tree, 'chat-attachment-open')).not.toBeNull();
+  });
+
+  test('shows a no-handler Open failure without removing Download', async () => {
+    const onOpenAttachment = jest.fn(() =>
+      Promise.resolve({
+        success: false,
+        message: 'No installed app can open this type of attachment',
+        retryable: false,
+      }),
+    );
+    const fileMessage = makeMessage({
+      messageId: 'file-1',
+      senderId: 'user-alice',
+      body: '',
+      type: 'file',
+      attachment: {
+        url: 'https://media.test/chatblobs/c/report.bin',
+        name: 'report.bin',
+        mimeType: 'application/octet-stream',
+      },
+    });
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [fileMessage],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onDownloadAttachment: jest.fn(),
+      onOpenAttachment,
+      isAttachmentOpenerSupported: true,
+    });
+
+    await act(async () => {
+      findByTestId(tree, 'chat-attachment-open').props.onPress();
+    });
+
+    const failure = findByTestId(tree, 'chat-attachment-download-failed');
+    expect(failure).not.toBeNull();
+    expect(failure.props.onPress).toBeUndefined();
+    expect(findByTestId(tree, 'chat-attachment-download')).not.toBeNull();
   });
 
   test('shows download progress as a percentage, then idle again once the download succeeds', async () => {

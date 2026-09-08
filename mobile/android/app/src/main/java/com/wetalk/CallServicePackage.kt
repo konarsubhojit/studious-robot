@@ -9,6 +9,7 @@ class CallServicePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
     listOf(
       CallServiceModule(reactContext),
+      AttachmentOpenerModule(reactContext),
       IncomingCallNotificationModule(reactContext),
       MessageNotificationModule(reactContext),
     )
