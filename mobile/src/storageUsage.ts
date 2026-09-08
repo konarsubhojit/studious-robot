@@ -1,4 +1,5 @@
 import RNFS from 'react-native-fs';
+import { pruneMissingCachedAttachments } from './attachmentCache';
 import { logWarn } from './appLogger';
 import { errorMessage } from './errors';
 
@@ -271,6 +272,10 @@ export async function clearCachedMedia({
   for (const directory of measurableDirectories()) {
     await clearMediaInDirectory(directory, now, seenPaths, result);
   }
+  // Cached attachments are ordinary media files here, so their bookkeeping is
+  // left pointing at files that no longer exist; dropping those entries keeps
+  // the next open a clean miss rather than a broken open.
+  await pruneMissingCachedAttachments();
 
   return result;
 }

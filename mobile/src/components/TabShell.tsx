@@ -164,6 +164,7 @@ function TabShell() {
             url: message?.attachment?.url,
             name: message?.attachment?.name,
             mimeType: message?.attachment?.mimeType,
+            messageId: message?.messageId,
             onProgress,
             onAbortHandle,
           });

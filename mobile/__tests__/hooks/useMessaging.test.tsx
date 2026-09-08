@@ -9,6 +9,7 @@ import {
 } from '../../src/messageNotification';
 import * as chatDb from '../../src/storage/chatDb';
 import { triggerHapticUnlessSilent } from '../../src/haptics';
+import { evictCachedAttachmentsForMessage } from '../../src/attachmentCache';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -25,6 +26,10 @@ jest.mock('../../src/messageNotification', () => ({
   dismissMessageNotification: jest.fn(),
   markMessageSeen: jest.fn(),
   setActiveConversation: jest.fn(),
+}));
+
+jest.mock('../../src/attachmentCache', () => ({
+  evictCachedAttachmentsForMessage: jest.fn(async () => 0),
 }));
 
 // In-memory stand-in for the durable local store, so the hook's hydration and
@@ -478,6 +483,9 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
     expect(resultRef.current.messagesByPeer.bob[0].body).toBe('');
     expect(resultRef.current.messagesByPeer.bob[0].deletedAt).toBeTruthy();
+    // The cache is an optimisation, never a second copy of the record: the
+    // bytes go with the message the user just withdrew.
+    expect(evictCachedAttachmentsForMessage).toHaveBeenCalledWith(messageId);
   });
 
   test('deleteMessage discards a still-queued message without contacting the server', async () => {
@@ -544,6 +552,22 @@ describe('useMessaging', () => {
     expect(resultRef.current.messagesByPeer.bob).toHaveLength(1);
     expect(resultRef.current.messagesByPeer.bob[0].body).toBe('');
     expect(resultRef.current.messagesByPeer.bob[0].deletedAt).toBe('2024-01-01T00:00:00.000Z');
+    // A deletion the sender performed is honoured on this device too, even
+    // though the message is one this user only received.
+    expect(evictCachedAttachmentsForMessage).toHaveBeenCalledWith('m-1');
+  });
+
+  test('a delete for a message no longer in the timeline still evicts its cached file', () => {
+    const { resultRef } = setup();
+
+    act(() => {
+      resultRef.current.handleMessageDeleted({ conversationId: 'c1', messageId: 'm-evicted' });
+    });
+
+    // Eviction is keyed off the message id, not off a rendered bubble, so a
+    // message paged out of memory has its bytes removed all the same.
+    expect(resultRef.current.messagesByPeer).toEqual({});
+    expect(evictCachedAttachmentsForMessage).toHaveBeenCalledWith('m-evicted');
   });
 
   test('isOffline follows the socket lifecycle', async () => {

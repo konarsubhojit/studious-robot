@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
+import { findCachedAttachment, rememberCachedAttachment } from './attachmentCache';
 import { logError, logInfo, logVerbose, logWarn } from './appLogger';
 import { ensureDownloadPermission } from './permissions';
 import { describeError } from './errors';
@@ -131,6 +132,8 @@ export type AttachmentDownloadResult = {
   reason?: AttachmentDownloadReason;
   statusCode?: number;
   message?: string;
+  /** The bytes were already on the device; no network request was made. */
+  fromCache?: boolean;
 };
 
 /**
@@ -281,10 +284,12 @@ async function downloadWithFallback({ url, fileName, onProgress, permission, isC
  *
  * @param [attachment]
  */
-export async function downloadAttachment({ url, name, mimeType, now = new Date(), onProgress, onAbortHandle }: {
+export async function downloadAttachment({ url, name, mimeType, messageId, now = new Date(), onProgress, onAbortHandle }: {
     url?: string | null;
     name?: string | null;
     mimeType?: string | null;
+    /** The message the attachment belongs to, so a tombstone can evict it. */
+    messageId?: string | null;
     now?: Date;
     /** Called with a 0..1 fraction as bytes arrive, for large files. */
     onProgress?: (fraction: number) => void;
@@ -303,6 +308,37 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
   }
 
   const fileName = attachmentDownloadFileName({ name, url, mimeType, now });
+
+  // Set before the first await, for the lifetime of the whole call: cancelling
+  // must stop the download outright — and be honoured even while the cache is
+  // still being consulted — rather than letting the fallback loop retry it in
+  // another directory.
+  let cancelled = false;
+  let abortCurrentAttempt: (() => void) | null = null;
+  onAbortHandle?.(() => {
+    cancelled = true;
+    abortCurrentAttempt?.();
+  });
+
+  // Already on the device: opening it again costs nothing, so neither the
+  // network nor the storage permission prompt is reached.
+  const cached = await findCachedAttachment({ url });
+  if (cached && !cancelled) {
+    onProgress?.(1);
+    logInfo('[Attachments] served from cache', { host: hostOf(url), mimeType });
+    const hit: AttachmentDownloadResult = {
+      success: true,
+      path: cached.path,
+      label: cached.label ?? 'this device',
+      fromCache: true,
+    };
+    return { ...hit, message: describeAttachmentDownloadResult(hit) };
+  }
+  if (cancelled) {
+    const abandoned: AttachmentDownloadResult = { success: false, reason: 'cancelled' };
+    return { ...abandoned, message: describeAttachmentDownloadResult(abandoned) };
+  }
+
   const permission = await ensureDownloadPermission();
   if (!permission.granted) {
     logWarn('[Attachments] storage permission denied; saving inside the app instead', {
@@ -311,16 +347,6 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
   }
 
   logInfo('[Attachments] download started', { host: hostOf(url), mimeType, fileName });
-
-  // Set once, for the lifetime of the whole call: cancelling must stop the
-  // download outright rather than letting the fallback loop retry it in
-  // another directory.
-  let cancelled = false;
-  let abortCurrentAttempt: (() => void) | null = null;
-  onAbortHandle?.(() => {
-    cancelled = true;
-    abortCurrentAttempt?.();
-  });
 
   const result = await downloadWithFallback({
     url,
@@ -337,7 +363,15 @@ export async function downloadAttachment({ url, name, mimeType, now = new Date()
     logInfo('[Attachments] download cancelled', { host: hostOf(url) });
     return { ...result, message: describeAttachmentDownloadResult(result) };
   }
-  if (result.success) return result;
+  if (result.success) {
+    await rememberCachedAttachment({
+      url,
+      sourcePath: result.path,
+      messageId,
+      label: result.label,
+    });
+    return result;
+  }
 
   logError('[Attachments] download failed', {
     host: hostOf(url),
@@ -362,8 +396,12 @@ const FAILURE_MESSAGES: Record<AttachmentDownloadReason, string> = {
 /**
  * @returns a user-facing summary of the download outcome.
  */
-export function describeAttachmentDownloadResult(result: { success?: boolean; label?: string; reason?: AttachmentDownloadReason; } | null | undefined): string {
-  if (result?.success) return `Saved attachment to ${result.label}`;
+export function describeAttachmentDownloadResult(result: { success?: boolean; label?: string; reason?: AttachmentDownloadReason; fromCache?: boolean; } | null | undefined): string {
+  if (result?.success) {
+    return result.fromCache
+      ? `Attachment already saved to ${result.label}`
+      : `Saved attachment to ${result.label}`;
+  }
   return (result?.reason && FAILURE_MESSAGES[result.reason]) || 'Could not download attachment';
 }
 

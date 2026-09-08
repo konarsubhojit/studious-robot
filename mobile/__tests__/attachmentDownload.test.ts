@@ -152,8 +152,10 @@ describe('attachmentDownload', () => {
       },
     });
 
-    // Give the abort handle a tick to be wired up before cancelling.
-    await Promise.resolve();
+    // Let the download actually start (the cache is consulted first) before
+    // cancelling, so this exercises a mid-flight abort rather than a
+    // never-started one.
+    await new Promise(resolve => setImmediate(resolve));
     abort?.();
 
     const result = await resultPromise;
