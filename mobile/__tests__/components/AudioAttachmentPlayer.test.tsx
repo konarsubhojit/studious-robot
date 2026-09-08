@@ -13,6 +13,7 @@ const mockSound = {
   resumePlayer: jest.fn().mockResolvedValue('ok'),
   stopPlayer: jest.fn().mockResolvedValue('ok'),
   seekToPlayer: jest.fn().mockResolvedValue('ok'),
+  setPlaybackSpeed: jest.fn().mockResolvedValue('ok'),
   addPlayBackListener: jest.fn(),
   removePlayBackListener: jest.fn(),
 };
@@ -129,5 +130,50 @@ describe('AudioAttachmentPlayer', () => {
 
     expect(findByTestId(tree, 'chat-audio-player-elapsed').props.children).toBe('0:03');
     expect(seen.length).toBeGreaterThan(0);
+  });
+
+  test('tapping the speed control cycles 1x -> 1.5x -> 2x -> 1x, labelled for screen readers', async () => {
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 4000 });
+
+    const rateButton = () => findByTestId(tree, 'chat-audio-player-rate');
+    const rateLabel = () => rateButton().props.children.props.children;
+    expect(rateLabel()).toBe('1x');
+    expect(rateButton().props.accessibilityLabel).toBe('Playback speed 1x');
+
+    act(() => {
+      rateButton().props.onPress();
+    });
+    expect(rateLabel()).toBe('1.5x');
+    expect(rateButton().props.accessibilityLabel).toBe('Playback speed 1.5x');
+
+    act(() => {
+      rateButton().props.onPress();
+    });
+    expect(rateLabel()).toBe('2x');
+
+    act(() => {
+      rateButton().props.onPress();
+    });
+    expect(rateLabel()).toBe('1x');
+  });
+
+  test('the chosen speed is applied when the next note starts playing', async () => {
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 4000 });
+
+    act(() => {
+      findByTestId(tree, 'chat-audio-player-rate').props.onPress();
+    });
+    await act(async () => {
+      await findByTestId(tree, 'chat-audio-player-toggle').props.onPress();
+    });
+
+    expect(mockSound.setPlaybackSpeed).toHaveBeenCalledWith(1.5);
+  });
+
+  test('hides the speed control when the native player exposes no rate API', () => {
+    delete (mockSound as any).setPlaybackSpeed;
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 4000 });
+    expect(findByTestId(tree, 'chat-audio-player-rate')).toBeNull();
+    mockSound.setPlaybackSpeed = jest.fn().mockResolvedValue('ok');
   });
 });

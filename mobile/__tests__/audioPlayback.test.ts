@@ -26,7 +26,7 @@ function withPlayerMock(
   return result;
 }
 
-function makeSound(overrides = {}) {
+function makeSound<T extends Record<string, unknown>>(overrides: T = {} as T) {
   return {
     startPlayer: jest.fn().mockResolvedValue('ok'),
     pausePlayer: jest.fn().mockResolvedValue('ok'),
@@ -153,6 +153,71 @@ describe('audioPlayback', () => {
       expect(player.formatPlaybackTime(0)).toBe('0:00');
       expect(player.formatPlaybackTime(65_000)).toBe('1:05');
       expect(player.formatPlaybackTime(null)).toBe('0:00');
+    });
+  });
+
+  test('cycling the playback rate goes 1x -> 1.5x -> 2x -> 1x and persists across notes', async () => {
+    const sound = makeSound({ setPlaybackSpeed: jest.fn().mockResolvedValue('ok') });
+    await withPlayerMock(sound, async (player: any) => {
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1);
+
+      expect(player.cyclePlaybackRate()).toEqual({ ok: true });
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1.5);
+
+      expect(player.cyclePlaybackRate()).toEqual({ ok: true });
+      expect(player.getAudioPlaybackState().playbackRate).toBe(2);
+
+      expect(player.cyclePlaybackRate()).toEqual({ ok: true });
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1);
+
+      // The chosen speed is carried onto the next note rather than resetting
+      // to 1x when one clip stops and another starts.
+      player.cyclePlaybackRate();
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1.5);
+
+      await player.playAudio('https://media.test/first.m4a');
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1.5);
+      await player.stopAudio();
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1.5);
+
+      await player.playAudio('https://media.test/second.m4a');
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1.5);
+      expect(sound.setPlaybackSpeed).toHaveBeenCalledWith(1.5);
+    });
+  });
+
+  test('elapsed/remaining times stay truthful regardless of the current playback rate', async () => {
+    const sound = makeSound({ setPlaybackSpeed: jest.fn().mockResolvedValue('ok') });
+    await withPlayerMock(sound, async (player: any) => {
+      player.cyclePlaybackRate();
+      player.cyclePlaybackRate();
+      expect(player.getAudioPlaybackState().playbackRate).toBe(2);
+
+      await player.playAudio('https://media.test/a.m4a', { durationMs: 10_000 });
+      const emit = sound.addPlayBackListener.mock.calls[0][0];
+      emit({ currentPosition: 4000, duration: 10_000 });
+
+      // The native listener already reports actual track position, so the
+      // formatter needs no rate-awareness of its own to stay truthful.
+      expect(player.formatPlaybackTime(player.getAudioPlaybackState().positionMs)).toBe('0:04');
+      expect(player.formatPlaybackTime(player.getAudioPlaybackState().durationMs)).toBe('0:10');
+    });
+  });
+
+  test('the rate control is unsupported when the native player exposes no rate API', async () => {
+    const sound = makeSound();
+    delete (sound as any).setPlaybackSpeed;
+    await withPlayerMock(sound, async (player: any) => {
+      expect(player.isPlaybackRateSupported()).toBe(false);
+      expect(player.cyclePlaybackRate()).toMatchObject({ ok: false, reason: 'unavailable' });
+      expect(player.getAudioPlaybackState().playbackRate).toBe(1);
+    });
+  });
+
+  test('the rate control is unsupported when the native module is not linked', async () => {
+    await withPlayerMock(null, async (player: any) => {
+      expect(player.isPlaybackRateSupported()).toBe(false);
+      expect(player.cyclePlaybackRate()).toMatchObject({ ok: false, reason: 'unavailable' });
     });
   });
 });

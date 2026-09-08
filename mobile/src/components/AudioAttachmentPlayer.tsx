@@ -3,9 +3,11 @@ import type { LayoutChangeEvent } from 'react-native';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
 import {
+  cyclePlaybackRate,
   formatPlaybackTime,
   getAudioPlaybackState,
   isAudioPlaybackAvailable,
+  isPlaybackRateSupported,
   pauseAudio,
   playAudio,
   resumeAudio,
@@ -19,6 +21,11 @@ import type { ThemeColors } from '../theme';
 
 /** Height (dp) of the scrubber track — small, but still comfortably tappable with the hit slop below. */
 const TRACK_HEIGHT = 4;
+
+/** `1x` / `1.5x` / `2x`, without a trailing `.0` for whole-number speeds. */
+function formatPlaybackRate(rate: number): string {
+  return `${Number(rate.toFixed(2)).toString()}x`;
+}
 
 function PlaybackIcon({
   isLoading,
@@ -107,6 +114,10 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
     }
   }, [durationMs, isCurrent, isPlaying, uri]);
 
+  const handleCycleRate = useCallback(() => {
+    cyclePlaybackRate();
+  }, []);
+
   const handleSeek = useCallback(
     (locationX: number) => {
       if (!isCurrent || !totalMs || !trackWidthRef.current) return;
@@ -120,6 +131,8 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
   const iconDefinition = ICONS[isPlaying ? 'mediaPause' : 'mediaPlay'];
   const VectorIcon = loadVectorIcons();
   const unavailable = !isAudioPlaybackAvailable();
+  const rateSupported = isPlaybackRateSupported();
+  const rateLabel = formatPlaybackRate(playback.playbackRate);
 
   return (
     <View style={styles.container} testID={testID}>
@@ -175,6 +188,17 @@ export default function AudioAttachmentPlayer({ uri, durationMs = 0, isOwn = fal
           </Text>
         ) : null}
       </View>
+      {rateSupported ? (
+        <Pressable
+          onPress={handleCycleRate}
+          accessibilityRole="button"
+          accessibilityLabel={`Playback speed ${rateLabel}`}
+          hitSlop={touchSlop(12)}
+          style={styles.rateButton}
+          testID={`${testID}-rate`}>
+          <Text style={styles.rateLabel}>{rateLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -231,5 +255,15 @@ const createStyles = (colors: ThemeColors) =>
     error: {
       ...typography.hint,
       color: colors.danger,
+    },
+    rateButton: {
+      paddingHorizontal: spacing.xs,
+      paddingVertical: 2,
+      borderRadius: radius.sm,
+      backgroundColor: colors.surfaceControl,
+    },
+    rateLabel: {
+      ...typography.hint,
+      color: colors.textPrimary,
     },
   });
