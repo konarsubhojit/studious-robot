@@ -31,6 +31,12 @@ function loadSoundModule(): typeof NitroSound | null {
   return _soundCache ?? null;
 }
 
+/**
+ * The speeds the control cycles through, in order. `1` (normal speed) is the
+ * default every session starts at.
+ */
+export const PLAYBACK_RATES: readonly number[] = [1, 1.5, 2];
+
 /** The state every subscribed player UI renders from. */
 export type AudioPlaybackState = {
   /** The source currently loaded, or `null` when nothing is playing. */
@@ -38,6 +44,13 @@ export type AudioPlaybackState = {
   isPlaying: boolean;
   positionMs: number;
   durationMs: number;
+  /**
+   * The active playback speed, one of {@link PLAYBACK_RATES}. Lives here
+   * rather than in a bubble's component state so every mounted player agrees
+   * on the current speed, and so it persists across notes within a session
+   * instead of resetting to 1x each time.
+   */
+  playbackRate: number;
 };
 
 /** Why a playback request could not be honoured. */
@@ -57,7 +70,17 @@ const IDLE_STATE: AudioPlaybackState = Object.freeze({
   isPlaying: false,
   positionMs: 0,
   durationMs: 0,
+  playbackRate: PLAYBACK_RATES[0],
 });
+
+/**
+ * Reset playback to idle while keeping the session's chosen speed, so
+ * stopping one note (or a failed start) doesn't reset the next note back to
+ * 1x.
+ */
+function idleState(): AudioPlaybackState {
+  return { ...IDLE_STATE, playbackRate: state.playbackRate };
+}
 
 const FAILURE_MESSAGES: Record<AudioPlaybackReason, string> = {
   unavailable: 'Audio playback is not available on this build',
@@ -90,6 +113,34 @@ export function _resetAudioPlayback() {
 /** Whether the audio-playback native module is linked. */
 export function isAudioPlaybackAvailable(): boolean {
   return Boolean(loadSoundModule());
+}
+
+/**
+ * Whether the linked native player exposes a rate API. The speed control
+ * degrades to hidden (rather than present-but-inert) when it doesn't.
+ */
+export function isPlaybackRateSupported(): boolean {
+  const sound = loadSoundModule();
+  return typeof sound?.setPlaybackSpeed === 'function';
+}
+
+/**
+ * Cycle to the next speed in {@link PLAYBACK_RATES}, applying it immediately
+ * to whatever is loaded and remembering it for the next note played.
+ */
+export function cyclePlaybackRate(): AudioPlaybackResult {
+  if (!isPlaybackRateSupported()) return failure('unavailable');
+  const currentIndex = PLAYBACK_RATES.indexOf(state.playbackRate);
+  const nextRate = PLAYBACK_RATES[(currentIndex + 1) % PLAYBACK_RATES.length] ?? PLAYBACK_RATES[0];
+  publish({ playbackRate: nextRate });
+
+  const sound = loadSoundModule();
+  if (sound && state.uri) {
+    sound.setPlaybackSpeed(nextRate).catch(error => {
+      logWarn('[AudioPlayback] setPlaybackSpeed failed', { error });
+    });
+  }
+  return { ok: true };
 }
 
 /** The current player state, for a component mounting mid-playback. */
@@ -127,7 +178,7 @@ export async function stopAudio(): Promise<AudioPlaybackResult> {
     // but it must still be visible in the logs.
     logVerbose('[AudioPlayback] stop ignored', { error });
   }
-  publish({ ...IDLE_STATE });
+  publish(idleState());
   return { ok: true };
 }
 
@@ -174,12 +225,17 @@ export async function playAudio(uri: string | null | undefined, { durationMs = 0
     });
     publish({ uri, isPlaying: true, positionMs: 0, durationMs: Number(durationMs) || 0 });
     await sound.startPlayer(uri);
-    logInfo('[AudioPlayback] playing', { durationMs: Number(durationMs) || 0 });
+    // Carry the session's chosen speed onto this note rather than resetting
+    // to 1x each time a new clip starts.
+    if (state.playbackRate !== PLAYBACK_RATES[0] && typeof sound.setPlaybackSpeed === 'function') {
+      await sound.setPlaybackSpeed(state.playbackRate);
+    }
+    logInfo('[AudioPlayback] playing', { durationMs: Number(durationMs) || 0, playbackRate: state.playbackRate });
     return { ok: true };
   } catch (error) {
     logError('[AudioPlayback] play failed', { error });
     sound.removePlayBackListener?.();
-    publish({ ...IDLE_STATE });
+    publish(idleState());
     return failure('failed', error);
   }
 }
