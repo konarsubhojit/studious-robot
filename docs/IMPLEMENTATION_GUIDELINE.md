@@ -8,6 +8,8 @@ client + Express/Socket.IO signaling server).
 Each item lists **what is done**, **what remains**, and **concrete next steps**
 so a new session can continue without re-deriving the analysis.
 
+> Last verified against commit `64fd1471e6f03f4218903449de3a97d0fd443717` on 2026-09-08.
+
 ---
 
 ## ✅ Already implemented in this PR
@@ -29,6 +31,41 @@ These gaps are complete and covered by tests (`cd mobile && npm test`):
    before the call is placed (`GET /presence/:userId`).
 4. **Tap-to-redial** — call-history rows in the Lobby are now pressable and
    re-place the call via `placeCall(peerId)`.
+5. **Mobile chat UI + message search + delivery/read status** — shipped in
+   `mobile/src/components/chat/ChatConversationPresentation.tsx`
+   (`MessageStatus = 'sending' | 'failed' | 'sent' | 'delivered' | 'read'`),
+   `mobile/src/components/ChatListScreen.tsx`,
+   `mobile/src/components/SearchScreen.tsx`, `mobile/src/hooks/useMessaging.ts`
+   (`GET /messages/search`), and `server/src/routes/messages.routes.ts`
+   (`GET /messages/search` + `POST /messages/read`).
+6. **Blocked-people management UI** — `mobile/src/hooks/useBlocks.ts`, block /
+   unblock actions in `mobile/src/components/PeerProfileScreen.tsx`, and the
+   blocked-people list in `mobile/src/components/SettingsScreen.tsx`.
+7. **Multi-device read sync** — `server/src/routes/messages.routes.ts` emits
+   `SERVER_EVENTS.MESSAGE_READ` to a user's sockets; the mobile client subscribes
+   in `mobile/src/hooks/useCallFlow.ts`.
+8. **Screen sharing and call minimisation/PiP path** — shipped in
+   `mobile/src/hooks/useScreenShare.ts`, `mobile/src/screenShare.ts`,
+   `mobile/src/hooks/usePictureInPicturePip.ts`,
+   `mobile/src/hooks/useCallMinimize.ts`, wired through
+   `mobile/src/components/CallScreen.tsx`.
+9. **TURN fallback + diagnostics** — `mobile/src/webrtcConfig.ts` now includes
+   TURN credential fetch (`/turn-credentials`), tiered fallback (fetched/cache/
+   stale-cache/build-time-config), and `getTurnDiagnostics()`.
+10. **Lobby/search network-error recovery** — offline banner + retry actions are
+    implemented in `mobile/src/components/CallsScreen.tsx` and
+    `mobile/src/components/SearchScreen.tsx`, wired from
+    `mobile/src/components/TabShell.tsx`.
+11. **Vector icon migration** — icon rendering is centralised through
+    `mobile/src/vectorIcons.tsx`, `mobile/src/components/primitives/Icon.tsx`
+    and `mobile/src/components/IconButton.tsx` (emoji kept only as fallback when
+    native fonts are absent).
+12. **App icon and splash wiring** — launcher icons are present in
+    `mobile/android/app/src/main/res/mipmap-*/ic_launcher*.png`; launch/splash
+    surfaces are configured via
+    `mobile/android/app/src/main/res/values/styles.xml` (`windowBackground`) and
+    `mobile/ios/StudiousRobot/LaunchScreen.storyboard`; iOS app icons are in
+    `mobile/ios/StudiousRobot/Images.xcassets/AppIcon.appiconset/`.
 
 ---
 
@@ -100,34 +137,61 @@ verified Firebase account:
 | 7 | **Presence before calling** | ✅ basic indicator added; optionally subscribe to live presence over the socket instead of one-shot fetch. |
 | 8 | **In-memory sessions lost on restart** | ✅ The server bootstrap (`require.main` block in `server/src/index.ts`) wires the Redis-backed store bundle via `createRedisPgStores()` whenever `REDIS_URL` is set (and closes it on shutdown). The mobile app gained `refreshSession()` + an `authedFetch()` helper that calls `POST /session/refresh` and retries once on a 401 (wired into call-history + contact lookups). Remaining: persist hot keyed state (currently per-instance Maps) and call refresh proactively on a TTL. |
 | 9 | **Push provider lock-in / duplicated credentials** | ✅ Azure Notification Hubs is now the **preferred** transport in `server/src/push.ts` (SAS-signed REST direct-send, zero new dependencies), with automatic fallback to direct APNs/FCM when unconfigured or on send failure. Outcomes carry `transport: 'notification_hub' \| 'direct'`. Env-gated via `AZURE_NOTIFICATION_HUB_CONNECTION_STRING` / `AZURE_NOTIFICATION_HUB_NAME`; setup documented in [AZURE_SETUP.md](./AZURE_SETUP.md). |
-| 10 | **No text chat / no message persistence** | ✅ `server/src/messageStore.ts` (memory + Postgres `messages` table, indexed on `(conversation_id, created_at desc)`), `message.send` / `message.received` / `message.delivered` socket events, `GET /messages` history with cursor pagination, and a data-only push fallback for offline recipients. Durable whenever `DATABASE_URL` is set. Remaining: a mobile chat UI. |
+| 10 | **No text chat / no message persistence** | ✅ `server/src/messageStore.ts` (memory + Postgres `messages` table, indexed on `(conversation_id, created_at desc)`), `message.send` / `message.received` / `message.delivered` socket events, `GET /messages` history with cursor pagination, and a data-only push fallback for offline recipients. Durable whenever `DATABASE_URL` is set. Mobile UI + search are now implemented (`ChatConversationPresentation.tsx`, `ChatListScreen.tsx`, `SearchScreen.tsx`). |
 | 11 | **Incoming calls never reached the callee** | ✅ Fixed. Offline-push gating was per **user** rather than per **device**, so a user online on one device got no push on any other; `resolveOfflinePushChannels()` now resolves push targets per device. Engine.IO's default 25s/20s heartbeat also let a suspended phone look connected for up to 45s — longer than the ringing timeout (30s at the time; now 120s) — so `SOCKET_PING_INTERVAL_MS` / `SOCKET_PING_TIMEOUT_MS` now default to 10s each. On mobile, a foreground `onMessage` handler was added (`setBackgroundMessageHandler` alone drops pushes that arrive while the app is open) and `displayIncomingCall()` deduplicates by `callId`. |
 
 ---
 
 ## 🟡 P2 — UX / reliability
 
-- **TURN fallback** (`mobile/src/webrtcConfig.ts`): self-hosted TURN option +
-  "TURN unavailable" diagnostics; document setup.
-- **Lobby network-error recovery**: retry button + persistent offline banner.
-- **iOS support**: CallKit, APNs token collection, an iOS CI workflow.
+- ~~**TURN fallback**~~ ✅ Implemented in `mobile/src/webrtcConfig.ts`
+  (credential fetch + tiered fallback + diagnostics).
+- ~~**Lobby network-error recovery**~~ ✅ Implemented (offline banners + Retry)
+  in `mobile/src/components/CallsScreen.tsx` and
+  `mobile/src/components/SearchScreen.tsx`.
+- **iOS support**: ✅ CallKit (`mobile/src/callKeep.ts`) + APNs/FCM token
+  collection (`mobile/src/pushNotifications.ts`) are implemented. **Remaining:**
+  add an iOS CI workflow (current `.github/workflows/mobile-ci.yml` runs tests on
+  Ubuntu only; no iOS build job).
 - ~~**Session expiry**~~: ✅ `SESSION_TTL_MS` defaults to 7 days, expired
   sessions are swept out of the in-memory map, every shared-store key is
   written with an expiry, and the app re-mints on `401` / `session.invalid`.
-- **Replace emoji icons** with `react-native-vector-icons` for consistent
-  cross-device rendering (`IconButton`, Lobby gear, redial, presence dot).
-- **Bitrate / codec control**: `RTCRtpSender.setParameters()` caps + `getStats()`
-  packet-loss → quality warnings.
+- ~~**Replace emoji icons**~~ ✅ Implemented via
+  `mobile/src/vectorIcons.tsx` + shared icon primitives.
+- **Bitrate / codec control**: ✅ bitrate caps are applied with
+  `RTCRtpSender.setParameters()` (`applyBitrateConstraints` in
+  `mobile/src/webrtcConfig.ts`) and `getStats()` packet-loss/quality warnings are
+  surfaced in `mobile/src/hooks/useCallFlow.ts`. **Remaining:** codec-preference
+  controls are still not implemented.
 
 ---
 
 ## 🔵 P3 — Mainstream features
 
-Group calls (server `MAX_ROOM_SIZE = 2`), a **mobile chat UI** (the server-side
-text-chat API and persistence now exist — see gap 10), screen sharing, profile
-pictures/display names, blocked-callers UI (server `blocks` API exists, no UI),
-account deletion/data export (GDPR), app icon & splash, i18n
-(`CALL_END_REASON_LABELS` is i18n-ready), accessibility hints.
+- **Group calls** — still absent: server capacity is still capped to 1:1
+  (`server/src/config.ts` `MAX_ROOM_SIZE = 2`).
+- ~~**Mobile chat UI**~~ ✅ implemented (`mobile/src/components/chat/ChatConversationPresentation.tsx`,
+  `mobile/src/components/ChatListScreen.tsx`, `mobile/src/components/SearchScreen.tsx`).
+- ~~**Screen sharing**~~ ✅ implemented (`mobile/src/hooks/useScreenShare.ts`,
+  `mobile/src/screenShare.ts`, `mobile/src/components/CallScreen.tsx`).
+- **Profile pictures/display names** — still absent: avatars are initials from
+  user ids (`mobile/src/components/primitives/Avatar.tsx`), and the persisted
+  `users` table has no profile-picture/display-name fields (`server/db/schema.ts`).
+- ~~**Blocked-callers UI**~~ ✅ implemented (`mobile/src/hooks/useBlocks.ts`,
+  `mobile/src/components/PeerProfileScreen.tsx`,
+  `mobile/src/components/SettingsScreen.tsx`).
+- **Account deletion/data export (GDPR)** — still absent after scanning
+  `server/src/routes/` (`attachments`, `auditLog`, `blocks`, `calls`, `devices`,
+  `directory`, `health`, `messages`, `metrics`, `session`, `turnCredentials`):
+  no account-delete or data-export endpoint found. Tracked in #293.
+- ~~**App icon & splash**~~ ✅ implemented (`mobile/android/app/src/main/res/mipmap-*`,
+  Android `windowBackground` styles, iOS `LaunchScreen.storyboard`, iOS
+  `AppIcon.appiconset`).
+- **i18n** (`CALL_END_REASON_LABELS` is i18n-ready) — still absent: no
+  `i18n`/`i18next`/`translation`/`locale` matches under `mobile/src`. Tracked in #305.
+- **Accessibility hints** — **could not determine full completion**: there are
+  182 `accessibilityLabel` usages across `mobile/src`, but this document has not
+  been through a full accessibility audit pass.
 
 ---
 
@@ -143,16 +207,17 @@ account deletion/data export (GDPR), app icon & splash, i18n
 
 ## Suggested order for the next session
 
-All P0 items and the P1 functional gaps (#4, #5, #7, #8) are now implemented. The
-remaining backlog is P2 / P3 / infra:
+All P0 items and core P1/P2 chat/call UX gaps are now implemented. The highest-
+value remaining backlog is:
 
-1. `cd mobile && npm install` to fetch the `react-native-callkeep` /
-   `@react-native-firebase/*` native modules, then run real-device QA for
-   background push + the system call UI (P0 #1/#2 operational follow-up).
-2. Swap emoji glyphs for `react-native-vector-icons` (P2).
-3. Persist the hot keyed state (sessions/presence Maps) behind Redis and call
-   `POST /session/refresh` proactively on a TTL (P1 #8 follow-up).
-4. TURN fallback + diagnostics and Lobby network-error recovery (P2).
+1. Add account deletion and data-export endpoints (GDPR; #293).
+2. Add i18n plumbing and extract user-visible strings (#305).
+3. Add an iOS CI workflow (current mobile CI is Linux-only tests/lint/typecheck).
+4. Extend calling beyond 1:1 rooms (server still enforces `MAX_ROOM_SIZE = 2`).
+5. Complete an explicit accessibility audit (current status is partially verified,
+   not fully audited).
+6. Optional call-quality follow-up: codec-preference controls (bitrate caps +
+   quality warnings are already implemented).
 
 **Conventions to follow** (see repo memories): Drizzle ORM for DB; run tests per
 package (`cd mobile && npm test`, `cd server && npm test`); default branch is
