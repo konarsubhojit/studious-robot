@@ -194,7 +194,7 @@ referencing the returned `publicUrl`.
 
 - Every object lives under one shared prefix — `<R2_PUBLIC_BASE_URL>/chatblobs/<conversationId>/<uuid>.<ext>` — so a deployment only points a single bucket/CDN hostname at chat media, and `message.send` can reject any URL outside it.
 - The object key is **server-generated**, so a caller cannot overwrite another conversation's media.
-- `content-length` and `content-type` are part of the signature: an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
+- `cache-control`, `content-length`, and `content-type` are part of the signature: every object stores `public, max-age=31536000, immutable`, and an upload that exceeds the size cap or changes its MIME type is rejected by R2 itself, not only by the client. The same allowlist and caps (10 MB images, 16 MB voice notes, 25 MB files — see `shared/messages.ts`) are re-checked on `message.send`.
 - When R2 is not configured the endpoint answers `503` and attachment messages are refused; the rest of chat is unaffected.
 
 ## Push notifications

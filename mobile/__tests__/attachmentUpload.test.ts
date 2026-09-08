@@ -145,7 +145,11 @@ describe('attachmentUpload', () => {
         uploadUrl: 'https://r2.example/upload',
         publicUrl: 'https://cdn.example/chatblobs/conv-1/x.png',
         expiresAt: '2024-01-01T00:00:00.000Z',
-        headers: { 'Content-Type': 'image/png', 'Content-Length': '10' },
+        headers: {
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Content-Type': 'image/png',
+          'Content-Length': '10',
+        },
       };
       const authedFetch = buildAuthedFetch({ ok: true, json: () => Promise.resolve(payload) });
 
@@ -212,7 +216,11 @@ describe('attachmentUpload', () => {
       const onProgress = jest.fn();
       const promise = putAttachment({
         uploadUrl: 'https://r2.example/upload',
-        headers: { 'Content-Type': 'image/png', 'Content-Length': '10' },
+        headers: {
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Content-Type': 'image/png',
+          'Content-Length': '10',
+        },
         body: { uri: 'file:///tmp/photo.png' },
         onProgress,
       });
@@ -220,7 +228,11 @@ describe('attachmentUpload', () => {
       const xhr = FakeXHR.instances[0];
       expect(xhr.method).toBe('PUT');
       expect(xhr.url).toBe('https://r2.example/upload');
-      expect(xhr.requestHeaders).toEqual({ 'Content-Type': 'image/png', 'Content-Length': '10' });
+      expect(xhr.requestHeaders).toEqual({
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Content-Type': 'image/png',
+        'Content-Length': '10',
+      });
 
       xhr.upload.onprogress({ lengthComputable: true, loaded: 5, total: 10 });
       expect(onProgress).toHaveBeenCalledWith(0.5);
@@ -291,7 +303,11 @@ describe('attachmentUpload', () => {
         uploadUrl: 'https://r2.example/upload',
         publicUrl: 'https://cdn.example/chatblobs/conv-1/x.png',
         expiresAt: '2024-01-01T00:00:00.000Z',
-        headers: { 'Content-Type': 'image/png', 'Content-Length': '1024' },
+        headers: {
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Content-Type': 'image/png',
+          'Content-Length': '1024',
+        },
       };
       const authedFetch = (jest.fn((build: any) => {
           build('session-1');

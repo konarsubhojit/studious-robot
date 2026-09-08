@@ -10,7 +10,8 @@
  * point one hostname (bucket domain or CDN) at it.
  *
  * The presigned URL is the *enforcement point*, not just a convenience:
- * `content-length` and `content-type` are part of the signature, so an upload
+ * `cache-control`, `content-length`, and `content-type` are part of the
+ * signature, so every object carries durable caching metadata and an upload
  * that exceeds the size cap or changes the MIME type is rejected by R2 itself
  * even if the client ignores the limits it was told about. The type/size/MIME
  * checks below run server-side on both `POST /attachments/presign` and
@@ -30,6 +31,7 @@ const S3_SERVICE = 's3';
 const DEFAULT_PRESIGN_TTL_SECONDS = 300;
 /** Upper bound on the configurable TTL: a leaked URL should expire quickly. */
 const MAX_PRESIGN_TTL_SECONDS = 3600;
+const ATTACHMENT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 /** File extension per accepted MIME type, purely cosmetic for the object key. */
 const EXTENSION_BY_MIME_TYPE = Object.freeze({
@@ -117,10 +119,8 @@ function validateAttachmentRequest({ type, mimeType, sizeBytes }: { type?: unkno
 function createAttachmentKey({ conversationId, mimeType }: { conversationId: string; mimeType: string; }): string {
   const extension =
     (EXTENSION_BY_MIME_TYPE as Record<string, string>)[mimeType] ?? 'bin';
-  // The conversation id is derived from two user ids, which are already
-  // restricted to safe characters, but encode it anyway: the key ends up in a
-  // URL path.
-  const scope = encodeURIComponent(conversationId);
+  // Keep the raw object key path-safe; presigning performs the URL encoding.
+  const scope = conversationId.replace(/:/g, '_');
   return `${ATTACHMENT_PATH_PREFIX}/${scope}/${crypto.randomUUID()}.${extension}`;
 }
 
@@ -221,9 +221,10 @@ function presignObjectRequest({ config, method, key, signedHeaderValues = {}, no
 /**
  * Presign an upload of exactly `sizeBytes` bytes of `mimeType` to `key`.
  *
- * `content-length` and `content-type` are signed headers, so the client must
- * send both and they must match: the size cap and MIME allowlist are therefore
- * enforced by object storage, not only by this server or the client.
+ * `cache-control`, `content-length`, and `content-type` are signed headers, so
+ * the client must send all three and they must match: durable caching metadata,
+ * the size cap, and the MIME allowlist are therefore enforced by object
+ * storage, not only by this server or the client.
  *
  * @param params
  */
@@ -240,7 +241,11 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     config,
     method: 'PUT',
     key,
-    signedHeaderValues: { 'content-length': String(sizeBytes), 'content-type': mimeType },
+    signedHeaderValues: {
+      'cache-control': ATTACHMENT_CACHE_CONTROL,
+      'content-length': String(sizeBytes),
+      'content-type': mimeType,
+    },
     now,
   });
 
@@ -250,7 +255,11 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     publicUrl: `${config.publicBaseUrl}/${key.split('/').map(encodeSegment).join('/')}`,
     expiresAt: signed.expiresAt,
     // The client must replay these verbatim, or R2 rejects the signature.
-    headers: { 'Content-Type': mimeType, 'Content-Length': String(sizeBytes) },
+    headers: {
+      'Cache-Control': ATTACHMENT_CACHE_CONTROL,
+      'Content-Type': mimeType,
+      'Content-Length': String(sizeBytes),
+    },
   };
 }
 
