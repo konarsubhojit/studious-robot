@@ -14,7 +14,12 @@ import {
   createMessageRecord,
   nextTimestamp,
 } from './records.ts';
-import { bodyMatches, clampLimit, normaliseSearchTerm } from './queries.ts';
+import {
+  bodyMatches,
+  clampExportReadLimit,
+  clampLimit,
+  normaliseSearchTerm,
+} from './queries.ts';
 import type { MessageStore, StoredMessage } from './types.ts';
 
 export function createMemoryMessageStore(): MessageStore {
@@ -69,6 +74,16 @@ export function createMemoryMessageStore(): MessageStore {
         .filter((message) => bodyMatches(message, term))
         .sort(byNewestFirst)
         .slice(0, cap)
+        .map((message) => ({ ...message }));
+    },
+
+    async listUserMessages({ userId, limit, before } = {}) {
+      if (!userId) return [];
+      return messages
+        .filter((message) => message.senderId === userId || message.recipientId === userId)
+        .filter((message) => (before ? message.createdAt < before : true))
+        .sort(byNewestFirst)
+        .slice(0, clampExportReadLimit(limit))
         .map((message) => ({ ...message }));
     },
 

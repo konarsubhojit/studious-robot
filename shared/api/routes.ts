@@ -14,6 +14,7 @@ const API_ROUTES = Object.freeze({
   METRICS: '/metrics',
   SESSION: '/session',
   SESSION_REFRESH: '/session/refresh',
+  ACCOUNT_EXPORT: '/account/export',
   USERS: '/users',
   DEVICES_REGISTER: '/devices/register',
   DEVICES_UNREGISTER: '/devices/unregister',

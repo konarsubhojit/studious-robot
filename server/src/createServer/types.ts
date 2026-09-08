@@ -21,6 +21,8 @@ export type CreateServerOptions = {
   messageRateWindowMs?: number;
   messageSearchRateLimit?: number;
   messageSearchRateWindowMs?: number;
+  accountExportRateLimit?: number;
+  accountExportRateWindowMs?: number;
   shutdownDrainMs?: number;
   staleDeviceMaxAgeMs?: number;
   /** Age past which a terminal `calls` row (and its cascaded events) is deleted; `0` disables. */

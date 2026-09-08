@@ -26,7 +26,12 @@
 
 import { and, asc, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import { messages as messagesTable } from '../../db/schema.ts';
-import { clampLimit, normaliseSearchTerm, MAX_CONVERSATION_LIMIT } from './queries.ts';
+import {
+  clampExportReadLimit,
+  clampLimit,
+  normaliseSearchTerm,
+  MAX_CONVERSATION_LIMIT,
+} from './queries.ts';
 import { applyReaction, createMessageRecord, nextTimestamp } from './records.ts';
 import type { Database } from '../../db/client.ts';
 import type {
@@ -191,6 +196,22 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         )
         .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
         .limit(clampLimit(limit));
+      return rows.map(toStoredMessage);
+    },
+
+    async listUserMessages({ userId, limit, before } = {}) {
+      if (!userId) return [];
+      const rows = await db
+        .select()
+        .from(messagesTable)
+        .where(
+          and(
+            byParticipant(userId),
+            before ? lt(messagesTable.createdAt, before) : undefined
+          )
+        )
+        .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
+        .limit(clampExportReadLimit(limit));
       return rows.map(toStoredMessage);
     },
 

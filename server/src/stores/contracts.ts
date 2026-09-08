@@ -143,6 +143,7 @@ export type ServerState = Stores & {
   turnCredentialsRateLimiter: RateLimiter;
   messageSendRateLimiter: RateLimiter;
   messageSearchRateLimiter: RateLimiter;
+  accountExportRateLimiter: RateLimiter;
   telemetry: import('../telemetry.ts').Telemetry;
   messageStore: import('../messageStore.ts').MessageStore;
   cache: import('../cache.ts').Cache;

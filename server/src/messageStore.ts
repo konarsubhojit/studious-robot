@@ -90,6 +90,7 @@ export type {
   ConversationSummary,
   MessageRecord,
   MessageStore,
+  ListUserMessagesOptions,
   StoredMessage,
 } from './messageStore/types.ts';
 

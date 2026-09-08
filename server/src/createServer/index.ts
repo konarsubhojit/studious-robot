@@ -132,6 +132,15 @@ function createServer(opts: CreateServerOptions = {}) {
       opts.messageSearchRateWindowMs ??
       parseEnv('MESSAGE_SEARCH_RATE_WINDOW_MS', 60_000),
   });
+  // An export is substantially broader than an interactive read. One successful
+  // attempt per account per day limits scraping and accidental retry storms.
+  const accountExportRateLimiter = createRateLimiter({
+    maxRequests:
+      opts.accountExportRateLimit ?? parseEnv('ACCOUNT_EXPORT_RATE_LIMIT', 1),
+    windowMs:
+      opts.accountExportRateWindowMs ??
+      parseEnv('ACCOUNT_EXPORT_RATE_WINDOW_MS', 24 * 60 * 60 * 1000),
+  });
 
   const telemetry = createTelemetry();
 
@@ -197,6 +206,7 @@ function createServer(opts: CreateServerOptions = {}) {
     messageSendRateLimiter,
     /** Rate limiter for message search (`GET /messages/search`). */
     messageSearchRateLimiter,
+    accountExportRateLimiter,
     /** Shared telemetry recorder for this server instance. */
     telemetry,
     /** Persistent store for text-chat messages (in-memory unless Postgres is configured). */
