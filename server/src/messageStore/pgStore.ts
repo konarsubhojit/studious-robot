@@ -199,7 +199,7 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       return rows.map(toStoredMessage);
     },
 
-    async listUserMessages({ userId, limit, before } = {}) {
+    async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
       if (!userId) return [];
       const rows = await db
         .select()
@@ -207,7 +207,17 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         .where(
           and(
             byParticipant(userId),
-            before ? lt(messagesTable.createdAt, before) : undefined
+            before
+              ? or(
+                  lt(messagesTable.createdAt, before),
+                  beforeMessageId
+                    ? and(
+                        eq(messagesTable.createdAt, before),
+                        lt(messagesTable.messageId, beforeMessageId)
+                      )
+                    : undefined
+                )
+              : undefined
           )
         )
         .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))

@@ -4,24 +4,71 @@ import { readAccountCallEvents } from '../domain/accountExport.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
 import { getSessionFromRequestAsync } from '../lib/auth.ts';
 import { describeError } from '../lib/errors.ts';
-import { normaliseOptionalString } from '../lib/normalize.ts';
-import { MAX_MESSAGE_LIMIT, clampMessageLimit } from '../messageStore.ts';
+import { clampMessageLimit } from '../messageStore.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type DeviceRecord = import('../stores/contracts.ts').DeviceRecord;
+type CallRecord = import('../stores/contracts.ts').CallRecord;
+type CallHistoryPage = import('../domain/callHistory.ts').CallHistoryPage;
+type StoredMessage = import('../messageStore.ts').StoredMessage;
+type Response = import('express').Response;
 
-const DEFAULT_CALL_EXPORT_LIMIT = 50;
-const MAX_CALL_EXPORT_LIMIT = 100;
+const DEFAULT_CALL_EXPORT_PAGE_SIZE = 50;
+const MAX_CALL_EXPORT_PAGE_SIZE = 100;
 
-function clampCallLimit(value: unknown): number {
+function clampCallPageSize(value: unknown): number {
   const requested = Number(value);
-  if (!Number.isFinite(requested)) return DEFAULT_CALL_EXPORT_LIMIT;
-  return Math.min(Math.max(Math.floor(requested), 1), MAX_CALL_EXPORT_LIMIT);
+  if (!Number.isFinite(requested)) return DEFAULT_CALL_EXPORT_PAGE_SIZE;
+  return Math.min(Math.max(Math.floor(requested), 1), MAX_CALL_EXPORT_PAGE_SIZE);
 }
 
-function parseOffset(value: unknown): number {
-  const requested = Number(value);
-  return Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : 0;
+function json(value: unknown): string {
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Honour HTTP backpressure so a slow archive download cannot make buffered
+ * response chunks grow with the size of the account.
+ */
+async function writeChunk(res: Response, chunk: string): Promise<void> {
+  if (res.destroyed) throw new Error('account export client disconnected');
+  if (res.write(chunk)) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      res.off('drain', onDrain);
+      res.off('close', onClose);
+      res.off('error', onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('account export client disconnected'));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+    res.once('error', onError);
+  });
+}
+
+async function writeArrayValues(
+  res: Response,
+  values: unknown[],
+  firstValue: boolean
+): Promise<{ firstValue: boolean; count: number; }> {
+  let isFirst = firstValue;
+  for (const value of values) {
+    await writeChunk(res, `${isFirst ? '' : ','}${json(value)}`);
+    isFirst = false;
+  }
+  return { firstValue: isFirst, count: values.length };
 }
 
 /**
@@ -40,10 +87,8 @@ function exportDevice(device: DeviceRecord) {
   };
 }
 
-function exportMessage(message: import('../messageStore.ts').StoredMessage) {
-  const attachment = message.attachment as {
-    url?: unknown;
-  } | null;
+function exportMessage(message: StoredMessage) {
+  const attachment = message.attachment as { url?: unknown; } | null;
   return {
     ...message,
     attachment: attachment
@@ -54,7 +99,7 @@ function exportMessage(message: import('../messageStore.ts').StoredMessage) {
   };
 }
 
-function exportCall(call: import('../stores/contracts.ts').CallRecord) {
+function exportCall(call: CallRecord) {
   return {
     callId: call.callId,
     callerId: call.callerId,
@@ -69,16 +114,154 @@ function exportCall(call: import('../stores/contracts.ts').CallRecord) {
   };
 }
 
+function ownMessages(rows: StoredMessage[], userId: string): StoredMessage[] {
+  const own = rows.filter(
+    (message) => message.senderId === userId || message.recipientId === userId
+  );
+  if (own.length !== rows.length) {
+    console.error(
+      `[account-export] dropped ${rows.length - own.length} non-participant message(s)`
+    );
+  }
+  return own;
+}
+
+function ownCalls(rows: CallRecord[], userId: string): CallRecord[] {
+  return rows.filter((call) => call.callerId === userId || call.calleeId === userId);
+}
+
+async function readMessagePage(
+  state: ServerState,
+  userId: string,
+  pageSize: number,
+  before?: string,
+  beforeMessageId?: string
+): Promise<StoredMessage[]> {
+  if (!state.messageStore.listUserMessages) {
+    throw new Error('message store does not support account exports');
+  }
+  return state.messageStore.listUserMessages({
+    userId,
+    limit: pageSize,
+    before,
+    beforeMessageId,
+  });
+}
+
+async function streamMessages(
+  res: Response,
+  state: ServerState,
+  userId: string,
+  pageSize: number,
+  initialRows: StoredMessage[]
+): Promise<number> {
+  let rows = initialRows;
+  let firstValue = true;
+  let count = 0;
+  let previousCursor = '';
+
+  while (rows.length > 0) {
+    const written = await writeArrayValues(
+      res,
+      ownMessages(rows, userId).map(exportMessage),
+      firstValue
+    );
+    firstValue = written.firstValue;
+    count += written.count;
+    if (rows.length < pageSize) break;
+
+    const last = rows.at(-1);
+    if (!last) break;
+    const cursor = `${last.createdAt}\u0000${last.messageId}`;
+    if (cursor === previousCursor) throw new Error('message export cursor did not advance');
+    previousCursor = cursor;
+    rows = await readMessagePage(state, userId, pageSize, last.createdAt, last.messageId);
+  }
+
+  return count;
+}
+
+async function streamCalls(
+  res: Response,
+  state: ServerState,
+  userId: string,
+  pageSize: number,
+  initialPage: CallHistoryPage
+): Promise<number> {
+  let page = initialPage;
+  let offset = 0;
+  let firstValue = true;
+  let count = 0;
+
+  while (page.calls.length > 0) {
+    const written = await writeArrayValues(
+      res,
+      ownCalls(page.calls, userId).map(exportCall),
+      firstValue
+    );
+    firstValue = written.firstValue;
+    count += written.count;
+    offset += page.calls.length;
+    if (page.calls.length < pageSize) break;
+    page = await readCallHistory(state, { userId, limit: pageSize, offset });
+  }
+
+  return count;
+}
+
+async function streamCallEvents(
+  res: Response,
+  state: ServerState,
+  userId: string,
+  pageSize: number,
+  initialPage: CallHistoryPage
+): Promise<void> {
+  let page = initialPage;
+  let offset = 0;
+  let firstValue = true;
+
+  while (page.calls.length > 0) {
+    const calls = ownCalls(page.calls, userId);
+    const events = await readAccountCallEvents(
+      state,
+      calls.map((call) => call.callId)
+    );
+    ({ firstValue } = await writeArrayValues(res, events, firstValue));
+    offset += page.calls.length;
+    if (page.calls.length < pageSize) break;
+    page = await readCallHistory(state, { userId, limit: pageSize, offset });
+  }
+}
+
+function profileFor(state: ServerState, userId: string) {
+  const profile = state.users.get(userId);
+  return {
+    userId,
+    email: profile?.email ?? null,
+    authProvider: profile?.authProvider ?? null,
+    createdAt: profile?.createdAt ?? null,
+    verifiedAt: profile?.verifiedAt ?? null,
+  };
+}
+
+function destroyOrReportUnavailable(res: Response, error: unknown): void {
+  console.error(`[account-export] generation failed: ${describeError(error)}`);
+  if (res.headersSent) {
+    res.destroy(error instanceof Error ? error : undefined);
+    return;
+  }
+  res.status(503).json({ error: 'account export unavailable' });
+}
+
 function createAccountExportRouter({ state }: { state: ServerState }): import('express').Router {
   const router = express.Router();
 
   /**
    * GET /account/export
    *
-   * A bounded, machine-readable export selected exclusively from the active
-   * session's user id. Message pages use `before`; call pages use `callOffset`.
-   * Attachment records contain object-storage URLs only—the server never
-   * downloads or embeds attachment bytes or client-supplied metadata.
+   * One request produces a complete archive. Messages, calls, and call events
+   * are read and emitted in bounded pages; attachment records contain only
+   * object-storage URLs, never bytes or client-supplied metadata.
    */
   router.get(API_ROUTES.ACCOUNT_EXPORT, async (req, res) => {
     const session = await getSessionFromRequestAsync(req, state);
@@ -96,111 +279,88 @@ function createAccountExportRouter({ state }: { state: ServerState }): import('e
       return;
     }
 
-    const messageLimit = clampMessageLimit(req.query.limit);
-    const before = normaliseOptionalString(req.query.before);
-    const callLimit = clampCallLimit(req.query.callLimit);
-    const callOffset = parseOffset(req.query.callOffset);
+    const messagePageSize = clampMessageLimit(req.query.limit);
+    const callPageSize = clampCallPageSize(req.query.callLimit);
 
-    let messageRows;
     try {
-      if (!state.messageStore.listUserMessages) {
-        throw new Error('message store does not support account exports');
-      }
-      // The extra row is never returned; it makes `hasMore` exact while keeping
-      // the datastore read bounded to MAX_MESSAGE_LIMIT + 1.
-      messageRows = await state.messageStore.listUserMessages({
-        userId: session.userId,
-        limit: Math.min(messageLimit + 1, MAX_MESSAGE_LIMIT + 1),
-        before: before ?? undefined,
-      });
-    } catch (error) {
-      console.error(`[account-export] message lookup failed: ${describeError(error)}`);
-      res.status(503).json({ error: 'account export unavailable' });
-      return;
-    }
-
-    // Defence in depth against an incorrectly scoped injected or remote store.
-    const ownMessages = messageRows.filter(
-      (message) =>
-        message.senderId === session.userId || message.recipientId === session.userId
-    );
-    if (ownMessages.length !== messageRows.length) {
-      console.error(
-        `[account-export] dropped ${messageRows.length - ownMessages.length} non-participant message(s)`
+      // Read one bounded page before sending headers so an unavailable message
+      // store can still produce a well-formed 503 response.
+      const firstMessages = await readMessagePage(
+        state,
+        session.userId,
+        messagePageSize
       );
-    }
-    const hasMoreMessages = ownMessages.length > messageLimit;
-    const messages = ownMessages.slice(0, messageLimit).map(exportMessage);
-
-    const callPage = await readCallHistory(state, {
-      userId: session.userId,
-      limit: callLimit,
-      offset: callOffset,
-    });
-    const calls = callPage.calls
-      .filter((call) => call.callerId === session.userId || call.calleeId === session.userId)
-      .map(exportCall);
-    const callEvents = await readAccountCallEvents(
-      state,
-      calls.map((call) => call.callId)
-    );
-
-    const profile = state.users.get(session.userId);
-    const devices = Array.from(state.devices.values())
-      .filter((device) => device.userId === session.userId)
-      .map(exportDevice);
-    const blocks = Array.from(state.blocks.get(session.userId) ?? []);
-
-    // Record before taking the audit snapshot so the delivered export contains
-    // its own access record. Failed exports are deliberately not called exported.
-    state.auditLog.record({
-      event: 'account.exported',
-      actor: session.userId,
-      target: session.userId,
-      outcome: 'success',
-      details: { messageCount: messages.length, callCount: calls.length },
-    });
-    const audit = state.auditLog.getForUser(session.userId);
-
-    res.status(200).json({
-      schemaVersion: 1,
-      exportedAt: new Date().toISOString(),
-      userId: session.userId,
-      profile: {
+      const firstCalls = await readCallHistory(state, {
         userId: session.userId,
-        email: profile?.email ?? null,
-        authProvider: profile?.authProvider ?? null,
-        createdAt: profile?.createdAt ?? null,
-        verifiedAt: profile?.verifiedAt ?? null,
-      },
-      messages,
-      calls,
-      callEvents,
-      devices,
-      blocks,
-      auditLog: audit,
-      pagination: {
+        limit: callPageSize,
+        offset: 0,
+      });
+      const exportedAt = new Date().toISOString();
+      const prefix = json({
+        schemaVersion: 1,
+        exportedAt,
+        userId: session.userId,
+        profile: profileFor(state, session.userId),
+      });
+
+      res.status(200).type('application/json');
+      await writeChunk(res, `${prefix.slice(0, -1)},"messages":[`);
+      const messageCount = await streamMessages(
+        res,
+        state,
+        session.userId,
+        messagePageSize,
+        firstMessages
+      );
+      await writeChunk(res, '],"calls":[');
+      const callCount = await streamCalls(
+        res,
+        state,
+        session.userId,
+        callPageSize,
+        firstCalls
+      );
+      await writeChunk(res, '],"callEvents":[');
+      await streamCallEvents(res, state, session.userId, callPageSize, firstCalls);
+
+      const devices = Array.from(state.devices.values())
+        .filter((device) => device.userId === session.userId)
+        .map(exportDevice);
+      const blocks = Array.from(state.blocks.get(session.userId) ?? []);
+      state.auditLog.record({
+        event: 'account.exported',
+        actor: session.userId,
+        target: session.userId,
+        outcome: 'success',
+        details: { messageCount, callCount },
+      });
+      const auditLog = state.auditLog.getForUser(session.userId);
+      const pagination = {
         messages: {
-          limit: messageLimit,
-          before: before ?? null,
-          hasMore: hasMoreMessages,
-          nextBefore:
-            hasMoreMessages && messages.length > 0
-              ? messages[messages.length - 1].createdAt
-              : null,
+          limit: messagePageSize,
+          before: null,
+          hasMore: false,
+          nextBefore: null,
         },
         calls: {
-          limit: callLimit,
-          offset: callOffset,
-          total: callPage.total,
-          hasMore: callOffset + calls.length < callPage.total,
-          nextOffset:
-            callOffset + calls.length < callPage.total
-              ? callOffset + calls.length
-              : null,
+          limit: callPageSize,
+          offset: 0,
+          total: firstCalls.total,
+          hasMore: false,
+          nextOffset: null,
         },
-      },
-    });
+      };
+
+      await writeChunk(
+        res,
+        `],"devices":${json(devices)},"blocks":${json(blocks)},"auditLog":${json(
+          auditLog
+        )},"pagination":${json(pagination)}}`
+      );
+      res.end();
+    } catch (error) {
+      destroyOrReportUnavailable(res, error);
+    }
   });
 
   return router;

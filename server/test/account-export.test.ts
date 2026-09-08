@@ -1,6 +1,6 @@
 /**
  * Integration tests for `GET /account/export`: strict session ownership,
- * privacy projections, bounded pagination, audit recording and daily limiting.
+ * privacy projections, bounded streaming, audit recording and daily limiting.
  *
  * Mirrors the helper style of `messages-search.test.ts`.
  */
@@ -217,47 +217,90 @@ test('GET /account/export returns only session-owner data with sensitive credent
   );
 });
 
-test('GET /account/export paginates all own messages with a bounded before cursor', async (t) => {
+test('GET /account/export streams every own message and call through bounded internal pages', async (t) => {
+  const stores = createMemoryStores();
   const messageStore = createMemoryMessageStore();
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 5; index++) {
     await messageStore.saveMessage({
       messageId: `page-${index}`,
       senderId: 'page-alice',
       recipientId: 'page-bob',
       body: `message ${index}`,
+      // Compound cursor coverage: timestamp-only pagination would skip three.
+      createdAt: '2026-09-08T06:00:00.000Z',
     });
+    const callId = `page-call-${index}`;
+    stores.calls.set(callId, {
+      callId,
+      callerId: index % 2 === 0 ? 'page-alice' : 'page-bob',
+      calleeId: index % 2 === 0 ? 'page-bob' : 'page-alice',
+      status: 'ended',
+      createdAt: `2026-09-08T07:0${index}:00.000Z`,
+    });
+    stores.callEvents.set(callId, [
+      {
+        eventId: `page-event-${index}`,
+        callId,
+        event: 'ended',
+        actor: 'page-alice',
+        timestamp: `2026-09-08T07:0${index}:30.000Z`,
+      },
+    ]);
   }
+  const messageReads: import('../src/messageStore.ts').ListUserMessagesOptions[] = [];
+  const listUserMessages = messageStore.listUserMessages;
+  assert.ok(listUserMessages);
+  messageStore.listUserMessages = async (options = {}) => {
+    messageReads.push(options);
+    return listUserMessages(options);
+  };
 
   const { url, teardown } = await startServer({
+    stores,
     messageStore,
-    accountExportRateLimit: 10,
   });
   t.after(teardown);
   const session = await createSession(url, 'page-alice');
 
-  const first = await getJson(url, `${API_ROUTES.ACCOUNT_EXPORT}?limit=2`, session);
-  assert.equal(first.status, 200);
-  assert.deepEqual(
-    first.body.messages.map((message: any) => message.messageId),
-    ['page-2', 'page-1']
-  );
-  assert.equal(first.body.pagination.messages.hasMore, true);
-  assert.ok(first.body.pagination.messages.nextBefore);
-
-  const second = await getJson(
+  // Legacy continuation inputs cannot turn this into a partial archive.
+  const res = await getJson(
     url,
-    `${API_ROUTES.ACCOUNT_EXPORT}?limit=2&before=${encodeURIComponent(
-      first.body.pagination.messages.nextBefore
-    )}`,
+    `${API_ROUTES.ACCOUNT_EXPORT}?limit=2&callLimit=2&before=ignored&callOffset=4`,
     session
   );
-  assert.equal(second.status, 200);
+  assert.equal(res.status, 200);
   assert.deepEqual(
-    second.body.messages.map((message: any) => message.messageId),
-    ['page-0']
+    new Set(res.body.messages.map((message: any) => message.messageId)),
+    new Set(['page-0', 'page-1', 'page-2', 'page-3', 'page-4'])
   );
-  assert.equal(second.body.pagination.messages.hasMore, false);
-  assert.equal(second.body.pagination.messages.nextBefore, null);
+  assert.deepEqual(
+    new Set(res.body.calls.map((call: any) => call.callId)),
+    new Set(['page-call-0', 'page-call-1', 'page-call-2', 'page-call-3', 'page-call-4'])
+  );
+  assert.deepEqual(
+    new Set(res.body.callEvents.map((event: any) => event.eventId)),
+    new Set(['page-event-0', 'page-event-1', 'page-event-2', 'page-event-3', 'page-event-4'])
+  );
+  assert.deepEqual(messageReads.map((read) => read.limit), [2, 2, 2]);
+  assert.equal(messageReads[0].before, undefined);
+  assert.ok(messageReads.slice(1).every((read) => read.before && read.beforeMessageId));
+  assert.deepEqual(res.body.pagination.messages, {
+    limit: 2,
+    before: null,
+    hasMore: false,
+    nextBefore: null,
+  });
+  assert.deepEqual(res.body.pagination.calls, {
+    limit: 2,
+    offset: 0,
+    total: 5,
+    hasMore: false,
+    nextOffset: null,
+  });
+
+  // The one daily allowance covered every internal page, not just the first.
+  const repeated = await getJson(url, API_ROUTES.ACCOUNT_EXPORT, session);
+  assert.equal(repeated.status, 429);
 });
 
 test('GET /account/export applies a strict per-account daily rate limit', async (t) => {

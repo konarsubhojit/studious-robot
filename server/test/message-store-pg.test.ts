@@ -172,6 +172,7 @@ test('listUserMessages exports a bounded participant page including tombstones',
     userId: 'alice',
     limit: 10_000,
     before: '2024-02-01T00:00:00.000Z',
+    beforeMessageId: 'm-2',
   });
 
   const [query] = queries;
@@ -179,12 +180,17 @@ test('listUserMessages exports a bounded participant page including tombstones',
     query.text,
     /"messages"\."sender_id" = \$\d+ or "messages"\."recipient_id" = \$\d+/
   );
-  assert.match(query.text, /"messages"\."created_at" < \$/);
+  assert.match(
+    query.text,
+    /"messages"\."created_at" < \$\d+ or \("messages"\."created_at" = \$\d+ and "messages"\."message_id" < \$\d+\)/
+  );
   assert.match(query.text, /order by "messages"\."created_at" desc, "messages"\."message_id" desc/);
   assert.deepEqual(query.params, [
     'alice',
     'alice',
     '2024-02-01T00:00:00.000Z',
+    '2024-02-01T00:00:00.000Z',
+    'm-2',
     101,
   ]);
   assert.equal(page?.[0].deletedAt, tombstone.deletedAt);

@@ -77,11 +77,18 @@ export function createMemoryMessageStore(): MessageStore {
         .map((message) => ({ ...message }));
     },
 
-    async listUserMessages({ userId, limit, before } = {}) {
+    async listUserMessages({ userId, limit, before, beforeMessageId } = {}) {
       if (!userId) return [];
       return messages
         .filter((message) => message.senderId === userId || message.recipientId === userId)
-        .filter((message) => (before ? message.createdAt < before : true))
+        .filter((message) =>
+          before
+            ? message.createdAt < before ||
+              (message.createdAt === before &&
+                beforeMessageId !== undefined &&
+                message.messageId < beforeMessageId)
+            : true
+        )
         .sort(byNewestFirst)
         .slice(0, clampExportReadLimit(limit))
         .map((message) => ({ ...message }));

@@ -49,6 +49,8 @@ export type ListUserMessagesOptions = {
   userId?: string;
   limit?: unknown;
   before?: string;
+  /** Tie-breaker used with `before` for stable export pagination. */
+  beforeMessageId?: string;
 };
 
 export type ReactToMessageOptions = {
