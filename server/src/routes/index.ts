@@ -10,6 +10,7 @@ import { createMessagesRouter } from './messages.routes.ts';
 import { createAttachmentsRouter } from './attachments.routes.ts';
 import { createTurnCredentialsRouter } from './turnCredentials.routes.ts';
 import { createAccountExportRouter } from './accountExport.routes.ts';
+import { createAccountDeletionRouter } from './accountDeletion.routes.ts';
 
 /**
  * Mount every HTTP router onto the Express app.
@@ -25,6 +26,7 @@ function mountRoutes(app: import('express').Express, ctx: {
         db: import('../../db/client.ts').Database | null;
         io: any;
         sessionTtlMs: number;
+        accountDeletionGraceMs: number;
         ringingTimeoutMs: number;
         turnFetch?: typeof fetch;
         turnEnv?: NodeJS.ProcessEnv;
@@ -39,6 +41,7 @@ function mountRoutes(app: import('express').Express, ctx: {
     db,
     io,
     sessionTtlMs,
+    accountDeletionGraceMs,
     ringingTimeoutMs,
     turnFetch,
     turnEnv,
@@ -48,6 +51,7 @@ function mountRoutes(app: import('express').Express, ctx: {
   app.use(createHealthRouter({ state }));
   app.use(createSessionRouter({ state, db, sessionTtlMs, verifyIdToken }));
   app.use(createAccountExportRouter({ state }));
+  app.use(createAccountDeletionRouter({ state, graceMs: accountDeletionGraceMs }));
   app.use(createDevicesRouter({ state, db }));
   app.use(createDirectoryRouter({ state }));
   app.use(createMetricsRouter({ state }));

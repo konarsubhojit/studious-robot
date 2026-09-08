@@ -669,6 +669,40 @@ at.
 
 ---
 
+## 13a. Account export and erasure (GDPR)
+
+Two authenticated endpoints cover the subject-access and erasure obligations:
+
+- `GET /account/export` streams the account's own data as JSON (§ `server/README.md`).
+- `POST /account/delete` **queues** an erasure, `GET /account/delete` reports it,
+  and `DELETE /account/delete` cancels it while it is still pending.
+
+An erasure does not run inside the request. It is written to the
+`account_deletions` table (migration `0011_account_deletions.sql`) and carried
+out by a background sweep once its grace period has elapsed — `7 days` by
+default, `ACCOUNT_DELETION_GRACE_MS` to change it, `0` to erase at the next
+sweep. The queue is reloaded at boot, so a restart during the grace period does
+not cancel anything. The sweep runs every `ACCOUNT_DELETION_SWEEP_INTERVAL_MS`
+(default one hour; `0` disables the timer).
+
+What the erasure does, per account:
+
+| Store | Effect |
+| ----- | ------ |
+| `users` | Row deleted, releasing the username — a provider account is bound to one username permanently, so anonymising the row would burn it forever. |
+| `messages` | The messages the user *sent* are tombstoned (body, attachment and reactions cleared, row kept). The ones they received are the peer's history and are left alone. |
+| R2 attachments | The objects those messages referenced are deleted with a signed `DELETE`; there is no bucket lifecycle rule that would collect them otherwise. |
+| `calls` / `call_events` | Rows naming the user are deleted; events cascade with their call. |
+| `devices` | Rows deleted, taking their push tokens — live delivery channels to a handset — with them. |
+| `blocks` | Removed in both directions. |
+| `audit_log` | Kept, with every `actor`/`target` mention rewritten to a random pseudonym; the 180-day `AUDIT_RETENTION_MS` window then ages the rows out. |
+| Sessions / presence | Every session revoked (including the shared Redis keys), live sockets disconnected, presence and connection state dropped. |
+
+A failure part-way through leaves the row `pending`, so the next sweep retries;
+every step is safe to run twice.
+
+---
+
 ## 14. Production host snapshot (authoritative for host migration)
 
 Production (`signal.kiyon.store`) runs one `robot-signal.service` unit per

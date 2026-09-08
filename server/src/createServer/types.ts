@@ -23,6 +23,14 @@ export type CreateServerOptions = {
   messageSearchRateWindowMs?: number;
   accountExportRateLimit?: number;
   accountExportRateWindowMs?: number;
+  accountDeletionRateLimit?: number;
+  accountDeletionRateWindowMs?: number;
+  /** Grace period between a deletion request and the erasure; `0` erases at the next sweep. */
+  accountDeletionGraceMs?: number;
+  /** How often queued erasures are drained; `0` disables the timer. */
+  accountDeletionSweepIntervalMs?: number;
+  /** Injected `fetch` for attachment deletion during erasure (tests / stand-in object storage). */
+  attachmentFetch?: typeof fetch;
   shutdownDrainMs?: number;
   staleDeviceMaxAgeMs?: number;
   /** Age past which a terminal `calls` row (and its cascaded events) is deleted; `0` disables. */

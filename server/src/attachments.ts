@@ -150,24 +150,20 @@ function encodeSegment(segment: string): string {
 }
 
 /**
- * Presign an upload of exactly `sizeBytes` bytes of `mimeType` to `key`.
+ * Presign one S3 request against the configured bucket.
  *
- * `cache-control`, `content-length`, and `content-type` are signed headers, so
- * the client must send all three and they must match: durable caching metadata,
- * the size cap, and the MIME allowlist are therefore enforced by object
- * storage, not only by this server or the client.
+ * Query-string ("presigned URL") authentication rather than an `Authorization`
+ * header, because the upload URL is handed to the client, and sharing one code
+ * path with the server-side delete keeps a single SigV4 implementation.
  *
- * @param params
+ * `signedHeaderValues` are the headers *besides* `host` that participate in the
+ * signature; a request that omits or changes one of them is rejected by object
+ * storage rather than by this server.
  */
-function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new Date() }: {
-        config: ReturnType<typeof loadR2Config>; key: string; mimeType: string;
-        sizeBytes: number; now?: Date;
-    }): {
-    uploadUrl: string; publicUrl: string; expiresAt: string;
-    headers: Record<string, string>; key: string;
-} {
-  if (!config) throw new Error('presignAttachmentUpload: R2 is not configured');
-
+function presignObjectRequest({ config, method, key, signedHeaderValues = {}, now = new Date() }: {
+        config: NonNullable<ReturnType<typeof loadR2Config>>; method: string; key: string;
+        signedHeaderValues?: Record<string, string>; now?: Date;
+    }): { url: string; expiresAt: string; } {
   const endpoint = new URL(config.endpoint);
   const canonicalUri = `/${[config.bucket, ...key.split('/')].map(encodeSegment).join('/')}`;
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -175,12 +171,11 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
   const scope = `${dateStamp}/${R2_REGION}/${S3_SERVICE}/aws4_request`;
 
   // Signed headers must be sorted by lowercase name.
-  const signedHeaders = 'cache-control;content-length;content-type;host';
-  const canonicalHeaders =
-    `cache-control:${ATTACHMENT_CACHE_CONTROL}\n` +
-    `content-length:${sizeBytes}\n` +
-    `content-type:${mimeType}\n` +
-    `host:${endpoint.host}\n`;
+  const headerPairs = [...Object.entries(signedHeaderValues), ['host', endpoint.host]].sort(
+    ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
+  );
+  const signedHeaders = headerPairs.map(([name]) => name).join(';');
+  const canonicalHeaders = headerPairs.map(([name, value]) => `${name}:${value}\n`).join('');
 
   const query = new URLSearchParams();
   query.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
@@ -196,7 +191,7 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
     .join('&');
 
   const canonicalRequest = [
-    'PUT',
+    method,
     canonicalUri,
     canonicalQuery,
     canonicalHeaders,
@@ -218,10 +213,47 @@ function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new D
   const signature = crypto.createHmac('sha256', signingKey).update(stringToSign, 'utf8').digest('hex');
 
   return {
-    key,
-    uploadUrl: `${endpoint.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`,
-    publicUrl: `${config.publicBaseUrl}/${key.split('/').map(encodeSegment).join('/')}`,
+    url: `${endpoint.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`,
     expiresAt: new Date(now.getTime() + config.ttlSeconds * 1000).toISOString(),
+  };
+}
+
+/**
+ * Presign an upload of exactly `sizeBytes` bytes of `mimeType` to `key`.
+ *
+ * `cache-control`, `content-length`, and `content-type` are signed headers, so
+ * the client must send all three and they must match: durable caching metadata,
+ * the size cap, and the MIME allowlist are therefore enforced by object
+ * storage, not only by this server or the client.
+ *
+ * @param params
+ */
+function presignAttachmentUpload({ config, key, mimeType, sizeBytes, now = new Date() }: {
+        config: ReturnType<typeof loadR2Config>; key: string; mimeType: string;
+        sizeBytes: number; now?: Date;
+    }): {
+    uploadUrl: string; publicUrl: string; expiresAt: string;
+    headers: Record<string, string>; key: string;
+} {
+  if (!config) throw new Error('presignAttachmentUpload: R2 is not configured');
+
+  const signed = presignObjectRequest({
+    config,
+    method: 'PUT',
+    key,
+    signedHeaderValues: {
+      'cache-control': ATTACHMENT_CACHE_CONTROL,
+      'content-length': String(sizeBytes),
+      'content-type': mimeType,
+    },
+    now,
+  });
+
+  return {
+    key,
+    uploadUrl: signed.url,
+    publicUrl: `${config.publicBaseUrl}/${key.split('/').map(encodeSegment).join('/')}`,
+    expiresAt: signed.expiresAt,
     // The client must replay these verbatim, or R2 rejects the signature.
     headers: {
       'Cache-Control': ATTACHMENT_CACHE_CONTROL,
@@ -246,10 +278,53 @@ function isManagedAttachmentUrl(config: ReturnType<typeof loadR2Config>, url: un
   return !url.includes('..');
 }
 
+/**
+ * Recover the object key from a public attachment URL.
+ *
+ * Only URLs this deployment minted are accepted, so an account erasure can
+ * never be steered into deleting an object outside the chat-blob prefix.
+ *
+ * @returns the key, or `null` when the URL is not one of ours.
+ */
+function attachmentKeyFromUrl(config: ReturnType<typeof loadR2Config>, url: unknown): string | null {
+  if (!config || !isManagedAttachmentUrl(config, url)) return null;
+  const path = (url as string).slice(config.publicBaseUrl.length + 1);
+  try {
+    return path.split('/').map(decodeURIComponent).join('/');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete the object behind a public attachment URL.
+ *
+ * Used by account erasure: tombstoning a message clears the reference to its
+ * attachment, but the bytes outlive the row unless they are removed here, and
+ * the bucket carries no lifecycle rule that would collect them.
+ *
+ * @returns `true` when the object is gone (including when it never existed).
+ */
+async function deleteAttachmentObject({ config, url, fetchImpl = fetch, now = new Date() }: {
+        config: ReturnType<typeof loadR2Config>; url: unknown;
+        fetchImpl?: typeof fetch; now?: Date;
+    }): Promise<boolean> {
+  const key = attachmentKeyFromUrl(config, url);
+  if (!config || !key) return false;
+
+  const signed = presignObjectRequest({ config, method: 'DELETE', key, now });
+  const response = await fetchImpl(signed.url, { method: 'DELETE' });
+  // S3/R2 answer an absent key with 204, so a retry after a partial erasure is
+  // not an error; 404 is tolerated for stand-ins that report it instead.
+  return response.ok || response.status === 404;
+}
+
 export {
   DEFAULT_PRESIGN_TTL_SECONDS,
   MAX_PRESIGN_TTL_SECONDS,
+  attachmentKeyFromUrl,
   createAttachmentKey,
+  deleteAttachmentObject,
   isManagedAttachmentUrl,
   loadR2Config,
   presignAttachmentUpload,

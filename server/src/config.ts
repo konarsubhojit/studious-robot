@@ -347,6 +347,26 @@ const DEFAULT_FANOUT_PROBE_INTERVAL_MS = 15 * 1000;
  */
 const DEFAULT_FANOUT_PROBE_STALE_INTERVALS = 3;
 
+/**
+ * Grace period between an account-deletion request and the erasure running.
+ *
+ * The request is destructive and irreversible, so it is deliberately not
+ * immediate: a week is long enough for the owner of a mistakenly — or
+ * maliciously — deleted account to sign back in and cancel, and short enough
+ * to stay a defensible answer to "without undue delay".  Override with
+ * `ACCOUNT_DELETION_GRACE_MS`; `0` erases at the next sweep.
+ */
+const DEFAULT_ACCOUNT_DELETION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How often the queue of due account erasures is drained.  Override with
+ * `ACCOUNT_DELETION_SWEEP_INTERVAL_MS`.
+ */
+const DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Message page size used while walking an account's history during erasure. */
+const ACCOUNT_DELETION_MESSAGE_BATCH = 200;
+
 export {
   MAX_ROOM_SIZE,
   PUSH_PROVIDERS,
@@ -389,4 +409,7 @@ export {
   DEVICE_FANOUT_ALERT_THRESHOLD,
   DEFAULT_FANOUT_PROBE_INTERVAL_MS,
   DEFAULT_FANOUT_PROBE_STALE_INTERVALS,
+  DEFAULT_ACCOUNT_DELETION_GRACE_MS,
+  DEFAULT_ACCOUNT_DELETION_SWEEP_INTERVAL_MS,
+  ACCOUNT_DELETION_MESSAGE_BATCH,
 };
