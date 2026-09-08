@@ -255,6 +255,9 @@ curl -fsS https://signal.yourdomain.com/health | grep -o '"stateAffinity":"[^"]*
 # must print "stateAffinity":"shared" on BOTH VMs
 ```
 
+That check is necessary but **not sufficient** — see *Verify fan-out, not just
+`stateAffinity`* below.
+
 nginx, with both VMs' private addresses:
 
 ```nginx
@@ -266,6 +269,43 @@ upstream robot_signal {
 
 Socket.IO needs the `Upgrade`/`Connection` headers on the `proxy_pass` (§9),
 otherwise the WebSocket transport silently degrades to long-polling.
+
+### Verify fan-out, not just `stateAffinity`
+
+`stateAffinity: "shared"` only proves the VM found a `REDIS_URL`. It describes
+the call registry, sessions and cache — **not** whether an event emitted on VM
+0 reaches a socket held by VM 1. Those are different guarantees, and only the
+second is what users experience: when it breaks, the sending VM cannot see the
+remote socket, classifies an online device as offline and falls back to push.
+Nothing else in `/health` disagrees.
+
+So each instance actively probes the fan-out path — it announces itself to its
+peers over the Socket.IO adapter every `FANOUT_PROBE_INTERVAL_MS` (default
+`15000`; `0` disables it) — and reports what came back, orthogonally to
+`stateAffinity`:
+
+```bash
+curl -fsS http://127.0.0.1:4173/health | python3 -c 'import json,sys; print(json.load(sys.stdin)["fanout"])'
+# {'transport': 'redis-adapter', 'probing': True, 'peersSeen': ['1'],
+#  'lastPeerEventAgeMs': 4200, 'healthy': True, 'mixedTransport': False}
+```
+
+On this two-VM fleet each VM must list the *other* one in `peersSeen`. Read the
+fields as:
+
+- **`healthy: false` with an empty `peersSeen`** — this VM has heard from no
+  peer for several intervals. It is either alone (one VM down or not yet
+  deployed) or unable to receive fan-out, e.g. its adapter's Redis clients
+  failed while its command client stayed up. `stateAffinity` still reads
+  `"shared"` in both cases.
+- **`mixedTransport: true`** — a peer answered on a *different* transport, so
+  neither adapter can reach the other's sockets. This is what a half-finished
+  adapter migration looks like; the mismatch is also logged with `[fanout]`.
+- **`probing: false`** — no cross-instance adapter is attached at all
+  (`transport: "in-memory"`), which is correct only for single-process runs.
+
+Both VMs disagreeing on `transport` is worth failing a deploy over: check
+`fanout` on each instance after a rollout (§11), not only `stateAffinity`.
 
 ### Sizing that follows from N = 2
 
@@ -551,6 +591,14 @@ curl http://localhost:4173/health
 
 Expected response: `200 OK` with a JSON body (e.g. `{"status":"ok"}`).
 
+On a multi-VM fleet also read the `fanout` block — it is the only field that
+says whether socket broadcasts actually cross instances (see §5a, *Verify
+fan-out, not just `stateAffinity`*):
+
+```bash
+curl -fsS http://localhost:4173/health | grep -o '"healthy":[a-z]*'
+```
+
 ---
 
 ## 12. How the automated deploy works
@@ -724,7 +772,8 @@ systemd-analyze security robot-signal   # sandbox exposure score
 
 `/health` must report `"stateAffinity":"shared"` on **both** VMs. `"sticky"`
 means that VM has no `REDIS_URL` and is keeping private state — fix it before
-sending it traffic.
+sending it traffic. Then check `fanout.healthy` on both, for the reason given
+in §5a.
 
 Load distribution through the balancer (parallel, not sequential — each proxy
 worker keeps its own round-robin cursor):

@@ -159,6 +159,12 @@ export type ServerState = Stores & {
   cache: import('../cache.ts').Cache;
   messageBus: import('../messageBus.ts').MessageBus | null;
   draining: boolean;
+  /**
+   * Cross-instance fan-out self-test.  Orthogonal to `stateAffinity`: that
+   * describes Redis-backed call/session state, this describes whether socket
+   * broadcasts actually reach the other instances.
+   */
+  fanout?: import('../lib/fanoutProbe.ts').FanoutProbe;
   incomingCallPushState?: Map<string, IncomingCallPushEntry>;
 };
 

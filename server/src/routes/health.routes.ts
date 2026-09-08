@@ -11,6 +11,14 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * state and `'shared'` when runtime call/session state is coordinated through
  * Redis-backed store primitives.
  *
+ * `fanout` is deliberately **orthogonal** to `stateAffinity`: the latter says
+ * runtime state is Redis-backed, which is not the same guarantee as "an event
+ * emitted here reaches a socket held by another instance".  It is measured by
+ * an active probe (`lib/fanoutProbe.ts`) rather than inferred from
+ * configuration, so a fleet split across two fan-out transports — or an
+ * instance whose adapter clients have failed while its command client stays up
+ * — reports `healthy: false` instead of looking perfectly well.
+ *
  * `messageStore` reports only which backend is in use.  It deliberately does
  * *not* carry a readiness flag: the store is constructed synchronously over the
  * pool `db/client.ts` already owns, so any such flag could only ever be a
@@ -29,6 +37,7 @@ function createHealthRouter({ state }: {
             instanceId?: string;
             callState?: object;
             messageBus?: object | null;
+            fanout?: { getStatus: () => import('../lib/fanoutProbe.ts').FanoutStatus; };
         };
     }): import('express').Router {
   const router = express.Router();
@@ -57,6 +66,7 @@ function createHealthRouter({ state }: {
       messageStore: {
         type: state.messageStore.type,
       },
+      fanout: state.fanout?.getStatus() ?? null,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });

@@ -7,7 +7,7 @@ import { createRateLimiter, createAuditLog } from '../security.ts';
 import { createStores } from '../stores/index.ts';
 import { createMessageStore } from '../messageStore.ts';
 import { createMemoryCache, subscribeToCacheInvalidations } from '../cache.ts';
-import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS } from '../config.ts';
+import { DEFAULT_RINGING_TIMEOUT_MS, DEFAULT_MEDIA_CONNECT_TIMEOUT_MS, DEFAULT_MAX_CALL_DURATION_MS, DEFAULT_CALL_HEARTBEAT_TIMEOUT_MS, DEFAULT_PARTICIPANT_DISCONNECT_GRACE_MS, RINGING_POLL_MS, DEFAULT_SHUTDOWN_DRAIN_MS, DEFAULT_CALL_RETENTION_MS, DEFAULT_MAX_RETAINED_CALLS, DEFAULT_SOCKET_PING_INTERVAL_MS, DEFAULT_SOCKET_PING_TIMEOUT_MS, DEFAULT_SOCKET_MAX_BUFFER_BYTES, DEFAULT_JSON_BODY_LIMIT, DEFAULT_STALE_DEVICE_MAX_AGE_MS, DEFAULT_STALE_DEVICE_SWEEP_INTERVAL_MS, DEFAULT_SESSION_TTL_MS, DEFAULT_SESSION_SWEEP_INTERVAL_MS, DEFAULT_DB_CALL_RETENTION_MS, DEFAULT_AUDIT_RETENTION_MS, DEFAULT_MESSAGE_RETENTION_MS, DEFAULT_DB_RETENTION_SWEEP_INTERVAL_MS, DEFAULT_FANOUT_PROBE_INTERVAL_MS } from '../config.ts';
 import { getPresenceSnapshot, resolveReachableChannels, drainLocalPresence, pruneExpiredSessions } from '../lib/state.ts';
 import { runRetentionSweep } from '../lib/retention.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
@@ -20,6 +20,7 @@ import { isVerboseLoggingEnabled, verboseLog } from '../lib/verbose.ts';
 import { describeError } from '../lib/errors.ts';
 import { parseByteSize, parseNonNegativeNumber } from '../lib/env.ts';
 import { setQueryTimingSink } from '../lib/queryTiming.ts';
+import { createFanoutProbe } from '../lib/fanoutProbe.ts';
 import type { CreateServerOptions } from './types.ts';
 
 /**
@@ -273,6 +274,24 @@ function createServer(opts: CreateServerOptions = {}) {
     console.log('[signaling] Socket.IO Redis adapter attached (multi-instance mode)');
   }
 
+  // Prove the fan-out path rather than inferring it from `stateAffinity`:
+  // announce this instance to its peers over the adapter that room broadcasts
+  // travel on, and report on `/health` who answered (see lib/fanoutProbe.ts).
+  // Created after the adapter is attached, because which adapter is in place is
+  // exactly what the probe measures.
+  const fanoutProbe = createFanoutProbe({
+    io,
+    instanceId: state.instanceId ?? `${process.pid}`,
+    intervalMs:
+      opts.fanoutProbeIntervalMs ??
+      parseNonNegativeNumber(
+        'FANOUT_PROBE_INTERVAL_MS',
+        process.env.FANOUT_PROBE_INTERVAL_MS,
+        DEFAULT_FANOUT_PROBE_INTERVAL_MS
+      ),
+  });
+  state.fanout = fanoutProbe;
+
   // ── HTTP routes ────────────────────────────────────────────────────────────
   // Mounted after `io` is created so the calls router can emit realtime events.
   mountRoutes(app, {
@@ -418,6 +437,7 @@ function createServer(opts: CreateServerOptions = {}) {
       clearInterval(deviceSweepTimer);
       clearInterval(sessionSweepTimer);
       clearInterval(retentionSweepTimer);
+      fanoutProbe.stop();
 
       // Tell connected clients to reconnect elsewhere.
       io.emit(SERVER_EVENTS.SERVER_DRAINING, { reason, ts: new Date().toISOString() });
@@ -495,6 +515,11 @@ function createServer(opts: CreateServerOptions = {}) {
     getCall: (callId: string) => state.calls.get(callId) || null,
     getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
+    /**
+     * Cross-instance fan-out snapshot, as reported by `/health`.  Exposed so
+     * tests (and operators via a REPL) can read it without an HTTP round trip.
+     */
+    getFanoutStatus: (now?: number) => fanoutProbe.getStatus(now),
     /**
      * Advance all stale `ringing` calls to `missed`.  Exposed for
      * deterministic testing; the production server also calls this on a timer.
