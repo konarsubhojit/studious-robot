@@ -137,6 +137,44 @@ describe('audioPlayback', () => {
     });
   });
 
+  test('reaching the end of a clip tells completion subscribers which source ended', async () => {
+    const sound = makeSound();
+    await withPlayerMock(sound, async (player: any) => {
+      const finished: string[] = [];
+      const states: any[] = [];
+      player.subscribeAudioPlaybackCompletion((uri: string) => {
+        finished.push(uri);
+        states.push(player.getAudioPlaybackState());
+      });
+      await player.playAudio('https://media.test/a.m4a');
+      const emit = sound.addPlayBackListener.mock.calls[0][0];
+
+      // A native player can keep reporting positions past the end; the clip
+      // must still complete exactly once.
+      emit({ currentPosition: 4000, duration: 4000 });
+      emit({ currentPosition: 4100, duration: 4000 });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(finished).toEqual(['https://media.test/a.m4a']);
+      // The player is idle by the time subscribers hear about it, so a
+      // listener may start the next clip straight away.
+      expect(states[0]).toMatchObject({ uri: null, isPlaying: false });
+    });
+  });
+
+  test('stopping a clip is not reported as a completion', async () => {
+    const sound = makeSound();
+    await withPlayerMock(sound, async (player: any) => {
+      const finished: string[] = [];
+      player.subscribeAudioPlaybackCompletion((uri: string) => finished.push(uri));
+      await player.playAudio('https://media.test/a.m4a');
+      await player.stopAudio();
+
+      expect(finished).toEqual([]);
+    });
+  });
+
   test('seeking moves the reported position', async () => {
     const sound = makeSound();
     await withPlayerMock(sound, async (player: any) => {

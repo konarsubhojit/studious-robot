@@ -33,6 +33,7 @@ import { Avatar, Banner, Chip, FAB, Icon, Skeleton } from '../primitives';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../../connectivityUx';
 import { announceForAccessibility, describeMessageDelivery } from '../../accessibilityAnnouncer';
 import SwipeableRow from '../SwipeableRow';
+import useVoiceNoteAutoAdvance from '../../hooks/useVoiceNoteAutoAdvance';
 import { describeAttachmentDownloadResult, isAttachmentDownloadRetryable } from '../../attachmentDownload';
 
 import type { CallActivity, ChatMessage } from '../../hooks/useMessaging';
@@ -41,6 +42,7 @@ import type { MediaViewerItem } from '../MediaViewer';
 import type { ThemeColors } from '../../theme';
 import type { PeerPresence } from '../../types/directory';
 import type { AttachmentDownloadReason } from '../../attachmentDownload';
+import type { VoiceNoteTarget } from '../../hooks/useVoiceNoteAutoAdvance';
 
 export type { CallActivity, ChatMessage };
 /** A conversation timeline holds messages and (merged) call records alike. */
@@ -1824,6 +1826,34 @@ function ChatConversationScreen({
   }, [messages]);
 
   const activeHighlightId = quotedHighlightId ?? highlightMessageId;
+
+  // The conversation's voice notes, oldest first, as auto-advance walks them.
+  // Only voice notes: an audio *attachment* the user opened deliberately ends
+  // where it ends rather than starting something else.
+  const voiceNotes = useMemo(() => {
+    const ordered = [...messages].reverse();
+    return ordered.reduce((collected: VoiceNoteTarget[], entry) => {
+      if (isCallEntry(entry) || entry.deletedAt) return collected;
+      const url = entry.attachment?.url;
+      if (!url || messageTypeOf(entry) !== MESSAGE_TYPES.VOICE) return collected;
+      collected.push({
+        messageId: entry.messageId,
+        uri: url,
+        durationMs: entry.attachment?.durationMs ?? 0,
+        isOwn: entry.senderId === currentUserId,
+      });
+      return collected;
+    }, []);
+  }, [currentUserId, messages]);
+
+  // Auto-advance must never play from an off-screen bubble with no visible
+  // source, so the note it starts is brought into view and flashed with the
+  // same "here it is" highlight a tapped quote uses.
+  const handleAutoAdvance = useCallback((messageId: string) => {
+    setQuotedHighlightId(messageId);
+  }, []);
+
+  useVoiceNoteAutoAdvance(voiceNotes, { onAdvance: handleAutoAdvance });
 
   const scheduleScrollToEnd = useCallback(() => {
     if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
