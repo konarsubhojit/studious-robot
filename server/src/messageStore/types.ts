@@ -63,6 +63,7 @@ export type MessageStore = {
   type: 'memory' | 'postgres';
   saveMessage: (message: NewMessageInput) => Promise<StoredMessage>;
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
+  getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
   /**
    * `conversationId` is the shard key of the messages collection: supplying it

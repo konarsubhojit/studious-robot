@@ -533,10 +533,75 @@ test('message.delete refuses to delete the peer message', async (t) => {
   });
 
   assert.equal(ack.ok, false);
-  assert.equal(ack.error.code, 'not_found');
+  assert.equal(ack.error.code, 'forbidden');
 
   const history = await getJson(url, '/messages?peerId=msg-bob', aliceSession);
   assert.equal(history.body.messages.length, 1);
+});
+
+test('message.delete rejects non-owner before calling deleteMessage in the store', async (t) => {
+  let deleteAttempts = 0;
+  const messageStore = asMessageStore({
+    type: 'memory' as const,
+    async saveMessage(message: any) {
+      return message;
+    },
+    async listMessages() {
+      return [];
+    },
+    async getMessage() {
+      return {
+        messageId: 'msg-1',
+        conversationId: 'msg-alice:msg-bob',
+        senderId: 'msg-alice',
+        recipientId: 'msg-bob',
+        body: 'hello',
+        type: 'text',
+        attachment: null,
+        replyTo: null,
+        reactions: {},
+        deletedAt: null,
+        createdAt: new Date().toISOString(),
+        deliveredTo: [],
+        readAt: null,
+      };
+    },
+    async searchMessages() {
+      return [];
+    },
+    markDelivered: async () => null,
+    enqueueDeliveryReceipt() {},
+    async flushDeliveryReceipts() {},
+    async listConversations() {
+      return [];
+    },
+    async markRead() {
+      return 0;
+    },
+    async deleteMessage() {
+      deleteAttempts += 1;
+      return null;
+    },
+    async reactToMessage() {
+      return null;
+    },
+  });
+  const { url, teardown } = await startServer({ messageStore });
+  t.after(teardown);
+
+  const bobSession = await createSession(url, 'msg-bob');
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => bob.disconnect());
+
+  const ack = await emitWithAck(bob, 'message.delete', {
+    version: VERSION,
+    peerId: 'msg-alice',
+    messageId: 'msg-1',
+  });
+
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'forbidden');
+  assert.equal(deleteAttempts, 0);
 });
 
 test('message.delete rejects an unknown message and an unauthenticated caller', async (t) => {
