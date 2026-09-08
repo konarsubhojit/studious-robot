@@ -96,12 +96,70 @@ describe('AudioAttachmentPlayer', () => {
       });
     });
     await act(async () => {
-      findByTestId(tree, 'chat-audio-player-track').props.onPress({
+      findByTestId(tree, 'chat-audio-player-track').props.onResponderGrant({
         nativeEvent: { locationX: 50 },
       });
     });
 
     expect(mockSound.seekToPlayer).toHaveBeenCalledWith(2500);
+  });
+
+  test('dragging the scrubber seeks continuously', async () => {
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 10_000 });
+    await act(async () => {
+      await findByTestId(tree, 'chat-audio-player-toggle').props.onPress();
+    });
+
+    act(() => {
+      findByTestId(tree, 'chat-audio-player-track').props.onLayout({
+        nativeEvent: { layout: { width: 200 } },
+      });
+    });
+    await act(async () => {
+      findByTestId(tree, 'chat-audio-player-track').props.onResponderGrant({
+        nativeEvent: { locationX: 20 },
+      });
+    });
+    await act(async () => {
+      findByTestId(tree, 'chat-audio-player-track').props.onResponderMove({
+        nativeEvent: { locationX: 150 },
+      });
+    });
+
+    expect(mockSound.seekToPlayer).toHaveBeenCalledWith(1000);
+    expect(mockSound.seekToPlayer).toHaveBeenLastCalledWith(7500);
+  });
+
+  test('falls back to the flat track when there is no waveform data', () => {
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 4000 });
+    expect(findByTestId(tree, 'chat-audio-player-waveform')).toBeNull();
+  });
+
+  test('falls back to the flat track when the waveform is too short to be meaningful', () => {
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 4000, waveform: [0.5] });
+    expect(findByTestId(tree, 'chat-audio-player-waveform')).toBeNull();
+  });
+
+  test('renders a waveform when amplitude data is available, and seeking still works', async () => {
+    const waveform = [0.1, 0.9, 0.4, 0.6, 0.2];
+    const tree = render({ uri: 'https://media.test/a.m4a', durationMs: 10_000, waveform });
+    expect(findByTestId(tree, 'chat-audio-player-waveform')).not.toBeNull();
+
+    await act(async () => {
+      await findByTestId(tree, 'chat-audio-player-toggle').props.onPress();
+    });
+    act(() => {
+      findByTestId(tree, 'chat-audio-player-track').props.onLayout({
+        nativeEvent: { layout: { width: 200 } },
+      });
+    });
+    await act(async () => {
+      findByTestId(tree, 'chat-audio-player-track').props.onResponderGrant({
+        nativeEvent: { locationX: 100 },
+      });
+    });
+
+    expect(mockSound.seekToPlayer).toHaveBeenCalledWith(5000);
   });
 
   test('an attachment that is still uploading reports why it cannot play', async () => {

@@ -120,4 +120,44 @@ describe('voiceRecorder', () => {
       await expect(recorder.stopVoiceRecording()).resolves.toBeNull();
     });
   });
+
+  test('captures metering readings into a fixed-length, normalised waveform', async () => {
+    const fakeSound = {
+      startRecorder: jest.fn().mockResolvedValue('file:///tmp/note.m4a'),
+      stopRecorder: jest.fn().mockResolvedValue('file:///tmp/note.m4a'),
+      addRecordBackListener: jest.fn(callback => {
+        // Silence, then progressively louder, then silence again.
+        for (const currentMetering of [-60, -45, -30, -15, 0, -15, -30, -45, -60]) {
+          callback({ currentPosition: 1000, currentMetering });
+        }
+      }),
+      removeRecordBackListener: jest.fn(),
+    };
+
+    await withRecorderMock(fakeSound, async (recorder: any) => {
+      await recorder.startVoiceRecording();
+      const result = await recorder.stopVoiceRecording();
+      expect(Array.isArray(result.waveform)).toBe(true);
+      expect(result.waveform).toHaveLength(48);
+      expect(result.waveform.every((value: number) => value >= 0 && value <= 1)).toBe(true);
+      // The middle of the recording was loudest.
+      const midpoint = result.waveform[Math.floor(result.waveform.length / 2)];
+      expect(midpoint).toBeGreaterThan(result.waveform[0]);
+    });
+  });
+
+  test('omits waveform when the recorder reports no metering readings', async () => {
+    const fakeSound = {
+      startRecorder: jest.fn().mockResolvedValue('file:///tmp/note.m4a'),
+      stopRecorder: jest.fn().mockResolvedValue('file:///tmp/note.m4a'),
+      addRecordBackListener: jest.fn(callback => callback({ currentPosition: 3000 })),
+      removeRecordBackListener: jest.fn(),
+    };
+
+    await withRecorderMock(fakeSound, async (recorder: any) => {
+      await recorder.startVoiceRecording();
+      const result = await recorder.stopVoiceRecording();
+      expect(result.waveform).toBeUndefined();
+    });
+  });
 });

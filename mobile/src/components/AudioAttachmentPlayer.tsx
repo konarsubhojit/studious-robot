@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, AppState, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { logInfo, logWarn } from '../appLogger';
 import {
   cyclePlaybackRate,
@@ -60,7 +60,6 @@ function WaveformBars({
     <View style={styles.waveformBars} pointerEvents="none" testID={`${testID}-waveform`}>
       {barHeights.map((height, index) => (
         <View
-          // eslint-disable-next-line react/no-array-index-key -- bars are a fixed-length, order-stable layout
           key={index}
           style={[
             styles.waveformBar,
@@ -94,33 +93,18 @@ function PlaybackIcon({
 }
 
 /**
- * Inline player for a voice note or audio attachment.
+ * Owns the shared-player wiring: subscribing to `audioPlayback`, mapping its
+ * state onto this attachment's `isPlaying`/`totalMs`/`positionMs`, backgrounding
+ * pause, and the play/pause/resume toggle. Split out of the component purely
+ * to keep each function's branching manageable.
  *
- * All players in a conversation share the one native player owned by
- * `audioPlayback`, so this component only ever renders the shared state: when
- * another bubble starts playing, this one falls back to its idle look without
- * any coordination between the rows.
- *
- * @param props
+ * @param uri
+ * @param durationMs
  */
-export default function AudioAttachmentPlayer({
-  uri,
-  durationMs = 0,
-  waveform,
-  isOwn = false,
-  testID = 'chat-audio-player',
-}: {
-        uri?: string | null;
-        durationMs?: number | null;
-        waveform?: number[] | null;
-        isOwn?: boolean;
-        testID?: string;
-    }) {
-  const styles = useThemedStyles(createStyles);
+function useAudioAttachmentPlayback(uri: string | null | undefined, durationMs: number | null | undefined) {
   const [playback, setPlayback] = useState(() => getAudioPlaybackState());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const trackWidthRef = useRef(0);
 
   useEffect(() => subscribeAudioPlayback(setPlayback), []);
 
@@ -167,9 +151,24 @@ export default function AudioAttachmentPlayer({
     }
   }, [durationMs, isCurrent, isPlaying, uri]);
 
-  const handleCycleRate = useCallback(() => {
-    cyclePlaybackRate();
-  }, []);
+  return { playback, isLoading, error, isCurrent, isPlaying, totalMs, positionMs, handleToggle };
+}
+
+/**
+ * Touch-responder handlers that seek to wherever the finger is, on both the
+ * initial touch and any subsequent drag — the track's `onLayout` feeds it a
+ * width to convert an `x` position into a fraction of the total duration.
+ *
+ * These are the low-level responder props (not `PanResponder`, whose gesture
+ * state needs a full touch history a test can't easily provide) attached
+ * directly to a plain `View`; layering them onto `Pressable`, which owns the
+ * same prop names internally, would not work.
+ *
+ * @param isCurrent
+ * @param totalMs
+ */
+function useSeekResponder(isCurrent: boolean, totalMs: number) {
+  const trackWidthRef = useRef(0);
 
   const handleSeek = useCallback(
     (locationX: number) => {
@@ -180,26 +179,58 @@ export default function AudioAttachmentPlayer({
     [isCurrent, totalMs],
   );
 
-  // `PanResponder.create` is only called once (below); it must read the
-  // latest `handleSeek` through a ref rather than closing over the one from
+  // The handlers below are only created once; they must read the latest
+  // `handleSeek` through a ref rather than closing over the one from
   // whichever render created it.
   const handleSeekRef = useRef(handleSeek);
   handleSeekRef.current = handleSeek;
 
-  // A tap and a drag are the same gesture here — both move the scrubber to
-  // wherever the finger is — so grant and move share one handler. Attaching
-  // this to a plain `View` (rather than layering it onto `Pressable`, which
-  // owns the same low-level responder props) is what makes dragging work.
-  const panResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: event => handleSeekRef.current(event.nativeEvent.locationX),
-        onPanResponderMove: event => handleSeekRef.current(event.nativeEvent.locationX),
-      }),
+  const responderHandlers = useMemo(
+    () => ({
+      onStartShouldSetResponder: () => true,
+      onMoveShouldSetResponder: () => true,
+      onResponderGrant: (event: { nativeEvent: { locationX: number; }; }) =>
+        handleSeekRef.current(event.nativeEvent.locationX),
+      onResponderMove: (event: { nativeEvent: { locationX: number; }; }) =>
+        handleSeekRef.current(event.nativeEvent.locationX),
+    }),
     [],
   );
+
+  return { trackWidthRef, responderHandlers };
+}
+
+/**
+ * Inline player for a voice note or audio attachment.
+ *
+ * All players in a conversation share the one native player owned by
+ * `audioPlayback`, so this component only ever renders the shared state: when
+ * another bubble starts playing, this one falls back to its idle look without
+ * any coordination between the rows.
+ *
+ * @param props
+ */
+export default function AudioAttachmentPlayer({
+  uri,
+  durationMs = 0,
+  waveform,
+  isOwn = false,
+  testID = 'chat-audio-player',
+}: {
+        uri?: string | null;
+        durationMs?: number | null;
+        waveform?: number[] | null;
+        isOwn?: boolean;
+        testID?: string;
+    }) {
+  const styles = useThemedStyles(createStyles);
+  const { playback, isLoading, error, isCurrent, isPlaying, totalMs, positionMs, handleToggle } =
+    useAudioAttachmentPlayback(uri, durationMs);
+  const { trackWidthRef, responderHandlers: seekResponderHandlers } = useSeekResponder(isCurrent, totalMs);
+
+  const handleCycleRate = useCallback(() => {
+    cyclePlaybackRate();
+  }, []);
 
   const progress = totalMs > 0 ? Math.min(1, positionMs / totalMs) : 0;
   const iconDefinition = ICONS[isPlaying ? 'mediaPause' : 'mediaPlay'];
@@ -248,7 +279,7 @@ export default function AudioAttachmentPlayer({
           }}
           style={[styles.track, hasWaveform && styles.waveformTrack]}
           testID={`${testID}-track`}
-          {...panResponder.panHandlers}>
+          {...seekResponderHandlers}>
           {hasWaveform && barHeights ? (
             <WaveformBars barHeights={barHeights} progress={progress} styles={styles} testID={testID} />
           ) : (
