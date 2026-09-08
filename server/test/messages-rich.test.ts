@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { closeTestServer, getJson, listenOnRandomPort, postJson } from './helpers.ts';
 
 import { MESSAGE_TYPES, describeMessagePreview, messageTypeOf, parseEventPayload, SERVER_EVENTS } from '../../shared/index.ts';
-import { presignAttachmentUpload } from '../src/attachments.ts';
+import { deleteAttachmentObject, presignAttachmentUpload } from '../src/attachments.ts';
 import { createServer } from '../src/index.ts';
 import { io as ioClient } from 'socket.io-client';
 
@@ -130,6 +130,28 @@ test('presign produces the known SigV4 signature with cache control', () => {
     new URL(result.uploadUrl).searchParams.get('X-Amz-Signature'),
     '9ac80309e68314bbbcdd64f982287dcad76c0dd20b0fe33435931e2bbe10038d'
   );
+});
+
+test('attachment deletion refuses a URL outside the managed prefix', async () => {
+  let requests = 0;
+  const removed = await deleteAttachmentObject({
+    config: {
+      accountId: 'test-account',
+      bucket: 'wetalk-media',
+      accessKeyId: 'test-key-id',
+      secretAccessKey: 'test-secret',
+      endpoint: 'https://test-account.r2.cloudflarestorage.com',
+      publicBaseUrl: R2_ENV.R2_PUBLIC_BASE_URL,
+      ttlSeconds: 300,
+    },
+    url: 'https://attacker.example/private.jpg',
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.equal(removed, false);
+  assert.equal(requests, 0);
 });
 
 test('presign rejects an unauthenticated caller', async (t) => {
@@ -381,6 +403,91 @@ test('message.send still refuses an empty text message', async (t) => {
   });
   assert.equal(ack.ok, false);
   assert.equal(ack.error.code, 'bad_request');
+});
+
+test('message.delete removes its attachment after tombstoning', async (t) => {
+  withR2Env(t);
+  const originalFetch = globalThis.fetch;
+  const deletes: { url: string; init: RequestInit | undefined; }[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (!String(input).startsWith('https://test-account.r2.cloudflarestorage.com/')) {
+      return originalFetch(input, init);
+    }
+    deletes.push({ url: String(input), init });
+    return new Response(null, { status: 204 });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+  const aliceSession = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const sent = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'rich-bob',
+    body: '',
+    type: 'image',
+    attachment: imageAttachment(),
+  });
+  const deleted = await emitWithAck(alice, 'message.delete', {
+    version: VERSION,
+    peerId: 'rich-bob',
+    messageId: sent.message.messageId,
+  });
+
+  assert.equal(deleted.ok, true);
+  assert.equal(deletes.length, 1);
+  assert.equal(deletes[0].init?.method, 'DELETE');
+  assert.match(deletes[0].url, /\/wetalk-media\/chatblobs\//);
+});
+
+test('message.delete succeeds when attachment deletion fails', async (t) => {
+  withR2Env(t);
+  const originalFetch = globalThis.fetch;
+  const originalError = console.error;
+  const errors: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (!String(input).startsWith('https://test-account.r2.cloudflarestorage.com/')) {
+      return originalFetch(input, init);
+    }
+    throw new Error('R2 unavailable');
+  };
+  console.error = (...args) => {
+    errors.push(args.join(' '));
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
+  });
+
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+  const aliceSession = await createSession(url, 'rich-alice');
+  await createSession(url, 'rich-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const sent = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'rich-bob',
+    body: '',
+    type: 'image',
+    attachment: imageAttachment(),
+  });
+  const deleted = await emitWithAck(alice, 'message.delete', {
+    version: VERSION,
+    peerId: 'rich-bob',
+    messageId: sent.message.messageId,
+  });
+
+  assert.equal(deleted.ok, true);
+  await Promise.resolve();
+  assert.ok(errors.some((line) => line.includes('failed to delete attachment')));
 });
 
 // ─── Replies ──────────────────────────────────────────────────────────────────
