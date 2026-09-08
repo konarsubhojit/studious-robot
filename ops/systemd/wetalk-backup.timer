@@ -1,0 +1,12 @@
+[Unit]
+Description=Run wetalk database backup daily
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+Persistent=true
+RandomizedDelaySec=20m
+Unit=wetalk-backup.service
+
+[Install]
+WantedBy=timers.target
+
