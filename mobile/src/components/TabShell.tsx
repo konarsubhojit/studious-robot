@@ -159,16 +159,17 @@ function TabShell() {
         onReactToMessage={(message, emoji, action) =>
           reactToMessage(peerId, message.messageId, emoji, action)
         }
-        onDownloadAttachment={async (message, onProgress) => {
+        onDownloadAttachment={async (message, onProgress, onAbortHandle) => {
           const result = await downloadAttachment({
             url: message?.attachment?.url,
             name: message?.attachment?.name,
             mimeType: message?.attachment?.mimeType,
             onProgress,
+            onAbortHandle,
           });
           updateStatus(
             describeAttachmentDownloadResult(result),
-            result.success ? 'success' : 'error',
+            result.success ? 'success' : result.reason === 'cancelled' ? 'info' : 'error',
           );
           return result;
         }}

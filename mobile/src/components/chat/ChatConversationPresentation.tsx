@@ -33,12 +33,14 @@ import { Avatar, Banner, Chip, FAB, Icon, Skeleton } from '../primitives';
 import { describeOffline, OFFLINE_CONSEQUENCE, OFFLINE_ICON } from '../../connectivityUx';
 import { announceForAccessibility, describeMessageDelivery } from '../../accessibilityAnnouncer';
 import SwipeableRow from '../SwipeableRow';
+import { describeAttachmentDownloadResult, isAttachmentDownloadRetryable } from '../../attachmentDownload';
 
 import type { CallActivity, ChatMessage } from '../../hooks/useMessaging';
 import type { ReactElement, ReactNode } from 'react';
 import type { MediaViewerItem } from '../MediaViewer';
 import type { ThemeColors } from '../../theme';
 import type { PeerPresence } from '../../types/directory';
+import type { AttachmentDownloadReason } from '../../attachmentDownload';
 
 export type { CallActivity, ChatMessage };
 /** A conversation timeline holds messages and (merged) call records alike. */
@@ -57,11 +59,12 @@ export type MessageAction = (message: ChatMessage) => void;
 export type AttachmentDownloadAction = (
   message: ChatMessage,
   onProgress?: (fraction: number) => void,
-) => void | Promise<{ success?: boolean } | void>;
+  onAbortHandle?: (abort: () => void) => void,
+) => void | Promise<{ success?: boolean; reason?: AttachmentDownloadReason } | void>;
 /** Per-message attachment download state: idle is the absence of an entry. */
 export type AttachmentDownloadState =
   | { status: 'downloading'; progress: number }
-  | { status: 'failed' };
+  | { status: 'failed'; reason?: AttachmentDownloadReason };
 /** Adds or removes an emoji reaction on a message. */
 export type ReactionAction = (
   message: ChatMessage,
@@ -382,6 +385,7 @@ type MessageContentProps = {
  styles: ChatStyles;
  onDownloadAttachment?: (message: ChatMessage) => void;
  onOpenMedia?: (message: ChatMessage) => void;
+ onCancelDownload?: (message: ChatMessage) => void;
  downloadState?: AttachmentDownloadState;
 };
 
@@ -467,8 +471,9 @@ function AttachmentDownload({
  textStyle,
  styles,
  onDownloadAttachment,
+ onCancelDownload,
  downloadState,
-}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'downloadState'> & {
+}: Pick<MessageContentProps, 'message' | 'styles' | 'onDownloadAttachment' | 'onCancelDownload' | 'downloadState'> & {
  textStyle: object;
 }) {
  const attachmentUrl = message.attachment?.url;
@@ -490,16 +495,37 @@ function AttachmentDownload({
        progress={downloadState.progress}
        styles={styles}
        progressTestID="chat-attachment-download-progress"
+       onCancel={onCancelDownload ? () => onCancelDownload(message) : undefined}
+       cancelLabel="Cancel download"
+       cancelTestID="chat-attachment-download-cancel"
      />
    );
  }
 
  if (downloadState?.status === 'failed') {
+   const failureMessage = describeAttachmentDownloadResult({
+     success: false,
+     reason: downloadState.reason,
+   });
+   if (isAttachmentDownloadRetryable(downloadState.reason)) {
+     return (
+       <Pressable
+         onPress={() => onDownloadAttachment(message)}
+         accessibilityRole="button"
+         accessibilityLabel="Retry download"
+         accessibilityHint="Tries downloading this attachment again"
+         hitSlop={touchSlop(12)}
+         style={styles.attachmentDownloadButton}
+         testID="chat-attachment-download-failed">
+         <Text style={[textStyle, styles.failedText]}>{`${failureMessage} · Tap to retry`}</Text>
+       </Pressable>
+     );
+   }
    return (
      <Text
        style={[textStyle, styles.failedText]}
        testID="chat-attachment-download-failed">
-       Download failed
+       {failureMessage}
      </Text>
    );
  }
@@ -518,7 +544,7 @@ function AttachmentDownload({
  );
 }
 
-type RenderMessageBodyProps = Omit<MessageContentProps, 'onDownloadAttachment'> & {
+type RenderMessageBodyProps = Omit<MessageContentProps, 'onDownloadAttachment' | 'onCancelDownload'> & {
  downloadButton: ReactNode;
 };
 
@@ -705,6 +731,7 @@ function MessageContent(props: MessageContentProps) {
      textStyle={textStyle}
      styles={props.styles}
      onDownloadAttachment={props.onDownloadAttachment}
+     onCancelDownload={props.onCancelDownload}
      downloadState={props.downloadState}
    />
  );
@@ -867,6 +894,7 @@ export type MessageRowProps = {
   onDownloadAttachment?: MessageAction;
   onOpenMedia?: MessageAction;
   onCancelAttachmentUpload?: () => void;
+  onCancelDownload?: MessageAction;
   downloadState?: AttachmentDownloadState;
 };
 
@@ -881,10 +909,11 @@ function MessageBubble({
   onQuotePress,
   onDownloadAttachment,
   onOpenMedia,
+  onCancelDownload,
   downloadState,
   styles,
 }: Pick<MessageRowProps, 'message' | 'quotedMessage' | 'isOwn' | 'isGroupEnd' | 'isHighlighted' |
-  'onQuotePress' | 'onDownloadAttachment' | 'onOpenMedia' | 'downloadState'> & {
+  'onQuotePress' | 'onDownloadAttachment' | 'onOpenMedia' | 'onCancelDownload' | 'downloadState'> & {
   canReact: boolean;
   accessibilityLabel: string;
   styles: ChatStyles;
@@ -916,6 +945,7 @@ function MessageBubble({
         styles={styles}
         onDownloadAttachment={onDownloadAttachment}
         onOpenMedia={onOpenMedia}
+        onCancelDownload={onCancelDownload}
         downloadState={downloadState}
       />
     </View>
@@ -1009,6 +1039,7 @@ function MessageRowLayout({
   onDownloadAttachment,
   onOpenMedia,
   onCancelAttachmentUpload,
+  onCancelDownload,
   downloadState,
   actions,
   toggleReactionBar,
@@ -1055,6 +1086,7 @@ function MessageRowLayout({
         onQuotePress={onQuotePress}
         onDownloadAttachment={onDownloadAttachment}
         onOpenMedia={onOpenMedia}
+        onCancelDownload={onCancelDownload}
         downloadState={downloadState}
         styles={styles}
       />
@@ -1114,6 +1146,7 @@ const MessageRow = memo(
   onDownloadAttachment,
   onOpenMedia,
   onCancelAttachmentUpload,
+  onCancelDownload,
   downloadState,
 }: MessageRowProps) {
   const styles = useThemedStyles(createStyles);
@@ -1176,6 +1209,7 @@ const MessageRow = memo(
       onDownloadAttachment={onDownloadAttachment}
       onOpenMedia={onOpenMedia}
       onCancelAttachmentUpload={onCancelAttachmentUpload}
+      onCancelDownload={onCancelDownload}
       downloadState={downloadState}
       actions={actions}
       toggleReactionBar={toggleReactionBar}
@@ -1717,6 +1751,9 @@ function ChatConversationScreen({
   // Attachment download progress/failure, keyed by message id: idle is the
   // absence of an entry, so two concurrent downloads never share a slot.
   const [downloadStates, setDownloadStates] = useState<Record<string, AttachmentDownloadState>>({});
+  // Abort handles for in-flight downloads, keyed by message id, so a cancel
+  // tap reaches the right (and only the right) request.
+  const downloadAbortRefs = useRef<Record<string, (() => void) | undefined>>({});
   const hasReachedTopRef = useRef(false);
   const typingIdleTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
@@ -2076,12 +2113,25 @@ function ChatConversationScreen({
             : prev,
         );
       };
-      Promise.resolve(onDownloadAttachment(message, onProgress))
+      Promise.resolve(
+        onDownloadAttachment(message, onProgress, abort => {
+          downloadAbortRefs.current[messageId] = abort;
+        }),
+      )
         .then(result => {
+          delete downloadAbortRefs.current[messageId];
           if (!isMountedRef.current) return;
           setDownloadStates(prev => {
             if (result && result.success === false) {
-              return { ...prev, [messageId]: { status: 'failed' } };
+              // A cancel is not a failure worth a retry prompt: it simply
+              // returns the bubble to its idle "Download" state.
+              if (result.reason === 'cancelled') {
+                if (!(messageId in prev)) return prev;
+                const next = { ...prev };
+                delete next[messageId];
+                return next;
+              }
+              return { ...prev, [messageId]: { status: 'failed', reason: result.reason } };
             }
             if (!(messageId in prev)) return prev;
             const next = { ...prev };
@@ -2090,12 +2140,20 @@ function ChatConversationScreen({
           });
         })
         .catch(() => {
+          delete downloadAbortRefs.current[messageId];
           if (!isMountedRef.current) return;
           setDownloadStates(prev => ({ ...prev, [messageId]: { status: 'failed' } }));
         });
     },
     [onDownloadAttachment],
   );
+
+  const handleCancelDownload = useCallback((message: ChatMessage) => {
+    const messageId = message.messageId;
+    const abort = downloadAbortRefs.current[messageId];
+    downloadAbortRefs.current[messageId] = undefined;
+    abort?.();
+  }, []);
 
   const handleOpenMedia = useCallback(
     (message: ChatMessage) => {
@@ -2241,6 +2299,7 @@ function ChatConversationScreen({
           onDownloadAttachment={onDownloadAttachment ? handleDownloadAttachment : undefined}
           onOpenMedia={handleOpenMedia}
           onCancelAttachmentUpload={onCancelAttachmentUpload}
+          onCancelDownload={onDownloadAttachment ? handleCancelDownload : undefined}
           downloadState={downloadStates[item.message.messageId]}
         />
       );
@@ -2252,6 +2311,7 @@ function ChatConversationScreen({
       handleDelete,
       handleQuotePress,
       handleReact,
+      handleCancelDownload,
       handleDownloadAttachment,
       handleOpenMedia,
       handleReply,
