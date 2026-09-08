@@ -162,6 +162,15 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       return rows.map(toStoredMessage);
     },
 
+    async getMessage(conversationId: string, messageId: string) {
+      const [row] = await db
+        .select()
+        .from(messagesTable)
+        .where(byPrimaryKey(conversationId, messageId))
+        .limit(1);
+      return row ? toStoredMessage(row) : null;
+    },
+
     async searchMessages({ userId, query, limit, before } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];

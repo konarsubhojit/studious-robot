@@ -33,6 +33,7 @@
  * ─────────
  *   saveMessage(message)                        → Promise<savedMessage>
  *   listMessages({ conversationId, limit, before }) → Promise<message[]>
+ *   getMessage(conversationId, messageId)       → Promise<message|null>
  *   searchMessages({ userId, query, limit, before }) → Promise<message[]>
  *   markDelivered(messageId, userId, conversationId?)  → Promise<message|null>
  *   listConversations(userId)                   → Promise<conversationSummary[]>

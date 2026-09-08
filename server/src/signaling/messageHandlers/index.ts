@@ -11,6 +11,26 @@ import { describeError } from '../../lib/errors.ts';
 import { parseClientMessageId, validateBody, validateReactionEmoji } from './validation.ts';
 import { deliverMessage } from './delivery.ts';
 
+async function ensureCanDeleteMessage(
+  state: import('../../stores/contracts.ts').ServerState,
+  requesterId: string,
+  conversationId: string,
+  messageId: string
+): Promise<{ ok: true; } | { ok: false; code: string; message: string; }> {
+  const existing = await state.messageStore.getMessage(conversationId, messageId);
+  if (!existing || existing.deletedAt) {
+    return { ok: false, code: ERROR_CODES.NOT_FOUND, message: 'message not found' };
+  }
+  if (existing.senderId !== requesterId) {
+    return {
+      ok: false,
+      code: ERROR_CODES.FORBIDDEN,
+      message: 'you can only delete your own messages',
+    };
+  }
+  return { ok: true };
+}
+
 function registerMessageHandlers(
   socket: import('socket.io').Socket,
   { io, state }: { io: import('socket.io').Server; state: import('../../stores/contracts.ts').ServerState; }
@@ -78,6 +98,37 @@ function registerMessageHandlers(
     }
 
     const conversationId = deriveConversationId(requesterId, peerId);
+    try {
+      const entitlement = await ensureCanDeleteMessage(
+        state,
+        requesterId,
+        conversationId,
+        messageId
+      );
+      if (!entitlement.ok) {
+        acknowledgeError(
+          socket,
+          ack,
+          CLIENT_EVENTS.MESSAGE_DELETE,
+          entitlement.code,
+          entitlement.message,
+          state
+        );
+        return;
+      }
+    } catch (error) {
+      console.error(`[messages] failed to verify delete entitlement: ${describeError(error)}`);
+      acknowledgeError(
+        socket,
+        ack,
+        CLIENT_EVENTS.MESSAGE_DELETE,
+        ERROR_CODES.INTERNAL_ERROR,
+        'could not verify delete entitlement',
+        state
+      );
+      return;
+    }
+
     let deleted;
     try {
       deleted = await state.messageStore.deleteMessage(conversationId, messageId, requesterId);

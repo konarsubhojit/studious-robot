@@ -50,6 +50,15 @@ export function createMemoryMessageStore(): MessageStore {
         .map((message) => ({ ...message }));
     },
 
+    async getMessage(conversationId, messageId) {
+      const message = messages.find(
+        (candidate) =>
+          candidate.conversationId === conversationId &&
+          candidate.messageId === messageId
+      );
+      return message ? { ...message } : null;
+    },
+
     async searchMessages({ userId, query, limit, before } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
