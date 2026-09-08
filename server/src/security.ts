@@ -36,18 +36,11 @@ export type AuditEntry = {
  * The `now` parameter accepted by `check()` lets callers inject a synthetic
  * clock for deterministic unit tests.
  *
- * Buckets are opportunistically pruned every `SWEEP_INTERVAL` calls to
- * `check()`: every expired bucket (its window has rolled over and it hasn't
- * been touched since) is dropped.  This bounds the map's size even when it
- * is fed a continuous stream of unique keys (e.g. spoofed/rotating identities),
- * without needing a background timer.
+ * Expired buckets are pruned once per window, independently of request volume.
  */
-const SWEEP_INTERVAL = 100;
-
 function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; windowMs: number; }): import('./stores/contracts.ts').RateLimiter &
 { reset: (key?: string) => void; size: () => number; } {
   const buckets: Map<string, { windowStart: number; count: number; }> = new Map();
-  let callsSinceSweep = 0;
 
   /** Drop every bucket whose window has already expired. */
   function sweep(now: number) {
@@ -58,6 +51,9 @@ function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; win
     }
   }
 
+  const sweepTimer = setInterval(() => sweep(Date.now()), windowMs);
+  sweepTimer.unref();
+
   return {
     /**
      * Check whether the action identified by `key` is allowed, and if so
@@ -67,12 +63,6 @@ function createRateLimiter({ maxRequests, windowMs }: { maxRequests: number; win
      * @param now  - Unix timestamp in ms; defaults to `Date.now()`.
      */
     check(key: string, now: number = Date.now()): { allowed: boolean; remaining: number; resetAt: number; } {
-      callsSinceSweep += 1;
-      if (callsSinceSweep >= SWEEP_INTERVAL) {
-        callsSinceSweep = 0;
-        sweep(now);
-      }
-
       let bucket = buckets.get(key);
       if (!bucket || now - bucket.windowStart >= windowMs) {
         bucket = { windowStart: now, count: 0 };
