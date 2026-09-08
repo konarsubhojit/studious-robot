@@ -45,6 +45,14 @@ export type SearchMessagesOptions = {
   before?: string;
 };
 
+export type ListUserMessagesOptions = {
+  userId?: string;
+  limit?: unknown;
+  before?: string;
+  /** Tie-breaker used with `before` for stable export pagination. */
+  beforeMessageId?: string;
+};
+
 export type ReactToMessageOptions = {
   conversationId?: string;
   messageId?: string;
@@ -65,6 +73,8 @@ export type MessageStore = {
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
   getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;
+  /** Bounded export page containing every participant message, including tombstones. */
+  listUserMessages?: (opts?: ListUserMessagesOptions) => Promise<StoredMessage[]>;
   /**
    * `conversationId` is the shard key of the messages collection: supplying it
    * keeps the update single-partition on Cosmos. It stays optional so callers

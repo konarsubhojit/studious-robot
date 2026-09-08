@@ -12,6 +12,8 @@
 export const DEFAULT_MESSAGE_LIMIT = 50;
 /** Maximum page size for `listMessages`. */
 export const MAX_MESSAGE_LIMIT = 100;
+/** One look-ahead row lets an export page report `hasMore` exactly. */
+export const MAX_MESSAGE_EXPORT_READ_LIMIT = MAX_MESSAGE_LIMIT + 1;
 /** Maximum number of conversations returned by one conversation-list request. */
 export const MAX_CONVERSATION_LIMIT = 100;
 
@@ -32,6 +34,12 @@ export function clampLimit(limit: unknown): number {
   const requested = Number(limit);
   if (!Number.isFinite(requested)) return DEFAULT_MESSAGE_LIMIT;
   return Math.min(Math.max(Math.floor(requested), 1), MAX_MESSAGE_LIMIT);
+}
+
+export function clampExportReadLimit(limit: unknown): number {
+  const requested = Number(limit);
+  if (!Number.isFinite(requested)) return DEFAULT_MESSAGE_LIMIT;
+  return Math.min(Math.max(Math.floor(requested), 1), MAX_MESSAGE_EXPORT_READ_LIMIT);
 }
 
 /**
