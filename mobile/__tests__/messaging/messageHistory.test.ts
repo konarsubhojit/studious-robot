@@ -4,6 +4,7 @@ import {
   patchMessageEverywhere,
   prependMessage,
   removeMessage,
+  upsertTimelineEntry,
 } from '../../src/messaging/messageHistory';
 
 /**
@@ -79,6 +80,16 @@ describe('mergeHistoryPage', () => {
     expect(mergeHistoryPage(held, page)).toEqual(page);
   });
 
+  test('an optimistic call entry is reconciled by callId, not duplicated', () => {
+    const held = [
+      { callId: 'call-1', type: 'call', status: 'ringing', syncState: 'pending', createdAt: '2026-08-25T10:35:00.000Z' } as any,
+    ];
+    const page = [
+      { callId: 'call-1', type: 'call', status: 'ended', syncState: 'synced', durationSeconds: 12, createdAt: '2026-08-25T10:35:00.000Z' } as any,
+    ];
+    expect(mergeHistoryPage(held, page)).toEqual(page);
+  });
+
   // The regression this guards: `fetchMessagesForPeer` awaits a network round
   // trip, and a message arriving over the socket during that window is newer
   // than anything the response can contain. Replacing the history with the page
@@ -131,5 +142,50 @@ describe('mergeHistoryPage', () => {
     ];
     const merged = mergeHistoryPage(held, page, { before: '2026-08-25T10:30:00.000Z' });
     expect(merged.map((m: any) => m.messageId ?? m.callId)).toEqual(['m2', 'm1', 'c1']);
+  });
+
+  test('an older page is re-sorted so entries stay newest-first', () => {
+    const held = [
+      message({ messageId: 'm3', createdAt: '2026-08-25T12:00:00.000Z' }),
+      { callId: 'c1', type: 'call', createdAt: '2026-08-25T09:00:00.000Z' } as any,
+    ];
+    const page = [
+      message({ messageId: 'm2', createdAt: '2026-08-25T11:00:00.000Z' }),
+    ];
+    const merged = mergeHistoryPage(held, page, { before: '2026-08-25T12:00:00.000Z' });
+    expect(merged.map((m: any) => m.messageId ?? m.callId)).toEqual(['m3', 'm2', 'c1']);
+  });
+});
+
+describe('upsertTimelineEntry', () => {
+  test('inserts a live call chronologically among held messages', () => {
+    const state = {
+      bob: [
+        message({ messageId: 'newer', createdAt: '2026-08-25T10:40:00.000Z' }),
+        message({ messageId: 'older', createdAt: '2026-08-25T10:20:00.000Z' }),
+      ],
+    };
+    const next = upsertTimelineEntry(state, 'bob', {
+      callId: 'call-1',
+      type: 'call',
+      createdAt: '2026-08-25T10:30:00.000Z',
+    } as any);
+    expect(next.bob.map((m: any) => m.messageId ?? m.callId)).toEqual(['newer', 'call-1', 'older']);
+  });
+
+  test('replaces a previous live call entry by callId', () => {
+    const state = {
+      bob: [
+        { callId: 'call-1', type: 'call', status: 'ringing', createdAt: '2026-08-25T10:30:00.000Z' } as any,
+      ],
+    };
+    const next = upsertTimelineEntry(state, 'bob', {
+      callId: 'call-1',
+      type: 'call',
+      status: 'ended',
+      createdAt: '2026-08-25T10:30:00.000Z',
+    } as any);
+    expect(next.bob).toHaveLength(1);
+    expect((next.bob[0] as any).status).toBe('ended');
   });
 });

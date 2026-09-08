@@ -358,7 +358,6 @@ function TabShell() {
       conversations={chat.conversations}
       isServerUnreachable={isServerUnreachable}
       onRetryConnect={retryPresenceConnect}
-      status={status}
     />
   ), [
     callHistory,
@@ -368,7 +367,6 @@ function TabShell() {
     missedCallCount,
     retryPresenceConnect,
     searchUsers,
-    status,
     chat.conversations,
     startAudioCallWith,
     startVideoCallWith,
@@ -381,7 +379,6 @@ function TabShell() {
       accountProviderId={accountProviderId}
       signalingUrl={signalingUrl}
       onSaveSignalingUrl={setSignalingUrl}
-      status={status}
       onSignOut={() => {
         // Reset first, then clear: the reset's own state write can only ever
         // race with the clear as the (harmless) default route, never as the
@@ -422,7 +419,6 @@ function TabShell() {
     accountProviderId,
     setSignalingUrl,
     signalingUrl,
-    status,
     userId,
     chat.blockedUsers,
     chat.messageNotificationsEnabled,

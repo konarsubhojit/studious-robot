@@ -1,6 +1,7 @@
 import {
   conversationIdForPeer,
   totalUnread,
+  withCallActivity,
   withConversationRead,
   withIncomingMessage,
   withOutgoingMessage,
@@ -170,5 +171,45 @@ describe('withOutgoingMessage', () => {
   test('a message with no recipient leaves the list untouched', () => {
     const list = [{ peerId: 'bob', unreadCount: 0 } as any];
     expect(withOutgoingMessage(list, sent({ recipientId: undefined }))).toBe(list);
+  });
+});
+
+describe('withCallActivity', () => {
+  const call = (overrides: any = {}): any => ({
+    type: 'call',
+    callId: 'call-1',
+    direction: 'outgoing',
+    status: 'ringing',
+    createdAt: '2026-08-25T11:30:00.000Z',
+    ...overrides,
+  });
+
+  test('a live call moves the peer row first and updates last activity', () => {
+    const carol = conversation({ conversationId: 'conv-2', peerId: 'carol' });
+    const next = withCallActivity([carol, conversation({ peerId: 'bob' })], 'bob', call());
+    expect(next.map(row => row.peerId)).toEqual(['bob', 'carol']);
+    expect(next[0]).toMatchObject({
+      peerId: 'bob',
+      lastActivity: { callId: 'call-1', status: 'ringing' },
+    });
+    expect(next[1]).toBe(carol);
+  });
+
+  test('a call to a new peer creates a provisional row', () => {
+    const next = withCallActivity([], 'dave', call({ conversationId: 'alice:dave' }));
+    expect(next).toEqual([
+      expect.objectContaining({
+        conversationId: 'alice:dave',
+        peerId: 'dave',
+        unreadCount: 0,
+        lastActivity: expect.objectContaining({ callId: 'call-1' }),
+      }),
+    ]);
+  });
+
+  test('a call update keeps the existing unread count', () => {
+    const next = withCallActivity([conversation({ unreadCount: 2 })], 'bob', call({ status: 'ended' }));
+    expect(next[0].unreadCount).toBe(2);
+    expect(next[0].lastActivity).toMatchObject({ status: 'ended' });
   });
 });

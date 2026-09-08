@@ -120,6 +120,27 @@ describe('ChatConversationScreen', () => {
     expect(messageItems.map((item: any) => item.message.messageId)).toEqual(['m1', 'm2']);
   });
 
+  test('renders calls and messages as one chronological timeline', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({ messageId: 'm3', body: 'newest', createdAt: '2026-08-25T10:40:00.000Z' }),
+        { type: 'call', callId: 'c1', direction: 'outgoing', status: 'ended', createdAt: '2026-08-25T10:30:00.000Z' },
+        makeMessage({ messageId: 'm1', body: 'oldest', createdAt: '2026-08-25T10:20:00.000Z' }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    expect(
+      list.props.data
+        .filter((item: any) => item.type === 'message' || item.type === 'call')
+        .map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId),
+    ).toEqual(['m1', 'c1', 'm3']);
+  });
+
   test('back button calls onBack', () => {
     const onBack = jest.fn();
     const tree = render({

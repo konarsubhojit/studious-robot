@@ -16,6 +16,7 @@ import {
   conversationIdForPeer,
   totalUnread,
   withConversationRead,
+  withCallActivity,
   withIncomingMessage,
   withOutgoingMessage,
 } from '../messaging/conversations';
@@ -25,6 +26,7 @@ import {
   patchMessage as patchMessageIn,
   prependMessage,
   removeMessage,
+  upsertTimelineEntry,
 } from '../messaging/messageHistory';
 import { createMessageId } from '../messaging/messageIdentity';
 import {
@@ -75,7 +77,7 @@ export type {
 } from '../messaging/types';
 export { OUTBOX_MAX_ATTEMPTS } from '../messaging/sendPipeline';
 
-import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
+import type { CallActivity, ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
 
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
@@ -389,6 +391,15 @@ export default function useMessaging({
     },
     [],
   );
+
+  const recordCallActivity = useCallback((peerId: string, activity: CallActivity) => {
+    const trimmedPeerId = (peerId ?? '').trim();
+    if (!trimmedPeerId || !activity?.callId) return;
+    setMessagesByPeer(prev =>
+      upsertTimelineEntry(prev, trimmedPeerId, activity as unknown as ChatMessage),
+    );
+    setConversations(prev => withCallActivity(prev, trimmedPeerId, activity));
+  }, []);
 
   /**
    * Replace the outbox and mirror it into the local store, so a queued send
@@ -996,6 +1007,7 @@ export default function useMessaging({
     fetchConversations,
     fetchMessagesForPeer,
     searchMessages,
+    recordCallActivity,
     sendMessage,
     beginAttachmentUpload,
     updateAttachmentUploadProgress,

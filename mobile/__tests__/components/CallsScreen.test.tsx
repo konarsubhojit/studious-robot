@@ -356,38 +356,21 @@ describe('CallsScreen message action', () => {
   });
 });
 
-// The single `status` slot is written by session refresh, identity and the
-// message outbox as well as by call setup. Rendering it inline meant an
-// authentication or rate-limit failure pushed the call log down the screen to
-// report something that has nothing to do with calls.
-describe('CallsScreen app-level status', () => {
-  const toast = (tree: any) =>
-    byTestID(tree, 'calls-status-toast').filter((n: any) => typeof n.type === 'string');
-
-  test('floats a failure over the log instead of inserting it above the rows', () => {
+describe('CallsScreen status surfaces', () => {
+  test('does not render the app-wide status slot in the Calls tab', () => {
     const tree = render({
       callHistory: [call()],
-      status: { message: 'Too many requests. Try again shortly.', severity: 'error' },
+      status: { message: 'Message failed to send', severity: 'error' },
     });
 
-    expect(toast(tree)).not.toHaveLength(0);
-    // The rows are still where they were: the toast is absolutely positioned.
+    expect(byTestID(tree, 'calls-status-toast')).toHaveLength(0);
     expect(rowCount(tree, 'call-history-row')).toBe(1);
-  });
-
-  test('stays out of the way of informational call chatter', () => {
-    const tree = render({ status: { message: 'Calling bob…', severity: 'info' } });
-    expect(toast(tree)).toHaveLength(0);
-  });
-
-  test('shows nothing when there is no status at all', () => {
-    expect(toast(render())).toHaveLength(0);
   });
 
   test('keeps the persistent offline condition inline, where it cannot fade', () => {
     const tree = render({ isServerUnreachable: true });
 
     expect(byTestID(tree, 'offline-banner')).not.toHaveLength(0);
-    expect(toast(tree)).toHaveLength(0);
+    expect(byTestID(tree, 'calls-status-toast')).toHaveLength(0);
   });
 });

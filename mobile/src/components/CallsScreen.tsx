@@ -20,7 +20,6 @@ import { announceForAccessibility } from '../accessibilityAnnouncer';
 import { useTheme, useThemedStyles } from '../ThemeContext';
 import { spacing, typography } from '../theme';
 import PeoplePickerSheet from './PeoplePickerSheet';
-import StatusToast from './StatusToast';
 import SwipeableRow from './SwipeableRow';
 import {
   Avatar,
@@ -37,7 +36,6 @@ import {
 } from './primitives';
 import type { CallFilter } from '../callLog';
 import type { CallHistoryEntry } from '../hooks/useCallHistory';
-import type { CallStatus } from './StatusBanner';
 import type { ThemeColors } from '../theme';
 import type { ContactRow, ConversationRow } from '../types/directory';
 
@@ -58,7 +56,6 @@ export type CallsScreenProps = {
   isServerUnreachable?: boolean;
   onRetryConnect?: () => void;
   isLoading?: boolean;
-  status?: CallStatus;
 };
 
 const FILTER_OPTIONS = [
@@ -283,7 +280,6 @@ export default function CallsScreen({
   isServerUnreachable,
   onRetryConnect,
   isLoading = false,
-  status,
 }: CallsScreenProps) {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -470,12 +466,6 @@ export default function CallsScreen({
         />
       </Sheet>
 
-      {/* Last, so it paints over the log without relying on `zIndex`, and
-          floated rather than inserted above it: the single `status` slot
-          carries failures from every subsystem — session refresh, identity, the
-          message outbox — and an inline banner let each of them push the call
-          history down to report something unrelated to calls. */}
-      <StatusToast status={status} testID="calls-status-toast" />
     </View>
   );
 }

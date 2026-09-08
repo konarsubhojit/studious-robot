@@ -140,6 +140,24 @@ test('GET /messages?include=calls interleaves calls and messages newest-first', 
   assert.equal(bobCall.status, 'declined');
 });
 
+test('GET /messages?include=calls includes an active call before it is terminal', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'tl-live-alice');
+  await createSession(url, 'tl-live-bob');
+
+  const ringing = await placeCall(url, aliceSession, 'tl-live-bob');
+  const res = await getJson(url, '/messages?peerId=tl-live-bob&include=calls', aliceSession);
+  assert.equal(res.status, 200);
+
+  const callEntry = res.body.messages.find((entry: any) => entry.type === 'call');
+  assert.ok(callEntry, 'the live call should be projected into the timeline immediately');
+  assert.equal(callEntry.callId, ringing.callId);
+  assert.equal(callEntry.status, 'ringing');
+  assert.equal(callEntry.direction, 'outgoing');
+});
+
 test('GET /messages?include=calls paginates the merged stream without gaps or duplicates', async (t) => {
   const { url, teardown } = await startServer();
   t.after(teardown);

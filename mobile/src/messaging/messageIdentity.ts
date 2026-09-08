@@ -17,8 +17,20 @@ export function timelineEntryId(entry: { messageId?: string; callId?: string; })
 /**
  * Newest-first ordering, matching the server's message ordering.
  */
-export function byNewestFirst(a: { createdAt?: string; }, b: { createdAt?: string; }): number {
-  return Date.parse(b?.createdAt ?? '') - Date.parse(a?.createdAt ?? '');
+export function byNewestFirst(
+  a: { createdAt?: string; messageId?: string; callId?: string; },
+  b: { createdAt?: string; messageId?: string; callId?: string; },
+): number {
+  const aTime = Date.parse(a?.createdAt ?? '');
+  const bTime = Date.parse(b?.createdAt ?? '');
+  const aKnown = Number.isFinite(aTime);
+  const bKnown = Number.isFinite(bTime);
+  if (aKnown && bKnown && aTime !== bTime) return bTime - aTime;
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
+  const aId = timelineEntryId(a) ?? '';
+  const bId = timelineEntryId(b) ?? '';
+  if (aId === bId) return 0;
+  return aId < bId ? 1 : -1;
 }
 
 /**
