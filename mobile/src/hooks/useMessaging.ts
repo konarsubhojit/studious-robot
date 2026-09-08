@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
+import { evictCachedAttachmentsForMessage } from '../attachmentCache';
 import { triggerHapticUnlessSilent } from '../haptics';
 import {
   dismissMessageNotification,
@@ -89,6 +90,25 @@ const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 /** How often `sendTypingIndicator(peerId, true)` may be emitted while the
  * user keeps typing, so every keystroke doesn't trigger a socket emit. */
 const TYPING_INDICATOR_THROTTLE_MS = 2000;
+
+/**
+ * Delete any locally cached bytes for a message that has just been
+ * tombstoned, whichever side deleted it.
+ *
+ * The cache is an optimisation, never a second copy of the record: a cached
+ * file that outlived its tombstone would let this device open content the
+ * sender has already withdrawn. Best-effort, but a failure is logged rather
+ * than swallowed — bytes left behind after a deletion is a privacy-relevant
+ * condition, not a silent no-op.
+ */
+function evictTombstonedAttachment(messageId: string) {
+  evictCachedAttachmentsForMessage(messageId).catch(error => {
+    logWarn('[Messaging] Failed to evict the cached attachment of a deleted message', {
+      messageId,
+      message: errorMessage(error),
+    });
+  });
+}
 
 /**
  * Owns text chat: the conversation list, per-peer message history, optimistic
@@ -755,6 +775,7 @@ export default function useMessaging({
       // Delete for everyone leaves a tombstone rather than a hole, matching
       // what the server stored and what the peer is about to be told.
       patchMessage(trimmedPeerId, messageId, entry => ({ ...entry, ...tombstoneOf(entry) }));
+      evictTombstonedAttachment(messageId);
       return true;
     },
     [discardMessage, patchMessage, signalingRef, socketRef, updateStatus],
@@ -896,6 +917,7 @@ export default function useMessaging({
       const messageId = payload?.messageId;
       if (!messageId) return;
       setMessagesByPeer(prev => applyTombstone(prev, messageId, payload?.message ?? undefined));
+      evictTombstonedAttachment(messageId);
     },
     [],
   );
