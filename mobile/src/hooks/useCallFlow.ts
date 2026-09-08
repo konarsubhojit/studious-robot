@@ -1465,12 +1465,15 @@ export default function useCallFlow({
    */
   const disconnectSocket = useCallback(() => {
     // The Engine.IO manager is shared between sockets created for the same URL,
-    // so its listener outlives `socket.off()` and must be removed by hand.
+    // so its listeners are not the socket's to remove and must be detached by
+    // hand.
     detachManagerPingRef.current?.();
     detachManagerPingRef.current = null;
     if (socketRef.current) {
       logInfo('[CallFlow] Disconnecting socket');
-      socketRef.current.off(); // remove all listeners before disconnect
+      // Remove only the handlers this hook registered, rather than every
+      // listener anything else may hold on the same socket.
+      signalingRef.current?.dispose();
       socketRef.current.disconnect();
       socketRef.current = null;
       signalingRef.current = null;
@@ -1905,7 +1908,7 @@ export default function useCallFlow({
       });
 
       // ── Socket lifecycle ──────────────────────────────────────────────
-      socket.on(TRANSPORT_EVENTS.CONNECT, async () => {
+      signaling.on(TRANSPORT_EVENTS.CONNECT, async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         // Clear offline indicator on successful connection.
         recordConnectSuccess();
@@ -1969,7 +1972,7 @@ export default function useCallFlow({
         }
       });
 
-      socket.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
+      signaling.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
         logWarn('[CallFlow] Socket disconnected', { reason });
         handleSocketDisconnected();
         if (isInCallRef.current) {
@@ -1983,7 +1986,7 @@ export default function useCallFlow({
         }
       });
 
-      socket.on(TRANSPORT_EVENTS.CONNECT_ERROR, error => {
+      signaling.on(TRANSPORT_EVENTS.CONNECT_ERROR, error => {
         logError('[CallFlow] Socket connect error', {
           message: errorMessage(error),
           description: (error as { description?: unknown })?.description,
