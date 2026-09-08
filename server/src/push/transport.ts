@@ -113,8 +113,8 @@ export async function sendFcmOnce(
 ): Promise<PushAttemptResult> {
   const token = await getFcmAccessToken(config);
   if (!token.ok) {
-    // Treat token-endpoint 5xx/429 (or network errors) as retryable; other
-    // failures surface their status so withRetry can short-circuit.
+    // Treat token-endpoint 5xx/429 as retryable; other failures surface their
+    // status so withRetry can short-circuit.
     return {
       ok: false,
       statusCode: token.statusCode,
@@ -279,7 +279,12 @@ export function extractNotificationHubCorrelationHeaders(
 
 /**
  * Call `fn` up to MAX_ATTEMPTS times, backing off exponentially on transient
- * failures.
+ * failures that were explicitly rejected by the provider (429/5xx).
+ *
+ * Intentionally does **not** retry when no status code is available (socket
+ * error, timeout, reset, etc.): for push providers and Notification Hubs
+ * direct-send we cannot supply a documented dedup/idempotency key per message,
+ * so replaying an ambiguous attempt risks duplicate delivery.
  *
  * @param label - Used in log messages.
  */
@@ -310,6 +315,10 @@ export async function withRetry(
       console.error(
         `[push] ${label} attempt ${attempt}/${MAX_ATTEMPTS} threw: ${describeError(error)}`
       );
+      console.warn(
+        `[push] ${label} not retrying after transport error; outcome may be ambiguous`
+      );
+      return last;
     }
 
     if (attempt < MAX_ATTEMPTS) {

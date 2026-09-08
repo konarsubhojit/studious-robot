@@ -15,8 +15,10 @@ import type { PushAttemptResult, PushDeliveryOutcome } from './types.ts';
  */
 export function isRetryable(result: { statusCode?: number; } | null | undefined): boolean {
   const sc = result?.statusCode;
-  // No status (network error), rate-limited, or server-side error
-  return !sc || sc === 429 || sc >= 500;
+  // Only retry when the provider explicitly replied with a retryable status.
+  // A missing status is ambiguous (the provider might have accepted the send
+  // but the response never reached us), so retrying can double-deliver.
+  return sc === 429 || (typeof sc === 'number' && sc >= 500);
 }
 
 /**

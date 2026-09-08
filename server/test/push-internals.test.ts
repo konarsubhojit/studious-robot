@@ -21,7 +21,7 @@ import {
   resolveCallTtlSeconds,
 } from '../src/push/envelopes.ts';
 import { isDeadTokenResult, isRetryable } from '../src/push/outcomes.ts';
-import { extractNotificationHubCorrelationHeaders } from '../src/push/transport.ts';
+import { extractNotificationHubCorrelationHeaders, withRetry } from '../src/push/transport.ts';
 
 // ─── Envelopes ────────────────────────────────────────────────────────────────
 
@@ -87,9 +87,9 @@ test('a message envelope truncates and collapses the preview', () => {
 // ─── Outcome classification ───────────────────────────────────────────────────
 
 test('only transient failures are retryable', () => {
-  // No status at all means the request never got a response: a network error.
-  assert.equal(isRetryable(undefined), true);
-  assert.equal(isRetryable({}), true);
+  // Missing status is ambiguous: retrying could double-deliver.
+  assert.equal(isRetryable(undefined), false);
+  assert.equal(isRetryable({}), false);
   assert.equal(isRetryable({ statusCode: 429 }), true);
   assert.equal(isRetryable({ statusCode: 500 }), true);
   assert.equal(isRetryable({ statusCode: 503 }), true);
@@ -98,6 +98,30 @@ test('only transient failures are retryable', () => {
   assert.equal(isRetryable({ statusCode: 400 }), false);
   assert.equal(isRetryable({ statusCode: 403 }), false);
   assert.equal(isRetryable({ statusCode: 404 }), false);
+});
+
+test('withRetry does not replay an attempt when the transport throws', async () => {
+  let attempts = 0;
+  const outcome = await withRetry(async () => {
+    attempts += 1;
+    throw new Error('socket hang up');
+  }, 'fcm:dev-1');
+
+  assert.equal(attempts, 1);
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.reason ?? '', /socket hang up/i);
+});
+
+test('withRetry does not replay a failed result with no status code', async () => {
+  let attempts = 0;
+  const outcome = await withRetry(async () => {
+    attempts += 1;
+    return { ok: false, reason: 'timeout' };
+  }, 'hub:dev-1');
+
+  assert.equal(attempts, 1);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.statusCode, undefined);
 });
 
 test('a dead token needs both a matching status and a matching reason', () => {
