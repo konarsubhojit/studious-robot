@@ -70,20 +70,9 @@ export type CallEvent = {
   timestamp: string;
 };
 export type CallEventStore = Map<string, CallEvent[]>;
-export type MessageRecord = {
-  messageId: string;
-  conversationId: string;
-  senderId: string;
-  recipientId: string;
-  body: string;
-  type?: string;
-  attachment?: object | null;
-  replyTo?: string | null;
-  reactions?: Record<string, string[]>;
-  deletedAt?: string | null;
-  createdAt: string;
-  deliveredTo?: string[];
-  readAt?: string | null;
+export type MessageRecord = import('../../../shared/signaling/schemas.ts').MessageRecord & {
+  deliveredTo: string[];
+  readAt: string | null;
 };
 export type BlockStore = Map<string, Set<string>>;
 export type Stores = {

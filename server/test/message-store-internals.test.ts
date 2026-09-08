@@ -147,7 +147,7 @@ test('a tombstone strips the content but keeps the row', () => {
   const original = message({
     messageId: 'm-1',
     body: 'secret',
-    attachment: { url: 'https://example.invalid/a.png' },
+    attachment: { url: 'https://example.invalid/a.png', mimeType: 'image/png' },
     reactions: { '👍': ['bob'] },
   });
 
