@@ -5,6 +5,24 @@ import ChatConversationScreen, {
   findUnreadAnchorKey,
 } from '../../src/components/ChatConversationScreen';
 import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
+import { _resetAudioPlayback } from '../../src/audioPlayback';
+import { _resetPlayedVoiceNotes } from '../../src/storage/playedVoiceNotes';
+
+/**
+ * The shared player's native module, faked so a voice note can be played (and
+ * driven to its end) in this suite the way it is on a device.
+ */
+const mockSound = {
+  startPlayer: jest.fn().mockResolvedValue('ok'),
+  pausePlayer: jest.fn().mockResolvedValue('ok'),
+  resumePlayer: jest.fn().mockResolvedValue('ok'),
+  stopPlayer: jest.fn().mockResolvedValue('ok'),
+  seekToPlayer: jest.fn().mockResolvedValue('ok'),
+  addPlayBackListener: jest.fn(),
+  removePlayBackListener: jest.fn(),
+};
+
+jest.mock('react-native-nitro-sound', () => ({ default: mockSound }));
 
 jest.mock('../../src/accessibilityAnnouncer', () => ({
   ...jest.requireActual('../../src/accessibilityAnnouncer'),
@@ -93,6 +111,10 @@ describe('ChatConversationScreen', () => {
       jest.runOnlyPendingTimers();
     });
     jest.useRealTimers();
+    // The player and the played-note set are module singletons; a test that
+    // played something must not leave that behind for the next one.
+    _resetAudioPlayback();
+    _resetPlayedVoiceNotes();
   });
 
   test('renders the header with peerId and presence', () => {
@@ -1886,6 +1908,48 @@ describe('ChatConversationScreen attachments', () => {
 
     expect(findByTestId(tree, 'chat-audio-player')).not.toBeNull();
     expect(findByTestId(tree, 'chat-audio-player-duration').props.children).toBe('0:08');
+  });
+
+  test('a finished voice note plays the next unplayed one and brings it on screen', async () => {
+    const voiceNote = (messageId: string, name: string) =>
+      makeMessage({
+        messageId,
+        body: '',
+        type: 'voice',
+        attachment: {
+          url: `https://media.test/chatblobs/c/${name}.m4a`,
+          mimeType: 'audio/aac',
+          durationMs: 4000,
+        },
+      });
+    const tree = render({
+      peerId: 'user-bob',
+      // Newest-first, as the screen receives them.
+      messages: [voiceNote('voice-2', 'second'), voiceNote('voice-1', 'first')],
+      onSendMessage: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const toggles = findAllPressableByTestId(tree, 'chat-audio-player-toggle');
+    await act(async () => {
+      await toggles[0].props.onPress();
+    });
+    expect(mockSound.startPlayer).toHaveBeenLastCalledWith(
+      'https://media.test/chatblobs/c/first.m4a',
+    );
+
+    // The native player reports the clip reaching its end.
+    const emit = mockSound.addPlayBackListener.mock.calls.at(-1)[0];
+    await act(async () => {
+      emit({ currentPosition: 4000, duration: 4000 });
+      await Promise.resolve();
+    });
+
+    expect(mockSound.startPlayer).toHaveBeenLastCalledWith(
+      'https://media.test/chatblobs/c/second.m4a',
+    );
+    // …and the note now playing is pointed at rather than left off screen.
+    expect(findAllByTestId(tree, 'chat-message-highlighted')).toHaveLength(1);
   });
 
   test('a video file renders a play affordance that opens the viewer', () => {

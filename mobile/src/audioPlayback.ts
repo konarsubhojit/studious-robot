@@ -91,6 +91,12 @@ const FAILURE_MESSAGES: Record<AudioPlaybackReason, string> = {
 
 let state: AudioPlaybackState = IDLE_STATE;
 const listeners = new Set<(next: AudioPlaybackState) => void>();
+const completionListeners = new Set<(uri: string) => void>();
+/**
+ * The source whose end-of-clip release is already under way, so the burst of
+ * position events a native player can emit past the end only completes once.
+ */
+let completingUri: string | null = null;
 
 function publish(next: Partial<AudioPlaybackState>) {
   state = { ...state, ...next };
@@ -103,10 +109,22 @@ function publish(next: Partial<AudioPlaybackState>) {
   }
 }
 
+function notifyCompletion(uri: string) {
+  for (const listener of completionListeners) {
+    try {
+      listener(uri);
+    } catch (error) {
+      logWarn('[AudioPlayback] completion listener threw', { error });
+    }
+  }
+}
+
 /** Reset the cached module and player state (tests only). */
 export function _resetAudioPlayback() {
   _soundCache = undefined;
   listeners.clear();
+  completionListeners.clear();
+  completingUri = null;
   state = IDLE_STATE;
 }
 
@@ -157,6 +175,21 @@ export function subscribeAudioPlayback(listener: (next: AudioPlaybackState) => v
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
+  };
+}
+
+/**
+ * Subscribe to clips reaching their end on their own, as opposed to being
+ * stopped, paused or replaced. The conversation layer uses this to chain
+ * voice notes; this module stays a single-clip player that knows nothing
+ * about what a clip belongs to.
+ *
+ * @returns an unsubscribe function.
+ */
+export function subscribeAudioPlaybackCompletion(listener: (uri: string) => void): () => void {
+  completionListeners.add(listener);
+  return () => {
+    completionListeners.delete(listener);
   };
 }
 
@@ -211,14 +244,20 @@ export async function playAudio(uri: string | null | undefined, { durationMs = 0
   }
 
   try {
+    completingUri = null;
     sound.addPlayBackListener?.(event => {
       const positionMs = Number(event?.currentPosition) || 0;
       const total = Number(event?.duration) || 0;
       logVerbose('[AudioPlayback] position', { positionMs, durationMs: total });
       if (total > 0 && positionMs >= total) {
         // Finished: release the player rather than leaving it parked at the
-        // end, so the next play starts from a clean state.
-        void stopAudio();
+        // end, so the next play starts from a clean state. Subscribers are
+        // told which source ended once the player is idle again, so a
+        // listener may start the next clip straight away.
+        const finishedUri = state.uri;
+        if (!finishedUri || completingUri === finishedUri) return;
+        completingUri = finishedUri;
+        void stopAudio().then(() => notifyCompletion(finishedUri));
         return;
       }
       publish({ positionMs, durationMs: total || state.durationMs });
