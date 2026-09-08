@@ -65,7 +65,9 @@ function toStoredMessage(row: MessageRow): StoredMessage {
     recipientId: row.recipientId,
     body: row.body,
     type: row.type,
-    attachment: (row.attachment as object | null) ?? null,
+    attachment:
+      (row.attachment as import('../../../shared/signaling/schemas.ts').AttachmentRecord | null) ??
+      null,
     replyTo: row.replyTo ?? null,
     reactions: (row.reactions as Record<string, string[]>) ?? {},
     deletedAt: row.deletedAt ?? null,

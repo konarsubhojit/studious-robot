@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { API_ROUTES, CLIENT_EVENTS, SERVER_EVENTS, HEALTH_RESPONSE, SESSION_RESPONSE, parseEventPayload, s } from '../../shared/index.ts';
+import type { MessageRecord as SharedMessageRecord } from '../../shared/signaling/schemas.ts';
+import type { MessageRecord as ServerMessageRecord } from '../src/stores/contracts.ts';
 import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 
 /**
@@ -47,6 +49,18 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 
 type IsAny<T> = 0 extends (1 & T) ? true : false;
 type Assert<T extends true> = T;
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+  ? true
+  : false;
+type _ServerMessageBaseMatchesShared = Assert<
+  Equal<Omit<ServerMessageRecord, 'deliveredTo' | 'readAt'>, SharedMessageRecord>
+>;
+type _ServerMessageBookkeepingIsRequired = Assert<
+  Equal<
+    Pick<ServerMessageRecord, 'deliveredTo' | 'readAt'>,
+    { deliveredTo: string[]; readAt: string | null; }
+  >
+>;
 
 /**
  * @returns the created session id

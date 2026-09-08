@@ -9,6 +9,7 @@
 export type MessageRecord = import('../stores/contracts.ts').MessageRecord;
 
 export type StoredMessage = MessageRecord & {
+  createdAt: string;
   type: string;
   attachment: object | null;
   replyTo: string | null;

@@ -73,7 +73,7 @@ type SendValidationResult =
       recipientId: string;
       messageType: string;
       body: string;
-      attachment: Record<string, any> | null;
+      attachment: import('../../../../shared/signaling/schemas.ts').AttachmentRecord | null;
       replyTo: string | null;
       clientMessageId: string | undefined;
     }
@@ -93,7 +93,12 @@ function validateRecipient(
 function validateAttachmentPayload(
   messageType: string,
   parsed: Record<string, any>
-): { ok: true; attachment: Record<string, any> | null; } | { ok: false; code: string; message: string; } {
+):
+  | {
+      ok: true;
+      attachment: import('../../../../shared/signaling/schemas.ts').AttachmentRecord | null;
+    }
+  | { ok: false; code: string; message: string; } {
   const carriesAttachment = isAttachmentMessageType(messageType);
   if (!carriesAttachment) {
     if (parsed.attachment) {

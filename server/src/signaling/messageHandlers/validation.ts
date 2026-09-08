@@ -34,7 +34,13 @@ function validateBody(
 function validateAttachment(
   type: string,
   rawAttachment: unknown
-): { attachment: Record<string, any>; error?: undefined; message?: undefined; } | { attachment?: undefined; error: string; message: string; } {
+):
+  | {
+      attachment: import('../../../../shared/signaling/schemas.ts').AttachmentRecord;
+      error?: undefined;
+      message?: undefined;
+    }
+  | { attachment?: undefined; error: string; message: string; } {
   if (!rawAttachment || typeof rawAttachment !== 'object' || Array.isArray(rawAttachment)) {
     return { error: 'bad_request', message: `${type} messages require an attachment` };
   }
