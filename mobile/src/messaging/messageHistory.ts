@@ -32,6 +32,28 @@ function pageWindow(page: ChatMessage[]): { oldest: number; newest: number; } | 
 }
 
 /**
+ * Timestamp for a freshly composed local entry.
+ *
+ * If the device clock is behind the newest loaded timeline entry, a plain
+ * `new Date()` would sort the optimistic bubble above newer calls/messages.
+ * Clamp the local timestamp just after the newest known entry (and after the
+ * previous locally minted timestamp) so composition order remains chronological.
+ */
+export function nextLocalCreatedAt(
+  existing: ChatMessage[] = [],
+  nowMs: number = Date.now(),
+  previousLocalMs: number = 0,
+): string {
+  let floor = Number.isFinite(previousLocalMs) ? previousLocalMs : 0;
+  for (const entry of existing) {
+    const time = entryTime(entry);
+    if (time !== null && time > floor) floor = time;
+  }
+  const next = Number.isFinite(nowMs) && nowMs > floor ? nowMs : floor + 1;
+  return new Date(next).toISOString();
+}
+
+/**
  * Pure transforms over the per-peer message history.
  *
  * Every one of them returns the *same* object when nothing changed, so a React
@@ -176,9 +198,10 @@ export function mergeHistoryPage(
   { before }: { before?: string; } = {},
 ): ChatMessage[] {
   const held = existing ?? [];
+  const pageWithClientTimes = carryLocalCreatedAt(held, page);
   if (!before) {
-    const serverIds = new Set(page.map(timelineEntryId));
-    const window = pageWindow(page);
+    const serverIds = new Set(pageWithClientTimes.map(timelineEntryId));
+    const window = pageWindow(pageWithClientTimes);
     const kept = held.filter(entry => {
       if (serverIds.has(timelineEntryId(entry))) return false;
       if (entry.syncState === 'pending' || entry.syncState === 'failed') return true;
@@ -187,8 +210,23 @@ export function mergeHistoryPage(
       const time = entryTime(entry);
       return time === null || time > window.newest || time < window.oldest;
     });
-    return dedupeAndSort(kept.length ? [...kept, ...page] : page);
+    return dedupeAndSort(kept.length ? [...kept, ...pageWithClientTimes] : pageWithClientTimes);
   }
   const existingIds = new Set(held.map(timelineEntryId));
-  return dedupeAndSort([...held, ...page.filter(entry => !existingIds.has(timelineEntryId(entry)))]);
+  return dedupeAndSort([...held, ...pageWithClientTimes.filter(entry => !existingIds.has(timelineEntryId(entry)))]);
+}
+
+function carryLocalCreatedAt(existing: ChatMessage[], page: ChatMessage[]): ChatMessage[] {
+  const clientCreatedAtById = new Map<string, string>();
+  for (const entry of existing) {
+    const id = timelineEntryId(entry);
+    if (!id || !entry.clientCreatedAt) continue;
+    clientCreatedAtById.set(id, entry.clientCreatedAt);
+  }
+  if (!clientCreatedAtById.size) return page;
+  return page.map(entry => {
+    const id = timelineEntryId(entry);
+    const clientCreatedAt = id ? clientCreatedAtById.get(id) : undefined;
+    return clientCreatedAt ? { ...entry, clientCreatedAt } : entry;
+  });
 }

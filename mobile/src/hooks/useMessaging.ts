@@ -24,6 +24,7 @@ import {
 import { withDraft, withoutDraft } from '../messaging/drafts';
 import {
   mergeHistoryPage,
+  nextLocalCreatedAt,
   patchMessage as patchMessageIn,
   prependMessage,
   removeMessage,
@@ -214,6 +215,8 @@ export default function useMessaging({
   const drainOutboxRef = useRef(() => {});
   const attachmentUploadMetaRef = useRef(({} as Record<string, { conversationId?: string | null; createdAt: string; }>));
   const conversationsRef = useRef(([] as ConversationSummary[]));
+  const messagesByPeerRef = useRef(({} as Record<string, ChatMessage[]>));
+  const lastLocalCreatedAtMsRef = useRef(0);
 
   useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
@@ -222,6 +225,10 @@ export default function useMessaging({
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    messagesByPeerRef.current = messagesByPeer;
+  }, [messagesByPeer]);
 
   // ─── Hydrate-then-fetch ──────────────────────────────────────────────────
   // Render whatever was cached locally straight away, then let the network
@@ -591,7 +598,12 @@ export default function useMessaging({
       if (attachment ? !attachment.url : !trimmedBody) return;
 
       const messageId = createMessageId();
-      const createdAt = new Date().toISOString();
+      const createdAt = nextLocalCreatedAt(
+        messagesByPeerRef.current[trimmedPeerId] ?? [],
+        Date.now(),
+        lastLocalCreatedAtMsRef.current,
+      );
+      lastLocalCreatedAtMsRef.current = Date.parse(createdAt);
       const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
       const outgoing = {
         messageId,
@@ -625,7 +637,12 @@ export default function useMessaging({
       if (!trimmedPeerId || !isAttachmentMessageType(type) || !attachment?.url) return null;
 
       const messageId = createMessageId();
-      const createdAt = new Date().toISOString();
+      const createdAt = nextLocalCreatedAt(
+        messagesByPeerRef.current[trimmedPeerId] ?? [],
+        Date.now(),
+        lastLocalCreatedAtMsRef.current,
+      );
+      lastLocalCreatedAtMsRef.current = Date.parse(createdAt);
       const conversationId = conversationIdForPeer(conversationsRef.current, trimmedPeerId);
       const optimisticMessage = buildUploadingMessage({
         messageId,

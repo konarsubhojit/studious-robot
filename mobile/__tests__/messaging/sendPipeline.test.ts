@@ -152,6 +152,21 @@ describe('send state transitions', () => {
     });
   });
 
+  test('an acknowledged send keeps the local composition timestamp for ordering', () => {
+    const sent = asSent(
+      pending(),
+      {
+        body: 'hello',
+        createdAt: '2026-08-25T10:20:00.000Z',
+      } as any,
+    );
+    expect(sent).toMatchObject({
+      createdAt: '2026-08-25T10:20:00.000Z',
+      clientCreatedAt: '2026-08-25T10:30:00.000Z',
+      syncState: 'synced',
+    });
+  });
+
   test('an exhausted send is surfaced as failed', () => {
     expect(asFailed(pending())).toMatchObject({
       pending: false,

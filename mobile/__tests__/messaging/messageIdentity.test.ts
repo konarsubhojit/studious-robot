@@ -34,6 +34,20 @@ describe('ordering', () => {
       { messageId: 'bbb', createdAt },
     ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual(['bbb', 'aaa', 'zzz']);
   });
+
+  test('client-created sends sort by the later valid local timestamp', () => {
+    expect([
+      { callId: 'call-late', createdAt: '2026-08-25T17:20:00.000Z' },
+      {
+        messageId: 'sent-after-call',
+        createdAt: '2026-08-25T17:10:00.000Z',
+        clientCreatedAt: '2026-08-25T17:21:00.000Z',
+      },
+    ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual([
+      'sent-after-call',
+      'call-late',
+    ]);
+  });
 });
 
 describe('createMessageId', () => {

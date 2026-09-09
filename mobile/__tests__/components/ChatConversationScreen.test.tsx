@@ -169,6 +169,39 @@ describe('ChatConversationScreen', () => {
     ).toEqual(['m1', 'c1', 'm3']);
   });
 
+  test('renders a newly sent message after older messages and newer call entries', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [
+        makeMessage({
+          messageId: 'new-outgoing',
+          body: 'teams',
+          senderId: 'user-alice',
+          recipientId: 'user-bob',
+          createdAt: '2026-08-25T17:10:00.000Z',
+          clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        }),
+        { type: 'call', callId: 'call-520', direction: 'outgoing', status: 'ended', createdAt: '2026-08-25T17:20:00.000Z' },
+        { type: 'call', callId: 'call-513', direction: 'outgoing', status: 'ended', createdAt: '2026-08-25T17:13:00.000Z' },
+        makeMessage({ messageId: 'old-message', body: 'older', createdAt: '2026-08-25T17:00:00.000Z' }),
+      ],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    const timelineItems = list.props.data.filter(
+      (item: any) => item.type === 'message' || item.type === 'call',
+    );
+    expect(timelineItems.map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId))
+      .toEqual(['old-message', 'call-513', 'new-outgoing']);
+    expect(timelineItems[1].entries.map((entry: any) => entry.callId)).toEqual([
+      'call-513',
+      'call-520',
+    ]);
+  });
+
   test('back button calls onBack', () => {
     const onBack = jest.fn();
     const tree = render({
