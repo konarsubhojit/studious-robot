@@ -17,6 +17,31 @@ jest.mock('../../src/storage/chatDb', () => ({
   flushChatDb: jest.fn(async () => {}),
 }));
 
+let mockChurnMessagingIdentity = false;
+jest.mock('../../src/hooks/useMessaging', () => {
+  const actual = jest.requireActual('../../src/hooks/useMessaging');
+  return {
+    __esModule: true,
+    default: (options: any) => {
+      const api = actual.default(options);
+      if (!mockChurnMessagingIdentity) return api;
+      return {
+        ...api,
+        fetchConversations: () => api.fetchConversations(),
+        handleMessageReceived: (message: any) => api.handleMessageReceived(message),
+        handleMessageDeleted: (payload: any) => api.handleMessageDeleted(payload),
+        handleMessageReaction: (payload: any) => api.handleMessageReaction(payload),
+        handleMessageDelivered: (message: any) => api.handleMessageDelivered(message),
+        handleMessageRead: (payload: any) => api.handleMessageRead(payload),
+        handleTypingEvent: (payload: any) => api.handleTypingEvent(payload),
+        handleSocketConnected: () => api.handleSocketConnected(),
+        handleSocketDisconnected: () => api.handleSocketDisconnected(),
+        resetTypingState: () => api.resetTypingState(),
+      };
+    },
+  };
+});
+
 // `voiceRecorder.js` (pulled in via `useAttachments`) imports this directly
 // (it's a hard app dependency, not an optional native module); the real
 // package doesn't parse under Jest's transform, same reason `chatDb.test.js`
@@ -312,6 +337,7 @@ describe('useCallFlow', () => {
   afterEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    mockChurnMessagingIdentity = false;
     delete ((global as any)).fetch;
   });
 
@@ -1373,6 +1399,25 @@ describe('useCallFlow incoming-call ringing', () => {
       callId: 'call-1',
       callerId: 'bob',
     });
+  });
+
+  test('rerendered messaging handlers do not recreate the presence socket', async () => {
+    const { resultRef, tree } = await renderWithSocket();
+    const { io } = require('socket.io-client');
+    const socketMock = (io as jest.Mock).mock.results[(io as jest.Mock).mock.results.length - 1]?.value;
+
+    expect(io).toHaveBeenCalledTimes(1);
+
+    mockChurnMessagingIdentity = true;
+    for (let i = 0; i < 3; i += 1) {
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+      await act(async () => {});
+    }
+
+    expect(io).toHaveBeenCalledTimes(1);
+    expect(socketMock.disconnect).not.toHaveBeenCalled();
   });
 
   test('call.incoming transitions to INCOMING_RINGING phase', async () => {
