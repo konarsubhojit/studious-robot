@@ -349,6 +349,17 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
   }
 }
 
+/**
+ * Warm the short-lived ICE-server cache once an authenticated session exists.
+ * This is deliberately best-effort: call setup retains getIceServersForCall's
+ * normal fallback behavior when this request has not completed or fails.
+ */
+export function prefetchIceServersForCall(
+  options: { signalingUrl?: string; sessionId?: string | null; fetchImpl?: typeof fetch; } = {},
+): void {
+  void getIceServersForCall(options).catch(() => {});
+}
+
 export function resetIceServersForCallCache() {
   cachedServerIceServers = null;
   cachedServerIceServersExpiresAt = 0;
