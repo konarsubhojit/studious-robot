@@ -825,6 +825,11 @@ export default function useCallFlow({
     handleSocketDisconnected,
   } = messaging;
 
+  const resetTypingStateRef = useRef(resetTypingState);
+  useEffect(() => {
+    resetTypingStateRef.current = resetTypingState;
+  }, [resetTypingState]);
+
   useEffect(() => {
     recordTimelineCallRef.current = (call, durationSeconds) => {
       const projected = projectCallTimelineActivity(call, userIdRef.current, durationSeconds);
@@ -1596,8 +1601,8 @@ export default function useCallFlow({
       socketRef.current = null;
       signalingRef.current = null;
     }
-    resetTypingState();
-  }, [resetTypingState]);
+    resetTypingStateRef.current();
+  }, []);
 
   // Store mutable callbacks in refs so socket listeners always call the latest
   // version without the socket needing to be recreated.
@@ -1689,6 +1694,71 @@ export default function useCallFlow({
     resyncCallStateRef.current = resyncCallState;
   }, [resyncCallState]);
 
+  const connectSocketHandlersRef = useRef({
+    consumeForeignDeviceCallEvent,
+    createOrGetSession,
+    disconnectSocket,
+    sendInitialOffer,
+    updateStatus,
+    showIncomingCallUi,
+    handleMessageReceived,
+    handleMessageDeleted,
+    handleMessageReaction,
+    handleMessageDelivered,
+    handleMessageRead,
+    handleTypingEvent,
+    handleSocketConnected,
+    handleSocketDisconnected,
+    recordConnectSuccess,
+    recordConnectError,
+    fetchConversations,
+    fetchBlocks,
+    wakeCallHeartbeat,
+  });
+  useEffect(() => {
+    connectSocketHandlersRef.current = {
+      consumeForeignDeviceCallEvent,
+      createOrGetSession,
+      disconnectSocket,
+      sendInitialOffer,
+      updateStatus,
+      showIncomingCallUi,
+      handleMessageReceived,
+      handleMessageDeleted,
+      handleMessageReaction,
+      handleMessageDelivered,
+      handleMessageRead,
+      handleTypingEvent,
+      handleSocketConnected,
+      handleSocketDisconnected,
+      recordConnectSuccess,
+      recordConnectError,
+      fetchConversations,
+      fetchBlocks,
+      wakeCallHeartbeat,
+    };
+  }, [
+    consumeForeignDeviceCallEvent,
+    createOrGetSession,
+    disconnectSocket,
+    sendInitialOffer,
+    updateStatus,
+    showIncomingCallUi,
+    handleMessageReceived,
+    handleMessageDeleted,
+    handleMessageReaction,
+    handleMessageDelivered,
+    handleMessageRead,
+    handleTypingEvent,
+    handleSocketConnected,
+    handleSocketDisconnected,
+    recordConnectSuccess,
+    recordConnectError,
+    fetchConversations,
+    fetchBlocks,
+    wakeCallHeartbeat,
+  ]);
+
   /**
    * Create and return a new authenticated Socket.IO connection.
    * All call-level and RTC-relay events are registered here.
@@ -1698,7 +1768,7 @@ export default function useCallFlow({
    */
   const connectSocket = useCallback(
       (sessionId: string) => {
-      disconnectSocket();
+      connectSocketHandlersRef.current.disconnectSocket();
 
       // Begin fetching TURN credentials as soon as authentication completes,
       // while the socket connects and the incoming-call UI is shown. A peer
@@ -1726,7 +1796,7 @@ export default function useCallFlow({
       };
       const manager = (socket as { io?: ManagerEvents }).io;
       const onManagerPing = () => {
-        wakeCallHeartbeat('socket-ping');
+        connectSocketHandlersRef.current.wakeCallHeartbeat('socket-ping');
       };
       manager?.on?.('ping', onManagerPing);
       // Socket.IO's reconnection ladder used to stop for good after five
@@ -1771,11 +1841,11 @@ export default function useCallFlow({
         setIncomingCall(call);
         recordTimelineCallRef.current(call);
         dispatchCallEvent(CALL_EVENTS.RECEIVE);
-        updateStatus(`Incoming call from ${call.callerId}`);
+        connectSocketHandlersRef.current.updateStatus(`Incoming call from ${call.callerId}`);
         // Show system-level incoming-call UI (CallKeep) and start the JS
         // ringtone fallback when CallKeep is unavailable.  Runs async so UI
         // state updates are never blocked if CallKeep setup is slow.
-        showIncomingCallUi(call).catch(error => {
+        connectSocketHandlersRef.current.showIncomingCallUi(call).catch(error => {
           logWarn('[CallFlow] showIncomingCallUi unexpected error', {
             message: errorMessage(error),
           });
@@ -1851,7 +1921,7 @@ export default function useCallFlow({
 
           // A call being held by another of this user's devices: track who it
           // is with so the UI can say so, and otherwise stay out of its way.
-          if (consumeForeignDeviceCallEvent(call, eventCallId, knownCallId)) return;
+          if (connectSocketHandlersRef.current.consumeForeignDeviceCallEvent(call, eventCallId, knownCallId)) return;
 
           if (call) {
             activeCallRef.current = call;
@@ -1860,13 +1930,13 @@ export default function useCallFlow({
           }
 
           if (callStatus === 'accepted') {
-            updateStatus('Call accepted, connecting media…');
+            connectSocketHandlersRef.current.updateStatus('Call accepted, connecting media…');
             // Caller is responsible for sending the initial RTC offer. This is
             // the negotiation the event triggers, and it stays here: the rules
             // above are decisions, this is a peer connection.
             if (isCallerRef.current && call) {
               activeCallIdRef.current = call.callId;
-              await sendInitialOffer(signaling, call.callId);
+              await connectSocketHandlersRef.current.sendInitialOffer(signaling, call.callId);
             }
             return;
           }
@@ -1925,11 +1995,11 @@ export default function useCallFlow({
             },
           );
           dispatchCallEvent(CALL_EVENTS.CONNECT);
-          updateStatus('Connected', 'success');
+          connectSocketHandlersRef.current.updateStatus('Connected', 'success');
           startCallService();
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC offer', error);
-          updateStatus('Failed to connect media', 'error');
+          connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
           endActiveCallRef.current?.('Failed to connect media', 'error');
         } finally {
           isNegotiatingRef.current = false;
@@ -1960,11 +2030,11 @@ export default function useCallFlow({
             }
           }
           dispatchCallEvent(CALL_EVENTS.CONNECT);
-          updateStatus('Connected', 'success');
+          connectSocketHandlersRef.current.updateStatus('Connected', 'success');
           startCallService();
         } catch (error) {
           logError('[CallFlow] Failed to handle RTC answer', error);
-          updateStatus('Failed to connect media', 'error');
+          connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
           endActiveCallRef.current?.('Failed to connect media', 'error');
         }
       });
@@ -1992,34 +2062,34 @@ export default function useCallFlow({
 
       // ── Chat ─────────────────────────────────────────────────────────
       signaling.on(SERVER_EVENTS.MESSAGE_RECEIVED, ({ message }) => {
-        handleMessageReceived(message);
+        connectSocketHandlersRef.current.handleMessageReceived(message);
       });
 
       signaling.on(SERVER_EVENTS.MESSAGE_DELETED, payload => {
-        handleMessageDeleted(payload);
+        connectSocketHandlersRef.current.handleMessageDeleted(payload);
       });
 
       signaling.on(SERVER_EVENTS.MESSAGE_REACTION, payload => {
-        handleMessageReaction(payload);
+        connectSocketHandlersRef.current.handleMessageReaction(payload);
       });
 
       signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
-        handleMessageDelivered(message);
+        connectSocketHandlersRef.current.handleMessageDelivered(message);
       });
 
       signaling.on(SERVER_EVENTS.MESSAGE_READ, ({ readerId, readAt }) => {
-        handleMessageRead({ readerId, readAt });
+        connectSocketHandlersRef.current.handleMessageRead({ readerId, readAt });
       });
 
       signaling.on(SERVER_EVENTS.MESSAGE_TYPING, ({ senderId, isTyping }) => {
-        handleTypingEvent({ senderId, isTyping });
+        connectSocketHandlersRef.current.handleTypingEvent({ senderId, isTyping });
       });
 
       // ── In-call screen-share relay ──────────────────────────────────────
       signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
         if (callId !== activeCallIdRef.current) return;
         // The peer's own relayed beat is another timer-free wake-up source.
-        wakeCallHeartbeat('peer-media-state');
+        connectSocketHandlersRef.current.wakeCallHeartbeat('peer-media-state');
         // The frame is additive and each key is read independently: silence
         // about a flag is not a claim about it, so a liveness heartbeat never
         // clears the "they are presenting" banner or the peer's picture.
@@ -2036,7 +2106,7 @@ export default function useCallFlow({
       signaling.on(TRANSPORT_EVENTS.CONNECT, async () => {
         logInfo('[CallFlow] Socket connected', { socketId: socket.id });
         // Clear offline indicator on successful connection.
-        recordConnectSuccess();
+        connectSocketHandlersRef.current.recordConnectSuccess();
         // The budget stopped while the socket was down; recovery is possible
         // again, so give back exactly that time before anything else.
         resumeRecoveryBudgetRef.current?.('socket-connected');
@@ -2067,18 +2137,18 @@ export default function useCallFlow({
         // no-op, leaving old messages/conversations unloaded until the user
         // manually pulls to refresh. Firing here guarantees it runs once the
         // session/socket are actually ready, on cold start and on reconnect.
-        fetchConversations();
+        connectSocketHandlersRef.current.fetchConversations();
         // The blocklist gates who can appear in the directory, the chat list
         // and search, so it is loaded on the same "session is live" signal.
-        fetchBlocks();
+        connectSocketHandlersRef.current.fetchBlocks();
         // Flush any chat message queued while the socket was down (including
         // one composed in a previous run of the app).
-        handleSocketConnected();
+        connectSocketHandlersRef.current.handleSocketConnected();
         // A reconnect may have swallowed one or more beats (they are dropped
         // while the socket is down), so prove liveness again straight away.
         // Before the `isInCall` guard on purpose: the heartbeat's own `active`
         // flag is the authority on whether a beat is owed.
-        wakeCallHeartbeat('socket-connect');
+        connectSocketHandlersRef.current.wakeCallHeartbeat('socket-connect');
         if (!isInCallRef.current) return;
         setIsReconnecting(false);
         if (activeCallIdRef.current) {
@@ -2099,10 +2169,10 @@ export default function useCallFlow({
 
       signaling.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
         logWarn('[CallFlow] Socket disconnected', { reason });
-        handleSocketDisconnected();
+        connectSocketHandlersRef.current.handleSocketDisconnected();
         if (isInCallRef.current) {
           setIsReconnecting(true);
-          updateStatus('Reconnecting…');
+          connectSocketHandlersRef.current.updateStatus('Reconnecting…');
           // A lost socket is a recovery symptom in its own right, and it
           // immediately pauses the budget: no ICE restart can be sent without
           // a socket, so this window would otherwise be spent waiting.
@@ -2116,7 +2186,7 @@ export default function useCallFlow({
           message: errorMessage(error),
           description: (error as { description?: unknown })?.description,
         });
-        recordConnectError();
+        connectSocketHandlersRef.current.recordConnectError();
       });
 
       // The server accepted the handshake but the presented sessionId no
@@ -2137,7 +2207,7 @@ export default function useCallFlow({
         const attempts = sessionRemintAttempts(isInCallRef.current);
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           try {
-            const newSessionId = await createOrGetSession();
+            const newSessionId = await connectSocketHandlersRef.current.createOrGetSession();
             // A newer socket may already have replaced this one (e.g. the
             // presence effect re-ran, or the user signed out) — don't race it.
             if (socketRef.current !== socket) return;
@@ -2153,7 +2223,7 @@ export default function useCallFlow({
             if (socketRef.current !== socket) return;
             if (attempt >= attempts) {
               logError('[CallFlow] Failed to re-mint session after session.invalid', error);
-              updateStatus(SESSION_EXPIRED_MESSAGE, 'error');
+              connectSocketHandlersRef.current.updateStatus(SESSION_EXPIRED_MESSAGE, 'error');
               return;
             }
             await new Promise(resolve => setTimeout(resolve, SESSION_REMINT_RETRY_MS));
@@ -2165,34 +2235,10 @@ export default function useCallFlow({
 
       return socket;
     },
-    [
-      consumeForeignDeviceCallEvent,
-      createOrGetSession,
-      disconnectSocket,
-      sendInitialOffer,
-      updateStatus,
-      showIncomingCallUi,
-      signalingUrl,
-      handleMessageReceived,
-      handleMessageDeleted,
-      handleMessageReaction,
-      handleMessageDelivered,
-      handleMessageRead,
-      handleTypingEvent,
-      handleSocketConnected,
-      handleSocketDisconnected,
-      recordConnectSuccess,
-      recordConnectError,
-      sessionIdRef,
-      deviceIdRef,
-      fetchConversations,
-      fetchBlocks,
-      wakeCallHeartbeat,
-      beginIceRecoveryRef,
-      noteRecoverySymptomRef,
-      pauseRecoveryBudgetRef,
-      resumeRecoveryBudgetRef,
-    ],
+    // Socket listeners read volatile handlers through connectSocketHandlersRef;
+    // reconnecting is only required when the endpoint itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [signalingUrl],
   );
 
   // ─── Call rehydration (push-notification deep link) ───────────────────────
