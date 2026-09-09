@@ -215,6 +215,8 @@ function TabShell() {
         isStartingCall={isPlacingCall}
         isPeerTyping={Boolean(chat.typingByPeer[peerId])}
         isLoadingMessages={chat.isLoadingMessages}
+        isRefreshingMessages={chat.isRefreshingMessages}
+        onRefreshMessages={chat.handleRefreshMessages}
         onPickAttachment={kind => pickAndSendAttachment(peerId, kind)}
         onStartVoiceNote={() => startRecordingVoiceNote()}
         onStopVoiceNote={() => stopRecordingVoiceNoteAndSend(peerId)}
@@ -242,8 +244,10 @@ function TabShell() {
     chat.conversations,
     chat.currentUserId,
     chat.handleLoadOlderMessages,
+    chat.handleRefreshMessages,
     chat.isChatOffline,
     chat.isLoadingMessages,
+    chat.isRefreshingMessages,
     chat.isRecordingVoiceNote,
     chat.isUploadingAttachment,
     chat.isVoiceNoteSupported,

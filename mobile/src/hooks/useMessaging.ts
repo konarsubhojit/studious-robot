@@ -75,10 +75,11 @@ export type {
   ConversationActivity,
   ConversationSummary,
   OutboxItem,
+  TimelineCursor,
 } from '../messaging/types';
 export { OUTBOX_MAX_ATTEMPTS } from '../messaging/sendPipeline';
 
-import type { CallActivity, ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
+import type { CallActivity, ChatMessage, ConversationSummary, OutboxItem, TimelineCursor } from '../messaging/types';
 
 /**
  * Safety-net timeout for a peer's typing indicator: cleared automatically
@@ -301,7 +302,7 @@ export default function useMessaging({
    * @returns the fetched page (empty on failure)
    */
   const fetchMessagesForPeer = useCallback(
-    async (peerId: string, { before }: { before?: string; } = {}) => {
+    async (peerId: string, { before, cursor }: { before?: string; cursor?: TimelineCursor | null; } = {}) => {
       const trimmedPeerId = (peerId ?? '').trim();
       const sessionId = sessionIdRef.current;
       if (!sessionId || !trimmedPeerId) return [];
@@ -309,7 +310,11 @@ export default function useMessaging({
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => {
           const params = new URLSearchParams({ peerId: trimmedPeerId });
-          if (before) params.set('before', before);
+          const pageCursor = cursor ?? (before ? { before } : null);
+          if (pageCursor?.before) params.set('before', pageCursor.before);
+          if (pageCursor?.beforeType) params.set('beforeType', pageCursor.beforeType);
+          if (pageCursor?.beforeMessageId) params.set('beforeMessageId', pageCursor.beforeMessageId);
+          if (pageCursor?.beforeCallId) params.set('beforeCallId', pageCursor.beforeCallId);
           params.set('include', 'calls');
           return {
             url: `${trimmedUrl}${API_ROUTES.MESSAGES}?${params.toString()}`,
@@ -321,7 +326,7 @@ export default function useMessaging({
         const messages = Array.isArray(data.messages) ? data.messages : [];
         setMessagesByPeer(prev => ({
           ...prev,
-          [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before }),
+          [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before: cursor?.before ?? before }),
         }));
         return messages;
       } catch (error) {

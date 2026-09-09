@@ -29,6 +29,7 @@ import { timeQuery } from './lib/queryTiming.ts';
 
 /** Default time-to-live for every cached entry, in milliseconds. */
 const DEFAULT_TTL_MS = 30_000;
+const INVALIDATION_MARKER_TTL_MS = 5 * 60_000;
 /** Upper bound on entries held by the memory backend before LRU eviction. */
 const DEFAULT_MAX_ENTRIES = 1_000;
 /** Namespace applied to every Redis key so `delByPrefix` can never scan beyond the cache. */
@@ -82,6 +83,10 @@ function callHistoryCacheKey(userId: string, statusFilter: string | null, limit:
  */
 function callHistoryCachePrefix(userId: string): string {
   return `callhist::${userId}::`;
+}
+
+function invalidationMarkerKey(prefix: string): string {
+  return `inv::${prefix}`;
 }
 
 export type Cache = {
@@ -322,6 +327,23 @@ async function writeCached(state: CacheableState, key: string, value: unknown, t
   }
 }
 
+async function writeCachedIfNotInvalidated(
+  state: CacheableState,
+  key: string,
+  value: unknown,
+  prefixes: string[],
+  startedAtMs: number,
+  ttlMs: number = DEFAULT_TTL_MS,
+): Promise<void> {
+  const wanted = prefixes.filter(Boolean);
+  if (!state?.cache || wanted.length === 0) return;
+  for (const prefix of wanted) {
+    const invalidatedAt = await readCached(state, invalidationMarkerKey(prefix));
+    if (typeof invalidatedAt === 'number' && invalidatedAt >= startedAtMs) return;
+  }
+  await writeCached(state, key, value, ttlMs);
+}
+
 // ─── Invalidation ─────────────────────────────────────────────────────────────
 
 /**
@@ -340,11 +362,14 @@ async function invalidateCache(state: CacheableState, ...prefixes: string[]): Pr
   if (!state?.cache || wanted.length === 0) return;
 
   const cache = state.cache;
+  const invalidatedAt = Date.now();
   await Promise.all(
     wanted.map((prefix) =>
-      Promise.resolve(cache.delByPrefix(prefix)).catch((error: unknown) => {
-        console.error(`[cache] eviction failed for "${prefix}": ${describeError(error)}`);
-      })
+      Promise.resolve(cache.delByPrefix(prefix))
+        .then(() => cache.set(invalidationMarkerKey(prefix), invalidatedAt, INVALIDATION_MARKER_TTL_MS))
+        .catch((error: unknown) => {
+          console.error(`[cache] eviction failed for "${prefix}": ${describeError(error)}`);
+        })
     )
   );
 
@@ -373,9 +398,11 @@ async function subscribeToCacheInvalidations(state: CacheableState): Promise<(()
         : [] as unknown[]);
     for (const prefix of prefixes) {
       if (typeof prefix !== 'string' || prefix.length === 0) continue;
-      Promise.resolve(cache.delByPrefix(prefix)).catch((error: unknown) => {
-        console.error(`[cache] remote eviction failed for "${prefix}": ${describeError(error)}`);
-      });
+      Promise.resolve(cache.delByPrefix(prefix))
+        .then(() => cache.set(invalidationMarkerKey(prefix), Date.now(), INVALIDATION_MARKER_TTL_MS))
+        .catch((error: unknown) => {
+          console.error(`[cache] remote eviction failed for "${prefix}": ${describeError(error)}`);
+        });
     }
   });
 }
@@ -389,6 +416,7 @@ export {
   createRedisCache,
   readCached,
   writeCached,
+  writeCachedIfNotInvalidated,
   invalidateCache,
   subscribeToCacheInvalidations,
   conversationsCacheKey,
@@ -397,4 +425,5 @@ export {
   messagesCachePrefix,
   callHistoryCacheKey,
   callHistoryCachePrefix,
+  invalidationMarkerKey,
 };

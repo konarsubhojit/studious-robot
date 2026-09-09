@@ -25,8 +25,23 @@ describe('patchMessage', () => {
   test('updates one message by id', () => {
     const state = { bob: [message(), message({ messageId: 'm2' })] };
     const next = patchMessage(state, 'bob', 'm2', entry => ({ ...entry, body: 'edited' }));
-    expect(next.bob[1].body).toBe('edited');
-    expect(next.bob[0]).toBe(state.bob[0]);
+    expect(next.bob.find((entry: any) => entry.messageId === 'm2')?.body).toBe('edited');
+    expect(next.bob.find((entry: any) => entry.messageId === 'm1')).toBe(state.bob[0]);
+  });
+
+  test('re-sorts when an optimistic message is reconciled to the server timestamp', () => {
+    const state = {
+      bob: [
+        message({ messageId: 'optimistic', createdAt: '2026-08-25T10:50:00.000Z', syncState: 'pending' }),
+        message({ messageId: 'newer-server', createdAt: '2026-08-25T10:40:00.000Z' }),
+      ],
+    };
+    const next = patchMessage(state, 'bob', 'optimistic', entry => ({
+      ...entry,
+      createdAt: '2026-08-25T10:30:00.000Z',
+      syncState: 'synced',
+    }));
+    expect(next.bob.map((m: any) => m.messageId)).toEqual(['newer-server', 'optimistic']);
   });
 
   test('is a no-op for an unloaded conversation or an unknown message', () => {

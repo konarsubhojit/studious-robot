@@ -121,37 +121,43 @@ function byParticipant(userId: string) {
  *   configured, and falls back to the memory store when it is not.
  */
 export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
+  const saveMessageWithStatus: MessageStore['saveMessageWithStatus'] = async (message) => {
+    const record = createMessageRecord(message);
+
+    // Idempotent on `(conversationId, messageId)` — the primary key, and the
+    // pair a client replays from its durable outbox. `DO NOTHING` rather than
+    // an update: a replay must not overwrite the reactions, receipts or
+    // tombstone the original has accumulated since.
+    const inserted = await db
+      .insert(messagesTable)
+      .values(toInsertValues(record))
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted.length > 0) return { message: toStoredMessage(inserted[0]), inserted: true };
+
+    // The insert was a no-op, so the message already exists; return the
+    // stored copy rather than the one that was just rejected.
+    const [existing] = await db
+      .select()
+      .from(messagesTable)
+      .where(byPrimaryKey(record.conversationId, record.messageId))
+      .limit(1);
+    return { message: existing ? toStoredMessage(existing) : record, inserted: false };
+  };
+
   return {
     type: 'postgres',
 
     async ready() {},
 
     async saveMessage(message: NewMessageInput) {
-      const record = createMessageRecord(message);
-
-      // Idempotent on `(conversationId, messageId)` — the primary key, and the
-      // pair a client replays from its durable outbox. `DO NOTHING` rather than
-      // an update: a replay must not overwrite the reactions, receipts or
-      // tombstone the original has accumulated since.
-      const inserted = await db
-        .insert(messagesTable)
-        .values(toInsertValues(record))
-        .onConflictDoNothing()
-        .returning();
-
-      if (inserted.length > 0) return toStoredMessage(inserted[0]);
-
-      // The insert was a no-op, so the message already exists; return the
-      // stored copy rather than the one that was just rejected.
-      const [existing] = await db
-        .select()
-        .from(messagesTable)
-        .where(byPrimaryKey(record.conversationId, record.messageId))
-        .limit(1);
-      return existing ? toStoredMessage(existing) : record;
+      return (await saveMessageWithStatus(message)).message;
     },
 
-    async listMessages({ conversationId, limit, before } = {}) {
+    saveMessageWithStatus,
+
+    async listMessages({ conversationId, limit, before, beforeMessageId, withLookahead } = {}) {
       if (!conversationId) return [];
       const rows = await db
         .select()
@@ -159,11 +165,21 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
         .where(
           and(
             eq(messagesTable.conversationId, conversationId),
-            before ? lt(messagesTable.createdAt, before) : undefined
+            before
+              ? or(
+                  lt(messagesTable.createdAt, before),
+                  beforeMessageId
+                    ? and(
+                        eq(messagesTable.createdAt, before),
+                        lt(messagesTable.messageId, beforeMessageId)
+                      )
+                    : undefined
+                )
+              : undefined
           )
         )
         .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
-        .limit(clampLimit(limit));
+        .limit(withLookahead ? clampExportReadLimit(limit) : clampLimit(limit));
       return rows.map(toStoredMessage);
     },
 
@@ -176,7 +192,7 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
       return row ? toStoredMessage(row) : null;
     },
 
-    async searchMessages({ userId, query, limit, before } = {}) {
+    async searchMessages({ userId, query, limit, before, beforeMessageId, withLookahead } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
 
@@ -191,11 +207,21 @@ export function createPgMessageStore({ db }: { db: Database; }): MessageStore {
           and(
             byParticipant(userId),
             sql`lower(${messagesTable.body}) like ${pattern} escape '\\'`,
-            before ? lt(messagesTable.createdAt, before) : undefined
+            before
+              ? or(
+                  lt(messagesTable.createdAt, before),
+                  beforeMessageId
+                    ? and(
+                        eq(messagesTable.createdAt, before),
+                        lt(messagesTable.messageId, beforeMessageId)
+                      )
+                    : undefined
+                )
+              : undefined
           )
         )
         .orderBy(desc(messagesTable.createdAt), desc(messagesTable.messageId))
-        .limit(clampLimit(limit));
+        .limit(withLookahead ? clampExportReadLimit(limit) : clampLimit(limit));
       return rows.map(toStoredMessage);
     },
 

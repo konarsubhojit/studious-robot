@@ -31,6 +31,18 @@ describe('applyIncomingMessage', () => {
     expect(next.bob[0]).toMatchObject({ messageId: 'm1', syncState: 'synced' });
   });
 
+  test('an older inbound message does not move below newer messages visually', () => {
+    const state = {
+      bob: [message({ messageId: 'newer', createdAt: '2026-08-25T10:40:00.000Z' })],
+    };
+    const next = applyIncomingMessage(
+      state,
+      message({ messageId: 'older', createdAt: '2026-08-25T10:20:00.000Z' }),
+    );
+    expect(next.bob.map((m: any) => m.messageId)).toEqual(['newer', 'older']);
+    expect([...next.bob].reverse().map((m: any) => m.messageId)).toEqual(['older', 'newer']);
+  });
+
   test('the same message over both the socket and a push converges on one entry', () => {
     const state = { bob: [message({ syncState: 'synced' })] };
     expect(applyIncomingMessage(state, message())).toBe(state);
@@ -50,6 +62,40 @@ describe('applyDeliveryReceipt', () => {
   test('a receipt that arrives before the send ack still lands in the history', () => {
     const next = applyDeliveryReceipt({}, message({ senderId: 'alice', recipientId: 'bob' }));
     expect(next.bob).toHaveLength(1);
+  });
+
+  test('a stale receipt does not clear newer local read state or disturb ordering', () => {
+    const state = {
+      bob: [
+        message({
+          messageId: 'newer',
+          senderId: 'alice',
+          recipientId: 'bob',
+          createdAt: '2026-08-25T10:40:00.000Z',
+        }),
+        message({
+          messageId: 'older',
+          senderId: 'alice',
+          recipientId: 'bob',
+          createdAt: '2026-08-25T10:20:00.000Z',
+          deliveredTo: ['bob'],
+          readAt: '2026-08-25T11:00:00.000Z',
+        }),
+      ],
+    };
+    const next = applyDeliveryReceipt(
+      state,
+      message({
+        messageId: 'older',
+        senderId: 'alice',
+        recipientId: 'bob',
+        createdAt: '2026-08-25T10:20:00.000Z',
+        deliveredTo: ['bob'],
+        readAt: null,
+      }),
+    );
+    expect(next.bob.map((m: any) => m.messageId)).toEqual(['newer', 'older']);
+    expect(next.bob[1].readAt).toBe('2026-08-25T11:00:00.000Z');
   });
 });
 

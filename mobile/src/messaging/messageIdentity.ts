@@ -27,10 +27,14 @@ export function byNewestFirst(
   const bKnown = Number.isFinite(bTime);
   if (aKnown && bKnown && aTime !== bTime) return bTime - aTime;
   if (aKnown !== bKnown) return aKnown ? -1 : 1;
-  const aId = timelineEntryId(a) ?? '';
-  const bId = timelineEntryId(b) ?? '';
+  const aId = timelineSortId(a);
+  const bId = timelineSortId(b);
   if (aId === bId) return 0;
   return aId < bId ? 1 : -1;
+}
+
+function timelineSortId(entry: { messageId?: string; callId?: string; }): string {
+  return entry?.callId ? `call:${entry.callId}` : `message:${entry?.messageId ?? ''}`;
 }
 
 /**

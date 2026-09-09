@@ -171,6 +171,20 @@ describe('useChatSync', () => {
     expect(resultRef.current.isRefreshingConversations).toBe(false);
   });
 
+  test('handleRefreshMessages fetches newest history even when the socket is unavailable', async () => {
+    const { resultRef, params } = await setup({ chatPeerId: 'bob' });
+    params.fetchMessagesForPeer.mockClear();
+    params.markConversationRead.mockClear();
+
+    await act(async () => {
+      await resultRef.current.handleRefreshMessages();
+    });
+
+    expect(params.fetchMessagesForPeer).toHaveBeenCalledWith('bob');
+    expect(params.markConversationRead).toHaveBeenCalledWith('bob');
+    expect(resultRef.current.isRefreshingMessages).toBe(false);
+  });
+
   test('handleLoadOlderMessages is a no-op with no open conversation', async () => {
     const { resultRef, params } = await setup({ chatPeerId: null });
     act(() => {
@@ -179,15 +193,22 @@ describe('useChatSync', () => {
     expect(params.fetchMessagesForPeer).not.toHaveBeenCalled();
   });
 
-  test('handleLoadOlderMessages pages further back using the oldest message createdAt', async () => {
+  test('handleLoadOlderMessages pages further back using the oldest entry cursor', async () => {
     const { resultRef, params } = await setup({
       chatPeerId: 'bob',
-      messagesByPeer: { bob: [{ createdAt: '2024-01-02' }, { createdAt: '2024-01-01' }] },
+      messagesByPeer: {
+        bob: [
+          { createdAt: '2024-01-02', messageId: 'newer' },
+          { createdAt: '2024-01-01', type: 'call', callId: 'old-call' },
+        ],
+      },
     });
     act(() => {
       resultRef.current.handleLoadOlderMessages();
     });
-    expect(params.fetchMessagesForPeer).toHaveBeenCalledWith('bob', { before: '2024-01-01' });
+    expect(params.fetchMessagesForPeer).toHaveBeenCalledWith('bob', {
+      cursor: { before: '2024-01-01', beforeType: 'call', beforeCallId: 'old-call' },
+    });
   });
 
   test('handleLoadOlderMessages does nothing when the oldest message has no createdAt', async () => {

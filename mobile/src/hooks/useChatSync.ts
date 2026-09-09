@@ -18,13 +18,26 @@ export type { PeerPresence };
 export type UseChatSyncParams = {
   chatPeerId: string | null;
   isRegistered: boolean;
-  messagesByPeer: Record<string, Array<{ createdAt?: string; }>>;
+  messagesByPeer: Record<string, Array<{ createdAt?: string; messageId?: string; callId?: string; type?: string; }>>;
   fetchConversations: () => Promise<void>;
   setActiveChatPeerId: (peerId: string | null) => void;
-  fetchMessagesForPeer: (peerId: string, options?: { before?: string; }) => Promise<unknown>;
+  fetchMessagesForPeer: (peerId: string, options?: { before?: string; cursor?: import('../messaging/types').TimelineCursor | null; }) => Promise<unknown>;
   markConversationRead: (peerId: string) => Promise<void>;
   checkPresence: (peerId: string) => Promise<PeerPresence | null>;
 };
+
+function cursorFromOldest(
+  entry: { createdAt?: string; messageId?: string; callId?: string; type?: string; } | undefined,
+): import('../messaging/types').TimelineCursor | null {
+  if (!entry?.createdAt) return null;
+  if (entry.type === 'call' && entry.callId) {
+    return { before: entry.createdAt, beforeType: 'call', beforeCallId: entry.callId };
+  }
+  if (entry.messageId) {
+    return { before: entry.createdAt, beforeType: 'message', beforeMessageId: entry.messageId };
+  }
+  return { before: entry.createdAt };
+}
 
 export default function useChatSync({
   chatPeerId,
@@ -46,6 +59,7 @@ export default function useChatSync({
   // "empty" state that is really just "not loaded yet".
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isRefreshingMessages, setIsRefreshingMessages] = useState(false);
 
   // Fetch the conversation list once identity is established.
   useEffect(() => {
@@ -115,12 +129,24 @@ export default function useChatSync({
     }
   }, [fetchConversations]);
 
+  const handleRefreshMessages = useCallback(async () => {
+    if (!chatPeerId) return;
+    setIsRefreshingMessages(true);
+    try {
+      await fetchMessagesForPeer(chatPeerId);
+      await markConversationRead(chatPeerId);
+    } finally {
+      setIsRefreshingMessages(false);
+    }
+  }, [chatPeerId, fetchMessagesForPeer, markConversationRead]);
+
   const handleLoadOlderMessages = useCallback(() => {
     if (!chatPeerId) return;
     const existing = messagesByPeer[chatPeerId] ?? [];
     const oldest = existing[existing.length - 1];
-    if (oldest?.createdAt) {
-      fetchMessagesForPeer(chatPeerId, { before: oldest.createdAt });
+    const cursor = cursorFromOldest(oldest);
+    if (cursor) {
+      fetchMessagesForPeer(chatPeerId, { cursor });
     }
   }, [chatPeerId, messagesByPeer, fetchMessagesForPeer]);
 
@@ -129,7 +155,9 @@ export default function useChatSync({
     isLoadingConversations,
     isLoadingMessages,
     isRefreshingConversations,
+    isRefreshingMessages,
     handleRefreshConversations,
+    handleRefreshMessages,
     handleLoadOlderMessages,
   };
 }

@@ -180,6 +180,7 @@ test('GET /messages?include=calls paginates the merged stream without gaps or du
 
   const seen = [];
   let cursor = null;
+  let lastEntryCursor = null;
   for (let page = 0; page < 3; page++) {
     const query = `/messages?peerId=tl-page-bob&include=calls&limit=2${
       cursor ? `&before=${encodeURIComponent(cursor)}` : ''
@@ -190,7 +191,9 @@ test('GET /messages?include=calls paginates the merged stream without gaps or du
     for (const entry of res.body.messages) {
       seen.push(entry.messageId ?? entry.callId);
     }
-    cursor = res.body.messages[res.body.messages.length - 1].createdAt;
+    assert.equal(res.body.hasMore, page < 2);
+    lastEntryCursor = res.body.messages[res.body.messages.length - 1].createdAt;
+    cursor = res.body.nextCursor?.before ?? null;
   }
 
   assert.deepEqual(seen, expected);
@@ -198,7 +201,7 @@ test('GET /messages?include=calls paginates the merged stream without gaps or du
 
   const exhausted = await getJson(
     url,
-    `/messages?peerId=tl-page-bob&include=calls&limit=2&before=${encodeURIComponent(cursor)}`,
+    `/messages?peerId=tl-page-bob&include=calls&limit=2&before=${encodeURIComponent(lastEntryCursor)}`,
     aliceSession
   );
   assert.deepEqual(exhausted.body.messages, []);
@@ -238,17 +241,17 @@ test('a message and a call sharing a millisecond keep a deterministic order', ()
   const merged = mergeTimeline([message], [call], 10);
   assert.deepEqual(
     merged.map((entry) => entry.messageId ?? entry.callId),
-    ['zzz', 'aaa']
+    ['aaa', 'zzz']
   );
   // Same page whichever order the two sources are read in.
   assert.deepEqual(mergeTimeline([message], [call], 10), merged);
-  assert.equal(merged[0].type, 'call');
-  assert.equal(merged[1].type, 'text');
+  assert.equal(merged[0].type, 'text');
+  assert.equal(merged[1].type, 'call');
 
   // The page is capped by `limit`, newest kept.
   assert.deepEqual(
-    mergeTimeline([message], [call], 1).map((entry) => entry.callId),
-    ['zzz']
+    mergeTimeline([message], [call], 1).map((entry) => entry.messageId),
+    ['aaa']
   );
 });
 

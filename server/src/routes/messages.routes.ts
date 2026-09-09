@@ -4,7 +4,7 @@ import { getSessionFromRequest } from '../lib/auth.ts';
 import { normaliseId, normaliseOptionalString } from '../lib/normalize.ts';
 import { deriveConversationId, clampMessageLimit } from '../messageStore.ts';
 import { toCallTimelineEntry, readCallsBetween, augmentConversationsWithCalls, markMissedCallsRead, mergeTimeline } from '../domain/callTimeline.ts';
-import { readCached, writeCached, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesCachePrefix } from '../cache.ts';
+import { readCached, writeCached, writeCachedIfNotInvalidated, invalidateCache, conversationsCacheKey, conversationsCachePrefix, messagesCacheKey, messagesCachePrefix } from '../cache.ts';
 import { emitToUserSockets } from '../domain/notifications.ts';
 import { getPresenceSnapshot } from '../lib/state.ts';
 import { SIGNALING_VERSION } from '../config.ts';
@@ -33,6 +33,39 @@ export type ConversationSummary = {
   lastMessage: Record<string, any> | null;
   unreadCount: number;
 };
+
+type TimelineCursor = {
+  before: string;
+  beforeType?: 'message' | 'call';
+  beforeMessageId?: string;
+  beforeCallId?: string;
+};
+
+function parseTimelineCursor(query: express.Request['query']): TimelineCursor | null {
+  const before = normaliseOptionalString(query?.before);
+  if (!before) return null;
+  const beforeTypeRaw = normaliseOptionalString(query?.beforeType);
+  const beforeType = beforeTypeRaw === 'call' || beforeTypeRaw === 'message'
+    ? beforeTypeRaw
+    : undefined;
+  const beforeMessageId = normaliseOptionalString(query?.beforeMessageId ?? query?.beforeId);
+  const beforeCallId = normaliseOptionalString(query?.beforeCallId ?? query?.beforeId);
+  return {
+    before,
+    beforeType,
+    beforeMessageId: beforeType === 'call' ? undefined : beforeMessageId ?? undefined,
+    beforeCallId: beforeType === 'message' ? undefined : beforeCallId ?? undefined,
+  };
+}
+
+function cursorForEntry(entry: Record<string, any> | undefined): TimelineCursor | null {
+  if (!entry?.createdAt) return null;
+  if (entry.type === 'call') {
+    return { before: entry.createdAt, beforeType: 'call', beforeCallId: entry.callId };
+  }
+  return { before: entry.createdAt, beforeType: 'message', beforeMessageId: entry.messageId };
+}
+
 function createMessagesRouter({ state, io }: { state: import('../stores/contracts.ts').ServerState; io: any; }): import('express').Router {
   const router = express.Router();
 
@@ -69,7 +102,11 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     const conversationId = deriveConversationId(session.userId, peerId);
-    const before = normaliseOptionalString(req.query?.before);
+    const cursor = parseTimelineCursor(req.query);
+    if (cursor && Number.isNaN(Date.parse(cursor.before))) {
+      res.status(400).json({ error: 'before cursor must be an ISO timestamp' });
+      return;
+    }
     const includeCalls = String(req.query?.include ?? '')
       .split(',')
       .map((token) => token.trim())
@@ -85,22 +122,34 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     // the entry unreachable, because the app always asks for the merged
     // timeline — a cache with no possible reader.
     const limit = clampMessageLimit(req.query?.limit);
-    const cacheKey = before ? null : messagesCacheKey(conversationId, limit);
+    const readLimit = limit + 1;
+    const cacheKey = cursor ? null : messagesCacheKey(conversationId, readLimit);
 
+    const cacheStartedAt = Date.now();
     let messages: MessageRecord[] | undefined = cacheKey ? await readCached(state, cacheKey) : undefined;
     if (messages === undefined) {
       try {
         messages = (await state.messageStore.listMessages({
             conversationId,
-            limit,
-            before: before ?? undefined,
+            limit: readLimit,
+            before: cursor?.before,
+            beforeMessageId: cursor?.beforeMessageId,
+            withLookahead: true,
           }) as MessageRecord[]);
       } catch (error) {
         console.error(`[messages] history lookup failed: ${describeError(error)}`);
         res.status(503).json({ error: 'message store unavailable' });
         return;
       }
-      if (cacheKey) await writeCached(state, cacheKey, messages);
+      if (cacheKey) {
+        await writeCachedIfNotInvalidated(
+          state,
+          cacheKey,
+          messages,
+          [messagesCachePrefix(conversationId)],
+          cacheStartedAt
+        );
+      }
     }
 
     // Defence in depth: only ever return messages the caller took part in.
@@ -113,10 +162,16 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     if (!includeCalls) {
+      const page = participantMessages.slice(0, limit);
+      const nextCursor = participantMessages.length > limit
+        ? cursorForEntry(page[page.length - 1])
+        : null;
       res.status(200).json({
         conversationId,
-        messages: participantMessages,
-        limit: participantMessages.length,
+        messages: page,
+        limit: page.length,
+        nextCursor,
+        hasMore: Boolean(nextCursor),
       });
       return;
     }
@@ -128,16 +183,29 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       isBlocked(state.blocks, peerId, session.userId);
     const callEntries = hidden
       ? []
-      : (await readCallsBetween(state, session.userId, peerId, before)).map((call) =>
+      : (await readCallsBetween(
+          state,
+          session.userId,
+          peerId,
+          cursor?.before,
+          cursor?.beforeCallId,
+          cursor?.beforeType === 'message',
+        )).map((call) =>
           toCallTimelineEntry(call, session.userId),
         );
 
-    const timeline = mergeTimeline(participantMessages, callEntries, limit);
+    const timelineWithLookahead = mergeTimeline(participantMessages, callEntries, readLimit);
+    const timeline = timelineWithLookahead.slice(0, limit);
+    const nextCursor = timelineWithLookahead.length > limit
+      ? cursorForEntry(timeline[timeline.length - 1])
+      : null;
 
     res.status(200).json({
       conversationId,
       messages: timeline,
       limit: timeline.length,
+      nextCursor,
+      hasMore: Boolean(nextCursor),
     });
   });
 
@@ -193,15 +261,21 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
     }
 
     const limit = clampMessageLimit(req.query?.limit);
-    const before = normaliseOptionalString(req.query?.before);
+    const cursor = parseTimelineCursor(req.query);
+    if (cursor && Number.isNaN(Date.parse(cursor.before))) {
+      res.status(400).json({ error: 'before cursor must be an ISO timestamp' });
+      return;
+    }
 
     let matches: Array<MessageRecord>;
     try {
       matches = await state.messageStore.searchMessages({
         userId: session.userId,
         query,
-        limit,
-        before: before ?? undefined,
+        limit: limit + 1,
+        before: cursor?.before,
+        beforeMessageId: cursor?.beforeMessageId,
+        withLookahead: true,
       });
     } catch (error) {
       console.error(`[messages] search failed: ${describeError(error)}`);
@@ -223,7 +297,7 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
       );
     }
 
-    const results = participantMatches
+    const resultsWithLookahead = participantMatches
       .map((message) => ({
         ...message,
         peerId: message.senderId === session.userId ? message.recipientId : message.senderId,
@@ -233,8 +307,12 @@ function createMessagesRouter({ state, io }: { state: import('../stores/contract
           !isBlocked(state.blocks, session.userId, message.peerId) &&
           !isBlocked(state.blocks, message.peerId, session.userId)
       );
+    const results = resultsWithLookahead.slice(0, limit);
+    const nextCursor = resultsWithLookahead.length > limit
+      ? cursorForEntry(results[results.length - 1])
+      : null;
 
-    res.status(200).json({ query, results, limit });
+    res.status(200).json({ query, results, limit: results.length, nextCursor, hasMore: Boolean(nextCursor) });
   });
 
   /**

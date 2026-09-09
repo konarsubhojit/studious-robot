@@ -20,7 +20,9 @@ export type ChatContextValue = {
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
   isRefreshingConversations: boolean;
+  isRefreshingMessages: boolean;
   handleRefreshConversations: ChatSync['handleRefreshConversations'];
+  handleRefreshMessages: ChatSync['handleRefreshMessages'];
   handleLoadOlderMessages: ChatSync['handleLoadOlderMessages'];
   conversations: CallFlow['conversations'];
   messagesByPeer: CallFlow['messagesByPeer'];
@@ -139,7 +141,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
     isLoadingConversations,
     isLoadingMessages,
     isRefreshingConversations,
+    isRefreshingMessages,
     handleRefreshConversations,
+    handleRefreshMessages,
     handleLoadOlderMessages,
   } = useChatSync({
     chatPeerId,
@@ -178,7 +182,9 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       isLoadingConversations,
       isLoadingMessages,
       isRefreshingConversations,
+      isRefreshingMessages,
       handleRefreshConversations,
+      handleRefreshMessages,
       handleLoadOlderMessages,
       conversations: callFlow.conversations,
       messagesByPeer: callFlow.messagesByPeer,
@@ -254,10 +260,12 @@ export function ChatProvider({ children }: { children: ReactNode; }) {
       chatPeerId,
       handleLoadOlderMessages,
       handleRefreshConversations,
+      handleRefreshMessages,
       handleRouteChange,
       isLoadingConversations,
       isLoadingMessages,
       isRefreshingConversations,
+      isRefreshingMessages,
       messageNotificationsEnabled,
       mutedPeers,
       isPeerMuted,

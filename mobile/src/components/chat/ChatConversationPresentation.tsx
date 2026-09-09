@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -123,6 +124,7 @@ const TYPING_IDLE_MS = 3000;
 /** Distance (px) from the bottom of the message list still considered
  * "at the bottom" for auto-scroll / scroll-to-bottom-FAB purposes. */
 const NEAR_BOTTOM_THRESHOLD = 80;
+const AUTO_SCROLL_RETRY_COUNT = 4;
 /** Number of skeleton bubbles rendered while the first page of history loads. */
 const SKELETON_BUBBLE_COUNT = 6;
 /** Emoji offered by the long-press reaction bar. */
@@ -1438,6 +1440,10 @@ export type ChatConversationScreenProps = {
   isPeerTyping?: boolean;
   /** Shows skeleton bubbles while the first page of history is still being fetched. */
   isLoadingMessages?: boolean;
+  /** Pull-to-refresh state for fetching the newest history page of this conversation. */
+  isRefreshingMessages?: boolean;
+  /** Fetches the newest history page without loading older entries. */
+  onRefreshMessages?: () => void;
   /** Shows a persistent banner explaining that queued messages will be delivered once connectivity returns. */
   isOffline?: boolean;
   /** Message the screen was opened at (a search result): the list scrolls to it and the bubble is emphasised. */
@@ -1575,7 +1581,10 @@ function ConversationTimeline({
   renderItem,
   handleScrollToIndexFailed,
   handleViewableItemsChanged,
+  handleContentSizeChange,
   isLoadingMessages,
+  isRefreshingMessages,
+  onRefreshMessages,
   stickyDateLabel,
   showScrollToBottom,
   newMessageCount,
@@ -1588,7 +1597,10 @@ function ConversationTimeline({
   renderItem: ({ item }: { item: ListItem }) => ReactElement | null;
   handleScrollToIndexFailed: (info: { index: number }) => void;
   handleViewableItemsChanged: (info: { viewableItems: Array<{ item?: ListItem }> }) => void;
+  handleContentSizeChange: () => void;
   isLoadingMessages: boolean;
+  isRefreshingMessages: boolean;
+  onRefreshMessages?: () => void;
   stickyDateLabel: string | null;
   showScrollToBottom: boolean;
   newMessageCount: number;
@@ -1616,6 +1628,12 @@ function ConversationTimeline({
         onScrollToIndexFailed={handleScrollToIndexFailed}
         viewabilityConfig={VIEWABILITY_CONFIG}
         onViewableItemsChanged={handleViewableItemsChanged}
+        onContentSizeChange={handleContentSizeChange}
+        refreshControl={
+          onRefreshMessages ? (
+            <RefreshControl refreshing={isRefreshingMessages} onRefresh={onRefreshMessages} />
+          ) : undefined
+        }
         ListEmptyComponent={isLoadingMessages ? <MessageSkeleton /> : null}
       />
       {stickyDateLabel ? (
@@ -1849,6 +1867,7 @@ function ChatConversationScreen({
   onDownloadAttachment,
   onOpenAttachment,
   onLoadOlder,
+  onRefreshMessages,
   onBack,
   currentUserId,
   peerPresence = null,
@@ -1860,6 +1879,7 @@ function ChatConversationScreen({
   isStartingCall = false,
   isPeerTyping = false,
   isLoadingMessages = false,
+  isRefreshingMessages = false,
   isOffline = false,
   onTypingChange,
   unreadCount = 0,
@@ -1922,6 +1942,7 @@ function ChatConversationScreen({
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const didMountDraftPersistRef = useRef(false);
   const autoScrollFrameRef = useRef((null as number | null));
+  const autoScrollRetriesRef = useRef(0);
   const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
   // Tracks the newest message's id so the auto-scroll-to-bottom effect below
@@ -2016,7 +2037,8 @@ function ChatConversationScreen({
 
   useVoiceNoteAutoAdvance(voiceNotes, { onAdvance: handleAutoAdvance });
 
-  const scheduleScrollToEnd = useCallback(() => {
+  const scheduleScrollToEnd = useCallback((retries = AUTO_SCROLL_RETRY_COUNT) => {
+    autoScrollRetriesRef.current = Math.max(autoScrollRetriesRef.current, retries);
     if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     autoScrollFrameRef.current = requestAnimationFrame(() => {
       autoScrollFrameRef.current = null;
@@ -2024,6 +2046,13 @@ function ChatConversationScreen({
       listRef.current?.scrollToEnd({ animated: true });
     });
   }, []);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (!isNearBottomRef.current && autoScrollRetriesRef.current <= 0) return;
+    if (autoScrollRetriesRef.current <= 0) return;
+    autoScrollRetriesRef.current -= 1;
+    scheduleScrollToEnd(0);
+  }, [scheduleScrollToEnd]);
 
   // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
   // only by a tick glyph in the bubble footer, which a screen-reader user has
@@ -2609,7 +2638,10 @@ function ChatConversationScreen({
           renderItem={renderItem}
           handleScrollToIndexFailed={handleScrollToIndexFailed}
           handleViewableItemsChanged={handleViewableItemsChanged}
+          handleContentSizeChange={handleContentSizeChange}
           isLoadingMessages={isLoadingMessages}
+          isRefreshingMessages={isRefreshingMessages}
+          onRefreshMessages={onRefreshMessages}
           stickyDateLabel={stickyDateLabel}
           showScrollToBottom={showScrollToBottom}
           newMessageCount={newMessageCount}

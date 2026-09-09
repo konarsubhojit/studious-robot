@@ -25,6 +25,15 @@ describe('ordering', () => {
     expect([older, newer].sort(byNewestFirst)).toEqual([newer, older]);
     expect([newer, older].sort(byOldestFirst)).toEqual([older, newer]);
   });
+
+  test('timestamp ties use deterministic type and id ordering', () => {
+    const createdAt = '2026-08-25T10:00:00.000Z';
+    expect([
+      { callId: 'zzz', createdAt },
+      { messageId: 'aaa', createdAt },
+      { messageId: 'bbb', createdAt },
+    ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual(['bbb', 'aaa', 'zzz']);
+  });
 });
 
 describe('createMessageId', () => {

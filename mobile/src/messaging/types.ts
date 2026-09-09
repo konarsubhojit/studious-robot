@@ -48,6 +48,13 @@ export type OutboxItem = {
   lastError?: string | null;
 };
 
+export type TimelineCursor = {
+  before: string;
+  beforeType?: 'message' | 'call';
+  beforeMessageId?: string;
+  beforeCallId?: string;
+};
+
 /**
  * Newest event of a conversation: either a message or a call, as merged by the
  * server (`lastActivity`).
