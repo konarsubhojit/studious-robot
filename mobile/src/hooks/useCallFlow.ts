@@ -208,6 +208,60 @@ export type PeerConnection = RTCPeerConnection & {
   onconnectionstatechange: ((event: unknown) => void) | null;
 };
 export type WebrtcMediaStream = MediaStream;
+type WebrtcMediaStreamTrack = ReturnType<WebrtcMediaStream['getTracks']>[number];
+
+function trackId(track: WebrtcMediaStreamTrack): string | null {
+  return typeof track?.id === 'string' && track.id.length > 0 ? track.id : null;
+}
+
+function includesTrackByIdOrReference(
+  tracks: readonly WebrtcMediaStreamTrack[],
+  candidate: WebrtcMediaStreamTrack,
+) {
+  const candidateId = trackId(candidate);
+  for (const track of tracks) {
+    if (track === candidate || (candidateId && trackId(track) === candidateId)) return true;
+  }
+  return false;
+}
+
+function resetMergedScreenAudioTracking(
+  mergedTrackIds: string[],
+  mergedTrackRefs: WebrtcMediaStreamTrack[],
+) {
+  mergedTrackIds.length = 0;
+  mergedTrackRefs.length = 0;
+}
+
+function isAdditionalAudioOnlyRemoteStream(
+  current: WebrtcMediaStream,
+  stream: WebrtcMediaStream,
+) {
+  return stream.id !== current.id && !stream.getVideoTracks?.().length;
+}
+
+function mergeScreenAudioTracks(
+  current: WebrtcMediaStream,
+  stream: WebrtcMediaStream,
+  mergedTrackIds: string[],
+  mergedTrackRefs: WebrtcMediaStreamTrack[],
+) {
+  const currentTracks = current.getTracks?.() ?? [];
+  for (const audioTrack of stream.getAudioTracks?.() ?? []) {
+    const audioTrackId = trackId(audioTrack);
+    if (
+      includesTrackByIdOrReference(currentTracks, audioTrack) ||
+      (audioTrackId && mergedTrackIds.includes(audioTrackId)) ||
+      mergedTrackRefs.includes(audioTrack)
+    ) {
+      continue;
+    }
+    current.addTrack?.(audioTrack);
+    currentTracks.push(audioTrack);
+    if (audioTrackId) mergedTrackIds.push(audioTrackId);
+    mergedTrackRefs.push(audioTrack);
+  }
+}
 
 function callTimelineStatus(call: CallRecord): string {
   return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
@@ -603,6 +657,9 @@ export default function useCallFlow({
   const peerConnectionRef = useRef((null as PeerConnection | null));
   const pendingPeerConnectionRef = useRef((null as Promise<PeerConnection> | null));
   const localStreamRef = useRef((null as WebrtcMediaStream | null));
+  const remoteStreamRef = useRef((null as WebrtcMediaStream | null));
+  const mergedScreenAudioTrackIdsRef = useRef(([] as string[]));
+  const mergedScreenAudioTrackRefsRef = useRef(([] as WebrtcMediaStreamTrack[]));
   const activeCallIdRef = useRef((null as string | null));
   const isCallerRef = useRef(false);
   // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
@@ -1034,6 +1091,11 @@ export default function useCallFlow({
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    remoteStreamRef.current = null;
+    resetMergedScreenAudioTracking(
+      mergedScreenAudioTrackIdsRef.current,
+      mergedScreenAudioTrackRefsRef.current,
+    );
     setRemoteStream(null);
     setConnectionQuality({ bars: 0, label: 'No link' });
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
@@ -1094,31 +1156,31 @@ export default function useCallFlow({
       const [stream] = streams;
       if (stream) {
         logInfo('[CallFlow] Remote stream connected');
-        setRemoteStream(current => {
-          // Screen sharing with screen audio adds a *second* stream that only
-          // carries an audio track. Letting it replace the primary stream would
-          // leave the remote video view with nothing to render (blank screen).
-          if (current && stream.id !== current.id && !stream.getVideoTracks?.().length) {
-            // Keep the original A/V stream as the stage source, but merge in any
-            // extra audio tracks (for example screen/system audio) so playback
-            // still includes them.
-            const currentTrackIds = new Set(
-              (current.getTracks?.() ?? [])
-                .map((track: any) => track?.id)
-                .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
-            );
-            const currentTrackRefs = new Set(current.getTracks?.() ?? []);
-            (stream.getAudioTracks?.() ?? []).forEach((audioTrack: any) => {
-              const trackId = typeof audioTrack?.id === 'string' ? audioTrack.id : null;
-              if ((trackId && currentTrackIds.has(trackId)) || currentTrackRefs.has(audioTrack)) return;
-              current.addTrack?.(audioTrack);
-              if (trackId) currentTrackIds.add(trackId);
-              currentTrackRefs.add(audioTrack);
-            });
-            return current;
-          }
-          return stream;
-        });
+        const current = remoteStreamRef.current;
+        let nextRemoteStream = stream;
+        // Screen sharing with screen audio adds a *second* stream that only
+        // carries an audio track. Letting it replace the primary stream would
+        // leave the remote video view with nothing to render (blank screen).
+        if (current && isAdditionalAudioOnlyRemoteStream(current, stream)) {
+          // Keep the original A/V stream as the stage source, but merge in any
+          // extra audio tracks (for example screen/system audio) so playback
+          // still includes them. This mutation happens once, before the state
+          // update, so React cannot replay it by re-invoking an updater.
+          mergeScreenAudioTracks(
+            current,
+            stream,
+            mergedScreenAudioTrackIdsRef.current,
+            mergedScreenAudioTrackRefsRef.current,
+          );
+          nextRemoteStream = current;
+        } else {
+          resetMergedScreenAudioTracking(
+            mergedScreenAudioTrackIdsRef.current,
+            mergedScreenAudioTrackRefsRef.current,
+          );
+        }
+        remoteStreamRef.current = nextRemoteStream;
+        setRemoteStream(nextRemoteStream);
         if (activeCallIdRef.current) {
           Telemetry.trackFirstRemoteFrame(activeCallIdRef.current);
         }

@@ -5396,11 +5396,15 @@ describe('useCallFlow answer path', () => {
     await act(async () => {
       peerConnection.ontrack?.({ streams: [screenAudioOnlyStream as unknown as WebrtcMediaStream] });
     });
+    await act(async () => {
+      peerConnection.ontrack?.({ streams: [screenAudioOnlyStream as unknown as WebrtcMediaStream] });
+    });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
 
     expect(primaryRemoteStream.addTrack).toHaveBeenCalledWith(sharedSystemAudio);
+    expect(primaryRemoteStream.addTrack).toHaveBeenCalledTimes(1);
     expect(resultRef.current.remoteStream).toBe(primaryRemoteStream);
   });
 
