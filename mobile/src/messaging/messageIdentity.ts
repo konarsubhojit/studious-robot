@@ -18,11 +18,11 @@ export function timelineEntryId(entry: { messageId?: string; callId?: string; })
  * Newest-first ordering, matching the server's message ordering.
  */
 export function byNewestFirst(
-  a: { createdAt?: string; messageId?: string; callId?: string; },
-  b: { createdAt?: string; messageId?: string; callId?: string; },
+  a: { createdAt?: string; clientCreatedAt?: string; messageId?: string; callId?: string; },
+  b: { createdAt?: string; clientCreatedAt?: string; messageId?: string; callId?: string; },
 ): number {
-  const aTime = Date.parse(a?.createdAt ?? '');
-  const bTime = Date.parse(b?.createdAt ?? '');
+  const aTime = timelineSortTime(a);
+  const bTime = timelineSortTime(b);
   const aKnown = Number.isFinite(aTime);
   const bKnown = Number.isFinite(bTime);
   if (aKnown && bKnown && aTime !== bTime) return bTime - aTime;
@@ -35,6 +35,20 @@ export function byNewestFirst(
 
 function timelineSortId(entry: { messageId?: string; callId?: string; }): string {
   return entry?.callId ? `call:${entry.callId}` : `message:${entry?.messageId ?? ''}`;
+}
+
+function parsedTimestamp(value: string | undefined): number {
+  const parsed = Date.parse(value ?? '');
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function timelineSortTime(entry: { createdAt?: string; clientCreatedAt?: string; }): number {
+  const createdAt = parsedTimestamp(entry?.createdAt);
+  const clientCreatedAt = parsedTimestamp(entry?.clientCreatedAt);
+  if (Number.isFinite(createdAt) && Number.isFinite(clientCreatedAt)) {
+    return Math.max(createdAt, clientCreatedAt);
+  }
+  return Number.isFinite(createdAt) ? createdAt : clientCreatedAt;
 }
 
 /**

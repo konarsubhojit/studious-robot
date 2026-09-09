@@ -1,5 +1,6 @@
 import {
   mergeHistoryPage,
+  nextLocalCreatedAt,
   patchMessage,
   patchMessageEverywhere,
   prependMessage,
@@ -78,6 +79,48 @@ describe('removeMessage and prependMessage', () => {
   });
 });
 
+describe('nextLocalCreatedAt', () => {
+  test('a new outgoing message is placed after newer call entries even if the device clock is behind', () => {
+    const existing = [
+      { callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any,
+      message({ messageId: 'old-message', createdAt: '2026-08-25T17:00:00.000Z' }),
+    ];
+    const createdAt = nextLocalCreatedAt(
+      existing,
+      Date.parse('2026-08-25T17:10:00.000Z'),
+    );
+    const state = {
+      bob: existing,
+    };
+    const next = prependMessage(
+      state,
+      'bob',
+      message({ messageId: 'new-message', createdAt, clientCreatedAt: createdAt }),
+    );
+
+    expect(createdAt).toBe('2026-08-25T17:20:00.001Z');
+    expect(next.bob.map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'new-message',
+      'call-520',
+      'old-message',
+    ]);
+    expect([...next.bob].reverse().map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'old-message',
+      'call-520',
+      'new-message',
+    ]);
+  });
+
+  test('multiple local sends in the same tick keep composition order', () => {
+    const first = nextLocalCreatedAt([], Date.parse('2026-08-25T17:21:00.000Z'), 0);
+    const second = nextLocalCreatedAt([], Date.parse('2026-08-25T17:21:00.000Z'), Date.parse(first));
+    expect([first, second]).toEqual([
+      '2026-08-25T17:21:00.000Z',
+      '2026-08-25T17:21:00.001Z',
+    ]);
+  });
+});
+
 describe('mergeHistoryPage', () => {
   test('the first page is authoritative but keeps entries the server has never seen', () => {
     const held = [
@@ -103,6 +146,35 @@ describe('mergeHistoryPage', () => {
       { callId: 'call-1', type: 'call', status: 'ended', syncState: 'synced', durationSeconds: 12, createdAt: '2026-08-25T10:35:00.000Z' } as any,
     ];
     expect(mergeHistoryPage(held, page)).toEqual(page);
+  });
+
+  test('a server acknowledgement cannot move a newly sent message above newer call history', () => {
+    const held = [
+      message({
+        messageId: 'new-message',
+        createdAt: '2026-08-25T17:10:00.000Z',
+        clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        syncState: 'synced',
+      }),
+      { callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any,
+      message({ messageId: 'old-message', createdAt: '2026-08-25T17:00:00.000Z' }),
+    ];
+    const page = [
+      { callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any,
+      message({ messageId: 'new-message', createdAt: '2026-08-25T17:10:00.000Z' }),
+      message({ messageId: 'old-message', createdAt: '2026-08-25T17:00:00.000Z' }),
+    ];
+    const merged = mergeHistoryPage(held, page);
+    expect(merged.map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'new-message',
+      'call-520',
+      'old-message',
+    ]);
+    expect([...merged].reverse().map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'old-message',
+      'call-520',
+      'new-message',
+    ]);
   });
 
   // The regression this guards: `fetchMessagesForPeer` awaits a network round

@@ -19,6 +19,7 @@ export type ChatMessage = Omit<MessageRecord, 'conversationId'> & {
   status?: string;
   peerId?: string;
   localId?: string;
+  clientCreatedAt?: string;
   pending?: boolean;
   failed?: boolean;
   syncState?: 'pending' | 'synced' | 'failed';

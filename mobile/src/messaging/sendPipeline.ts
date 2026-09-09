@@ -121,6 +121,7 @@ export function buildOptimisticMessage({
     createdAt,
     deliveredTo: [],
     readAt: null,
+    clientCreatedAt: createdAt,
     pending: true,
     syncState: 'pending',
   };
@@ -173,13 +174,19 @@ export function buildOutboxItem({
 /** The server acknowledged the send: its copy wins, and the bubble stops
  * being pending. */
 export function asSent(entry: ChatMessage, confirmed?: ChatMessage | null): ChatMessage {
+  const clientCreatedAt = entry.clientCreatedAt ?? validTimestamp(entry.createdAt);
   return {
     ...entry,
     ...(confirmed ?? {}),
+    ...(clientCreatedAt ? { clientCreatedAt } : {}),
     pending: false,
     failed: false,
     syncState: 'synced',
   };
+}
+
+function validTimestamp(value: string | null | undefined): string | undefined {
+  return Number.isFinite(Date.parse(value ?? '')) ? value ?? undefined : undefined;
 }
 
 /** Out of automatic retries: the bubble is surfaced as failed so the user can
