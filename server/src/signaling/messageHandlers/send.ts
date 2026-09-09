@@ -7,7 +7,6 @@ import { invalidateCache, conversationsCachePrefix, messagesCachePrefix } from '
 import { acknowledgeError, acknowledgeSuccess, parseInboundPayload } from '../ack.ts';
 import { CLIENT_EVENTS, ERROR_CODES, SERVER_EVENTS } from '../../../../shared/index.ts';
 import { describeError } from '../../lib/errors.ts';
-import { runDetached } from '../../lib/queryTiming.ts';
 import { deliverMessage } from './delivery.ts';
 import {
   isAttachmentMessageType,
@@ -22,49 +21,60 @@ type MessageSendContext = {
   state: import('../../stores/contracts.ts').ServerState;
 };
 
+function sameAcceptedSend(
+  a: import('../../messageStore.ts').StoredMessage,
+  b: import('../../messageStore.ts').StoredMessage
+): boolean {
+  return (
+    a.senderId === b.senderId &&
+    a.recipientId === b.recipientId &&
+    a.conversationId === b.conversationId &&
+    a.body === b.body &&
+    a.type === b.type &&
+    a.replyTo === b.replyTo &&
+    JSON.stringify(a.attachment ?? null) === JSON.stringify(b.attachment ?? null)
+  );
+}
+
 async function persistAcceptedMessage(
   state: import('../../stores/contracts.ts').ServerState,
   message: import('../../messageStore.ts').StoredMessage,
   recipientWasOnline: boolean
-) {
-  try {
-    const saved = await state.messageStore.saveMessage(message);
-    if (saved.senderId !== message.senderId || saved.recipientId !== message.recipientId) {
-      state.telemetry.recordMessagePersistenceFailure();
-      // The client was already acked on accept, so a durable idempotency
-      // collision is surfaced operationally rather than as a late negative ack.
-      console.error(
-        `[messages] messageId collision after accept messageId=${message.messageId}` +
-          ` conversationId=${message.conversationId}`
-      );
-      return;
-    }
-    await invalidateCache(
-      state,
-      conversationsCachePrefix(message.senderId),
-      conversationsCachePrefix(message.recipientId),
-      messagesCachePrefix(message.conversationId)
+): Promise<{ message: import('../../messageStore.ts').StoredMessage; inserted: boolean; }> {
+  const result = state.messageStore.saveMessageWithStatus
+    ? await state.messageStore.saveMessageWithStatus(message)
+    : { message: await state.messageStore.saveMessage(message), inserted: true };
+  const saved = result.message;
+  if (!sameAcceptedSend(saved, message)) {
+    console.error(
+      `[messages] rejected messageId collision messageId=${message.messageId}` +
+        ` conversationId=${message.conversationId}`
     );
-    if (recipientWasOnline) {
-      if (typeof state.messageStore.enqueueDeliveryReceipt === 'function') {
-        state.messageStore.enqueueDeliveryReceipt({
-          messageId: message.messageId,
-          userId: message.recipientId,
-          conversationId: message.conversationId,
-        });
-      } else {
-        await state.messageStore.markDelivered(
-          message.messageId,
-          message.recipientId,
-          message.conversationId
-        );
-      }
-      await invalidateCache(state, messagesCachePrefix(message.conversationId));
-    }
-  } catch (error) {
-    state.telemetry.recordMessagePersistenceFailure();
-    console.error(`[messages] failed to persist accepted message: ${describeError(error)}`);
+    throw new Error('messageId already belongs to a different message');
   }
+  await invalidateCache(
+    state,
+    conversationsCachePrefix(message.senderId),
+    conversationsCachePrefix(message.recipientId),
+    messagesCachePrefix(message.conversationId)
+  );
+  if (recipientWasOnline && result.inserted) {
+    if (typeof state.messageStore.enqueueDeliveryReceipt === 'function') {
+      state.messageStore.enqueueDeliveryReceipt({
+        messageId: message.messageId,
+        userId: message.recipientId,
+        conversationId: message.conversationId,
+      });
+    } else {
+      await state.messageStore.markDelivered(
+        message.messageId,
+        message.recipientId,
+        message.conversationId
+      );
+    }
+    await invalidateCache(state, messagesCachePrefix(message.conversationId));
+  }
+  return result;
 }
 
 type SendValidationResult =
@@ -259,22 +269,40 @@ async function handleMessageSend(
       ` conversationId=${message.conversationId} senderId=${senderId}`
   );
 
-  deliverMessage(io, state, message);
-  acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message });
-
   const recipientWasOnline = (state.userConnections.get(validated.recipientId)?.size ?? 0) > 0;
+  let persisted: { message: import('../../messageStore.ts').StoredMessage; inserted: boolean; };
+  try {
+    persisted = await persistAcceptedMessage(state, message, recipientWasOnline);
+  } catch (error) {
+    state.telemetry.recordMessagePersistenceFailure();
+    console.error(`[messages] failed to persist accepted message: ${describeError(error)}`);
+    acknowledgeError(
+      socket,
+      ack,
+      CLIENT_EVENTS.MESSAGE_SEND,
+      ERROR_CODES.INTERNAL_ERROR,
+      'message could not be saved',
+      state
+    );
+    return;
+  }
+
+  const savedMessage = persisted.message;
+  if (persisted.inserted) {
+    deliverMessage(io, state, savedMessage);
+  }
+  acknowledgeSuccess(socket, ack, CLIENT_EVENTS.MESSAGE_SEND, { message: savedMessage });
+
   const deliveredMessage = recipientWasOnline
-    ? { ...message, deliveredTo: [...new Set([...message.deliveredTo, validated.recipientId])] }
-    : message;
+    ? { ...savedMessage, deliveredTo: [...new Set([...(savedMessage.deliveredTo ?? []), validated.recipientId])] }
+    : savedMessage;
 
   emitToUserSockets(io, senderId, SERVER_EVENTS.MESSAGE_DELIVERED, {
     version: SIGNALING_VERSION,
-    conversationId: message.conversationId,
-    messageId: message.messageId,
+    conversationId: savedMessage.conversationId,
+    messageId: savedMessage.messageId,
     message: deliveredMessage,
   });
-
-  void runDetached(() => persistAcceptedMessage(state, message, recipientWasOnline));
 }
 
 export { handleMessageSend };

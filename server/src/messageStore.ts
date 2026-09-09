@@ -96,6 +96,7 @@ export type {
 
 export {
   DEFAULT_MESSAGE_LIMIT,
+  MAX_MESSAGE_EXPORT_READ_LIMIT,
   MAX_MESSAGE_LIMIT,
   deriveConversationId,
   clampLimit as clampMessageLimit,

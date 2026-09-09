@@ -1,4 +1,4 @@
-import { patchMessageEverywhere, prependMessage } from './messageHistory';
+import { patchMessageEverywhere, upsertTimelineEntry } from './messageHistory';
 import type { ChatMessage, MessagesByPeer } from './types';
 
 /**
@@ -40,9 +40,8 @@ export function applyIncomingMessage(
   message: ChatMessage,
 ): MessagesByPeer {
   const senderId = message.senderId;
-  const existing = state[senderId] ?? [];
-  if (existing.some(m => m.messageId === message.messageId)) return state;
-  return prependMessage(state, senderId, { ...message, syncState: 'synced' });
+  if ((state[senderId] ?? []).some(m => m.messageId === message.messageId)) return state;
+  return upsertTimelineEntry(state, senderId, { ...message, syncState: 'synced' });
 }
 
 /**
@@ -58,10 +57,15 @@ export function applyDeliveryReceipt(
   const peerId = message.recipientId;
   const existing = state[peerId] ?? [];
   const index = existing.findIndex(m => m.messageId === message.messageId);
-  if (index === -1) return prependMessage(state, peerId, message);
+  if (index === -1) return upsertTimelineEntry(state, peerId, message);
   const next = [...existing];
-  next[index] = { ...next[index], ...message };
-  return { ...state, [peerId]: next };
+  next[index] = {
+    ...next[index],
+    ...message,
+    deliveredTo: [...new Set([...(next[index].deliveredTo ?? []), ...(message.deliveredTo ?? [])])],
+    readAt: message.readAt ?? next[index].readAt ?? null,
+  };
+  return upsertTimelineEntry({ ...state, [peerId]: next }, peerId, next[index]);
 }
 
 /**

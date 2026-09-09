@@ -36,6 +36,10 @@ export type ListMessagesOptions = {
   conversationId?: string;
   limit?: unknown;
   before?: string;
+  /** Tie-breaker used with `before` for stable pagination across timestamp ties. */
+  beforeMessageId?: string;
+  /** Internal API look-ahead reads may ask for one extra row to compute hasMore. */
+  withLookahead?: boolean;
 };
 
 export type SearchMessagesOptions = {
@@ -43,6 +47,10 @@ export type SearchMessagesOptions = {
   query?: unknown;
   limit?: unknown;
   before?: string;
+  /** Tie-breaker used with `before` for stable pagination across timestamp ties. */
+  beforeMessageId?: string;
+  /** Internal API look-ahead reads may ask for one extra row to compute hasMore. */
+  withLookahead?: boolean;
 };
 
 export type ListUserMessagesOptions = {
@@ -67,9 +75,15 @@ export type DeliveryReceiptInput = {
   conversationId?: string;
 };
 
+export type SaveMessageResult = {
+  message: StoredMessage;
+  inserted: boolean;
+};
+
 export type MessageStore = {
   type: 'memory' | 'postgres';
   saveMessage: (message: NewMessageInput) => Promise<StoredMessage>;
+  saveMessageWithStatus?: (message: NewMessageInput) => Promise<SaveMessageResult>;
   listMessages: (opts?: ListMessagesOptions) => Promise<StoredMessage[]>;
   getMessage: (conversationId: string, messageId: string) => Promise<StoredMessage | null>;
   searchMessages: (opts?: SearchMessagesOptions) => Promise<StoredMessage[]>;

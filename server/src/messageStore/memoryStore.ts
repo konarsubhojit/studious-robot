@@ -24,6 +24,20 @@ import type { MessageStore, StoredMessage } from './types.ts';
 
 export function createMemoryMessageStore(): MessageStore {
   const messages: StoredMessage[] = [];
+  const saveMessageWithStatus: MessageStore['saveMessageWithStatus'] = async (message) => {
+    const record = createMessageRecord(message);
+    // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
+    // mirroring the Postgres store's insert: a client replaying a send from its
+    // durable outbox must not create a second copy of the same message.
+    const existing = messages.find(
+      (candidate) =>
+        candidate.conversationId === record.conversationId &&
+        candidate.messageId === record.messageId
+    );
+    if (existing) return { message: { ...existing }, inserted: false };
+    messages.push(record);
+    return { message: { ...record }, inserted: true };
+  };
 
   return {
     type: 'memory',
@@ -31,25 +45,23 @@ export function createMemoryMessageStore(): MessageStore {
     async ready() {},
 
     async saveMessage(message) {
-      const record = createMessageRecord(message);
-      // Idempotent on the client-supplied `{ conversationId, messageId }` pair,
-      // mirroring the Postgres store's insert: a client replaying a send from its
-      // durable outbox must not create a second copy of the same message.
-      const existing = messages.find(
-        (candidate) =>
-          candidate.conversationId === record.conversationId &&
-          candidate.messageId === record.messageId
-      );
-      if (existing) return { ...existing };
-      messages.push(record);
-      return { ...record };
+      return (await saveMessageWithStatus(message)).message;
     },
 
-    async listMessages({ conversationId, limit, before } = {}) {
-      const cap = clampLimit(limit);
+    saveMessageWithStatus,
+
+    async listMessages({ conversationId, limit, before, beforeMessageId, withLookahead } = {}) {
+      const cap = withLookahead ? clampExportReadLimit(limit) : clampLimit(limit);
       return messages
         .filter((message) => message.conversationId === conversationId)
-        .filter((message) => (before ? message.createdAt < before : true))
+        .filter((message) =>
+          before
+            ? message.createdAt < before ||
+              (message.createdAt === before &&
+                beforeMessageId !== undefined &&
+                message.messageId < beforeMessageId)
+            : true
+        )
         .sort(byNewestFirst)
         .slice(0, cap)
         .map((message) => ({ ...message }));
@@ -64,13 +76,20 @@ export function createMemoryMessageStore(): MessageStore {
       return message ? { ...message } : null;
     },
 
-    async searchMessages({ userId, query, limit, before } = {}) {
+    async searchMessages({ userId, query, limit, before, beforeMessageId, withLookahead } = {}) {
       const term = normaliseSearchTerm(query);
       if (!term || !userId) return [];
-      const cap = clampLimit(limit);
+      const cap = withLookahead ? clampExportReadLimit(limit) : clampLimit(limit);
       return messages
         .filter((message) => message.senderId === userId || message.recipientId === userId)
-        .filter((message) => (before ? message.createdAt < before : true))
+        .filter((message) =>
+          before
+            ? message.createdAt < before ||
+              (message.createdAt === before &&
+                beforeMessageId !== undefined &&
+                message.messageId < beforeMessageId)
+            : true
+        )
         .filter((message) => bodyMatches(message, term))
         .sort(byNewestFirst)
         .slice(0, cap)

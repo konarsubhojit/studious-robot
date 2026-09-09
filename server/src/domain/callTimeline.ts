@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 import { calls as callsTable } from '../../db/schema.ts';
-import { deriveConversationId, MAX_MESSAGE_LIMIT } from '../messageStore.ts';
+import { deriveConversationId, MAX_MESSAGE_EXPORT_READ_LIMIT } from '../messageStore.ts';
 import { invalidateCallHistoryCache, persistCallRecord } from '../callPersistence.ts';
 import { describeError } from '../lib/errors.ts';
 import { callRecordFromRow } from './callHistory.ts';
@@ -47,7 +47,7 @@ export type CallRecord = import('../stores/contracts.ts').CallRecord;
  * by whatever happened to survive in memory, which is what made deep paging
  * over a call-heavy conversation skip entries.
  */
-const MAX_TIMELINE_CALLS = MAX_MESSAGE_LIMIT;
+const MAX_TIMELINE_CALLS = MAX_MESSAGE_EXPORT_READ_LIMIT;
 
 /**
  * Chat-list scan bound.  The list only ever shows a peer's *newest* activity,
@@ -101,12 +101,17 @@ function toCallTimelineEntry(call: CallRecord, userId: string): {
  * The in-memory fallback for `readCallsBetween`; see the note above.
  *
  * @param before - Optional ISO cursor; only calls older than it are returned.
+ * @param beforeCallId - Tie-breaker for cursors that point at a call.
+ * @param includeCallsAtBefore - Whether all calls sharing `before` are older
+ *   than the mixed-timeline cursor (true when the cursor points at a message).
  */
 function listCallsBetween(
   state: ServerState,
   userId: string,
   peerId: string,
   before?: string | null,
+  beforeCallId?: string | null,
+  includeCallsAtBefore = false,
 ): CallRecord[] {
   const calls: CallRecord[] = [];
   for (const call of state.calls.values()) {
@@ -114,10 +119,20 @@ function listCallsBetween(
       (call.callerId === userId && call.calleeId === peerId) ||
       (call.callerId === peerId && call.calleeId === userId);
     if (!isPair) continue;
-    if (before && !(call.createdAt < before)) continue;
+    if (before) {
+      const isBefore =
+        call.createdAt < before ||
+        (call.createdAt === before &&
+          (includeCallsAtBefore || (beforeCallId ? call.callId < beforeCallId : false)));
+      if (!isBefore) continue;
+    }
     calls.push(call);
   }
-  return calls.sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1));
+  return calls.sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+    if (a.callId === b.callId) return 0;
+    return a.callId < b.callId ? 1 : -1;
+  });
 }
 
 /**
@@ -131,8 +146,12 @@ async function readCallsBetween(
   userId: string,
   peerId: string,
   before?: string | null,
+  beforeCallId?: string | null,
+  includeCallsAtBefore = false,
 ): Promise<CallRecord[]> {
-  if (!state.db) return listCallsBetween(state, userId, peerId, before);
+  if (!state.db) {
+    return listCallsBetween(state, userId, peerId, before, beforeCallId, includeCallsAtBefore);
+  }
   try {
     const pair = or(
       and(eq(callsTable.callerId, userId), eq(callsTable.calleeId, peerId)),
@@ -142,13 +161,27 @@ async function readCallsBetween(
     const rows = await state.db
       .select()
       .from(callsTable)
-      .where(cursor ? and(pair, lt(callsTable.createdAt, cursor)) : pair)
+      .where(
+        cursor
+          ? and(
+              pair,
+              or(
+                lt(callsTable.createdAt, cursor),
+                includeCallsAtBefore
+                  ? eq(callsTable.createdAt, cursor)
+                  : beforeCallId
+                    ? and(eq(callsTable.createdAt, cursor), lt(callsTable.callId, beforeCallId))
+                    : undefined,
+              ),
+            )
+          : pair
+      )
       .orderBy(desc(callsTable.createdAt), desc(callsTable.callId))
       .limit(MAX_TIMELINE_CALLS);
     return (rows ?? []).map(callRecordFromRow);
   } catch (error) {
     console.error(`[calls] conversation call lookup failed, serving resident calls: ${describeError(error)}`);
-    return listCallsBetween(state, userId, peerId, before);
+    return listCallsBetween(state, userId, peerId, before, beforeCallId, includeCallsAtBefore);
   }
 }
 
@@ -236,12 +269,18 @@ function mergeTimeline(messages: Array<Record<string, any>>, callEntries: Array<
   ];
   entries.sort((a, b) => {
     if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
-    const aId = a.messageId ?? a.callId ?? '';
-    const bId = b.messageId ?? b.callId ?? '';
+    const aId = timelineSortId(a);
+    const bId = timelineSortId(b);
     if (aId === bId) return 0;
     return aId < bId ? 1 : -1;
   });
   return entries.slice(0, limit);
+}
+
+function timelineSortId(entry: Record<string, any>): string {
+  return entry?.type === 'call'
+    ? `call:${entry.callId ?? ''}`
+    : `message:${entry.messageId ?? ''}`;
 }
 
 /**

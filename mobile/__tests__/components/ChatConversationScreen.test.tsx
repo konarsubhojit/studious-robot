@@ -826,6 +826,25 @@ describe('ChatConversationScreen', () => {
     expect(findByTestId(tree, 'chat-message-list').props.keyboardShouldPersistTaps).toBe('handled');
   });
 
+  test('message history pull-to-refresh fetches the newest page', () => {
+    const onRefreshMessages = jest.fn();
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+      onRefreshMessages,
+      isRefreshingMessages: true,
+    });
+    const refreshControl = findByTestId(tree, 'chat-message-list').props.refreshControl;
+    expect(refreshControl.props.refreshing).toBe(true);
+    act(() => {
+      refreshControl.props.onRefresh();
+    });
+    expect(onRefreshMessages).toHaveBeenCalled();
+  });
+
   test('auto-scrolls to the newest message when it changes (new message sent/received)', () => {
     const tree = render({
       peerId: 'user-bob',
@@ -851,6 +870,48 @@ describe('ChatConversationScreen', () => {
           currentUserId="user-alice"
         />,
       );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  test('retries latest scroll after delayed content-size changes while near bottom', () => {
+    const tree = render({
+      peerId: 'user-bob',
+      messages: [makeMessage({ messageId: 'm1' })],
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    const flatList = tree.root.findByType(FlatList).instance;
+    const scrollSpy = jest.spyOn(flatList, 'scrollToEnd');
+    const list = findByTestId(tree, 'chat-message-list');
+
+    act(() => {
+      tree.update(
+        <ChatConversationScreen
+          peerId="user-bob"
+          messages={[makeMessage({ messageId: 'm2' }), makeMessage({ messageId: 'm1' })]}
+          onSendMessage={jest.fn()}
+          onBack={jest.fn()}
+          currentUserId="user-alice"
+        />,
+      );
+    });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    scrollSpy.mockClear();
+
+    act(() => {
+      list.props.onContentSizeChange();
     });
     act(() => {
       jest.runOnlyPendingTimers();

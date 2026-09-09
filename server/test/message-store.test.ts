@@ -153,6 +153,26 @@ test('listMessages honours the `before` cursor', async () => {
     limit: 2,
     before: firstPage[firstPage.length - 1].createdAt,
   });
+
+  test('listMessages accepts a message-id cursor tie-breaker', async () => {
+    const store = createMemoryMessageStore();
+    const conversationId = deriveConversationId('alice', 'bob');
+    const createdAt = '2024-01-01T00:00:00.000Z';
+    await store.saveMessage({ conversationId, messageId: 'a', senderId: 'alice', recipientId: 'bob', body: 'a', createdAt });
+    await store.saveMessage({ conversationId, messageId: 'b', senderId: 'alice', recipientId: 'bob', body: 'b', createdAt });
+    await store.saveMessage({ conversationId, messageId: 'c', senderId: 'alice', recipientId: 'bob', body: 'c', createdAt });
+
+    const firstPage = await store.listMessages({ conversationId, limit: 2 });
+    assert.deepEqual(firstPage.map((m) => m.messageId), ['c', 'b']);
+
+    const secondPage = await store.listMessages({
+      conversationId,
+      limit: 2,
+      before: createdAt,
+      beforeMessageId: 'b',
+    });
+    assert.deepEqual(secondPage.map((m) => m.messageId), ['a']);
+  });
   assert.deepEqual(
     secondPage.map((m) => m.body),
     ['message 2', 'message 1']
@@ -205,6 +225,33 @@ test('searchMessages honours the limit and the `before` cursor', async () => {
     query: 'message',
     limit: 2,
     before: firstPage[firstPage.length - 1].createdAt,
+  });
+
+  test('searchMessages accepts a message-id cursor tie-breaker', async () => {
+    const store = createMemoryMessageStore();
+    const conversationId = deriveConversationId('alice', 'bob');
+    const createdAt = '2024-01-01T00:00:00.000Z';
+    for (const messageId of ['a', 'b', 'c']) {
+      await store.saveMessage({
+        conversationId,
+        messageId,
+        senderId: 'alice',
+        recipientId: 'bob',
+        body: `needle ${messageId}`,
+        createdAt,
+      });
+    }
+
+    const firstPage = await store.searchMessages({ userId: 'alice', query: 'needle', limit: 2 });
+    assert.deepEqual(firstPage.map((m) => m.messageId), ['c', 'b']);
+    const secondPage = await store.searchMessages({
+      userId: 'alice',
+      query: 'needle',
+      limit: 2,
+      before: createdAt,
+      beforeMessageId: 'b',
+    });
+    assert.deepEqual(secondPage.map((m) => m.messageId), ['a']);
   });
   assert.deepEqual(
     secondPage.map((m) => m.body),

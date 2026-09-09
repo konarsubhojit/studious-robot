@@ -57,7 +57,7 @@ export function patchMessage(
     changed = true;
     return update(entry);
   });
-  return changed ? { ...state, [peerId]: next } : state;
+  return changed ? { ...state, [peerId]: dedupeAndSort(next) } : state;
 }
 
 /**
@@ -73,11 +73,12 @@ export function patchMessageEverywhere(
   let changed = false;
   const next: MessagesByPeer = {};
   Object.entries(state).forEach(([peerId, messages]) => {
-    next[peerId] = messages.map(entry => {
+    const updated = messages.map(entry => {
       if (entry.messageId !== messageId) return entry;
       changed = true;
       return update(entry);
     });
+    next[peerId] = changed ? dedupeAndSort(updated) : updated;
   });
   return changed ? next : state;
 }
@@ -104,7 +105,7 @@ export function prependMessage(
   peerId: string,
   message: ChatMessage,
 ): MessagesByPeer {
-  return { ...state, [peerId]: [message, ...(state[peerId] ?? [])] };
+  return { ...state, [peerId]: dedupeAndSort([message, ...(state[peerId] ?? [])]) };
 }
 
 /**
@@ -123,8 +124,22 @@ export function upsertTimelineEntry(
   const entryId = timelineEntryId(entry);
   if (!entryId) return state;
   const existing = state[peerId] ?? [];
-  const next = [entry, ...existing.filter(item => timelineEntryId(item) !== entryId)].sort(byNewestFirst);
+  const next = dedupeAndSort([entry, ...existing.filter(item => timelineEntryId(item) !== entryId)]);
   return { ...state, [peerId]: next };
+}
+
+export function dedupeAndSort(entries: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+  const unidentified: ChatMessage[] = [];
+  for (const entry of entries) {
+    const id = timelineEntryId(entry);
+    if (!id) {
+      unidentified.push(entry);
+      continue;
+    }
+    byId.set(id, byId.has(id) ? { ...(byId.get(id) ?? {}), ...entry } : entry);
+  }
+  return [...byId.values(), ...unidentified].sort(byNewestFirst);
 }
 
 /**
@@ -172,8 +187,8 @@ export function mergeHistoryPage(
       const time = entryTime(entry);
       return time === null || time > window.newest || time < window.oldest;
     });
-    return kept.length ? [...kept, ...page].sort(byNewestFirst) : page;
+    return dedupeAndSort(kept.length ? [...kept, ...page] : page);
   }
   const existingIds = new Set(held.map(timelineEntryId));
-  return [...held, ...page.filter(entry => !existingIds.has(timelineEntryId(entry)))].sort(byNewestFirst);
+  return dedupeAndSort([...held, ...page.filter(entry => !existingIds.has(timelineEntryId(entry)))]);
 }

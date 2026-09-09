@@ -78,6 +78,14 @@ function emitWithAck(socket: import('socket.io-client').Socket, event: string, p
 const VERSION = 1;
 const METRICS_TOKEN = 'test-metrics-token';
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 // ─── Cache hits ───────────────────────────────────────────────────────────────
 
 test('GET /conversations is served from cache on a repeat request', async (t) => {
@@ -153,6 +161,51 @@ test('the merged timeline is served from the same message cache', async (t) => {
     version: VERSION,
     recipientId: 'cache-bob',
     body: 'hello',
+  });
+
+  test('an in-flight first-page fill cannot survive a write invalidation', async (t) => {
+    const inner = createMemoryMessageStore();
+    const delayed = createDeferred<void>();
+    let delayFirstList = true;
+    const store = {
+      ...inner,
+      async listMessages(query: any) {
+        const snapshot = await inner.listMessages(query);
+        if (delayFirstList) {
+          delayFirstList = false;
+          await delayed.promise;
+        }
+        return snapshot;
+      },
+    };
+    const { url, teardown } = await startServer({ messageStore: store });
+    t.after(teardown);
+
+    const aliceSession = await createSession(url, 'cache-race-alice');
+    await createSession(url, 'cache-race-bob');
+    const alice = await connectSocket(url, aliceSession);
+    t.after(() => alice.disconnect());
+
+    const staleFill = getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const ack = await emitWithAck(alice, 'message.send', {
+      version: VERSION,
+      recipientId: 'cache-race-bob',
+      body: 'committed while fetch was in flight',
+    });
+    assert.equal(ack.ok, true);
+
+    delayed.resolve();
+    const stale = await staleFill;
+    assert.equal(stale.status, 200);
+    assert.deepEqual(stale.body.messages, []);
+
+    const fresh = await getJson(url, '/messages?peerId=cache-race-bob', aliceSession);
+    assert.equal(fresh.status, 200);
+    assert.deepEqual(fresh.body.messages.map((message: any) => message.body), [
+      'committed while fetch was in flight',
+    ]);
   });
 
   // The app always asks for the merged timeline, so this is the only shape of

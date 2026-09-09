@@ -206,7 +206,7 @@ test('message.send delivers to the recipient and acks the sender', async (t) => 
   assert.equal(confirmation.messageId, ack.message.messageId);
 });
 
-test('message.send acks after fan-out without waiting for persistence', async (t) => {
+test('message.send waits for persistence before ack and recipient fanout', async (t) => {
   const deferred = createDeferred<void>();
   const saved: any[] = [];
   const messageStore = asMessageStore({
@@ -250,24 +250,28 @@ test('message.send acks after fan-out without waiting for persistence', async (t
     bob.disconnect();
   });
 
-  const received = new Promise<any>((resolve) => bob.once('message.received', resolve));
+  let received = false;
+  bob.once('message.received', () => {
+    received = true;
+  });
   const ackPromise = emitWithAck(alice, 'message.send', {
     version: VERSION,
     recipientId: 'ack-bob',
     body: 'fast ack',
   });
 
-  const envelope = await received;
-  const ack = await withCeiling(ackPromise, 'the send ack (it must not wait for persistence)');
-  assert.equal((ack as any).ok, true);
-  assert.equal((ack as any).message.messageId, envelope.message.messageId);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(received, false, 'recipient fanout must wait for a committed save');
   assert.equal(saved.length, 0, 'saveMessage has not completed when the ack is emitted');
 
   deferred.resolve(undefined);
-  await waitForCondition(() => saved.length === 1, 'the message to be persisted');
+  const ack = await withCeiling(ackPromise, 'the send ack after persistence');
+  assert.equal((ack as any).ok, true);
+  await waitForCondition(() => received, 'recipient fanout after persistence');
+  assert.equal(saved.length, 1, 'the message was persisted before success');
 });
 
-test('message.send surfaces asynchronous persistence failures in telemetry', async (t) => {
+test('message.send reports persistence failures as retryable ack errors', async (t) => {
   const messageStore = asMessageStore({
     type: 'memory' as const,
     async saveMessage() {
@@ -299,21 +303,106 @@ test('message.send surfaces asynchronous persistence failures in telemetry', asy
   t.after(teardown);
 
   const aliceSession = await createSession(url, 'persist-alice');
-  await createSession(url, 'persist-bob');
+  const bobSession = await createSession(url, 'persist-bob');
   const alice = await connectSocket(url, aliceSession);
-  t.after(() => alice.disconnect());
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  let received = false;
+  bob.once('message.received', () => {
+    received = true;
+  });
 
   const ack = await emitWithAck(alice, 'message.send', {
     version: VERSION,
     recipientId: 'persist-bob',
-    body: 'accepted despite store outage',
+    body: 'not accepted during store outage',
   });
-  assert.equal(ack.ok, true);
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'internal_error');
+  assert.equal(received, false, 'failed persistence must not fan out to the recipient');
 
   await waitForCondition(
     () => getMetrics().counters.message_persist_errors === 1,
     'the persistence failure to be counted in telemetry'
   );
+});
+
+test('message.send retry with the same id returns the stored message without duplicate fanout', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'retry-alice');
+  const bobSession = await createSession(url, 'retry-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  let deliveries = 0;
+  bob.on('message.received', () => {
+    deliveries += 1;
+  });
+
+  const payload = {
+    version: VERSION,
+    recipientId: 'retry-bob',
+    body: 'retry-safe',
+    messageId: 'stable-client-id',
+  };
+  const first = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(first.ok, true);
+  const replay = await emitWithAck(alice, 'message.send', payload);
+  assert.equal(replay.ok, true);
+  assert.equal(replay.message.messageId, first.message.messageId);
+  assert.equal(replay.message.createdAt, first.message.createdAt);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(deliveries, 1, 'a replayed ack must not deliver the same message twice');
+});
+
+test('message.send rejects duplicate ids reused by another sender or body', async (t) => {
+  const { url, teardown } = await startServer();
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'owner-alice');
+  const bobSession = await createSession(url, 'owner-bob');
+  const alice = await connectSocket(url, aliceSession);
+  const bob = await connectSocket(url, bobSession);
+  t.after(() => {
+    alice.disconnect();
+    bob.disconnect();
+  });
+
+  const first = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'owner-bob',
+    body: 'original',
+    messageId: 'owned-id',
+  });
+  assert.equal(first.ok, true);
+
+  const changedBody = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'owner-bob',
+    body: 'changed',
+    messageId: 'owned-id',
+  });
+  assert.equal(changedBody.ok, false);
+  assert.equal(changedBody.error.code, 'internal_error');
+
+  const otherSender = await emitWithAck(bob, 'message.send', {
+    version: VERSION,
+    recipientId: 'owner-alice',
+    body: 'original',
+    messageId: 'owned-id',
+  });
+  assert.equal(otherSender.ok, false);
+  assert.equal(otherSender.error.code, 'internal_error');
 });
 
 test('message.send records a delivery receipt when the recipient is connected', async (t) => {
@@ -423,10 +512,10 @@ test('message.send surfaces a messageId already used by another message after ac
     messageId: 'client-uuid-2',
   });
 
-  assert.equal(ack.ok, true);
-  assert.equal(ack.message.messageId, 'client-uuid-2');
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'internal_error');
   await waitForCondition(
-    () => getMetrics().counters.message_persist_errors === 1,
+    () => getMetrics().counters.message_persist_errors >= 1,
     'the messageId collision to be counted in telemetry'
   );
 
