@@ -82,6 +82,7 @@ import {
   ICE_TRANSPORT_POLICIES,
   getIceServersForCall,
   getTurnServerEndpoints,
+  prefetchIceServersForCall,
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
 } from '../webrtcConfig';
@@ -1627,6 +1628,10 @@ export default function useCallFlow({
       (sessionId: string) => {
       disconnectSocket();
 
+      // Begin fetching TURN credentials as soon as authentication completes,
+      // while the socket connects and the incoming-call UI is shown. A peer
+      // connection that is created meanwhile shares this in-flight request.
+      prefetchIceServersForCall({ signalingUrl, sessionId });
       logInfo('[CallFlow] Connecting socket', { signalingUrl });
       // The correlation id travels on the handshake so the server can stamp it
       // on its own signaling logs, making a failed call traceable end to end.
@@ -2149,6 +2154,9 @@ export default function useCallFlow({
 
       try {
         const sessionId = await createOrGetSession();
+        // A push cold start does not connect its socket until after this lookup,
+        // so warm ICE credentials here rather than delaying until the answer.
+        prefetchIceServersForCall({ signalingUrl, sessionId });
 
         const response = await fetch(buildCallLookupUrl({ signalingUrl, callId }), {
           headers: bearerAuthHeaders(sessionId),

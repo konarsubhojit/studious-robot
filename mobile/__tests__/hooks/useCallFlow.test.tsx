@@ -150,6 +150,7 @@ jest.mock('../../src/webrtcConfig', () => ({
   ICE_TRANSPORT_POLICIES: { ALL: 'all', RELAY: 'relay' },
   getIceServers: jest.fn(() => []),
   getIceServersForCall: jest.fn(async () => []),
+  prefetchIceServersForCall: jest.fn(),
   // The real parser: the point of these tests is that the TURN summary the
   // call logs matches the list handed to RTCPeerConnection.
   getTurnServerEndpoints: jest.requireActual('../../src/webrtcConfig').getTurnServerEndpoints,
@@ -1407,6 +1408,16 @@ describe('useCallFlow incoming-call ringing', () => {
 
     const { displayIncomingCall } = require('../../src/callKeep');
     expect(displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  test('prefetches ICE servers when the authenticated socket is created', async () => {
+    await renderWithSocket();
+
+    const { prefetchIceServersForCall } = require('../../src/webrtcConfig');
+    expect(prefetchIceServersForCall).toHaveBeenCalledWith({
+      signalingUrl: 'http://localhost:4173',
+      sessionId: 'sess-ring',
+    });
   });
 
   test('starts fallback ringtone when CallKeep returns false', async () => {

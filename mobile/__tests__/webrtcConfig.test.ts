@@ -7,6 +7,7 @@ import {
   getTurnDiagnostics,
   getTurnServerEndpoints,
   normalizeIceTransportPolicy,
+  prefetchIceServersForCall,
   resetIceServersForCallCache,
 } from '../src/webrtcConfig';
 import { logError, logInfo, logVerbose, logWarn } from '../src/appLogger';
@@ -104,6 +105,30 @@ describe('getIceServers', () => {
       expect(fetchImpl).toHaveBeenCalledWith('https://signal.example/turn-credentials', {
         headers: { Authorization: 'Bearer ' + 'session-id' },
       });
+    });
+
+    test('shares a prefetch in flight with peer-connection setup', async () => {
+      let resolveFetch: ((value: ReturnType<typeof response>) => void) | undefined;
+      const fetchImpl = jest.fn(
+        () => new Promise<ReturnType<typeof response>>(resolve => { resolveFetch = resolve; }),
+      );
+      const request = {
+        signalingUrl: 'https://signal.example',
+        sessionId: 'session-id',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      };
+
+      prefetchIceServersForCall(request);
+      const iceServers = getIceServersForCall(request);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      resolveFetch?.(
+        response([{ urls: ['turn:cf.example'], username: 'short', credential: 'lived' }],
+          new Date(Date.now() + 5 * 60 * 1000).toISOString()),
+      );
+      await expect(iceServers).resolves.toEqual([
+        { urls: ['turn:cf.example'], username: 'short', credential: 'lived' },
+      ]);
     });
 
     test('refreshes credentials near expiry', async () => {
