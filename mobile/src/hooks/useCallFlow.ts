@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { io } from 'socket.io-client';
 import {
@@ -208,6 +208,15 @@ export type PeerConnection = RTCPeerConnection & {
   onconnectionstatechange: ((event: unknown) => void) | null;
 };
 export type WebrtcMediaStream = MediaStream;
+
+const NO_LINK_CONNECTION_QUALITY = { bars: 0, label: 'No link' };
+
+function areConnectionQualitiesEqual(
+  left: { bars: number; label: string; },
+  right: { bars: number; label: string; },
+) {
+  return left.bars === right.bars && left.label === right.label;
+}
 
 function callTimelineStatus(call: CallRecord): string {
   return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
@@ -573,10 +582,7 @@ export default function useCallFlow({
       selected: null,
     } as { available: any[], selected: any }),
   );
-  const [connectionQuality, setConnectionQuality] = useState({
-    bars: 0,
-    label: 'No link',
-  });
+  const [connectionQuality, setConnectionQuality] = useState(NO_LINK_CONNECTION_QUALITY);
   const [selectedCandidatePair, setSelectedCandidatePair] = useState(
     (null as IceCandidatePairSummary | null),
   );
@@ -1035,7 +1041,11 @@ export default function useCallFlow({
       peerConnectionRef.current = null;
     }
     setRemoteStream(null);
-    setConnectionQuality({ bars: 0, label: 'No link' });
+    setConnectionQuality(current =>
+      areConnectionQualitiesEqual(current, NO_LINK_CONNECTION_QUALITY)
+        ? current
+        : NO_LINK_CONNECTION_QUALITY,
+    );
     connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
@@ -3513,7 +3523,11 @@ export default function useCallFlow({
 
   useEffect(() => {
     if (!isInCall) {
-      setConnectionQuality({ bars: 0, label: 'No link' });
+      setConnectionQuality(current =>
+        areConnectionQualitiesEqual(current, NO_LINK_CONNECTION_QUALITY)
+          ? current
+          : NO_LINK_CONNECTION_QUALITY,
+      );
       qualitySmootherRef.current = null;
       connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
       selectedCandidatePairRef.current = null;
@@ -3569,7 +3583,9 @@ export default function useCallFlow({
           sampledQuality,
         );
         const nextQuality = qualitySmootherRef.current.reported;
-        setConnectionQuality(nextQuality);
+        setConnectionQuality(current =>
+          areConnectionQualitiesEqual(current, nextQuality) ? current : nextQuality,
+        );
 
         // Surface a status warning when packet loss is severe enough to impair
         // the call.  Only update status on the downgrade crossing so the message
@@ -3728,145 +3744,292 @@ export default function useCallFlow({
 
   // ─── Public interface ─────────────────────────────────────────────────────
 
-  return {
-    // Identity / connection config
-    userId: identity.userId,
-    setUserId: identity.setUserId,
-    editUserId: identity.editUserId,
-    // Surfaced so Settings can name the account behind the username. Read
-    // straight off the Firebase user rather than persisted, because it is only
-    // ever displayed and must not outlive the session it came from.
-    accountEmail: identity.authUser?.email ?? null,
-    accountProviderId: identity.authUser?.providerData?.[0]?.providerId ?? null,
-    isRegistered,
-    isLoadingIdentity: identity.isLoadingIdentity,
-    isAuthenticating: identity.isAuthenticating,
-    canUseGoogleSignIn: identity.canUseGoogleSignIn,
-    canUseMicrosoftSignIn: identity.canUseMicrosoftSignIn,
-    registerUser: identity.registerUser,
-    unregisterUser,
-    updateUserId: identity.updateUserId,
-    calleeId,
-    setCalleeId,
-    signalingUrl,
-    setSignalingUrl,
-    authedFetch,
+  const callFlowState = useMemo(
+    () => ({
+      // Identity / connection config
+      userId: identity.userId,
+      // Surfaced so Settings can name the account behind the username. Read
+      // straight off the Firebase user rather than persisted, because it is only
+      // ever displayed and must not outlive the session it came from.
+      accountEmail: identity.authUser?.email ?? null,
+      accountProviderId: identity.authUser?.providerData?.[0]?.providerId ?? null,
+      isRegistered,
+      isLoadingIdentity: identity.isLoadingIdentity,
+      isAuthenticating: identity.isAuthenticating,
+      canUseGoogleSignIn: identity.canUseGoogleSignIn,
+      canUseMicrosoftSignIn: identity.canUseMicrosoftSignIn,
+      calleeId,
+      signalingUrl,
 
-    // Call lifecycle
-    callPhase,
-    activeCall,
-    incomingCall,
-    callElsewhere,
-    isPlacingCall,
+      // Call lifecycle
+      callPhase,
+      activeCall,
+      incomingCall,
+      callElsewhere,
+      isPlacingCall,
 
-    // UI status
-    status,
-    updateStatus,
-    callSummary,
-    calleePresence: presenceSearch.calleePresence,
-    checkPresence,
-    searchUsers: presenceSearch.searchUsers,
-    isServerUnreachable: presenceSearch.isServerUnreachable,
-    retryPresenceConnect,
+      // UI status
+      status,
+      callSummary,
+      calleePresence: presenceSearch.calleePresence,
+      isServerUnreachable: presenceSearch.isServerUnreachable,
 
-    // Blocklist
-    blockedUsers: blocks.blockedUsers,
-    isUserBlocked: blocks.isUserBlocked,
-    fetchBlocks,
-    blockPeer,
-    unblockPeer,
+      // Blocklist
+      blockedUsers: blocks.blockedUsers,
 
-    // Call history
-    callHistory: callHistory.callHistory,
-    missedCallCount: callHistory.missedCallCount,
-    markMissedCallsRead: callHistory.markMissedCallsRead,
-    fetchCallHistory: callHistory.fetchCallHistory,
-    setOutgoingCallMediaType,
+      // Call history
+      callHistory: callHistory.callHistory,
+      missedCallCount: callHistory.missedCallCount,
 
-    // Chat
-    conversations: messaging.conversations,
-    messagesByPeer: messaging.messagesByPeer,
-    drafts: messaging.drafts,
-    saveDraft: messaging.saveDraft,
-    clearDraft: messaging.clearDraft,
-    unreadTotal: messaging.unreadTotal,
-    activeChatPeerId,
-    setActiveChatPeerId: messaging.setActiveChatPeerId,
-    fetchConversations,
-    fetchMessagesForPeer: messaging.fetchMessagesForPeer,
-    searchMessages: messaging.searchMessages,
-    recordCallActivity: messaging.recordCallActivity,
-    sendMessage: messaging.sendMessage,
-    retryMessage: messaging.retryMessage,
-    retryAttachmentUpload: attachments.retryUpload,
-    discardMessage: messaging.discardMessage,
-    deleteMessage: messaging.deleteMessage,
-    reactToMessage: messaging.reactToMessage,
-    drainOutbox: messaging.drainOutbox,
-    isChatOffline: messaging.isOffline,
-    pendingSendCount: messaging.pendingSendCount,
-    markConversationRead,
-    typingByPeer: messaging.typingByPeer,
-    sendTypingIndicator: messaging.sendTypingIndicator,
-    isRemoteScreenSharing,
+      // Chat
+      conversations: messaging.conversations,
+      messagesByPeer: messaging.messagesByPeer,
+      drafts: messaging.drafts,
+      unreadTotal: messaging.unreadTotal,
+      activeChatPeerId,
+      isChatOffline: messaging.isOffline,
+      pendingSendCount: messaging.pendingSendCount,
+      typingByPeer: messaging.typingByPeer,
+      isRemoteScreenSharing,
 
-    // Attachments (photo / camera / file / voice note)
-    pickAndSendAttachment: attachments.pickAndSend,
-    startRecordingVoiceNote: attachments.startRecordingVoiceNote,
-    stopRecordingVoiceNoteAndSend: attachments.stopRecordingVoiceNoteAndSend,
-    cancelRecordingVoiceNote: attachments.cancelRecordingVoiceNote,
-    cancelAttachmentUpload: attachments.cancelUpload,
-    isUploadingAttachment: attachments.isUploading,
-    attachmentUploadProgress: attachments.uploadProgress,
-    isRecordingVoiceNote: attachments.isRecordingVoiceNote,
-    attachmentsAvailable: attachments.attachmentsAvailable,
-    isVoiceNoteSupported: attachments.isVoiceNoteSupported,
+      // Attachments (photo / camera / file / voice note)
+      isUploadingAttachment: attachments.isUploading,
+      attachmentUploadProgress: attachments.uploadProgress,
+      isRecordingVoiceNote: attachments.isRecordingVoiceNote,
+      attachmentsAvailable: attachments.attachmentsAvailable,
+      isVoiceNoteSupported: attachments.isVoiceNoteSupported,
 
-    // In-call media state
-    localStream,
-    remoteStream,
-    isInCall,
-    isMuted,
-    isVideoEnabled,
-    isRemoteVideoEnabled,
-    isSpeakerEnabled,
-    isScreenSharing,
-    isTogglingScreenShare,
-    isScreenAudioShared,
-    isScreenAudioEnabled,
-    screenShareDelivery,
-    isScreenShareSupported,
-    isCompactView,
-    isLocalPrimary,
-    isFrontCamera,
-    callConnectedAtMs,
-    audioDevices,
-    connectionQuality,
-    selectedCandidatePair,
-    isReconnecting,
-    recoveryStatus,
-    isConnectionLost,
-    callDelivery,
-    iceTransportPolicy: activeIceTransportPolicy,
+      // In-call media state
+      localStream,
+      remoteStream,
+      isInCall,
+      isMuted,
+      isVideoEnabled,
+      isRemoteVideoEnabled,
+      isSpeakerEnabled,
+      isScreenSharing,
+      isTogglingScreenShare,
+      isScreenAudioShared,
+      isScreenAudioEnabled,
+      screenShareDelivery,
+      isScreenShareSupported,
+      isCompactView,
+      isLocalPrimary,
+      isFrontCamera,
+      callConnectedAtMs,
+      audioDevices,
+      connectionQuality,
+      selectedCandidatePair,
+      isReconnecting,
+      recoveryStatus,
+      isConnectionLost,
+      callDelivery,
+      iceTransportPolicy: activeIceTransportPolicy,
+    }),
+    [
+      activeCall,
+      activeChatPeerId,
+      activeIceTransportPolicy,
+      attachments.attachmentsAvailable,
+      attachments.isRecordingVoiceNote,
+      attachments.isUploading,
+      attachments.isVoiceNoteSupported,
+      attachments.uploadProgress,
+      audioDevices,
+      blocks.blockedUsers,
+      callConnectedAtMs,
+      callDelivery,
+      callElsewhere,
+      callHistory.callHistory,
+      callHistory.missedCallCount,
+      callPhase,
+      callSummary,
+      calleeId,
+      connectionQuality,
+      identity.authUser?.email,
+      identity.authUser?.providerData,
+      identity.canUseGoogleSignIn,
+      identity.canUseMicrosoftSignIn,
+      identity.isAuthenticating,
+      identity.isLoadingIdentity,
+      identity.userId,
+      incomingCall,
+      isCompactView,
+      isConnectionLost,
+      isFrontCamera,
+      isInCall,
+      isLocalPrimary,
+      isMuted,
+      isPlacingCall,
+      isReconnecting,
+      isRegistered,
+      isRemoteScreenSharing,
+      isRemoteVideoEnabled,
+      isScreenAudioEnabled,
+      isScreenAudioShared,
+      isScreenShareSupported,
+      isScreenSharing,
+      isSpeakerEnabled,
+      isTogglingScreenShare,
+      isVideoEnabled,
+      localStream,
+      messaging.conversations,
+      messaging.drafts,
+      messaging.messagesByPeer,
+      messaging.isOffline,
+      messaging.pendingSendCount,
+      messaging.typingByPeer,
+      messaging.unreadTotal,
+      presenceSearch.calleePresence,
+      presenceSearch.isServerUnreachable,
+      recoveryStatus,
+      remoteStream,
+      screenShareDelivery,
+      selectedCandidatePair,
+      signalingUrl,
+      status,
+    ],
+  );
 
-    // Call actions
-    placeCall,
-    cancelOutgoingCall,
-    acceptIncomingCall,
-    declineIncomingCall,
-    handleEndCall,
-    startLocalPreview,
-    rehydrateCallFromPush,
+  const callFlowActions = useMemo(
+    () => ({
+      // Identity / connection config
+      setUserId: identity.setUserId,
+      editUserId: identity.editUserId,
+      registerUser: identity.registerUser,
+      unregisterUser,
+      updateUserId: identity.updateUserId,
+      setCalleeId,
+      setSignalingUrl,
+      authedFetch,
 
-    // In-call controls (the interface `CallScreen` renders against)
-    handleMuteToggle,
-    handleVideoToggle,
-    handleScreenShareToggle,
-    handleScreenAudioToggle,
-    handleCameraSwitch,
-    handleSwapStreams,
-    handleRetryReconnect,
-    chooseAudioOutput,
-    dismissCallSummary,
-  };
+      // UI status
+      updateStatus,
+      checkPresence,
+      searchUsers: presenceSearch.searchUsers,
+      retryPresenceConnect,
+
+      // Blocklist
+      isUserBlocked: blocks.isUserBlocked,
+      fetchBlocks,
+      blockPeer,
+      unblockPeer,
+
+      // Call history
+      markMissedCallsRead: callHistory.markMissedCallsRead,
+      fetchCallHistory: callHistory.fetchCallHistory,
+      setOutgoingCallMediaType,
+
+      // Chat
+      saveDraft: messaging.saveDraft,
+      clearDraft: messaging.clearDraft,
+      setActiveChatPeerId: messaging.setActiveChatPeerId,
+      fetchConversations,
+      fetchMessagesForPeer: messaging.fetchMessagesForPeer,
+      searchMessages: messaging.searchMessages,
+      recordCallActivity: messaging.recordCallActivity,
+      sendMessage: messaging.sendMessage,
+      retryMessage: messaging.retryMessage,
+      retryAttachmentUpload: attachments.retryUpload,
+      discardMessage: messaging.discardMessage,
+      deleteMessage: messaging.deleteMessage,
+      reactToMessage: messaging.reactToMessage,
+      drainOutbox: messaging.drainOutbox,
+      markConversationRead,
+      sendTypingIndicator: messaging.sendTypingIndicator,
+
+      // Attachments (photo / camera / file / voice note)
+      pickAndSendAttachment: attachments.pickAndSend,
+      startRecordingVoiceNote: attachments.startRecordingVoiceNote,
+      stopRecordingVoiceNoteAndSend: attachments.stopRecordingVoiceNoteAndSend,
+      cancelRecordingVoiceNote: attachments.cancelRecordingVoiceNote,
+      cancelAttachmentUpload: attachments.cancelUpload,
+
+      // Call actions
+      placeCall,
+      cancelOutgoingCall,
+      acceptIncomingCall,
+      declineIncomingCall,
+      handleEndCall,
+      startLocalPreview,
+      rehydrateCallFromPush,
+
+      // In-call controls (the interface `CallScreen` renders against)
+      handleMuteToggle,
+      handleVideoToggle,
+      handleScreenShareToggle,
+      handleScreenAudioToggle,
+      handleCameraSwitch,
+      handleSwapStreams,
+      handleRetryReconnect,
+      chooseAudioOutput,
+      dismissCallSummary,
+    }),
+    [
+      acceptIncomingCall,
+      attachments.cancelUpload,
+      attachments.cancelRecordingVoiceNote,
+      attachments.pickAndSend,
+      attachments.retryUpload,
+      attachments.startRecordingVoiceNote,
+      attachments.stopRecordingVoiceNoteAndSend,
+      authedFetch,
+      blockPeer,
+      blocks.isUserBlocked,
+      callHistory.fetchCallHistory,
+      callHistory.markMissedCallsRead,
+      cancelOutgoingCall,
+      checkPresence,
+      chooseAudioOutput,
+      declineIncomingCall,
+      dismissCallSummary,
+      fetchBlocks,
+      fetchConversations,
+      handleCameraSwitch,
+      handleEndCall,
+      handleMuteToggle,
+      handleRetryReconnect,
+      handleScreenAudioToggle,
+      handleScreenShareToggle,
+      handleSwapStreams,
+      handleVideoToggle,
+      identity.editUserId,
+      identity.registerUser,
+      identity.setUserId,
+      identity.updateUserId,
+      markConversationRead,
+      messaging.clearDraft,
+      messaging.deleteMessage,
+      messaging.discardMessage,
+      messaging.drainOutbox,
+      messaging.fetchMessagesForPeer,
+      messaging.reactToMessage,
+      messaging.recordCallActivity,
+      messaging.retryMessage,
+      messaging.saveDraft,
+      messaging.searchMessages,
+      messaging.sendMessage,
+      messaging.sendTypingIndicator,
+      messaging.setActiveChatPeerId,
+      placeCall,
+      presenceSearch.searchUsers,
+      rehydrateCallFromPush,
+      retryPresenceConnect,
+      setCalleeId,
+      setOutgoingCallMediaType,
+      setSignalingUrl,
+      startLocalPreview,
+      unblockPeer,
+      unregisterUser,
+      updateStatus,
+    ],
+  );
+
+  return useMemo(
+    () => ({
+      ...callFlowState,
+      ...callFlowActions,
+    }),
+    [callFlowActions, callFlowState],
+  );
 }
