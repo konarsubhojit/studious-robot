@@ -4598,6 +4598,24 @@ describe('useCallFlow chat', () => {
     );
   });
 
+  test('keeps the public snapshot stable when a stats poll reports the same quality', async () => {
+    const { resultRef, peerConnection } = await acceptCallWithPeerConnection('call-stable-stats');
+    peerConnection.getStats.mockResolvedValue(
+      candidatePairReport({ localType: 'host', remoteType: 'srflx' }),
+    );
+
+    await connectPeerConnection(peerConnection, 'call-stable-stats');
+    const afterInitialStatsPoll = resultRef.current;
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
+
+    expect(peerConnection.getStats).toHaveBeenCalledTimes(2);
+    expect(resultRef.current).toBe(afterInitialStatsPoll);
+  });
+
   test('logs a selected direct candidate pair with TURN usage disabled', async () => {
     const { logInfo } = require('../../src/appLogger');
     const { peerConnection } = await acceptCallWithPeerConnection('call-direct-pair');
