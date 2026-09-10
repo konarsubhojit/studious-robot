@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { io as ioClient } from 'socket.io-client';
 import { createServer } from '../src/index.ts';
 import { createMemoryStores } from '../src/stores/index.ts';
 import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
@@ -84,6 +85,28 @@ async function startServer(stores: import('../src/stores/contracts.ts').Stores) 
   };
 }
 
+function connect(url: string, sessionId: string): Promise<import('socket.io-client').Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = ioClient(url, {
+      auth: { sessionId },
+      forceNew: true,
+      transports: ['websocket'],
+    });
+    socket.once('connect', () => resolve(socket));
+    socket.once('connect_error', reject);
+  });
+}
+
+function emitWithAck(
+  socket: import('socket.io-client').Socket,
+  event: string,
+  payload: Record<string, unknown>
+): Promise<any> {
+  return new Promise((resolve) => {
+    socket.emit(event, payload, resolve);
+  });
+}
+
 async function postJson(url: string, path: string, body: Record<string, unknown>, sessionId?: string) {
   const response = await fetch(`${url}${path}`, {
     method: 'POST',
@@ -127,7 +150,62 @@ test('shared call/session state allows create on one instance and accept on anot
   }
 });
 
-test('shared atomic transitions: exactly one concurrent conflicting transition wins', async () => {
+test('shared call state refreshes a stale local ringing cache before RTC and cancel', async () => {
+  const shared = createSharedBackends();
+  const storesA = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    instanceId: 'instance-a',
+    callState: shared.callState,
+    sessionState: shared.sessionState,
+  });
+  const storesB = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    instanceId: 'instance-b',
+    callState: shared.callState,
+    sessionState: shared.sessionState,
+  });
+
+  const a = await startServer(storesA);
+  const b = await startServer(storesB);
+  let caller: import('socket.io-client').Socket | null = null;
+  try {
+    const callerSession = (await postJson(a.url, '/session', { userId: 'user-a', deviceId: 'dev-a' })).body.sessionId;
+    const calleeSession = (await postJson(a.url, '/session', { userId: 'user-b', deviceId: 'dev-b' })).body.sessionId;
+
+    caller = await connect(a.url, callerSession);
+    const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
+    assert.equal(created.status, 201);
+    assert.equal(created.body.status, 'ringing');
+    const callId = created.body.callId;
+    assert.equal(storesA.calls.get(callId)?.status, 'ringing');
+
+    const accepted = await postJson(b.url, `/calls/${callId}/accept`, {}, calleeSession);
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.status, 'accepted');
+    assert.equal(storesA.calls.get(callId)?.status, 'ringing');
+
+    const candidateAck = await emitWithAck(caller, 'rtc.candidate', {
+      version: 1,
+      callId,
+      candidate: { candidate: 'candidate:stale-cache-regression' },
+    });
+    assert.equal(candidateAck.ok, true);
+    assert.equal(storesA.calls.get(callId)?.status, 'connecting_media');
+
+    const cancelAck = await emitWithAck(caller, 'call.cancel', {
+      version: 1,
+      callId,
+    });
+    assert.equal(cancelAck.ok, true);
+    assert.equal(cancelAck.call.status, 'ended');
+  } finally {
+    caller?.disconnect();
+    await a.teardown();
+    await b.teardown();
+  }
+});
+
+test('shared atomic transitions: exactly one concurrent terminal transition wins', async () => {
   const shared = createSharedBackends();
   const storesA = Object.assign(createMemoryStores(), {
     stateAffinity: 'shared' as const,
@@ -150,12 +228,12 @@ test('shared atomic transitions: exactly one concurrent conflicting transition w
     const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
     const callId = created.body.callId;
 
-    const [cancelled, accepted] = await Promise.all([
+    const [cancelled, declined] = await Promise.all([
       postJson(a.url, `/calls/${callId}/cancel`, {}, callerSession),
-      postJson(b.url, `/calls/${callId}/accept`, {}, calleeSession),
+      postJson(b.url, `/calls/${callId}/decline`, {}, calleeSession),
     ]);
 
-    const statuses = [cancelled.status, accepted.status].sort((x, y) => x - y);
+    const statuses = [cancelled.status, declined.status].sort((x, y) => x - y);
     assert.deepEqual(statuses, [200, 409]);
   } finally {
     await a.teardown();

@@ -14,21 +14,30 @@ async function hydrateCallFromShared(
   callId: string
 ): Promise<CallRecord | null> {
   const local = state.calls.get(callId);
-  if (local) {
-    return local;
-  }
   if (!state.callState) {
-    return null;
+    return local ?? null;
   }
   const shared = await state.callState.get(callId);
   if (!shared) {
-    return null;
+    return local ?? null;
+  }
+  if (local && !isSharedCallNewer(local, shared)) {
+    return local;
   }
   state.calls.set(callId, shared);
   if (!state.callEvents.has(callId)) {
     state.callEvents.set(callId, []);
   }
   return shared;
+}
+
+function callRecordTimestamp(call: CallRecord): number {
+  const parsed = Date.parse(call.updatedAt ?? call.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSharedCallNewer(local: CallRecord, shared: CallRecord): boolean {
+  return callRecordTimestamp(shared) > callRecordTimestamp(local);
 }
 
 async function persistCallToShared(state: ServerState, call: CallRecord): Promise<void> {
