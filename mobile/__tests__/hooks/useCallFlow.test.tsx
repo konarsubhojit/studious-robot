@@ -4672,6 +4672,46 @@ describe('useCallFlow chat', () => {
     expect(resultRef.current).toBe(afterInitialStatsPoll);
   });
 
+  test('uses scoped video stats between candidate-pair polls', async () => {
+    const { peerConnection } = await acceptCallWithPeerConnection('call-scoped-stats');
+    const remoteVideoTrack = { id: 'remote-video', kind: 'video' };
+    await connectPeerConnection(peerConnection, 'call-scoped-stats');
+    await act(async () => {
+      peerConnection.ontrack?.({
+        streams: [{
+          getVideoTracks: () => [remoteVideoTrack],
+        }],
+      });
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
+    expect(peerConnection.getStats).toHaveBeenCalledWith();
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
+
+    const fullReportCount = peerConnection.getStats.mock.calls.filter(
+      (args: unknown[]) => args.length === 0,
+    ).length;
+    await act(async () => {
+      // Eight more seven-second ticks put this sample 63 seconds after the
+      // prior complete report, crossing the nine-tick candidate-pair cadence.
+      jest.advanceTimersByTime(7000 * 8);
+      await Promise.resolve();
+    });
+    expect(
+      peerConnection.getStats.mock.calls.filter((args: unknown[]) => args.length === 0),
+    ).toHaveLength(fullReportCount + 1);
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
+  });
+
   test('logs a selected direct candidate pair with TURN usage disabled', async () => {
     const { logInfo } = require('../../src/appLogger');
     const { peerConnection } = await acceptCallWithPeerConnection('call-direct-pair');

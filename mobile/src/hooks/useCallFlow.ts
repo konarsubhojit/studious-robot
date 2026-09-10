@@ -211,6 +211,28 @@ export type PeerConnection = RTCPeerConnection & {
 export type WebrtcMediaStream = MediaStream;
 type WebrtcMediaStreamTrack = ReturnType<WebrtcMediaStream['getTracks']>[number];
 
+async function getConnectionQualityReports(
+  peerConnection: PeerConnection,
+  remoteVideoTrack: WebrtcMediaStreamTrack | undefined,
+  shouldPollCandidatePair: boolean,
+) {
+  const candidatePairReport = shouldPollCandidatePair ? await peerConnection.getStats() : null;
+  const report = remoteVideoTrack
+    ? await peerConnection.getStats(remoteVideoTrack)
+    : candidatePairReport;
+  return { candidatePairReport, report };
+}
+
+function selectedCandidatePairFromReports(
+  report: { forEach: (fn: (stat: any) => void) => void; },
+  candidatePairReport: { forEach: (fn: (stat: any) => void) => void; } | null,
+  callStats: { candidatePair: any; },
+) {
+  if (!candidatePairReport) return null;
+  if (candidatePairReport === report) return callStats.candidatePair;
+  return collectCallStats(candidatePairReport).candidatePair;
+}
+
 function trackId(track: WebrtcMediaStreamTrack): string | null {
   return typeof track?.id === 'string' && track.id.length > 0 ? track.id : null;
 }
@@ -302,6 +324,7 @@ function projectCallTimelineActivity(
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
+const CANDIDATE_PAIR_POLL_INTERVAL_MS = STATS_POLL_INTERVAL_MS * 9;
 
 /**
  * How long peer-connection setup will wait for a session to be minted before
@@ -3652,22 +3675,40 @@ export default function useCallFlow({
     }
 
     let cancelled = false;
+    let pollsSinceCandidatePair = 0;
     const pollStats = async () => {
       const pc = peerConnectionRef.current;
       if (!pc || typeof pc.getStats !== 'function') return;
 
       try {
-        const report = await pc.getStats();
+        const remoteVideoTrack = remoteStreamRef.current?.getVideoTracks?.()[0];
+        const shouldPollCandidatePair =
+          !remoteVideoTrack ||
+          pollsSinceCandidatePair >=
+            CANDIDATE_PAIR_POLL_INTERVAL_MS / STATS_POLL_INTERVAL_MS - 1;
+        if (remoteVideoTrack) {
+          pollsSinceCandidatePair = shouldPollCandidatePair ? 0 : pollsSinceCandidatePair + 1;
+        }
+        const { candidatePairReport, report } = await getConnectionQualityReports(
+          pc,
+          remoteVideoTrack,
+          shouldPollCandidatePair,
+        );
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
 
+        const callStats = collectCallStats(report);
         const {
           rttMs,
           totalPacketsLost,
           totalPacketsReceived,
           totalBytesReceived,
-          candidatePair: succeededCandidatePair,
-        } = collectCallStats(report);
+        } = callStats;
+        const succeededCandidatePair = selectedCandidatePairFromReports(
+          report,
+          candidatePairReport,
+          callStats,
+        );
 
         if (succeededCandidatePair) {
           const getReportStat =
@@ -3678,12 +3719,12 @@ export default function useCallFlow({
           );
         }
 
-        const now = Date.now();
+        const sampleTimestampMs = Date.now();
         const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
-          timestampMs: now,
+          timestampMs: sampleTimestampMs,
           totalBytesReceived,
         });
-        connectionStatsRef.current = { timestampMs: now, totalBytesReceived };
+        connectionStatsRef.current = { timestampMs: sampleTimestampMs, totalBytesReceived };
 
         const packetLossRatio = derivePacketLossRatio({
           totalPacketsLost,
@@ -3716,11 +3757,10 @@ export default function useCallFlow({
       }
     };
 
-    // Polling is a foreground-only concern: `getStats()` walks the whole
-    // report every 7 seconds, and while the app is backgrounded there is no
-    // indicator on screen to consume the result — only battery to spend on it.
-    // A foreground transition takes a sample straight away so the bars are
-    // current by the time the user can see them.
+    // Polling is a foreground-only concern. Video-track stats keep the regular
+    // quality samples small, while an occasional complete report retains ICE
+    // candidate-pair diagnostics. A foreground transition takes a sample
+    // straight away so the bars are current by the time the user can see them.
     let intervalId = (null as ReturnType<typeof setInterval> | null);
     const startPolling = () => {
       if (intervalId) return;
