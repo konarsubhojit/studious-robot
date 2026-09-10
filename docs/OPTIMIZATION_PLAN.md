@@ -70,7 +70,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness                                         | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | P2.5 | Design-system consolidation                                | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | B4   | Attachment progress ring                                   | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| P1.2 | Decompose `useCallFlow`                                    | 🚧 partial. The eleven pure-rule slices are out, and the cohesive liveness/recovery side-effect clusters are now concern-hooks (`useCallHeartbeat`, `useCallRecovery`) with focused tests. The checkpointed effect-hook extraction in [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md) has landed CP1 (`useCallAudioRouting`), CP2 (`useConnectionQuality`), CP3 (`usePeerConnection`), CP4 (`useLocalMedia`), CP5 (`useSignalingSocket`) and CP6 (`useAnswerPath`); `useCallFlow.ts` is down to 2,290 lines. CP7 teardown investigation is the next pickup. **Device QA is still pending** (per instruction); see the checklist in the P1.2 note below |
+| P1.2 | Decompose `useCallFlow`                                    | 🚧 partial. The eleven pure-rule slices are out, and the cohesive liveness/recovery side-effect clusters are now concern-hooks (`useCallHeartbeat`, `useCallRecovery`) with focused tests. The checkpointed effect-hook extraction in [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md) has landed CP1 (`useCallAudioRouting`), CP2 (`useConnectionQuality`), CP3 (`usePeerConnection`), CP4 (`useLocalMedia`), CP5 (`useSignalingSocket`) and CP6 (`useAnswerPath`); `useCallFlow.ts` is down to 2,290 lines. CP7 teardown investigation is complete: `endActiveCall` stays in the composition root because extraction would only move the cross-hook teardown order behind a large parameter bag. **Device QA is still pending** (per instruction); see the checklist in the P1.2 note below |
 | P1.7 | Swap `chatDb` JSON document for SQLite                     | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test _and_ priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ### Still deferred
@@ -113,7 +113,7 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | C3    | Recovery endgame (escalation + "Call back" card)             | Device QA required: the behaviour only manifests during a real ICE failure                                                                                                                                                                                                                                                                                                                                               |
 | C5    | Ringback tone for the caller                                 | Device QA required; audio-session behaviour cannot be verified in this environment                                                                                                                                                                                                                                                                                                                                       |
 | D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass                                                                                                                                                                                                                                                                                                                                      |
-| E1–E3 | `useCallFlow` decomposition, SQLite, i18n                    | E1 is partly done — pure-rule extraction plus `useCallHeartbeat`/`useCallRecovery`, CP1 `useCallAudioRouting`, CP2 `useConnectionQuality`, CP3 `usePeerConnection`, CP4 `useLocalMedia`, CP5 `useSignalingSocket` and CP6 `useAnswerPath` have landed; CP7 teardown investigation remains and tracked in `docs/CALLFLOW_EXTRACTION.md`; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
+| E1–E3 | `useCallFlow` decomposition, SQLite, i18n                    | E1 is partly done — pure-rule extraction plus `useCallHeartbeat`/`useCallRecovery`, CP1 `useCallAudioRouting`, CP2 `useConnectionQuality`, CP3 `usePeerConnection`, CP4 `useLocalMedia`, CP5 `useSignalingSocket` and CP6 `useAnswerPath` have landed; CP7 teardown investigation is complete and intentionally keeps `endActiveCall` in `useCallFlow` as the composition-root teardown coordinator; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
 
 ## Phase 7 — Target-architecture rebuild
 
@@ -434,9 +434,9 @@ subsystems that should not have been sharing a surface.
 4. **i18n before more copy.** Every string added now is a string to extract later.
 5. **`getItemLayout`** on the message list, if bubble heights can be made
    predictable, so jump-to-quote stops relying on the scroll-failure fallback.
-6. Continue the checkpointed `useCallFlow` effect-hook extraction in
-   `docs/CALLFLOW_EXTRACTION.md` (next: CP7 teardown investigation/verdict) and split
-   `ChatConversationPresentation` further along the seams already established.
+6. Continue any further `useCallFlow` work from the completed checkpoint record in
+   `docs/CALLFLOW_EXTRACTION.md` and split `ChatConversationPresentation` further
+   along the seams already established.
 
 ### Working notes for whoever picks this up
 
@@ -782,9 +782,12 @@ _effectful_ half out into hooks — following `useCallHeartbeat` and
 checkpoints, one in flight at a time. Current handoff, 2026-09-10: CP1
 `useCallAudioRouting`, CP2 `useConnectionQuality`, CP3 `usePeerConnection`,
 CP4 `useLocalMedia`, CP5 `useSignalingSocket` and CP6 `useAnswerPath` have
-landed, and `useCallFlow.ts` is down to 2,290 lines. Start with CP7 teardown
-investigation: decide whether `endActiveCall` should stay in the composition
-root or move, then record the verdict here.
+landed, and `useCallFlow.ts` is down to 2,290 lines. CP7 teardown investigation
+is complete: `endActiveCall` should stay in the composition root because it is
+the ordered coordinator across history, timeline, CallKeep, ringtone fallback,
+heartbeat, recovery, screen share, peer connection, local media, audio routing
+and UI reset. Extracting it would relocate that coupling into a large parameter
+bag without producing a smaller hook boundary.
 
 **Device QA — outstanding.** CI cannot verify any of this: there is no E2E
 coverage of the call path (#114), so a regression here is caught by a person on

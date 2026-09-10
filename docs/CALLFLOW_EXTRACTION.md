@@ -58,12 +58,13 @@ is now **2,290 lines** in this checkout. The extracted effect hooks present now
 are `useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
 `useCallAudioRouting`, `useConnectionQuality`, `usePeerConnection`,
 `useLocalMedia`, `useSignalingSocket` and `useAnswerPath`, with focused tests
-for the latter eight. The next checkpoint is **CP7 — teardown investigation**:
-decide whether `endActiveCall` should stay in the composition root or be
-extracted, and record that verdict in `docs/OPTIMIZATION_PLAN.md`. A server-side call pickup blocker found
-in the production logs on 2026-09-10 was fixed separately by refreshing stale
-local call caches from shared call state before RTC/cancel handling; it does not
-change this extraction order.
+for the latter eight. The checkpointed extraction has reached the planned CP7
+teardown investigation. The verdict is recorded below: `endActiveCall` stays in
+the composition root because its job is to coordinate every extracted hook's
+teardown boundary rather than own a separable concern. A server-side call pickup
+blocker found in the production logs on 2026-09-10 was fixed separately by
+refreshing stale local call caches from shared call state before RTC/cancel
+handling; it does not change this extraction order.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
@@ -364,7 +365,7 @@ coverage: `mobile/__tests__/hooks/useAnswerPath.test.tsx`.
 
 ---
 
-### CP7 — Teardown (investigation, not a commitment) ⬜
+### CP7 — Teardown (investigation, not extracted) ✅
 
 **Subject.** `endActiveCall` (≈1420–1543) under `// ─── Call teardown ───`.
 
@@ -389,9 +390,14 @@ It is the composition root's own function: the one place that knows the whole
 call's shape. Extracting it would mean passing most of the hook back in as
 parameters, which relocates the coupling without reducing it.
 
-If the conclusion is not to extract, **record that in `docs/OPTIMIZATION_PLAN.md`
-with the reasoning**, exactly as #216 recorded its two deferrals — both of which
-were correct.
+**Verdict.** Do not extract this checkpoint. After CP6, the measured shape is
+still the same kind of composition-root responsibility: `endActiveCall` is the
+single ordered teardown that touches call history, timeline reconciliation,
+CallKeep, ringtone fallback, heartbeat, recovery, screen share, peer connection,
+local media, audio routing and UI state reset. A `useCallTeardown` wrapper would
+not reduce responsibilities; it would accept nearly every call-lifecycle ref,
+setter and checkpoint hook as parameters, then hide the one place that currently
+documents the teardown order. Keeping it here is the smaller and safer boundary.
 
 **Entry precondition.** CP6 merged, so the collaborator list is final.
 **Resume check.** Search `docs/OPTIMIZATION_PLAN.md` for a teardown decision; its
@@ -440,10 +446,10 @@ result in the checkpoint's PR.
 - [x] CP4 extracted.
 - [x] CP5 extracted.
 - [x] CP6 extracted.
-- [ ] CP7 teardown verdict recorded.
-- [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
-- [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
-- [ ] `useCallFlow.test.tsx` still passes unmodified.
+- [x] CP7 teardown verdict recorded.
+- [x] `useCallFlow.ts` is materially smaller and reads as a composition root.
+- [x] Each extracted hook has direct tests that do not mount `useCallFlow`.
+- [x] `useCallFlow.test.tsx` still passes unmodified.
 - [ ] Device QA recorded per checkpoint.
 - [ ] `docs/OPTIMIZATION_PLAN.md` updated with what came out, what remains, and why
       anything was abandoned — including CP7's verdict.
