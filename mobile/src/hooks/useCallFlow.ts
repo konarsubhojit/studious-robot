@@ -302,6 +302,7 @@ function projectCallTimelineActivity(
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
+const CANDIDATE_PAIR_POLL_INTERVAL_MS = 60000;
 
 /**
  * How long peer-connection setup will wait for a session to be minted before
@@ -3652,14 +3653,24 @@ export default function useCallFlow({
     }
 
     let cancelled = false;
+    let lastCandidatePairPollAtMs: number | null = null;
     const pollStats = async () => {
       const pc = peerConnectionRef.current;
       if (!pc || typeof pc.getStats !== 'function') return;
 
       try {
-        const report = await pc.getStats();
+        const remoteVideoTrack = remoteStreamRef.current?.getVideoTracks?.()[0];
+        const now = Date.now();
+        const shouldPollCandidatePair =
+          !remoteVideoTrack ||
+          lastCandidatePairPollAtMs === null ||
+          now - lastCandidatePairPollAtMs >= CANDIDATE_PAIR_POLL_INTERVAL_MS;
+        const report = shouldPollCandidatePair
+          ? await pc.getStats()
+          : await pc.getStats(remoteVideoTrack);
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
+        if (shouldPollCandidatePair) lastCandidatePairPollAtMs = now;
 
         const {
           rttMs,
@@ -3678,7 +3689,6 @@ export default function useCallFlow({
           );
         }
 
-        const now = Date.now();
         const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
           timestampMs: now,
           totalBytesReceived,
@@ -3716,11 +3726,10 @@ export default function useCallFlow({
       }
     };
 
-    // Polling is a foreground-only concern: `getStats()` walks the whole
-    // report every 7 seconds, and while the app is backgrounded there is no
-    // indicator on screen to consume the result — only battery to spend on it.
-    // A foreground transition takes a sample straight away so the bars are
-    // current by the time the user can see them.
+    // Polling is a foreground-only concern. Video-track stats keep the regular
+    // quality samples small, while an occasional complete report retains ICE
+    // candidate-pair diagnostics. A foreground transition takes a sample
+    // straight away so the bars are current by the time the user can see them.
     let intervalId = (null as ReturnType<typeof setInterval> | null);
     const startPolling = () => {
       if (intervalId) return;

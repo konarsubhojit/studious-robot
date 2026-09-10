@@ -4672,6 +4672,26 @@ describe('useCallFlow chat', () => {
     expect(resultRef.current).toBe(afterInitialStatsPoll);
   });
 
+  test('uses scoped video stats between candidate-pair polls', async () => {
+    const { peerConnection } = await acceptCallWithPeerConnection('call-scoped-stats');
+    const remoteVideoTrack = { id: 'remote-video', kind: 'video' };
+    await connectPeerConnection(peerConnection, 'call-scoped-stats');
+    await act(async () => {
+      peerConnection.ontrack?.({
+        streams: [{
+          getVideoTracks: () => [remoteVideoTrack],
+        }],
+      });
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
+
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
+  });
+
   test('logs a selected direct candidate pair with TURN usage disabled', async () => {
     const { logInfo } = require('../../src/appLogger');
     const { peerConnection } = await acceptCallWithPeerConnection('call-direct-pair');
