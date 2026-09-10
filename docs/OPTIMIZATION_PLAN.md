@@ -174,6 +174,16 @@ was written for the wrong topology and then rewritten across `README.md`,
 Load balancing must be **round-robin, not `ip_hash`**: with Redis the affinity is
 `shared`, so pinning a user to a VM buys nothing and costs an uneven fleet.
 
+**2026-09-10 production-log fix.** A callee could accept on one signaling VM
+while the caller's socket stayed on another VM whose local hot cache still held
+the call as `ringing`. The caller then emitted `rtc.candidate` or `call.cancel`
+to that stale instance and received `stale_call_state`, matching the observed
+logs (`call is not ready for RTC in state: ringing`, then `call state changed on
+another instance`). Shared-mode hydration now checks the shared call store before
+using the local cache and replaces the local entry when shared state is newer, so
+the stale instance sees `accepted`/`connecting_media` before authorizing RTC or
+ending the call. Regression coverage lives in `server/test/shared-call-state.test.ts`.
+
 ### D4.1 — Session lifetime (done)
 
 Sessions were non-expiring bearer tokens in an unbounded map. Now:
@@ -442,6 +452,11 @@ subsystems that should not have been sharing a surface.
 - Baseline at handoff: server 529 passing / 1 skipped (the count *fell* because
   the Mongo-driver suites went with the driver), mobile 2145 passing, typecheck
   and lint clean in both packages.
+- 2026-09-10 call pickup fix: if production logs show `stale_call_state` for
+  `rtc.candidate` on one VM after `call.accept`/`call.connected` on another,
+  re-run `node --experimental-test-module-mocks --test test/shared-call-state.test.ts`
+  from `server/`; the regression asserts shared-mode hydration refreshes the
+  caller instance before RTC/cancel handling.
 
 ## Notes and deviations
 

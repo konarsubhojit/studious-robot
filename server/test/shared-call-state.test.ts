@@ -205,7 +205,7 @@ test('shared call state refreshes a stale local ringing cache before RTC and can
   }
 });
 
-test('shared atomic transitions: exactly one concurrent conflicting transition wins', async () => {
+test('shared atomic transitions: exactly one concurrent terminal transition wins', async () => {
   const shared = createSharedBackends();
   const storesA = Object.assign(createMemoryStores(), {
     stateAffinity: 'shared' as const,
@@ -228,12 +228,12 @@ test('shared atomic transitions: exactly one concurrent conflicting transition w
     const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
     const callId = created.body.callId;
 
-    const [cancelled, accepted] = await Promise.all([
+    const [cancelled, declined] = await Promise.all([
       postJson(a.url, `/calls/${callId}/cancel`, {}, callerSession),
-      postJson(b.url, `/calls/${callId}/accept`, {}, calleeSession),
+      postJson(b.url, `/calls/${callId}/decline`, {}, calleeSession),
     ]);
 
-    const statuses = [cancelled.status, accepted.status].sort((x, y) => x - y);
+    const statuses = [cancelled.status, declined.status].sort((x, y) => x - y);
     assert.deepEqual(statuses, [200, 409]);
   } finally {
     await a.teardown();

@@ -57,7 +57,10 @@ Current handoff, 2026-09-10: `useCallFlow.ts` is still **4,221 lines** in this
 checkout, so none of CP1–CP6 below has landed yet. The extracted effect hooks
 present now are `useScreenShare`, `useCallHeartbeat` and `useCallRecovery`, with
 focused tests for the latter two. The next safe implementation checkpoint is
-**CP1 — `useCallAudioRouting`**.
+**CP1 — `useCallAudioRouting`**. A server-side call pickup blocker found in the
+production logs on 2026-09-10 was fixed separately by refreshing stale local
+call caches from shared call state before RTC/cancel handling; it does not
+change this extraction order.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
