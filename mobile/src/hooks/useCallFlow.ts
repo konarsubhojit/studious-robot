@@ -2151,6 +2151,7 @@ export default function useCallFlow({
   const teardownRef = useRef({
     disconnectSocket,
     closePeerConnection,
+    releaseLocalMedia,
     stopCallHeartbeat,
     closeRecoveryEpisode,
     stopCallService,
@@ -2159,6 +2160,7 @@ export default function useCallFlow({
     teardownRef.current = {
       disconnectSocket,
       closePeerConnection,
+      releaseLocalMedia,
       stopCallHeartbeat,
       closeRecoveryEpisode,
       stopCallService,
@@ -2170,10 +2172,7 @@ export default function useCallFlow({
       const teardown = teardownRef.current;
       teardown.disconnectSocket();
       teardown.closePeerConnection();
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
-        localStreamRef.current = null;
-      }
+      teardown.releaseLocalMedia();
       teardown.stopCallHeartbeat('unmount');
       teardown.closeRecoveryEpisode('unmount');
       teardown.stopCallService();
