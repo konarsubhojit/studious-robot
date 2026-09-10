@@ -53,14 +53,15 @@ Measured on `master` at `45c42ad`:
 | `mobile/src/hooks/useCallFlow.ts` | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: CP1 has landed. `useCallFlow.ts` is now **4,024
-lines** in this checkout. The extracted effect hooks present now are
-`useScreenShare`, `useCallHeartbeat`, `useCallRecovery` and
-`useCallAudioRouting`, with focused tests for the latter three. The next safe
-implementation checkpoint is **CP2 — `useConnectionQuality`**. A server-side
-call pickup blocker found in the production logs on 2026-09-10 was fixed
-separately by refreshing stale local call caches from shared call state before
-RTC/cancel handling; it does not change this extraction order.
+Current handoff, 2026-09-10: CP1 and CP2 have landed. `useCallFlow.ts` is now
+**3,799 lines** in this checkout. The extracted effect hooks present now are
+`useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
+`useCallAudioRouting` and `useConnectionQuality`, with focused tests for the
+latter four. The next safe implementation checkpoint is **CP3 —
+`usePeerConnection`**. A server-side call pickup blocker found in the production
+logs on 2026-09-10 was fixed separately by refreshing stale local call caches
+from shared call state before RTC/cancel handling; it does not change this
+extraction order.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
@@ -204,7 +205,7 @@ typecheck, lint, the CP1 hook test and `useCallFlow.test.tsx`.
 
 ---
 
-### CP2 — `useConnectionQuality` ⬜ · size S · risk Low
+### CP2 — `useConnectionQuality` ✅ · size S · risk Low
 
 **Extracts.** The whole `// ─── Connection quality polling ───` block
 (≈3655–3817): `noteSelectedCandidatePair` and the `getStats` polling effect,
@@ -229,6 +230,13 @@ regress a render-count test while the suite still passes functionally — check
 **Exit state.** `mobile/src/hooks/useConnectionQuality.ts` with direct tests.
 **Resume check.** `ls mobile/src/hooks/useConnectionQuality.ts`.
 **Rollback.** Revert the single PR.
+
+**Landed in this session.** `useConnectionQuality` owns the foreground-gated
+stats polling effect, the selected-candidate-pair dedupe key, quality smoothing,
+bitrate differencing state and the no-link reset. It preserves the
+`areConnectionQualitiesEqual` identity rule for unchanged samples and resets.
+Focused coverage: `mobile/__tests__/hooks/useConnectionQuality.test.tsx`.
+Verified with mobile typecheck, lint, the CP2 hook test and `useCallFlow.test.tsx`.
 
 ---
 
@@ -377,8 +385,9 @@ result in the checkpoint's PR.
 2. `ls mobile/src/hooks/` — the presence of `useCallAudioRouting.ts`,
    `useConnectionQuality.ts`, `usePeerConnection.ts`, `useLocalMedia.ts`,
    `useSignalingSocket.ts`, `useAnswerPath.ts` tells you which checkpoints landed.
-3. `wc -l mobile/src/hooks/useCallFlow.ts` — compare against 4,221 baseline and
-   the 4,024-line post-CP1 handoff to gauge progress.
+3. `wc -l mobile/src/hooks/useCallFlow.ts` — compare against 4,221 baseline,
+   the 4,024-line post-CP1 handoff and the 3,799-line post-CP2 handoff to gauge
+   progress.
 4. Check for an open PR touching `useCallFlow.ts`. If one exists, **that is the
    in-flight checkpoint**; do not start another.
 5. Run the §4 verification to confirm the tree you found is actually green before
@@ -391,7 +400,7 @@ result in the checkpoint's PR.
 ## 8. Definition of done
 
 - [x] CP1 extracted.
-- [ ] CP2 extracted.
+- [x] CP2 extracted.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.

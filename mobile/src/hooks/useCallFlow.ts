@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AppState } from 'react-native';
 import { io } from 'socket.io-client';
 import {
   mediaDevices,
@@ -19,6 +18,7 @@ import { emitEvent, emitMetric, getCorrelationId } from '../observability';
 import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
+import useConnectionQuality from './useConnectionQuality';
 import useBlocks from './useBlocks';
 import useCallHistory, { DEFAULT_CALL_MEDIA_TYPE } from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
@@ -27,20 +27,8 @@ import useMessaging from './useMessaging';
 import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
-import {
-  CALL_END_REASON_LABELS,
-  candidatePairKey,
-  collectCallStats,
-  deriveBitrateKbps,
-  derivePacketLossRatio,
-  getConnectionQuality,
-  isRelayPolicyViolated,
-  shouldWarnPoorConnection,
-  smoothConnectionQuality,
-  summarizeCandidatePair,
-} from '../callUx';
+import { CALL_END_REASON_LABELS } from '../callUx';
 import { getMediaAccessStatus, summarizeIceCandidate } from '../diagnostics';
-import type { IceCandidatePairSummary } from '../diagnostics';
 import { triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
 import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
@@ -195,28 +183,6 @@ export type PeerConnection = RTCPeerConnection & {
 export type WebrtcMediaStream = MediaStream;
 type WebrtcMediaStreamTrack = ReturnType<WebrtcMediaStream['getTracks']>[number];
 
-async function getConnectionQualityReports(
-  peerConnection: PeerConnection,
-  remoteVideoTrack: WebrtcMediaStreamTrack | undefined,
-  shouldPollCandidatePair: boolean,
-) {
-  const candidatePairReport = shouldPollCandidatePair ? await peerConnection.getStats() : null;
-  const report = remoteVideoTrack
-    ? await peerConnection.getStats(remoteVideoTrack)
-    : candidatePairReport;
-  return { candidatePairReport, report };
-}
-
-function selectedCandidatePairFromReports(
-  report: { forEach: (fn: (stat: any) => void) => void; },
-  candidatePairReport: { forEach: (fn: (stat: any) => void) => void; } | null,
-  callStats: { candidatePair: any; },
-) {
-  if (!candidatePairReport) return null;
-  if (candidatePairReport === report) return callStats.candidatePair;
-  return collectCallStats(candidatePairReport).candidatePair;
-}
-
 function trackId(track: WebrtcMediaStreamTrack): string | null {
   return typeof track?.id === 'string' && track.id.length > 0 ? track.id : null;
 }
@@ -270,15 +236,6 @@ function mergeScreenAudioTracks(
   }
 }
 
-const NO_LINK_CONNECTION_QUALITY = { bars: 0, label: 'No link' };
-
-function areConnectionQualitiesEqual(
-  left: { bars: number; label: string; },
-  right: { bars: number; label: string; },
-) {
-  return left.bars === right.bars && left.label === right.label;
-}
-
 function callTimelineStatus(call: CallRecord): string {
   return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
 }
@@ -307,9 +264,7 @@ function projectCallTimelineActivity(
 
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
-const STATS_POLL_INTERVAL_MS = 7000;
 export const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
-const CANDIDATE_PAIR_POLL_INTERVAL_MS = STATS_POLL_INTERVAL_MS * 9;
 
 /**
  * How long peer-connection setup will wait for a session to be minted before
@@ -632,10 +587,6 @@ export default function useCallFlow({
    * duration derive it locally with `useCallElapsedSeconds`.
    */
   const [callConnectedAtMs, setCallConnectedAtMs] = useState((null as number | null));
-  const [connectionQuality, setConnectionQuality] = useState(NO_LINK_CONNECTION_QUALITY);
-  const [selectedCandidatePair, setSelectedCandidatePair] = useState(
-    (null as IceCandidatePairSummary | null),
-  );
   const [isReconnecting, setIsReconnecting] = useState(false);
   // Non-null while a recovery episode is open, so the call screen can show what
   // is happening (and how much budget is left) instead of a static spinner.
@@ -680,19 +631,6 @@ export default function useCallFlow({
   const isScreenSharingRef = useRef(false);
   const mediaStateRelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
-  // Hysteresis state for the quality indicator: a single bad sample must not
-  // be allowed to flip the bars, so the smoother remembers how many
-  // consecutive worse samples have been seen. Reset whenever a call ends.
-  const qualitySmootherRef = useRef(
-    (null as { reported: { bars: number; label: string; }; pendingWorse: number; } | null),
-  );
-  const connectionStatsRef = useRef(
-    ({
-      timestampMs: null,
-      totalBytesReceived: 0,
-    } as { timestampMs: number | null, totalBytesReceived: number }),
-  );
-  const selectedCandidatePairRef = useRef((null as string | null));
   const isInCallRef = useRef(false);
   // ICE candidates that arrive before the remote description is applied are
   // buffered here and flushed once setRemoteDescription succeeds.
@@ -968,16 +906,23 @@ export default function useCallFlow({
     });
   }, [callPhase, isInCall]);
 
-  useEffect(() => {
-    connectionQualityRef.current = connectionQuality;
-  }, [connectionQuality]);
-
   const { startCallHeartbeat, stopCallHeartbeat, wakeCallHeartbeat } = useCallHeartbeat({
     activeCallIdRef,
     socketRef,
     signalingRef,
     isScreenSharingRef,
   });
+  const { connectionQuality, selectedCandidatePair } = useConnectionQuality({
+    activeCallIdRef,
+    activeIceTransportPolicy,
+    isInCall,
+    peerConnectionRef,
+    remoteStreamRef,
+    updateStatus,
+  });
+  useEffect(() => {
+    connectionQualityRef.current = connectionQuality;
+  }, [connectionQuality]);
 
   /**
    * The session id TURN credentials are minted against.
@@ -1113,12 +1058,6 @@ export default function useCallFlow({
       mergedScreenAudioTrackRefsRef.current,
     );
     setRemoteStream(null);
-    setConnectionQuality(current =>
-      areConnectionQualitiesEqual(current, NO_LINK_CONNECTION_QUALITY)
-        ? current
-        : NO_LINK_CONNECTION_QUALITY,
-    );
-    connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
   }, []);
 
   const createPeerConnection = useCallback(async () => {
@@ -3557,170 +3496,6 @@ export default function useCallFlow({
     },
     [],
   );
-
-  // ─── Connection quality polling ───────────────────────────────────────────
-
-  /**
-   * Record a newly selected ICE candidate pair, once per selection.
-   *
-   * `getStats` reports the same pair on every poll, so this is keyed on the
-   * pair's identity: telemetry, the log line and the relay-policy warning fire
-   * when the route changes, not seven seconds apart forever.
-   */
-  const noteSelectedCandidatePair = useCallback(
-    (
-      summary: IceCandidatePairSummary,
-      candidatePair: {
-        id?: unknown;
-        localCandidateId?: unknown;
-        remoteCandidateId?: unknown;
-      },
-    ) => {
-      const key = candidatePairKey(candidatePair, summary);
-      if (key === selectedCandidatePairRef.current) return;
-      selectedCandidatePairRef.current = key;
-      setSelectedCandidatePair(summary);
-      logInfo('[CallFlow] ICE candidate pair selected', summary);
-      if (activeCallIdRef.current) {
-        Telemetry.trackSelectedCandidatePair(activeCallIdRef.current, summary.local);
-      }
-      if (
-        isRelayPolicyViolated({
-          isRelayOnly: activeIceTransportPolicy === ICE_TRANSPORT_POLICIES.RELAY,
-          summary,
-        })
-      ) {
-        logWarn('[CallFlow] Relay ICE policy selected a non-relay candidate pair', summary);
-      }
-    },
-    [activeIceTransportPolicy],
-  );
-
-  useEffect(() => {
-    if (!isInCall) {
-      setConnectionQuality(current =>
-        areConnectionQualitiesEqual(current, NO_LINK_CONNECTION_QUALITY)
-          ? current
-          : NO_LINK_CONNECTION_QUALITY,
-      );
-      qualitySmootherRef.current = null;
-      connectionStatsRef.current = { timestampMs: null, totalBytesReceived: 0 };
-      selectedCandidatePairRef.current = null;
-      setSelectedCandidatePair(null);
-      return undefined;
-    }
-
-    let cancelled = false;
-    let pollsSinceCandidatePair = 0;
-    const pollStats = async () => {
-      const pc = peerConnectionRef.current;
-      if (!pc || typeof pc.getStats !== 'function') return;
-
-      try {
-        const remoteVideoTrack = remoteStreamRef.current?.getVideoTracks?.()[0];
-        const shouldPollCandidatePair =
-          !remoteVideoTrack ||
-          pollsSinceCandidatePair >=
-            CANDIDATE_PAIR_POLL_INTERVAL_MS / STATS_POLL_INTERVAL_MS - 1;
-        if (remoteVideoTrack) {
-          pollsSinceCandidatePair = shouldPollCandidatePair ? 0 : pollsSinceCandidatePair + 1;
-        }
-        const { candidatePairReport, report } = await getConnectionQualityReports(
-          pc,
-          remoteVideoTrack,
-          shouldPollCandidatePair,
-        );
-        if (cancelled) return;
-        if (!report || typeof report.forEach !== 'function') return;
-
-        const callStats = collectCallStats(report);
-        const {
-          rttMs,
-          totalPacketsLost,
-          totalPacketsReceived,
-          totalBytesReceived,
-        } = callStats;
-        const succeededCandidatePair = selectedCandidatePairFromReports(
-          report,
-          candidatePairReport,
-          callStats,
-        );
-
-        if (succeededCandidatePair) {
-          const getReportStat =
-            typeof report.get === 'function' ? (id: unknown) => report.get(id) : () => undefined;
-          noteSelectedCandidatePair(
-            summarizeCandidatePair(succeededCandidatePair, getReportStat),
-            succeededCandidatePair,
-          );
-        }
-
-        const sampleTimestampMs = Date.now();
-        const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
-          timestampMs: sampleTimestampMs,
-          totalBytesReceived,
-        });
-        connectionStatsRef.current = { timestampMs: sampleTimestampMs, totalBytesReceived };
-
-        const packetLossRatio = derivePacketLossRatio({
-          totalPacketsLost,
-          totalPacketsReceived,
-        });
-        const sampledQuality = getConnectionQuality({
-          rttMs,
-          packetLossRatio,
-          bitrateKbps,
-        });
-        qualitySmootherRef.current = smoothConnectionQuality(
-          qualitySmootherRef.current,
-          sampledQuality,
-        );
-        const nextQuality = qualitySmootherRef.current.reported;
-        setConnectionQuality(current =>
-          areConnectionQualitiesEqual(current, nextQuality) ? current : nextQuality,
-        );
-
-        // Surface a status warning when packet loss is severe enough to impair
-        // the call.  Only update status on the downgrade crossing so the message
-        // doesn't flicker; recovery is silent (the bars update speaks for itself).
-        if (shouldWarnPoorConnection({ bars: nextQuality.bars, packetLossRatio })) {
-          updateStatus('Poor connection — high packet loss detected', 'error');
-        }
-      } catch (error) {
-        logWarn('[CallFlow] Failed to read connection stats', {
-          message: errorMessage(error),
-        });
-      }
-    };
-
-    // Polling is a foreground-only concern. Video-track stats keep the regular
-    // quality samples small, while an occasional complete report retains ICE
-    // candidate-pair diagnostics. A foreground transition takes a sample
-    // straight away so the bars are current by the time the user can see them.
-    let intervalId = (null as ReturnType<typeof setInterval> | null);
-    const startPolling = () => {
-      if (intervalId) return;
-      pollStats();
-      intervalId = setInterval(pollStats, STATS_POLL_INTERVAL_MS);
-    };
-    const stopPolling = () => {
-      if (!intervalId) return;
-      clearInterval(intervalId);
-      intervalId = null;
-    };
-
-    if (AppState.currentState !== 'background') startPolling();
-    const subscription = AppState.addEventListener?.('change', nextState => {
-      if (nextState === 'background') stopPolling();
-      else startPolling();
-    });
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-      subscription?.remove?.();
-    };
-  }, [isInCall, noteSelectedCandidatePair, updateStatus]);
 
   // ─── Ringtone cleanup on unmount ─────────────────────────────────────────
   // Ensure the fallback ringtone never outlives the component tree in case the
