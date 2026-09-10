@@ -16,6 +16,7 @@ import useCallAudioRouting from './useCallAudioRouting';
 import useConnectionQuality from './useConnectionQuality';
 import useLocalMedia from './useLocalMedia';
 import usePeerConnection from './usePeerConnection';
+import useSignalingSocket from './useSignalingSocket';
 import useBlocks from './useBlocks';
 import useCallHistory, { DEFAULT_CALL_MEDIA_TYPE } from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
@@ -1230,28 +1231,12 @@ export default function useCallFlow({
 
   // ─── Socket connection ────────────────────────────────────────────────────
 
-  /**
-   * Disconnect and discard the current socket (if any).
-   * Does NOT clear the session ID – sessions are reused across reconnects
-   * until the userId or signalingUrl changes.
-   */
-  const disconnectSocket = useCallback(() => {
-    // The Engine.IO manager is shared between sockets created for the same URL,
-    // so its listeners are not the socket's to remove and must be detached by
-    // hand.
-    detachManagerPingRef.current?.();
-    detachManagerPingRef.current = null;
-    if (socketRef.current) {
-      logInfo('[CallFlow] Disconnecting socket');
-      // Remove only the handlers this hook registered, rather than every
-      // listener anything else may hold on the same socket.
-      signalingRef.current?.dispose();
-      socketRef.current.disconnect();
-      socketRef.current = null;
-      signalingRef.current = null;
-    }
-    resetTypingStateRef.current();
-  }, []);
+  const { disconnectSocket } = useSignalingSocket({
+    detachManagerPingRef,
+    resetTypingStateRef,
+    signalingRef,
+    socketRef,
+  });
 
   // Store mutable callbacks in refs so socket listeners always call the latest
   // version without the socket needing to be recreated.
