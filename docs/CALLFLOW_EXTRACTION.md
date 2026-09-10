@@ -2,20 +2,20 @@
 
 Working document for the extraction of the **effectful** half of
 `mobile/src/hooks/useCallFlow.ts` into focused hooks. It is the successor to the
-Phase 5 architecture work tracked in #216, which took the *pure decision logic*
+Phase 5 architecture work tracked in #216, which took the _pure decision logic_
 out and deliberately left every side effect behind.
 
 This document exists because the work spans many sessions and many PRs, and
 because any one of them can be interrupted. Each checkpoint below is written so
-that a reader who has *only this file* and a clean checkout can determine what
+that a reader who has _only this file_ and a clean checkout can determine what
 has already landed, what is safe to start, and how to verify the state they
 found the tree in. Nothing here depends on a previous session's memory.
 
 > **Naming.** `docs/OPTIMIZATION_PLAN.md` already uses "Phase 6" for the chat &
 > calling UX pass and "Phase 7" for the target-architecture rebuild. The issue
 > tree calls this work "Phase 6" because it succeeds #216's "Phase 5". To avoid
-> two Phase 6s, this document refers to the work by name — *the `useCallFlow`
-> extraction* — and to its units as **checkpoints**, not phases.
+> two Phase 6s, this document refers to the work by name — _the `useCallFlow`
+> extraction_ — and to its units as **checkpoints**, not phases.
 
 ---
 
@@ -23,18 +23,18 @@ found the tree in. Nothing here depends on a previous session's memory.
 
 `useCallFlow` is the single hook behind every call: signaling, peer connection,
 media, CallKeep, recovery, screen share, statistics and teardown. Phase 5 was
-scoped by one rule — *rules come out; side effects stay* — and delivered seven
+scoped by one rule — _rules come out; side effects stay_ — and delivered seven
 pure modules under `mobile/src/call/`:
 
-| Module | What it decides |
-| ------ | --------------- |
-| `callDecisions.ts` | Whether a given signaling frame should act on the current call |
-| `answerPath.ts` | The ordering and preconditions of the answer sequence |
-| `sessionLifecycle.ts` | When a session must be created, refreshed or abandoned |
-| `pushRehydration.ts` | What a cold-start push payload means for call state |
-| `audioRouteRules.ts` | Which output to prefer, and when a manual pick is void |
-| `iceRestartLadder.ts` | The ICE-restart escalation schedule |
-| `recoveryEpisode.ts` | When a recovery episode opens, extends and closes |
+| Module                | What it decides                                                |
+| --------------------- | -------------------------------------------------------------- |
+| `callDecisions.ts`    | Whether a given signaling frame should act on the current call |
+| `answerPath.ts`       | The ordering and preconditions of the answer sequence          |
+| `sessionLifecycle.ts` | When a session must be created, refreshed or abandoned         |
+| `pushRehydration.ts`  | What a cold-start push payload means for call state            |
+| `audioRouteRules.ts`  | Which output to prefer, and when a manual pick is void         |
+| `iceRestartLadder.ts` | The ICE-restart escalation schedule                            |
+| `recoveryEpisode.ts`  | When a recovery episode opens, extends and closes              |
 
 Two further modules, `callStateMachine.ts` and `callEndpoints.ts`, predate that
 work but are crossed by several checkpoints below and are listed here so they
@@ -48,20 +48,22 @@ out of the composition root one checkpoint at a time.
 
 Measured on `master` at `45c42ad`:
 
-| Artefact | Size |
-| -------- | ---- |
-| `mobile/src/hooks/useCallFlow.ts` | **4,221 lines** |
+| Artefact                                      | Size            |
+| --------------------------------------------- | --------------- |
+| `mobile/src/hooks/useCallFlow.ts`             | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: CP1 and CP2 have landed. `useCallFlow.ts` is now
-**3,799 lines** in this checkout. The extracted effect hooks present now are
-`useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
-`useCallAudioRouting` and `useConnectionQuality`, with focused tests for the
-latter four. The next safe implementation checkpoint is **CP3 —
-`usePeerConnection`**. A server-side call pickup blocker found in the production
-logs on 2026-09-10 was fixed separately by refreshing stale local call caches
-from shared call state before RTC/cancel handling; it does not change this
-extraction order.
+Current handoff, 2026-09-10: CP1, CP2 and CP3 have landed. `useCallFlow.ts`
+is now **3,560 lines** in this checkout. The extracted effect hooks present now
+are `useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
+`useCallAudioRouting`, `useConnectionQuality` and `usePeerConnection`, with
+focused tests for the latter five. Per the scaffold-first follow-up request,
+empty CP4–CP6 files also exist (`useLocalMedia`, `useSignalingSocket`,
+`useAnswerPath`) but are intentionally **not wired** yet. The next safe wiring
+checkpoint is **CP4 — `useLocalMedia`**. A server-side call pickup blocker found
+in the production logs on 2026-09-10 was fixed separately by refreshing stale
+local call caches from shared call state before RTC/cancel handling; it does not
+change this extraction order.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
@@ -77,17 +79,17 @@ for `useCallFlow` to become a composition root rather than an implementation.
 Two sessions working concurrently will conflict, and the conflicts land in a
 4,000-line file whose call path has no E2E coverage (#114 is open). Therefore:
 
-> **Rule: one checkpoint in flight at a time. Wait for *merge*, not PR-open,
+> **Rule: one checkpoint in flight at a time. Wait for _merge_, not PR-open,
 > before starting the next.**
 
-Genuinely parallel work is anything that does *not* touch that file:
+Genuinely parallel work is anything that does _not_ touch that file:
 
 - splitting `useCallFlow.test.tsx` into per-hook test files, after a checkpoint lands;
 - updating this document or `docs/OPTIMIZATION_PLAN.md`;
-- device QA for the *previously merged* checkpoint.
+- device QA for the _previously merged_ checkpoint.
 
-A workable rhythm is to run checkpoint *N*'s device QA in parallel with
-checkpoint *N+1*'s implementation.
+A workable rhythm is to run checkpoint _N_'s device QA in parallel with
+checkpoint _N+1_'s implementation.
 
 CP3, CP5 and CP6 must **never** be batched together. They touch overlapping refs
 — `peerConnectionRef`, `socketRef`, `signalingRef`, `activeCallIdRef` — and each
@@ -111,14 +113,14 @@ Violating any of these is a regression even when the suite is green.
 
 **Added by the six PRs merged against #345**
 
-| Invariant | Source |
-| --------- | ------ |
-| The memoized `callFlowState` / `callFlowActions` split — never reintroduce an unmemoized return | #353 |
-| `areConnectionQualitiesEqual` preserves object identity on `setConnectionQuality` | #353 |
-| `prefetchIceServersForCall` warms at socket connect *and* at push rehydration | #354 |
-| `remoteStreamRef`, `mergedScreenAudioTrackIdsRef` and `mergedScreenAudioTrackRefsRef` are always reset together | #355 |
-| `connectSocketHandlersRef` ref-forwarding keeps `connectSocket` dependent only on `signalingUrl` | #356 |
-| `publishAudioDevices` identity preservation, the media-state relay debounce, and the bounded answered-call `Set` | #358 |
+| Invariant                                                                                                        | Source |
+| ---------------------------------------------------------------------------------------------------------------- | ------ |
+| The memoized `callFlowState` / `callFlowActions` split — never reintroduce an unmemoized return                  | #353   |
+| `areConnectionQualitiesEqual` preserves object identity on `setConnectionQuality`                                | #353   |
+| `prefetchIceServersForCall` warms at socket connect _and_ at push rehydration                                    | #354   |
+| `remoteStreamRef`, `mergedScreenAudioTrackIdsRef` and `mergedScreenAudioTrackRefsRef` are always reset together  | #355   |
+| `connectSocketHandlersRef` ref-forwarding keeps `connectSocket` dependent only on `signalingUrl`                 | #356   |
+| `publishAudioDevices` identity preservation, the media-state relay debounce, and the bounded answered-call `Set` | #358   |
 
 ---
 
@@ -240,7 +242,7 @@ Verified with mobile typecheck, lint, the CP2 hook test and `useCallFlow.test.ts
 
 ---
 
-### CP3 — `usePeerConnection` ⬜ · size L · risk High
+### CP3 — `usePeerConnection` ✅ · size L · risk High
 
 **Extracts.** `closePeerConnection` and `createPeerConnection` (≈1122–1312) plus
 `renegotiate` (≈895–925).
@@ -251,7 +253,7 @@ Verified with mobile typecheck, lint, the CP2 hook test and `useCallFlow.test.ts
 
 **Care.**
 
-- The three merge-tracking refs are reset *together* (#355). Keeping them in one
+- The three merge-tracking refs are reset _together_ (#355). Keeping them in one
   hook is the point of taking this checkpoint before CP4.
 - `prefetchIceServersForCall` warming (#354) must survive.
 - The hook must call into `call/iceRestartLadder.ts`, never reimplement it.
@@ -262,11 +264,20 @@ through `peerConnectionRef` directly.
 
 **Entry precondition.** CP2 merged.
 **Resume check.** `ls mobile/src/hooks/usePeerConnection.ts`.
-**Rollback.** Revert; CP4 must not be started until this is stable.
+**Rollback.** Revert; CP4 must not be wired until this is stable.
+
+**Landed in this session.** `usePeerConnection` now owns `peerConnectionRef`,
+`pendingPeerConnectionRef`, `remoteStreamRef`, `iceCandidateBufferRef`,
+`isNegotiatingRef`, peer construction with TURN-aware ICE servers, candidate
+emission, remote track handling, screen-audio-only stream merging,
+renegotiation and close/teardown. `useCallFlow` keeps the recovery/screen-share
+composition by passing ref-backed callbacks into the hook. Focused coverage:
+`mobile/__tests__/hooks/usePeerConnection.test.tsx`. Verified with mobile
+typecheck and the CP3 hook plus `useCallFlow.test.tsx` targeted Jest run.
 
 ---
 
-### CP4 — `useLocalMedia` ⬜ · size M · risk Medium
+### CP4 — `useLocalMedia` 🚧 scaffolded · size M · risk Medium
 
 **Extracts.** `startLocalPreview` and `releaseLocalMedia` from
 `// ─── Local media ───` (≈1316–1349, with `releaseLocalMedia` at ≈1107), and
@@ -286,11 +297,16 @@ hook wires its controls before these handlers are defined. Whatever moves must
 keep those refs current.
 
 **Entry precondition.** CP3 merged.
-**Resume check.** `ls mobile/src/hooks/useLocalMedia.ts`.
+**Resume check.** `ls mobile/src/hooks/useLocalMedia.ts`; if it only returns an
+empty scaffold, CP4 still needs wiring.
+
+**Scaffold status.** `mobile/src/hooks/useLocalMedia.ts` exists only as an
+unwired placeholder so future sessions can implement this checkpoint without
+first creating the file.
 
 ---
 
-### CP5 — `useSignalingSocket` ⬜ · size XL · risk High
+### CP5 — `useSignalingSocket` 🚧 scaffolded · size XL · risk High
 
 **Extracts.** The `// ─── Socket connection ───` block (≈1624–2284).
 
@@ -303,7 +319,7 @@ six message/typing handlers, `handleSocketConnected`, `handleSocketDisconnected`
 and `wakeCallHeartbeat` — with a dependency array of literally `[signalingUrl]`
 behind an eslint-disable.
 
-That ref bag *is* the extracted hook's interface, already designed. The work is
+That ref bag _is_ the extracted hook's interface, already designed. The work is
 closer to moving a block than to untangling one: the twenty handlers become the
 hook's parameter object, and the ref-forwarding pattern moves with it. Do not
 collapse the ref bag into direct dependencies — that reintroduces the reconnect
@@ -311,11 +327,15 @@ storm #356 fixed.
 
 **Entry precondition.** CP4 merged.
 **Resume check.** `ls mobile/src/hooks/useSignalingSocket.ts` and confirm
-`connectSocket`'s dependency array is still `[signalingUrl]`.
+`connectSocket`'s dependency array is still `[signalingUrl]`; if the hook only
+returns `{}`, CP5 still needs wiring.
+
+**Scaffold status.** `mobile/src/hooks/useSignalingSocket.ts` exists only as an
+unwired placeholder.
 
 ---
 
-### CP6 — `useAnswerPath` ⬜ · size L · risk High
+### CP6 — `useAnswerPath` 🚧 scaffolded · size L · risk High
 
 **Extracts.** `// ─── Accept incoming call ───` (≈2834–3183) and the adjacent
 `// ─── Decline incoming call ───` and `// ─── CallKeep: bridge OS answer/end
@@ -327,7 +347,11 @@ through `call/answerPath.ts`; this checkpoint moves the effects around those
 decisions, it does not re-decide them.
 
 **Entry precondition.** CP5 merged.
-**Resume check.** `ls mobile/src/hooks/useAnswerPath.ts`.
+**Resume check.** `ls mobile/src/hooks/useAnswerPath.ts`; if the hook only
+returns `{}`, CP6 still needs wiring.
+
+**Scaffold status.** `mobile/src/hooks/useAnswerPath.ts` exists only as an
+unwired placeholder.
 
 ---
 
@@ -362,7 +386,7 @@ were correct.
 
 **Entry precondition.** CP6 merged, so the collaborator list is final.
 **Resume check.** Search `docs/OPTIMIZATION_PLAN.md` for a teardown decision; its
-presence *is* the completion signal, whichever way it went.
+presence _is_ the completion signal, whichever way it went.
 
 ---
 
@@ -382,9 +406,11 @@ result in the checkpoint's PR.
 ## 7. Resuming after an interruption
 
 1. `git log --oneline -1` — note the commit the tree is on.
-2. `ls mobile/src/hooks/` — the presence of `useCallAudioRouting.ts`,
-   `useConnectionQuality.ts`, `usePeerConnection.ts`, `useLocalMedia.ts`,
-   `useSignalingSocket.ts`, `useAnswerPath.ts` tells you which checkpoints landed.
+2. `ls mobile/src/hooks/` — `useCallAudioRouting.ts`,
+   `useConnectionQuality.ts` and `usePeerConnection.ts` are wired checkpoints.
+   `useLocalMedia.ts`, `useSignalingSocket.ts` and `useAnswerPath.ts` may be
+   scaffold-only; open each file and confirm it does more than return `{}` before
+   treating that checkpoint as wired.
 3. `wc -l mobile/src/hooks/useCallFlow.ts` — compare against 4,221 baseline,
    the 4,024-line post-CP1 handoff and the 3,799-line post-CP2 handoff to gauge
    progress.
@@ -401,6 +427,8 @@ result in the checkpoint's PR.
 
 - [x] CP1 extracted.
 - [x] CP2 extracted.
+- [x] CP3 extracted.
+- [ ] CP4–CP6 scaffold files are wired one at a time.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.
