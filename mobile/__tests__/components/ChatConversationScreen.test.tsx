@@ -1,9 +1,10 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView } from 'react-native';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Text } from 'react-native';
 import ChatConversationScreen, {
   findUnreadAnchorKey,
 } from '../../src/components/ChatConversationScreen';
+import { mergeHistoryPage } from '../../src/messaging/messageHistory';
 import { announceForAccessibility } from '../../src/accessibilityAnnouncer';
 import { _resetAudioPlayback } from '../../src/audioPlayback';
 import { _resetPlayedVoiceNotes } from '../../src/storage/playedVoiceNotes';
@@ -200,6 +201,53 @@ describe('ChatConversationScreen', () => {
       'call-513',
       'call-520',
     ]);
+  });
+
+  test('a call from a Postgres-backed page lands between the messages bracketing its start', () => {
+    // End to end over the path a real page takes: `mergeHistoryPage` is what
+    // orders and canonicalises the entries, and the screen renders whatever it
+    // produces. The message timestamps are in the shape a string-mode Postgres
+    // `timestamptz` column yields and the call's in the shape `toISOString`
+    // yields — the mismatch that used to sort every call to the bottom of the
+    // conversation and leave the messages ordered by UUID.
+    const day = new Date().toISOString().slice(0, 10);
+    const page = [
+      makeMessage({ messageId: 'after-call', body: 'after', createdAt: `${day} 17:30:00+00` }),
+      {
+        type: 'call',
+        callId: 'call-520',
+        direction: 'outgoing',
+        status: 'ended',
+        createdAt: `${day}T17:20:00.000Z`,
+      },
+      makeMessage({ messageId: 'before-call', body: 'before', createdAt: `${day} 17:10:00.5+00` }),
+    ];
+
+    const tree = render({
+      peerId: 'user-bob',
+      messages: mergeHistoryPage([], page as any),
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    });
+
+    const list = findByTestId(tree, 'chat-message-list');
+    expect(
+      list.props.data
+        .filter((item: any) => item.type === 'message' || item.type === 'call')
+        .map((item: any) => item.message?.messageId ?? item.entries?.[0]?.callId),
+    ).toEqual(['before-call', 'call-520', 'after-call']);
+
+    // The day separator and the bubble times both come from parsing these
+    // timestamps, so they are silently lost — not errored on — when a value is
+    // unparseable, which is what made this worth asserting.
+    const dateItems = list.props.data.filter((item: any) => item.type === 'date');
+    expect(dateItems.map((item: any) => item.label)).toEqual(['Today']);
+    expect(
+      tree.root
+        .findAllByType(Text)
+        .some((node: any) => /^\d{1,2}:\d{2}/.test(String(node.props.children ?? ''))),
+    ).toBe(true);
   });
 
   test('back button calls onBack', () => {

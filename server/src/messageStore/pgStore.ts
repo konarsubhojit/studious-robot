@@ -33,6 +33,7 @@ import {
   MAX_CONVERSATION_LIMIT,
 } from './queries.ts';
 import { applyReaction, createMessageRecord, nextTimestamp } from './records.ts';
+import { normalizeTimestamp } from '../../../shared/time.ts';
 import type { Database } from '../../db/client.ts';
 import type {
   ConversationSummary,
@@ -58,9 +59,23 @@ export function escapeLikePattern(value: string): string {
 /**
  * Shape a row into the domain record every caller expects.
  *
- * The timestamp columns are read in `string` mode, so they arrive as ISO text
- * and need no conversion — which matters because `createdAt` doubles as the
- * pagination cursor and a round trip through `Date` would lose precision.
+ * The timestamp columns are read in `string` mode, which does *not* mean ISO
+ * text: Drizzle's node-postgres session replaces the driver's `timestamptz`
+ * parser with the identity function, so what arrives is Postgres' own
+ * rendering — `2026-09-09 14:16:47.89+00`, with a space separator, the trailing
+ * zeroes of the fraction trimmed and a two-digit offset.  That is neither
+ * comparable against the ISO timestamps call records carry (a space sorts
+ * before `T`, so every call looked newer than every message from the same day)
+ * nor parseable by Hermes, which the mobile app runs.  Normalising here — the
+ * one place every read is shaped — restores the invariant the rest of the
+ * system is written against: a timestamp is fixed-width UTC ISO, so comparing
+ * two of them lexicographically is the same as comparing them chronologically.
+ *
+ * Lossless for this table: every writer of these three columns goes through
+ * `nextTimestamp()`, which has millisecond resolution, so the sub-millisecond
+ * digits normalisation drops are always the zeroes Postgres padded them with.
+ * That matters because `createdAt` doubles as the `before` pagination cursor,
+ * whose tie-break is an equality test against the stored value.
  */
 function toStoredMessage(row: MessageRow): StoredMessage {
   return {
@@ -75,10 +90,10 @@ function toStoredMessage(row: MessageRow): StoredMessage {
       null,
     replyTo: row.replyTo ?? null,
     reactions: (row.reactions as Record<string, string[]>) ?? {},
-    deletedAt: row.deletedAt ?? null,
-    createdAt: row.createdAt,
+    deletedAt: normalizeTimestamp(row.deletedAt ?? null),
+    createdAt: normalizeTimestamp(row.createdAt),
     deliveredTo: [...(row.deliveredTo ?? [])],
-    readAt: row.readAt ?? null,
+    readAt: normalizeTimestamp(row.readAt ?? null),
   };
 }
 

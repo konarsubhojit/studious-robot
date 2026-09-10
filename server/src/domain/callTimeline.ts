@@ -5,6 +5,7 @@ import { invalidateCallHistoryCache, persistCallRecord } from '../callPersistenc
 import { describeError } from '../lib/errors.ts';
 import { callRecordFromRow } from './callHistory.ts';
 import { messageTypeOf } from '../../../shared/index.ts';
+import { timestampMs } from '../../../shared/time.ts';
 
 /**
  * Call records seen as part of a conversation's timeline.
@@ -55,6 +56,37 @@ const MAX_TIMELINE_CALLS = MAX_MESSAGE_EXPORT_READ_LIMIT;
  * already lose to a newer one.
  */
 const MAX_ACTIVITY_CALLS = 500;
+
+/**
+ * Order two timestamps newest-first by the instant they name.
+ *
+ * Comparing the strings would do if every producer emitted the same
+ * fixed-width UTC ISO, but that is a property of the data, not of the type, and
+ * it did not hold: Postgres renders `timestamptz` with a space separator, which
+ * sorts before the `T` in the ISO timestamps call entries carry, so every call
+ * sorted as newer than every message from the same day.  A trimmed fraction
+ * misorders the same way (`…:47Z` sorts before `…:47.5Z`).  `pgStore` now
+ * canonicalises on read, but the ordering itself should not depend on that
+ * having been done everywhere.
+ *
+ * A timestamp that cannot be parsed sorts last, so one malformed record cannot
+ * displace real activity from the top of a page.
+ *
+ * @returns Negative when `a` is newer, positive when `b` is, and 0 when they
+ *   name the same instant — the caller then applies its own id tie-break.
+ */
+function compareNewestFirst(a: string | null | undefined, b: string | null | undefined): number {
+  const aMs = timestampMs(a);
+  const bMs = timestampMs(b);
+  const aKnown = Number.isFinite(aMs);
+  const bKnown = Number.isFinite(bMs);
+  if (!aKnown || !bKnown) {
+    if (aKnown === bKnown) return 0;
+    return aKnown ? -1 : 1;
+  }
+  if (aMs === bMs) return 0;
+  return aMs < bMs ? 1 : -1;
+}
 
 /**
  * @returns `value` as a Date for a timestamp comparison, or `null` when it is
@@ -120,16 +152,18 @@ function listCallsBetween(
       (call.callerId === peerId && call.calleeId === userId);
     if (!isPair) continue;
     if (before) {
+      const order = compareNewestFirst(call.createdAt, before);
       const isBefore =
-        call.createdAt < before ||
-        (call.createdAt === before &&
+        order > 0 ||
+        (order === 0 &&
           (includeCallsAtBefore || (beforeCallId ? call.callId < beforeCallId : false)));
       if (!isBefore) continue;
     }
     calls.push(call);
   }
   return calls.sort((a, b) => {
-    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+    const order = compareNewestFirst(a.createdAt, b.createdAt);
+    if (order !== 0) return order;
     if (a.callId === b.callId) return 0;
     return a.callId < b.callId ? 1 : -1;
   });
@@ -268,7 +302,8 @@ function mergeTimeline(messages: Array<Record<string, any>>, callEntries: Array<
     ...callEntries,
   ];
   entries.sort((a, b) => {
-    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+    const order = compareNewestFirst(a.createdAt, b.createdAt);
+    if (order !== 0) return order;
     const aId = timelineSortId(a);
     const bId = timelineSortId(b);
     if (aId === bId) return 0;
@@ -324,7 +359,7 @@ function addCallActivity(
     byPeer.set(peerId, { entry, unread: unread ? 1 : 0 });
     return;
   }
-  if (entry.createdAt > existing.entry.createdAt) existing.entry = entry;
+  if (compareNewestFirst(entry.createdAt, existing.entry.createdAt) < 0) existing.entry = entry;
   if (unread) existing.unread += 1;
 }
 
@@ -409,7 +444,9 @@ function latestConversationActivity(
   lastMessage: Record<string, any> | null,
 ) {
   if (!calls) return lastMessage;
-  if (!lastMessage || calls.entry.createdAt > lastMessage.createdAt) return calls.entry;
+  if (!lastMessage || compareNewestFirst(calls.entry.createdAt, lastMessage.createdAt) < 0) {
+    return calls.entry;
+  }
   return lastMessage;
 }
 
@@ -430,12 +467,9 @@ function appendCallOnlyConversations(
 }
 
 function sortConversationsByActivity(conversations: Array<Record<string, any>>) {
-  return conversations.sort((a, b) => {
-    const aAt = a.lastActivity?.createdAt ?? '';
-    const bAt = b.lastActivity?.createdAt ?? '';
-    if (aAt === bAt) return 0;
-    return aAt < bAt ? 1 : -1;
-  });
+  return conversations.sort((a, b) =>
+    compareNewestFirst(a.lastActivity?.createdAt, b.lastActivity?.createdAt),
+  );
 }
 
 async function augmentConversationsWithCalls(

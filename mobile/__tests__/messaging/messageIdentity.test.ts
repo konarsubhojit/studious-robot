@@ -35,17 +35,67 @@ describe('ordering', () => {
     ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual(['bbb', 'aaa', 'zzz']);
   });
 
-  test('client-created sends sort by the later valid local timestamp', () => {
+  test('a pending send sorts by its local timestamp, an acknowledged one by the server\'s', () => {
+    // While the send is in flight the server has no opinion yet, so the local
+    // timestamp is what places the optimistic bubble — below the call it was
+    // composed after.
+    expect([
+      { callId: 'call-late', createdAt: '2026-08-25T17:20:00.000Z' },
+      {
+        messageId: 'sent-after-call',
+        createdAt: '2026-08-25T17:21:00.000Z',
+        clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        syncState: 'pending',
+      },
+    ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual([
+      'sent-after-call',
+      'call-late',
+    ]);
+
+    // Once acknowledged the server's timestamp wins, even though the device's
+    // clock ran a minute fast. Taking the later of the two would have pinned
+    // this device's own messages below everything the server considered newer,
+    // permanently — and shown the two participants different orders.
     expect([
       { callId: 'call-late', createdAt: '2026-08-25T17:20:00.000Z' },
       {
         messageId: 'sent-after-call',
         createdAt: '2026-08-25T17:10:00.000Z',
         clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        syncState: 'synced',
+      },
+    ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual([
+      'call-late',
+      'sent-after-call',
+    ]);
+  });
+
+  test('an acknowledged send falls back to its local timestamp when the server has none', () => {
+    expect([
+      { callId: 'call-late', createdAt: '2026-08-25T17:20:00.000Z' },
+      {
+        messageId: 'sent-after-call',
+        createdAt: undefined,
+        clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        syncState: 'synced',
       },
     ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual([
       'sent-after-call',
       'call-late',
+    ]);
+  });
+
+  test('Postgres-shaped timestamps order by their instant, not their text', () => {
+    // A message's `createdAt` reaches the client from a string-mode Postgres
+    // column, a call's from `toISOString`. Compared as text the space
+    // separator sorts before `T`, which put every call above every message
+    // from the same day.
+    expect([
+      { messageId: 'message-newer', createdAt: '2026-08-25 17:25:00.5+00' },
+      { callId: 'call-older', createdAt: '2026-08-25T17:20:00.000Z' },
+    ].sort(byNewestFirst).map(entry => entry.messageId ?? entry.callId)).toEqual([
+      'message-newer',
+      'call-older',
     ]);
   });
 });
