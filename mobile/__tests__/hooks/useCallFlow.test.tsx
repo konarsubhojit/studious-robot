@@ -4688,8 +4688,19 @@ describe('useCallFlow chat', () => {
       jest.advanceTimersByTime(7000);
       await Promise.resolve();
     });
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith();
 
+    await act(async () => {
+      jest.advanceTimersByTime(7000);
+      await Promise.resolve();
+    });
     expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
+
+    await act(async () => {
+      jest.advanceTimersByTime(56000);
+      await Promise.resolve();
+    });
+    expect(peerConnection.getStats).toHaveBeenLastCalledWith();
   });
 
   test('logs a selected direct candidate pair with TURN usage disabled', async () => {

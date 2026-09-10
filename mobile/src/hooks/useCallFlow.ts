@@ -3670,7 +3670,9 @@ export default function useCallFlow({
           : await pc.getStats(remoteVideoTrack);
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
-        if (shouldPollCandidatePair) lastCandidatePairPollAtMs = now;
+        if (shouldPollCandidatePair && remoteVideoTrack) {
+          lastCandidatePairPollAtMs = now;
+        }
 
         const {
           rttMs,
@@ -3689,11 +3691,12 @@ export default function useCallFlow({
           );
         }
 
+        const sampleTimestampMs = Date.now();
         const bitrateKbps = deriveBitrateKbps(connectionStatsRef.current, {
-          timestampMs: now,
+          timestampMs: sampleTimestampMs,
           totalBytesReceived,
         });
-        connectionStatsRef.current = { timestampMs: now, totalBytesReceived };
+        connectionStatsRef.current = { timestampMs: sampleTimestampMs, totalBytesReceived };
 
         const packetLossRatio = derivePacketLossRatio({
           totalPacketsLost,
