@@ -53,14 +53,14 @@ Measured on `master` at `45c42ad`:
 | `mobile/src/hooks/useCallFlow.ts`             | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: CP1 through CP5 have landed. `useCallFlow.ts`
-is now **2,909 lines** in this checkout. The extracted effect hooks present now
+Current handoff, 2026-09-10: CP1 through CP6 have landed. `useCallFlow.ts`
+is now **2,290 lines** in this checkout. The extracted effect hooks present now
 are `useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
 `useCallAudioRouting`, `useConnectionQuality`, `usePeerConnection`,
-`useLocalMedia` and `useSignalingSocket`, with focused tests for the latter
-seven. Per the scaffold-first follow-up request, the CP6 file also exists
-(`useAnswerPath`) but is intentionally **not wired** yet. The next safe wiring
-checkpoint is **CP6 — `useAnswerPath`**. A server-side call pickup blocker found
+`useLocalMedia`, `useSignalingSocket` and `useAnswerPath`, with focused tests
+for the latter eight. The next checkpoint is **CP7 — teardown investigation**:
+decide whether `endActiveCall` should stay in the composition root or be
+extracted, and record that verdict in `docs/OPTIMIZATION_PLAN.md`. A server-side call pickup blocker found
 in the production logs on 2026-09-10 was fixed separately by refreshing stale
 local call caches from shared call state before RTC/cancel handling; it does not
 change this extraction order.
@@ -340,7 +340,7 @@ Focused coverage: `mobile/__tests__/hooks/useSignalingSocket.test.tsx`.
 
 ---
 
-### CP6 — `useAnswerPath` 🚧 scaffolded · size L · risk High
+### CP6 — `useAnswerPath` ✅ · size L · risk High
 
 **Extracts.** `// ─── Accept incoming call ───` (≈2834–3183) and the adjacent
 `// ─── Decline incoming call ───` and `// ─── CallKeep: bridge OS answer/end
@@ -352,11 +352,15 @@ through `call/answerPath.ts`; this checkpoint moves the effects around those
 decisions, it does not re-decide them.
 
 **Entry precondition.** CP5 merged.
-**Resume check.** `ls mobile/src/hooks/useAnswerPath.ts`; if the hook only
-returns `{}`, CP6 still needs wiring.
+**Resume check.** `ls mobile/src/hooks/useAnswerPath.ts` and confirm
+`useCallFlow` imports and composes it.
 
-**Scaffold status.** `mobile/src/hooks/useAnswerPath.ts` exists only as an
-unwired placeholder.
+**Landed in this session.** `useAnswerPath` now owns accepting incoming calls,
+socket/HTTP accept fallback, media acquisition after accept, declining incoming
+calls, queued answer replay, persisted notification actions and the CallKeep
+answer/end bridge. The single pending-answer queue remains in `callKeep.js`;
+this hook only records and consumes through the existing helpers. Focused
+coverage: `mobile/__tests__/hooks/useAnswerPath.test.tsx`.
 
 ---
 
@@ -435,7 +439,8 @@ result in the checkpoint's PR.
 - [x] CP3 extracted.
 - [x] CP4 extracted.
 - [x] CP5 extracted.
-- [ ] CP6 scaffold file is wired.
+- [x] CP6 extracted.
+- [ ] CP7 teardown verdict recorded.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.
