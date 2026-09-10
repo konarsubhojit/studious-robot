@@ -4697,7 +4697,9 @@ describe('useCallFlow chat', () => {
     expect(peerConnection.getStats).toHaveBeenLastCalledWith(remoteVideoTrack);
 
     await act(async () => {
-      jest.advanceTimersByTime(56000);
+      // Eight more seven-second ticks put this sample 63 seconds after the
+      // prior complete report, crossing the nine-tick candidate-pair cadence.
+      jest.advanceTimersByTime(7000 * 8);
       await Promise.resolve();
     });
     expect(peerConnection.getStats).toHaveBeenLastCalledWith();

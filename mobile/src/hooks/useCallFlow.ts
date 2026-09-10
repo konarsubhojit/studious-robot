@@ -302,7 +302,7 @@ function projectCallTimelineActivity(
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
-const CANDIDATE_PAIR_POLL_INTERVAL_MS = 60000;
+const CANDIDATE_PAIR_POLL_INTERVAL_MS = STATS_POLL_INTERVAL_MS * 9;
 
 /**
  * How long peer-connection setup will wait for a session to be minted before
