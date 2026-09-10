@@ -121,8 +121,16 @@ export type Stores = {
       | { ok: true; call: CallRecord; idempotent: boolean }
       | { ok: false; error: 'not_found' | 'stale_call_state' | 'terminal_state' }
     >;
-    acquireSweepLease: (instanceId: string, ttlMs: number) => Promise<boolean>;
-    releaseSweepLease: (instanceId: string) => Promise<void>;
+    /**
+     * Every non-terminal call the shared store knows this user participates in.
+     *
+     * "Is this callee already on a call?" cannot be answered from a
+     * key-per-call layout, so a backend that can answer it maintains a
+     * secondary index and implements this. Optional: a backend without one
+     * leaves the question to the local registry, which is correct for a
+     * single-instance deployment.
+     */
+    listActiveCallsForUser?: (userId: string) => Promise<CallRecord[]>;
   };
   sessionState?: {
     get: (sessionId: string) => Promise<SessionRecord | null>;
@@ -174,6 +182,29 @@ export type ServerState = Stores & {
    */
   fanout?: import('../lib/fanoutProbe.ts').FanoutProbe;
   incomingCallPushState?: Map<string, IncomingCallPushEntry>;
+  /**
+   * callId → epoch ms at which this instance last read or wrote the record in
+   * the shared store. Reads inside {@link DEFAULT_CALL_STATE_FRESHNESS_MS} of
+   * that stamp are served from `calls`; older ones go back to the shared store.
+   */
+  callSyncedAt?: Map<string, number>;
+  /**
+   * callId → RTC signals received before the call was media-ready, replayed
+   * once it becomes ready and dropped when it ends.
+   */
+  pendingRtcSignals?: Map<string, PendingRtcSignal[]>;
+};
+
+/**
+ * An RTC relay frame held back because the call had not reached a media-ready
+ * state when it arrived.
+ */
+export type PendingRtcSignal = {
+  eventName: string;
+  dataKey: string;
+  fromUserId: string;
+  toUserId: string;
+  value: unknown;
 };
 
 /**

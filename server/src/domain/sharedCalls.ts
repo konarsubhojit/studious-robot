@@ -3,37 +3,133 @@ import {
   createCallRecord,
   callPeerId,
   findCallerBlockingCall,
+  getCallExpiry,
   supersedeRedialledCalls,
 } from './calls.ts';
+import { DEFAULT_CALL_STATE_FRESHNESS_MS, TERMINAL_CALL_STATES } from '../config.ts';
+import { describeError } from '../lib/errors.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 type CallRecord = import('../stores/contracts.ts').CallRecord;
 
+/**
+ * Record that `callId` was just read from — or written to — the shared store,
+ * so the freshness bound in {@link hydrateCallFromShared} can tell a record
+ * this instance has just confirmed from one it merely remembers.
+ */
+function markCallSynced(state: ServerState, callId: string, now: number = Date.now()): void {
+  if (!state.callState) return;
+  state.callSyncedAt ??= new Map();
+  state.callSyncedAt.set(callId, now);
+}
+
+/**
+ * Adopt a record another instance owns into the local registry.
+ *
+ * The local `state.calls` map is a cache, so a record that arrives from the
+ * shared store replaces whatever this instance believed. The event log is
+ * created empty when missing: events are per-instance breadcrumbs, and the
+ * durable log lives in Postgres.
+ */
+function adoptSharedCall(state: ServerState, call: CallRecord, now: number = Date.now()): CallRecord {
+  state.calls.set(call.callId, call);
+  if (!state.callEvents.has(call.callId)) {
+    state.callEvents.set(call.callId, []);
+  }
+  markCallSynced(state, call.callId, now);
+  return call;
+}
+
+/**
+ * Resolve a call, preferring the shared record over this instance's cache.
+ *
+ * The cache used to win unconditionally, which is exactly how one instance kept
+ * answering `ringing` for a call another instance had already ended: nothing
+ * ever invalidated it. It is now trusted only for
+ * {@link DEFAULT_CALL_STATE_FRESHNESS_MS} after this instance last confirmed it
+ * against the shared store — long enough to keep Redis off the per-frame RTC
+ * path, short enough that a divergence cannot outlive a ring.
+ *
+ * @param options.maxAgeMs - Freshness window; `0` forces a shared read.
+ */
 async function hydrateCallFromShared(
   state: ServerState,
-  callId: string
+  callId: string,
+  { maxAgeMs = DEFAULT_CALL_STATE_FRESHNESS_MS }: { maxAgeMs?: number } = {}
 ): Promise<CallRecord | null> {
   const local = state.calls.get(callId);
-  if (local) {
+  if (!state.callState) {
+    return local ?? null;
+  }
+  const now = Date.now();
+  const syncedAt = state.callSyncedAt?.get(callId) ?? 0;
+  // A terminal record is final: no later read can change it, so it never needs
+  // re-reading however old this instance's copy is.
+  if (local && (TERMINAL_CALL_STATES.has(local.status) || now - syncedAt < maxAgeMs)) {
     return local;
   }
-  if (!state.callState) {
-    return null;
-  }
+
   const shared = await state.callState.get(callId);
   if (!shared) {
-    return null;
+    return local ?? null;
   }
-  state.calls.set(callId, shared);
-  if (!state.callEvents.has(callId)) {
-    state.callEvents.set(callId, []);
-  }
-  return shared;
+  return adoptSharedCall(state, shared, now);
 }
 
 async function persistCallToShared(state: ServerState, call: CallRecord): Promise<void> {
   if (!state.callState) return;
   await state.callState.save(call);
+  markCallSynced(state, call.callId);
+}
+
+/**
+ * Pull every call the shared store says `userId` is on into the local registry,
+ * and drop local records the shared store no longer considers active.
+ *
+ * This is what makes a `busy` verdict answerable across instances: the question
+ * is per *user*, and a key-per-call store cannot answer it without the index
+ * this reads. Best-effort — a shared store that cannot answer (or fails) leaves
+ * the local registry as the only evidence, which is what a single-instance
+ * deployment has anyway.
+ */
+async function refreshActiveCallsForUser(state: ServerState, userId: string): Promise<void> {
+  const listActive = state.callState?.listActiveCallsForUser;
+  if (!listActive) return;
+  let shared: CallRecord[];
+  try {
+    shared = await listActive(userId);
+  } catch (error: unknown) {
+    console.error(
+      `[calls] failed to read shared active calls for ${userId}: ${describeError(error)}`
+    );
+    return;
+  }
+
+  const now = Date.now();
+  const active = new Set<string>();
+  for (const call of shared) {
+    active.add(call.callId);
+    adoptSharedCall(state, call, now);
+  }
+  // Anything this instance still holds as non-terminal that the shared store
+  // does not list has been ended elsewhere; keeping it would let a fossil on
+  // one instance keep reporting the user as busy.
+  const orphans = [];
+  for (const call of state.calls.values()) {
+    if (TERMINAL_CALL_STATES.has(call.status)) continue;
+    if (call.callerId !== userId && call.calleeId !== userId) continue;
+    if (active.has(call.callId)) continue;
+    orphans.push(call.callId);
+  }
+  for (const callId of orphans) {
+    const latest = await state.callState?.get(callId);
+    if (latest) {
+      adoptSharedCall(state, latest, now);
+      continue;
+    }
+    state.calls.delete(callId);
+    state.callSyncedAt?.delete(callId);
+  }
 }
 
 async function createCallRecordWithShared(
@@ -48,6 +144,47 @@ async function createCallRecordWithShared(
   const call = createCallRecord(state, args);
   await persistCallToShared(state, call);
   return call;
+}
+
+/**
+ * Re-read every locally expired call from the shared store before the sweep
+ * acts on it.
+ *
+ * The sweep finalises records directly, bypassing the atomic transition, so
+ * without this an instance whose copy of a call is behind would overwrite a
+ * conversation another instance is happily running with `media_connect_timeout`.
+ * Only records this instance already believes are past their deadline are read,
+ * so the cost is bounded by how many calls are actually expiring.
+ *
+ * A no-op without a shared store: there is then nothing to be behind.
+ *
+ * @returns Number of records refreshed from the shared store.
+ */
+async function refreshExpiredCallsFromShared(
+  state: ServerState,
+  timeouts: { ringingTimeoutMs?: number; mediaConnectTimeoutMs?: number; maxCallDurationMs?: number; heartbeatTimeoutMs?: number; } = {}
+): Promise<number> {
+  if (!state.callState) return 0;
+  const now = Date.now();
+  const expiring = [];
+  for (const call of state.calls.values()) {
+    const expiry = getCallExpiry(call, timeouts);
+    if (expiry && expiry.deadlineMs <= now) expiring.push(call.callId);
+  }
+
+  let refreshed = 0;
+  for (const callId of expiring) {
+    try {
+      const shared = await state.callState.get(callId);
+      if (shared) {
+        adoptSharedCall(state, shared, now);
+        refreshed++;
+      }
+    } catch (error: unknown) {
+      console.error(`[calls] failed to refresh expiring call ${callId}: ${describeError(error)}`);
+    }
+  }
+  return refreshed;
 }
 
 /**
@@ -93,7 +230,19 @@ async function placeCallWithShared(
     onSuperseded?: (call: CallRecord, previousStatus: string, reason: string) => void;
   }
 ): Promise<PlaceCallResult> {
-  const blocking = findCallerBlockingCall(state, callerId, calleeId);
+  // Both verdicts this makes — "the caller is already on a call" and "the
+  // callee is busy" — are per *user*, and the local registry only knows about
+  // calls this instance handled. Pull the shared view of both participants in
+  // first, so a call running on another instance is seen and a fossil this
+  // instance never saw ended is dropped.
+  await Promise.all([
+    refreshActiveCallsForUser(state, callerId),
+    refreshActiveCallsForUser(state, calleeId),
+  ]);
+
+  const blocking = findCallerBlockingCall(state, callerId, calleeId, {
+    staleAfterMs: ringingTimeoutMs,
+  });
   if (blocking) {
     return {
       ok: false,
@@ -171,10 +320,7 @@ async function transitionCallWithShared(
 }
 
 function hydrateCallFromAtomicResult(state: ServerState, callId: string, call: CallRecord): void {
-  state.calls.set(callId, call);
-  if (!state.callEvents.has(callId)) {
-    state.callEvents.set(callId, []);
-  }
+  adoptSharedCall(state, call);
 }
 
 function primeLocalCallForTransition(
@@ -188,8 +334,7 @@ function primeLocalCallForTransition(
     local.status = fromStatus;
     return;
   }
-  state.calls.set(callId, { ...atomicCall, status: fromStatus });
-  if (!state.callEvents.has(callId)) state.callEvents.set(callId, []);
+  adoptSharedCall(state, { ...atomicCall, status: fromStatus });
 }
 
 async function handleAtomicTransitionFailure(
@@ -202,7 +347,7 @@ async function handleAtomicTransitionFailure(
   }
   if (error === 'stale_call_state') {
     const latest = await state.callState?.get(callId);
-    if (latest) state.calls.set(callId, latest);
+    if (latest) adoptSharedCall(state, latest);
     return {
       ok: false as const,
       status: 409,
@@ -219,8 +364,12 @@ async function handleAtomicTransitionFailure(
 }
 
 export {
+  adoptSharedCall,
   hydrateCallFromShared,
+  refreshExpiredCallsFromShared,
+  markCallSynced,
   persistCallToShared,
+  refreshActiveCallsForUser,
   createCallRecordWithShared,
   placeCallWithShared,
   transitionCallWithShared,

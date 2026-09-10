@@ -4,6 +4,7 @@ import { recordCallHeartbeat } from '../domain/calls.ts';
 import { notifyCallTransition, emitToUserSockets } from '../domain/notifications.ts';
 import { hydrateCallFromShared, transitionCallWithShared } from '../domain/sharedCalls.ts';
 import { requireSocketSession, validateSignalingVersion, parseInboundPayload, acknowledgeSuccess, acknowledgeError } from './ack.ts';
+import { bufferRtcSignal, countBufferedRtcSignals, flushBufferedRtcSignals, isBufferableSignal } from './rtcBuffer.ts';
 import { CLIENT_EVENTS, ERROR_CODES } from '../../../shared/index.ts';
 
 /**
@@ -157,6 +158,10 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
       reason: transition.reason ?? null,
     });
   }
+  // Candidates that arrived during the ring are replayed here — the accept that
+  // makes the call media-ready is exactly what they were waiting for — and
+  // discarded when the transition was into a terminal state instead.
+  flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
   options.onSuccess?.(result.call, transition);
   acknowledgeSuccess(socket, ack, options.eventName, { call: result.call });
 }
@@ -238,20 +243,45 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     );
     return;
   }
-  if (!RTC_ACTIVE_CALL_STATES.has(call.status)) {
+  // Only now, with a rejection on the table, is a shared-store read worth its
+  // latency: the local record may simply be behind a peer instance that has
+  // already accepted the call. Frames for a call that really is media-ready
+  // never pay for this.
+  const current = RTC_ACTIVE_CALL_STATES.has(call.status)
+    ? call
+    : (await hydrateCallFromShared(options.state, callId, { maxAgeMs: 0 })) ?? call;
+
+  if (!RTC_ACTIVE_CALL_STATES.has(current.status)) {
+    const buffered =
+      isBufferableSignal(options.eventName, current.status) &&
+      bufferRtcSignal(options.state, callId, {
+        eventName: options.eventName,
+        dataKey: options.dataKey,
+        fromUserId: userId,
+        toUserId: current.callerId === userId ? current.calleeId : current.callerId,
+        value,
+      });
+    if (buffered) {
+      acknowledgeSuccess(socket, ack, options.eventName, {
+        callId,
+        buffered: true,
+        bufferedCount: countBufferedRtcSignals(options.state, callId),
+      });
+      return;
+    }
     acknowledgeError(
       socket,
       ack,
       options.eventName,
       'stale_call_state',
-      `call is not ready for RTC in state: ${call.status}`,
+      `call is not ready for RTC in state: ${current.status}`,
       options.state
     );
     return;
   }
 
-  if (call.status === 'accepted') {
-    const previousStatus = call.status;
+  if (current.status === 'accepted') {
+    const previousStatus = current.status;
     const result = await transitionCallWithShared(options.state, callId, 'connecting_media', {
       actor: userId,
     });
@@ -260,6 +290,9 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
         previousStatus,
         actor: userId,
       });
+    }
+    if (result.ok) {
+      flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
     }
   }
 
@@ -276,7 +309,7 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     recordCallHeartbeat(options.state, callId);
   }
 
-  const peerUserId = call.callerId === userId ? call.calleeId : call.callerId;
+  const peerUserId = current.callerId === userId ? current.calleeId : current.callerId;
   const relayPayload = {
     version: SIGNALING_VERSION,
     callId,

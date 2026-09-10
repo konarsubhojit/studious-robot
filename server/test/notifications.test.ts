@@ -134,16 +134,18 @@ test('a call transition reaches sockets and the cross-instance message bus', asy
   const transition = await stateChanged;
   assert.equal(transition.status, 'accepted');
   await wait(0);
-  assert.deepEqual(published.filter(entry => entry.channel === CALL_TRANSITION_CHANNEL), [
-    {
-      channel: CALL_TRANSITION_CHANNEL,
-      message: {
-        callId: created.body.callId,
-        previousStatus: 'ringing',
-        status: 'accepted',
-        actor: 'callee-transition',
-        reason: null,
-      },
-    },
-  ]);
+  const transitions = published.filter(entry => entry.channel === CALL_TRANSITION_CHANNEL);
+  assert.equal(transitions.length, 1);
+  const message = transitions[0].message as Record<string, unknown>;
+  // The publishing instance is stamped so subscribers can ignore their own echo.
+  assert.equal(typeof message.instanceId, 'string');
+  assert.notEqual(message.instanceId, '');
+  const { instanceId: _instanceId, ...rest } = message;
+  assert.deepEqual(rest, {
+    callId: created.body.callId,
+    previousStatus: 'ringing',
+    status: 'accepted',
+    actor: 'callee-transition',
+    reason: null,
+  });
 });

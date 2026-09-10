@@ -56,8 +56,7 @@ test('GET /health reports shared affinity metadata when shared stores are config
       get: async () => null,
       save: async () => {},
       transitionAtomic: async () => ({ ok: false as const, error: 'not_found' as const }),
-      acquireSweepLease: async () => true,
-      releaseSweepLease: async () => {},
+      listActiveCallsForUser: async () => [],
     },
   });
   const { httpServer } = createServer({ stores });

@@ -51,15 +51,20 @@ function createCallRecord(state: ServerState, { callerId, calleeId, ringingTimeo
   let status = 'ringing';
   let endReason = null;
 
-  if (getActiveCallsForUser(state, calleeId).length > 0) {
+  // A record that has shown no sign of life for longer than a whole ring is one
+  // the sweep is due to end; it must not be able to report the callee as busy.
+  if (getActiveCallsForUser(state, calleeId, { staleAfterMs: ringingTimeoutMs }).length > 0) {
     status = 'busy';
     endReason = 'busy';
     // Name the offender: a `busy` rejection is otherwise undiagnosable, and the
-    // usual cause is a stale call the callee never actually hung up.
+    // usual cause is a stale call the callee never actually hung up. `staleMs`
+    // is the diagnostic one: `ageMs` measures the call's whole life, so a long
+    // healthy conversation and a fossil from the same minute look identical.
     const blockers = describeActiveCallsForUser(state, calleeId)
       .map(
         (blocker) =>
-          `${blocker.callId}(status=${blocker.status} ageMs=${blocker.ageMs} caller=${blocker.callerId} callee=${blocker.calleeId})`
+          `${blocker.callId}(status=${blocker.status} ageMs=${blocker.ageMs}` +
+          ` staleMs=${blocker.staleMs} caller=${blocker.callerId} callee=${blocker.calleeId})`
       )
       .join(',');
     console.log(
@@ -234,17 +239,43 @@ function appendCallEvent(state: ServerState, callId: string, event: string, acto
 }
 
 /**
- * Return all non-terminal calls where `userId` is either the caller or callee.
+ * Epoch ms at which a call last showed any sign of life: a state change, an
+ * answer, or a heartbeat from one of its participants.
+ *
+ * A long healthy conversation has an old `updatedAt` — it last changed state
+ * when it was answered — but a recent heartbeat, so age has to be measured
+ * against the most recent of the three or every call over an hour old would
+ * read as abandoned.
  */
-function getActiveCallsForUser(state: ServerState, userId: string): CallRecord[] {
+function lastActivityAt(call: CallRecord, fallback: number): number {
+  return Math.max(
+    toTimestamp(call.createdAt, fallback),
+    toTimestamp(call.updatedAt, 0),
+    toTimestamp(call.answeredAt, 0),
+    toTimestamp(call.lastHeartbeatAt, 0)
+  );
+}
+
+/**
+ * Return all non-terminal calls where `userId` is either the caller or callee.
+ *
+ * @param options.staleAfterMs - Ignore records that have shown no sign of life
+ *   for this long. A record that far past its own timeout is one the sweep is
+ *   due to end, and treating it as live is how a fossil on one instance blocked
+ *   a user's calls indefinitely. `0` (the default) applies no bound, which is
+ *   what the reporting paths want: they exist to *show* the stale record.
+ */
+function getActiveCallsForUser(
+  state: ServerState,
+  userId: string,
+  { staleAfterMs = 0, now = Date.now() }: { staleAfterMs?: number; now?: number; } = {}
+): CallRecord[] {
   const active = [];
   for (const call of state.calls.values()) {
-    if (
-      !TERMINAL_CALL_STATES.has(call.status) &&
-      (call.callerId === userId || call.calleeId === userId)
-    ) {
-      active.push(call);
-    }
+    if (TERMINAL_CALL_STATES.has(call.status)) continue;
+    if (call.callerId !== userId && call.calleeId !== userId) continue;
+    if (staleAfterMs > 0 && now - lastActivityAt(call, now) > staleAfterMs) continue;
+    active.push(call);
   }
   return active;
 }
@@ -299,8 +330,13 @@ function isSupersededRedial(call: CallRecord, callerId: string, calleeId: string
  *
  * @returns the blocking call, or `null` when the caller is free.
  */
-function findCallerBlockingCall(state: ServerState, callerId: string, calleeId: string): CallRecord | null {
-  for (const call of getActiveCallsForUser(state, callerId)) {
+function findCallerBlockingCall(
+  state: ServerState,
+  callerId: string,
+  calleeId: string,
+  { staleAfterMs = 0 }: { staleAfterMs?: number; } = {}
+): CallRecord | null {
+  for (const call of getActiveCallsForUser(state, callerId, { staleAfterMs })) {
     if (isSupersededRedial(call, callerId, calleeId)) continue;
     if (call.status === 'ringing' && call.calleeId === callerId) continue;
     return call;
@@ -405,6 +441,9 @@ function tickRingingTimeouts(state: ServerState, now: number, onTransition?: (ca
  * `ringing` calls are left alone: they are delivered by push to a callee who
  * is expected to be offline, and the ring timeout already bounds them.
  *
+ * Single-instance deployments only — presence is per-process, so on a fleet
+ * this cannot tell "gone" from "connected to the other node".
+ *
  * @returns Number of calls transitioned.
  */
 function endCallsForDisconnectedParticipant(
@@ -413,6 +452,13 @@ function endCallsForDisconnectedParticipant(
   { reason = 'participant_disconnected', onTransition }: { reason?: string; onTransition?: (call: CallRecord, previousStatus: string, reason: string) => void; } = {}
 ): number {
   if (!userId) return 0;
+  // `userConnections` only tracks sockets held by *this* process, so with more
+  // than one instance a peer connected to the other node is indistinguishable
+  // from a peer who is gone. Ending a call on that evidence tore down live
+  // conversations purely because the two participants were load-balanced apart.
+  // The heartbeat and media-setup deadlines already end genuinely dead calls;
+  // they are slower than this was, and they are not wrong.
+  if (!isSingleInstanceMode(state)) return 0;
   let count = 0;
   const now = Date.now();
   for (const call of getActiveCallsForUser(state, userId)) {
@@ -596,6 +642,7 @@ function describeActiveCallsForUser(state: ServerState, userId: string, now: num
     createdAt: string;
     updatedAt: string | null | undefined;
     ageMs: number;
+    staleMs: number;
 }[] {
   return getActiveCallsForUser(state, userId).map((call) => ({
     callId: call.callId,
@@ -605,6 +652,9 @@ function describeActiveCallsForUser(state: ServerState, userId: string, now: num
     createdAt: call.createdAt,
     updatedAt: call.updatedAt,
     ageMs: Math.max(0, now - toTimestamp(call.createdAt, now)),
+    // Age since the record last showed any sign of life. `ageMs` alone said
+    // nothing about staleness — the whole point of the question being asked.
+    staleMs: Math.max(0, now - lastActivityAt(call, now)),
   }));
 }
 

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
-import { SHARED_SESSION_MAX_TTL_MS } from '../config.ts';
+import {
+  SHARED_SESSION_MAX_TTL_MS,
+  SHARED_CALL_MAX_TTL_MS,
+  TERMINAL_CALL_STATES,
+} from '../config.ts';
 
 type SocketIoAdapterFactory = (
   pub: unknown,
@@ -20,11 +24,66 @@ function callKey(callId: string): string {
   return `signaling:call:${callId}`;
 }
 
+function userCallsKey(userId: string): string {
+  return `signaling:user:${userId}:calls`;
+}
+
 function sessionKey(sessionId: string): string {
   return `signaling:session:${sessionId}`;
 }
 
-const SWEEP_LEASE_KEY = 'signaling:calls:sweep:lease';
+/**
+ * Write the record and reconcile both participants' active-call indexes in one
+ * round trip, so a `busy` verdict on any instance can be answered per *user*
+ * rather than per known callId.
+ *
+ * A non-terminal call is added to each participant's set; a terminal one is
+ * removed. Both the record and the sets carry an expiry, so a crash between the
+ * two writes cannot strand a member that blocks the user's calls forever.
+ */
+const SAVE_CALL_LUA = `
+local ttl = tonumber(ARGV[2])
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)
+if ARGV[3] == '1' then
+  redis.call('SREM', KEYS[2], ARGV[4])
+  redis.call('SREM', KEYS[3], ARGV[4])
+else
+  redis.call('SADD', KEYS[2], ARGV[4])
+  redis.call('SADD', KEYS[3], ARGV[4])
+  redis.call('PEXPIRE', KEYS[2], ttl)
+  redis.call('PEXPIRE', KEYS[3], ttl)
+end
+return 1
+`;
+
+/**
+ * Resolve a user's index to the records it names, dropping members whose record
+ * has expired or has since become terminal.
+ *
+ * The index is a cache of `signaling:call:*`, never an authority: every answer
+ * is read back from the records themselves, so a leaked member can only cost
+ * one extra `GET` before it is swept out of the set.
+ */
+const LIST_USER_CALLS_LUA = `
+local ids = redis.call('SMEMBERS', KEYS[1])
+local out = {}
+for _, id in ipairs(ids) do
+  local raw = redis.call('GET', 'signaling:call:' .. id)
+  if raw then
+    local call = cjson.decode(raw)
+    local terminal = { ended = true, declined = true, missed = true, busy = true, unreachable = true }
+    if terminal[call.status] then
+      redis.call('SREM', KEYS[1], id)
+    else
+      table.insert(out, raw)
+    end
+  else
+    redis.call('SREM', KEYS[1], id)
+  end
+end
+if #out == 0 then return '[]' end
+return '[' .. table.concat(out, ',') .. ']'
+`;
 
 const TRANSITION_CALL_LUA = `
 local raw = redis.call('GET', KEYS[1])
@@ -34,6 +93,7 @@ local fromStatus = ARGV[1]
 local toStatus = ARGV[2]
 local nowIso = ARGV[3]
 local reason = ARGV[4]
+local ttl = tonumber(ARGV[5])
 local terminal = { ended = true, declined = true, missed = true, busy = true, unreachable = true }
 if call.status == toStatus then return cjson.encode({ ok = true, idempotent = true, call = call }) end
 if terminal[call.status] then return cjson.encode({ ok = false, error = 'terminal_state' }) end
@@ -41,24 +101,12 @@ if call.status ~= fromStatus then return cjson.encode({ ok = false, error = 'sta
 call.status = toStatus
 call.updatedAt = nowIso
 if reason ~= '' then call.endReason = reason end
-redis.call('SET', KEYS[1], cjson.encode(call))
+redis.call('SET', KEYS[1], cjson.encode(call), 'PX', ttl)
+if terminal[toStatus] then
+  redis.call('SREM', KEYS[2], call.callId)
+  redis.call('SREM', KEYS[3], call.callId)
+end
 return cjson.encode({ ok = true, idempotent = false, call = call })
-`;
-
-const ACQUIRE_SWEEP_LEASE_LUA = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  redis.call('PEXPIRE', KEYS[1], ARGV[2])
-  return 1
-end
-if redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2], 'NX') then return 1 end
-return 0
-`;
-
-const RELEASE_SWEEP_LEASE_LUA = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0
 `;
 
 async function createRedisPgStores(
@@ -121,11 +169,35 @@ async function createRedisPgStores(
       return callFallback.get(callId) ?? null;
     },
     save: async (call: import('./contracts.ts').CallRecord) => {
+      if (evalFn) {
+        await evalFn(SAVE_CALL_LUA, {
+          keys: [callKey(call.callId), userCallsKey(call.callerId), userCallsKey(call.calleeId)],
+          arguments: [
+            JSON.stringify(call),
+            String(SHARED_CALL_MAX_TTL_MS),
+            TERMINAL_CALL_STATES.has(call.status) ? '1' : '0',
+            call.callId,
+          ],
+        });
+        return;
+      }
       if (typeof busPub.set === 'function') {
-        await busPub.set(callKey(call.callId), JSON.stringify(call));
+        await busPub.set(callKey(call.callId), JSON.stringify(call), { PX: SHARED_CALL_MAX_TTL_MS });
         return;
       }
       callFallback.set(call.callId, { ...call });
+    },
+    listActiveCallsForUser: async (userId: string) => {
+      if (evalFn) {
+        const raw = await evalFn(LIST_USER_CALLS_LUA, { keys: [userCallsKey(userId)] });
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return Array.isArray(parsed) ? (parsed as import('./contracts.ts').CallRecord[]) : [];
+      }
+      return Array.from(callFallback.values()).filter(
+        (call) =>
+          !TERMINAL_CALL_STATES.has(call.status) &&
+          (call.callerId === userId || call.calleeId === userId)
+      );
     },
     transitionAtomic: async ({
       callId,
@@ -139,10 +211,24 @@ async function createRedisPgStores(
       actor?: string | null;
       reason?: string | null;
     }) => {
+      // The index keys are resolved from the record this instance last read, so
+      // a transition into a terminal state can clear both participants' index
+      // members in the same atomic script that writes the record.
+      const known = callFallback.get(callId) ?? (await bundle.callState.get(callId));
       const redisResult = evalFn
         ? await evalFn(TRANSITION_CALL_LUA, {
-            keys: [callKey(callId)],
-            arguments: [fromStatus, toStatus, new Date().toISOString(), reason ?? ''],
+            keys: [
+              callKey(callId),
+              userCallsKey(known?.callerId ?? callId),
+              userCallsKey(known?.calleeId ?? callId),
+            ],
+            arguments: [
+              fromStatus,
+              toStatus,
+              new Date().toISOString(),
+              reason ?? '',
+              String(SHARED_CALL_MAX_TTL_MS),
+            ],
           })
         : null;
       const resolved = evalFn
@@ -150,9 +236,8 @@ async function createRedisPgStores(
         : (() => {
             const call = callFallback.get(callId);
             if (!call) return { ok: false, error: 'not_found' };
-            const terminal = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
             if (call.status === toStatus) return { ok: true, idempotent: true, call };
-            if (terminal.has(call.status)) return { ok: false, error: 'terminal_state' };
+            if (TERMINAL_CALL_STATES.has(call.status)) return { ok: false, error: 'terminal_state' };
             if (call.status !== fromStatus) return { ok: false, error: 'stale_call_state' };
             callFallback.set(callId, { ...call, status: toStatus, updatedAt: new Date().toISOString() });
             return { ok: true, idempotent: false, call: callFallback.get(callId) };
@@ -171,23 +256,6 @@ async function createRedisPgStores(
         call: resolved.call as import('./contracts.ts').CallRecord,
         idempotent: Boolean(resolved.idempotent),
       };
-    },
-    acquireSweepLease: async (ownerId: string, ttlMs: number) => {
-      if (evalFn) {
-        const result = await evalFn(ACQUIRE_SWEEP_LEASE_LUA, {
-          keys: [SWEEP_LEASE_KEY],
-          arguments: [ownerId, String(Math.max(1_000, ttlMs))],
-        });
-        return Number(result) === 1;
-      }
-      return true;
-    },
-    releaseSweepLease: async (ownerId: string) => {
-      if (!evalFn) return;
-      await evalFn(RELEASE_SWEEP_LEASE_LUA, {
-        keys: [SWEEP_LEASE_KEY],
-        arguments: [ownerId],
-      });
     },
   };
 
@@ -242,7 +310,6 @@ async function createRedisPgStores(
   let closePromise: Promise<void> | null = null;
   bundle.close = (): Promise<void> => {
     closePromise ??= (async () => {
-      await bundle.callState?.releaseSweepLease(bundle.instanceId);
       await messageBus.close();
       await Promise.allSettled(clients.map((client) => client.quit?.()));
     })();
