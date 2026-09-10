@@ -510,6 +510,12 @@ export function isCallOwnedByAnotherDevice({
   return evaluateCallOnAnotherDevice({ call, userId, deviceId }).isOwnedByAnotherDevice;
 }
 
+/**
+ * Evaluate ownership and the live-call description together.
+ *
+ * Ownership remains true for terminal calls; `elsewhere` is only populated
+ * when another device owns a call with a live, non-empty status.
+ */
 export function evaluateCallOnAnotherDevice({
   call,
   userId,

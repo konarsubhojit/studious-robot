@@ -105,7 +105,7 @@ describe('answered-call history', () => {
     for (let i = 0; i < ANSWERED_CALL_HISTORY_LIMIT + 5; i += 1) {
       rememberAnsweredCallId(history, `call-${i}`);
     }
-    expect(history).toHaveProperty('size', ANSWERED_CALL_HISTORY_LIMIT);
+    expect(history.size).toBe(ANSWERED_CALL_HISTORY_LIMIT);
     expect([...history][0]).toBe('call-5');
     expect([...history][history.size - 1]).toBe(
       `call-${ANSWERED_CALL_HISTORY_LIMIT + 4}`,

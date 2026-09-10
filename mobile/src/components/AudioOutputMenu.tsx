@@ -13,7 +13,7 @@ const BASE_ROUTES = [AUDIO_ROUTES.SPEAKER_PHONE, AUDIO_ROUTES.EARPIECE];
 /**
  * Merge the OS-reported routes into the always-available base routes.
  */
-function buildRouteList(available?: string[]): string[] {
+function buildRouteList(available?: readonly string[]): string[] {
   const routes = [...BASE_ROUTES];
   (available || []).forEach(route => {
     if (!routes.includes(route)) {
@@ -25,7 +25,7 @@ function buildRouteList(available?: string[]): string[] {
 
 export type AudioOutputMenuProps = {
   /** Device names reported by the OS. */
-  available?: string[];
+  available?: readonly string[];
   /** Currently selected device name. */
   selected?: string | null;
   /** Fallback selection when none reported. */

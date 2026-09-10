@@ -307,6 +307,8 @@ function TestHook({ resultRef, options }: any) {
   return null;
 }
 
+const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
+
 function renderHook(options?: any) {
   const resultRef: { current: any; } = { current: null };
   let tree: any;
@@ -3377,7 +3379,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
     await act(async () => {
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
       await Promise.resolve();
     });
 
@@ -3403,7 +3405,7 @@ describe('useCallFlow chat', () => {
     expect(mediaStateEmits).toEqual([]);
 
     await act(async () => {
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
       await Promise.resolve();
     });
     expect(mediaStateEmits).toEqual([
@@ -3491,7 +3493,7 @@ describe('useCallFlow chat', () => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
     await act(async () => {
-      jest.advanceTimersByTime(100);
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
       await Promise.resolve();
     });
 
@@ -4099,7 +4101,7 @@ describe('useCallFlow chat', () => {
         await resultRef.current.handleScreenShareToggle();
       });
       await act(async () => {
-        jest.advanceTimersByTime(100);
+        jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
         await Promise.resolve();
       });
       expect(resultRef.current.isScreenSharing).toBe(true);

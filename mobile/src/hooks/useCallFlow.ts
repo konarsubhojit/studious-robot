@@ -658,10 +658,10 @@ export default function useCallFlow({
     ({
       available: [],
       selected: null,
-    } as { available: string[], selected: string | null }),
+    } as { available: readonly string[], selected: string | null }),
   );
   const publishAudioDevices = useCallback(
-    (next: { available: string[]; selected: string | null; }) => {
+    (next: { available: readonly string[]; selected: string | null; }) => {
       setAudioDevices(previous => {
         const sameAvailable =
           previous.available === next.available ||
