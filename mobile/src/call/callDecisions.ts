@@ -118,17 +118,19 @@ export function classifyCallDelivery(delivery: unknown): CallDelivery {
 /**
  * Add `callId` to the bounded answered-call history.
  *
- * Returns the next history; the oldest entry is dropped past the bound, and a
- * callId already remembered is left where it is (its position is its age).
+ * Mutates the insertion-ordered set in place. The oldest entry is dropped past
+ * the bound, and a callId already remembered is left where it is.
  */
 export function rememberAnsweredCallId(
-  history: readonly string[],
+  history: Set<string>,
   callId: string,
-): string[] {
-  if (history.includes(callId)) return history.slice();
-  const next = [...history, callId];
-  if (next.length > ANSWERED_CALL_HISTORY_LIMIT) next.shift();
-  return next;
+): void {
+  if (history.has(callId)) return;
+  history.add(callId);
+  if (history.size > ANSWERED_CALL_HISTORY_LIMIT) {
+    const oldest = history.values().next().value;
+    if (oldest !== undefined) history.delete(oldest);
+  }
 }
 
 /**
@@ -189,12 +191,12 @@ export function decideAcceptIncomingCall({
   callId: string;
   status?: string | null;
   acceptInFlightCallId: string | null;
-  answeredCallIds: readonly string[];
+  answeredCallIds: ReadonlySet<string>;
 }): AcceptDecision {
   if (acceptInFlightCallId === callId) {
     return { action: 'skip', reason: 'accept_in_flight' };
   }
-  if (answeredCallIds.includes(callId)) {
+  if (answeredCallIds.has(callId)) {
     return { action: 'skip', reason: 'already_accepted' };
   }
   if (status && status !== 'ringing') {
@@ -505,12 +507,33 @@ export function isCallOwnedByAnotherDevice({
   userId: string | null | undefined;
   deviceId: string | null | undefined;
 }): boolean {
+  return evaluateCallOnAnotherDevice({ call, userId, deviceId }).isOwnedByAnotherDevice;
+}
+
+export function evaluateCallOnAnotherDevice({
+  call,
+  userId,
+  deviceId,
+}: {
+  call: DeviceOwnedCall | null | undefined;
+  userId: string | null | undefined;
+  deviceId: string | null | undefined;
+}): { isOwnedByAnotherDevice: boolean; elsewhere: CallElsewhere | null; } {
   const thisDevice = (deviceId ?? '').trim();
-  if (!call?.callId || !thisDevice) return false;
-  if (!callPeerId(call, userId)) return false;
+  if (!call?.callId || !thisDevice) {
+    return { isOwnedByAnotherDevice: false, elsewhere: null };
+  }
+  const peerId = callPeerId(call, userId);
+  if (!peerId) return { isOwnedByAnotherDevice: false, elsewhere: null };
 
   const owner = callOwnerDeviceId(call, userId);
-  return Boolean(owner) && owner !== thisDevice;
+  const isOwnedByAnotherDevice = Boolean(owner) && owner !== thisDevice;
+  const status = call.status ?? '';
+  const elsewhere =
+    isOwnedByAnotherDevice && status && !isTerminalCallStatus(status)
+      ? { callId: call.callId, peerId, status }
+      : null;
+  return { isOwnedByAnotherDevice, elsewhere };
 }
 
 /**
@@ -534,15 +557,7 @@ export function describeCallOnAnotherDevice({
   userId: string | null | undefined;
   deviceId: string | null | undefined;
 }): CallElsewhere | null {
-  if (!isCallOwnedByAnotherDevice({ call, userId, deviceId })) return null;
-
-  const status = call?.status ?? '';
-  if (!status || isTerminalCallStatus(status)) return null;
-
-  const peerId = callPeerId(call as DeviceOwnedCall, userId);
-  if (!peerId) return null;
-
-  return { callId: (call as DeviceOwnedCall).callId as string, peerId, status };
+  return evaluateCallOnAnotherDevice({ call, userId, deviceId }).elsewhere;
 }
 
 /**

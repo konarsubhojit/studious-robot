@@ -89,27 +89,25 @@ describe('delivery classification', () => {
 
 describe('answered-call history', () => {
   it('remembers a new callId', () => {
-    expect(rememberAnsweredCallId([], 'a')).toEqual(['a']);
+    const history = new Set<string>();
+    rememberAnsweredCallId(history, 'a');
+    expect([...history]).toEqual(['a']);
   });
 
   it('never records the same callId twice', () => {
-    expect(rememberAnsweredCallId(['a', 'b'], 'a')).toEqual(['a', 'b']);
-  });
-
-  it('does not mutate the history it was given', () => {
-    const history = ['a'];
-    rememberAnsweredCallId(history, 'b');
-    expect(history).toEqual(['a']);
+    const history = new Set(['a', 'b']);
+    rememberAnsweredCallId(history, 'a');
+    expect([...history]).toEqual(['a', 'b']);
   });
 
   it('is bounded, dropping the oldest entry', () => {
-    let history: string[] = [];
+    const history = new Set<string>();
     for (let i = 0; i < ANSWERED_CALL_HISTORY_LIMIT + 5; i += 1) {
-      history = rememberAnsweredCallId(history, `call-${i}`);
+      rememberAnsweredCallId(history, `call-${i}`);
     }
-    expect(history).toHaveLength(ANSWERED_CALL_HISTORY_LIMIT);
-    expect(history[0]).toBe('call-5');
-    expect(history[history.length - 1]).toBe(
+    expect(history).toHaveProperty('size', ANSWERED_CALL_HISTORY_LIMIT);
+    expect([...history][0]).toBe('call-5');
+    expect([...history][history.size - 1]).toBe(
       `call-${ANSWERED_CALL_HISTORY_LIMIT + 4}`,
     );
   });
@@ -151,7 +149,7 @@ describe('duplicate-accept suppression', () => {
     callId: 'c1',
     status: 'ringing',
     acceptInFlightCallId: null,
-    answeredCallIds: [] as string[],
+    answeredCallIds: new Set<string>(),
   };
 
   it('accepts a ringing call nothing else is answering', () => {
@@ -166,7 +164,7 @@ describe('duplicate-accept suppression', () => {
 
   it('skips a call already answered', () => {
     expect(
-      decideAcceptIncomingCall({ ...base, answeredCallIds: ['c0', 'c1'] }),
+      decideAcceptIncomingCall({ ...base, answeredCallIds: new Set(['c0', 'c1']) }),
     ).toEqual({ action: 'skip', reason: 'already_accepted' });
   });
 
@@ -198,7 +196,7 @@ describe('duplicate-accept suppression', () => {
       decideAcceptIncomingCall({
         ...base,
         acceptInFlightCallId: 'other',
-        answeredCallIds: ['other'],
+        answeredCallIds: new Set(['other']),
       }),
     ).toEqual({ action: 'accept' });
   });

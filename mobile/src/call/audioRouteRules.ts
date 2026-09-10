@@ -82,8 +82,8 @@ export function describeChosenRoute(route: string): string {
  * picker from emptying itself between two successful switches.
  */
 export function mergeDiscoveredDevices(
-  discovered?: readonly string[] | null,
-  previous?: readonly string[] | null,
+  discovered?: string[] | null,
+  previous?: string[] | null,
 ): string[] {
-  return [...((discovered?.length ? discovered : previous) ?? [])];
+  return discovered?.length ? discovered : (previous ?? []);
 }
