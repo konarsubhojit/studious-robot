@@ -79,7 +79,8 @@ export function describeChosenRoute(route: string): string {
  * The native module reports its list only as a side effect of selecting a
  * route, and a selection that reports nothing has not discovered an empty
  * world — it has discovered nothing. Keeping the earlier list stops the output
- * picker from emptying itself between two successful switches.
+ * picker from emptying itself between two successful switches. The result
+ * aliases the selected input and must not be mutated.
  */
 export function mergeDiscoveredDevices(
   discovered?: readonly string[] | null,

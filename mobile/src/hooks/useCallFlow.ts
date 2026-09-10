@@ -323,7 +323,7 @@ function projectCallTimelineActivity(
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
-const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
+export const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
 const CANDIDATE_PAIR_POLL_INTERVAL_MS = STATS_POLL_INTERVAL_MS * 9;
 
 /**
@@ -720,6 +720,7 @@ export default function useCallFlow({
   // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
   // without re-creating the timer on every toggle.
   const isScreenSharingRef = useRef(false);
+  const mediaStateRelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
   // Hysteresis state for the quality indicator: a single bad sample must not
   // be allowed to flip the bars, so the smoother remembers how many
@@ -3621,10 +3622,15 @@ export default function useCallFlow({
   const activeCallId = activeCall?.callId ?? null;
   const canRelayMediaState = activeCallId !== null && isLiveCallStatus(activeCall?.status);
   useEffect(() => {
+    if (mediaStateRelayTimerRef.current) {
+      clearTimeout(mediaStateRelayTimerRef.current);
+      mediaStateRelayTimerRef.current = null;
+    }
     isScreenSharingRef.current = isScreenSharing;
     if (!socketRef.current?.connected || !activeCallId) return;
     if (!canRelayMediaState) return;
-    const timer = setTimeout(() => {
+    mediaStateRelayTimerRef.current = setTimeout(() => {
+      mediaStateRelayTimerRef.current = null;
       if (!socketRef.current?.connected) return;
       signalingRef.current
         ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
@@ -3638,8 +3644,13 @@ export default function useCallFlow({
           });
         });
     }, MEDIA_STATE_RELAY_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
   }, [activeCallId, canRelayMediaState, isScreenSharing, isVideoEnabled]);
+  useEffect(
+    () => () => {
+      if (mediaStateRelayTimerRef.current) clearTimeout(mediaStateRelayTimerRef.current);
+    },
+    [],
+  );
 
   // ─── Connection quality polling ───────────────────────────────────────────
 

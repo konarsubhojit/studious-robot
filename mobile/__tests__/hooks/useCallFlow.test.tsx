@@ -1,7 +1,11 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
-import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import useCallFlow, {
+  CALL_PHASES,
+  CALL_END_REASON_LABELS,
+  MEDIA_STATE_RELAY_DEBOUNCE_MS,
+} from '../../src/hooks/useCallFlow';
 import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { startScreenCapture } from '../../src/screenShare';
@@ -306,8 +310,6 @@ function TestHook({ resultRef, options }: any) {
   resultRef.current = result;
   return null;
 }
-
-const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
 
 function renderHook(options?: any) {
   const resultRef: { current: any; } = { current: null };
