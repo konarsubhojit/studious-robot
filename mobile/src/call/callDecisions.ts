@@ -507,7 +507,11 @@ export function isCallOwnedByAnotherDevice({
   userId: string | null | undefined;
   deviceId: string | null | undefined;
 }): boolean {
-  return evaluateCallOnAnotherDevice({ call, userId, deviceId }).isOwnedByAnotherDevice;
+  const thisDevice = (deviceId ?? '').trim();
+  if (!call?.callId || !thisDevice || !callPeerId(call, userId)) return false;
+
+  const owner = callOwnerDeviceId(call, userId);
+  return Boolean(owner) && owner !== thisDevice;
 }
 
 /**
