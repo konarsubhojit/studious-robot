@@ -53,14 +53,14 @@ Measured on `master` at `45c42ad`:
 | `mobile/src/hooks/useCallFlow.ts`             | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: CP1 through CP4 have landed. `useCallFlow.ts`
-is now **3,452 lines** in this checkout. The extracted effect hooks present now
+Current handoff, 2026-09-10: CP1 through CP5 have landed. `useCallFlow.ts`
+is now **2,909 lines** in this checkout. The extracted effect hooks present now
 are `useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
-`useCallAudioRouting`, `useConnectionQuality`, `usePeerConnection` and
-`useLocalMedia`, with focused tests for the latter six. Per the scaffold-first
-follow-up request, CP5–CP6 files also exist (`useSignalingSocket`,
-`useAnswerPath`) but are intentionally **not wired** yet. The next safe wiring
-checkpoint is **CP5 — `useSignalingSocket`**. A server-side call pickup blocker found
+`useCallAudioRouting`, `useConnectionQuality`, `usePeerConnection`,
+`useLocalMedia` and `useSignalingSocket`, with focused tests for the latter
+seven. Per the scaffold-first follow-up request, the CP6 file also exists
+(`useAnswerPath`) but is intentionally **not wired** yet. The next safe wiring
+checkpoint is **CP6 — `useAnswerPath`**. A server-side call pickup blocker found
 in the production logs on 2026-09-10 was fixed separately by refreshing stale
 local call caches from shared call state before RTC/cancel handling; it does not
 change this extraction order.
@@ -309,7 +309,7 @@ reading `peerConnectionRef` directly. Focused coverage:
 
 ---
 
-### CP5 — `useSignalingSocket` 🚧 scaffolded · size XL · risk High
+### CP5 — `useSignalingSocket` ✅ · size XL · risk High
 
 **Extracts.** The `// ─── Socket connection ───` block (≈1624–2284).
 
@@ -330,11 +330,13 @@ storm #356 fixed.
 
 **Entry precondition.** CP4 merged.
 **Resume check.** `ls mobile/src/hooks/useSignalingSocket.ts` and confirm
-`connectSocket`'s dependency array is still `[signalingUrl]`; if the hook only
-returns `{}`, CP5 still needs wiring.
+`connectSocket`'s dependency array is still `[signalingUrl]`.
 
-**Scaffold status.** `mobile/src/hooks/useSignalingSocket.ts` exists only as an
-unwired placeholder.
+**Landed in this session.** `useSignalingSocket` now owns socket disconnect,
+authenticated socket creation, manager ping/reconnect-failed listeners, the
+ref-forwarded socket handler bag, call/RTC/message/media-state transport
+listeners, reconnect queue flushing and session-invalid re-mint handling.
+Focused coverage: `mobile/__tests__/hooks/useSignalingSocket.test.tsx`.
 
 ---
 
@@ -432,7 +434,8 @@ result in the checkpoint's PR.
 - [x] CP2 extracted.
 - [x] CP3 extracted.
 - [x] CP4 extracted.
-- [ ] CP5–CP6 scaffold files are wired one at a time.
+- [x] CP5 extracted.
+- [ ] CP6 scaffold file is wired.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.
