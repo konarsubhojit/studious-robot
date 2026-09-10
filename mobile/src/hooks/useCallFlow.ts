@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
-import { RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
 import {
   CALL_EVENTS,
@@ -9,8 +7,8 @@ import {
   callStateReducer,
 } from '../call/callStateMachine';
 import * as Telemetry from '../telemetry';
-import { emitEvent, emitMetric, getCorrelationId } from '../observability';
-import { startCallService, stopCallService } from '../callService';
+import { emitEvent } from '../observability';
+import { stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
 import useConnectionQuality from './useConnectionQuality';
@@ -38,13 +36,7 @@ import {
   sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
-import { getSocketOptions } from '../socketConfig';
-import {
-  CLIENT_EVENTS,
-  SERVER_EVENTS,
-  TRANSPORT_EVENTS,
-  createSignalingClient,
-} from '../signalingClient';
+import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
 import { ERROR_CODES } from '../../../shared';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import {
@@ -58,22 +50,15 @@ import {
   buildCallEndSummary,
   callDurationSeconds,
   callPeerId,
-  classifyCallDelivery,
   decideAcceptIncomingCall,
-  decideIncomingOffer,
   describeCallStateEnding,
   describeDialBlocked,
   evaluateCallOnAnotherDevice,
   isLiveCallStatus,
   isMissedCall,
-  isStateChangeForOtherCall,
-  isTerminalCallStatus,
-  isTerminalIceState,
   rememberAnsweredCallId,
   resolveOutgoingCallee,
   resolveCallEndReason,
-  resolveKnownCallId,
-  shouldReportEmptyCallState,
   shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../call/callDecisions';
@@ -84,12 +69,9 @@ import type {
   DeviceOwnedCall,
 } from '../call/callDecisions';
 import {
-  SESSION_EXPIRED_MESSAGE,
   SESSION_REFRESH_FAILED_MESSAGE,
   SESSION_REFRESH_INTERVAL_MS,
-  SESSION_REMINT_RETRY_MS,
   parseCallStateReportAck,
-  sessionRemintAttempts,
   shouldScheduleSessionRefresh,
   shouldTearDownAfterResync,
 } from '../call/sessionLifecycle';
@@ -97,7 +79,6 @@ import {
   classifyLookupFailure,
   describeRehydratedCall,
   isRehydratableCallId,
-  readMediaStateFrame,
   shouldDeferRehydration,
 } from '../call/pushRehydration';
 import type { RehydrationOutcome } from '../call/pushRehydration';
@@ -1231,13 +1212,6 @@ export default function useCallFlow({
 
   // ─── Socket connection ────────────────────────────────────────────────────
 
-  const { disconnectSocket } = useSignalingSocket({
-    detachManagerPingRef,
-    resetTypingStateRef,
-    signalingRef,
-    socketRef,
-  });
-
   // Store mutable callbacks in refs so socket listeners always call the latest
   // version without the socket needing to be recreated.
   const endActiveCallRef = useRef(endActiveCall);
@@ -1325,559 +1299,58 @@ export default function useCallFlow({
     resyncCallStateRef.current = resyncCallState;
   }, [resyncCallState]);
 
-  const connectSocketHandlersRef = useRef({
+  const { connectSocket, disconnectSocket } = useSignalingSocket({
+    activeCallIdRef,
+    activeCallRef,
+    beginIceRecoveryRef,
     consumeForeignDeviceCallEvent,
     createOrGetSession,
-    disconnectSocket,
-    sendInitialOffer,
-    updateStatus,
-    showIncomingCallUi,
-    handleMessageReceived,
+    detachManagerPingRef,
+    deviceIdRef,
+    dispatchCallEvent,
+    displayedIncomingCallIdsRef,
+    endActiveCallRef,
+    ensurePeerConnectionRef,
+    fetchBlocks,
+    fetchConversations,
     handleMessageDeleted,
-    handleMessageReaction,
     handleMessageDelivered,
+    handleMessageReaction,
     handleMessageRead,
-    handleTypingEvent,
+    handleMessageReceived,
     handleSocketConnected,
     handleSocketDisconnected,
-    recordConnectSuccess,
+    handleTypingEvent,
+    iceCandidateBufferRef,
+    incomingCallRef,
+    isCallerRef,
+    isInCallRef,
+    isNegotiatingRef,
+    noteRecoverySymptomRef,
+    pauseRecoveryBudgetRef,
+    peerConnectionRef,
     recordConnectError,
-    fetchConversations,
-    fetchBlocks,
+    recordConnectSuccess,
+    recordTimelineCallRef,
+    reportOwnCallState,
+    resetTypingStateRef,
+    resyncCallStateRef,
+    resumeRecoveryBudgetRef,
+    sendInitialOffer,
+    sessionIdRef,
+    setActiveCall,
+    setCallDelivery,
+    setIncomingCall,
+    setIsReconnecting,
+    setIsRemoteScreenSharing,
+    setIsRemoteVideoEnabled,
+    showIncomingCallUi,
+    signalingRef,
+    signalingUrl,
+    socketRef,
+    updateStatus,
     wakeCallHeartbeat,
   });
-  useEffect(() => {
-    connectSocketHandlersRef.current = {
-      consumeForeignDeviceCallEvent,
-      createOrGetSession,
-      disconnectSocket,
-      sendInitialOffer,
-      updateStatus,
-      showIncomingCallUi,
-      handleMessageReceived,
-      handleMessageDeleted,
-      handleMessageReaction,
-      handleMessageDelivered,
-      handleMessageRead,
-      handleTypingEvent,
-      handleSocketConnected,
-      handleSocketDisconnected,
-      recordConnectSuccess,
-      recordConnectError,
-      fetchConversations,
-      fetchBlocks,
-      wakeCallHeartbeat,
-    };
-  }, [
-    consumeForeignDeviceCallEvent,
-    createOrGetSession,
-    disconnectSocket,
-    sendInitialOffer,
-    updateStatus,
-    showIncomingCallUi,
-    handleMessageReceived,
-    handleMessageDeleted,
-    handleMessageReaction,
-    handleMessageDelivered,
-    handleMessageRead,
-    handleTypingEvent,
-    handleSocketConnected,
-    handleSocketDisconnected,
-    recordConnectSuccess,
-    recordConnectError,
-    fetchConversations,
-    fetchBlocks,
-    wakeCallHeartbeat,
-  ]);
-
-  /**
-   * Create and return a new authenticated Socket.IO connection.
-   * All call-level and RTC-relay events are registered here.
-   *
-   * Uses ref-forwarded callbacks so the socket never needs to be recreated
-   * simply because a callback identity changed.
-   */
-  const connectSocket = useCallback(
-    (sessionId: string) => {
-      connectSocketHandlersRef.current.disconnectSocket();
-
-      // Begin fetching TURN credentials as soon as authentication completes,
-      // while the socket connects and the incoming-call UI is shown. A peer
-      // connection that is created meanwhile shares this in-flight request.
-      prefetchIceServersForCall({ signalingUrl, sessionId });
-      logInfo('[CallFlow] Connecting socket', { signalingUrl });
-      // The correlation id travels on the handshake so the server can stamp it
-      // on its own signaling logs, making a failed call traceable end to end.
-      const socket = io(signalingUrl.trim(), {
-        ...getSocketOptions(),
-        auth: { sessionId, correlationId: getCorrelationId() },
-      });
-      socketRef.current = socket;
-      const signaling = createSignalingClient(socket);
-      signalingRef.current = signaling;
-
-      // The Engine.IO manager emits `ping` for every server heartbeat packet
-      // (every `SOCKET_PING_INTERVAL_MS`, ~10s). Those arrive over the native
-      // networking bridge, not the JS timer queue, so they keep beating while
-      // the OS has that queue suspended — which is the whole reason a call in
-      // Picture-in-Picture stopped proving itself live.
-      type ManagerEvents = {
-        on?: (event: string, listener: () => void) => void;
-        off?: (event: string, listener: () => void) => void;
-      };
-      const manager = (socket as { io?: ManagerEvents }).io;
-      const onManagerPing = () => {
-        connectSocketHandlersRef.current.wakeCallHeartbeat('socket-ping');
-      };
-      manager?.on?.('ping', onManagerPing);
-      // Socket.IO's reconnection ladder used to stop for good after five
-      // attempts, well inside the recovery budget, and nothing listened for
-      // that: the only way back was the user tapping Retry. The policy is now
-      // effectively unlimited, but any transport that still reports exhaustion
-      // re-arms itself rather than stranding a live call.
-      const onManagerReconnectFailed = () => {
-        logWarn('[CallFlow] Socket reconnection ladder exhausted', {
-          inCall: isInCallRef.current,
-          callId: activeCallIdRef.current,
-        });
-        if (!isInCallRef.current) return;
-        socketRef.current?.connect();
-      };
-      manager?.on?.(TRANSPORT_EVENTS.RECONNECT_FAILED, onManagerReconnectFailed);
-      detachManagerPingRef.current = () => {
-        manager?.off?.('ping', onManagerPing);
-        manager?.off?.(TRANSPORT_EVENTS.RECONNECT_FAILED, onManagerReconnectFailed);
-      };
-
-      // ── Incoming call ──────────────────────────────────────────────────
-      signaling.on(SERVER_EVENTS.CALL_INCOMING, ({ call }) => {
-        logInfo('[CallFlow] Incoming call', {
-          callId: call.callId,
-          callerId: call.callerId,
-        });
-        signaling.emit(
-          CLIENT_EVENTS.CALL_INCOMING_ACK,
-          {
-            version: SIGNALING_VERSION,
-            callId: call.callId,
-            deviceId: deviceIdRef.current || undefined,
-          },
-          ack => {
-            if (!ack?.ok) {
-              logWarn('[CallFlow] call.incoming.ack failed', { error: ack?.error });
-            }
-          },
-        );
-        incomingCallRef.current = call;
-        setIncomingCall(call);
-        recordTimelineCallRef.current(call);
-        dispatchCallEvent(CALL_EVENTS.RECEIVE);
-        connectSocketHandlersRef.current.updateStatus(`Incoming call from ${call.callerId}`);
-        // Show system-level incoming-call UI (CallKeep) and start the JS
-        // ringtone fallback when CallKeep is unavailable.  Runs async so UI
-        // state updates are never blocked if CallKeep setup is slow.
-        connectSocketHandlersRef.current.showIncomingCallUi(call).catch(error => {
-          logWarn('[CallFlow] showIncomingCallUi unexpected error', {
-            message: errorMessage(error),
-          });
-        });
-      });
-
-      // ── Call ringing (caller confirmation) ────────────────────────────
-      signaling.on(SERVER_EVENTS.CALL_RINGING, ({ call, delivery }) => {
-        logInfo('[CallFlow] Call ringing', { callId: call.callId, delivery });
-        activeCallRef.current = call;
-        setActiveCall(call);
-        recordTimelineCallRef.current(call);
-        setCallDelivery(classifyCallDelivery(delivery));
-      });
-
-      // ── Call state changes ────────────────────────────────────────────
-      signaling.on(
-        SERVER_EVENTS.CALL_STATE_CHANGED,
-        async ({ status: callStatus, call, reason }) => {
-          logInfo('[CallFlow] call.state_changed', {
-            callStatus,
-            callId: call?.callId,
-            reason,
-          });
-          const eventCallId = call?.callId ?? null;
-          const knownCallId = resolveKnownCallId({
-            activeCallId: activeCallIdRef.current,
-            activeCall: activeCallRef.current,
-            incomingCall: incomingCallRef.current,
-          });
-
-          // A call that stops ringing — cancelled, declined, missed, timed out —
-          // must take its OS notification with it, otherwise the shade keeps a
-          // tappable ghost that answers a call nobody can join.
-          if (eventCallId && isTerminalCallStatus(callStatus)) {
-            logInfo('[CallFlow] Dismissing call UI for terminal transition', {
-              callId: eventCallId,
-              callStatus,
-              reason: reason ?? null,
-            });
-            clearPendingAnswer(eventCallId, `state_${callStatus}`);
-            displayedIncomingCallIdsRef.current.delete(eventCallId);
-            endCallKeepCall(eventCallId);
-          }
-
-          // Transitions for a *different* call (a stale ring that ended while
-          // this one is up) must not touch the call currently in progress.
-          if (isStateChangeForOtherCall({ eventCallId, knownCallId })) {
-            logInfo('[CallFlow] Ignoring state change for a non-current call', {
-              callId: eventCallId,
-              knownCallId,
-              callStatus,
-            });
-            return;
-          }
-
-          // `busy` means the server still believes one of the participants is
-          // in a call. When this device holds no live call of its own, saying
-          // so lets the server clear the phantom that is blocking every new
-          // call, instead of the user being stuck forever. Reconciliation is
-          // device-scoped server-side, so this can no longer end a call another
-          // of this user's devices is holding.
-          if (
-            callStatus === 'busy' &&
-            shouldReportEmptyCallState({
-              eventCallId,
-              activeCallId: activeCallIdRef.current,
-              incomingCallId: incomingCallRef.current?.callId,
-            })
-          ) {
-            reportOwnCallState(signaling, [], { reason: 'busy-rejection' });
-          }
-
-          // A call being held by another of this user's devices: track who it
-          // is with so the UI can say so, and otherwise stay out of its way.
-          if (
-            connectSocketHandlersRef.current.consumeForeignDeviceCallEvent(
-              call,
-              eventCallId,
-              knownCallId,
-            )
-          )
-            return;
-
-          if (call) {
-            activeCallRef.current = call;
-            setActiveCall(call);
-            recordTimelineCallRef.current(call);
-          }
-
-          if (callStatus === 'accepted') {
-            connectSocketHandlersRef.current.updateStatus('Call accepted, connecting media…');
-            // Caller is responsible for sending the initial RTC offer. This is
-            // the negotiation the event triggers, and it stays here: the rules
-            // above are decisions, this is a peer connection.
-            if (isCallerRef.current && call) {
-              activeCallIdRef.current = call.callId;
-              await connectSocketHandlersRef.current.sendInitialOffer(signaling, call.callId);
-            }
-            return;
-          }
-
-          const ending = describeCallStateEnding({ status: callStatus, reason });
-          if (ending) {
-            endActiveCallRef.current?.(ending.message, ending.severity, ending.endReason);
-          }
-        },
-      );
-
-      // ── RTC offer (callee receives offer from caller) ─────────────────
-      signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId }) => {
-        const offerDecision = decideIncomingOffer({
-          callId,
-          activeCallId: activeCallIdRef.current,
-          isNegotiating: isNegotiatingRef.current,
-        });
-        if (offerDecision === 'ignore-unknown-call') {
-          logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
-          return;
-        }
-        if (offerDecision === 'ignore-glare') {
-          logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer');
-          return;
-        }
-        isNegotiatingRef.current = true;
-        logInfo('[CallFlow] RTC offer received');
-        try {
-          const pc = await ensurePeerConnectionRef.current?.();
-          if (!pc) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current;
-          iceCandidateBufferRef.current = [];
-          for (const c of buffered) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(c));
-            } catch (err) {
-              logWarn('[CallFlow] Failed to add buffered ICE candidate', {
-                message: errorMessage(err),
-              });
-            }
-          }
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          signaling.emit(
-            CLIENT_EVENTS.RTC_ANSWER,
-            {
-              version: SIGNALING_VERSION,
-              callId,
-              sdp: pc.localDescription,
-            },
-            ack => {
-              if (!ack?.ok) logWarn('[CallFlow] rtc.answer ack failed', ack?.error);
-            },
-          );
-          dispatchCallEvent(CALL_EVENTS.CONNECT);
-          connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
-        } catch (error) {
-          logError('[CallFlow] Failed to handle RTC offer', error);
-          connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
-          endActiveCallRef.current?.('Failed to connect media', 'error');
-        } finally {
-          isNegotiatingRef.current = false;
-        }
-      });
-
-      // ── RTC answer (caller receives answer from callee) ───────────────
-      signaling.on(SERVER_EVENTS.RTC_ANSWER, async ({ sdp, callId }) => {
-        if (callId !== activeCallIdRef.current) {
-          logWarn('[CallFlow] rtc.answer for unknown callId', { callId });
-          return;
-        }
-        logInfo('[CallFlow] RTC answer received');
-        try {
-          const pc = peerConnectionRef.current;
-          if (!pc) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          // Flush any ICE candidates that arrived before the remote description.
-          const buffered = iceCandidateBufferRef.current;
-          iceCandidateBufferRef.current = [];
-          for (const c of buffered) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(c));
-            } catch (err) {
-              logWarn('[CallFlow] Failed to add buffered ICE candidate', {
-                message: errorMessage(err),
-              });
-            }
-          }
-          dispatchCallEvent(CALL_EVENTS.CONNECT);
-          connectSocketHandlersRef.current.updateStatus('Connected', 'success');
-          startCallService();
-        } catch (error) {
-          logError('[CallFlow] Failed to handle RTC answer', error);
-          connectSocketHandlersRef.current.updateStatus('Failed to connect media', 'error');
-          endActiveCallRef.current?.('Failed to connect media', 'error');
-        }
-      });
-
-      // ── RTC ICE candidates ────────────────────────────────────────────
-      signaling.on(SERVER_EVENTS.RTC_CANDIDATE, async ({ candidate, callId }) => {
-        if (callId !== activeCallIdRef.current) return;
-        const pc = peerConnectionRef.current;
-        if (!pc) return;
-        // Buffer the candidate until the remote description is applied; adding
-        // a candidate without a remote description throws on all platforms.
-        if (!pc.remoteDescription) {
-          iceCandidateBufferRef.current.push(candidate);
-          logVerbose('[CallFlow] ICE candidate buffered (awaiting remote description)');
-          return;
-        }
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (error) {
-          logWarn('[CallFlow] Failed to add ICE candidate', {
-            message: errorMessage(error),
-          });
-        }
-      });
-
-      // ── Chat ─────────────────────────────────────────────────────────
-      signaling.on(SERVER_EVENTS.MESSAGE_RECEIVED, ({ message }) => {
-        connectSocketHandlersRef.current.handleMessageReceived(message);
-      });
-
-      signaling.on(SERVER_EVENTS.MESSAGE_DELETED, payload => {
-        connectSocketHandlersRef.current.handleMessageDeleted(payload);
-      });
-
-      signaling.on(SERVER_EVENTS.MESSAGE_REACTION, payload => {
-        connectSocketHandlersRef.current.handleMessageReaction(payload);
-      });
-
-      signaling.on(SERVER_EVENTS.MESSAGE_DELIVERED, ({ message }) => {
-        connectSocketHandlersRef.current.handleMessageDelivered(message);
-      });
-
-      signaling.on(SERVER_EVENTS.MESSAGE_READ, ({ readerId, readAt }) => {
-        connectSocketHandlersRef.current.handleMessageRead({ readerId, readAt });
-      });
-
-      signaling.on(SERVER_EVENTS.MESSAGE_TYPING, ({ senderId, isTyping }) => {
-        connectSocketHandlersRef.current.handleTypingEvent({ senderId, isTyping });
-      });
-
-      // ── In-call screen-share relay ──────────────────────────────────────
-      signaling.on(SERVER_EVENTS.CALL_MEDIA_STATE, ({ callId, mediaState }) => {
-        if (callId !== activeCallIdRef.current) return;
-        // The peer's own relayed beat is another timer-free wake-up source.
-        connectSocketHandlersRef.current.wakeCallHeartbeat('peer-media-state');
-        // The frame is additive and each key is read independently: silence
-        // about a flag is not a claim about it, so a liveness heartbeat never
-        // clears the "they are presenting" banner or the peer's picture.
-        const frame = readMediaStateFrame(mediaState);
-        if (frame.isScreenSharing !== undefined) {
-          setIsRemoteScreenSharing(frame.isScreenSharing);
-        }
-        if (frame.isVideoEnabled !== undefined) {
-          setIsRemoteVideoEnabled(frame.isVideoEnabled);
-        }
-      });
-
-      // ── Socket lifecycle ──────────────────────────────────────────────
-      signaling.on(TRANSPORT_EVENTS.CONNECT, async () => {
-        logInfo('[CallFlow] Socket connected', { socketId: socket.id });
-        // Clear offline indicator on successful connection.
-        connectSocketHandlersRef.current.recordConnectSuccess();
-        // The budget stopped while the socket was down; recovery is possible
-        // again, so give back exactly that time before anything else.
-        resumeRecoveryBudgetRef.current?.('socket-connected');
-        // Order matters here. Reconciling this device's view of its calls comes
-        // *before* replaying anything queued offline, and any queued terminal
-        // media report is dropped outright: replaying "my media failed" on
-        // reconnect is what ended the very call the reconnect had just saved,
-        // and every ICE restart after it was rejected as `stale_call_state`.
-        resyncCallStateRef.current?.();
-        const droppedTerminalReports = signaling.dropQueuedEvents(
-          item =>
-            item.event === CLIENT_EVENTS.CALL_CONNECTED &&
-            isTerminalIceState((item.payload as { iceState?: unknown })?.iceState),
-        );
-        if (droppedTerminalReports > 0) {
-          logWarn('[CallFlow] Dropped stale media-failure reports on reconnect', {
-            count: droppedTerminalReports,
-            callId: activeCallIdRef.current,
-          });
-        }
-        // Replay anything that was emitted while the socket was down.
-        signaling.flushQueue();
-        // Load the conversation list as soon as the session is actually
-        // live. `sessionIdRef` is only populated once `createOrGetSession`
-        // resolves, which happens asynchronously — a chat-sync effect keyed
-        // only on `isRegistered` (which flips as soon as a stored userId
-        // loads, before the session exists) can fire too early and silently
-        // no-op, leaving old messages/conversations unloaded until the user
-        // manually pulls to refresh. Firing here guarantees it runs once the
-        // session/socket are actually ready, on cold start and on reconnect.
-        connectSocketHandlersRef.current.fetchConversations();
-        // The blocklist gates who can appear in the directory, the chat list
-        // and search, so it is loaded on the same "session is live" signal.
-        connectSocketHandlersRef.current.fetchBlocks();
-        // Flush any chat message queued while the socket was down (including
-        // one composed in a previous run of the app).
-        connectSocketHandlersRef.current.handleSocketConnected();
-        // A reconnect may have swallowed one or more beats (they are dropped
-        // while the socket is down), so prove liveness again straight away.
-        // Before the `isInCall` guard on purpose: the heartbeat's own `active`
-        // flag is the authority on whether a beat is owed.
-        connectSocketHandlersRef.current.wakeCallHeartbeat('socket-connect');
-        if (!isInCallRef.current) return;
-        setIsReconnecting(false);
-        if (activeCallIdRef.current) {
-          Telemetry.trackReconnect(activeCallIdRef.current);
-          emitMetric('call.reconnect', 1, { callId: activeCallIdRef.current });
-        }
-        // Either peer's socket reconnecting mid-call means its network path
-        // may have moved, so it offers an ICE restart rather than waiting for
-        // the other side to notice.
-        if (peerConnectionRef.current) {
-          logInfo('[CallFlow] Socket reconnected mid-call; restarting ICE', {
-            callId: activeCallIdRef.current,
-            isCaller: isCallerRef.current,
-          });
-          beginIceRecoveryRef.current?.('socket-reconnect');
-        }
-      });
-
-      signaling.on(TRANSPORT_EVENTS.DISCONNECT, reason => {
-        logWarn('[CallFlow] Socket disconnected', { reason });
-        connectSocketHandlersRef.current.handleSocketDisconnected();
-        if (isInCallRef.current) {
-          setIsReconnecting(true);
-          connectSocketHandlersRef.current.updateStatus('Reconnecting…');
-          // A lost socket is a recovery symptom in its own right, and it
-          // immediately pauses the budget: no ICE restart can be sent without
-          // a socket, so this window would otherwise be spent waiting.
-          noteRecoverySymptomRef.current?.('socket-disconnect');
-          pauseRecoveryBudgetRef.current?.('socket-offline');
-        }
-      });
-
-      signaling.on(TRANSPORT_EVENTS.CONNECT_ERROR, error => {
-        logError('[CallFlow] Socket connect error', {
-          message: errorMessage(error),
-          description: (error as { description?: unknown })?.description,
-        });
-        connectSocketHandlersRef.current.recordConnectError();
-      });
-
-      // The server accepted the handshake but the presented sessionId no
-      // longer resolves to a live session (server restart dropped the
-      // in-memory table, TTL expiry, …) and downgraded this connection to a
-      // guest. Re-mint a session and reconnect so the client re-authenticates
-      // immediately, instead of silently operating as an unauthenticated
-      // guest until some later authenticated action (e.g. `call.initiate`) is
-      // rejected.
-      signaling.on(SERVER_EVENTS.SESSION_INVALID, async ({ sessionId: staleSessionId } = {}) => {
-        logWarn('[CallFlow] Session invalidated by server; re-minting session', {
-          sessionId: staleSessionId,
-          inCall: isInCallRef.current,
-        });
-        sessionIdRef.current = null;
-        // Mid-call this is not a cosmetic re-auth, so it gets a retry budget —
-        // see `call/sessionLifecycle`.
-        const attempts = sessionRemintAttempts(isInCallRef.current);
-        for (let attempt = 1; attempt <= attempts; attempt += 1) {
-          try {
-            const newSessionId = await connectSocketHandlersRef.current.createOrGetSession();
-            // A newer socket may already have replaced this one (e.g. the
-            // presence effect re-ran, or the user signed out) — don't race it.
-            if (socketRef.current !== socket) return;
-            logInfo('[CallFlow] Session re-minted after session.invalid', { attempt });
-            connectSocket(newSessionId);
-            return;
-          } catch (error) {
-            logWarn('[CallFlow] Session re-mint attempt failed', {
-              attempt,
-              attempts,
-              message: errorMessage(error),
-            });
-            if (socketRef.current !== socket) return;
-            if (attempt >= attempts) {
-              logError('[CallFlow] Failed to re-mint session after session.invalid', error);
-              connectSocketHandlersRef.current.updateStatus(SESSION_EXPIRED_MESSAGE, 'error');
-              return;
-            }
-            await new Promise(resolve => setTimeout(resolve, SESSION_REMINT_RETRY_MS));
-            // The identity may have gone away while this was waiting.
-            if (socketRef.current !== socket) return;
-          }
-        }
-      });
-
-      return socket;
-    },
-    // Socket listeners read volatile handlers through connectSocketHandlersRef;
-    // reconnecting is only required when the endpoint itself changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [signalingUrl],
-  );
 
   // ─── Call rehydration (push-notification deep link) ───────────────────────
 
