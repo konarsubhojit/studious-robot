@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { mediaDevices, RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
+import { RTCIceCandidate, RTCSessionDescription } from 'react-native-webrtc';
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
 import {
   CALL_EVENTS,
@@ -14,6 +14,7 @@ import { startCallService, stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
 import useConnectionQuality from './useConnectionQuality';
+import useLocalMedia from './useLocalMedia';
 import usePeerConnection from './usePeerConnection';
 import useBlocks from './useBlocks';
 import useCallHistory, { DEFAULT_CALL_MEDIA_TYPE } from './useCallHistory';
@@ -24,11 +25,9 @@ import usePresenceSearch from './usePresenceSearch';
 import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { CALL_END_REASON_LABELS } from '../callUx';
-import { getMediaAccessStatus } from '../diagnostics';
 import { triggerHaptic } from '../haptics';
 import { consumePendingCallAction } from '../incomingCallNotification';
-import { isTrackEnabled, setTrackEnabled } from '../mediaControls';
-import { ensureCallPermissions, getMissingCallPermissions } from '../permissions';
+import { getMissingCallPermissions } from '../permissions';
 import { shouldShowPermissionPrimer } from '../permissionsPrimer';
 import {
   addCallLinkListener,
@@ -121,7 +120,7 @@ import type { CallStatus } from '../components/StatusBanner';
 import type { CallActivity } from '../messaging/types';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
-import type { WebrtcMediaStream } from './usePeerConnection';
+import type { ReplaceOutgoingVideoTrack, WebrtcMediaStream } from './usePeerConnection';
 import { errorMessage } from '../errors';
 import {
   bringAppToForeground,
@@ -486,11 +485,8 @@ export default function useCallFlow({
   const [isRemoteVideoEnabled, setIsRemoteVideoEnabled] = useState(true);
 
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
-  const [localStream, setLocalStream] = useState(null as WebrtcMediaStream | null);
   const [remoteStream, setRemoteStream] = useState(null as WebrtcMediaStream | null);
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   /**
    * Epoch milliseconds at which the current call connected, or `null`.
@@ -515,6 +511,7 @@ export default function useCallFlow({
   const noteRecoverySymptomBridgeRef = useRef((_trigger: RecoveryTrigger, _state?: string) => {});
   const beginIceRecoveryBridgeRef = useRef((_trigger: RecoveryTrigger) => {});
   const cancelIceRestartsBridgeRef = useRef((_reason: string) => {});
+  const replaceOutgoingVideoTrackRef = useRef(null as ReplaceOutgoingVideoTrack | null);
   // How the callee is being reached for an outgoing call: a device that can
   // ring now, or one a push still has to wake. Null until the server says.
   const [callDelivery, setCallDelivery] = useState(null as CallDelivery | null);
@@ -524,7 +521,6 @@ export default function useCallFlow({
   // Typed wrapper around `socketRef.current`: validates every payload against
   // the shared contract and queues fire-and-forget emits while offline.
   const signalingRef = useRef(null as ReturnType<typeof createSignalingClient> | null);
-  const localStreamRef = useRef(null as WebrtcMediaStream | null);
   const activeCallIdRef = useRef(null as string | null);
   const isCallerRef = useRef(false);
   // Synchronous mirror of isPlacingCall so `placeCall` can guard re-entrancy
@@ -702,6 +698,22 @@ export default function useCallFlow({
     updateStatus,
   });
 
+  const {
+    handleCameraSwitch,
+    handleVideoToggle,
+    isFrontCamera,
+    isVideoEnabled,
+    localStream,
+    localStreamRef,
+    releaseLocalMedia,
+    setLocalStream,
+    startLocalPreview,
+  } = useLocalMedia({
+    replaceOutgoingVideoTrackRef,
+    setIsMuted,
+    updateStatus,
+  });
+
   const isInCall = callPhase === CALL_PHASES.IN_CALL;
   const { isRegistered } = identity;
   const { audioDevices, chooseAudioOutput, handleMuteToggle, isSpeakerEnabled, resetAudioRouting } =
@@ -817,6 +829,7 @@ export default function useCallFlow({
     iceCandidateBufferRef,
     isNegotiatingRef,
     peerConnectionRef,
+    replaceOutgoingVideoTrack,
     remoteStreamRef,
     renegotiate,
   } = usePeerConnection({
@@ -838,6 +851,10 @@ export default function useCallFlow({
       cancelIceRestarts: cancelIceRestartsBridgeRef,
     },
   });
+
+  useEffect(() => {
+    replaceOutgoingVideoTrackRef.current = replaceOutgoingVideoTrack;
+  }, [replaceOutgoingVideoTrack]);
 
   const {
     isScreenSharing,
@@ -926,65 +943,6 @@ export default function useCallFlow({
     beginIceRecoveryBridgeRef.current = beginIceRecovery;
     cancelIceRestartsBridgeRef.current = cancelIceRestarts;
   }, [beginIceRecovery, cancelIceRestarts, noteRecoverySymptom, reportCallConnected]);
-
-  /**
-   * Stop and drop the local camera/mic stream.
-   *
-   * Also blanks the local video view: an `RTCView` whose stream was torn down
-   * keeps presenting its last decoded frame, which is exactly the frozen image
-   * left behind in the Picture-in-Picture window after a call ends.
-   */
-  const releaseLocalMedia = useCallback(() => {
-    const stream = localStreamRef.current;
-    if (stream) {
-      stream.getTracks?.().forEach(track => {
-        try {
-          track.stop();
-        } catch {
-          // Best-effort: the track may already have been ended by the OS.
-        }
-      });
-      localStreamRef.current = null;
-    }
-    setLocalStream(null);
-  }, []);
-
-  // ─── Local media ──────────────────────────────────────────────────────────
-
-  const startLocalPreview = useCallback(async () => {
-    if (localStreamRef.current) return localStreamRef.current;
-
-    const permResult = await ensureCallPermissions();
-    if (!permResult.ok) {
-      updateStatus(permResult.message, 'error');
-      return null;
-    }
-    if (permResult.warningMessage) {
-      logWarn('[CallFlow] Optional permission denied', {
-        message: permResult.warningMessage,
-      });
-    }
-
-    try {
-      const stream = await mediaDevices.getUserMedia({
-        audio: true,
-        video: { facingMode: 'user' },
-      });
-      logInfo('[CallFlow] Local media stream acquired', {
-        audio: stream.getAudioTracks().length,
-        video: stream.getVideoTracks().length,
-      });
-      localStreamRef.current = stream;
-      setLocalStream(stream);
-      setIsMuted(!isTrackEnabled(stream, 'audio'));
-      setIsVideoEnabled(isTrackEnabled(stream, 'video'));
-      return stream;
-    } catch (error) {
-      logError('[CallFlow] Failed to acquire media', error);
-      updateStatus(getMediaAccessStatus(error), 'error');
-      throw error;
-    }
-  }, [updateStatus]);
 
   // ─── Incoming call UI helper ──────────────────────────────────────────────
 
@@ -3107,66 +3065,6 @@ export default function useCallFlow({
     handleMuteToggleRef.current = handleMuteToggle;
     handleEndCallRef.current = handleEndCall;
   }, [handleEndCall, handleMuteToggle]);
-
-  const handleVideoToggle = useCallback(() => {
-    const nextVideoEnabled = !isVideoEnabled;
-    if (!setTrackEnabled(localStreamRef.current, 'video', nextVideoEnabled)) {
-      updateStatus('Start preview to control video', 'error');
-      return;
-    }
-    setIsVideoEnabled(nextVideoEnabled);
-    updateStatus(nextVideoEnabled ? 'Camera enabled' : 'Camera disabled');
-  }, [isVideoEnabled, updateStatus]);
-
-  const handleCameraSwitch = useCallback(async () => {
-    try {
-      const [videoTrack] = localStreamRef.current?.getVideoTracks?.() ?? [];
-
-      // Fast path: react-native-webrtc provides an in-place camera flip that
-      // keeps the same track object – no renegotiation required.
-      if (typeof videoTrack?._switchCamera === 'function') {
-        videoTrack._switchCamera();
-        setIsFrontCamera(prev => !prev);
-        updateStatus('Camera switched');
-        return;
-      }
-
-      // Fallback: acquire a new stream with the opposite facing mode and call
-      // replaceTrack on the active peer connection sender so the remote peer
-      // receives the new camera source without requiring renegotiation.
-      const nextFacingMode = isFrontCamera ? 'environment' : 'user';
-      const newStream = await mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: nextFacingMode },
-      });
-      const [newVideoTrack] = newStream.getVideoTracks();
-      if (!newVideoTrack) {
-        newStream.getTracks().forEach(t => t.stop());
-        updateStatus('Camera switch unavailable', 'error');
-        return;
-      }
-
-      const pc = peerConnectionRef.current;
-      if (pc) {
-        const sender = pc.getSenders?.().find(s => s.track?.kind === 'video');
-        if (sender) {
-          await sender.replaceTrack(newVideoTrack);
-        }
-      }
-
-      videoTrack?.stop();
-      if (localStreamRef.current) {
-        if (videoTrack) localStreamRef.current.removeTrack(videoTrack);
-        localStreamRef.current.addTrack(newVideoTrack);
-      }
-      setLocalStream(localStreamRef.current);
-      setIsFrontCamera(prev => !prev);
-      updateStatus('Camera switched');
-    } catch (error) {
-      logError('[CallFlow] Camera switch failed', error);
-      updateStatus('Camera switch unavailable', 'error');
-    }
-  }, [isFrontCamera, peerConnectionRef, updateStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) return;

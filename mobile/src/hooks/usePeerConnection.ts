@@ -66,6 +66,8 @@ type UsePeerConnectionParams = {
   recoveryCallbacks: RecoveryCallbacks;
 };
 
+export type ReplaceOutgoingVideoTrack = (track: WebrtcMediaStreamTrack) => Promise<void>;
+
 function trackId(track: WebrtcMediaStreamTrack): string | null {
   return typeof track?.id === 'string' && track.id.length > 0 ? track.id : null;
 }
@@ -332,6 +334,13 @@ export default function usePeerConnection({
     return pendingPeerConnectionRef.current;
   }, [createPeerConnection]);
 
+  const replaceOutgoingVideoTrack = useCallback<ReplaceOutgoingVideoTrack>(async track => {
+    const sender = peerConnectionRef.current?.getSenders?.().find(s => s.track?.kind === 'video');
+    if (sender) {
+      await sender.replaceTrack(track);
+    }
+  }, []);
+
   return {
     closePeerConnection,
     ensurePeerConnection,
@@ -339,6 +348,7 @@ export default function usePeerConnection({
     isNegotiatingRef,
     peerConnectionRef,
     pendingPeerConnectionRef,
+    replaceOutgoingVideoTrack,
     remoteStreamRef,
     renegotiate,
   };
