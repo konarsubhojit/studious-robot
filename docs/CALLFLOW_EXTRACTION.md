@@ -53,14 +53,14 @@ Measured on `master` at `45c42ad`:
 | `mobile/src/hooks/useCallFlow.ts` | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: `useCallFlow.ts` is still **4,221 lines** in this
-checkout, so none of CP1–CP6 below has landed yet. The extracted effect hooks
-present now are `useScreenShare`, `useCallHeartbeat` and `useCallRecovery`, with
-focused tests for the latter two. The next safe implementation checkpoint is
-**CP1 — `useCallAudioRouting`**. A server-side call pickup blocker found in the
-production logs on 2026-09-10 was fixed separately by refreshing stale local
-call caches from shared call state before RTC/cancel handling; it does not
-change this extraction order.
+Current handoff, 2026-09-10: CP1 has landed. `useCallFlow.ts` is now **4,024
+lines** in this checkout. The extracted effect hooks present now are
+`useScreenShare`, `useCallHeartbeat`, `useCallRecovery` and
+`useCallAudioRouting`, with focused tests for the latter three. The next safe
+implementation checkpoint is **CP2 — `useConnectionQuality`**. A server-side
+call pickup blocker found in the production logs on 2026-09-10 was fixed
+separately by refreshing stale local call caches from shared call state before
+RTC/cancel handling; it does not change this extraction order.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
@@ -163,7 +163,7 @@ captured in §1 of this document: 4,221 lines of hook, 5,800 lines of test, at
 
 ---
 
-### CP1 — `useCallAudioRouting` ⬜ · size S · risk Low
+### CP1 — `useCallAudioRouting` ✅ · size S · risk Low
 
 **Extracts.** The `// ─── Audio session & device routing ───` block
 (≈3821–3920): the `startAudioSession` / `stopAudioSession` lifecycle effect,
@@ -194,6 +194,13 @@ that do not mount `useCallFlow`; `useCallFlow.ts` shrinks by ≈130 lines.
 **Resume check.** `ls mobile/src/hooks/useCallAudioRouting.ts` — if present and the
 suite is green, CP1 is done; start CP2.
 **Rollback.** Revert the single PR; nothing else depends on it.
+
+**Landed in this session.** `useCallAudioRouting` owns the audio session
+start/stop effect, automatic route selection, native device subscription,
+speaker-route reassertion, manual `chooseAudioOutput`, the audio-device snapshot
+and `handleMuteToggle`'s unmute session restore. Focused coverage:
+`mobile/__tests__/hooks/useCallAudioRouting.test.tsx`. Verified with mobile
+typecheck, lint, the CP1 hook test and `useCallFlow.test.tsx`.
 
 ---
 
@@ -370,7 +377,8 @@ result in the checkpoint's PR.
 2. `ls mobile/src/hooks/` — the presence of `useCallAudioRouting.ts`,
    `useConnectionQuality.ts`, `usePeerConnection.ts`, `useLocalMedia.ts`,
    `useSignalingSocket.ts`, `useAnswerPath.ts` tells you which checkpoints landed.
-3. `wc -l mobile/src/hooks/useCallFlow.ts` — compare against 4,221 to gauge progress.
+3. `wc -l mobile/src/hooks/useCallFlow.ts` — compare against 4,221 baseline and
+   the 4,024-line post-CP1 handoff to gauge progress.
 4. Check for an open PR touching `useCallFlow.ts`. If one exists, **that is the
    in-flight checkpoint**; do not start another.
 5. Run the §4 verification to confirm the tree you found is actually green before
@@ -382,7 +390,8 @@ result in the checkpoint's PR.
 
 ## 8. Definition of done
 
-- [ ] CP1 and CP2 extracted, each in its own PR.
+- [x] CP1 extracted.
+- [ ] CP2 extracted.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.

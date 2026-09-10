@@ -70,7 +70,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 | P2.4 | State completeness | ✅ |
 | P2.5 | Design-system consolidation | ✅ |
 | B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | 🚧 partial. The eleven pure-rule slices are out, and the cohesive liveness/recovery side-effect clusters are now concern-hooks (`useCallHeartbeat`, `useCallRecovery`) with focused tests. The next pass is the checkpointed effect-hook extraction in [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md): CP1–CP6 have not landed in this checkout, `useCallFlow.ts` remains 4,221 lines, and CP1 (`useCallAudioRouting`) is the next safe pickup. **Device QA is still pending** (per instruction); see the checklist in the P1.2 note below |
+| P1.2 | Decompose `useCallFlow` | 🚧 partial. The eleven pure-rule slices are out, and the cohesive liveness/recovery side-effect clusters are now concern-hooks (`useCallHeartbeat`, `useCallRecovery`) with focused tests. The checkpointed effect-hook extraction in [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md) has started: CP1 (`useCallAudioRouting`) has landed, `useCallFlow.ts` is down to 4,024 lines, and CP2 (`useConnectionQuality`) is the next safe pickup. **Device QA is still pending** (per instruction); see the checklist in the P1.2 note below |
 | P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
 
 ### Still deferred
@@ -113,7 +113,7 @@ foundations, B chat UX, C calling UX, D new features, E enablers).
 | C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
 | C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
 | D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass |
-| E1–E3 | `useCallFlow` decomposition, SQLite, i18n | E1 is partly done — pure-rule extraction plus `useCallHeartbeat`/`useCallRecovery` have landed, while the remaining effect-hook checkpoints are tracked in `docs/CALLFLOW_EXTRACTION.md`; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
+| E1–E3 | `useCallFlow` decomposition, SQLite, i18n | E1 is partly done — pure-rule extraction plus `useCallHeartbeat`/`useCallRecovery` and CP1 `useCallAudioRouting` have landed, while the remaining effect-hook checkpoints are tracked in `docs/CALLFLOW_EXTRACTION.md`; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
 
 ## Phase 7 — Target-architecture rebuild
 
@@ -435,7 +435,7 @@ subsystems that should not have been sharing a surface.
 5. **`getItemLayout`** on the message list, if bubble heights can be made
    predictable, so jump-to-quote stops relying on the scroll-failure fallback.
 6. Continue the checkpointed `useCallFlow` effect-hook extraction in
-   `docs/CALLFLOW_EXTRACTION.md` (next: CP1 `useCallAudioRouting`) and split
+   `docs/CALLFLOW_EXTRACTION.md` (next: CP2 `useConnectionQuality`) and split
    `ChatConversationPresentation` further along the seams already established.
 
 ### Working notes for whoever picks this up
@@ -772,12 +772,12 @@ That residue is the subject of the follow-up work now planned in
 [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md), which takes the
 *effectful* half out into hooks — following `useCallHeartbeat` and
 `useCallRecovery` rather than the pure-module pattern — as a sequence of
-checkpoints, one in flight at a time. Current handoff, 2026-09-10: none of
-CP1–CP6 has landed yet (`useCallAudioRouting`, `useConnectionQuality`,
-`usePeerConnection`, `useLocalMedia`, `useSignalingSocket`, `useAnswerPath` are
-absent), and `useCallFlow.ts` remains 4,221 lines. Start with CP1
-`useCallAudioRouting`; teardown's verdict, whichever way it goes, is recorded
-back here after CP6.
+checkpoints, one in flight at a time. Current handoff, 2026-09-10: CP1
+`useCallAudioRouting` has landed, `useCallFlow.ts` is down to 4,024 lines, and
+the remaining checkpoint hooks (`useConnectionQuality`, `usePeerConnection`,
+`useLocalMedia`, `useSignalingSocket`, `useAnswerPath`) are absent. Start with
+CP2 `useConnectionQuality`; teardown's verdict, whichever way it goes, is
+recorded back here after CP6.
 
 **Device QA — outstanding.** CI cannot verify any of this: there is no E2E
 coverage of the call path (#114), so a regression here is caught by a person on
