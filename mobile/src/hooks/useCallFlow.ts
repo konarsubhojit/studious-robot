@@ -119,15 +119,9 @@ import type { CallMediaType } from '../settingsStorage';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallStatus } from '../components/StatusBanner';
 import type { CallActivity } from '../messaging/types';
-import type { MediaStream } from 'react-native-webrtc';
 import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
-import type {
-  PeerConnection,
-  PeerIceCandidateEvent,
-  PeerTrackEvent,
-  WebrtcMediaStream,
-} from './usePeerConnection';
+import type { WebrtcMediaStream } from './usePeerConnection';
 import { errorMessage } from '../errors';
 import {
   bringAppToForeground,
@@ -920,7 +914,7 @@ export default function useCallFlow({
     if (pc) {
       applyBitrateConstraints(pc).catch(() => {});
     }
-  }, []);
+  }, [peerConnectionRef]);
 
   useEffect(() => {
     markCallConnectedRef.current = markCallConnected;
@@ -3172,7 +3166,7 @@ export default function useCallFlow({
       logError('[CallFlow] Camera switch failed', error);
       updateStatus('Camera switch unavailable', 'error');
     }
-  }, [isFrontCamera, updateStatus]);
+  }, [isFrontCamera, peerConnectionRef, updateStatus]);
 
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) return;
