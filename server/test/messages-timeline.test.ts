@@ -255,6 +255,30 @@ test('a message and a call sharing a millisecond keep a deterministic order', ()
   );
 });
 
+test('a message and a call are ordered by instant, not by the shape of their timestamps', () => {
+  // The two sides of the timeline reach this function in different shapes: a
+  // message's timestamp comes off a `string`-mode Postgres column, a call's is
+  // produced by `toISOString`. Compared as text the space separator sorts
+  // before `T`, so the call — five minutes the older of the two — used to sort
+  // above the message, which is how calls ended up piled at the end of every
+  // conversation instead of sitting in their place along it.
+  const message = { messageId: 'aaa', createdAt: '2026-08-18 12:05:00.5+00' };
+  const call = { type: 'call', callId: 'zzz', createdAt: '2026-08-18T12:00:00.000Z' };
+
+  assert.ok(message.createdAt < call.createdAt, 'the text comparison disagrees with the clock');
+  assert.deepEqual(
+    mergeTimeline([message], [call], 10).map((entry) => entry.messageId ?? entry.callId),
+    ['aaa', 'zzz']
+  );
+
+  // …and a call that really is newer still comes first.
+  const older = { messageId: 'aaa', createdAt: '2026-08-18 11:55:00+00' };
+  assert.deepEqual(
+    mergeTimeline([older], [call], 10).map((entry) => entry.messageId ?? entry.callId),
+    ['zzz', 'aaa']
+  );
+});
+
 // ─── durationSeconds ──────────────────────────────────────────────────────────
 
 test('durationSeconds is 0 for calls that never connected', async (t) => {

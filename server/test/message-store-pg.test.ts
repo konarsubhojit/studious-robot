@@ -390,6 +390,55 @@ test('an incomplete reaction request never reaches the database', async () => {
   assert.equal(queries.length, 0);
 });
 
+// ─── Timestamp normalisation ──────────────────────────────────────────────────
+
+test('rows arrive with canonical ISO timestamps whatever Postgres rendered', async () => {
+  // What the driver actually hands back for a `timestamptz` read in Drizzle's
+  // `string` mode: Postgres' own rendering, because the node-postgres session
+  // replaces the type parser with the identity function. The space separator
+  // sorts before the `T` in a call entry's ISO timestamp, and Hermes — which
+  // the mobile app runs — parses none of these at all.
+  const { store } = createRecordingStore([
+    [
+      toTuple(
+        messageRow({
+          messageId: 'm-trimmed',
+          createdAt: '2026-09-09 14:16:47.89+00' as string,
+          readAt: '2026-09-09 14:17:00+00' as string,
+          deletedAt: '2026-09-09 14:18:00.5+00' as string,
+        }),
+      ),
+      toTuple(
+        messageRow({ messageId: 'm-micros', createdAt: '2026-09-09 14:16:47.891234+00' as string }),
+      ),
+      toTuple(
+        messageRow({ messageId: 'm-offset', createdAt: '2026-09-09 19:46:47.89+05:30' as string }),
+      ),
+      toTuple(
+        messageRow({ messageId: 'm-canonical', createdAt: '2026-09-09T14:16:47.890Z' }),
+      ),
+    ],
+  ]);
+
+  const page = await store.listMessages({ conversationId: 'alice:bob', limit: 10 });
+
+  assert.deepEqual(
+    page.map((message) => message.createdAt),
+    [
+      '2026-09-09T14:16:47.890Z',
+      '2026-09-09T14:16:47.891Z',
+      '2026-09-09T14:16:47.890Z',
+      '2026-09-09T14:16:47.890Z',
+    ],
+  );
+  // Shipped to the client in every payload, and read in `string` mode from the
+  // same kind of column, so they need the same treatment.
+  assert.equal(page[0].readAt, '2026-09-09T14:17:00.000Z');
+  assert.equal(page[0].deletedAt, '2026-09-09T14:18:00.500Z');
+  assert.equal(page[1].readAt, null);
+  assert.equal(page[1].deletedAt, null);
+});
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 test('the store is ready on construction and does not close the borrowed pool', async () => {

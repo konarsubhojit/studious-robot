@@ -148,7 +148,13 @@ describe('mergeHistoryPage', () => {
     expect(mergeHistoryPage(held, page)).toEqual(page);
   });
 
-  test('a server acknowledgement cannot move a newly sent message above newer call history', () => {
+  test('an acknowledged send is placed by the server timestamp both participants share', () => {
+    // The device's clock ran eleven minutes fast when this was composed, so
+    // its `clientCreatedAt` disagrees with the server about where the message
+    // belongs. The server's answer is the one both participants can agree on,
+    // so once the send is acknowledged it is the one that decides — otherwise
+    // this device alone shows the message above a call that really preceded it,
+    // and goes on doing so for as long as the entry is cached.
     const held = [
       message({
         messageId: 'new-message',
@@ -166,14 +172,58 @@ describe('mergeHistoryPage', () => {
     ];
     const merged = mergeHistoryPage(held, page);
     expect(merged.map((m: any) => m.messageId ?? m.callId)).toEqual([
-      'new-message',
       'call-520',
+      'new-message',
       'old-message',
     ]);
+    // The screen reverses this array, so oldest reads top-first.
     expect([...merged].reverse().map((m: any) => m.messageId ?? m.callId)).toEqual([
       'old-message',
-      'call-520',
       'new-message',
+      'call-520',
+    ]);
+  });
+
+  test('a still-pending send stays below the call history it was composed after', () => {
+    const held = [
+      message({
+        messageId: 'queued-message',
+        createdAt: '2026-08-25T17:21:00.000Z',
+        clientCreatedAt: '2026-08-25T17:21:00.000Z',
+        syncState: 'pending',
+      }),
+      { callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any,
+    ];
+    const page = [{ callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any];
+
+    expect(mergeHistoryPage(held, page).map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'queued-message',
+      'call-520',
+    ]);
+  });
+
+  test('a call is placed between the messages that bracket its start time', () => {
+    // The message timestamps arrive in the shape a string-mode Postgres column
+    // yields; the call's is produced by `toISOString`. Comparing them as text
+    // sorted every call above every same-day message.
+    const page = [
+      message({ messageId: 'after-call', createdAt: '2026-08-25 17:30:00+00' }),
+      { callId: 'call-520', type: 'call', createdAt: '2026-08-25T17:20:00.000Z' } as any,
+      message({ messageId: 'before-call', createdAt: '2026-08-25 17:10:00.5+00' }),
+    ];
+    const merged = mergeHistoryPage([], page);
+
+    expect(merged.map((m: any) => m.messageId ?? m.callId)).toEqual([
+      'after-call',
+      'call-520',
+      'before-call',
+    ]);
+    // Every timestamp that entered the history is canonical, so the formatters
+    // and day separators downstream have something they can parse.
+    expect(merged.map((m: any) => m.createdAt)).toEqual([
+      '2026-08-25T17:30:00.000Z',
+      '2026-08-25T17:20:00.000Z',
+      '2026-08-25T17:10:00.500Z',
     ]);
   });
 

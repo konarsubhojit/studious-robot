@@ -1,5 +1,42 @@
 import { byNewestFirst, timelineEntryId } from './messageIdentity';
+import { normalizeTimestamp, timestampMs } from '../../../shared/time';
 import type { ChatMessage, MessagesByPeer } from './types';
+
+/**
+ * The timestamp-bearing fields of a timeline entry.
+ *
+ * `readAt` and `deletedAt` are included because they arrive from the same
+ * string-mode Postgres columns as `createdAt` and are re-persisted into the
+ * on-device snapshot, so leaving them in the raw wire shape would just move the
+ * problem to whatever reads them next.
+ */
+const TIMESTAMP_FIELDS = ['createdAt', 'clientCreatedAt', 'readAt', 'deletedAt'] as const;
+
+/**
+ * Canonicalise an entry's timestamps as it enters the history.
+ *
+ * Normalising at this one ingest point rather than in each of the formatters,
+ * separators and comparators that read a timestamp means everything downstream
+ * — ordering, day separators, grouping, call-run collapsing, retention pruning,
+ * the chat list and search — gets a value it can parse without knowing this
+ * problem exists.
+ *
+ * Returns the entry itself when nothing changed: the transforms in this module
+ * promise referential stability, and a fresh object per merge would defeat the
+ * memoised rows in the chat screen.
+ */
+export function normalizeEntryTimestamps(entry: ChatMessage): ChatMessage {
+  let next: ChatMessage | null = null;
+  for (const field of TIMESTAMP_FIELDS) {
+    const value = entry?.[field];
+    if (typeof value !== 'string') continue;
+    const normalized = normalizeTimestamp(value);
+    if (normalized === value) continue;
+    next = next ?? { ...entry };
+    next[field] = normalized;
+  }
+  return next ?? entry;
+}
 
 /**
  * Millisecond timestamp of a timeline entry, or `null` when it has none that
@@ -7,7 +44,7 @@ import type { ChatMessage, MessagesByPeer } from './types';
  * window, so callers treat `null` as "outside it" and keep the entry.
  */
 function entryTime(entry: { createdAt?: string; }): number | null {
-  const parsed = Date.parse(entry?.createdAt ?? '');
+  const parsed = timestampMs(entry?.createdAt);
   return Number.isNaN(parsed) ? null : parsed;
 }
 
@@ -153,7 +190,8 @@ export function upsertTimelineEntry(
 export function dedupeAndSort(entries: ChatMessage[]): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   const unidentified: ChatMessage[] = [];
-  for (const entry of entries) {
+  for (const raw of entries) {
+    const entry = normalizeEntryTimestamps(raw);
     const id = timelineEntryId(entry);
     if (!id) {
       unidentified.push(entry);

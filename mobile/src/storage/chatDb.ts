@@ -1,6 +1,8 @@
 import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
 import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
+import { normalizeEntryTimestamps } from '../messaging/messageHistory';
+import { timestampMs } from '../../../shared/time';
 import { errorMessage } from '../errors';
 
 /**
@@ -94,7 +96,7 @@ let pendingWrite = Promise.resolve();
  * Timestamp of a timeline entry, used for retention ordering.
  */
 function entryTime(entry: any): number {
-  const value = Date.parse(entry?.createdAt ?? '');
+  const value = timestampMs(entry?.createdAt);
   return Number.isNaN(value) ? 0 : value;
 }
 
@@ -118,18 +120,40 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 /**
+ * Canonicalise the timestamps a chat-list row carries.
+ *
+ * A row's `lastActivity` is the merged newest of the conversation's last
+ * message and last call, and both it and `lastMessage` are timeline entries, so
+ * they need the same treatment as the history itself — the list orders and
+ * previews by them.
+ */
+function normalizeConversationTimestamps(row: any): any {
+  const lastMessage = row.lastMessage ? normalizeEntryTimestamps(row.lastMessage) : row.lastMessage;
+  const lastActivity = row.lastActivity
+    ? normalizeEntryTimestamps(row.lastActivity)
+    : row.lastActivity;
+  if (lastMessage === row.lastMessage && lastActivity === row.lastActivity) return row;
+  return { ...row, lastMessage, lastActivity };
+}
+
+/**
  * Coerce a parsed file into a valid snapshot, dropping anything malformed so a
  * corrupt or out-of-date file degrades to "less history" instead of breaking
  * the chat screens.
+ *
+ * Timestamps are canonicalised on the way in.  The file outlives any one server
+ * response, so an entry cached from a build that stored a raw Postgres
+ * `timestamptz` rendering would otherwise keep its unparseable time for as long
+ * as retention holds it, and go on sorting itself by id.
  */
 function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   if (!parsed || typeof parsed !== 'object') return emptySnapshot();
   const raw = (parsed as Record<string, any>);
 
   const conversations = Array.isArray(raw.conversations)
-    ? raw.conversations.filter(
-        (entry: any) => entry && typeof entry.peerId === 'string',
-      )
+    ? raw.conversations
+        .filter((entry: any) => entry && typeof entry.peerId === 'string')
+        .map(normalizeConversationTimestamps)
     : [];
 
   const messagesByPeer: Record<string, ChatMessage[]> = {};
@@ -138,7 +162,9 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
   Object.keys(rawMessages).forEach(peerId => {
     const entries = Array.isArray(rawMessages[peerId]) ? rawMessages[peerId] : [];
     messagesByPeer[peerId] = pruneMessages(
-      entries.filter((entry: any) => entry && (entry.messageId || entry.callId)),
+      entries
+        .filter((entry: any) => entry && (entry.messageId || entry.callId))
+        .map(normalizeEntryTimestamps),
     );
   });
 
