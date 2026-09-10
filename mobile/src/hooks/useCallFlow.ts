@@ -15,6 +15,7 @@ import useConnectionQuality from './useConnectionQuality';
 import useLocalMedia from './useLocalMedia';
 import usePeerConnection from './usePeerConnection';
 import useSignalingSocket from './useSignalingSocket';
+import useAnswerPath from './useAnswerPath';
 import useBlocks from './useBlocks';
 import useCallHistory, { DEFAULT_CALL_MEDIA_TYPE } from './useCallHistory';
 import useCompactCallView from './useCompactCallView';
@@ -25,15 +26,11 @@ import useSession from './useSession';
 import useStartupPermissions from './useStartupPermissions';
 import { CALL_END_REASON_LABELS } from '../callUx';
 import { triggerHaptic } from '../haptics';
-import { consumePendingCallAction } from '../incomingCallNotification';
-import { getMissingCallPermissions } from '../permissions';
 import { shouldShowPermissionPrimer } from '../permissionsPrimer';
 import {
   addCallLinkListener,
   getInitialCallLink,
-  installForegroundMessageHandler,
   registerForPushNotifications,
-  sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
 import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
@@ -50,16 +47,13 @@ import {
   buildCallEndSummary,
   callDurationSeconds,
   callPeerId,
-  decideAcceptIncomingCall,
   describeCallStateEnding,
   describeDialBlocked,
   evaluateCallOnAnotherDevice,
   isLiveCallStatus,
   isMissedCall,
-  rememberAnsweredCallId,
   resolveOutgoingCallee,
   resolveCallEndReason,
-  shouldResetReplayGuard,
   shouldSummariseCall,
 } from '../call/callDecisions';
 import type {
@@ -82,14 +76,6 @@ import {
   shouldDeferRehydration,
 } from '../call/pushRehydration';
 import type { RehydrationOutcome } from '../call/pushRehydration';
-import {
-  ANSWER_SOCKET_ATTEMPTS,
-  ANSWER_SOCKET_WAIT_MS,
-  classifyHttpAccept,
-  decideQueuedAnswerReplay,
-  describeAnswerFallback,
-  describeDegradedMedia,
-} from '../call/answerPath';
 import { buildCallActionUrl, buildCallLookupUrl } from '../call/callEndpoints';
 import type { CallAction } from '../call/callEndpoints';
 import { bearerAuthHeaders } from '../authHeaders';
@@ -104,18 +90,7 @@ import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
 import type { ReplaceOutgoingVideoTrack, WebrtcMediaStream } from './usePeerConnection';
 import { errorMessage } from '../errors';
-import {
-  bringAppToForeground,
-  clearPendingAnswer,
-  consumePendingAnswer,
-  displayIncomingCall,
-  endCall as endCallKeepCall,
-  peekPendingAnswer,
-  recordPendingAnswer,
-  setCallActionHandlers as setCallKeepActionHandlers,
-  reportCallConnected as reportCallKeepConnected,
-  setupCallKeep,
-} from '../callKeep';
+import { clearPendingAnswer, displayIncomingCall, endCall as endCallKeepCall } from '../callKeep';
 import { startIncomingRingtone, stopIncomingRingtone } from '../ringtone';
 import { shouldVibrateForRing } from '../ringerMode';
 
@@ -335,34 +310,6 @@ function reportOwnCallStateAsync(
  */
 function isCallInProgressRejection(error: unknown): boolean {
   return (error as { code?: unknown })?.code === ERROR_CODES.CALL_IN_PROGRESS;
-}
-
-/**
- * Whether a rejection means another of this user's devices already answered.
- */
-function isAnsweredElsewhereRejection(error: unknown): boolean {
-  const candidate = error as { code?: unknown; answerFailureReason?: unknown };
-  return (
-    candidate?.code === ERROR_CODES.ANSWERED_ELSEWHERE ||
-    candidate?.answerFailureReason === ERROR_CODES.ANSWERED_ELSEWHERE
-  );
-}
-
-/**
- * The `error` code from a failed JSON response, or `null` when the body is
- * missing, unreadable or not the shape the API documents. Never throws: this
- * only ever enriches a failure that is already being reported.
- */
-async function readErrorCode(
-  response: { json?: () => Promise<unknown> } | null | undefined,
-): Promise<string | null> {
-  try {
-    const body = await response?.json?.();
-    const code = (body as { error?: unknown })?.error;
-    return typeof code === 'string' ? code : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -1901,604 +1848,38 @@ export default function useCallFlow({
     endActiveCall('Call cancelled', 'info', 'cancelled');
   }, [endActiveCall, releaseCallOnServer]);
 
-  // ─── Accept incoming call ─────────────────────────────────────────────────
+  // ─── Accept / decline incoming call ──────────────────────────────────────
 
-  /**
-   * Report an answer-path stage to the server as a push receipt so a call that
-   * rings but cannot be picked up is diagnosable from server logs alone.
-   * Never throws.
-   */
-  const reportAnswerStage = useCallback(
-    /**
-     * @param stage - a canonical stage name such as
-     *   `answer_attempted`, `answer_failed`, `answer_accepted`, `accept_tapped`,
-     *   `decline_tapped` or `answer_skipped_duplicate`.
-     */
-    (callId: string | null, stage: string, reason: string | null = null) => {
-      if (!callId) return;
-      sendPushReceipt({
-        callId,
-        stage,
-        reason,
-        sessionId: sessionIdRef.current,
-        signalingUrl: (signalingUrl ?? '').trim(),
-      }).catch(error => {
-        logWarn('[CallFlow] answer receipt failed', {
-          stage,
-          message: errorMessage(error),
-        });
-      });
-    },
-    [sessionIdRef, signalingUrl],
-  );
-
-  // Latest `reportAnswerStage` for the mount-once CallKeep effect below.
-  const reportAnswerStageRef = useRef(reportAnswerStage);
-  useEffect(() => {
-    reportAnswerStageRef.current = reportAnswerStage;
-  }, [reportAnswerStage]);
-
-  /**
-   * Resolve a connected socket, waiting up to `timeoutMs` for one (creating it
-   * when none exists).  Returns `null` — never throws — when the socket cannot
-   * be connected in time, so the caller can fall back to HTTP.
-   */
-  const waitForConnectedSocket = useCallback(
-    async (timeoutMs = ANSWER_SOCKET_WAIT_MS) => {
-      if (socketRef.current?.connected) return socketRef.current;
-      try {
-        let socket = socketRef.current;
-        if (!socket) {
-          const sessionId = await createOrGetSession();
-          socket = connectSocket(sessionId);
-        }
-        if (!socket) return null;
-        const connectingSocket = socket;
-        await new Promise(
-          /** @param resolve */ (resolve: (value?: unknown) => void, reject) => {
-            const timer = setTimeout(() => reject(new Error('socket connect timeout')), timeoutMs);
-            connectingSocket.once('connect', () => {
-              clearTimeout(timer);
-              resolve();
-            });
-            connectingSocket.once('connect_error', error => {
-              clearTimeout(timer);
-              reject(error);
-            });
-          },
-        );
-        return socketRef.current?.connected ? socketRef.current : null;
-      } catch (error) {
-        logWarn('[CallFlow] Socket not connected in time to answer', {
-          message: errorMessage(error),
-        });
-        return null;
-      }
-    },
-    [connectSocket, createOrGetSession],
-  );
-
-  /**
-   * Accept the call over the authenticated HTTP endpoint, used when the socket
-   * is unavailable so answering never depends on socket timing.
-   */
-  const acceptCallOverHttp = useCallback(
-    /**
-     * @returns the updated call record
-     */
-    async (callId: string): Promise<CallRecord> => {
-      const response = await authedFetchRef.current?.(sessionId => ({
-        url: buildCallActionUrl({ signalingUrl: signalingUrl ?? '', callId, action: 'accept' }),
-        options: {
-          method: 'POST',
-          headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
-          body: '{}',
-        },
-      }));
-      const verdict = classifyHttpAccept(response);
-      if (verdict.outcome === 'failed') {
-        const error = new Error(verdict.message) as AnswerError;
-        error.answerFailureReason = verdict.answerFailureReason;
-        // The status alone cannot tell "another device answered" from any other
-        // conflict, and the two need opposite handling, so the server's own
-        // code is carried on the rejection.
-        error.code = await readErrorCode(response);
-        throw error;
-      }
-      return verdict.response.json();
-    },
-    [authedFetchRef, signalingUrl],
-  );
-
-  /**
-   * Tell the server the call is accepted, preferring the socket and falling
-   * back to HTTP.  Retries the socket emit once before falling back.
-   */
-  const sendCallAccept = useCallback(
-    async (callId: string): Promise<{ call: CallRecord; transport: 'socket' | 'http' }> => {
-      const socket = await waitForConnectedSocket();
-      if (socket) {
-        for (let attempt = 1; attempt <= ANSWER_SOCKET_ATTEMPTS; attempt += 1) {
-          try {
-            const ack = await signalingRef.current?.request(CLIENT_EVENTS.CALL_ACCEPT, {
-              version: SIGNALING_VERSION,
-              callId,
-            });
-            return { call: ack.call, transport: 'socket' };
-          } catch (error) {
-            // Another of this user's devices picked the call up. Retrying — or
-            // falling back to HTTP — would only ask the same refused question
-            // again, so this rejection ends the answer attempt here.
-            if (isAnsweredElsewhereRejection(error)) throw error;
-            logWarn('[CallFlow] call.accept over socket failed', {
-              callId,
-              attempt,
-              message: errorMessage(error),
-            });
-          }
-        }
-      }
-
-      // The fallback is never silent: a socket that answered and failed reads
-      // differently from one that never connected.
-      const fallback = describeAnswerFallback(Boolean(socket));
-      logWarn('[CallFlow] Answering over HTTP', { callId, reason: fallback.reason });
-      updateStatus(fallback.message, 'warning');
-
-      const call = await acceptCallOverHttp(callId);
-      return { call, transport: 'http' };
-    },
-    [acceptCallOverHttp, updateStatus, waitForConnectedSocket],
-  );
-
-  /**
-   * Acquire local media for a call that has *already* been accepted.  Media
-   * failures degrade the call (audio-only / no media) instead of preventing the
-   * answer, and every failure is logged, surfaced and reported. Never throws.
-   */
-  const acquireMediaForAcceptedCall = useCallback(
-    async (callId: string) => {
-      const permissions = await getMissingCallPermissions().catch(() => null);
-      if (permissions?.missing?.length) {
-        logWarn('[CallFlow] Answering without granted media permissions', {
-          callId,
-          missing: permissions.missing,
-          camera: permissions.camera,
-          microphone: permissions.microphone,
-        });
-        // A push cold start has no foreground Activity, so the runtime prompt
-        // that `startLocalPreview` triggers has nowhere to appear — raise the
-        // app first rather than letting the request be dropped.
-        bringAppToForeground();
-      }
-
-      let stream = null;
-      try {
-        stream = await startLocalPreview();
-      } catch (error) {
-        logError('[CallFlow] Local media failed after accepting call', error);
-      }
-
-      const degraded = describeDegradedMedia({
-        hasStream: Boolean(stream),
-        missingPermissions: permissions?.missing,
-        permissionMessage: permissions?.message,
-      });
-      if (degraded) {
-        logWarn('[CallFlow] Call accepted without local media', {
-          callId,
-          reason: degraded.reason,
-        });
-        updateStatus(degraded.message, 'warning');
-        reportAnswerStage(callId, 'answer_failed', degraded.reason);
-      }
-
-      try {
-        // Make the peer connection now so tracks are added before the offer
-        // arrives; a media-less connection still negotiates and can receive.
-        await ensurePeerConnection();
-      } catch (error) {
-        logError('[CallFlow] Failed to prepare peer connection after accept', error);
-        updateStatus('Failed to connect media', 'error');
-        reportAnswerStage(callId, 'answer_failed', 'peer_connection_failed');
-      }
-    },
-    [ensurePeerConnection, reportAnswerStage, startLocalPreview, updateStatus],
-  );
-
-  /** Remember a callId that must never be accepted twice (bounded). */
-  const rememberAnsweredCall = useCallback(
-    /** @param callId */ (callId: string) => {
-      rememberAnsweredCallId(answeredCallIdsRef.current, callId);
-    },
-    [],
-  );
-
-  const acceptIncomingCall = useCallback(async () => {
-    // Read from the ref first: on a push-originated answer the ref is set
-    // before React has re-rendered with the new state, and a stale closure over
-    // `incomingCall` would otherwise silently no-op.
-    const call = incomingCallRef.current ?? incomingCall;
-    if (!call?.callId) {
-      const queuedCallId = peekPendingAnswer();
-      logWarn('[CallFlow] acceptIncomingCall aborted', {
-        reason: 'no_incoming_call',
-        queuedCallId,
-      });
-      updateStatus('No incoming call to answer', 'error');
-      reportAnswerStage(queuedCallId, 'answer_failed', 'no_incoming_call');
-      return;
-    }
-
-    // ── Idempotency guard ───────────────────────────────────────────────────
-    // A second accept for the same call is a logged no-op, never an error path:
-    // the server has already left `ringing`, so it would fail and the old
-    // failure handling tore down the call that had just connected. A tap for a
-    // call that stopped ringing (a stale notification the OS still showed) is
-    // dismissed instead of answered.
-    const acceptDecision = decideAcceptIncomingCall({
-      callId: call.callId,
-      status: call.status,
-      acceptInFlightCallId: acceptInFlightCallIdRef.current,
-      answeredCallIds: answeredCallIdsRef.current,
-    });
-    if (acceptDecision.action === 'skip') {
-      logInfo('[CallFlow] Ignoring duplicate acceptIncomingCall', {
-        callId: call.callId,
-        reason: acceptDecision.reason,
-      });
-      reportAnswerStage(call.callId, 'answer_skipped_duplicate', acceptDecision.reason);
-      return;
-    }
-    if (acceptDecision.action === 'dismiss') {
-      logInfo('[CallFlow] Ignoring accept for a call that stopped ringing', {
-        callId: call.callId,
-        status: call.status,
-      });
-      reportAnswerStage(call.callId, 'accept_tapped', acceptDecision.reason);
-      clearPendingAnswer(call.callId, acceptDecision.reason);
-      endCallKeepCall(call.callId);
-      return;
-    }
-
-    triggerHaptic('answer');
-    // The previous call's summary has been overtaken by this one.
-    setCallSummary(null);
-    logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
-    acceptInFlightCallIdRef.current = call.callId;
-    reportAnswerStage(call.callId, 'answer_attempted');
-
-    try {
-      isCallerRef.current = false;
-      activeCallIdRef.current = call.callId;
-      updateStatus('Answering…');
-
-      // Signalling first: a call that connects with degraded media is far
-      // better than one that cannot be answered, so `call.accept` is never
-      // gated on local media or on the socket already being connected.
-      const { call: acceptedCall, transport } = await sendCallAccept(call.callId);
-
-      const nextCall = acceptedCall ?? call;
-      rememberAnsweredCall(call.callId);
-      activeCallRef.current = nextCall;
-      setActiveCall(nextCall);
-      recordTimelineCallRef.current(nextCall);
-      incomingCallRef.current = null;
-      setIncomingCall(null);
-      clearPendingAnswer(call.callId, 'answered');
-      updateStatus('Connecting…');
-      Telemetry.trackCallStart(call.callId, sessionIdRef.current);
-      emitEvent('info', 'call.started', { callId: call.callId, direction: 'incoming' });
-      // Stop any ringing (CallKeep system UI transitions to in-call state;
-      // JS fallback ringtone stops here in case CallKeep was unavailable).
-      stopIncomingRingtone();
-      logInfo('[CallFlow] Ringing stopped (call accepted)', {
-        callId: call.callId,
-        transport,
-      });
-      // Tell the OS call UI (CallKeep) the call is now active so any ringing
-      // system UI shown by a background push transitions to the in-call state.
-      reportCallKeepConnected(call.callId);
-      reportAnswerStage(call.callId, 'answer_accepted', transport);
-
-      // Media last, and never fatal to the answer itself.
-      await acquireMediaForAcceptedCall(call.callId);
-      // callPhase advances to in_call via the rtc.offer handler once the caller
-      // sends its offer.
-    } catch (error) {
-      const reason = (error as AnswerError)?.answerFailureReason ?? 'accept_failed';
-      logError('[CallFlow] acceptIncomingCall failed', error);
-      reportAnswerStage(call.callId, 'answer_failed', reason);
-      clearPendingAnswer(call.callId, reason);
-
-      // Answered on another device: nothing failed, the call simply is not
-      // this device's. Take the incoming UI down without ending the call the
-      // other device is now on.
-      if (isAnsweredElsewhereRejection(error)) {
-        activeCallIdRef.current = null;
-        dismissIncomingCallElsewhere(call.callId, callPeerId(call, userIdRef.current) ?? '');
-        return;
-      }
-
-      // Never tear down a call that is already up. The accept can fail simply
-      // because it lost a race with an earlier accept for the same call, in
-      // which case the call is connected and ending it here is exactly the
-      // "cannot pick up" bug.
-      const liveCall = activeCallRef.current;
-      if (liveCall && isLiveCallStatus(liveCall.status)) {
-        logWarn('[CallFlow] Accept failed while a call is already active; keeping it', {
-          callId: call.callId,
-          activeCallId: liveCall.callId,
-          activeStatus: liveCall.status,
-          reason,
-        });
-        updateStatus('Call already answered', 'info');
-        return;
-      }
-
-      updateStatus(`Failed to accept call: ${errorMessage(error)}`, 'error');
-      endActiveCall();
-    } finally {
-      if (acceptInFlightCallIdRef.current === call.callId) {
-        acceptInFlightCallIdRef.current = null;
-      }
-    }
-  }, [
-    acquireMediaForAcceptedCall,
+  const { acceptIncomingCall, declineIncomingCall } = useAnswerPath({
+    acceptInFlightCallIdRef,
+    activeCallIdRef,
+    activeCallRef,
+    authedFetchRef,
+    answeredCallIdsRef,
+    connectSocket,
+    createOrGetSession,
     dismissIncomingCallElsewhere,
     endActiveCall,
+    endActiveCallRef,
+    ensurePeerConnection,
     incomingCall,
-    rememberAnsweredCall,
-    reportAnswerStage,
-    sendCallAccept,
-    updateStatus,
+    incomingCallRef,
+    isCallerRef,
+    rehydrateCallFromPushRef,
+    replayedAnswerCallIdsRef,
     sessionIdRef,
+    setActiveCall,
+    setCallSummary,
+    setIncomingCall,
+    signalingRef,
+    signalingUrl,
+    socketRef,
+    startLocalPreview,
+    triggerHaptic,
+    updateStatus,
     userIdRef,
-  ]);
-
-  // ─── Decline incoming call ────────────────────────────────────────────────
-
-  /**
-   * Tell the server a call is declined, preferring the socket and falling back
-   * to the authenticated HTTP endpoint so a decline tapped during a cold start
-   * still reaches the server. Never throws.
-   */
-  const declineCallById = useCallback(
-    /**
-     * @returns whether the server was told
-     */
-    async (callId: string): Promise<boolean> => {
-      if (!callId) return false;
-      clearPendingAnswer(callId, 'declined');
-
-      if (socketRef.current?.connected) {
-        try {
-          await signalingRef.current?.request(CLIENT_EVENTS.CALL_DECLINE, {
-            version: SIGNALING_VERSION,
-            callId,
-          });
-          return true;
-        } catch (error) {
-          logWarn('[CallFlow] decline ack failed', { message: errorMessage(error) });
-        }
-      }
-
-      try {
-        const response = await authedFetchRef.current?.(sessionId => ({
-          url: buildCallActionUrl({
-            signalingUrl: signalingUrl ?? '',
-            callId,
-            action: 'decline',
-          }),
-          options: {
-            method: 'POST',
-            headers: bearerAuthHeaders(sessionId, { 'Content-Type': 'application/json' }),
-            body: '{}',
-          },
-        }));
-        if (response?.ok) return true;
-        logWarn('[CallFlow] HTTP decline failed', {
-          callId,
-          status: response?.status ?? null,
-        });
-      } catch (error) {
-        logWarn('[CallFlow] HTTP decline threw', { callId, message: errorMessage(error) });
-      }
-      return false;
-    },
-    [authedFetchRef, signalingUrl],
-  );
-
-  const declineIncomingCall = useCallback(async () => {
-    // Mirror `acceptIncomingCall`: prefer the ref so a push-originated decline
-    // is never dropped on a stale closure.
-    const call = incomingCallRef.current ?? incomingCall;
-    if (!call) {
-      logWarn('[CallFlow] declineIncomingCall aborted', { reason: 'no_incoming_call' });
-      return;
-    }
-
-    await declineCallById(call.callId);
-    endActiveCall('Call declined', 'info', 'declined');
-  }, [declineCallById, endActiveCall, incomingCall]);
-
-  // ─── CallKeep: bridge OS answer/end buttons into the call flow ────────────
-  // Keep refs to the latest accept/decline handlers so the (mount-once)
-  // CallKeep listener effect always invokes the current versions.
-  const acceptIncomingCallRef = useRef(acceptIncomingCall);
-  const declineIncomingCallRef = useRef(declineIncomingCall);
-  useEffect(() => {
-    acceptIncomingCallRef.current = acceptIncomingCall;
-    declineIncomingCallRef.current = declineIncomingCall;
-  }, [acceptIncomingCall, declineIncomingCall]);
-
-  // An `answerCall` can arrive for a call this hook doesn't know about yet —
-  // either a headless answer replayed by `setCallActionHandlers` the instant
-  // this effect attached (the push cold-start race: CallKeep's native listener
-  // lives at module scope in index.js and can queue an answer before this hook
-  // ever mounts), or the matching `call.incoming` simply hasn't landed yet.
-  // Such answers are queued in `callKeep.js`'s *single* pending-answer queue
-  // (never a second queue here, which is where an answer could previously be
-  // lost in the hand-off) and replayed by the effect below as soon as the call
-  // record is known, instead of requiring a second Accept tap in the app.
-
-  /**
-   * Queue an answered callId whose call record this hook doesn't know yet, and
-   * immediately try to fetch that record (`GET /calls/:callId`) so the queued
-   * answer can be drained without waiting on the socket to deliver
-   * `call.incoming`. Drops the queue entry — loudly — when the call turns out
-   * to be gone.
-   */
-  const queueAnswerForReplay = useCallback((callUUID: string, source: string) => {
-    if (!callUUID) return;
-    recordPendingAnswer(callUUID, source);
-    Promise.resolve(rehydrateCallFromPushRef.current?.(callUUID))
-      .then(outcome => {
-        const replay = decideQueuedAnswerReplay({
-          outcome,
-          callUUID,
-          queuedCallId: peekPendingAnswer(),
-          knownIncomingCallId: incomingCallRef.current?.callId ?? null,
-        });
-        if (replay.action === 'wait' || replay.action === 'ignore') return;
-
-        if (replay.action === 'dismiss') {
-          // The tap was for a call that had already stopped ringing — the
-          // notification outlived the call. Dismiss it silently rather than
-          // failing an answer nobody can complete.
-          logInfo('[CallFlow] Queued answer dropped; call already ended', {
-            callUUID,
-            source,
-            outcome,
-          });
-          reportAnswerStageRef.current?.(callUUID, 'accept_tapped', replay.reason);
-          clearPendingAnswer(callUUID, replay.reason);
-          endCallKeepCall(callUUID);
-          return;
-        }
-
-        logWarn('[CallFlow] Queued answer cannot be replayed; call unavailable', {
-          callUUID,
-          source,
-        });
-        reportAnswerStageRef.current?.(callUUID, 'answer_failed', replay.reason);
-        clearPendingAnswer(callUUID, replay.reason);
-      })
-      .catch(error => {
-        // A failed lookup/parse here would otherwise surface as an unhandled
-        // promise rejection on the incoming-call answer path — the worst
-        // possible moment for a redbox (dev) or silent breakage (release).
-        // Fail the answer the same way `acceptIncomingCall` does: log
-        // (redacted), report the stage, clear the queue, and end the pending
-        // CallKeep entry so the OS call UI doesn't get stuck ringing/connecting.
-        const reason = (error as AnswerError)?.answerFailureReason ?? 'rehydrate_failed';
-        logError('[CallFlow] Queued answer rehydrate failed', error);
-        reportAnswerStageRef.current?.(callUUID, 'answer_failed', reason);
-        clearPendingAnswer(callUUID, reason);
-        endCallKeepCall(callUUID);
-      });
-  }, []);
-
-  // Latest `declineCallById` for the mount-once effects below.
-  const declineCallByIdRef = useRef(declineCallById);
-  useEffect(() => {
-    declineCallByIdRef.current = declineCallById;
-  }, [declineCallById]);
-
-  // Drain the Accept / Decline the user tapped on the branded notification
-  // while this JS context was not running. The pending-answer queue lives in a
-  // JS module, so it cannot survive process death — the native side persists
-  // the tap (`PendingCallStore`) and it is replayed here on mount, which is
-  // what makes a cold-start answer work even when Telecom never created a
-  // CallKeep connection to route it through.
-  useEffect(() => {
-    let cancelled = false;
-    consumePendingCallAction()
-      .then(pending => {
-        if (cancelled || !pending?.callId) return;
-        const { callId, action, connectionLive } = pending;
-        const reason = connectionLive ? 'connection_live' : 'connection_missing';
-        logInfo('[CallFlow] Replaying persisted notification action', pending);
-        if (action === 'accept') {
-          reportAnswerStageRef.current?.(callId, 'accept_tapped', reason);
-          queueAnswerForReplay(callId, 'native_persisted_intent');
-        } else if (action === 'decline') {
-          reportAnswerStageRef.current?.(callId, 'decline_tapped', reason);
-          declineCallByIdRef.current?.(callId);
-        }
-      })
-      .catch(error => {
-        logWarn('[CallFlow] Failed to drain persisted notification action', {
-          message: errorMessage(error),
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Run once on mount; handlers are invoked via refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    // Configure CallKeep up front so the system call UI is ready before the
-    // first incoming push; degrades to a no-op when the native module is absent.
-    setupCallKeep().catch(() => {});
-    // Take over routing of the answer/end events already subscribed to at
-    // module scope (`registerCallActionListeners`, wired once in index.js)
-    // rather than re-registering with the native module — react-native-callkeep
-    // tracks a single listener per event name and unsubscribes by name only,
-    // so re-registering here would silently replace the module-scope handler
-    // and this effect's cleanup would remove it entirely.
-    const detachCallActionHandlers = setCallKeepActionHandlers({
-      onAnswer: callUUID => {
-        if (callUUID && incomingCallRef.current?.callId !== callUUID) {
-          logInfo('[CallFlow] Recording answerCall for replay', { callUUID });
-          queueAnswerForReplay(callUUID, 'call_flow_unknown_call');
-          return;
-        }
-        acceptIncomingCallRef.current?.();
-      },
-      onEnd: callUUID => {
-        clearPendingAnswer(callUUID, 'ended_before_answer');
-        if (incomingCallRef.current) {
-          declineIncomingCallRef.current?.();
-        } else {
-          endActiveCallRef.current?.();
-        }
-      },
-    });
-    // `setBackgroundMessageHandler` (installed in index.js) only fires when the
-    // app is backgrounded; this covers pushes that land while it is on screen,
-    // e.g. when the socket is mid-reconnect and the call.incoming event is lost.
-    const unsubscribeForegroundPush = installForegroundMessageHandler();
-    return () => {
-      unsubscribeForegroundPush();
-      detachCallActionHandlers();
-    };
-    // Run once on mount; handlers are invoked via refs (`queueAnswerForReplay`
-    // is stable and only touches refs, so it is safe to omit).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Replay a queued `answerCall` once the matching call becomes known to this
-  // hook (via the `call.incoming` socket event or push rehydration).
-  useEffect(() => {
-    const callId = incomingCall?.callId;
-    if (!callId) return;
-    // The effect re-runs whenever `acceptIncomingCall`'s identity changes, so a
-    // per-callId guard (not just the drained queue) keeps a replay from
-    // triggering a second accept for the same call.
-    if (replayedAnswerCallIdsRef.current.has(callId)) return;
-    if (!consumePendingAnswer(callId)) return;
-    // Bounded: callIds are unique, so the guard set would otherwise grow for
-    // the lifetime of the app.
-    if (shouldResetReplayGuard(replayedAnswerCallIdsRef.current.size)) {
-      replayedAnswerCallIdsRef.current.clear();
-    }
-    replayedAnswerCallIdsRef.current.add(callId);
-    logInfo('[CallFlow] Replaying recorded answerCall', { callId });
-    acceptIncomingCallRef.current?.();
-  }, [incomingCall]);
+    recordTimelineCallRef,
+  });
 
   // ─── End active in-call ───────────────────────────────────────────────────
 
