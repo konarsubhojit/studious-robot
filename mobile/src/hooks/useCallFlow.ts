@@ -211,6 +211,28 @@ export type PeerConnection = RTCPeerConnection & {
 export type WebrtcMediaStream = MediaStream;
 type WebrtcMediaStreamTrack = ReturnType<WebrtcMediaStream['getTracks']>[number];
 
+async function getConnectionQualityReports(
+  peerConnection: PeerConnection,
+  remoteVideoTrack: WebrtcMediaStreamTrack | undefined,
+  shouldPollCandidatePair: boolean,
+) {
+  const candidatePairReport = shouldPollCandidatePair ? await peerConnection.getStats() : null;
+  const report = remoteVideoTrack
+    ? await peerConnection.getStats(remoteVideoTrack)
+    : candidatePairReport;
+  return { candidatePairReport, report };
+}
+
+function selectedCandidatePairFromReports(
+  report: { forEach: (fn: (stat: any) => void) => void; },
+  candidatePairReport: { forEach: (fn: (stat: any) => void) => void; } | null,
+  callStats: { candidatePair: any; },
+) {
+  if (!candidatePairReport) return null;
+  if (candidatePairReport === report) return callStats.candidatePair;
+  return collectCallStats(candidatePairReport).candidatePair;
+}
+
 function trackId(track: WebrtcMediaStreamTrack): string | null {
   return typeof track?.id === 'string' && track.id.length > 0 ? track.id : null;
 }
@@ -3653,34 +3675,40 @@ export default function useCallFlow({
     }
 
     let cancelled = false;
-    let lastCandidatePairPollAtMs: number | null = null;
+    let pollsSinceCandidatePair = 0;
     const pollStats = async () => {
       const pc = peerConnectionRef.current;
       if (!pc || typeof pc.getStats !== 'function') return;
 
       try {
         const remoteVideoTrack = remoteStreamRef.current?.getVideoTracks?.()[0];
-        const now = Date.now();
         const shouldPollCandidatePair =
           !remoteVideoTrack ||
-          lastCandidatePairPollAtMs === null ||
-          now - lastCandidatePairPollAtMs >= CANDIDATE_PAIR_POLL_INTERVAL_MS;
-        const report = shouldPollCandidatePair
-          ? await pc.getStats()
-          : await pc.getStats(remoteVideoTrack);
+          pollsSinceCandidatePair >=
+            CANDIDATE_PAIR_POLL_INTERVAL_MS / STATS_POLL_INTERVAL_MS - 1;
+        if (remoteVideoTrack) {
+          pollsSinceCandidatePair = shouldPollCandidatePair ? 0 : pollsSinceCandidatePair + 1;
+        }
+        const { candidatePairReport, report } = await getConnectionQualityReports(
+          pc,
+          remoteVideoTrack,
+          shouldPollCandidatePair,
+        );
         if (cancelled) return;
         if (!report || typeof report.forEach !== 'function') return;
-        if (shouldPollCandidatePair && remoteVideoTrack) {
-          lastCandidatePairPollAtMs = now;
-        }
 
+        const callStats = collectCallStats(report);
         const {
           rttMs,
           totalPacketsLost,
           totalPacketsReceived,
           totalBytesReceived,
-          candidatePair: succeededCandidatePair,
-        } = collectCallStats(report);
+        } = callStats;
+        const succeededCandidatePair = selectedCandidatePairFromReports(
+          report,
+          candidatePairReport,
+          callStats,
+        );
 
         if (succeededCandidatePair) {
           const getReportStat =
