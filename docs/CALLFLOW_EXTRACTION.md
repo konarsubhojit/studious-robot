@@ -40,13 +40,24 @@ Two further modules, `callStateMachine.ts` and `callEndpoints.ts`, predate that
 work but are crossed by several checkpoints below and are listed here so they
 are not mistaken for new surface.
 
-What remains in the hook is the part those modules are called *from*. Measured
-on `master` at `45c42ad`:
+Since that baseline, the cohesive liveness and recovery side-effect clusters
+also moved out into `useCallHeartbeat` and `useCallRecovery`, and screen-share
+orchestration already lives in `useScreenShare`. What remains in this document
+is the next, narrower extraction pass: moving the remaining effectful clusters
+out of the composition root one checkpoint at a time.
+
+Measured on `master` at `45c42ad`:
 
 | Artefact | Size |
 | -------- | ---- |
 | `mobile/src/hooks/useCallFlow.ts` | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
+
+Current handoff, 2026-09-10: `useCallFlow.ts` is still **4,221 lines** in this
+checkout, so none of CP1–CP6 below has landed yet. The extracted effect hooks
+present now are `useScreenShare`, `useCallHeartbeat` and `useCallRecovery`, with
+focused tests for the latter two. The next safe implementation checkpoint is
+**CP1 — `useCallAudioRouting`**.
 
 The pattern to follow already exists in the same directory: `useCallRecovery`,
 `useScreenShare` and `useCallHeartbeat` are all effectful hooks that own their
