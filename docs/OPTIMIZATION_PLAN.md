@@ -752,6 +752,14 @@ are the ordering of native calls against `peerConnectionRef` /
 carry the peer connection, which is the one thing these modules are defined by
 not having.
 
+That residue is the subject of the follow-up work planned in
+[`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md), which takes the
+*effectful* half out into hooks — following `useCallHeartbeat` and
+`useCallRecovery` rather than the pure-module pattern — as a sequence of
+checkpoints, one in flight at a time. That document carries the invariants each
+checkpoint must preserve and the resume procedure for picking the work up
+mid-stream; teardown's verdict, whichever way it goes, is recorded back here.
+
 **Device QA — outstanding.** CI cannot verify any of this: there is no E2E
 coverage of the call path (#114), so a regression here is caught by a person on
 a device or not at all. The following has to be run against this branch before
