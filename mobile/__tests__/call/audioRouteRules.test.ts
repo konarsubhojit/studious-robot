@@ -155,10 +155,8 @@ describe('mergeDiscoveredDevices', () => {
     expect(mergeDiscoveredDevices(undefined, undefined)).toEqual([]);
   });
 
-  it('copies rather than aliasing either input', () => {
+  it('preserves the earlier reference when nothing new was discovered', () => {
     const previous = ['B'];
-    const merged = mergeDiscoveredDevices([], previous);
-    merged.push('C');
-    expect(previous).toEqual(['B']);
+    expect(mergeDiscoveredDevices([], previous)).toBe(previous);
   });
 });

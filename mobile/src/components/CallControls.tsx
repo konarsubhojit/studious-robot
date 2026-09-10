@@ -13,7 +13,7 @@ export type CallControlsProps = {
   isMuted: boolean;
   isVideoEnabled: boolean;
   hasLocalStream: boolean;
-  audioDevices?: { available?: string[]; selected?: string | null; };
+  audioDevices?: { available?: readonly string[]; selected?: string | null; };
   isSpeakerEnabled: boolean;
   isScreenSharing?: boolean;
   /** True while a start/stop is in flight (capture prompt, renegotiation). */

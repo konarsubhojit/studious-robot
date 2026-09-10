@@ -97,11 +97,10 @@ import {
   classifyCallDelivery,
   decideAcceptIncomingCall,
   decideIncomingOffer,
-  describeCallOnAnotherDevice,
   describeCallStateEnding,
   describeDialBlocked,
+  evaluateCallOnAnotherDevice,
   isLiveCallStatus,
-  isCallOwnedByAnotherDevice,
   isMissedCall,
   isStateChangeForOtherCall,
   isTerminalCallStatus,
@@ -324,6 +323,7 @@ function projectCallTimelineActivity(
 const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:4173';
 
 const STATS_POLL_INTERVAL_MS = 7000;
+export const MEDIA_STATE_RELAY_DEBOUNCE_MS = 100;
 const CANDIDATE_PAIR_POLL_INTERVAL_MS = STATS_POLL_INTERVAL_MS * 9;
 
 /**
@@ -658,7 +658,21 @@ export default function useCallFlow({
     ({
       available: [],
       selected: null,
-    } as { available: any[], selected: any }),
+    } as { available: readonly string[], selected: string | null }),
+  );
+  const publishAudioDevices = useCallback(
+    (next: { available: readonly string[]; selected: string | null; }) => {
+      setAudioDevices(previous => {
+        const sameAvailable =
+          previous.available === next.available ||
+          (
+            previous.available.length === next.available.length &&
+            previous.available.every((device, index) => device === next.available[index])
+          );
+        return sameAvailable && previous.selected === next.selected ? previous : next;
+      });
+    },
+    [],
   );
   const [connectionQuality, setConnectionQuality] = useState(NO_LINK_CONNECTION_QUALITY);
   const [selectedCandidatePair, setSelectedCandidatePair] = useState(
@@ -706,6 +720,7 @@ export default function useCallFlow({
   // Mirrors `isScreenSharing` so the heartbeat can carry the current flag
   // without re-creating the timer on every toggle.
   const isScreenSharingRef = useRef(false);
+  const mediaStateRelayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionQualityRef = useRef({ bars: 0, label: 'No link' });
   // Hysteresis state for the quality indicator: a single bad sample must not
   // be allowed to flip the bars, so the smoother remembers how many
@@ -746,7 +761,7 @@ export default function useCallFlow({
   // button), and a second accept for a call that is already up fails
   // server-side — so each callId is accepted at most once.
   const acceptInFlightCallIdRef = useRef((null as string | null));
-  const answeredCallIdsRef = useRef(([] as string[]));
+  const answeredCallIdsRef = useRef(new Set<string>());
   // callIds whose queued answer has already been replayed, so the replay effect
   // stays a no-op when `acceptIncomingCall`'s identity changes.
   const replayedAnswerCallIdsRef = useRef((new Set() as Set<string>));
@@ -1567,8 +1582,12 @@ export default function useCallFlow({
    */
   const consumeForeignDeviceCallEvent = useCallback(
     (call: DeviceOwnedCall | null | undefined, eventCallId: string | null, knownCallId: string | null): boolean => {
-      const owner = { userId: userIdRef.current, deviceId: deviceIdRef.current };
-      const elsewhere = describeCallOnAnotherDevice({ call, ...owner });
+      const evaluation = evaluateCallOnAnotherDevice({
+        call,
+        userId: userIdRef.current,
+        deviceId: deviceIdRef.current,
+      });
+      const elsewhere = evaluation.elsewhere;
       if (elsewhere) {
         logInfo('[CallFlow] Call is held by another device of this user', elsewhere);
         callElsewhereRef.current = elsewhere;
@@ -1591,7 +1610,7 @@ export default function useCallFlow({
       // belongs on the device that placed the call, not on this one's idle
       // screen. `knownCallId` is the test for "was never in it": a device still
       // ringing for this call keeps the verdict, so the ring always stops.
-      if (!knownCallId && isCallOwnedByAnotherDevice({ call, ...owner })) {
+      if (!knownCallId && evaluation.isOwnedByAnotherDevice) {
         logInfo("[CallFlow] Ignoring a transition for another device's call", {
           callId: eventCallId,
         });
@@ -3017,10 +3036,7 @@ export default function useCallFlow({
 
   /** Remember a callId that must never be accepted twice (bounded). */
   const rememberAnsweredCall = useCallback(/** @param callId */ (callId: string) => {
-    answeredCallIdsRef.current = rememberAnsweredCallId(
-      answeredCallIdsRef.current,
-      callId,
-    );
+    rememberAnsweredCallId(answeredCallIdsRef.current, callId);
   }, []);
 
   const acceptIncomingCall = useCallback(async () => {
@@ -3547,7 +3563,7 @@ export default function useCallFlow({
         manualAudioRouteRef.current = route;
         const result = await chooseAudioRoute(route);
         if (!result.ok) {
-          setAudioDevices({
+          publishAudioDevices({
             available: result.available,
             selected: result.selected,
           });
@@ -3555,7 +3571,7 @@ export default function useCallFlow({
           updateStatus(result.message, 'error');
           return;
         }
-        setAudioDevices({
+        publishAudioDevices({
           available: result.available,
           selected: result.selected,
         });
@@ -3566,7 +3582,7 @@ export default function useCallFlow({
         updateStatus('Unable to switch audio output', 'error');
       }
     },
-    [updateStatus],
+    [publishAudioDevices, updateStatus],
   );
 
   const dismissCallSummary = useCallback(() => {
@@ -3606,21 +3622,35 @@ export default function useCallFlow({
   const activeCallId = activeCall?.callId ?? null;
   const canRelayMediaState = activeCallId !== null && isLiveCallStatus(activeCall?.status);
   useEffect(() => {
+    if (mediaStateRelayTimerRef.current) {
+      clearTimeout(mediaStateRelayTimerRef.current);
+      mediaStateRelayTimerRef.current = null;
+    }
     isScreenSharingRef.current = isScreenSharing;
     if (!socketRef.current?.connected || !activeCallId) return;
     if (!canRelayMediaState) return;
-    signalingRef.current
-      ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
-        version: SIGNALING_VERSION,
-        callId: activeCallId,
-        mediaState: { isScreenSharing, isVideoEnabled },
-      })
-      .catch(error => {
-        logWarn('[CallFlow] call.media-state emit failed', {
-          message: errorMessage(error),
+    mediaStateRelayTimerRef.current = setTimeout(() => {
+      mediaStateRelayTimerRef.current = null;
+      if (!socketRef.current?.connected) return;
+      signalingRef.current
+        ?.request(CLIENT_EVENTS.CALL_MEDIA_STATE, {
+          version: SIGNALING_VERSION,
+          callId: activeCallId,
+          mediaState: { isScreenSharing, isVideoEnabled },
+        })
+        .catch(error => {
+          logWarn('[CallFlow] call.media-state emit failed', {
+            message: errorMessage(error),
+          });
         });
-      });
+    }, MEDIA_STATE_RELAY_DEBOUNCE_MS);
   }, [activeCallId, canRelayMediaState, isScreenSharing, isVideoEnabled]);
+  useEffect(
+    () => () => {
+      if (mediaStateRelayTimerRef.current) clearTimeout(mediaStateRelayTimerRef.current);
+    },
+    [],
+  );
 
   // ─── Connection quality polling ───────────────────────────────────────────
 
@@ -3828,7 +3858,7 @@ export default function useCallFlow({
       ) {
         const speakerResult = await chooseAudioRoute(AUDIO_ROUTES.SPEAKER_PHONE);
         if (speakerResult.ok) {
-          setAudioDevices({
+          publishAudioDevices({
             available: mergeDiscoveredDevices(speakerResult.available, result.available),
             selected: speakerResult.selected,
           });
@@ -3839,7 +3869,7 @@ export default function useCallFlow({
           message: speakerResult.message,
         });
       }
-      setAudioDevices({ available: result.available, selected: result.selected });
+      publishAudioDevices({ available: result.available, selected: result.selected });
       setIsSpeakerEnabled(result.selected === AUDIO_ROUTES.SPEAKER_PHONE);
       if (!result.ok) {
         logWarn('[CallFlow] Automatic audio routing degraded', {
@@ -3847,7 +3877,7 @@ export default function useCallFlow({
         });
       }
     },
-    [speakerEnabledByDefault],
+    [publishAudioDevices, speakerEnabledByDefault],
   );
 
   useEffect(() => {
@@ -3862,7 +3892,7 @@ export default function useCallFlow({
     // Re-evaluate whenever a device is plugged in or removed mid-call.
     return subscribeAudioDevices(nextDevices => {
       logInfo('[CallFlow] Audio devices changed', nextDevices);
-      setAudioDevices(nextDevices);
+      publishAudioDevices(nextDevices);
       // A *detachable* device the user picked by hand can vanish mid-call (a
       // headset runs out of battery, a cable is pulled). The automatic route
       // silently takes over below, which is right — but the hand-over is
@@ -3877,7 +3907,7 @@ export default function useCallFlow({
       }
       applyAutomaticAudioRoute(nextDevices.available);
     });
-  }, [applyAutomaticAudioRoute, isInCall, updateStatus]);
+  }, [applyAutomaticAudioRoute, isInCall, publishAudioDevices, updateStatus]);
 
   useEffect(() => {
     if (!isInCall || !isSpeakerEnabled) return;

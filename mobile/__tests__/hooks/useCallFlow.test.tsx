@@ -1,7 +1,11 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { AppState } from 'react-native';
-import useCallFlow, { CALL_PHASES, CALL_END_REASON_LABELS } from '../../src/hooks/useCallFlow';
+import useCallFlow, {
+  CALL_PHASES,
+  CALL_END_REASON_LABELS,
+  MEDIA_STATE_RELAY_DEBOUNCE_MS,
+} from '../../src/hooks/useCallFlow';
 import type { PeerTrackEvent, WebrtcMediaStream } from '../../src/hooks/useCallFlow';
 import useCompactCallView from '../../src/hooks/useCompactCallView';
 import { startScreenCapture } from '../../src/screenShare';
@@ -3317,13 +3321,14 @@ describe('useCallFlow chat', () => {
     });
 
     const { mediaDevices, RTCPeerConnection } = require('react-native-webrtc');
+    const localVideoTrack = { kind: 'video', enabled: true };
     const videoSender = {
       track: { kind: 'video' },
       replaceTrack: jest.fn().mockResolvedValue(undefined),
     };
     (mediaDevices.getUserMedia as jest.Mock).mockResolvedValue({
-      getTracks: () => [],
-      getVideoTracks: () => [],
+      getTracks: () => [localVideoTrack],
+      getVideoTracks: () => [localVideoTrack],
       getAudioTracks: () => [],
     });
     (RTCPeerConnection as jest.Mock).mockImplementation(() => ({
@@ -3375,6 +3380,10 @@ describe('useCallFlow chat', () => {
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
     });
+    await act(async () => {
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
+      await Promise.resolve();
+    });
 
     expect(resultRef.current.isScreenSharing).toBe(true);
     expect(mediaStateEmits).toContainEqual({
@@ -3385,6 +3394,29 @@ describe('useCallFlow chat', () => {
       // a black rectangle.
       mediaState: { isScreenSharing: true, isVideoEnabled: true },
     });
+
+    mediaStateEmits.length = 0;
+    for (let index = 0; index < 3; index += 1) {
+      act(() => {
+        resultRef.current.handleVideoToggle();
+      });
+      act(() => {
+        tree.update(<TestHook resultRef={resultRef} />);
+      });
+    }
+    expect(mediaStateEmits).toEqual([]);
+
+    await act(async () => {
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
+      await Promise.resolve();
+    });
+    expect(mediaStateEmits).toEqual([
+      {
+        version: 1,
+        callId: 'call-share-1',
+        mediaState: { isScreenSharing: true, isVideoEnabled: false },
+      },
+    ]);
   });
 
   test('holds the media-state snapshot until the call leaves ringing, then relays it once', async () => {
@@ -3461,6 +3493,10 @@ describe('useCallFlow chat', () => {
     });
     act(() => {
       tree.update(<TestHook resultRef={resultRef} />);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
+      await Promise.resolve();
     });
 
     expect(mediaStateEmits).toEqual([
@@ -4065,6 +4101,10 @@ describe('useCallFlow chat', () => {
       });
       await act(async () => {
         await resultRef.current.handleScreenShareToggle();
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(MEDIA_STATE_RELAY_DEBOUNCE_MS);
+        await Promise.resolve();
       });
       expect(resultRef.current.isScreenSharing).toBe(true);
       expect(emits).toEqual(
@@ -5587,6 +5627,15 @@ describe('useCallFlow answer path', () => {
     expect(audioRouting.applyPreferredAudioRoute).toHaveBeenCalled();
     expect(audioRouting.setAudioRoute).not.toHaveBeenCalled();
     expect(resultRef.current.isSpeakerEnabled).toBe(false);
+
+    const publishedAudioDevices = resultRef.current.audioDevices;
+    await act(async () => {
+      deviceChangeHandler({
+        available: [...publishedAudioDevices.available],
+        selected: publishedAudioDevices.selected,
+      });
+    });
+    expect(resultRef.current.audioDevices).toBe(publishedAudioDevices);
 
     // An explicit user choice must survive later device changes.
     await act(async () => {
