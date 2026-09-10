@@ -845,8 +845,6 @@ export default function useCallFlow({
     },
   });
 
-  const isInCall = callPhase === CALL_PHASES.IN_CALL;
-
   const {
     isScreenSharing,
     isTogglingScreenShare,
