@@ -80,7 +80,10 @@ function compareNewestFirst(a: string | null | undefined, b: string | null | und
   const bMs = timestampMs(b);
   const aKnown = Number.isFinite(aMs);
   const bKnown = Number.isFinite(bMs);
-  if (!aKnown || !bKnown) return aKnown === bKnown ? 0 : aKnown ? -1 : 1;
+  if (!aKnown || !bKnown) {
+    if (aKnown === bKnown) return 0;
+    return aKnown ? -1 : 1;
+  }
   if (aMs === bMs) return 0;
   return aMs < bMs ? 1 : -1;
 }

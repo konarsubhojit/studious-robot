@@ -37,9 +37,14 @@ const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
  *   - `T` or a space between the date and the time;
  *   - seconds optional, fractional seconds optional and of any length;
  *   - the zone as `Z`, `±HH`, `±HHMM` or `±HH:MM`, or absent.
+ *
+ * The zone's hours are bounded here because, unlike the date and time fields,
+ * an out-of-range offset cannot be caught by reading the built date back: it is
+ * applied as a plain millisecond shift, so `+99` would silently land four days
+ * early instead of being rejected. `±23:59` is the ECMAScript grammar's limit.
  */
 const TIMESTAMP_TEXT =
-  /^(\d{4,})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(Z|z|[+-]\d{2}(?::?\d{2})?)?$/;
+  /^(\d{4,})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?(Z|z|[+-](?:[01]\d|2[0-3])(?::?[0-5]\d)?)?$/;
 
 /** Milliseconds in one minute, for applying a UTC offset. */
 const MS_PER_MINUTE = 60_000;
@@ -111,6 +116,23 @@ export function normalizeTimestamp(
     second ? Number(second) : 0,
     fractionToMilliseconds(fraction),
   );
+
+  // The regex bounds each field's *width*, not its range, and `Date`'s setters
+  // roll over rather than reject — `2026-13-45` would become `2027-02-14`, a
+  // confidently wrong timestamp where the contract above promises the original
+  // back. Reading the fields off again is the cheapest way to tell a value that
+  // was understood from one that was merely absorbed.
+  if (
+    instant.getUTCFullYear() !== Number(year) ||
+    instant.getUTCMonth() !== Number(month) - 1 ||
+    instant.getUTCDate() !== Number(day) ||
+    instant.getUTCHours() !== Number(hour) ||
+    instant.getUTCMinutes() !== Number(minute) ||
+    instant.getUTCSeconds() !== (second ? Number(second) : 0)
+  ) {
+    return value;
+  }
+
   instant.setTime(instant.getTime() - offsetMinutes(zone) * MS_PER_MINUTE);
 
   // Outside ±8.64e15 ms the date is invalid, and beyond four-digit years

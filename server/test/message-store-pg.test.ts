@@ -403,16 +403,16 @@ test('rows arrive with canonical ISO timestamps whatever Postgres rendered', asy
       toTuple(
         messageRow({
           messageId: 'm-trimmed',
-          createdAt: '2026-09-09 14:16:47.89+00' as string,
-          readAt: '2026-09-09 14:17:00+00' as string,
-          deletedAt: '2026-09-09 14:18:00.5+00' as string,
+          createdAt: '2026-09-09 14:16:47.89+00',
+          readAt: '2026-09-09 14:17:00+00',
+          deletedAt: '2026-09-09 14:18:00.5+00',
         }),
       ),
       toTuple(
-        messageRow({ messageId: 'm-micros', createdAt: '2026-09-09 14:16:47.891234+00' as string }),
+        messageRow({ messageId: 'm-micros', createdAt: '2026-09-09 14:16:47.891234+00' }),
       ),
       toTuple(
-        messageRow({ messageId: 'm-offset', createdAt: '2026-09-09 19:46:47.89+05:30' as string }),
+        messageRow({ messageId: 'm-offset', createdAt: '2026-09-09 19:46:47.89+05:30' }),
       ),
       toTuple(
         messageRow({ messageId: 'm-canonical', createdAt: '2026-09-09T14:16:47.890Z' }),

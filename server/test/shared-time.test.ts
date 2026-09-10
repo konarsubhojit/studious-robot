@@ -55,6 +55,24 @@ test('a value that cannot be understood is passed through, not mangled', () => {
   assert.equal(normalizeTimestamp('275760-09-14 00:00:00+00'), '275760-09-14 00:00:00+00');
 });
 
+test('out-of-range components are rejected rather than rolled over', () => {
+  // `Date`'s setters roll over, so without a check `2026-13-45` would come back
+  // as a confident `2027-02-14` — a wrong timestamp that sorts into a
+  // plausible-looking place, which is the failure this module exists to stop.
+  for (const malformed of [
+    '2026-13-45 00:00:00+00',
+    '2026-02-30 00:00:00+00',
+    '2026-00-00 00:00:00+00',
+    '2026-09-09 25:99:99+00',
+    // An offset is applied as a plain millisecond shift, so it cannot be
+    // caught by reading the built date back; the grammar bounds it instead.
+    '2026-09-09 14:16:47.89+99',
+    '2026-09-09 14:16:47.89-2400',
+  ]) {
+    assert.equal(normalizeTimestamp(malformed), malformed);
+  }
+});
+
 test('normalised timestamps compare lexicographically as they do chronologically', () => {
   const raw = ['2026-09-09 14:16:47.89+00', '2026-09-09T14:16:47.000Z', '2026-09-09 14:16:48+00'];
   const normalized = raw.map((value) => normalizeTimestamp(value));
