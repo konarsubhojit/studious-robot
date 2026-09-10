@@ -53,14 +53,14 @@ Measured on `master` at `45c42ad`:
 | `mobile/src/hooks/useCallFlow.ts`             | **4,221 lines** |
 | `mobile/__tests__/hooks/useCallFlow.test.tsx` | **5,800 lines** |
 
-Current handoff, 2026-09-10: CP1, CP2 and CP3 have landed. `useCallFlow.ts`
-is now **3,560 lines** in this checkout. The extracted effect hooks present now
+Current handoff, 2026-09-10: CP1 through CP4 have landed. `useCallFlow.ts`
+is now **3,452 lines** in this checkout. The extracted effect hooks present now
 are `useScreenShare`, `useCallHeartbeat`, `useCallRecovery`,
-`useCallAudioRouting`, `useConnectionQuality` and `usePeerConnection`, with
-focused tests for the latter five. Per the scaffold-first follow-up request,
-empty CP4–CP6 files also exist (`useLocalMedia`, `useSignalingSocket`,
+`useCallAudioRouting`, `useConnectionQuality`, `usePeerConnection` and
+`useLocalMedia`, with focused tests for the latter six. Per the scaffold-first
+follow-up request, CP5–CP6 files also exist (`useSignalingSocket`,
 `useAnswerPath`) but are intentionally **not wired** yet. The next safe wiring
-checkpoint is **CP4 — `useLocalMedia`**. A server-side call pickup blocker found
+checkpoint is **CP5 — `useSignalingSocket`**. A server-side call pickup blocker found
 in the production logs on 2026-09-10 was fixed separately by refreshing stale
 local call caches from shared call state before RTC/cancel handling; it does not
 change this extraction order.
@@ -277,7 +277,7 @@ typecheck and the CP3 hook plus `useCallFlow.test.tsx` targeted Jest run.
 
 ---
 
-### CP4 — `useLocalMedia` 🚧 scaffolded · size M · risk Medium
+### CP4 — `useLocalMedia` ✅ · size M · risk Medium
 
 **Extracts.** `startLocalPreview` and `releaseLocalMedia` from
 `// ─── Local media ───` (≈1316–1349, with `releaseLocalMedia` at ≈1107), and
@@ -297,12 +297,15 @@ hook wires its controls before these handlers are defined. Whatever moves must
 keep those refs current.
 
 **Entry precondition.** CP3 merged.
-**Resume check.** `ls mobile/src/hooks/useLocalMedia.ts`; if it only returns an
-empty scaffold, CP4 still needs wiring.
+**Resume check.** `ls mobile/src/hooks/useLocalMedia.ts` and confirm
+`useCallFlow` imports and composes it.
 
-**Scaffold status.** `mobile/src/hooks/useLocalMedia.ts` exists only as an
-unwired placeholder so future sessions can implement this checkpoint without
-first creating the file.
+**Landed in this session.** `useLocalMedia` now owns `localStreamRef`,
+`localStream`, `isVideoEnabled`, `isFrontCamera`, `startLocalPreview`,
+`releaseLocalMedia`, `handleVideoToggle` and `handleCameraSwitch`. Camera-switch
+fallback calls through the CP3 `replaceOutgoingVideoTrack` boundary rather than
+reading `peerConnectionRef` directly. Focused coverage:
+`mobile/__tests__/hooks/useLocalMedia.test.tsx`.
 
 ---
 
@@ -428,7 +431,8 @@ result in the checkpoint's PR.
 - [x] CP1 extracted.
 - [x] CP2 extracted.
 - [x] CP3 extracted.
-- [ ] CP4–CP6 scaffold files are wired one at a time.
+- [x] CP4 extracted.
+- [ ] CP5–CP6 scaffold files are wired one at a time.
 - [ ] `useCallFlow.ts` is materially smaller and reads as a composition root.
 - [ ] Each extracted hook has direct tests that do not mount `useCallFlow`.
 - [ ] `useCallFlow.test.tsx` still passes unmodified.
