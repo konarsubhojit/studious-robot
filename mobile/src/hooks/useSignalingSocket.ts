@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
 import { logError, logInfo, logVerbose, logWarn } from '../appLogger';
 import { CALL_EVENTS } from '../call/callStateMachine';
+import { markAnswerStage } from '../call/answerTimeline';
 import {
   classifyCallDelivery,
   decideIncomingOffer,
@@ -25,6 +26,7 @@ import { clearPendingAnswer, endCall as endCallKeepCall } from '../callKeep';
 import { startCallService } from '../callService';
 import { errorMessage } from '../errors';
 import { emitMetric, getCorrelationId } from '../observability';
+import { sendPushReceipt } from '../pushNotifications';
 import { getSocketOptions } from '../socketConfig';
 import {
   CLIENT_EVENTS,
@@ -400,6 +402,27 @@ export default function useSignalingSocket({
         },
       );
 
+      /**
+       * Report `answer_sent` with how long the offer handler took.
+       *
+       * Best-effort and never awaited: a receipt must not delay the answer it
+       * is reporting on.
+       */
+      const reportAnswerSent = (callId: string) => {
+        const timing = markAnswerStage(callId);
+        if (!timing) return;
+        sendPushReceipt({
+          callId,
+          stage: 'answer_sent',
+          reason: `sinceAccept:${timing.sinceAcceptMs}`,
+          durationMs: timing.stageMs,
+          sessionId: sessionIdRef.current,
+          signalingUrl: signalingUrl.trim(),
+        }).catch(error => {
+          logWarn('[CallFlow] answer_sent receipt failed', { message: errorMessage(error) });
+        });
+      };
+
       signaling.on(SERVER_EVENTS.RTC_OFFER, async ({ sdp, callId }) => {
         const offerDecision = decideIncomingOffer({
           callId,
@@ -444,6 +467,11 @@ export default function useSignalingSocket({
               if (!ack?.ok) logWarn('[CallFlow] rtc.answer ack failed', ack?.error);
             },
           );
+          // The last step of the callee's answer, and the end of the client
+          // half of the server's `accepted -> in_call` window. Reported from
+          // here rather than from `useAnswerPath` because the answer is built
+          // in response to the caller's offer, which only this handler sees.
+          reportAnswerSent(callId);
           dispatchCallEvent(CALL_EVENTS.CONNECT);
           connectSocketHandlersRef.current.updateStatus('Connected', 'success');
           startCallService();

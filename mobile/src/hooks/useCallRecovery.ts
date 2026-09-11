@@ -6,6 +6,10 @@ import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { CALL_RECOVERY_BUDGET_MS } from '../../../shared';
 import { subscribeNetworkChanges } from '../networkMonitor';
+import { sendPushReceipt } from '../pushNotifications';
+import { describeLastIceServerFetch } from '../webrtcConfig';
+import { markAnswerStage, endAnswerTimeline } from '../call/answerTimeline';
+import { describeCandidatePair, readSelectedCandidatePair } from '../call/iceStats';
 import { createRecoveryEpisode } from '../call/recoveryEpisode';
 import type { RecoveryPauseReason, RecoveryTrigger } from '../call/recoveryEpisode';
 import {
@@ -59,6 +63,7 @@ export type UseCallRecoveryParams = {
   userIdRef: MutableRef<string>;
   connectedReportedCallIdRef: MutableRef<string | null>;
   isConnectionLostRef: MutableRef<boolean>;
+  sessionIdRef: MutableRef<string | null>;
   signalingUrl: string;
   activeIceTransportPolicy: IceTransportPolicy;
   ensureIceSessionId: () => Promise<string | null>;
@@ -86,6 +91,7 @@ export default function useCallRecovery({
   userIdRef,
   connectedReportedCallIdRef,
   isConnectionLostRef,
+  sessionIdRef,
   signalingUrl,
   activeIceTransportPolicy,
   ensureIceSessionId,
@@ -368,6 +374,56 @@ export default function useCallRecovery({
   );
 
   /**
+   * Report what the call actually connected *over*, after the fact.
+   *
+   * §4 of `docs/media-connect-latency-diagnosis.md` asks whether the slow
+   * calls are the ones falling back to a TURN relay — a question only the
+   * handset can answer, and one nothing reported at the moment it mattered.
+   * Sent as a receipt so it lands in the same journal as the other stages.
+   *
+   * Failure here is swallowed: diagnostics must never be able to affect a call
+   * that has, by definition, already connected.
+   */
+  const reportConnectedDiagnostics = useCallback(
+    async (callId: string, iceState: string, iceRestarts: number) => {
+      try {
+        const summary = await readSelectedCandidatePair(peerConnectionRef.current);
+        const timing = markAnswerStage(callId);
+        endAnswerTimeline(callId);
+        logInfo('[CallFlow] Call connected over candidate pair', {
+          callId,
+          iceState,
+          iceRestarts,
+          candidatePair: summary,
+        });
+        await sendPushReceipt({
+          callId,
+          stage: 'media_connected',
+          reason: [
+            describeCandidatePair(summary) ?? 'candidate-pair:unknown',
+            `iceRestarts:${iceRestarts}`,
+            describeLastIceServerFetch() ?? 'ice-servers:unknown',
+          ].join(' '),
+          durationMs: timing?.sinceAcceptMs ?? null,
+          sessionId: sessionIdRef.current,
+          signalingUrl: signalingUrl.trim(),
+        });
+      } catch (error) {
+        logWarn('[CallFlow] connected diagnostics failed', { message: errorMessage(error) });
+      }
+    },
+    [peerConnectionRef, sessionIdRef, signalingUrl],
+  );
+
+  // Forwarded through a ref, as the rest of this file does, so a
+  // diagnostics-only concern cannot churn the identity of a call-lifecycle
+  // callback that effects depend on.
+  const reportConnectedDiagnosticsRef = useRef(reportConnectedDiagnostics);
+  useEffect(() => {
+    reportConnectedDiagnosticsRef.current = reportConnectedDiagnostics;
+  }, [reportConnectedDiagnostics]);
+
+  /**
    * Tell the server this device's media is connected.
    *
    * This is the only signal that advances the call out of `connecting_media`;
@@ -381,6 +437,10 @@ export default function useCallRecovery({
      (iceState: string) => {
       const callId = activeCallIdRef.current;
       if (!callId) return;
+      // Read before `closeRecoveryEpisode`, which resets the ladder: a restart
+      // rung costs seconds, and nothing previously correlated one with the
+      // `accepted -> in_call` interval it inflated (diagnosis §5).
+      const iceRestarts = iceRestartRef.current.attempt;
       closeRecoveryEpisode('recovered');
       startCallHeartbeat(`media-connected:${iceState}`);
       if (connectedReportedCallIdRef.current === callId) return;
@@ -393,8 +453,18 @@ export default function useCallRecovery({
           if (!ack?.ok) logWarn('[CallFlow] call.connected ack failed', ack?.error);
         },
       );
+      // Strictly after the emit, and never awaited: this is the event that
+      // ends `connecting_media`, so a stats read must not be able to delay it.
+      void reportConnectedDiagnosticsRef.current(callId, iceState, iceRestarts);
     },
-    [activeCallIdRef, closeRecoveryEpisode, connectedReportedCallIdRef, signalingRef, startCallHeartbeat],
+    [
+      activeCallIdRef,
+      closeRecoveryEpisode,
+      connectedReportedCallIdRef,
+      iceRestartRef,
+      signalingRef,
+      startCallHeartbeat,
+    ],
   );
   /**
    * Whether the peer connection is carrying media again.

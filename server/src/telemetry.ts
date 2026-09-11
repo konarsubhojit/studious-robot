@@ -1,4 +1,11 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import {
+  MAX_PLAUSIBLE_SETUP_LATENCY_MS,
+  measureElapsedMs,
+  measureSinceAnswered,
+} from './lib/callLatency.ts';
+
+type ElapsedResult = import('./lib/callLatency.ts').ElapsedResult;
 
 /**
  * In-process call telemetry and QoS metrics.
@@ -63,9 +70,20 @@ export type Telemetry = {
     createdAt: string;
   }) => void;
   recordCallTransition: (
-    call: { callId: string; status: string; endReason?: string | null },
+    call: {
+      callId: string;
+      status: string;
+      endReason?: string | null;
+      /**
+       * Stamped on the accepted transition and carried in the shared store, so
+       * the instance that sees `in_call` can measure the connect latency even
+       * when it did not handle the accept.
+       */
+      answeredAt?: string | null;
+    },
     previousStatus: string
   ) => void;
+  recordRtcBufferOutcome: (outcome: RtcBufferOutcome, count?: number) => void;
   recordSignalingError: (code?: string) => void;
   recordMessagePersistenceFailure: () => void;
   recordCacheHit: () => void;
@@ -73,6 +91,18 @@ export type Telemetry = {
   recordDbQuery: (record: import('./lib/queryTiming.ts').QueryTimingRecord) => void;
   getSnapshot: () => MetricsSnapshot;
 };
+
+/**
+ * What became of RTC frames held while a call was still `ringing`.
+ *
+ * The two `stranded_*` outcomes are kept apart because they mean different
+ * things: `stranded_local` is a call that ended before it was ever media-ready
+ * (the buffer did its job and had nothing to replay into), while
+ * `stranded_remote` is a buffer this instance was still holding when a *peer*
+ * instance moved the call — the cross-instance loss described in
+ * `docs/media-connect-latency-diagnosis.md` §2.
+ */
+export type RtcBufferOutcome = 'buffered' | 'replayed' | 'stranded_local' | 'stranded_remote';
 
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
@@ -112,6 +142,14 @@ const MAX_TRACKED_SIGNALING_ERROR_CODES = 50;
 
 /** Event-loop delay sampling cadence for the `/metrics` histogram. */
 const EVENT_LOOP_DELAY_SAMPLE_MS = 1_000;
+
+/** RTC buffer outcome → the counter it increments. */
+const RTC_BUFFER_COUNTERS = {
+  buffered: 'rtc_signals_buffered',
+  replayed: 'rtc_signals_replayed',
+  stranded_local: 'rtc_signals_stranded_local',
+  stranded_remote: 'rtc_signals_stranded_remote',
+} as const;
 
 /**
  * Sampling resolution (ms) for `monitorEventLoopDelay`. The monitor reports
@@ -200,6 +238,37 @@ function createTelemetry(): Telemetry {
     calls_in_call: 0, // successfully reached in_call
     calls_ended: 0, // reached terminal ended state
     calls_failed: 0, // ended with endReason=failed
+    // ── Latency-sample provenance ───────────────────────────────────────────
+    // Both call-latency histograms are fed from two different clocks (the call
+    // record's, shared between instances, and this process's own), and a shift
+    // in the mix moves the distribution on its own. Counting the sources keeps
+    // them separable in analysis instead of silently blended.
+    //
+    // Measured from the shared record's `answeredAt`: works for every call,
+    // including one accepted on the other instance.
+    call_connect_latency_shared: 0,
+    // Measured from this process's own `accepted` timestamp, because the
+    // record carried no usable `answeredAt`. Same-instance calls only.
+    call_connect_latency_local: 0,
+    // Neither source was usable: `answeredAt` was absent *and* this process
+    // never saw the accept. These are the samples the histogram loses.
+    call_connect_latency_unmeasured: 0,
+    // Rejected because the elapsed time was negative or beyond the media
+    // timeout — i.e. the two hosts' clocks disagree. A non-zero value here
+    // means NTP on the signaling VMs needs attention, and it means the
+    // histogram is *under*-counting, not that the calls were fast.
+    call_connect_latency_skew_rejected: 0,
+    // The same four, for `call_setup_latency_ms` measured from the record's
+    // `createdAt` (the ring start for any call that rang).
+    call_setup_latency_shared: 0,
+    call_setup_latency_local: 0,
+    call_setup_latency_unmeasured: 0,
+    call_setup_latency_skew_rejected: 0,
+    // ── RTC hold-and-replay buffer (see rtcBuffer.ts) ───────────────────────
+    rtc_signals_buffered: 0, // frames held because the call was still ringing
+    rtc_signals_replayed: 0, // held frames released into a media-ready call
+    rtc_signals_stranded_local: 0, // discarded: the call ended on this instance
+    rtc_signals_stranded_remote: 0, // discarded: a peer instance moved the call
     signaling_errors: 0, // acknowledgeError / error ack responses
     message_persist_errors: 0, // accepted messages that failed durable persistence
     cache_hits: 0, // read served from the shared read cache
@@ -290,22 +359,88 @@ function createTelemetry(): Telemetry {
   /**
    * Record a call state transition.
    */
-  function recordAcceptedCall(ts: CallTimestamp | undefined, nowMs: number) {
+  function recordAcceptedCall(
+    call: { createdAt?: string | null },
+    ts: CallTimestamp | undefined,
+    nowMs: number
+  ) {
     counters.calls_accepted += 1;
-    if (!ts) return;
-    ts.acceptedMs = nowMs;
-    if (ts.ringingMs !== null) {
-      observeHistogram(histograms.call_setup_latency_ms, nowMs - ts.ringingMs);
-    }
+    if (ts) ts.acceptedMs = nowMs;
+    observeDerivedLatency({
+      histogram: histograms.call_setup_latency_ms,
+      // `createdAt` is the ring start for any call that rang, and a call that
+      // never rang cannot be accepted — so it carries the same meaning as the
+      // in-process `ringingMs` it replaces, and is readable on both hosts.
+      shared: measureElapsedMs(call.createdAt, nowMs, MAX_PLAUSIBLE_SETUP_LATENCY_MS),
+      localElapsedMs: ts?.ringingMs != null ? nowMs - ts.ringingMs : null,
+      provenance: {
+        shared: 'call_setup_latency_shared',
+        local: 'call_setup_latency_local',
+        unmeasured: 'call_setup_latency_unmeasured',
+        skewRejected: 'call_setup_latency_skew_rejected',
+      },
+    });
   }
 
-  function recordInCall(ts: CallTimestamp | undefined, nowMs: number) {
+  function recordInCall(
+    call: { answeredAt?: string | null },
+    ts: CallTimestamp | undefined,
+    nowMs: number
+  ) {
     counters.calls_in_call += 1;
-    if (!ts) return;
-    ts.inCallMs = nowMs;
-    if (ts.acceptedMs !== null) {
-      observeHistogram(histograms.call_connect_latency_ms, nowMs - ts.acceptedMs);
+    if (ts) ts.inCallMs = nowMs;
+    observeDerivedLatency({
+      histogram: histograms.call_connect_latency_ms,
+      // The whole point of the shared source: `call.accept` is handled on the
+      // callee's instance, so on a cross-instance call this process has no
+      // `acceptedMs` of its own and used to observe nothing at all.
+      shared: measureSinceAnswered(call, nowMs),
+      localElapsedMs: ts?.acceptedMs != null ? nowMs - ts.acceptedMs : null,
+      provenance: {
+        shared: 'call_connect_latency_shared',
+        local: 'call_connect_latency_local',
+        unmeasured: 'call_connect_latency_unmeasured',
+        skewRejected: 'call_connect_latency_skew_rejected',
+      },
+    });
+  }
+
+  /**
+   * Observe one latency sample, preferring the call record's own timestamp and
+   * falling back to this process's, and account for which source was used.
+   *
+   * A sample rejected as clock skew is **not** retried against the local
+   * clock. A skewed shared timestamp means the record was stamped by another
+   * host, and a call stamped elsewhere has no local timestamp to fall back to
+   * anyway; keeping the outcomes disjoint makes `*_skew_rejected` mean exactly
+   * "samples this histogram is missing because the clocks disagree".
+   */
+  function observeDerivedLatency({ histogram, shared, localElapsedMs, provenance }: {
+        histogram: Histogram;
+        shared: ElapsedResult;
+        localElapsedMs: number | null;
+        provenance: {
+            shared: keyof typeof counters;
+            local: keyof typeof counters;
+            unmeasured: keyof typeof counters;
+            skewRejected: keyof typeof counters;
+        };
+    }): void {
+    if (shared.ok) {
+      observeHistogram(histogram, shared.elapsedMs);
+      counters[provenance.shared] += 1;
+      return;
     }
+    if (shared.reason !== 'absent') {
+      counters[provenance.skewRejected] += 1;
+      return;
+    }
+    if (localElapsedMs === null) {
+      counters[provenance.unmeasured] += 1;
+      return;
+    }
+    observeHistogram(histogram, localElapsedMs);
+    counters[provenance.local] += 1;
   }
 
   function recordRingEnd(counter: 'calls_declined' | 'calls_missed', ts: CallTimestamp | undefined, nowMs: number) {
@@ -332,16 +467,16 @@ function createTelemetry(): Telemetry {
     }
   }
 
-  function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; }, previousStatus: string) {
+  function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; createdAt?: string | null; answeredAt?: string | null; }, previousStatus: string) {
     const ts = callTimestamps.get(call.callId);
     const nowMs = Date.now();
 
     switch (call.status) {
       case 'accepted':
-        recordAcceptedCall(ts, nowMs);
+        recordAcceptedCall(call, ts, nowMs);
         break;
       case 'in_call':
-        recordInCall(ts, nowMs);
+        recordInCall(call, ts, nowMs);
         break;
       case 'declined':
         recordRingEnd('calls_declined', ts, nowMs);
@@ -361,6 +496,21 @@ function createTelemetry(): Telemetry {
     if (ts && isTerminalStatus(call.status)) {
       callTimestamps.delete(call.callId);
     }
+  }
+
+  /**
+   * Record what became of RTC frames held while a call was still `ringing`.
+   *
+   * Until now the buffer's only trace was two `console.log` lines, and the
+   * case that matters most — a buffer still held when a peer instance moved
+   * the call — emitted neither. See `docs/media-connect-latency-diagnosis.md`.
+   *
+   * @param outcome - Which of the four fates the frames met.
+   * @param count - How many frames; a buffer is flushed or dropped wholesale.
+   */
+  function recordRtcBufferOutcome(outcome: RtcBufferOutcome, count: number = 1) {
+    if (!Number.isFinite(count) || count <= 0) return;
+    counters[RTC_BUFFER_COUNTERS[outcome]] += count;
   }
 
   /**
@@ -529,6 +679,7 @@ function createTelemetry(): Telemetry {
   return {
     recordCallCreated,
     recordCallTransition,
+    recordRtcBufferOutcome,
     recordSignalingError,
     recordMessagePersistenceFailure,
     recordCacheHit,

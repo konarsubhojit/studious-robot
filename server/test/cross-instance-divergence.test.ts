@@ -297,6 +297,13 @@ test('candidates buffered for a call that ends are discarded, not replayed', asy
 
       assert.equal((await postJson(a.url, `/calls/${callId}/decline`, {}, calleeSession)).status, 200);
       await settle();
+      // The buffer did its job and had nothing to replay into: counted apart
+      // from the cross-instance loss, which this instance never gets to fix.
+      const metrics = a.server.getMetrics();
+      assert.equal(metrics.counters.rtc_signals_buffered, 1);
+      assert.equal(metrics.counters.rtc_signals_replayed, 0);
+      assert.equal(metrics.counters.rtc_signals_stranded_local, 1);
+      assert.equal(metrics.counters.rtc_signals_stranded_remote, 0);
       // The call is over, so nothing may be relayed for it any more.
       const afterEnd = await emitWithAck(caller, 'rtc.candidate', {
         version: 1,
@@ -309,5 +316,97 @@ test('candidates buffered for a call that ends are discarded, not replayed', asy
     }
   } finally {
     await a.teardown();
+  }
+});
+
+// ─── P7: measuring a call whose halves were handled by different instances ───
+
+test('a buffer still held when a peer instance ends the call is counted as stranded', async () => {
+  const shared = createSharedBackends();
+  const bus = createMemoryMessageBus();
+  const a = await startInstance('instance-a', shared, bus);
+  const b = await startInstance('instance-b', shared, bus);
+  try {
+    const callerSession = (await postJson(a.url, '/session', { userId: 'user-a', deviceId: 'dev-a' })).body.sessionId;
+    const calleeSession = (await postJson(a.url, '/session', { userId: 'user-b', deviceId: 'dev-b' })).body.sessionId;
+    const caller = await connect(a.url, callerSession);
+
+    try {
+      const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
+      const callId = created.body.callId;
+
+      const buffered = await emitWithAck(caller, 'rtc.candidate', {
+        version: 1,
+        callId,
+        candidate: { candidate: 'candidate:early', sdpMid: '0', sdpMLineIndex: 0 },
+      });
+      assert.equal(buffered.buffered, true);
+
+      // The callee declines on the *other* instance, so A learns about it over
+      // the bus and releases the buffer it was holding without ever having had
+      // the chance to replay it.
+      assert.equal((await postJson(b.url, `/calls/${callId}/decline`, {}, calleeSession)).status, 200);
+      await settle();
+
+      const metrics = a.server.getMetrics();
+      assert.equal(metrics.counters.rtc_signals_buffered, 1);
+      assert.equal(metrics.counters.rtc_signals_replayed, 0);
+      assert.equal(metrics.counters.rtc_signals_stranded_remote, 1);
+      assert.equal(metrics.counters.rtc_signals_stranded_local, 0);
+    } finally {
+      caller.disconnect();
+    }
+  } finally {
+    await a.teardown();
+    await b.teardown();
+  }
+});
+
+test('a call accepted on one instance and connected on the other yields exactly one connect-latency sample', async () => {
+  const shared = createSharedBackends();
+  const bus = createMemoryMessageBus();
+  const a = await startInstance('instance-a', shared, bus);
+  const b = await startInstance('instance-b', shared, bus);
+  try {
+    const callerSession = (await postJson(a.url, '/session', { userId: 'user-a', deviceId: 'dev-a' })).body.sessionId;
+    const calleeSession = (await postJson(a.url, '/session', { userId: 'user-b', deviceId: 'dev-b' })).body.sessionId;
+
+    // Created on A (which holds the only in-process timestamps), accepted and
+    // connected on B (which holds none of them).
+    const created = await postJson(a.url, '/calls', { calleeId: 'user-b' }, callerSession);
+    const callId = created.body.callId;
+    assert.equal((await postJson(b.url, `/calls/${callId}/accept`, {}, calleeSession)).status, 200);
+    await settle();
+
+    const callee = await connect(b.url, calleeSession);
+    try {
+      const ack = await emitWithAck(callee, 'call.connected', {
+        version: 1,
+        callId,
+        iceState: 'connected',
+      });
+      assert.equal(ack.ok, true);
+    } finally {
+      callee.disconnect();
+    }
+    await settle();
+
+    const onB = b.server.getMetrics();
+    assert.equal(
+      onB.histograms.call_connect_latency_ms.count,
+      1,
+      'the instance that handled the connect observes the latency from the shared answeredAt'
+    );
+    assert.equal(onB.counters.call_connect_latency_shared, 1);
+    assert.equal(onB.counters.call_connect_latency_local, 0);
+    assert.equal(onB.counters.call_connect_latency_skew_rejected, 0);
+
+    // Exactly one sample fleet-wide: the instance that did not handle the
+    // transition records nothing, so the two hosts must never be summed for
+    // the wrong reason — they are disjoint, not duplicated.
+    assert.equal(a.server.getMetrics().histograms.call_connect_latency_ms.count, 0);
+  } finally {
+    await a.teardown();
+    await b.teardown();
   }
 });

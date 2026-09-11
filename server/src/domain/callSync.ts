@@ -17,6 +17,7 @@ import { CALL_TRANSITION_CHANNEL, TERMINAL_CALL_STATES } from '../config.ts';
 import { describeError } from '../lib/errors.ts';
 import { adoptSharedCall, markCallSynced } from './sharedCalls.ts';
 import { clearIncomingCallPushState } from './notifications.ts';
+import { discardBufferedRtcSignals } from '../signaling/rtcBuffer.ts';
 
 type ServerState = import('../stores/contracts.ts').ServerState;
 
@@ -53,10 +54,15 @@ function parseTransitionMessage(message: unknown): CallTransitionMessage | null 
  * The push bookkeeping is what stops a device being re-pushed for a call that
  * is over, and the buffered RTC signals would otherwise be replayed into a dead
  * call the first time anything touched it.
+ *
+ * Discarding those signals is counted as `stranded_remote`: unlike a local
+ * terminal transition, this instance never had the chance to replay them, so
+ * the count is the cross-instance candidate loss described in
+ * `docs/media-connect-latency-diagnosis.md` §2 rather than ordinary cleanup.
  */
 function releaseCallResources(state: ServerState, callId: string): void {
   clearIncomingCallPushState(state, callId);
-  state.pendingRtcSignals?.delete(callId);
+  discardBufferedRtcSignals(state, callId, 'stranded_remote');
 }
 
 /**

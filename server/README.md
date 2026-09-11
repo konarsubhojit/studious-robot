@@ -399,3 +399,81 @@ When `REDIS_URL` is unset the default in-memory stores and a no-op (single
 instance) bus are used, so local development and the test suite run without
 Redis. The message-bus / Redis-store tests in `test/message-bus.test.ts` use an
 in-memory Redis fake and need no live server.
+
+## Call latency metrics (`GET /metrics`)
+
+Two histograms describe how long a call takes to become usable. They measure
+different things and are dominated by different causes, so they are never
+compared or added:
+
+| Histogram | Interval | Dominated by |
+| --- | --- | --- |
+| `call_setup_latency_ms` | `ringing → accepted` | Human reaction time. Seconds are expected. |
+| `call_connect_latency_ms` | `accepted → in_call` | WebRTC media establishment. This is the one users perceive as silence after answering. |
+
+### Scrape each instance separately, and never sum them
+
+Metrics are per-process and reset on restart, and there is no aggregation
+across VMs. A histogram from `micro1` and one from `micro2` describe **disjoint
+populations of calls**, not two samples of the same one: only the instance that
+performed a transition records it. Summing the two hosts' buckets, or reading
+either host's `mean` as a fleet figure, produces a number that corresponds to
+nothing. Scrape and read them separately.
+
+### Why the observation comes from the call record
+
+Both intervals are now measured from timestamps on the shared call record —
+`createdAt` for setup, `answeredAt` for connect — rather than from a
+process-local map. On a cross-instance call the two ends of the interval are
+handled by *different* instances, so the process that observes the end of the
+interval never saw its start; before this, such calls produced no sample at all
+and the histogram silently described only same-instance calls.
+
+Each histogram therefore reports where its observations came from:
+
+| Counter | Meaning |
+| --- | --- |
+| `…_shared` | Derived from the call record. The normal path. |
+| `…_local` | Fallback to the in-process timestamp because the record's timestamp was absent. |
+| `…_unmeasured` | Neither source was available; no sample was recorded. |
+| `…_skew_rejected` | The record-derived value was negative or implausibly large and was discarded. |
+
+`…_shared` + `…_local` equals the histogram's `count`. The other two counters
+are observations the histogram is *missing*, and a non-trivial value in either
+means the histogram is no longer a complete census of this instance's calls.
+
+> **NTP is a precondition.** Deriving the interval from a record timestamp
+> means one instance's clock is compared against another's. A host whose clock
+> drifts will report inflated, deflated or rejected samples for every
+> cross-instance call it handles. Keep time synchronised on every VM;
+> `…_skew_rejected` climbing is the symptom.
+
+Implausibility bounds live in `src/lib/callLatency.ts` and are derived from the
+corresponding call timeouts: a call cannot legitimately take longer to connect
+than the sweep that force-ends it allows.
+
+### RTC signal buffering
+
+`rtc.offer` / `rtc.answer` / `rtc.candidate` arriving before a call is ready to
+relay them are held briefly and replayed. The outcome of every held signal is
+counted:
+
+| Counter | Meaning |
+| --- | --- |
+| `rtc_signals_buffered` | Signals held rather than relayed immediately. |
+| `rtc_signals_replayed` | Held signals later delivered to the peer. |
+| `rtc_signals_stranded_local` | Discarded because the call ended on this instance before the buffer could be replayed. |
+| `rtc_signals_stranded_remote` | Discarded because *another* instance advanced the call, so this one never got the chance to replay them. |
+
+`rtc_signals_stranded_remote` is the cross-instance loss specifically: those
+candidates were received, held, and then dropped, forcing ICE down a slower
+path. It is counted rather than fixed here deliberately, so the size of the
+problem is known before the remedy changes it.
+
+### Reading the transition log
+
+`[signaling] call.transition` lines carry `instance=` and, for the
+`connecting_media` and `in_call` transitions, `sinceAcceptedMs=` measured from
+the shared `answeredAt`. The difference between the two lines' values is the
+`connecting_media → in_call` leg, so one journal grep attributes the interval
+without cross-referencing both hosts.

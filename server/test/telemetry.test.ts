@@ -574,3 +574,136 @@ test('recordSignalingError buckets a missing code and caps distinct codes', () =
     snap.counters.signaling_errors
   );
 });
+
+// ─── Cross-instance latency provenance ───────────────────────────────────────
+
+/**
+ * A call as `notifyCallTransition` passes it to telemetry.  `answeredAt` is
+ * stamped by `transitionCall` on the accepted transition and travels in the
+ * shared store, so the instance that sees `in_call` has it even when it never
+ * handled the accept.
+ */
+function callRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    callId: 'call-1',
+    status: 'ringing',
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  } as any;
+}
+
+test('call_connect_latency_ms is observed for a call this process never saw accepted', () => {
+  const telemetry = createTelemetry();
+  const answeredAt = new Date(Date.now() - 3_000).toISOString();
+
+  // No recordCallCreated and no `accepted` transition: this is the callee's
+  // instance handling `call.connected` for a call created and accepted on the
+  // other one — the case that used to produce no sample at all.
+  telemetry.recordCallTransition(
+    callRecord({ status: 'in_call', answeredAt }),
+    'connecting_media'
+  );
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_connect_latency_ms.count, 1);
+  assert.ok(
+    (snap.histograms.call_connect_latency_ms.max ?? 0) >= 3_000,
+    'the sample is measured from answeredAt, not from process start'
+  );
+  assert.equal(snap.counters.call_connect_latency_shared, 1);
+  assert.equal(snap.counters.call_connect_latency_local, 0);
+  assert.equal(snap.counters.call_connect_latency_unmeasured, 0);
+  assert.equal(snap.counters.calls_in_call, 1);
+});
+
+test('call_connect_latency_ms falls back to the in-process clock when answeredAt is absent', () => {
+  const telemetry = createTelemetry();
+  const call = callRecord();
+
+  telemetry.recordCallCreated(call);
+  // A record with no `answeredAt` (an older record, or one restored from the
+  // database) still measures, through the path that always worked.
+  telemetry.recordCallTransition({ ...call, status: 'accepted' }, 'ringing');
+  telemetry.recordCallTransition({ ...call, status: 'in_call' }, 'accepted');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_connect_latency_ms.count, 1);
+  assert.equal(snap.counters.call_connect_latency_local, 1);
+  assert.equal(snap.counters.call_connect_latency_shared, 0);
+  assert.equal(snap.counters.call_connect_latency_skew_rejected, 0);
+});
+
+test('call_connect_latency_ms counts a call it can measure from neither clock', () => {
+  const telemetry = createTelemetry();
+
+  // Neither `answeredAt` nor a local accept: nothing to measure from. The
+  // counter is what stops that being invisible.
+  telemetry.recordCallTransition(callRecord({ status: 'in_call' }), 'connecting_media');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_connect_latency_ms.count, 0);
+  assert.equal(snap.counters.call_connect_latency_unmeasured, 1);
+});
+
+test('call_connect_latency_ms rejects clock-skewed answeredAt rather than observing it', () => {
+  const telemetry = createTelemetry();
+
+  // Stamped in the future by a host whose clock runs ahead.
+  telemetry.recordCallTransition(
+    callRecord({
+      callId: 'call-future',
+      status: 'in_call',
+      answeredAt: new Date(Date.now() + 60_000).toISOString(),
+    }),
+    'connecting_media'
+  );
+  // Further in the past than the media-connect timeout allows: such a call was
+  // force-ended long ago, so this is skew too, not a 10-minute connect.
+  telemetry.recordCallTransition(
+    callRecord({
+      callId: 'call-past',
+      status: 'in_call',
+      answeredAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    }),
+    'connecting_media'
+  );
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_connect_latency_ms.count, 0, 'skew never reaches the histogram');
+  assert.equal(snap.counters.call_connect_latency_skew_rejected, 2);
+  assert.equal(snap.counters.call_connect_latency_shared, 0);
+  assert.equal(snap.counters.call_connect_latency_local, 0);
+  // The funnel counter is unaffected: the calls did connect, only the timing
+  // is untrustworthy.
+  assert.equal(snap.counters.calls_in_call, 2);
+});
+
+test('call_setup_latency_ms is observed from the shared createdAt for a remote accept', () => {
+  const telemetry = createTelemetry();
+  const createdAt = new Date(Date.now() - 4_000).toISOString();
+
+  telemetry.recordCallTransition(callRecord({ status: 'accepted', createdAt }), 'ringing');
+
+  const snap = telemetry.getSnapshot();
+  assert.equal(snap.histograms.call_setup_latency_ms.count, 1);
+  assert.equal(snap.counters.call_setup_latency_shared, 1);
+  assert.equal(snap.counters.calls_accepted, 1);
+});
+
+test('recordRtcBufferOutcome keeps same-instance and cross-instance losses apart', () => {
+  const telemetry = createTelemetry();
+
+  telemetry.recordRtcBufferOutcome('buffered');
+  telemetry.recordRtcBufferOutcome('buffered');
+  telemetry.recordRtcBufferOutcome('replayed', 2);
+  telemetry.recordRtcBufferOutcome('stranded_local', 3);
+  telemetry.recordRtcBufferOutcome('stranded_remote', 4);
+  // Defensive: a caller that computed a count from an empty buffer.
+  telemetry.recordRtcBufferOutcome('stranded_remote', 0);
+
+  const { counters } = telemetry.getSnapshot();
+  assert.equal(counters.rtc_signals_buffered, 2);
+  assert.equal(counters.rtc_signals_replayed, 2);
+  assert.equal(counters.rtc_signals_stranded_local, 3);
+  assert.equal(counters.rtc_signals_stranded_remote, 4);
+});

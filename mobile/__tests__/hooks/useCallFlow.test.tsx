@@ -4708,7 +4708,9 @@ describe('useCallFlow chat', () => {
       await Promise.resolve();
     });
 
-    expect(peerConnection.getStats).toHaveBeenCalledTimes(2);
+    // Three reads: the connect-time candidate-pair diagnostic, then the two
+    // quality polls whose identical results must not churn the snapshot.
+    expect(peerConnection.getStats).toHaveBeenCalledTimes(3);
     expect(resultRef.current).toBe(afterInitialStatsPoll);
   });
 

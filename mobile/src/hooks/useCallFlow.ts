@@ -90,6 +90,7 @@ import type { Socket } from 'socket.io-client';
 import type { IceTransportPolicy } from '../webrtcConfig';
 import type { ReplaceOutgoingVideoTrack, WebrtcMediaStream } from './usePeerConnection';
 import { errorMessage } from '../errors';
+import { endAnswerTimeline } from '../call/answerTimeline';
 import { clearPendingAnswer, displayIncomingCall, endCall as endCallKeepCall } from '../callKeep';
 import { startIncomingRingtone, stopIncomingRingtone } from '../ringtone';
 import { shouldVibrateForRing } from '../ringerMode';
@@ -837,6 +838,7 @@ export default function useCallFlow({
     userIdRef,
     connectedReportedCallIdRef,
     isConnectionLostRef,
+    sessionIdRef,
     signalingUrl,
     activeIceTransportPolicy,
     ensureIceSessionId,
@@ -1037,6 +1039,10 @@ export default function useCallFlow({
       closeRecoveryEpisode(endReason ? `call-ended:${endReason}` : 'call-ended');
       cancelIceRestartsRef.current?.('call-ended');
       connectedReportedCallIdRef.current = null;
+      // A call that was accepted but never connected — the
+      // `media_connect_timeout` case — would otherwise leave its answer clock
+      // to be evicted silently by a later call.
+      endAnswerTimeline(callRecord?.callId);
 
       activeCallIdRef.current = null;
       isCallerRef.current = false;

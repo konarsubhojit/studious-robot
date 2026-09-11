@@ -10,6 +10,11 @@ import type { Database } from '../../db/client.ts';
 // answer stages report what happened when the user tapped Answer, so a call
 // that rings but cannot be picked up is visible in server logs (previously the
 // server saw nothing at all between `ringing` and `timeout`).
+// The last five stages below time the callee's own work *after* the accept is
+// acknowledged — permissions, camera, peer connection, answer — which runs
+// entirely inside `accepted -> in_call` and was previously invisible to the
+// server (`docs/media-connect-latency-diagnosis.md` §6). `media_connected`
+// closes that window and reports the ICE outcome the server cannot see (§4).
 const PUSH_RECEIPT_STAGES = new Set([
   'received',
   'ui_displayed',
@@ -20,7 +25,35 @@ const PUSH_RECEIPT_STAGES = new Set([
   'answer_skipped_duplicate',
   'accept_tapped',
   'decline_tapped',
+  'permissions_checked',
+  'media_acquired',
+  'peer_connection_ready',
+  'answer_sent',
+  'media_connected',
 ]);
+
+/**
+ * Ceiling on a client-reported stage duration, in ms.
+ *
+ * The value is measured on the handset and sent over an unauthenticated-ish
+ * receipt, so it is attacker-influenced: bound it rather than logging whatever
+ * arrives. Ten minutes is far past any stage that could still matter — the
+ * call it belongs to was force-ended long before.
+ */
+const MAX_RECEIPT_DURATION_MS = 10 * 60 * 1000;
+
+/**
+ * A device-measured stage duration, or `null` when absent or out of bounds.
+ *
+ * Distinct from the server-computed `latencyMs`, which is measured from the
+ * call record and therefore cannot see how long any one client-side step took.
+ */
+function normaliseReceiptDuration(value: unknown): number | null {
+  const durationMs = typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(durationMs)) return null;
+  if (durationMs < 0 || durationMs > MAX_RECEIPT_DURATION_MS) return null;
+  return Math.round(durationMs);
+}
 
 // Message pushes are data-only, so the client renders the notification itself
 // and "accepted by provider" proves nothing about the handset. These stages are
@@ -35,6 +68,43 @@ const MESSAGE_RECEIPT_STAGES = new Set([
 /**
  * Device push-token registration / unregistration.
  */
+/**
+ * The receipt log line.
+ *
+ * Extracted from the handler so the route reads as validate-resolve-report;
+ * the formatting is where most of its branching lived.
+ *
+ * `latencyMs` is the server's own measurement from the call record and
+ * `durationMs` the device's measurement of the step being reported, so both
+ * are logged and neither substitutes for the other.
+ */
+function formatReceiptLog({
+  callId,
+  messageId,
+  deviceId,
+  stage,
+  reason,
+  latencyMs,
+  durationMs,
+}: {
+  callId: string | null;
+  messageId: string | null;
+  deviceId: string;
+  stage: string;
+  reason: string | null;
+  latencyMs: number | null;
+  durationMs: number | null;
+}): string {
+  return (
+    `[push] Receipt ${callId ? 'callId' : 'messageId'}=${sanitizeForLog(callId || messageId)}` +
+    ` device=${sanitizeForLog(deviceId)}` +
+    ` stage=${sanitizeForLog(stage)}` +
+    (reason ? ` reason=${sanitizeForLog(reason)}` : '') +
+    ` latencyMs=${latencyMs ?? 'N/A'}` +
+    (durationMs === null ? '' : ` durationMs=${durationMs}`)
+  );
+}
+
 function createDevicesRouter({ state, db }: { state: import('../stores/contracts.ts').ServerState; db: Database | null; }): import('express').Router {
   const router = express.Router();
 
@@ -120,6 +190,7 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
     const messageId = normaliseId(req.body?.messageId);
     const stage = normaliseId(req.body?.stage);
     const reason = normaliseId(req.body?.reason);
+    const durationMs = normaliseReceiptDuration(req.body?.durationMs);
 
     if (!deviceId) {
       res.status(400).json({ error: 'sessionId or deviceId is required' });
@@ -147,11 +218,7 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
     const createdAtMs = call?.createdAt ? new Date(call.createdAt).getTime() : NaN;
     const latencyMs = Number.isFinite(createdAtMs) ? Math.max(0, Date.now() - createdAtMs) : null;
     console.log(
-      `[push] Receipt ${callId ? 'callId' : 'messageId'}=${sanitizeForLog(callId || messageId)}` +
-        ` device=${sanitizeForLog(deviceId)}` +
-        ` stage=${sanitizeForLog(stage)}` +
-        (reason ? ` reason=${sanitizeForLog(reason)}` : '') +
-        ` latencyMs=${latencyMs ?? 'N/A'}`
+      formatReceiptLog({ callId, messageId, deviceId, stage, reason, latencyMs, durationMs })
     );
 
     res.status(202).json({
@@ -161,6 +228,7 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
       stage,
       ...(reason ? { reason } : {}),
       latencyMs,
+      ...(durationMs === null ? {} : { durationMs }),
     });
   });
 
