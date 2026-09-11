@@ -243,9 +243,10 @@ jobs:
           # assets/fonts/ inside the APK.  Confirm the calling-UI icon font is
           # present so the icons render on-device instead of falling back to emoji.
           FONT_ENTRY="assets/fonts/MaterialCommunityIcons.ttf"
-          if ! unzip -l "$APK_PATH" | grep -Fq "$FONT_ENTRY"; then
+          APK_CONTENTS="$(unzip -l "$APK_PATH")"
+          if ! grep -Fq "$FONT_ENTRY" <<<"$APK_CONTENTS"; then
             echo "::error::Icon font $FONT_ENTRY is missing from the built APK; calling-UI icons will not render"
-            unzip -l "$APK_PATH" | grep -F 'assets/fonts/' || true
+            grep -F 'assets/fonts/' <<<"$APK_CONTENTS" || true
             exit 1
           fi
           echo "Verified $FONT_ENTRY is bundled in $APK_PATH"
