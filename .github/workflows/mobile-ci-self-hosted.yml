@@ -30,8 +30,7 @@ permissions:
 
 jobs:
   test:
-    name: Unit tests
-    if: github.event_name == 'workflow_dispatch' || vars.SELF_HOSTED_CI_ENABLED == 'true'
+    name: Unit tests (self-hosted)
     runs-on: [self-hosted, Linux, X64, studious-robot-ci]
     timeout-minutes: 20
 

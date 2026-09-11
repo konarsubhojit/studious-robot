@@ -18,19 +18,13 @@ on:
       - '.github/actions/setup-ci/**'
       - '.github/workflows/backend-ci-self-hosted.yml'
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: Deploy master after tests (requires production environment approval)
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Lint, build & test
-    if: github.event_name == 'workflow_dispatch' || vars.SELF_HOSTED_CI_ENABLED == 'true'
+    name: Lint, build & test (self-hosted)
     runs-on: [self-hosted, Linux, X64, studious-robot-ci]
     timeout-minutes: 20
     concurrency:
@@ -114,13 +108,13 @@ jobs:
         run: npm test
 
   deploy:
-    name: Deploy to Oracle Cloud VM
+    name: Deploy to Oracle Cloud VM (self-hosted)
     runs-on: [self-hosted, Linux, X64, studious-robot-deploy]
     timeout-minutes: 20
     environment: production
     needs: test
     # Shadow runs never deploy automatically while the hosted workflow is live.
-    if: github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch' && inputs.deploy
+    if: github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch'
 
     # Serialize deploys per branch so concurrent pushes to master can't
     # overlap SSH reset/install/restart cycles on the same host.

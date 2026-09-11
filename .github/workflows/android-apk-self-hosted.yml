@@ -31,10 +31,8 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build APK(s)
-    if: github.event_name == 'workflow_dispatch' || vars.SELF_HOSTED_CI_ENABLED == 'true'
-    # Names in the runner inventory are not scheduling labels. These role labels
-    # must be assigned only after the isolation prerequisites in README are met.
+    name: Build APK(s) (self-hosted)
+    # Role labels require isolated disposable workers; labels are not access controls.
     runs-on:
       - self-hosted
       - Linux
@@ -42,9 +40,6 @@ jobs:
       - ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'studious-robot-release' || 'studious-robot-android' }}
     timeout-minutes: 45
     environment: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'android-release' || 'ci' }}
-
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/studious-robot-gradle-${{ github.run_id }}-${{ github.run_attempt }}
 
     defaults:
       run:
@@ -61,6 +56,12 @@ jobs:
         with:
           package: mobile
           cache-scope: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'release' || 'ci' }}
+
+      - name: Prepare Gradle home
+        env:
+          CACHE_SCOPE: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'release' || 'ci' }}
+        run: |
+          echo "GRADLE_USER_HOME=$RUNNER_TEMP/studious-robot-gradle-$CACHE_SCOPE" >> "$GITHUB_ENV"
 
       - name: Set up Java
         uses: actions/setup-java@v6

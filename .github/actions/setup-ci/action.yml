@@ -27,10 +27,13 @@ runs:
         test "$RUNNER_OS" = Linux
         test "$RUNNER_ARCH" = X64
         JOB_ROOT="$(mktemp -d "$RUNNER_TEMP/studious-robot-${RUN_ID}-${RUN_ATTEMPT}-${JOB_ID}.XXXXXX")"
-        mkdir -p "$JOB_ROOT/npm" "$JOB_ROOT/tmp"
-        echo "NPM_CONFIG_CACHE=$JOB_ROOT/npm" >> "$GITHUB_ENV"
+        # Cache versions include paths, so dependency paths must be stable
+        # across runs. Disposable VMs provide isolation, not random cache names.
+        CACHE_ROOT="$RUNNER_TEMP/studious-robot-cache/$CACHE_SCOPE/$PACKAGE"
+        mkdir -p "$CACHE_ROOT/npm" "$JOB_ROOT/tmp"
+        echo "NPM_CONFIG_CACHE=$CACHE_ROOT/npm" >> "$GITHUB_ENV"
         echo "TMPDIR=$JOB_ROOT/tmp" >> "$GITHUB_ENV"
-        echo "cache-path=$JOB_ROOT/npm/_cacache" >> "$GITHUB_OUTPUT"
+        echo "cache-path=$CACHE_ROOT/npm/_cacache" >> "$GITHUB_OUTPUT"
         {
           echo "### Runner capacity"
           echo "- CPU cores: $(nproc)"
