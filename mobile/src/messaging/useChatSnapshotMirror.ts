@@ -62,9 +62,9 @@ export default function useChatSnapshotMirror({
     let cancelled = false;
     hydratedRef.current = false;
     if (!scope) return undefined;
-    loadChatSnapshot(scope)
+    const hydrate = () => loadChatSnapshot(scope)
       .then(snapshot => {
-        if (cancelled) return;
+        if (cancelled || hydratedRef.current) return;
         // Flagged hydrated before the snapshot is applied, so anything the
         // caller kicks off from it (replaying a queued send) already sees a
         // store that may be written back to.
@@ -74,8 +74,13 @@ export default function useChatSnapshotMirror({
       .catch(() => {
         // Do not overwrite an unreadable database with an empty first render.
       });
+    void hydrate();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active' && !hydratedRef.current) void hydrate();
+    });
     return () => {
       cancelled = true;
+      subscription.remove();
     };
   }, [scope]);
 
@@ -106,14 +111,14 @@ export default function useChatSnapshotMirror({
     const subscription = AppState.addEventListener?.('change', nextState => {
       if (nextState === 'active') return;
       persistNow();
-      void flushChatDb(scope).catch(() => {});
+      if (scope) void flushChatDb(scope).catch(() => {});
     });
     return () => subscription?.remove?.();
   }, [persistNow, scope]);
 
   useEffect(() => () => {
     persistNow();
-    void flushChatDb(scope).catch(() => {});
+    if (scope) void flushChatDb(scope).catch(() => {});
   }, [persistNow, scope]);
 
   return { persistNow };

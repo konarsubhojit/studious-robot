@@ -85,6 +85,7 @@ type Store = {
   writeTimer: ReturnType<typeof setTimeout> | null;
   pendingWrite: Promise<void>;
   closed: boolean;
+  inputMessages?: ChatSnapshot['messagesByPeer'];
 };
 const stores = new Map<string, Store>();
 function storeFor(scope: string): Store {
@@ -124,6 +125,19 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
       (entry: any) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
     );
   return unsent.length ? [...kept, ...unsent].sort((a, b) => entryTime(b) - entryTime(a)) : kept;
+}
+
+function prunePeerHistories(
+  histories: ChatSnapshot['messagesByPeer'], outbox: OutboxItem[], drafts: ChatSnapshot['drafts'],
+): ChatSnapshot['messagesByPeer'] {
+  const peers = Object.keys(histories);
+  if (peers.length <= MAX_CONVERSATIONS) return histories;
+  const pinned = new Set([...outbox.map(row => row.recipientId), ...Object.keys(drafts)]);
+  const newest = peers.sort((a, b) => entryTime(histories[b][0]) - entryTime(histories[a][0]));
+  return Object.fromEntries(newest.filter((peer, index) =>
+    index < MAX_CONVERSATIONS || pinned.has(peer) ||
+    histories[peer].some(row => row.syncState === 'pending' || row.syncState === 'failed'),
+  ).map(peer => [peer, histories[peer]]));
 }
 
 /**
@@ -205,7 +219,7 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
 
   return {
     conversations: conversations.slice(0, MAX_CONVERSATIONS),
-    messagesByPeer,
+    messagesByPeer: prunePeerHistories(messagesByPeer, outbox, drafts),
     outbox,
     drafts,
   };
@@ -214,11 +228,11 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
 /**
  * Read the persisted chat state, pruned to the retention limits.
  *
- * Never rejects: an unreadable or corrupt file yields an empty snapshot, which
- * simply means the app starts as it did before anything was cached.
+ * SQLite failures reject so neither hydration nor sending can overwrite an
+ * unreadable database or mistake an uncommitted outbox for durable storage.
  *
  * Concurrent callers share a single read, and a save that lands while the read
- * is in flight is preserved — see {@link preloadWrites}.  Both matter because
+ * is in flight is preserved. Both matter because
  * the load is asynchronous but a save is not: the composer can queue a send
  * before the disk read resolves, and treating the resulting cache as
  * authoritative discarded every conversation, message and draft on disk.
@@ -283,6 +297,7 @@ async function readSnapshot(store: Store, scope: string): Promise<void> {
   });
   if (store.closed) return;
   store.persisted = fromDisk;
+  store.inputMessages = fromDisk.messagesByPeer;
   store.rows = snapshotRows(fromDisk);
   const merged = { ...fromDisk };
   for (const table of store.preloadWrites) {
@@ -298,6 +313,7 @@ async function flushToDisk(store: Store, scope: string) {
   await withDatabase(async db => {
     if (store.closed) return;
     const snapshot = store.cache ?? emptySnapshot();
+    if (snapshot === store.persisted) return;
     const rows = snapshotRows(snapshot, store.persisted, store.rows);
     const commands = rowChanges(scope, store.rows, rows);
     if (commands.length) await db.executeBatch(commands);
@@ -322,23 +338,27 @@ export function saveChatSnapshot(partial: Partial<ChatSnapshot>, scope = 'legacy
   const base = store.cache ?? emptySnapshot();
 
   let messagesByPeer = base.messagesByPeer;
-  if (partial.messagesByPeer) {
+  if (partial.messagesByPeer && partial.messagesByPeer !== store.inputMessages) {
     messagesByPeer = {};
     Object.keys(partial.messagesByPeer).forEach(peerId => {
       const entries = partial.messagesByPeer![peerId];
-      messagesByPeer[peerId] = entries === base.messagesByPeer[peerId]
-        ? entries : pruneMessages(entries);
+      messagesByPeer[peerId] = entries === store.inputMessages?.[peerId] && base.messagesByPeer[peerId]
+        ? base.messagesByPeer[peerId] : pruneMessages(entries);
     });
+    store.inputMessages = partial.messagesByPeer;
   }
 
   store.cache = {
     conversations: partial.conversations
-      ? partial.conversations.slice(0, MAX_CONVERSATIONS)
+      ? (partial.conversations.length > MAX_CONVERSATIONS
+        ? partial.conversations.slice(0, MAX_CONVERSATIONS) : partial.conversations)
       : base.conversations,
     messagesByPeer,
     outbox: partial.outbox ?? base.outbox,
     drafts: partial.drafts ?? base.drafts ?? {},
   };
+  store.cache.messagesByPeer = prunePeerHistories(
+    store.cache.messagesByPeer, store.cache.outbox, store.cache.drafts);
 
   // Until the file has been folded in, remember which tables this write owns so
   // the read folds itself in underneath them rather than over them.  The test

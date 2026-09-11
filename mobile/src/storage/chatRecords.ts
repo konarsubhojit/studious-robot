@@ -19,12 +19,12 @@ function addRow(rows: ChatRows, kind: keyof ChatSnapshot, id: string, peer: stri
 /** Unchanged peer arrays bypass serialization, not merely the eventual SQL write. */
 export function snapshotRows(snapshot: ChatSnapshot, previous?: ChatSnapshot, held: ChatRows = new Map()): ChatRows {
   const rows: ChatRows = new Map();
-  for (const row of held.values()) {
+  for (const [key, row] of held) {
     if (snapshot[row.kind] === previous?.[row.kind]) {
-      rows.set(JSON.stringify([row.kind, row.id]), row);
+      rows.set(key, row);
     } else if (row.kind === 'messagesByPeer' &&
       snapshot.messagesByPeer[row.peer] === previous?.messagesByPeer[row.peer]) {
-      rows.set(JSON.stringify([row.kind, row.id]), row);
+      rows.set(key, row);
     }
   }
   if (snapshot.conversations !== previous?.conversations) {

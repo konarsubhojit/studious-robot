@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { AppState } from 'react-native';
 import useMessaging from '../../src/hooks/useMessaging';
 import { createSignalingClient } from '../../src/signalingClient';
 import {
@@ -74,7 +75,7 @@ function setup(overrides = {}) {
     current: createSignalingClient(params.socketRef.current),
   };
   const resultRef: { current: any; } = { current: null };
-  let tree;
+  let tree!: renderer.ReactTestRenderer;
   act(() => {
     tree = renderer.create(<TestHook resultRef={resultRef} params={params} />);
   });
@@ -88,6 +89,7 @@ const mountedTrees: any = [];
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.spyOn(AppState, 'addEventListener').mockReturnValue({ remove: jest.fn() });
   (chatDb as any).__snapshot.conversations = [];
   (chatDb as any).__snapshot.messagesByPeer = {};
   (chatDb as any).__snapshot.outbox = [];
@@ -1235,5 +1237,95 @@ describe('useMessaging snapshot persistence', () => {
 
     spy.mockRestore();
     jest.useRealTimers();
+  });
+});
+
+describe('transactional outbox and account lifecycle', () => {
+  test('does not emit until both the optimistic message and outbox are committed', async () => {
+    const { resultRef, params } = setup();
+    let commit!: () => void;
+    (chatDb.flushChatDb as jest.Mock).mockReturnValueOnce(new Promise<void>(resolve => { commit = resolve; }));
+    let sending!: Promise<void>;
+    await act(async () => { sending = resultRef.current.sendMessage('bob', 'durable first'); });
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+    expect((chatDb as any).__snapshot.outbox).toHaveLength(1);
+    expect((chatDb as any).__snapshot.messagesByPeer.bob[0].body).toBe('durable first');
+    await act(async () => { commit(); await sending; });
+    expect(params.socketRef.current.emit).toHaveBeenCalledTimes(1);
+  });
+
+  test('a disk-full error prevents sending without consuming a network retry', async () => {
+    const { resultRef, params } = setup();
+    (chatDb.flushChatDb as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+    await act(async () => { await resultRef.current.sendMessage('bob', 'not committed'); });
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
+    expect((chatDb as any).__snapshot.outbox[0].attempts).toBe(0);
+    expect(params.updateStatus).toHaveBeenCalledWith(expect.stringContaining('not saved'), 'error');
+  });
+
+  test('restores queued bubbles even when process death interrupted the UI mirror', async () => {
+    (chatDb as any).__snapshot.outbox = [{ messageId: 'q', recipientId: 'bob', body: 'survived', attempts: 5 }];
+    const { resultRef } = setup({ socketRef: { current: makeSocket({ connected: false }) } });
+    await act(async () => {});
+    expect(resultRef.current.messagesByPeer.bob[0]).toMatchObject({
+      messageId: 'q', body: 'survived', failed: true, syncState: 'failed',
+    });
+  });
+
+  test('concurrent refresh triggers share one request', async () => {
+    const { resultRef, params } = setup();
+    params.authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ conversations: [] }) });
+    await act(async () => {
+      await Promise.all([resultRef.current.fetchConversations(), resultRef.current.fetchConversations()]);
+    });
+    expect(params.authedFetchRef.current).toHaveBeenCalledTimes(1);
+  });
+
+  test('late conversation results cannot cross an account switch', async () => {
+    const { resultRef, params, tree } = setup();
+    let response!: (value: unknown) => void;
+    params.authedFetchRef.current.mockReturnValueOnce(new Promise(resolve => { response = resolve; }));
+    let refreshing!: Promise<void>;
+    await act(async () => { refreshing = resultRef.current.fetchConversations(); });
+    await act(async () => {
+      tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'other' }} />);
+      response({ ok: true, json: async () => ({ conversations: [{ peerId: 'private-peer' }] }) });
+      await refreshing;
+    });
+    expect(resultRef.current.conversations).toEqual([]);
+  });
+
+  test('a send queued during an in-flight acknowledgement is drained automatically', async () => {
+    jest.useFakeTimers();
+    try {
+      let acknowledge!: (value: unknown) => void;
+      const request = jest.fn()
+        .mockImplementationOnce(() => new Promise(resolve => { acknowledge = resolve; }))
+        .mockResolvedValue({ message: null });
+      const { resultRef } = setup({ signalingRef: { current: { request } } });
+      let first!: Promise<void>;
+      await act(async () => { first = resultRef.current.sendMessage('bob', 'first'); });
+      await act(async () => { await resultRef.current.sendMessage('bob', 'second'); });
+      expect(request).toHaveBeenCalledTimes(1);
+      await act(async () => { acknowledge({ message: null }); await first; });
+      await act(async () => { jest.advanceTimersByTime(1000); });
+      expect(request).toHaveBeenCalledTimes(2);
+      expect((chatDb as any).__snapshot.outbox).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('late attachment uploads cannot enter another account outbox', async () => {
+    const { resultRef, params, tree } = setup();
+    const oldFinishUpload = resultRef.current.finishAttachmentUpload;
+    await act(async () => {
+      tree.update(<TestHook resultRef={resultRef} params={{ ...params, userId: 'other' }} />);
+    });
+    await act(async () => {
+      await oldFinishUpload('bob', 'old-upload', 'image', { url: 'https://example.test/private-image' });
+    });
+    expect(resultRef.current.pendingSendCount).toBe(0);
+    expect(params.socketRef.current.emit).not.toHaveBeenCalled();
   });
 });

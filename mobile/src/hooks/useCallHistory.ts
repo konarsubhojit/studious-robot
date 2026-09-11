@@ -9,6 +9,7 @@ import { loadCallMediaTypes, saveCallMediaTypes } from '../settingsStorage';
 import type { CallMediaType, CallMediaTypeMap } from '../settingsStorage';
 import { dataScope } from '../storage/localDatabase';
 import useCachedResource from '../storage/useCachedResource';
+import { RequestCoalescer } from '../storage/requestCoalescer';
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
@@ -68,6 +69,8 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
         userId: string;
         storageUserId?: string;
     }) {
+  const requests = useMemo(
+    () => new RequestCoalescer(dataScope(signalingUrl, storageUserId)), [signalingUrl, storageUserId]);
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
   const [callHistory, setCallHistory] = useCachedResource<CallHistoryEntry[]>(
@@ -144,7 +147,7 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
    * @param [limit=20]
    */
   const fetchCallHistory = useCallback(
-    async (limit = 20) => {
+    (limit = 20) => requests.run(String(limit), async () => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
       try {
@@ -178,8 +181,8 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
           message: errorMessage(error),
         });
       }
-    },
-    [authedFetchRef, sessionIdRef, signalingUrl, userId, setCallHistory],
+    }),
+    [authedFetchRef, sessionIdRef, signalingUrl, userId, setCallHistory, requests],
   );
 
   useEffect(() => {

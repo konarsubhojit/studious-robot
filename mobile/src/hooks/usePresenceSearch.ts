@@ -20,10 +20,33 @@ const OFFLINE_ERROR_THRESHOLD = 3;
  * retryable error, whereas "we asked and there was nothing" is an empty state.
  */
 export class DirectorySearchError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly status?: number) {
     super(message);
     this.name = 'DirectorySearchError';
   }
+}
+
+async function fetchDirectory(
+  authedFetch: Function | null, server: string, query: string, limit: number, signal?: AbortSignal,
+): Promise<ContactRow[]> {
+  const response = await authedFetch?.((sid: string) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query) params.set('search', query);
+    return {
+      url: `${server}${API_ROUTES.USERS}?${params.toString()}`,
+      options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
+    };
+  });
+  if (!response?.ok) {
+    throw new DirectorySearchError(`Directory search failed with status ${response?.status ?? 'unknown'}`, response?.status);
+  }
+  const data = await response.json();
+  return Array.isArray(data.users) ? data.users : [];
+}
+
+function mayUseOfflineDirectory(error: unknown, updatedAt: number | undefined): boolean {
+  if (error instanceof DirectorySearchError && error.status && error.status < 500) return false;
+  return updatedAt !== undefined && Date.now() - updatedAt < 7 * 24 * 60 * 60_000;
 }
 
 /**
@@ -139,25 +162,9 @@ export default function usePresenceSearch({
       if (!isCurrent()) return [];
       // Presence is deliberately absent in stored rows; it is never a durable fact.
       if (cached && Date.now() - cached.updatedAt < 60_000) return cached.value;
-      let allowCachedFallback = true;
       try {
-        const response = await authedFetchRef.current?.((sid: string) => {
-          const params = new URLSearchParams({ limit: String(limit) });
-          if (trimmedQuery) params.set('search', trimmedQuery);
-          return {
-            url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}`,
-            options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
-          };
-        });
-        if (!response?.ok) {
-          allowCachedFallback = !response || response.status >= 500;
-          throw new DirectorySearchError(
-            `Directory search failed with status ${response?.status ?? 'unknown'}`,
-          );
-        }
-        const data = await response.json();
+        const users = await fetchDirectory(authedFetchRef.current, trimmedUrl, trimmedQuery, limit, signal);
         if (!isCurrent()) return [];
-        const users: ContactRow[] = Array.isArray(data.users) ? data.users : [];
         await writeResource(scope, key, users.map(({ userId: id }) => ({ userId: id })), version)
           .catch(() => logWarn('[PresenceSearch] Failed to cache directory'));
         return users;
@@ -165,9 +172,7 @@ export default function usePresenceSearch({
         // An aborted request is the expected outcome of a newer keystroke.
         if (error instanceof Error && error.name === 'AbortError') return [];
         if (!isCurrent()) return [];
-        if (allowCachedFallback && cached && Date.now() - cached.updatedAt < 7 * 24 * 60 * 60_000) {
-          return cached.value;
-        }
+        if (mayUseOfflineDirectory(error, cached?.updatedAt)) return cached!.value;
         logWarn('[PresenceSearch] searchUsers failed', {
           message: errorMessage(error),
         });

@@ -176,24 +176,17 @@ describe('chatDb', () => {
   });
 
   describe('retention bounds', () => {
-    // The JSON document is only a defensible medium for this store *because*
-    // it is bounded: every read and write serialises the whole file, so the
-    // cost grows with these two numbers. Raising them is the point at which
-    // the store has to move to SQLite (see ../../../docs/OPTIMIZATION_PLAN.md, P1.7), so
-    // they are pinned here rather than left to drift.
-    test('keeps the document small enough for whole-file reads and writes', () => {
+    // SQLite writes are incremental, but the hydrated UI snapshot must still
+    // have a bounded memory footprint.
+    test('keeps the hydrated cache bounded', () => {
       expect(MAX_MESSAGES_PER_CONVERSATION).toBe(200);
       expect(MAX_CONVERSATIONS).toBe(100);
       expect(MAX_MESSAGES_PER_CONVERSATION * MAX_CONVERSATIONS).toBeLessThanOrEqual(20_000);
     });
 
-    // The message *count* is only half of what a write costs: the other half
-    // is how big each message is, and that grows every time the schema gains a
-    // field. `JSON.stringify` of the whole document runs on the JS thread on
-    // every flush, so this pins the input to the latency recorded against P1.7
-    // in ../../../docs/OPTIMIZATION_PLAN.md — a schema change that doubles the
-    // document doubles the jank on send.
-    test('a full document stays within the size the P1.7 measurement assumed', () => {
+    // Retain the old representative fixture as a guard against unexpected
+    // payload growth; it is no longer serialized as one document in production.
+    test('a full cache stays within the existing payload size budget', () => {
       const snapshot = {
         conversations: [],
         messagesByPeer: {},
@@ -443,5 +436,48 @@ describe('SQLite isolation and incremental writes', () => {
         await loading;
         resetChatDbCache();
         expect((await loadChatSnapshot('alice')).drafts).toEqual({});
+      });
+
+      test('rolls back the optimistic message if a later outbox statement fails', async () => {
+        await loadChatSnapshot('atomic');
+        await withDatabase(async db => {
+          await db.execute(`CREATE TEMP TRIGGER reject_outbox BEFORE INSERT ON chat_records
+            WHEN NEW.kind = 'outbox' BEGIN SELECT RAISE(ABORT, 'disk failure'); END`);
+        });
+        saveChatSnapshot({
+          messagesByPeer: { bob: makeMessages(1) },
+          outbox: [{ messageId: 'q', recipientId: 'bob', body: 'hi' }],
+        }, 'atomic');
+        try {
+          await expect(flushChatDb('atomic')).rejects.toThrow('disk failure');
+          const rows = await withDatabase(db => db.execute('SELECT id FROM chat_records WHERE scope = ?', ['atomic']));
+          expect(rows.rows).toHaveLength(0);
+        } finally {
+          await withDatabase(async db => { await db.execute('DROP TRIGGER reject_outbox'); });
+        }
+        await flushChatDb('atomic');
+        resetChatDbCache();
+        expect((await loadChatSnapshot('atomic')).outbox).toHaveLength(1);
+        expect((await loadChatSnapshot('atomic')).messagesByPeer.bob).toHaveLength(1);
+      });
+
+      test('bounds peer history caches while preserving draft and queued-message peers', async () => {
+        const messagesByPeer = Object.fromEntries(
+          Array.from({ length: 103 }, (_, index) => [`peer-${index}`, makeMessages(1)]),
+        );
+        saveChatSnapshot({
+          messagesByPeer,
+          drafts: { 'peer-101': { text: 'unsent thought' } },
+          outbox: [{ messageId: 'q', recipientId: 'peer-102', body: 'unsent' }],
+        });
+        await flushChatDb();
+        const first = await loadChatSnapshot();
+        expect(Object.keys(first.messagesByPeer)).toHaveLength(102);
+        expect(first.messagesByPeer['peer-100']).toBeUndefined();
+        expect(first.messagesByPeer['peer-101']).toHaveLength(1);
+        expect(first.messagesByPeer['peer-102']).toHaveLength(1);
+        saveChatSnapshot({ messagesByPeer });
+        await flushChatDb();
+        expect((await loadChatSnapshot()).messagesByPeer['peer-102']).toHaveLength(1);
       });
     });

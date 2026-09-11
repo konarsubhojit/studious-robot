@@ -250,20 +250,25 @@ export function mergeHistoryPage(
     });
     return dedupeAndSort(kept.length ? [...kept, ...pageWithClientTimes] : pageWithClientTimes);
   }
-  const existingIds = new Set(held.map(timelineEntryId));
-  return dedupeAndSort([...held, ...pageWithClientTimes.filter(entry => !existingIds.has(timelineEntryId(entry)))]);
+  // A previously cached older row may now be a tombstone or carry new receipts.
+  // Deduplication must prefer the server page rather than silently ignoring it.
+  return dedupeAndSort([...held, ...pageWithClientTimes]);
 }
 
 function carryLocalCreatedAt(existing: ChatMessage[], page: ChatMessage[]): ChatMessage[] {
   const clientCreatedAtById = new Map<string, string>();
+  const tombstones = new Map<string, ChatMessage>();
   for (const entry of existing) {
     const id = timelineEntryId(entry);
+    if (id && entry.deletedAt) tombstones.set(id, entry);
     if (!id || !entry.clientCreatedAt) continue;
     clientCreatedAtById.set(id, entry.clientCreatedAt);
   }
-  if (!clientCreatedAtById.size) return page;
+  if (!clientCreatedAtById.size && !tombstones.size) return page;
   return page.map(entry => {
     const id = timelineEntryId(entry);
+    const tombstone = id ? tombstones.get(id) : undefined;
+    if (tombstone && !entry.deletedAt) return tombstone;
     const clientCreatedAt = id ? clientCreatedAtById.get(id) : undefined;
     return clientCreatedAt ? { ...entry, clientCreatedAt } : entry;
   });

@@ -6,7 +6,7 @@ export const LOCAL_DATABASE_NAME = 'wetalk-local.sqlite';
 let database: Promise<DB> | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
-/** No credentials in keys, and no caller-controlled database paths. */
+/** No session tokens in keys, and no caller-controlled database paths. */
 export function dataScope(server: string, userId: string): string {
   return userId.trim()
     ? JSON.stringify([server.trim().replace(/\/+$/, ''), userId.trim()])
@@ -55,13 +55,4 @@ export function withDatabase<T>(operation: (db: DB) => Promise<T>): Promise<T> {
   });
   queue = result.catch(() => {});
   return result;
-}
-
-export function clearLocalAccount(scope: string): Promise<void> {
-  return withDatabase(async db => {
-    await db.executeBatch([
-      ['DELETE FROM chat_records WHERE scope = ?', [scope]],
-      ['DELETE FROM resource_cache WHERE scope = ?', [scope]],
-    ]);
-  });
 }

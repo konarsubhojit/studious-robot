@@ -20,6 +20,7 @@ export type ThirdPartyLicense = {
 };
 
 export const THIRD_PARTY_LICENSES: ThirdPartyLicense[] = [
+  { name: '@op-engineering/op-sqlite', license: 'MIT' },
   { name: '@react-native-community/netinfo', license: 'MIT' },
   { name: '@react-native-documents/picker', license: 'MIT' },
   { name: '@react-native-firebase/app', license: 'Apache-2.0' },

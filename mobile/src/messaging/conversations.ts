@@ -15,6 +15,16 @@ export function totalUnread(conversations: ConversationSummary[]): number {
   return conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
 }
 
+/** A server list cannot yet describe a conversation whose sends remain local. */
+export function mergePendingConversations(
+  remote: ConversationSummary[], local: ConversationSummary[], pendingPeers: Set<string>,
+): ConversationSummary[] {
+  const pending = local.filter(row => pendingPeers.has(row.peerId));
+  if (!pending.length) return remote;
+  const heldPeers = new Set(pending.map(row => row.peerId));
+  return [...pending, ...remote.filter(row => !heldPeers.has(row.peerId))];
+}
+
 /** The conversation id known for a peer, or null when the conversation has
  * not been created server-side yet. */
 export function conversationIdForPeer(
