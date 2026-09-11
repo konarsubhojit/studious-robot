@@ -2,11 +2,12 @@ import RNFS from 'react-native-fs';
 import { logWarn } from '../appLogger';
 import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/types';
 import { normalizeEntryTimestamps } from '../messaging/messageHistory';
+import { byNewestFirst } from '../messaging/messageIdentity';
 import { timestampMs } from '../../../shared/time';
 import { errorMessage } from '../errors';
 import { withDatabase } from './localDatabase';
 import { rowChanges, snapshotRows } from './chatRecords';
-import type { ChatRows } from './chatRecords';
+import type { ChatRows, StoredChatRow } from './chatRecords';
 
 /**
  * Durable local chat store: the conversation list, per-conversation message
@@ -34,8 +35,9 @@ import type { ChatRows } from './chatRecords';
 
 const CHAT_DB_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-chat.json`;
 
-/** Retention: newest messages kept per conversation; older ones are pruned on
- * load and re-fetchable from the server, so the file cannot grow unbounded. */
+/** Retention: recent timeline entries (messages and calls) per conversation.
+ * Older synced rows are deleted locally on load and on coalesced saves, but
+ * remain fetchable from the server. Pending/failed sends are always retained. */
 export const MAX_MESSAGES_PER_CONVERSATION = 200;
 
 /** Retention: conversations kept, newest activity first. */
@@ -117,14 +119,9 @@ function entryTime(entry: any): number {
  */
 export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
   if (!Array.isArray(messages)) return [];
-  const ordered = [...messages].sort((a, b) => entryTime(b) - entryTime(a));
-  const kept = ordered.slice(0, MAX_MESSAGES_PER_CONVERSATION);
-  const unsent = ordered
-    .slice(MAX_MESSAGES_PER_CONVERSATION)
-    .filter(
-      (entry: any) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
-    );
-  return unsent.length ? [...kept, ...unsent].sort((a, b) => entryTime(b) - entryTime(a)) : kept;
+  return [...messages].sort(byNewestFirst).filter((entry, index) =>
+    index < MAX_MESSAGES_PER_CONVERSATION || entry?.syncState === 'pending' || entry?.syncState === 'failed',
+  );
 }
 
 function prunePeerHistories(
@@ -264,11 +261,20 @@ async function readLegacySnapshot(scope: string): Promise<ChatSnapshot> {
 }
 
 async function readSnapshot(store: Store, scope: string): Promise<void> {
-  const fromDisk = await withDatabase(async db => {
+  const { snapshot: fromDisk, rows } = await withDatabase(async db => {
     const result = await db.execute(
-      'SELECT kind, peer, payload FROM chat_records WHERE scope = ? ORDER BY position', [scope]);
+      'SELECT kind, id, peer, position, payload FROM chat_records WHERE scope = ? ORDER BY position', [scope]);
     const snapshot = emptySnapshot();
+    const storedRows: ChatRows = new Map();
     for (const row of result.rows) {
+      const stored: StoredChatRow = {
+        kind: row.kind as keyof ChatSnapshot,
+        id: String(row.id),
+        peer: String(row.peer),
+        position: Number(row.position),
+        payload: String(row.payload),
+      };
+      storedRows.set(JSON.stringify([stored.kind, stored.id]), stored);
       const value: unknown = JSON.parse(String(row.payload));
       if (row.kind === 'messagesByPeer') {
         const peer = String(row.peer);
@@ -284,21 +290,27 @@ async function readSnapshot(store: Store, scope: string): Promise<void> {
     }
     const migrated = await db.execute(
       'SELECT payload FROM resource_cache WHERE scope = ? AND key = ?', [scope, 'chat:migrated']);
+    const source = !migrated.rows.length && !result.rows.length ? await readLegacySnapshot(scope) : snapshot;
+    const retained = sanitizeSnapshot(source);
+    const retainedRows = snapshotRows(retained);
+    // Diff against the actual disk rows, not the pruned snapshot. Otherwise
+    // expired history disappears from memory but is never deleted in SQLite.
+    // One transaction also keeps migration and cleanup atomic; freed SQLite
+    // pages are reused without an expensive VACUUM on the send path.
+    const commands = rowChanges(scope, storedRows, retainedRows);
     if (!migrated.rows.length) {
-      const legacy = result.rows.length ? snapshot : await readLegacySnapshot(scope);
-      await db.executeBatch([
-        ...rowChanges(scope, new Map(), snapshotRows(legacy)),
-        ['INSERT INTO resource_cache(scope, key, payload, updated_at) VALUES (?, ?, ?, ?)',
-          [scope, 'chat:migrated', 'true', Date.now()]],
+      commands.push([
+        'INSERT INTO resource_cache(scope, key, payload, updated_at) VALUES (?, ?, ?, ?)',
+        [scope, 'chat:migrated', 'true', Date.now()],
       ]);
-      return legacy;
     }
-    return sanitizeSnapshot(snapshot);
+    if (commands.length) await db.executeBatch(commands);
+    return { snapshot: retained, rows: retainedRows };
   });
   if (store.closed) return;
   store.persisted = fromDisk;
   store.inputMessages = fromDisk.messagesByPeer;
-  store.rows = snapshotRows(fromDisk);
+  store.rows = rows;
   const merged = { ...fromDisk };
   for (const table of store.preloadWrites) {
     (merged as Record<string, unknown>)[table] = store.cache?.[table];

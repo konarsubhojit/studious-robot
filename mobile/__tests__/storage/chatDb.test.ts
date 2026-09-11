@@ -12,6 +12,8 @@ jest.mock('../../src/appLogger', () => ({
 
 import RNFS from 'react-native-fs';
 import { withDatabase } from '../../src/storage/localDatabase';
+import { rowChanges, snapshotRows } from '../../src/storage/chatRecords';
+import { timelineEntryId } from '../../src/messaging/messageIdentity';
 import type { DB } from '@op-engineering/op-sqlite';
 import {
   CHAT_DB_FILE_PATH,
@@ -176,6 +178,126 @@ describe('chatDb', () => {
   });
 
   describe('retention bounds', () => {
+    test.each([false, true])('startup deletes expired SQLite rows with migration marker = %s', async migrated => {
+      if (migrated) await loadChatSnapshot('active');
+      const history = [
+        ...makeMessages(MAX_MESSAGES_PER_CONVERSATION + 10),
+        ...makeMessages(1, { messageId: 'old-pending', createdAt: '2000-01-01T00:00:00.000Z', syncState: 'pending' }),
+        ...makeMessages(1, { messageId: 'old-failed', createdAt: '2000-01-01T00:00:00.000Z', syncState: 'failed' }),
+      ];
+      const snapshot = {
+        conversations: [{ peerId: 'bob' }],
+        messagesByPeer: { bob: history },
+        outbox: [{ messageId: 'old-pending', recipientId: 'bob', body: 'unsent' }],
+        drafts: { bob: { text: 'unfinished' } },
+      };
+      await withDatabase(db => db.executeBatch([
+        ...rowChanges('active', new Map(), snapshotRows(snapshot)),
+        ...rowChanges('other-account', new Map(), snapshotRows(snapshot)),
+      ]));
+      resetChatDbCache();
+
+      const loaded = await loadChatSnapshot('active');
+      const counts = await withDatabase(db => db.execute(
+        "SELECT scope, COUNT(*) AS count FROM chat_records WHERE kind = 'messagesByPeer' GROUP BY scope ORDER BY scope",
+      ));
+      expect(counts.rows).toEqual([
+        { scope: 'active', count: MAX_MESSAGES_PER_CONVERSATION + 2 },
+        { scope: 'other-account', count: history.length },
+      ]);
+      expect(loaded.messagesByPeer.bob.map(entry => entry.messageId)).toEqual(
+        expect.arrayContaining(['old-pending', 'old-failed']),
+      );
+      expect(loaded.outbox[0].messageId).toBe('old-pending');
+      expect(loaded.drafts).toEqual({
+        bob: { text: 'unfinished', replyToId: null, updatedAt: undefined },
+      });
+
+      resetChatDbCache();
+      mockDb.executeBatch.mockClear();
+      expect(await loadChatSnapshot('active')).toEqual(loaded);
+      expect(mockDb.executeBatch).not.toHaveBeenCalled();
+    });
+
+    test('startup removes inactive peer histories from SQLite but preserves draft and queued peers', async () => {
+      await loadChatSnapshot();
+      const messagesByPeer = Object.fromEntries(
+        Array.from({ length: MAX_CONVERSATIONS + 3 }, (_, index) => [`peer-${index}`, makeMessages(1, {
+          createdAt: new Date(Date.UTC(2026, 8, 11, 10, MAX_CONVERSATIONS - index)).toISOString(),
+        })]),
+      );
+      const snapshot = {
+        conversations: Object.keys(messagesByPeer).map(peerId => ({ peerId })),
+        messagesByPeer,
+        outbox: [{ messageId: 'q', recipientId: 'peer-102', body: 'unsent' }],
+        drafts: { 'peer-101': { text: 'unfinished' } },
+      };
+      await withDatabase(db => db.executeBatch(rowChanges('legacy', new Map(), snapshotRows(snapshot))));
+      resetChatDbCache();
+      await loadChatSnapshot();
+
+      const rows = await withDatabase(db => db.execute(
+        "SELECT kind, peer FROM chat_records WHERE scope = ? AND kind IN ('messagesByPeer', 'conversations')",
+        ['legacy'],
+      ));
+      const histories = rows.rows.filter(row => row.kind === 'messagesByPeer').map(row => row.peer);
+      expect(histories).toHaveLength(MAX_CONVERSATIONS + 2);
+      expect(histories).not.toContain('peer-100');
+      expect(histories).toEqual(expect.arrayContaining(['peer-101', 'peer-102']));
+      expect(rows.rows.filter(row => row.kind === 'conversations')).toHaveLength(MAX_CONVERSATIONS);
+    });
+
+    test('subsequent saves evict the oldest stored message instead of accumulating loaded history', async () => {
+      const initial = makeMessages(MAX_MESSAGES_PER_CONVERSATION);
+      saveChatSnapshot({ messagesByPeer: { bob: initial } });
+      await flushChatDb();
+      const newest = makeMessages(1, { messageId: 'newest', createdAt: '2026-09-11T00:00:00.000Z' })[0];
+      const loadedHistory = [newest, ...initial];
+      saveChatSnapshot({ messagesByPeer: { bob: loadedHistory } });
+      await flushChatDb();
+
+      const stored = await withDatabase(db => db.execute(
+        "SELECT payload FROM chat_records WHERE scope = ? AND kind = 'messagesByPeer' ORDER BY position",
+        ['legacy'],
+      ));
+      expect(stored.rows).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
+      const ids = stored.rows.map(row => JSON.parse(String(row.payload)).messageId);
+      expect(ids[0]).toBe('newest');
+      expect(ids).not.toContain(`m${MAX_MESSAGES_PER_CONVERSATION - 1}`);
+      expect(loadedHistory).toHaveLength(MAX_MESSAGES_PER_CONVERSATION + 1);
+    });
+
+    test('a failed startup cleanup leaves disk intact and retries before publishing the cache', async () => {
+      await loadChatSnapshot();
+      const snapshot = {
+        conversations: [],
+        messagesByPeer: { bob: makeMessages(MAX_MESSAGES_PER_CONVERSATION + 5) },
+        outbox: [],
+        drafts: {},
+      };
+      await withDatabase(db => db.executeBatch(rowChanges('legacy', new Map(), snapshotRows(snapshot))));
+      resetChatDbCache();
+      mockDb.executeBatch.mockRejectedValueOnce(new Error('cleanup failed'));
+
+      await expect(loadChatSnapshot()).rejects.toThrow('cleanup failed');
+      const stored = await withDatabase(db => db.execute(
+        "SELECT COUNT(*) AS count FROM chat_records WHERE scope = ? AND kind = 'messagesByPeer'", ['legacy'],
+      ));
+      expect(stored.rows[0].count).toBe(MAX_MESSAGES_PER_CONVERSATION + 5);
+      expect((await loadChatSnapshot()).messagesByPeer.bob).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
+    });
+
+    test('retention uses the same deterministic ordering for messages and calls as the live timeline', () => {
+      const createdAt = '2026-09-11T10:00:00.000Z';
+      const history = [
+        { type: 'call', callId: 'c1', createdAt },
+        ...makeMessages(1, { messageId: 'm1', createdAt }),
+        ...makeMessages(1, { messageId: 'm2', createdAt }),
+      ];
+      expect(pruneMessages(history as any).map(timelineEntryId))
+        .toEqual(['m2', 'm1', 'c1']);
+    });
+
     // SQLite writes are incremental, but the hydrated UI snapshot must still
     // have a bounded memory footprint.
     test('keeps the hydrated cache bounded', () => {
