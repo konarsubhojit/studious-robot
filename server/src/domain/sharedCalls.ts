@@ -73,7 +73,23 @@ async function hydrateCallFromShared(
   if (!shared) {
     return local ?? null;
   }
+  // The shared read happened, so the local copy is confirmed either way; a
+  // local record that is ahead of the shared one (this instance just wrote it)
+  // stays, but stops being treated as unverified.
+  if (local && !isSharedCallNewer(local, shared)) {
+    markCallSynced(state, callId, now);
+    return local;
+  }
   return adoptSharedCall(state, shared, now);
+}
+
+function callRecordTimestamp(call: CallRecord): number {
+  const parsed = Date.parse(call.updatedAt ?? call.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSharedCallNewer(local: CallRecord, shared: CallRecord): boolean {
+  return callRecordTimestamp(shared) > callRecordTimestamp(local);
 }
 
 async function persistCallToShared(state: ServerState, call: CallRecord): Promise<void> {

@@ -9,11 +9,11 @@ test.
 
 These were confirmed before work started and they materially shape the scope:
 
-| Question | Answer | Consequence |
-| -------- | ------ | ----------- |
-| Instance count | ~~Single instance~~ → **two signaling VMs** behind a load balancer, plus a separate host for Postgres and Redis | `REDIS_URL` is **mandatory**, not optional. Sessions, presence, call state, the read cache and socket fan-out must all be shared, and each VM needs a distinct `INSTANCE_ID` |
-| Process manager | ~~PM2~~ → **plain systemd** on Oracle Cloud (Oracle Linux, service user `opc`) | See Phase 7 / Decision 3 |
-| Concurrent users | **~10** | ~~P1.4 descoped~~ → boot hydration *was* bounded after all, in Phase 7 / Decision 4.3, because it is the one unbounded read that has to finish before the process serves anything — on both VMs |
+| Question         | Answer                                                                                                          | Consequence                                                                                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instance count   | ~~Single instance~~ → **two signaling VMs** behind a load balancer, plus a separate host for Postgres and Redis | `REDIS_URL` is **mandatory**, not optional. Sessions, presence, call state, the read cache and socket fan-out must all be shared, and each VM needs a distinct `INSTANCE_ID`                    |
+| Process manager  | ~~PM2~~ → **plain systemd** on Oracle Cloud (Oracle Linux, service user `opc`)                                  | See Phase 7 / Decision 3                                                                                                                                                                        |
+| Concurrent users | **~10**                                                                                                         | ~~P1.4 descoped~~ → boot hydration _was_ bounded after all, in Phase 7 / Decision 4.3, because it is the one unbounded read that has to finish before the process serves anything — on both VMs |
 
 The first two answers changed after this document was written and they invalidate
 anything below that assumes a single PM2-managed process. Phase 7 supersedes it.
@@ -24,96 +24,96 @@ Legend: ✅ done · 🚧 in progress · ⬜ not started · ⏸️ descoped (with
 
 ### Phase 1 — Quick wins, low risk
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P3.4 | Heartbeat must be an explicit opt-in, not any `call.media-state` frame | ✅ already fixed on `master` — verified the `heartbeat === true` guard in `callHandlers.ts` and the regression test in `stale-calls.test.ts`; no change needed |
-| P2.2 | Delete unreferenced `DraggableCallControls` | ✅ deleted, with its test |
-| P1.5 | Server: `express.json` body limit, gate `verboseLog` allocation, Socket.IO buffer cap | ✅ see note on compression below |
-| P3.3 | Move call timing constants into `shared/` so mobile and server cannot drift | ✅ `shared/signaling/timing.ts`, with an invariant test |
+| ID   | Task                                                                                  | Status                                                                                                                                                         |
+| ---- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P3.4 | Heartbeat must be an explicit opt-in, not any `call.media-state` frame                | ✅ already fixed on `master` — verified the `heartbeat === true` guard in `callHandlers.ts` and the regression test in `stale-calls.test.ts`; no change needed |
+| P2.2 | Delete unreferenced `DraggableCallControls`                                           | ✅ deleted, with its test                                                                                                                                      |
+| P1.5 | Server: `express.json` body limit, gate `verboseLog` allocation, Socket.IO buffer cap | ✅ see note on compression below                                                                                                                               |
+| P3.3 | Move call timing constants into `shared/` so mobile and server cannot drift           | ✅ `shared/signaling/timing.ts`, with an invariant test                                                                                                        |
 
 ### Phase 2 — Render performance (P1.1)
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P1.1a | Memoize `ScreenRenderersContext` value; `useCallback` the `TabShell` renderers | ✅ |
-| P1.1b | Move `elapsedCallSeconds` out of the shared hook into `useCallElapsedSeconds` | ✅ |
-| P1.1c | `React.memo` the leaf screens | ✅ |
-| P1.1d | Render-count regression test under fake timers | ✅ |
+| ID    | Task                                                                           | Status |
+| ----- | ------------------------------------------------------------------------------ | ------ |
+| P1.1a | Memoize `ScreenRenderersContext` value; `useCallback` the `TabShell` renderers | ✅     |
+| P1.1b | Move `elapsedCallSeconds` out of the shared hook into `useCallElapsedSeconds`  | ✅     |
+| P1.1c | `React.memo` the leaf screens                                                  | ✅     |
+| P1.1d | Render-count regression test under fake timers                                 | ✅     |
 
 ### Phase 3 — Startup / bundle
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P1.6a | Metro `inlineRequires` | ✅ |
-| P1.6b | `useThemedStyles` module-level style cache | ✅ |
+| ID    | Task                                       | Status |
+| ----- | ------------------------------------------ | ------ |
+| P1.6a | Metro `inlineRequires`                     | ✅     |
+| P1.6b | `useThemedStyles` module-level style cache | ✅     |
 
 ### Phase 4 — Server memory
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P1.3 | Evict terminal calls from the hot `state.calls` map after a retention window | ✅ |
+| ID   | Task                                                                         | Status |
+| ---- | ---------------------------------------------------------------------------- | ------ |
+| P1.3 | Evict terminal calls from the hot `state.calls` map after a retention window | ✅     |
 
 ### Phase 5 — Architecture & docs
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P3.1 | Document the single-instance requirement + surface it at startup and in `/health` | ✅ |
-| P1.4 | Directory / boot-hydration scaling | ⏸️ descoped — premature at ~10 concurrent users |
-| P3.2 | Reformat single-line wide type declarations + guard against regression | ✅ |
+| ID   | Task                                                                              | Status                                          |
+| ---- | --------------------------------------------------------------------------------- | ----------------------------------------------- |
+| P3.1 | Document the single-instance requirement + surface it at startup and in `/health` | ✅                                              |
+| P1.4 | Directory / boot-hydration scaling                                                | ⏸️ descoped — premature at ~10 concurrent users |
+| P3.2 | Reformat single-line wide type declarations + guard against regression            | ✅                                              |
 
 ### Previously deferred, done in this pass
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| P2.1 | Port `MediaViewer` / `SwipeableRow` to Reanimated worklets | ✅ |
-| P2.3 | Accessibility sweep | ✅ |
-| P2.4 | State completeness | ✅ |
-| P2.5 | Design-system consolidation | ✅ |
-| B4 | Attachment progress ring | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them |
-| P1.2 | Decompose `useCallFlow` | ✅ the structural hook split is now done. On top of the eleven pure-rule slices already out (the WebRTC stats helpers and stats-poll derivation in `callUx`, the ICE-recovery ladder rules in `call/iceRestartLadder`, the call-lifecycle decisions and `call.state_changed` dispatch and outgoing-call placement in `call/callDecisions`, the session/token rules in `call/sessionLifecycle`, push rehydration plus the media-state frame in `call/pushRehydration`, the answer path and queued-answer replay in `call/answerPath`, and the audio-route rules in `call/audioRouteRules`), the two remaining ref-coupled orchestration clusters are now their own concern-hooks: `useCallHeartbeat` (the in-call liveness beat + wake sources) and `useCallRecovery` (the recovery episode, the ICE-restart ladder and the proactive network-change restart, with its forward-refs). The public return contract is unchanged and `useCallFlow.test.tsx` passes unmodified; the new hooks have focused tests (`__tests__/hooks/useCallHeartbeat.test.tsx`, `__tests__/hooks/useCallRecovery.test.tsx`). **Device QA is still pending** (per instruction) — the recovery/audio-session behaviour only manifests on a device; see the checklist in the P1.2 note below |
-| P1.7 | Swap `chatDb` JSON document for SQLite | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test *and* priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below) |
+| ID   | Task                                                       | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P2.1 | Port `MediaViewer` / `SwipeableRow` to Reanimated worklets | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| P2.3 | Accessibility sweep                                        | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| P2.4 | State completeness                                         | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| P2.5 | Design-system consolidation                                | ✅                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| B4   | Attachment progress ring                                   | ✅ optimistic attachment sends now create the bubble before upload, render progress/cancel on that bubble, and leave failed uploads retryable instead of removing them                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| P1.2 | Decompose `useCallFlow`                                    | 🚧 partial. The eleven pure-rule slices are out, and the cohesive liveness/recovery side-effect clusters are now concern-hooks (`useCallHeartbeat`, `useCallRecovery`) with focused tests. The checkpointed effect-hook extraction in [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md) has landed CP1 (`useCallAudioRouting`), CP2 (`useConnectionQuality`), CP3 (`usePeerConnection`), CP4 (`useLocalMedia`), CP5 (`useSignalingSocket`) and CP6 (`useAnswerPath`); `useCallFlow.ts` is down to 2,290 lines. CP7 teardown investigation is complete: `endActiveCall` stays in the composition root because extraction would only move the cross-hook teardown order behind a large parameter bag. **Device QA is still pending** (per instruction); see the checklist in the P1.2 note below |
+| P1.7 | Swap `chatDb` JSON document for SQLite                     | ⏸️ still deferred, but the bound that justifies the deferral is now pinned by a test _and_ priced: ≈ 7.9 MB and ≈ 24 ms of `JSON.stringify` per flush at the ceiling (see the note below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ### Still deferred
 
-| ID | Task | Reason |
-| -- | ---- | ------ |
+| ID    | Task                                             | Reason                                                                                                                                                                                          |
+| ----- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | P1.6c | Enable R8 / `shrinkResources` for release builds | Real crash risk without device QA on the release APK, which this environment cannot do. **Re-raised as Phase 7 / D5.1** — it is now the last thing between the project and a shippable artifact |
-| P1.7 | Swap `chatDb` JSON document for SQLite | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today. **Re-raised as Phase 7 / D5.2** |
+| P1.7  | Swap `chatDb` JSON document for SQLite           | Needs a new native dependency. Bounded at 200 messages × 100 conversations, so defensible today. **Re-raised as Phase 7 / D5.2**                                                                |
 
 ### Phase 6 — Chat & calling UX pass
 
 Workstream IDs below are those of the chat/calling UX plan (A performance
 foundations, B chat UX, C calling UX, D new features, E enablers).
 
-| ID | Task | Status |
-| -- | ---- | ------ |
-| — | Message bubbles could not be swiped | ✅ the bubble was a `Pressable` covering the pan surface, and `activeOffsetX` equalled `failOffsetY`; long press now races inside the RNGH gesture and activation (10dp) sits below the vertical fail threshold (24dp) |
-| A2 | Debounce the chat snapshot mirror | ✅ trailing 750 ms debounce, force-flushed when the app leaves the foreground and on unmount |
-| A3 | Gate WebRTC stats polling on foreground | ✅ polling pauses in `background`, resumes with an immediate sample |
-| A4 | Call-history list cost | ✅ sections are shaped for `SectionList` inside the memo and the renderers are hoisted out of the JSX; server-side paging of `/calls` is not needed at the current log sizes |
-| B1 | Per-conversation drafts | ✅ persisted in the chat snapshot, restored on open (including the reply target), previewed as "Draft: …" in the chat list; written with a trailing debounce and force-flushed on leave/background |
-| B3 | Jump-to-latest / unread divider | ✅ the jump-to-latest pill (with a new-message count) and tap-a-quote-to-scroll already existed; this pass added the "N new messages" divider. It is anchored by counting back N *incoming* messages from the frozen mount-time unread count, **not** by `readAt` — see the note below |
-| B6 | Unread badge cap / mute | ✅ the badge was already capped at 99+ by the `Badge` primitive (verified, no change); mute/unmute is now reachable from a chat-list swipe and muted rows carry a glyph |
-| C1 | Quality-indicator hysteresis | ✅ `smoothConnectionQuality`: upgrade immediately, downgrade only after two consecutive worse samples |
-| C2 | Make failures speak | ✅ `setTrackEnabled` reads the track state back so the UI can never claim "muted" while audio still flows, and a manually chosen headset that disconnects announces the hand-over. The plan's PiP-refusal toast has **no trigger**: PiP is only ever entered natively from `onUserLeaveHint`, never from a user-initiated request |
-| C4 | Disable controls during renegotiation | ✅ the screen-share row reports `isTogglingScreenShare` as a busy, disabled "Starting…/Stopping…" state |
-| D1 | Call from chat / chat from call | ✅ the conversation header already placed calls; call-history rows now swipe to "Message" |
-| — | Screen share confirms success, not only failure | ✅ `verifyScreenShareFrames` already returned `verified`; `useScreenShare` now publishes it as `screenShareDelivery` (`idle`/`checking`/`confirmed`/`unverified`) and the in-call indicator settles on "Sharing — they can see your screen". An unreadable stats report stays `unverified` and keeps the old wording — the UI must not promise a view it could not measure |
-| — | Haptics at the moments that substitute for looking | ✅ connect, end and incoming ring already fired; *message sent* was missing and now fires on the server ack, not on the optimistic bubble. Silent mode is respected through `triggerHapticUnlessSilent`, and only a single-message drain buzzes, so a reconnect replaying a backlog does not rattle once per queued message |
-| C6 | Honest audio-only calls | ✅ camera state is now relayed over the existing `call.media-state` frame, so `mainHasVideo` asks whether there is a *picture* rather than whether there is a *track*, and `call-stage-ambient` is reachable. See the note below — this is deliberately not the `getUserMedia` change the original entry sketched |
-| — | First-run empty states point somewhere | ✅ the empty chat and call lists now offer a low-emphasis "Search for people" link. Deliberately *not* an `actionLabel`: a second filled button in the screen's accent, a couple of hundred pixels from the FAB, makes whichever the user reaches for the wrong one. The "no results" / "we could not check" distinction from P2.4 is untouched |
-| A1 | Stop `CallProvider` invalidating every consumer | ✅ the snapshot is published through a store and read with `useCallSelector`, so a consumer wakes only for the slice it selected; `endCall` / `handleExportLogs` read the call flow through a ref so their identity (and the memoised renderers that depend on it) survives a re-render. See the note below |
+| ID  | Task                                               | Status                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| —   | Message bubbles could not be swiped                | ✅ the bubble was a `Pressable` covering the pan surface, and `activeOffsetX` equalled `failOffsetY`; long press now races inside the RNGH gesture and activation (10dp) sits below the vertical fail threshold (24dp)                                                                                                                                                     |
+| A2  | Debounce the chat snapshot mirror                  | ✅ trailing 750 ms debounce, force-flushed when the app leaves the foreground and on unmount                                                                                                                                                                                                                                                                               |
+| A3  | Gate WebRTC stats polling on foreground            | ✅ polling pauses in `background`, resumes with an immediate sample                                                                                                                                                                                                                                                                                                        |
+| A4  | Call-history list cost                             | ✅ sections are shaped for `SectionList` inside the memo and the renderers are hoisted out of the JSX; server-side paging of `/calls` is not needed at the current log sizes                                                                                                                                                                                               |
+| B1  | Per-conversation drafts                            | ✅ persisted in the chat snapshot, restored on open (including the reply target), previewed as "Draft: …" in the chat list; written with a trailing debounce and force-flushed on leave/background                                                                                                                                                                         |
+| B3  | Jump-to-latest / unread divider                    | ✅ the jump-to-latest pill (with a new-message count) and tap-a-quote-to-scroll already existed; this pass added the "N new messages" divider. It is anchored by counting back N _incoming_ messages from the frozen mount-time unread count, **not** by `readAt` — see the note below                                                                                     |
+| B6  | Unread badge cap / mute                            | ✅ the badge was already capped at 99+ by the `Badge` primitive (verified, no change); mute/unmute is now reachable from a chat-list swipe and muted rows carry a glyph                                                                                                                                                                                                    |
+| C1  | Quality-indicator hysteresis                       | ✅ `smoothConnectionQuality`: upgrade immediately, downgrade only after two consecutive worse samples                                                                                                                                                                                                                                                                      |
+| C2  | Make failures speak                                | ✅ `setTrackEnabled` reads the track state back so the UI can never claim "muted" while audio still flows, and a manually chosen headset that disconnects announces the hand-over. The plan's PiP-refusal toast has **no trigger**: PiP is only ever entered natively from `onUserLeaveHint`, never from a user-initiated request                                          |
+| C4  | Disable controls during renegotiation              | ✅ the screen-share row reports `isTogglingScreenShare` as a busy, disabled "Starting…/Stopping…" state                                                                                                                                                                                                                                                                    |
+| D1  | Call from chat / chat from call                    | ✅ the conversation header already placed calls; call-history rows now swipe to "Message"                                                                                                                                                                                                                                                                                  |
+| —   | Screen share confirms success, not only failure    | ✅ `verifyScreenShareFrames` already returned `verified`; `useScreenShare` now publishes it as `screenShareDelivery` (`idle`/`checking`/`confirmed`/`unverified`) and the in-call indicator settles on "Sharing — they can see your screen". An unreadable stats report stays `unverified` and keeps the old wording — the UI must not promise a view it could not measure |
+| —   | Haptics at the moments that substitute for looking | ✅ connect, end and incoming ring already fired; _message sent_ was missing and now fires on the server ack, not on the optimistic bubble. Silent mode is respected through `triggerHapticUnlessSilent`, and only a single-message drain buzzes, so a reconnect replaying a backlog does not rattle once per queued message                                                |
+| C6  | Honest audio-only calls                            | ✅ camera state is now relayed over the existing `call.media-state` frame, so `mainHasVideo` asks whether there is a _picture_ rather than whether there is a _track_, and `call-stage-ambient` is reachable. See the note below — this is deliberately not the `getUserMedia` change the original entry sketched                                                          |
+| —   | First-run empty states point somewhere             | ✅ the empty chat and call lists now offer a low-emphasis "Search for people" link. Deliberately _not_ an `actionLabel`: a second filled button in the screen's accent, a couple of hundred pixels from the FAB, makes whichever the user reaches for the wrong one. The "no results" / "we could not check" distinction from P2.4 is untouched                            |
+| A1  | Stop `CallProvider` invalidating every consumer    | ✅ the snapshot is published through a store and read with `useCallSelector`, so a consumer wakes only for the slice it selected; `endCall` / `handleExportLogs` read the call flow through a ref so their identity (and the memoised renderers that depend on it) survives a re-render. See the note below                                                                |
 
 ### Chat & calling UX pass — deferred
 
-| ID | Task | Reason |
-| -- | ---- | ------ |
-| B2 | Message editing | Protocol change (`message.edit` / `message.edited`, `editedAt`, a server-enforced edit window). Should land together with D3 behind one schema-compatibility test |
-| B5 | Presence freshness / last seen | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation |
-| C3 | Recovery endgame (escalation + "Call back" card) | Device QA required: the behaviour only manifests during a real ICE failure |
-| C5 | Ringback tone for the caller | Device QA required; audio-session behaviour cannot be verified in this environment |
-| D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass |
-| E1–E3 | `useCallFlow` decomposition, SQLite, i18n | E1 (`useCallFlow` decomposition) is now done — see P1.2 above, device QA pending; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
+| ID    | Task                                                         | Reason                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| B2    | Message editing                                              | Protocol change (`message.edit` / `message.edited`, `editedAt`, a server-enforced edit window). Should land together with D3 behind one schema-compatibility test                                                                                                                                                                                                                                                        |
+| B5    | Presence freshness / last seen                               | Needs a server-side `lastSeenAt` and a socket presence subscription for the open conversation                                                                                                                                                                                                                                                                                                                            |
+| C3    | Recovery endgame (escalation + "Call back" card)             | Device QA required: the behaviour only manifests during a real ICE failure                                                                                                                                                                                                                                                                                                                                               |
+| C5    | Ringback tone for the caller                                 | Device QA required; audio-session behaviour cannot be verified in this environment                                                                                                                                                                                                                                                                                                                                       |
+| D2–D5 | Voice-message polish, link previews, group calls, group chat | Each is its own epic; D4/D5 in particular are explicitly out of scope for a UX pass                                                                                                                                                                                                                                                                                                                                      |
+| E1–E3 | `useCallFlow` decomposition, SQLite, i18n                    | E1 is partly done — pure-rule extraction plus `useCallHeartbeat`/`useCallRecovery`, CP1 `useCallAudioRouting`, CP2 `useConnectionQuality`, CP3 `usePeerConnection`, CP4 `useLocalMedia`, CP5 `useSignalingSocket` and CP6 `useAnswerPath` have landed; CP7 teardown investigation is complete and intentionally keeps `endActiveCall` in `useCallFlow` as the composition-root teardown coordinator; SQLite/i18n tracked as P1.7 / below; i18n should precede any further copy growth |
 
 ## Phase 7 — Target-architecture rebuild
 
@@ -122,16 +122,16 @@ split, the Redis role and the Android client, and they supersede the
 single-instance/PM2 assumptions above. Sequenced so each step is independently
 verifiable behind the existing CI gates.
 
-| ID | Decision | Status |
-| -- | -------- | ------ |
-| D3 | Deployment surface: plain systemd on Oracle Cloud | ✅ |
-| D2 | Redis role | ✅ **reversed mid-flight** — the fleet is two VMs, so shared state is mandatory |
-| D4.1 | Session TTL, sweep, and a Redis key that always expires | ✅ |
-| D4.2 | Session id out of URLs | ✅ |
-| D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅ |
-| D4.4 | Stop the client opting out of the server cache | ✅ |
-| D1 | Consolidate messages into Postgres, delete Mongo | ✅ — including the `callTimeline` reads it unlocked |
-| D5 | Android: release build, `chatDb`, permissions, i18n, `getItemLayout` | 🟡 **partly done** — the state/storage defects below are fixed; the release build, the storage-engine swap, permissions and i18n are not |
+| ID   | Decision                                                                        | Status                                                                                                                                   |
+| ---- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| D3   | Deployment surface: plain systemd on Oracle Cloud                               | ✅                                                                                                                                       |
+| D2   | Redis role                                                                      | ✅ **reversed mid-flight** — the fleet is two VMs, so shared state is mandatory                                                          |
+| D4.1 | Session TTL, sweep, and a Redis key that always expires                         | ✅                                                                                                                                       |
+| D4.2 | Session id out of URLs                                                          | ✅                                                                                                                                       |
+| D4.3 | Retention for `calls` / `call_events` / `audit_log`, and bounded boot hydration | ✅                                                                                                                                       |
+| D4.4 | Stop the client opting out of the server cache                                  | ✅                                                                                                                                       |
+| D1   | Consolidate messages into Postgres, delete Mongo                                | ✅ — including the `callTimeline` reads it unlocked                                                                                      |
+| D5   | Android: release build, `chatDb`, permissions, i18n, `getItemLayout`            | 🟡 **partly done** — the state/storage defects below are fixed; the release build, the storage-engine swap, permissions and i18n are not |
 
 ### D3 — Deployment surface (done)
 
@@ -154,7 +154,7 @@ guarding a topology no longer run. It now reads `INSTANCE_ID` /
 `SIGNAL_INSTANCE_ID`, declared per VM in `/etc/robot-signal/env`.
 
 **Known gap, deliberately left:** because instance `0` is never faulted (it
-cannot tell whether it is alone), the guard only arms if the *second* VM sets
+cannot tell whether it is alone), the guard only arms if the _second_ VM sets
 `INSTANCE_ID`. A fleet that forgot the variable is indistinguishable from a
 single host. A startup warning when `REDIS_URL` is set but `INSTANCE_ID` is not
 would close this; it is documented in `deploy/README.md` §5a but not enforced.
@@ -173,6 +173,16 @@ was written for the wrong topology and then rewritten across `README.md`,
 
 Load balancing must be **round-robin, not `ip_hash`**: with Redis the affinity is
 `shared`, so pinning a user to a VM buys nothing and costs an uneven fleet.
+
+**2026-09-10 production-log fix.** A callee could accept on one signaling VM
+while the caller's socket stayed on another VM whose local hot cache still held
+the call as `ringing`. The caller then emitted `rtc.candidate` or `call.cancel`
+to that stale instance and received `stale_call_state`, matching the observed
+logs (`call is not ready for RTC in state: ringing`, then `call state changed on
+another instance`). Shared-mode hydration now checks the shared call store before
+using the local cache and replaces the local entry when shared state is newer, so
+the stale instance sees `accepted`/`connecting_media` before authorizing RTC or
+ending the call. Regression coverage lives in `server/test/shared-call-state.test.ts`.
 
 ### D4.1 — Session lifetime (done)
 
@@ -204,7 +214,7 @@ registration/unregistration, and `useSession.ts`'s `/session/refresh`).
 ### D4.3 — Retention and bounded hydration (done)
 
 `calls`, `call_events` and `audit_log` were append-only and never deleted from.
-That is a storage problem, but on a two-VM fleet it was first a *boot* problem:
+That is a storage problem, but on a two-VM fleet it was first a _boot_ problem:
 `hydrateCallsAndEventsFromDb` read both tables in full before either process
 could serve a request, so startup time was a function of history.
 
@@ -229,14 +239,14 @@ could serve a request, so startup time was a function of history.
 **Testing note for the next session:** two suites built their Drizzle double so
 `.from()` returned a bare `Promise`. Bounded hydration chains `.where()` /
 `.orderBy()` / `.limit()`, so the doubles in `db-persistence.test.ts` and
-`stale-calls.test.ts` are now *thenable and chainable*. Any future narrowing of a
+`stale-calls.test.ts` are now _thenable and chainable_. Any future narrowing of a
 hydration read needs the same treatment.
 
 ### D4.4 — The unreachable cache (done)
 
 `GET /messages` keyed its cache off `before || includeCalls`. The app always sends
 `include=calls`, so the entry had no possible reader — a cache that could only
-ever miss. The key is now `before` alone: what is cached is the *message* page,
+ever miss. The key is now `before` alone: what is cached is the _message_ page,
 which is identical either way and is already invalidated by the send path via
 `messagesCachePrefix`; the call entries are merged in live on every request, so
 no call staleness is introduced. The participant filter and the block check both
@@ -251,7 +261,7 @@ devices and calls; MongoDB is gone.
 **What went in.** A `messages` table (migration `0010`) keyed on
 `(conversation_id, message_id)` with five indexes, each serving exactly one
 access path: the conversation page and its cursor, the two directions a search
-or conversation list matches on, a *partial* index over `read_at IS NULL` for
+or conversation list matches on, a _partial_ index over `read_at IS NULL` for
 unread counts, and a `pg_trgm` GIN index over `lower(body)` for search.
 `src/messageStore/pgStore.ts` implements the interface unchanged.
 
@@ -269,16 +279,16 @@ store-level timing wrapper (the pool already times every statement); the
 **Both open design questions resolved.**
 
 1. **Search: `pg_trgm`, not `tsvector`.** The existing semantics are a literal,
-   case-insensitive *substring* match — that is what `bodyMatches` does in the
+   case-insensitive _substring_ match — that is what `bodyMatches` does in the
    memory store, and what the API has always returned. `pg_trgm` on
    `lower(body)` preserves them exactly. `tsvector` is faster but matches word
-   *stems*, which would have silently changed what the endpoint returns and put
+   _stems_, which would have silently changed what the endpoint returns and put
    the two backends into disagreement, quietly invalidating the store suite
    rather than failing it.
 2. **Data migration: none.** The user confirmed the dev-stage dataset is
    disposable. The `messages` table starts empty.
 
-**One thing the plan did not anticipate.** Consolidating created a *new*
+**One thing the plan did not anticipate.** Consolidating created a _new_
 unbounded table, so the retention sweep grew a third target — but
 `MESSAGE_RETENTION_MS` defaults to `0`, meaning off. Chat is the user's own
 content rather than a record the server made about them, and a background job
@@ -290,7 +300,7 @@ only unique within its conversation.
 
 **Testing.** `test/message-store-pg.test.ts` (17 tests) drives the store through
 a real Drizzle handle bound to a recording fake `pg` client, so what is asserted
-is the *SQL actually issued*. That matters here specifically: if
+is the _SQL actually issued_. That matters here specifically: if
 `listConversations` stopped emitting `DISTINCT ON`, or the search predicate
 stopped matching the shape of the trigram index, the queries would still run and
 still return plausible rows — just by scanning the table. Only the statement text
@@ -312,14 +322,14 @@ resident rather than failing the request:
   whole pair history being resident.
 - **`readCallActivityByPeer`** — the chat list. Two bounded queries rather than
   one scan: the newest calls decide each peer's `lastActivity`, while
-  *unacknowledged missed* calls decide the unread badge and may be arbitrarily
+  _unacknowledged missed_ calls decide the unread badge and may be arbitrarily
   old — an unread badge that expired with the retention window would be a worse
   lie than a slightly shallow preview. The two results overlap, so they are
   folded by `callId` before counting; counting a call twice would double the
   badge.
 - **`markMissedCallsRead`** — acknowledgement. Now a single
   `UPDATE … WHERE callee_id = $1 AND caller_id = $2 AND status = 'missed' AND
-  missed_read_at IS NULL … RETURNING`, which reaches the evicted rows the old
+missed_read_at IS NULL … RETURNING`, which reaches the evicted rows the old
   loop over `state.calls` could not see. Those were unacknowledgeable, so they
   came back unread on the next restart. Resident records are still marked and
   persisted first, so a call missed moments ago whose write has not landed yet
@@ -329,14 +339,14 @@ resident rather than failing the request:
 The paging bug is closed by construction rather than by coincidence:
 `mergeTimeline` takes the newest `limit` of the two lists combined, which is
 only correct when each input already holds the newest `limit` of its own kind,
-so the call fetch bound is now *derived from* `MAX_MESSAGE_LIMIT` instead of
+so the call fetch bound is now _derived from_ `MAX_MESSAGE_LIMIT` instead of
 being a hand-picked number that happened to be larger.
 
 A single SQL join over `messages` and `calls` remains possible and would save a
 round trip, but it is not required for correctness and would put the two very
 different retention rules above into one statement. Deferred deliberately.
 
-`test/call-timeline.test.ts` covers this with 11 tests that seed rows *only*
+`test/call-timeline.test.ts` covers this with 11 tests that seed rows _only_
 into the `calls` table — the state an evicted or pre-restart call is actually
 in. Eight of them were confirmed to fail against the previous memory-only
 implementation. The fake Drizzle harness moved to `test/fakeCallsDb.ts` so both
@@ -368,7 +378,7 @@ subsystems that should not have been sharing a surface.
   `withOutgoingMessage` sibling now updates the list in the same commit, so the
   row's preview matches what the open conversation shows.
 - **The composer grew under rapid sending.** With a controlled `TextInput`, the
-  change event for the text being sent can land *after* the clear, restoring it
+  change event for the text being sent can land _after_ the clear, restoring it
   — and the next send appends to it. The one echo immediately following a send
   is now dropped, and the send reads the ref rather than the render's `draft`,
   which also stops two taps in one frame sending twice.
@@ -378,14 +388,14 @@ subsystems that should not have been sharing a surface.
   read resolves, so a save could beat the first load, and the load would then
   return empty — dropping every persisted conversation, message and draft, and
   writing that emptiness back over the file. Loads now share one promise (which
-  also dedupes concurrent reads) and fold the file in *underneath* any table
+  also dedupes concurrent reads) and fold the file in _underneath_ any table
   already written. Separately, an outbox-only save no longer re-sorts every
   conversation's history: that ran on the JS thread on every message ack.
 - **A failed registration still let the user into the app.** `registerUser`
   treated "the identity provider accepted the credentials" as registration
   complete, persisted the username and flipped `isRegistered`. But the username
   is not the account's to give — `resolveIdentityClaim` on the server binds it,
-  and answers `409` when it is already taken. That happened *after* the user had
+  and answers `409` when it is already taken. That happened _after_ the user had
   been admitted, so someone whose name was taken landed on a chat list that
   could never load, with the refusal reported only as a status message on
   another tab. The username is now verified with the server before it is
@@ -395,7 +405,7 @@ subsystems that should not have been sharing a surface.
   session is a failed registration, and is retried where the user stands.
 - **The conflict message described the wrong conflict.** The client branched on
   whether the `409` payload carried a `userId`, but `identity_claimed` carries
-  one too — the *existing* owner of the name, which is the name the user just
+  one too — the _existing_ owner of the name, which is the name the user just
   typed. Someone whose chosen name was taken was told "this account is already
   bound to <their own choice>", which describes the opposite situation. It now
   branches on the server's `code`, via `describeIdentityRejection`.
@@ -403,7 +413,7 @@ subsystems that should not have been sharing a surface.
   slot and every subsystem writes it, so session, identity and outbox errors
   were rendered inline by `CallsScreen` and pushed the history down the screen.
   Warnings and errors now float over the list as a self-dismissing top bar
-  (`StatusToast`); the persistent "server unreachable" *condition* stays an
+  (`StatusToast`); the persistent "server unreachable" _condition_ stays an
   inline `Banner`, because it stays true until something changes. The Chats tab
   shows the same bar — messaging failures are raised there and previously had
   nowhere to appear.
@@ -424,8 +434,9 @@ subsystems that should not have been sharing a surface.
 4. **i18n before more copy.** Every string added now is a string to extract later.
 5. **`getItemLayout`** on the message list, if bubble heights can be made
    predictable, so jump-to-quote stops relying on the scroll-failure fallback.
-6. Split `useCallFlow` and `ChatConversationPresentation` further along the seams
-   already established.
+6. Continue any further `useCallFlow` work from the completed checkpoint record in
+   `docs/CALLFLOW_EXTRACTION.md` and split `ChatConversationPresentation` further
+   along the seams already established.
 
 ### Working notes for whoever picks this up
 
@@ -438,13 +449,19 @@ subsystems that should not have been sharing a surface.
   `.eslintrc.js`); Jest **must** be `npx jest --ci --forceExit` or it hangs.
 - Server test doubles go through `test/helpers.ts`' `asDatabase` / `asMessageStore`
   / `asSocketIoServer`, never a per-suite `as any`.
-- Baseline at handoff: server 529 passing / 1 skipped (the count *fell* because
+- Baseline at handoff: server 529 passing / 1 skipped (the count _fell_ because
   the Mongo-driver suites went with the driver), mobile 2145 passing, typecheck
   and lint clean in both packages.
+- 2026-09-10 call pickup fix: if production logs show `stale_call_state` for
+  `rtc.candidate` on one VM after `call.accept`/`call.connected` on another,
+  re-run `node --experimental-test-module-mocks --test test/shared-call-state.test.ts`
+  from `server/`; the regression asserts shared-mode hydration refreshes the
+  caller instance before RTC/cancel handling.
 
 ## Notes and deviations
 
 ### C6: the ambient canvas was gated on the wrong question
+
 The canvas was built, tokenised and unit-tested for a state no call this app
 could place would ever produce. `mainHasVideo` asked `getVideoTracks().length >
 0`, and turning a camera off does not remove a track — `setTrackEnabled` sets
@@ -457,7 +474,7 @@ The fix relays the camera flag rather than changing the negotiated media.
 `enabled` is a purely local flag the peer cannot observe, so each side now sends
 `isVideoEnabled` alongside `isScreenSharing` in the existing `call.media-state`
 frame, and `deriveCallStreams` takes `localVideoEnabled` / `remoteVideoEnabled`
-and answers "is there a picture" as *track ∧ camera on*.
+and answers "is there a picture" as _track ∧ camera on_.
 
 Three things about the shape of it:
 
@@ -474,7 +491,7 @@ Three things about the shape of it:
   turning your own camera off removes the tile instead of leaving a black square
   that follows you around the screen.
 
-This is deliberately *not* the `getUserMedia` change the original deferral
+This is deliberately _not_ the `getUserMedia` change the original deferral
 sketched. Negotiating a genuinely audio-only call is a larger, device-QA-shaped
 piece of work; making the UI stop lying about what is on the wire is not, and it
 is the half that was actually broken. An "audio call" is still a video call with
@@ -483,15 +500,17 @@ the camera off — but it now says so, and both ends render the ambient canvas.
 gap, and is now a script for confirming a fix.
 
 ### B3: the unread divider cannot be derived from read receipts
+
 Opening a conversation marks it read within a round trip, so by the time the
 list renders, the receipts that would identify the unread run are already
-gone. The divider therefore reads the conversation's unread *count*, frozen at
+gone. The divider therefore reads the conversation's unread _count_, frozen at
 mount, and counts back that many incoming messages from the end of the loaded
 page. A count larger than the loaded page anchors at the oldest loaded message
 rather than dropping the divider, and the divider survives `unreadCount`
 dropping to 0 mid-session (there is a regression test for exactly that).
 
 ### P2.5: two real bugs, not just token hygiene
+
 Replacing the colour literals was supposed to be cosmetic. It uncovered two
 defects that the literals had been hiding.
 
@@ -499,7 +518,7 @@ defects that the literals had been hiding.
 `colors.success` badges. The dark palette's `danger: '#ff7b8a'` and
 `success: '#5be2a2'` are bright, so white text on them failed WCAG AA. The
 correct token, `textOnAccent`, is dark navy in the dark scheme, and
-`theme.test.ts` had *already* been asserting
+`theme.test.ts` had _already_ been asserting
 `contrast(textOnAccent, danger) >= 4.5` — the components simply were not using
 it.
 
@@ -508,41 +527,44 @@ it.
 light scheme, so that content was invisible over a 72%-black scrim for every
 light-mode user. Those now use `colors.onOverlay`.
 
-The `overlay` tokens deliberately live *outside* the two palettes: the video
+The `overlay` tokens deliberately live _outside_ the two palettes: the video
 stage is dark in both schemes, so putting scrims into `createStyles(colors)` is
 what invites the second bug back. Two opacities were normalised on the way
 (`0.55` and `0.65` both became `scrimMedium`, `0.6`); contrast against
 `onOverlay` stays far above AA at either value.
 
 ### P2.3: the accessibility gaps were all "state conveyed by pixels"
+
 Every finding had the same shape — something the sighted user reads off the
 screen that was never in the accessibility tree.
 
-The unread badges were the sharpest case. They render *inside* a `Pressable`
+The unread badges were the sharpest case. They render _inside_ a `Pressable`
 that already carries an `accessibilityLabel`, so React Native collapses the
 subtree into one node and the badge text is simply never spoken. The count is
 now part of the tab's and the row's accessible name.
 
-The call-control toggles named only the *next* action ("Unmute microphone"),
-which is a fine label but leaves no way to learn the *current* state, so
+The call-control toggles named only the _next_ action ("Unmute microphone"),
+which is a fine label but leaves no way to learn the _current_ state, so
 `IconButton` grew a `selected` prop. Its visual caption is now hidden from
 assistive tech, since the button's own name already says the same words.
 
 ### P2.4: the missing state was error, not loading or empty
+
 The screens already had loading skeletons and empty states. What they did not
-have was any way to *reach* an error state, because `searchUsers` swallowed
+have was any way to _reach_ an error state, because `searchUsers` swallowed
 both a non-OK response and a network error and returned `[]`. An unreachable
 directory therefore rendered as a confident "No matching contacts" — a claim
 the app had no basis for and the user could not act on.
 
 `searchUsers` now rejects with a `DirectorySearchError`, keeping `[]` only for
 the two cases that genuinely are not failures: no session yet, and a request
-aborted by a newer keystroke. `SearchScreen` renders the retry banner *above*
+aborted by a newer keystroke. `SearchScreen` renders the retry banner _above_
 the list rather than as `ListEmptyComponent`, because the contact lookup can
 fail while local message and call results still arrive — an empty-component
 banner would vanish exactly when the failure was partial.
 
 ### P2.1: what the port actually bought
+
 Beyond moving the drag off the JS thread, both components lost hand-rolled
 logic to the gesture system. `SwipeableRow`'s horizontal-vs-vertical
 arbitration was a `Math.abs(dx) > Math.abs(dy)` comparison inside
@@ -557,6 +579,7 @@ copy-pasted into each test that touched an animated component, and every new
 one needed them again.
 
 ### P1.2: the slices, then the split
+
 The honest status at the time of that pass was partial. What came out is the
 WebRTC stats handling —
 `collectCallStats` and `summarizeCandidatePair`, now in `callUx` beside the
@@ -618,7 +641,7 @@ own, whether a transition belongs to some other call (a stale ring that ends
 while a call is up must not touch the call in progress), the terminal-status →
 message/severity/`endReason` table — including that an `ended` whose reason is
 `cancelled` is a cancellation, not a call that happened — and the `busy`
-self-heal condition, where the call the rejection is *about* does not count as
+self-heal condition, where the call the rejection is _about_ does not count as
 one this device holds. The negotiation the `accepted` transition triggers moved
 to a named `sendInitialOffer` beside the handler rather than into the pure
 module: it is `createOffer` / `setLocalDescription` against a live peer
@@ -676,7 +699,7 @@ mistakes with their own messages rather than faults.
 `call/audioRouteRules.ts` owns the four rules that were inline in the hook's
 audio effects and reachable only by replaying a native device-change event:
 that "speaker on join" upgrades the earpiece but never steals a call away from
-a headset, that only a *detachable* route can be lost — an incomplete device
+a headset, that only a _detachable_ route can be lost — an incomplete device
 list is not an unplug — and that the loss is announced rather than silently
 handed over, how a chosen route is named, and that a selection which reports no
 devices has discovered nothing rather than an empty world, so the output picker
@@ -699,7 +722,7 @@ in preference to pushing through.
 The negotiation path is `setRemoteDescription` / `createAnswer` /
 `setLocalDescription` / `addTrack` against a live `RTCPeerConnection`, sequenced
 by refs that exist precisely to serialise it: `peerConnectionRef`,
-`isNegotiatingRef` and `iceCandidateBufferRef`. There is no *decision* left in
+`isNegotiatingRef` and `iceCandidateBufferRef`. There is no _decision_ left in
 it to extract. Every rule those effects consult has already come out — whether
 an inbound offer is stale or glare (`decideIncomingOffer`), what an observed
 `iceConnectionState` means and which rung of the ladder may run
@@ -713,12 +736,12 @@ which close over the refs they mutate.
 
 That is the boundary the extraction pattern has held at for eleven slices, and
 it is the reason `useCallFlow.test.tsx` has never needed to change. Where a
-decision *was* separable from the effect it sits beside — the offer's
+decision _was_ separable from the effect it sits beside — the offer's
 stale-vs-glare guard, the state-change dispatch, the answer's transport
 fallback — it came out.
 
-The structural split is now done. What the eleven pure-rule slices left behind
-was coordinated side effects sequenced through shared refs — but two of those
+The first structural split is partly done. What the eleven pure-rule slices left
+behind was coordinated side effects sequenced through shared refs — but two of those
 clusters were cohesive enough to lift out whole, carrying their refs with them
 rather than leaving a decision behind:
 
@@ -744,21 +767,27 @@ and each new hook has a focused test
 (`__tests__/hooks/useCallHeartbeat.test.tsx`,
 `__tests__/hooks/useCallRecovery.test.tsx`).
 
-What deliberately stayed in `useCallFlow` is the orchestrator layer itself — the
+What stayed in `useCallFlow` after that pass is the orchestrator layer itself — the
 `connectSocket` handlers and the WebRTC negotiation sequence — because, as the
-paragraphs above set out, there is no *decision* left in them to separate: they
+paragraphs above set out, there is no _decision_ left in them to separate: they
 are the ordering of native calls against `peerConnectionRef` /
 `isNegotiatingRef` / `iceCandidateBufferRef`, and a module for them would have to
 carry the peer connection, which is the one thing these modules are defined by
 not having.
 
-That residue is the subject of the follow-up work planned in
+That residue is the subject of the follow-up work now planned in
 [`docs/CALLFLOW_EXTRACTION.md`](CALLFLOW_EXTRACTION.md), which takes the
-*effectful* half out into hooks — following `useCallHeartbeat` and
+_effectful_ half out into hooks — following `useCallHeartbeat` and
 `useCallRecovery` rather than the pure-module pattern — as a sequence of
-checkpoints, one in flight at a time. That document carries the invariants each
-checkpoint must preserve and the resume procedure for picking the work up
-mid-stream; teardown's verdict, whichever way it goes, is recorded back here.
+checkpoints, one in flight at a time. Current handoff, 2026-09-10: CP1
+`useCallAudioRouting`, CP2 `useConnectionQuality`, CP3 `usePeerConnection`,
+CP4 `useLocalMedia`, CP5 `useSignalingSocket` and CP6 `useAnswerPath` have
+landed, and `useCallFlow.ts` is down to 2,290 lines. CP7 teardown investigation
+is complete: `endActiveCall` should stay in the composition root because it is
+the ordered coordinator across history, timeline, CallKeep, ringtone fallback,
+heartbeat, recovery, screen share, peer connection, local media, audio routing
+and UI reset. Extracting it would relocate that coupling into a large parameter
+bag without producing a smaller hook boundary.
 
 **Device QA — outstanding.** CI cannot verify any of this: there is no E2E
 coverage of the call path (#114), so a regression here is caught by a person on
@@ -779,7 +808,8 @@ The last two items on that list exercise `call/audioRouteRules` and
 mid-call, and an answer tapped in the system UI before the app knows the call.
 
 ### P1.7: the bound is now pinned, and priced
-The JSON document is only defensible *because* the store is bounded — every
+
+The JSON document is only defensible _because_ the store is bounded — every
 read and write serialises the whole file, so the cost is a direct function of
 `MAX_MESSAGES_PER_CONVERSATION × MAX_CONVERSATIONS`. `chatDb.test.ts` now
 asserts those two constants, so raising them is a deliberate act that fails a
@@ -801,14 +831,14 @@ it excludes the native `writeFile`, which is off the JS thread. Measuring the
 real number needs a device, which this environment does not have; the
 extrapolation is recorded here rather than presented as a measurement.
 
-The conclusion is unchanged but no longer a guess: at *today's* volumes (a few
+The conclusion is unchanged but no longer a guess: at _today's_ volumes (a few
 conversations, tens of messages) the document is kilobytes and the write is
 sub-millisecond. The cost only becomes visible for a user who is at, or near,
 the retention ceiling on every conversation. SQLite stays deferred, and this
 is the number that would retire the question.
 
-
 ### P3.4 was already fixed
+
 The finding that raised it (in a review report since deleted — see the review
 ledger below) was stale. `handleRtcRelay` already requires
 `mediaState.heartbeat === true` before stamping liveness, and
@@ -816,6 +846,7 @@ ledger below) was stale. `handleRtcRelay` already requires
 refresh the deadline. Verified rather than re-implemented.
 
 ### P1.5: no `compression` middleware
+
 Deliberately skipped. It would add a runtime dependency to save bandwidth on
 JSON payloads that are already small (a chat body is capped at 4000 characters)
 for a deployment serving ~10 concurrent users. The other three items in P1.5 —
@@ -824,6 +855,7 @@ frame cap — cost nothing and were done. Revisit compression if payload sizes o
 the user count change materially.
 
 ### P3.3: behaviour is unchanged
+
 The server's heartbeat timeout was the literal `150_000`; it is now derived as
 `CALL_HEARTBEAT_INTERVAL_MS * CALL_HEARTBEAT_MISSED_BEAT_ALLOWANCE`
 (`30_000 * 5`), which is the same number. `heartbeat-timing.test.ts` pins the
@@ -839,7 +871,7 @@ attempts, media-state relays), so the context identity changed several times a
 second and every consumer re-rendered with it — the tab shell, and through it
 the chat surfaces that read none of that state.
 
-The snapshot is now published through a *store* whose identity never changes:
+The snapshot is now published through a _store_ whose identity never changes:
 consumers subscribe with `useCallSelector`, which selects the fields they read
 and compares them one level deep, so an unrelated field changing wakes nobody.
 `useCall` remains for the call surfaces that genuinely read most of the call.
@@ -869,7 +901,7 @@ three components that display a duration derive the seconds locally through
 
 `callTimerRenderIsolation.test.tsx` locks this in. It asserts both halves of the
 property — that five seconds of call time advance the banner while leaving the
-tab shell's render count untouched, *and* that a genuine state change still
+tab shell's render count untouched, _and_ that a genuine state change still
 re-renders the shell, so the first assertion cannot silently degrade into
 "nothing is being counted".
 
@@ -916,7 +948,7 @@ Three things now state the constraint instead of leaving it to be rediscovered
 from intermittent 401s:
 
 - `README.md` has a "Deployment topology" section explaining that `REDIS_URL`
-  shares the Socket.IO adapter and message bus but *not* sessions, calls,
+  shares the Socket.IO adapter and message bus but _not_ sessions, calls,
   presence, or connections.
 - `/health` reports `stateAffinity: "sticky"`, so a deployment can assert on it.
 - The server logs a warning at startup when `REDIS_URL` is set, since that is
@@ -934,7 +966,7 @@ whole files, so the diff contains no unrelated reformatting. Regression guards
 differ by package because their tooling does:
 
 - **Mobile** uses an `eslint` `max-len` rule whose `ignorePattern` inverts the
-  usual sense of the rule — every line that is *not* a type or interface
+  usual sense of the rule — every line that is _not_ a type or interface
   declaration is exempt. This deliberately avoids imposing a general
   line-length style on the codebase.
 - **Server** now runs `eslint` too (`server/eslint.config.js`, wired to
@@ -963,16 +995,16 @@ branch's transient state into permanent documentation that slowly diverges from
 the code. Anything from them that is still true belongs in this plan or in
 `mobile/docs/UX_REDESIGN_PLAN.md`, which is where it now is.
 
-| Report | What was still open | Disposition |
-| ------ | ------------------- | ----------- |
-| `add-eslint-typescript-eslint-server` | **Nit**: the Socket.IO teardown was copy-pasted into ~25 suites; a `closeTestServer()` helper would collapse them | **Fixed.** `server/test/helpers.ts` exports `closeTestServer`, and all 25 suites call it. Its docstring states why the order (drop keep-alives → close Socket.IO → close HTTP) is not arbitrary: get it wrong and a suite hangs rather than fails |
-| `add-eslint-typescript-eslint-server` | **Out of scope**: `mobile-ci.yml` never ran `npm run lint`, so only the server's linter gated CI | **Fixed.** `mobile-ci.yml` runs `npm run lint` between typecheck and tests. The mobile package was already clean, so this only closes the gap between "we have a linter" and "the linter can fail a build" |
-| `better-ux-theming-options` | **Nit**: `confirm` in `SettingsScreen` was not a `useCallback` while `dismissToast` was | **Already fixed** on the branch; verified rather than re-done |
-| `copilot-fix-reconnect-banner-state` | **Nit, deferred**: `RingingAvatar`'s 36 dp initials sit in a fixed 100 dp disc with no `maxFontSizeMultiplier`, so they clip at large accessibility text sizes | **Fixed.** Capped at `fontScaleCaps.badge`, which is the token for exactly this shape — a glyph inside fixed geometry. Pinned in `accessibility.test.tsx` alongside the other 17 caps |
-| `fix-ringing-issue-on-caller-side` | **Out of scope**: `chooseAudioRoute` performs its Bluetooth permission check *outside* its `try`, which is why a Medium finding on that branch had to be closed with a `.catch()` at the call site rather than at the cause | **Fixed at the cause.** The permission check is now inside a `try` and a throw degrades exactly as a denial does, so the module keeps its "never throw, log and degrade" contract. The call-site `.catch()` stays as defence in depth. Two tests cover it, including one asserting `restoreInCallAudioSession` resolves |
-| `fix-ringing-issue-on-caller-side` | **Nit**: the three ringer-mode strings are declared on both sides of the native bridge | **Recorded, not changed.** Both sides carry a comment pointing at the other, which is the best available without a codegen step |
-| `fix-ringing-issue-on-caller-side` | **Out of scope**: `stopIncomingRingtone()` tears down the whole audio session rather than just the ringtone | **Recorded here.** Harmless in today's flows — it always runs before the in-call session starts — but it would bite a call-waiting feature, and that is the change that should fix it |
-| `log-sql-mongo-db-query-times` | **Nit**: `dbQueries` sits outside `counters`/`histograms`/`derived` in the telemetry snapshot | **Recorded, not changed.** It is a sorted table rather than a keyed map; already documented in the type |
-| `log-sql-mongo-db-query-times` | **Out of scope**: `persistence.ts` swallows DB errors on most write paths but rethrows on `persistUser`; `MessageStore`'s `any` typing leaves the Mongo call sites unchecked | **Half fixed.** The Mongo call sites are now typed: `messageStore/types.ts` describes the collection/cursor/client surface the store actually uses, so a misspelled operator or an unpopulated result field is a compile error. The injected client is asserted once, at the connector, because neither the driver's generic `Collection` nor a test double can be checked at that boundary. `persistence.ts`'s deliberate asymmetry is unchanged and still recorded here |
-| `copilot-implementation-plan-ui-architecture-performance` | **Two Nits**, both reviewed and knowingly left: `resolveMediaGesture` is dual-natured (exported pure helper *and* worklet), and `useThemedStyles`' cache requires module-level factories | **Recorded here**, because both are invariants rather than defects: adding a non-worklet-safe call to the first reintroduces a device-only crash, and defining a style factory inside a component silently defeats the second |
-| All six | Mobile Jest reports leaked handles and needs `--forceExit`; the server suite reports one skipped test without a CI Postgres service | **Recorded in the UX plan's §0 command table**, which now names `--forceExit` rather than describing the warning as benign |
+| Report                                                    | What was still open                                                                                                                                                                                                         | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add-eslint-typescript-eslint-server`                     | **Nit**: the Socket.IO teardown was copy-pasted into ~25 suites; a `closeTestServer()` helper would collapse them                                                                                                           | **Fixed.** `server/test/helpers.ts` exports `closeTestServer`, and all 25 suites call it. Its docstring states why the order (drop keep-alives → close Socket.IO → close HTTP) is not arbitrary: get it wrong and a suite hangs rather than fails                                                                                                                                                                                                                         |
+| `add-eslint-typescript-eslint-server`                     | **Out of scope**: `mobile-ci.yml` never ran `npm run lint`, so only the server's linter gated CI                                                                                                                            | **Fixed.** `mobile-ci.yml` runs `npm run lint` between typecheck and tests. The mobile package was already clean, so this only closes the gap between "we have a linter" and "the linter can fail a build"                                                                                                                                                                                                                                                                |
+| `better-ux-theming-options`                               | **Nit**: `confirm` in `SettingsScreen` was not a `useCallback` while `dismissToast` was                                                                                                                                     | **Already fixed** on the branch; verified rather than re-done                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `copilot-fix-reconnect-banner-state`                      | **Nit, deferred**: `RingingAvatar`'s 36 dp initials sit in a fixed 100 dp disc with no `maxFontSizeMultiplier`, so they clip at large accessibility text sizes                                                              | **Fixed.** Capped at `fontScaleCaps.badge`, which is the token for exactly this shape — a glyph inside fixed geometry. Pinned in `accessibility.test.tsx` alongside the other 17 caps                                                                                                                                                                                                                                                                                     |
+| `fix-ringing-issue-on-caller-side`                        | **Out of scope**: `chooseAudioRoute` performs its Bluetooth permission check _outside_ its `try`, which is why a Medium finding on that branch had to be closed with a `.catch()` at the call site rather than at the cause | **Fixed at the cause.** The permission check is now inside a `try` and a throw degrades exactly as a denial does, so the module keeps its "never throw, log and degrade" contract. The call-site `.catch()` stays as defence in depth. Two tests cover it, including one asserting `restoreInCallAudioSession` resolves                                                                                                                                                   |
+| `fix-ringing-issue-on-caller-side`                        | **Nit**: the three ringer-mode strings are declared on both sides of the native bridge                                                                                                                                      | **Recorded, not changed.** Both sides carry a comment pointing at the other, which is the best available without a codegen step                                                                                                                                                                                                                                                                                                                                           |
+| `fix-ringing-issue-on-caller-side`                        | **Out of scope**: `stopIncomingRingtone()` tears down the whole audio session rather than just the ringtone                                                                                                                 | **Recorded here.** Harmless in today's flows — it always runs before the in-call session starts — but it would bite a call-waiting feature, and that is the change that should fix it                                                                                                                                                                                                                                                                                     |
+| `log-sql-mongo-db-query-times`                            | **Nit**: `dbQueries` sits outside `counters`/`histograms`/`derived` in the telemetry snapshot                                                                                                                               | **Recorded, not changed.** It is a sorted table rather than a keyed map; already documented in the type                                                                                                                                                                                                                                                                                                                                                                   |
+| `log-sql-mongo-db-query-times`                            | **Out of scope**: `persistence.ts` swallows DB errors on most write paths but rethrows on `persistUser`; `MessageStore`'s `any` typing leaves the Mongo call sites unchecked                                                | **Half fixed.** The Mongo call sites are now typed: `messageStore/types.ts` describes the collection/cursor/client surface the store actually uses, so a misspelled operator or an unpopulated result field is a compile error. The injected client is asserted once, at the connector, because neither the driver's generic `Collection` nor a test double can be checked at that boundary. `persistence.ts`'s deliberate asymmetry is unchanged and still recorded here |
+| `copilot-implementation-plan-ui-architecture-performance` | **Two Nits**, both reviewed and knowingly left: `resolveMediaGesture` is dual-natured (exported pure helper _and_ worklet), and `useThemedStyles`' cache requires module-level factories                                    | **Recorded here**, because both are invariants rather than defects: adding a non-worklet-safe call to the first reintroduces a device-only crash, and defining a style factory inside a component silently defeats the second                                                                                                                                                                                                                                             |
+| All six                                                   | Mobile Jest reports leaked handles and needs `--forceExit`; the server suite reports one skipped test without a CI Postgres service                                                                                         | **Recorded in the UX plan's §0 command table**, which now names `--forceExit` rather than describing the warning as benign                                                                                                                                                                                                                                                                                                                                                |
