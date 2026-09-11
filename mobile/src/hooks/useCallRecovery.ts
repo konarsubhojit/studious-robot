@@ -30,7 +30,8 @@ import * as Telemetry from '../telemetry';
 import type { Socket } from 'socket.io-client';
 import type { CallRecord } from '../../../shared/signaling/schemas';
 import type { CallHeartbeat } from './useCallHeartbeat';
-import type { CallRecoveryStatus, PeerConnection } from './useCallFlow';
+import type { CallRecoveryStatus } from '../call/recoveryEpisode';
+import type { PeerConnection } from './usePeerConnection';
 
 type MutableRef<T> = { current: T };
 

@@ -39,6 +39,28 @@ export type RecoveryTrigger =
 /** Why the budget is currently not running. */
 export type RecoveryPauseReason = 'no-connectivity' | 'socket-offline';
 
+/**
+ * What the UI is told about an in-progress recovery.
+ *
+ * A media-only failure (ICE down, socket up — the common TURN-path case) used
+ * to show no banner at all, and the banner that did show for socket loss never
+ * said that the wait was bounded.
+ */
+export type CallRecoveryStatus = {
+  trigger: RecoveryTrigger;
+  attempts: number;
+  remainingMs: number;
+  isPaused: boolean;
+  pauseReason: RecoveryPauseReason | null;
+  /**
+   * Whether a rung of the ladder is queued or in flight right now.
+   *
+   * The banner hides its manual "Retry" while one is: a button that duplicates
+   * work already underway teaches the user that pressing it does nothing.
+   */
+  isAttemptPending: boolean;
+};
+
 /** Everything a log line, metric, or banner needs to describe an episode. */
 export type RecoveryEpisodeSnapshot = {
   trigger: RecoveryTrigger;

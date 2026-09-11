@@ -11,6 +11,7 @@ import { emitEvent } from '../observability';
 import { stopCallService } from '../callService';
 import useAttachments from './useAttachments';
 import useCallAudioRouting from './useCallAudioRouting';
+import useCallPresentation from './useCallPresentation';
 import useConnectionQuality from './useConnectionQuality';
 import useLocalMedia from './useLocalMedia';
 import usePeerConnection from './usePeerConnection';
@@ -42,7 +43,7 @@ import {
   applyBitrateConstraints,
   normalizeIceTransportPolicy,
 } from '../webrtcConfig';
-import type { RecoveryPauseReason, RecoveryTrigger } from '../call/recoveryEpisode';
+import type { RecoveryTrigger } from '../call/recoveryEpisode';
 import {
   buildCallEndSummary,
   callDurationSeconds,
@@ -57,9 +58,7 @@ import {
   shouldSummariseCall,
 } from '../call/callDecisions';
 import type {
-  CallDelivery,
   CallElsewhere,
-  CallEndSummary,
   DeviceOwnedCall,
 } from '../call/callDecisions';
 import {
@@ -109,6 +108,7 @@ export type {
  */
 export type AnswerError = Error & { answerFailureReason?: string; code?: string | null };
 export type { CallStatus };
+export type { CallRecoveryStatus } from '../call/recoveryEpisode';
 
 function callTimelineStatus(call: CallRecord): string {
   return call.status === 'ended' && call.endReason === 'cancelled' ? 'cancelled' : call.status;
@@ -171,41 +171,10 @@ const CALL_STATE_REPORT_ACK_TIMEOUT_MS = 2000;
 // them, so both can be unit-tested without mounting this hook.
 
 /**
- * What prompted an ICE restart or opened a recovery episode; carried into every
- * log line about it.
- *
- * Shared with `call/recoveryEpisode.ts` so a trigger means the same thing to
- * the ladder and to the budget it runs against.
- */
-type IceRestartTrigger = RecoveryTrigger;
-
-/**
- * What the UI is told about an in-progress recovery.
- *
- * A media-only failure (ICE down, socket up — the common TURN-path case) used
- * to show no banner at all, and the banner that did show for socket loss never
- * said that the wait was bounded.
- */
-export type CallRecoveryStatus = {
-  trigger: IceRestartTrigger;
-  attempts: number;
-  remainingMs: number;
-  isPaused: boolean;
-  pauseReason: RecoveryPauseReason | null;
-  /**
-   * Whether a rung of the ladder is queued or in flight right now.
-   *
-   * The banner hides its manual "Retry" while one is: a button that duplicates
-   * work already underway teaches the user that pressing it does nothing.
-   */
-  isAttemptPending: boolean;
-};
-
-/**
  * Re-exported from `call/callDecisions` so existing importers keep working;
  * they live there because the rules that build and classify them need no React.
  */
-export type { CallDelivery, CallEndSummary };
+export type { CallDelivery, CallEndSummary } from '../call/callDecisions';
 
 // Session rotation timing, the re-mint budget and how a `call.state.report`
 // ack is read now live in `call/sessionLifecycle.ts`, next to the rules that
@@ -396,45 +365,34 @@ export default function useCallFlow({
   // preview starts and the socket/`call.initiate` round-trip completes.
   const [isPlacingCall, setIsPlacingCall] = useState(false);
 
-  // ─── UI state ─────────────────────────────────────────────────────────────
-  // Raw state setter; callers use the `updateStatus(message, severity)` helper
-  // declared below rather than setting the shape by hand.
-  const [status, setStatus] = useState({ message: '', severity: 'info' } as CallStatus);
-  // Summary of the last connected call, surfaced by the conversation timeline.
-  const [callSummary, setCallSummary] = useState(null as CallEndSummary | null);
-
-  // True while the remote participant is screen-sharing (relayed via the
-  // `call.media-state` socket event).
-  const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
-  // Whether the remote participant's camera is on, relayed over the same
-  // event. Defaults to `true` because that is what an older peer — one that
-  // never sends the flag — effectively claims, and because a video call starts
-  // with both cameras live. `track.enabled = false` neither removes the track
-  // nor tells the peer anything, so this relay is the only way the receiving
-  // side can distinguish "a picture" from "a black rectangle".
-  const [isRemoteVideoEnabled, setIsRemoteVideoEnabled] = useState(true);
+  // ─── Presentation state ──────────────────────────────────────────────────
+  const {
+    status,
+    updateStatus,
+    callSummary,
+    setCallSummary,
+    dismissCallSummary,
+    isRemoteScreenSharing,
+    setIsRemoteScreenSharing,
+    isRemoteVideoEnabled,
+    setIsRemoteVideoEnabled,
+    isLocalPrimary,
+    setIsLocalPrimary,
+    callConnectedAtMs,
+    setCallConnectedAtMs,
+    isReconnecting,
+    setIsReconnecting,
+    recoveryStatus,
+    setRecoveryStatus,
+    isConnectionLost,
+    setIsConnectionLost,
+    callDelivery,
+    setCallDelivery,
+  } = useCallPresentation();
 
   // ─── Media / WebRTC state ─────────────────────────────────────────────────
   const [remoteStream, setRemoteStream] = useState(null as WebrtcMediaStream | null);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLocalPrimary, setIsLocalPrimary] = useState(false);
-  /**
-   * Epoch milliseconds at which the current call connected, or `null`.
-   *
-   * Published instead of a ticking `elapsedCallSeconds` so this hook's result —
-   * and therefore the call/chat context identity derived from it — changes
-   * exactly twice per call rather than once per second. Components that show a
-   * duration derive it locally with `useCallElapsedSeconds`.
-   */
-  const [callConnectedAtMs, setCallConnectedAtMs] = useState(null as number | null);
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  // Non-null while a recovery episode is open, so the call screen can show what
-  // is happening (and how much budget is left) instead of a static spinner.
-  const [recoveryStatus, setRecoveryStatus] = useState(null as CallRecoveryStatus | null);
-  // True from the moment the recovery budget is spent with media still down,
-  // until the call is torn down. The ladder ending used to be invisible: the
-  // banner vanished with the episode and the call simply stopped.
-  const [isConnectionLost, setIsConnectionLost] = useState(false);
   const isConnectionLostRef = useRef(false);
   const markCallConnectedRef = useRef(() => {});
   const reportCallConnectedBridgeRef = useRef((_state: string) => {});
@@ -442,9 +400,6 @@ export default function useCallFlow({
   const beginIceRecoveryBridgeRef = useRef((_trigger: RecoveryTrigger) => {});
   const cancelIceRestartsBridgeRef = useRef((_reason: string) => {});
   const replaceOutgoingVideoTrackRef = useRef(null as ReplaceOutgoingVideoTrack | null);
-  // How the callee is being reached for an outgoing call: a device that can
-  // ring now, or one a push still has to wake. Null until the server says.
-  const [callDelivery, setCallDelivery] = useState(null as CallDelivery | null);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const socketRef = useRef(null as Socket | null);
@@ -493,14 +448,6 @@ export default function useCallFlow({
   // callIds whose queued answer has already been replayed, so the replay effect
   // stays a no-op when `acceptIncomingCall`'s identity changes.
   const replayedAnswerCallIdsRef = useRef(new Set() as Set<string>);
-
-  const updateStatus: (message: string, severity?: CallStatus['severity']) => void = useCallback(
-    (message, severity = 'info') => {
-      logVerbose('[CallFlow] Status updated', { message, severity });
-      setStatus({ message, severity });
-    },
-    [],
-  );
 
   // ─── Composed sub-hooks (identity / session / history / presence / chat) ──
   // Each owns a single, cohesive concern and is unit-testable in isolation;
@@ -871,7 +818,7 @@ export default function useCallFlow({
     if (pc) {
       applyBitrateConstraints(pc).catch(() => {});
     }
-  }, [peerConnectionRef]);
+  }, [peerConnectionRef, setCallConnectedAtMs]);
 
   useEffect(() => {
     markCallConnectedRef.current = markCallConnected;
@@ -1083,7 +1030,15 @@ export default function useCallFlow({
       releaseLocalMedia,
       resetScreenShare,
       resetAudioRouting,
+      setCallConnectedAtMs,
+      setCallDelivery,
+      setCallSummary,
       setIsCompactView,
+      setIsConnectionLost,
+      setIsLocalPrimary,
+      setIsReconnecting,
+      setIsRemoteScreenSharing,
+      setIsRemoteVideoEnabled,
       stopCallHeartbeat,
       updateStatus,
     ],
@@ -1783,6 +1738,8 @@ export default function useCallFlow({
       createOrGetSession,
       endActiveCall,
       requestCallPlacement,
+      setCallDelivery,
+      setCallSummary,
       updateStatus,
       startLocalPreview,
       userId,
@@ -1922,7 +1879,7 @@ export default function useCallFlow({
   const handleSwapStreams = useCallback(() => {
     if (!remoteStream || !localStream) return;
     setIsLocalPrimary(prev => !prev);
-  }, [localStream, remoteStream]);
+  }, [localStream, remoteStream, setIsLocalPrimary]);
 
   const handleRetryReconnect = useCallback(() => {
     const socket = socketRef.current;
@@ -1934,11 +1891,7 @@ export default function useCallFlow({
     updateStatus('Reconnecting…');
     socket.disconnect();
     socket.connect();
-  }, [updateStatus]);
-
-  const dismissCallSummary = useCallback(() => {
-    setCallSummary(null);
-  }, []);
+  }, [setIsReconnecting, updateStatus]);
 
   // ─── Local media presence relay ───────────────────────────────────────────
   // Tell the peer whenever the local screen-sharing or camera state changes:

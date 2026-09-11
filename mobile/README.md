@@ -141,6 +141,26 @@ switches to a dedicated in-call UI with:
 - in-call controls for mute, video, speaker/earpiece route, camera switch, and
   screen sharing.
 
+## Call-flow code map
+
+`useCallFlow` composes the call lifecycle; concern-specific work lives in sibling
+hooks under `src/hooks/`:
+
+| Concern | Module |
+| --- | --- |
+| Local preview, camera switching and track lifecycle | `useLocalMedia.ts` |
+| Peer connection creation and media negotiation | `usePeerConnection.ts` |
+| Socket lifecycle and signaling event handlers | `useSignalingSocket.ts` |
+| Connection-quality sampling and candidate-pair diagnostics | `useConnectionQuality.ts` |
+| Status, summary, remote-media indicators and recovery presentation state | `useCallPresentation.ts` |
+| Recovery episodes and heartbeat scheduling | `useCallRecovery.ts`, `useCallHeartbeat.ts` |
+
+Pure decisions remain in `src/call/`. The reducer, call setup/teardown ordering,
+and memoized public state/action snapshot stay in `useCallFlow`. Presentation
+setters do not drive lifecycle transitions or start timers; the orchestrator
+and recovery hook decide when to update or reset them. Existing imports from
+`useCallFlow` remain supported.
+
 ## Audio routing
 
 During a call the audio output route can be switched between the loudspeaker,
