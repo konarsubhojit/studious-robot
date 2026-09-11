@@ -46,7 +46,13 @@ async function fetchDirectory(
 
 function mayUseOfflineDirectory(error: unknown, updatedAt: number | undefined): boolean {
   if (error instanceof DirectorySearchError && error.status && error.status < 500) return false;
-  return updatedAt !== undefined && Date.now() - updatedAt < 7 * 24 * 60 * 60_000;
+  return isRecent(updatedAt, 7 * 24 * 60 * 60_000);
+}
+
+function isRecent(updatedAt: number | undefined, maxAge: number): boolean {
+  if (updatedAt === undefined) return false;
+  const age = Date.now() - updatedAt;
+  return age >= 0 && age < maxAge;
 }
 
 /**
@@ -161,7 +167,7 @@ export default function usePresenceSearch({
       const cached = await readResource<ContactRow[]>(scope, key).catch(() => null);
       if (!isCurrent()) return [];
       // Presence is deliberately absent in stored rows; it is never a durable fact.
-      if (cached && Date.now() - cached.updatedAt < 60_000) return cached.value;
+      if (cached && isRecent(cached.updatedAt, 60_000)) return cached.value;
       try {
         const users = await fetchDirectory(authedFetchRef.current, trimmedUrl, trimmedQuery, limit, signal);
         if (!isCurrent()) return [];

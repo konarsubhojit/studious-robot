@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
@@ -33,6 +33,8 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl, 
   /** @type ids the authenticated user has blocked. */
   const scope = dataScope(signalingUrl, userId);
   const [blockedUsers, setBlockedUsers] = useCachedResource<string[]>(scope, 'blocks', []);
+  const blockedUsersRef = useRef(blockedUsers);
+  blockedUsersRef.current = blockedUsers;
 
   const blockedSet = useMemo(() => new Set(blockedUsers), [blockedUsers]);
 
@@ -58,8 +60,13 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl, 
       if (!response?.ok) return;
       const data = await response.json();
       if (!Array.isArray(data.blockedUsers)) return;
+      const previous = blockedUsersRef.current;
+      const changed = previous.length !== data.blockedUsers.length ||
+        previous.some(id => !data.blockedUsers.includes(id));
       setBlockedUsers(data.blockedUsers);
-      await invalidateDirectory(scope);
+      if (changed) {
+        await invalidateDirectory(scope).catch(() => logWarn('[Blocks] Failed to invalidate cached directory'));
+      }
     } catch (error) {
       logWarn('[Blocks] fetchBlocks failed', { message: errorMessage(error) });
     }
@@ -95,7 +102,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl, 
         setBlockedUsers((prev: string[]) =>
           prev.includes(trimmedPeerId) ? prev : [...prev, trimmedPeerId],
         );
-        await invalidateDirectory(scope);
+        await invalidateDirectory(scope).catch(() => logWarn('[Blocks] Failed to invalidate cached directory'));
         return true;
       } catch (error) {
         logWarn('[Blocks] blockUser failed', { message: errorMessage(error) });
@@ -125,7 +132,7 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl, 
         setBlockedUsers((prev: string[]) =>
           prev.filter((id: string) => id !== trimmedPeerId),
         );
-        await invalidateDirectory(scope);
+        await invalidateDirectory(scope).catch(() => logWarn('[Blocks] Failed to invalidate cached directory'));
         return true;
       } catch (error) {
         logWarn('[Blocks] unblockUser failed', { message: errorMessage(error) });

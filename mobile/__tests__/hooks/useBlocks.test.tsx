@@ -1,6 +1,7 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useBlocks from '../../src/hooks/useBlocks';
+import * as resourceCache from '../../src/storage/resourceCache';
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -139,5 +140,35 @@ describe('useBlocks', () => {
     });
 
     expect(resultRef.current.blockedUsers).toEqual([]);
+  });
+
+  test('unchanged block refreshes preserve the offline directory cache', async () => {
+    const invalidate = jest.spyOn(resourceCache, 'invalidateDirectory');
+    try {
+      (global.fetch as jest.Mock).mockImplementation(() => respond({ blockedUsers: ['user-bob'] }));
+      const { resultRef } = setup();
+      await act(async () => { await resultRef.current.fetchBlocks(); });
+      await act(async () => { await resultRef.current.fetchBlocks(); });
+      expect(invalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      invalidate.mockRestore();
+    }
+  });
+
+  test('cache failures cannot turn successful server block mutations into failures', async () => {
+    const invalidate = jest.spyOn(resourceCache, 'invalidateDirectory').mockRejectedValue(new Error('disk full'));
+    try {
+      const { resultRef } = setup();
+      await act(async () => {
+        await expect(resultRef.current.blockUser('user-bob')).resolves.toBe(true);
+      });
+      expect(resultRef.current.isUserBlocked('user-bob')).toBe(true);
+      await act(async () => {
+        await expect(resultRef.current.unblockUser('user-bob')).resolves.toBe(true);
+      });
+      expect(resultRef.current.isUserBlocked('user-bob')).toBe(false);
+    } finally {
+      invalidate.mockRestore();
+    }
   });
 });

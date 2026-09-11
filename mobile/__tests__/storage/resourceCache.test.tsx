@@ -115,6 +115,17 @@ test('directory retention is bounded without pruning durable call or block state
   expect((await cache.readResource(alice, 'calls'))?.value).toEqual(['call']);
 });
 
+test('a backward device clock does not keep a directory entry fresh indefinitely', async () => {
+  await cache.writeResource(alice, 'directory:["bo",20]', [{ userId: 'old' }]);
+  await withDatabase(async db => {
+    await db.execute('UPDATE resource_cache SET updated_at = ? WHERE scope = ?', [Date.now() + 3_600_000, alice]);
+  });
+  authedFetchRef.current.mockResolvedValue({ ok: true, json: async () => ({ users: [{ userId: 'new' }] }) });
+  await act(async () => { tree = renderer.create(<Directory />); });
+  expect(await directory.searchUsers('bo')).toEqual([{ userId: 'new' }]);
+  expect(authedFetchRef.current).toHaveBeenCalledTimes(1);
+});
+
 test('simultaneous refreshes coalesce, while subsequent refreshes and failures remain retryable', async () => {
   const requests = new RequestCoalescer();
   const work = jest.fn(async () => 'fresh');
