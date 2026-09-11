@@ -74,6 +74,11 @@ jest.mock('../../src/telemetry', () => ({
 jest.mock('../../src/webrtcConfig', () => ({
   prefetchIceServersForCall: jest.fn(),
 }));
+// Stubbed for the module graph, not for the assertions: the real module pulls
+// in Firebase, and the `answer_sent` receipt is fire-and-forget.
+jest.mock('../../src/pushNotifications', () => ({
+  sendPushReceipt: jest.fn(() => Promise.resolve(true)),
+}));
 
 const { io } = require('socket.io-client');
 const { createSignalingClient } = require('../../src/signalingClient');

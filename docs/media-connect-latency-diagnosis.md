@@ -226,3 +226,49 @@ Metrics are per-process and reset on restart, with no cross-VM aggregation. Any 
 scrape `micro1` and `micro2` separately, in the same window, and must not sum histograms
 whose populations differ (§0). With per-host counts in the low single digits, the useful
 unit of evidence for now is the per-call journal trace, not the histogram.
+
+---
+
+## Addendum: what is now measurable
+
+The instrumentation proposed above has since been implemented, with one deliberate
+exclusion. Nothing in this document's analysis has changed; what follows records which of
+its open questions the next production read can actually answer.
+
+**§0 — closed.** `call_connect_latency_ms` and `call_setup_latency_ms` are now derived
+from the shared record's `answeredAt` / `createdAt` (`server/src/lib/callLatency.ts`), so
+a cross-instance call produces exactly one sample, recorded by the instance that handled
+the transition. The histogram is no longer a same-instance-only population, and the
+existing samples quoted at the top of this document should be discarded rather than
+compared against new ones. Four counters per histogram (`…_shared`, `…_local`,
+`…_unmeasured`, `…_skew_rejected`) keep the two derivations distinguishable and make
+clock skew visible instead of letting it poison the buckets — see the NTP precondition in
+`server/README.md`.
+
+**§2 — measurable, not fixed.** `rtc_signals_buffered` / `_replayed` /
+`_stranded_local` / `_stranded_remote` now count every held signal's outcome.
+`rtc_signals_stranded_remote` is precisely the cross-instance loss described above: the
+buffer that `releaseCallResources` discards because a peer instance advanced the call.
+
+The replay gap itself is **deliberately left in place**. Fixing it in the same change
+that repairs the metric measuring it would make any subsequent improvement
+unattributable — the population and the behaviour would have moved together. The counter
+establishes the size of the problem first.
+
+**§4 — closed, pending data.** The selected candidate pair's types are read from
+`getStats()` and reported as a `media_connected` receipt, strictly after `call.connected`
+is emitted so the read cannot delay the transition it reports on
+(`mobile/src/call/iceStats.ts`). A slow call that connected over `relay` and a fast one
+that connected over `host`/`srflx` are now distinguishable per call.
+
+**§5 and §6 — measurable.** The callee's serialised work after the accept ack now reports
+per-stage durations (`permissions_checked`, `media_acquired`, `peer_connection_ready`,
+`answer_sent`), and `media_connected` carries the total since the accept. The ICE-server
+fetch reports its tier and duration separately (`mobile/src/webrtcConfig.ts`), so §1's
+cost is attributable rather than hidden inside §6's total. The ICE-restart count during
+the window is read before the ladder resets and reported alongside, so a restart rung can
+finally be correlated with an inflated interval.
+
+**Still true.** The measurement methodology above is unchanged: scrape `micro1` and
+`micro2` separately and never sum their histograms. With the metric fixed, the counts
+will grow — but they remain disjoint populations, not two samples of one.

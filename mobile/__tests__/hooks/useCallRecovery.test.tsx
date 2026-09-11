@@ -18,9 +18,15 @@ jest.mock('../../src/networkMonitor', () => ({
   subscribeNetworkChanges: jest.fn(() => jest.fn()),
 }));
 jest.mock('../../src/webrtcConfig', () => ({
+  describeLastIceServerFetch: jest.fn(() => null),
   getIceServersForCall: jest.fn(() => Promise.resolve([])),
   getTurnServerEndpoints: jest.fn(() => []),
   resetIceServersForCallCache: jest.fn(),
+}));
+// Stubbed for the module graph, not for the assertions: the real module pulls
+// in Firebase, and the connect-time diagnostics receipt is fire-and-forget.
+jest.mock('../../src/pushNotifications', () => ({
+  sendPushReceipt: jest.fn(() => Promise.resolve(true)),
 }));
 
 function TestHook({ resultRef, params }: any) {
