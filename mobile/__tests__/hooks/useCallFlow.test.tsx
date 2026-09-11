@@ -807,6 +807,38 @@ describe('useCallFlow', () => {
     });
     expect(resultRef.current.callSummary).toBeNull();
   });
+
+  test('presentation updates preserve action identity and do not change call phase', () => {
+    const { resultRef, tree } = renderHook();
+    const { updateStatus, dismissCallSummary, handleSwapStreams } = resultRef.current;
+
+    act(() => {
+      updateStatus('Waiting for media', 'warning');
+    });
+    expect(resultRef.current.status).toEqual({
+      message: 'Waiting for media',
+      severity: 'warning',
+    });
+    expect(resultRef.current.callPhase).toBe(CALL_PHASES.IDLE);
+    expect(resultRef.current.activeCall).toBeNull();
+    expect(resultRef.current.incomingCall).toBeNull();
+    expect(resultRef.current.updateStatus).toBe(updateStatus);
+    expect(resultRef.current.dismissCallSummary).toBe(dismissCallSummary);
+    expect(resultRef.current.handleSwapStreams).toBe(handleSwapStreams);
+
+    act(() => {
+      updateStatus('Ready');
+      dismissCallSummary();
+      handleSwapStreams();
+    });
+    expect(resultRef.current.status).toEqual({ message: 'Ready', severity: 'info' });
+    expect(resultRef.current.callSummary).toBeNull();
+    expect(resultRef.current.isLocalPrimary).toBe(false);
+
+    act(() => {
+      tree.unmount();
+    });
+  });
 });
 
 // ─── rehydrateCallFromPush ────────────────────────────────────────────────────
