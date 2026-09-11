@@ -6,12 +6,16 @@ on:
     paths:
       - 'server/**'
       - 'shared/**'
+      - '.nvmrc'
+      - '.github/actions/setup-ci/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     branches: [master]
     paths:
       - 'server/**'
       - 'shared/**'
+      - '.nvmrc'
+      - '.github/actions/setup-ci/**'
       - '.github/workflows/backend-ci.yml'
 
 permissions:
@@ -20,7 +24,11 @@ permissions:
 jobs:
   test:
     name: Lint, build & test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, studious-robot-ci]
+    timeout-minutes: 20
+    concurrency:
+      group: backend-test-${{ github.ref }}
+      cancel-in-progress: true
 
     defaults:
       run:
@@ -36,7 +44,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: studious_test
         ports:
-          - 5432:5432
+          - '127.0.0.1::5432'
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 10s
@@ -47,8 +55,7 @@ jobs:
       # Connection components for the ephemeral CI Postgres service. The full
       # DATABASE_URL(s) are composed from these in a step below to avoid
       # embedding a credential-shaped literal in the workflow.
-      PGHOST: localhost
-      PGPORT: '5432'
+      PGHOST: 127.0.0.1
       PGUSER: postgres
       PGPASSWORD: postgres
       PGDATABASE: studious_test
@@ -56,17 +63,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
         with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: server/package-lock.json
+          persist-credentials: false
+
+      - name: Set up CI dependencies
+        uses: ./.github/actions/setup-ci
+        with:
+          package: server
+          cache-scope: ci
 
       - name: Compose database URLs
         # App (pooled) and migration (direct) URLs point at the same CI service.
+        env:
+          PGPORT: ${{ job.services.postgres.ports[5432] }}
         run: |
+          set -euo pipefail
+          test -n "$PGPORT"
+          echo "PGPORT=${PGPORT}" >> "$GITHUB_ENV"
           URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}"
           echo "DATABASE_URL=${URL}" >> "$GITHUB_ENV"
           echo "DATABASE_URL_DIRECT=${URL}" >> "$GITHUB_ENV"
@@ -95,7 +108,9 @@ jobs:
 
   deploy:
     name: Deploy to Oracle Cloud VM
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, studious-robot-deploy]
+    timeout-minutes: 20
+    environment: production
     needs: test
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
@@ -108,13 +123,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
         with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: server/package-lock.json
+          persist-credentials: false
+
+      - name: Set up CI dependencies
+        uses: ./.github/actions/setup-ci
+        with:
+          package: server
+          cache-scope: deploy
 
       - name: Install dependencies
         working-directory: server

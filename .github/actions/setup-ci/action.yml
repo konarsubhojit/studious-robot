@@ -1,0 +1,61 @@
+name: Set up isolated CI dependencies
+description: Configure Node and a dependency-only cache outside the disposable checkout.
+inputs:
+  package:
+    description: Package directory (server or mobile)
+    required: true
+  cache-scope:
+    description: Trust boundary (ci, release or deploy)
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Prepare job-local directories
+      id: directories
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        PACKAGE: ${{ inputs.package }}
+        CACHE_SCOPE: ${{ inputs.cache-scope }}
+        JOB_ID: ${{ github.job }}
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+      run: |
+        set -euo pipefail
+        case "$PACKAGE" in server|mobile) ;; *) exit 1 ;; esac
+        case "$CACHE_SCOPE" in ci|release|deploy) ;; *) exit 1 ;; esac
+        test "$RUNNER_OS" = Linux
+        test "$RUNNER_ARCH" = X64
+        JOB_ROOT="$(mktemp -d "$RUNNER_TEMP/studious-robot-${RUN_ID}-${RUN_ATTEMPT}-${JOB_ID}.XXXXXX")"
+        mkdir -p "$JOB_ROOT/npm" "$JOB_ROOT/tmp"
+        echo "NPM_CONFIG_CACHE=$JOB_ROOT/npm" >> "$GITHUB_ENV"
+        echo "TMPDIR=$JOB_ROOT/tmp" >> "$GITHUB_ENV"
+        echo "cache-path=$JOB_ROOT/npm/_cacache" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Runner capacity"
+          echo "- CPU cores: $(nproc)"
+          echo "- Memory (MiB): $(free -m | awk '/^Mem:/ {print $2}')"
+          echo "- Free workspace disk (MiB): $(df -Pm "$GITHUB_WORKSPACE" | awk 'NR == 2 {print $4}')"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        package-manager-cache: false
+
+    # Only public package content is cached, never npm logs, credentials or
+    # node_modules. GitHub's ref scoping prevents PRs from updating master caches.
+    - name: Cache npm downloads
+      id: npm-cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.directories.outputs.cache-path }}
+        key: studious-robot-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-scope }}-${{ inputs.package }}-npm-${{ hashFiles('.nvmrc', format('{0}/package-lock.json', inputs.package)) }}
+
+    - name: Report dependency cache
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.npm-cache.outputs.cache-hit }}
+      run: |
+        echo "- npm cache hit: ${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
