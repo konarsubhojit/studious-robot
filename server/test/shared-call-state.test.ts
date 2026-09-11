@@ -8,8 +8,6 @@ import { closeTestServer, listenOnRandomPort, readJson } from './helpers.ts';
 function createSharedBackends() {
   const calls = new Map<string, import('../src/stores/contracts.ts').CallRecord>();
   const sessions = new Map<string, import('../src/stores/contracts.ts').SessionRecord>();
-  let leaseOwner: string | null = null;
-  let leaseExpiry = 0;
   const terminal = new Set(['ended', 'declined', 'missed', 'busy', 'unreachable']);
 
   const saves: string[] = [];
@@ -47,20 +45,13 @@ function createSharedBackends() {
         calls.set(callId, { ...call, status: toStatus, updatedAt: new Date().toISOString() });
         return { ok: true as const, call: { ...(calls.get(callId) as any) }, idempotent: false };
       },
-      acquireSweepLease: async (instanceId: string, ttlMs: number) => {
-        const now = Date.now();
-        if (leaseOwner === instanceId || leaseExpiry <= now) {
-          leaseOwner = instanceId;
-          leaseExpiry = now + ttlMs;
-          return true;
+      listActiveCallsForUser: async (userId: string) => {
+        const active: import('../src/stores/contracts.ts').CallRecord[] = [];
+        for (const call of calls.values()) {
+          if (terminal.has(call.status)) continue;
+          if (call.callerId === userId || call.calleeId === userId) active.push({ ...call });
         }
-        return false;
-      },
-      releaseSweepLease: async (instanceId: string) => {
-        if (leaseOwner === instanceId) {
-          leaseOwner = null;
-          leaseExpiry = 0;
-        }
+        return active;
       },
     },
     sessionState: {

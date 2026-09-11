@@ -25,6 +25,32 @@ const CALL_TRANSITION_CHANNEL = 'signaling:call.transitions';
 const RTC_ACTIVE_CALL_STATES = new Set(['accepted', 'connecting_media', 'in_call']);
 
 /**
+ * How long a locally cached call record may be trusted without re-reading the
+ * shared (cross-instance) store.
+ *
+ * The local `state.calls` map is a cache of a record another instance may have
+ * advanced. Reading Redis on every single RTC frame would put a network round
+ * trip on the hot media-setup path, so a record this instance synced within the
+ * window is used as-is; anything older is re-read. The transition subscriber
+ * (see `domain/callSync.ts`) keeps the window mostly moot — it refreshes the
+ * record the moment a peer instance moves it — but pub/sub is best-effort, so
+ * this bound is what makes a dropped message survivable.
+ */
+const DEFAULT_CALL_STATE_FRESHNESS_MS = 1_000;
+
+/**
+ * Cap on RTC signals held per call while it is not yet media-ready.
+ *
+ * Trickle ICE starts the moment the callee taps accept, so candidates routinely
+ * arrive before the `accepted` transition has committed. They used to be
+ * rejected and lost, which starves ICE and leaves the call stuck in
+ * `connecting_media` until the media timeout kills it. They are buffered
+ * instead — bounded, because an unbounded per-call queue fed by a client is a
+ * memory amplification vector.
+ */
+const MAX_BUFFERED_RTC_SIGNALS_PER_CALL = 32;
+
+/**
  * The status a call reaches once the peers report connected media.
  *
  * This is the call's *steady state*: it has no media-setup deadline, only a
@@ -314,6 +340,18 @@ const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const SHARED_SESSION_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Expiry applied to every shared call key and to the per-user index of active
+ * calls that is kept alongside it.
+ *
+ * Comfortably longer than {@link DEFAULT_MAX_CALL_DURATION_MS} (4h), so it can
+ * never expire a live conversation, and short enough that a record orphaned by
+ * a crash between the two writes disappears on its own rather than blocking the
+ * participants' next call forever. The index is a cache of the call keys, so a
+ * member that outlives its record resolves to nothing and is dropped on read.
+ */
+const SHARED_CALL_MAX_TTL_MS = 24 * 60 * 60 * 1000;
+
 /** How often expired sessions are swept out of the in-memory map. */
 const DEFAULT_SESSION_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -373,6 +411,8 @@ export {
   SIGNALING_VERSION,
   CALL_TRANSITION_CHANNEL,
   RTC_ACTIVE_CALL_STATES,
+  DEFAULT_CALL_STATE_FRESHNESS_MS,
+  MAX_BUFFERED_RTC_SIGNALS_PER_CALL,
   CONNECTED_CALL_STATUS,
   TERMINAL_CALL_STATES,
   CALL_END_REASONS,
@@ -405,6 +445,7 @@ export {
   DEFAULT_SESSION_TTL_MS,
   DEFAULT_SESSION_SWEEP_INTERVAL_MS,
   SHARED_SESSION_MAX_TTL_MS,
+  SHARED_CALL_MAX_TTL_MS,
   DEFAULT_MAX_PUSH_DEVICES_PER_USER,
   DEVICE_FANOUT_ALERT_THRESHOLD,
   DEFAULT_FANOUT_PROBE_INTERVAL_MS,

@@ -311,7 +311,9 @@ function describeBusyBlockers(state: ServerState, call: CallRecord): string {
   if (call.status !== 'busy') return '';
   const blockers = describeActiveCallsForUser(state, call.calleeId)
     .filter((blocker) => blocker.callId !== call.callId)
-    .map((blocker) => `${blocker.callId}:${blocker.status}:${blocker.ageMs}ms`);
+    .map(
+      (blocker) => `${blocker.callId}:${blocker.status}:${blocker.ageMs}ms:stale${blocker.staleMs}ms`
+    );
   return blockers.length > 0 ? ` blockedBy=${blockers.join(',')}` : '';
 }
 
@@ -475,6 +477,10 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { p
   if (state.messageBus && previousStatus !== null) {
     state.messageBus
       .publish(CALL_TRANSITION_CHANNEL, {
+        // The origin is what lets a subscriber skip the transition it just
+        // performed itself, so applying a peer's transition costs a shared-store
+        // read only on the instances that did not already know.
+        instanceId: state.instanceId ?? null,
         callId: call.callId,
         previousStatus,
         status: call.status,
@@ -504,6 +510,7 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { p
 }
 
 export {
+  clearIncomingCallPushState,
   emitToUserSockets,
   createCallEnvelope,
   getCallTransitionEventName,

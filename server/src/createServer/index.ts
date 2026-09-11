@@ -13,7 +13,9 @@ import { runRetentionSweep } from '../lib/retention.ts';
 import { hydrateAccountDeletions, runAccountDeletionSweep } from '../domain/accountDeletion.ts';
 import { waitForSocketsToDrain } from '../lib/lifecycle.ts';
 import { tickRingingTimeouts, sanitizeHydratedCalls, pruneTerminalCalls } from '../domain/calls.ts';
+import { refreshExpiredCallsFromShared } from '../domain/sharedCalls.ts';
 import { notifyCallTransition } from '../domain/notifications.ts';
+import { subscribeToCallTransitions } from '../domain/callSync.ts';
 import { loadPersistedStateFromDb, pruneStaleDevices } from '../lib/persistence.ts';
 import { mountRoutes } from '../routes/index.ts';
 import { registerSocketHandlers } from '../signaling/index.ts';
@@ -258,6 +260,17 @@ function createServer(opts: CreateServerOptions = {}) {
       console.error(`[cache] failed to subscribe to invalidations: ${describeError(error)}`);
     });
 
+  // Adopt call transitions performed by peer instances, so this instance's
+  // registry cannot go on describing a call that has moved on elsewhere.
+  let unsubscribeFromCallTransitions: (() => Promise<void>) | null = null;
+  const callTransitionSubscription = subscribeToCallTransitions(state)
+    .then((unsubscribe) => {
+      unsubscribeFromCallTransitions = unsubscribe;
+    })
+    .catch((error: unknown) => {
+      console.error(`[calls] failed to subscribe to call transitions: ${describeError(error)}`);
+    });
+
   verboseLog('server', 'state.initialized', {
     storeNames: Object.entries(stores)
       .filter(([, value]) => value instanceof Map)
@@ -365,13 +378,13 @@ function createServer(opts: CreateServerOptions = {}) {
     );
   const pollTimer = setInterval(() => {
     void (async () => {
-      if (state.callState) {
-        const lockTtlMs = Math.max(RINGING_POLL_MS * 3, 15_000);
-        const acquired = await state.callState.acquireSweepLease(state.instanceId ?? 'unknown', lockTtlMs);
-        if (!acquired) {
-          return;
-        }
-      }
+      // Every instance sweeps its own registry. A fleet-wide lease used to gate
+      // this, which meant the instances that lost it never examined their own
+      // records at all — the stale entries that block a user's calls are
+      // precisely the ones nobody else can see. Clobbering a call another
+      // instance has since advanced is prevented instead by re-reading each
+      // expired candidate from the shared store before it is finalised.
+      await refreshExpiredCallsFromShared(state, callTimeouts);
 
       const now = Date.now();
       tickRingingTimeouts(
@@ -534,6 +547,10 @@ function createServer(opts: CreateServerOptions = {}) {
       if (typeof unsubscribeFromCacheInvalidations === 'function') {
         await unsubscribeFromCacheInvalidations();
       }
+      await callTransitionSubscription;
+      if (typeof unsubscribeFromCallTransitions === 'function') {
+        await unsubscribeFromCallTransitions();
+      }
 
       // Close durable stores (Redis/Postgres) if they support it.
       if (typeof stores.close === 'function') {
@@ -573,6 +590,11 @@ function createServer(opts: CreateServerOptions = {}) {
      * directly (see `shutdown()`, which awaits it before closing stores).
      */
     cacheInvalidationSubscriptionReady: cacheInvalidationSubscription,
+    /**
+     * Resolves once the call-transition subscription attempt has settled.
+     * Exposed for the same reason as `cacheInvalidationSubscriptionReady`.
+     */
+    callTransitionSubscriptionReady: callTransitionSubscription,
     getCall: (callId: string) => state.calls.get(callId) || null,
     getCallEvents: (callId: string) => state.callEvents.get(callId) || [],
     getMetrics: () => state.telemetry.getSnapshot(),
