@@ -151,9 +151,11 @@ async function createRedisPgStores(
    * presenting as an outage.
    *
    * Only permission errors are absorbed, and each one is recorded so `/health`
-   * reports the subsystem as degraded. Every other failure (an unreachable
-   * Redis above all) keeps rejecting exactly as before, so the intentional
-   * fail-closed startup path in `src/index.ts` is untouched.
+   * reports the subsystem as degraded — including on the bus, whose callers
+   * would otherwise log the same refusal once at boot and then look healthy
+   * forever. Every other failure (an unreachable Redis above all) keeps
+   * rejecting exactly as before, so the intentional fail-closed startup path in
+   * `src/index.ts` is untouched.
    */
   function guardPermissionFailures(
     client: any,

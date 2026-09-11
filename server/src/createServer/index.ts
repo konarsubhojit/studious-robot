@@ -383,7 +383,8 @@ function createServer(opts: CreateServerOptions = {}) {
     );
   /** `/health` scope name for the stale-call sweep. */
   const CALL_SWEEP_SCOPE = 'call-sweep';
-  const pollTimer = setInterval(() => {    void (async () => {
+  const pollTimer = setInterval(() => {
+    void (async () => {
       // Every instance sweeps its own registry. A fleet-wide lease used to gate
       // this, which meant the instances that lost it never examined their own
       // records at all — the stale entries that block a user's calls are
