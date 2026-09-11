@@ -23,7 +23,11 @@ credentials:
 
 ```dotenv
 DATABASE_URL=postgresql://wetalk:<URL_ENCODED_DB_PASSWORD>@<A1_PRIVATE_IP>:5432/wetalk
-REDIS_URL=redis://<A1_PRIVATE_IP>:6379
+# Managed Redis (OCI Cache / Valkey) is TLS-only, so the scheme is rediss://.
+# A plain redis:// URL never connects to such an endpoint.
+REDIS_URL=rediss://<CACHE_USER>:<URL_ENCODED_CACHE_PASSWORD>@<CACHE_PRIVATE_ENDPOINT>:6379
+# Self-hosted Redis on the private VCN, without TLS:
+# REDIS_URL=redis://<A1_PRIVATE_IP>:6379
 INSTANCE_ID=<UNIQUE_INTEGER>
 NODE_ENV=production
 BACKUP_HEALTHCHECKS_URL=https://hc-ping.com/<backup-check-uuid>
@@ -100,7 +104,9 @@ curl --fail http://127.0.0.1:4173/health
 ```
 
 Restart `oci` as well after its migration. Confirm every health response
-reports shared state and inspect logs if a restart fails:
+reports shared state — and then prove fan-out really works, per
+[Verify fan-out across the fleet](#verify-fan-out-across-the-fleet) — and
+inspect logs if a restart fails:
 
 ```bash
 sudo journalctl -u robot-signal.service -n 100 --no-pager
@@ -189,6 +195,104 @@ environment:
 
 ```bash
 sudo bash -c 'set -a; . /etc/robot-signal/env; set +a; psql "$DATABASE_URL" -c "select 1"'
+```
+
+## Managed Redis (OCI Cache / Valkey)
+
+OCI Cache has no public endpoint, so every signaling host reaches it over the
+VCN: the cache subnet needs a security list / NSG rule allowing the Redis port
+from each signaling host's subnet. Each instance opens five connections — four
+from `createRedisPgStores()` (bus pub/sub plus adapter pub/sub) and one for the
+shared read cache — so a three-host fleet needs fifteen against the cluster's
+connection limit, multiplied again by `SIGNALING_CLUSTER_WORKERS`.
+
+`@socket.io/redis-adapter` needs `createCluster` against a cluster-mode
+endpoint and `createRedisPgStores()` calls `createClient`, so use a
+non-clustered endpoint (or wire a cluster-aware `opts.createClient`).
+
+### Grant both ACL axes
+
+Keys and pub/sub channels are governed independently and the default is
+`resetchannels`. Granting one without the other is the single most common way
+to bring a healthy-looking fleet up broken:
+
+- keys but **no channels** — subscribes are refused, so cross-instance fan-out
+  never works;
+- channels but **no keys** — the service boots cleanly, then fails the
+  stale-call sweep every five seconds, so nothing retires stranded `ringing`
+  records and users start being told the peer is busy.
+
+Neither is fatal any more: both are logged once (then rate-limited) as
+`[redis] <scope> is DEGRADED: NOPERM …` and reported on `/health` under
+`redis.issues[]`. Fix the grant:
+
+```redis
+ACL SETUSER <CACHE_USER> on >_<CACHE_PASSWORD> ~* &* +@all
+```
+
+A narrower grant must still cover the keys `signaling:call:*`,
+`signaling:user:*:calls`, `signaling:session:*` and `wetalk:cache:*`, the
+channels `signaling:call.transitions`, `signaling:cache.invalidate` and
+`socket.io#*`, plus `+@scripting` (the call store's Lua `EVAL` paths) and
+`+@keyspace` (the cache's `SCAN`-based prefix deletes).
+
+### Pre-flight the grant before restarting
+
+Run from one signaling host so a bad grant is caught here rather than as a
+restart loop:
+
+```bash
+sudo -i
+set -a; . /etc/robot-signal/env; set +a
+redis-cli --tls -u "$REDIS_URL" ACL WHOAMI
+redis-cli --tls -u "$REDIS_URL" ACL GETUSER <CACHE_USER>
+redis-cli --tls -u "$REDIS_URL" PUBLISH signaling:call.transitions preflight
+redis-cli --tls -u "$REDIS_URL" SET signaling:call:preflight ok PX 5000
+redis-cli --tls -u "$REDIS_URL" EVAL "return redis.call('GET', KEYS[1])" 1 signaling:call:preflight
+redis-cli --tls -u "$REDIS_URL" DEL signaling:call:preflight
+```
+
+`PUBLISH` must return an integer (`0` subscribers is fine) and the `SET`/`EVAL`
+round trip must return `OK`/`ok`. Any `NOPERM` names the axis still missing.
+
+## Verify fan-out across the fleet
+
+`stateAffinity: "shared"` only says the instance found a `REDIS_URL`; it is not
+proof that an event emitted on one host reaches a socket held by another. That
+is measured by the active probe in `server/src/lib/fanoutProbe.ts`. Run on
+**every** host:
+
+```bash
+curl -s localhost:4173/health | jq '{stateAffinity, fanout, instanceId}'
+```
+
+```json
+{ "stateAffinity": "shared",
+  "fanout": { "transport": "redis-adapter", "probing": true,
+              "peersSeen": ["1"], "lastPeerEventAgeMs": 445,
+              "healthy": true, "mixedTransport": false },
+  "instanceId": "0" }
+```
+
+`peersSeen` must list the *other* instances, `healthy` must be `true` and
+`mixedTransport` `false`. Each host needs a **unique `INSTANCE_ID`** — duplicates
+are indistinguishable to the probe as well as to the multi-instance guard.
+Probes are emitted every `FANOUT_PROBE_INTERVAL_MS` (default 15s), so wait at
+least one interval after a restart before concluding fan-out is broken. Check
+`redis.issues[]` in the same response: a non-empty list names a subsystem an ACL
+has disabled.
+
+Only when `fanout.healthy` is true on every host should nginx move from
+`ip_hash` to round-robin.
+
+A cross-instance call is the end-to-end proof: the caller's and callee's
+transitions interleave across hosts on one record.
+
+```
+02:37:23  micro2   call.created callerId=<caller> calleeId=<callee> status=ringing
+02:37:26  micro1   call.incoming.ack  userId=<callee>
+02:37:27  micro1   ringing->accepted           actor=<callee>
+02:37:34  micro2   connecting_media->in_call   actor=<caller>
 ```
 
 ## systemd restart backoff

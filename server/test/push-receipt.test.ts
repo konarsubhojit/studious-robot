@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
+import { createMemoryStores } from '../src/stores/index.ts';
 import { captureConsoleLog, closeTestServer, listenOnRandomPort, postJson } from './helpers.ts';
 
 async function startServer() {
@@ -75,6 +76,47 @@ test('push receipt accepts a plain deviceId without a live session', async (t) =
   assert.equal(res.status, 202);
   assert.equal(res.body.deviceId, 'device-cold-start');
   assert.equal(res.body.latencyMs, null);
+});
+
+test('push receipt times a call created on another instance from the shared record', async (t) => {
+  // The receipt lands on whichever instance the load balancer picked, which is
+  // not necessarily the one that created the call: timing it against the local
+  // registry alone reported `latencyMs=N/A` for exactly the cross-instance
+  // pushes worth measuring.
+  const createdAt = new Date(Date.now() - 1_500).toISOString();
+  const shared = {
+    get: async (callId: string) =>
+      callId === 'call-on-peer-instance'
+        ? ({
+            callId,
+            callerId: 'user-alice',
+            calleeId: 'user-bob',
+            status: 'ringing',
+            createdAt,
+            updatedAt: createdAt,
+          } as any)
+        : null,
+    save: async () => {},
+    transitionAtomic: async () => ({ ok: false as const, error: 'not_found' as const }),
+    listActiveCallsForUser: async () => [],
+  };
+  const stores = Object.assign(createMemoryStores(), {
+    stateAffinity: 'shared' as const,
+    callState: shared,
+  });
+  const server = createServer({ stores });
+  const port = await listenOnRandomPort(server.httpServer);
+  const url = `http://127.0.0.1:${port}`;
+  t.after(() => closeTestServer(server));
+
+  const res = await postJson(url, '/devices/push-receipt', {
+    deviceId: 'device-bob-phone',
+    callId: 'call-on-peer-instance',
+    stage: 'received',
+  });
+
+  assert.equal(res.status, 202);
+  assert.ok(res.body.latencyMs >= 1_500, `expected a real latency, got ${res.body.latencyMs}`);
 });
 
 test('push receipt rejects invalid stages', async (t) => {

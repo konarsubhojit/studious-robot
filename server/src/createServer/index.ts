@@ -24,6 +24,11 @@ import { describeError } from '../lib/errors.ts';
 import { parseByteSize, parseNonNegativeNumber } from '../lib/env.ts';
 import { setQueryTimingSink } from '../lib/queryTiming.ts';
 import { createFanoutProbe } from '../lib/fanoutProbe.ts';
+import {
+  clearRedisDegradation,
+  isRedisPermissionError,
+  reportRedisPermissionFailure,
+} from '../lib/redisHealth.ts';
 import type { CreateServerOptions } from './types.ts';
 
 /**
@@ -376,6 +381,8 @@ function createServer(opts: CreateServerOptions = {}) {
       process.env.MAX_RETAINED_CALLS,
       DEFAULT_MAX_RETAINED_CALLS
     );
+  /** `/health` scope name for the stale-call sweep. */
+  const CALL_SWEEP_SCOPE = 'call-sweep';
   const pollTimer = setInterval(() => {
     void (async () => {
       // Every instance sweeps its own registry. A fleet-wide lease used to gate
@@ -402,7 +409,25 @@ function createServer(opts: CreateServerOptions = {}) {
       // Bound the in-memory history the sweep above just added to, so neither it
       // nor `GET /calls` iterates a map that only ever grows.
       pruneTerminalCalls(state, { maxAgeMs: callRetentionMs, maxRetainedCalls, now });
+      // A sweep that has been failing and now succeeds is the only evidence
+      // that a permission grant took effect, so clear the degradation here
+      // rather than waiting for a restart.
+      clearRedisDegradation(CALL_SWEEP_SCOPE);
     })().catch((error: unknown) => {
+      // `NOPERM` on a key permanently disables the sweep, so nothing retires a
+      // stranded `ringing` record — the condition that makes the user's next
+      // call be rejected as busy. That is a degraded fleet, not a log line
+      // every five seconds: record it for `/health` and rate-limit the noise.
+      if (isRedisPermissionError(error)) {
+        reportRedisPermissionFailure({
+          scope: CALL_SWEEP_SCOPE,
+          error,
+          remedy:
+            'grant the signaling user key access to `signaling:*` plus `+@scripting`, e.g. ' +
+            '`ACL SETUSER <user> on >_<password> ~* &* +@all` (see docs/SETUP.md)',
+        });
+        return;
+      }
       console.error(`[calls] stale-call sweep failed: ${describeError(error)}`);
     });
   }, RINGING_POLL_MS);

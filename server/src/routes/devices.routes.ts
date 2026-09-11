@@ -113,7 +113,7 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
     });
   });
 
-  router.post(API_ROUTES.DEVICES_PUSH_RECEIPT, (req, res) => {
+  router.post(API_ROUTES.DEVICES_PUSH_RECEIPT, async (req, res) => {
     const session = getSessionFromRequest(req, state.sessions);
     const deviceId = session?.deviceId || normaliseId(req.body?.deviceId);
     const callId = normaliseId(req.body?.callId);
@@ -135,9 +135,15 @@ function createDevicesRouter({ state, db }: { state: import('../stores/contracts
       return;
     }
 
-    // Only calls are tracked in memory long enough to time the push against;
-    // message receipts report the stage alone.
-    const call = callId ? state.calls.get(callId) || null : null;
+    // Only calls are tracked long enough to time the push against; message
+    // receipts report the stage alone. The local registry is consulted first,
+    // then the shared record: a call created on another instance is absent from
+    // this process's map, which used to report `latencyMs=N/A` for exactly the
+    // cross-instance pushes worth measuring.
+    let call = callId ? state.calls.get(callId) || null : null;
+    if (callId && !call && state.callState) {
+      call = await state.callState.get(callId).catch(() => null);
+    }
     const createdAtMs = call?.createdAt ? new Date(call.createdAt).getTime() : NaN;
     const latencyMs = Number.isFinite(createdAtMs) ? Math.max(0, Date.now() - createdAtMs) : null;
     console.log(

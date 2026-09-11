@@ -753,12 +753,20 @@ export async function handleBackgroundPushMessage(remoteMessage: { data?: Record
   // with no live connection is answerable only through the app's own
   // connection-independent accept path.
   const connectionLive = await isCallConnectionLive(incoming.callId);
+  const livenessReason =
+    connectionLive === null ? null : connectionLive ? 'connection_live' : 'connection_missing';
   await sendPushReceipt({
     remoteMessage,
     callId: incoming.callId,
     stage: displayResult.shown ? 'ui_displayed' : 'ui_failed',
-    reason:
-      connectionLive === null ? null : connectionLive ? 'connection_live' : 'connection_missing',
+    // A failed display reports *why* it failed. Reporting connection liveness
+    // instead made every `ui_failed` read as `reason=connection_live`, which
+    // says nothing about the missing UI and reads as though the push path
+    // suppressed it on purpose — the actual cause (`telecom_threw`,
+    // `phone_account_not_registered`, `duplicate_callId_deduped`, …) was lost.
+    reason: displayResult.shown
+      ? livenessReason
+      : (displayResult.reason ?? livenessReason),
   });
   await logBackgroundInfo('[Push] Background message handler exit', {
     callId: incoming.callId,

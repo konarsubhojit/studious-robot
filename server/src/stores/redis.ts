@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { STORE_NAMES } from './contracts.ts';
 import { createRedisMessageBus } from '../messageBus.ts';
+import { isRedisPermissionError, reportRedisPermissionFailure } from '../lib/redisHealth.ts';
 import {
   SHARED_SESSION_MAX_TTL_MS,
   SHARED_CALL_MAX_TTL_MS,
@@ -129,20 +130,76 @@ async function createRedisPgStores(
     opts.createAdapter || (await import('@socket.io/redis-adapter')).createAdapter;
 
   const clients: any[] = [];
-  async function openClient(): Promise<any> {
+
+  /**
+   * What an operator must grant when Redis refuses a command outright.
+   * Named in one place so every degraded-subsystem message says the same
+   * thing.
+   */
+  const PERMISSION_REMEDY =
+    'grant the signaling user both ACL axes, e.g. ' +
+    '`ACL SETUSER <user> on >_<password> ~* &* +@all` (see docs/SETUP.md)';
+
+  /**
+   * Make the commands that no caller ever awaits survive a permission failure.
+   *
+   * `@socket.io/redis-adapter` subscribes (and publishes) fire-and-forget: it
+   * never attaches a rejection handler, and `client.on('error')` does not cover
+   * a rejected *command* promise. So a Valkey user without channel permissions
+   * used to take the process down with an unhandled `SimpleError: NOPERM`,
+   * which systemd turned into a fleet-wide restart loop — a misconfiguration
+   * presenting as an outage.
+   *
+   * Only permission errors are absorbed, and each one is recorded so `/health`
+   * reports the subsystem as degraded — including on the bus, whose callers
+   * would otherwise log the same refusal once at boot and then look healthy
+   * forever. Every other failure (an unreachable Redis above all) keeps
+   * rejecting exactly as before, so the intentional fail-closed startup path in
+   * `src/index.ts` is untouched.
+   */
+  function guardPermissionFailures(
+    client: any,
+    { scope, methods }: { scope: string; methods: string[] }
+  ): any {
+    const absorb = (error: unknown): undefined => {
+      if (!isRedisPermissionError(error)) throw error;
+      reportRedisPermissionFailure({ scope, error, remedy: PERMISSION_REMEDY });
+      return undefined;
+    };
+    for (const method of methods) {
+      const original = client?.[method];
+      if (typeof original !== 'function') continue;
+      client[method] = (...args: unknown[]) => {
+        let result: any;
+        try {
+          result = original.apply(client, args);
+        } catch (error) {
+          return absorb(error);
+        }
+        return typeof result?.then === 'function'
+          ? result.then(undefined, absorb)
+          : result;
+      };
+    }
+    return client;
+  }
+
+  async function openClient(guard?: { scope: string; methods: string[] }): Promise<any> {
     const client = createClient();
     client.on?.('error', (error: any) => {
       console.error(`[stores:redis] client error: ${error?.message}`);
     });
     await client.connect?.();
+    if (guard) guardPermissionFailures(client, guard);
     clients.push(client);
     return client;
   }
 
+  const SUBSCRIBE_METHODS = ['subscribe', 'pSubscribe', 'sSubscribe'];
   const busPub = await openClient();
-  const busSub = await openClient();
-  const adapterPub = await openClient();
-  const adapterSub = await openClient();
+  const busSub = await openClient({ scope: 'message-bus', methods: SUBSCRIBE_METHODS });
+  const adapterPub = await openClient({ scope: 'fanout-adapter', methods: ['publish'] });
+  const adapterSub = await openClient({ scope: 'fanout-adapter', methods: SUBSCRIBE_METHODS });
 
   const messageBus = createRedisMessageBus({ pub: busPub, sub: busSub });
   const instanceId = process.env.INSTANCE_ID || randomUUID();

@@ -28,6 +28,39 @@ test('GET /health returns ok status', async () => {
   }
 });
 
+test('GET /health reports Redis permission degradations so they are not silent', async (t) => {
+  const { reportRedisPermissionFailure, resetRedisHealth } = await import('../src/lib/redisHealth.ts');
+  const originalError = console.error;
+  console.error = () => {};
+  resetRedisHealth();
+  t.after(() => {
+    console.error = originalError;
+    resetRedisHealth();
+  });
+
+  const { httpServer } = createServer();
+  const port = await listenOnRandomPort(httpServer);
+  t.after(() => new Promise((resolve) => httpServer.close(() => resolve(undefined))));
+
+  const healthy = await readJson(await fetch(`http://127.0.0.1:${port}/health`));
+  assert.deepEqual(healthy.redis, { degraded: false, issues: [] });
+
+  // A NOPERM on the adapter's subscribe permanently disables fan-out without
+  // killing the process, so /health is the only place the condition shows.
+  reportRedisPermissionFailure({
+    scope: 'fanout-adapter',
+    error: new Error('NOPERM No permissions to access a channel'),
+    remedy: 'grant channels',
+  });
+
+  const degraded = await readJson(await fetch(`http://127.0.0.1:${port}/health`));
+  assert.equal(degraded.status, 'ok');
+  assert.equal(degraded.redis.degraded, true);
+  assert.equal(degraded.redis.issues[0].scope, 'fanout-adapter');
+  assert.equal(degraded.redis.issues[0].kind, 'permission');
+  assert.match(degraded.redis.issues[0].message, /NOPERM/);
+});
+
 test('GET /health names the message-store backend and reports it ready', async () => {
   const messageStore = asMessageStore({ type: 'postgres' as const, close: async () => {} });
   const { httpServer } = createServer({ messageStore });
