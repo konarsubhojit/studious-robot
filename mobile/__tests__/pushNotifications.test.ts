@@ -569,6 +569,31 @@ describe('background push handler', () => {
     expect(flushDurableLogs).toHaveBeenCalled();
   });
 
+  test('a failed CallKeep display reports why it failed, not connection liveness', async () => {
+    // `ui_failed reason=connection_live` used to be the only signal an operator
+    // got for a call that never rang, and it names the wrong thing entirely:
+    // the UI was never displayed because Telecom refused it.
+    jest
+      .spyOn(callKeep, 'displayIncomingCall')
+      .mockResolvedValueOnce({ shown: false, reason: 'phone_account_not_registered' });
+
+    await handleBackgroundPushMessage({
+      data: { callId: 'call-no-ui', callerId: 'alice' },
+    });
+
+    expect(globalAny.fetch).toHaveBeenCalledWith(
+      'http://localhost:4173/devices/push-receipt',
+      expect.objectContaining({
+        body: JSON.stringify({
+          deviceId: 'device-test',
+          callId: 'call-no-ui',
+          stage: 'ui_failed',
+          reason: 'phone_account_not_registered',
+        }),
+      }),
+    );
+  });
+
   test('sendPushReceipt can use a payload-provided session id and receipt URL', async () => {
     await expect(
       sendPushReceipt({

@@ -1,5 +1,6 @@
 import express from 'express';
 import { API_ROUTES } from '../../../shared/index.ts';
+import { getRedisHealth } from '../lib/redisHealth.ts';
 
 /**
  * GET /health – liveness/readiness probe.
@@ -18,6 +19,12 @@ import { API_ROUTES } from '../../../shared/index.ts';
  * configuration, so a fleet split across two fan-out transports — or an
  * instance whose adapter clients have failed while its command client stays up
  * — reports `healthy: false` instead of looking perfectly well.
+ *
+ * `redis` reports subsystems a Redis/Valkey *permission* failure has disabled
+ * — cross-instance fan-out or the stale-call sweep.  Those failures are not
+ * retryable and are deliberately non-fatal (see `lib/redisHealth.ts`), so
+ * without this field the instance would answer `status: 'ok'` while a
+ * subsystem it depends on is permanently dead.
  *
  * `messageStore` reports only which backend is in use.  It deliberately does
  * *not* carry a readiness flag: the store is constructed synchronously over the
@@ -67,6 +74,7 @@ function createHealthRouter({ state }: {
         type: state.messageStore.type,
       },
       fanout: state.fanout?.getStatus() ?? null,
+      redis: getRedisHealth(),
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
