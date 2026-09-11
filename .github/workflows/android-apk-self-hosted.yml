@@ -8,6 +8,7 @@ on:
       - 'shared/**'
       - '.nvmrc'
       - '.github/actions/setup-ci/**'
+      - '.github/gradle/**'
       - '.github/workflows/android-apk-self-hosted.yml'
   pull_request:
     branches: [master]
@@ -16,6 +17,7 @@ on:
       - 'shared/**'
       - '.nvmrc'
       - '.github/actions/setup-ci/**'
+      - '.github/gradle/**'
       - '.github/workflows/android-apk-self-hosted.yml'
   workflow_dispatch:
 
@@ -56,7 +58,18 @@ jobs:
         env:
           CACHE_SCOPE: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'release' || 'ci' }}
         run: |
-          echo "GRADLE_USER_HOME=$RUNNER_TEMP/studious-robot-gradle-$CACHE_SCOPE" >> "$GITHUB_ENV"
+          set -euo pipefail
+          umask 077
+          # RUNNER_TEMP's parent is this runner instance's _work directory,
+          # outside both checkout cleaning and per-job temporary-file cleanup.
+          CACHE_ROOT="$(dirname "$RUNNER_TEMP")/.studious-robot-gradle-build-cache-v1"
+          mkdir -p "$CACHE_ROOT/$CACHE_SCOPE"
+          {
+            echo "GRADLE_USER_HOME=$RUNNER_TEMP/studious-robot-gradle-$CACHE_SCOPE"
+            echo "GRADLE_BUILD_CACHE_ROOT=$CACHE_ROOT"
+            echo "GRADLE_BUILD_CACHE_DIR=$CACHE_ROOT/$CACHE_SCOPE"
+          } >> "$GITHUB_ENV"
+          GRADLE_BUILD_CACHE_ROOT="$CACHE_ROOT" python3 "$GITHUB_WORKSPACE/.github/gradle/trim-build-cache.py"
 
       - name: Set up Java
         uses: actions/setup-java@v6
@@ -64,8 +77,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Do not persist task outputs: bundled JS can contain environment values
-      # which are not modeled as Gradle/Metro cache inputs.
+      # Only dependency downloads enter Actions caches. Task outputs stay on
+      # this runner in separate ci/release directories; JS bundling is never
+      # cached or skipped because its environment values are undeclared inputs.
       - name: Cache Gradle dependencies
         id: gradle-cache
         uses: actions/cache@v4
@@ -150,6 +164,8 @@ jobs:
       #
       # -PreactNativeArchitectures=arm64-v8a limits the build to one ABI in CI.
       # Keep the CI override explicit even though gradle.properties agrees.
+      # Configuration cache stays disabled: @react-native-community/netinfo's
+      # android/build.gradle:121 launches Node during configuration (Gradle 9.3.1).
       - name: Assemble release APK
         env:
           SIGNALING_URL: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && secrets.SIGNALING_URL || '' }}
@@ -160,9 +176,13 @@ jobs:
           set -euo pipefail
           chmod +x android/gradlew
           cd android
+          START_SECONDS=$SECONDS
           ./gradlew assembleRelease \
             --build-cache --no-daemon --max-workers=2 \
+            --no-configuration-cache \
+            --init-script "$GITHUB_WORKSPACE/.github/gradle/self-hosted.init.gradle" \
             -PreactNativeArchitectures=arm64-v8a
+          echo "- assembleRelease wall time: $((SECONDS - START_SECONDS)) seconds" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify Firebase generated resources
         if: steps.firebase_config.outputs.fcm_enabled == 'true'
@@ -299,3 +319,7 @@ jobs:
       - name: Remove Firebase configuration
         if: always()
         run: rm -f android/app/google-services.json
+
+      - name: Bound persistent Gradle task cache
+        if: always() && env.GRADLE_BUILD_CACHE_ROOT != ''
+        run: python3 "$GITHUB_WORKSPACE/.github/gradle/trim-build-cache.py"

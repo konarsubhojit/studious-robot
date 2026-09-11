@@ -1,0 +1,22 @@
+def cacheDirectory = System.getenv("GRADLE_BUILD_CACHE_DIR")
+if (!cacheDirectory) {
+    throw new GradleException("GRADLE_BUILD_CACHE_DIR must identify the runner's scoped build cache")
+}
+
+settingsEvaluated { settings ->
+    settings.buildCache {
+        local {
+            directory = new File(cacheDirectory)
+            enabled = true
+        }
+    }
+}
+
+gradle.beforeProject { project ->
+    project.tasks.matching { it.name ==~ /createBundle.*JsAndAssets/ }.configureEach {
+        // BundleHermesCTask inherits the environment without declaring it as
+        // inputs. Scope separation alone cannot handle changes within release.
+        outputs.doNotCacheIf("JS bundles inline per-job environment values") { true }
+        outputs.upToDateWhen { false }
+    }
+}
