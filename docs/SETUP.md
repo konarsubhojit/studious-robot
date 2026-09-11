@@ -92,6 +92,8 @@ DB_POOL_SIZE=4
 # REQUIRED in the deployed topology (two signaling VMs): it is what makes
 # sessions, presence, call state, the read cache and socket fan-out shared
 # rather than private to each VM.  Optional for local single-process work.
+# Use the rediss:// scheme against a managed, TLS-only endpoint (OCI Cache /
+# Valkey); see "Redis" below for the ACL grant it also needs.
 REDIS_URL=redis://localhost:6379
 
 # Distinct ordinal per instance.  Nothing sets this automatically across
@@ -229,8 +231,109 @@ docker run -d -p 6379:6379 redis:7-alpine
 export REDIS_URL=redis://localhost:6379
 ```
 
-For multi-instance deployment, verify `/health` returns `stateAffinity: "shared"`
-before switching nginx to round-robin (no `ip_hash`).
+#### Managed Redis (OCI Cache / Valkey)
+
+A managed endpoint differs from the local container in four ways, each of which
+fails in its own way if missed.
+
+**TLS is mandatory, so the URL scheme is `rediss://`.** `createRedisPgStores()`
+hands `REDIS_URL` straight to `createClient({ url })`, so node-redis enables TLS
+from the scheme alone — but a `redis://` URL against a TLS-only endpoint simply
+never connects:
+
+```bash
+export REDIS_URL=rediss://<USER>:<URL_ENCODED_PASSWORD>@<CACHE_PRIVATE_ENDPOINT>:6379
+```
+
+**Both ACL axes must be granted.** Redis/Valkey governs keys and pub/sub
+channels independently and the default is `resetchannels`, so the two halves
+fail differently and neither is obvious:
+
+- keys but **no channels** — the Socket.IO adapter and the cache/transition bus
+  cannot `SUBSCRIBE`; fan-out never works;
+- channels but **no keys** — the server boots cleanly and then fails the
+  stale-call sweep every five seconds, so nothing ever retires a stranded
+  `ringing` record and the user's next call is rejected as busy.
+
+Both are now reported on `/health` as `redis.issues[]` rather than being fatal
+or silent, but the fix is the grant:
+
+```redis
+ACL SETUSER <USER> on >_<PASSWORD> ~* &* +@all
+```
+
+To scope narrowly instead, the server uses exactly these keys and channels:
+
+| Kind | Pattern | Written by |
+| --- | --- | --- |
+| key | `signaling:call:*` | call records |
+| key | `signaling:user:*:calls` | per-user active-call index |
+| key | `signaling:session:*` | sessions |
+| key | `wetalk:cache:*` | read cache (`REDIS_KEY_PREFIX` in `server/src/cache.ts`) |
+| channel | `signaling:call.transitions` | cross-instance call transitions |
+| channel | `signaling:cache.invalidate` | cache invalidations |
+| channel | `socket.io#*` | `@socket.io/redis-adapter` room fan-out and the fan-out probe |
+
+The cache deletes prefixes with `SCAN`, and the call store writes, lists and
+transitions records through `EVAL` Lua, so a narrow grant additionally needs
+`+@scripting` and `+@keyspace` on top of the usual `+@read +@write +@pubsub`.
+
+**Verify the grant with `redis-cli` before restarting the service**, so a bad
+ACL is caught in one command rather than as a restart loop:
+
+```bash
+redis-cli --tls -u "$REDIS_URL" ACL WHOAMI
+redis-cli --tls -u "$REDIS_URL" ACL GETUSER <USER>
+# Channels: must return an integer (0 subscribers is fine), not NOPERM
+redis-cli --tls -u "$REDIS_URL" PUBLISH signaling:call.transitions ping
+# Keys + scripting: must return OK / 1, not NOPERM
+redis-cli --tls -u "$REDIS_URL" SET signaling:call:preflight ok PX 5000
+redis-cli --tls -u "$REDIS_URL" EVAL "return redis.call('GET', KEYS[1])" 1 signaling:call:preflight
+redis-cli --tls -u "$REDIS_URL" DEL signaling:call:preflight
+```
+
+**Private networking.** OCI Cache has no public endpoint: every signaling host
+reaches it over the VCN, so the cache subnet needs a security list / NSG rule
+allowing the Redis port from each signaling host's subnet.
+
+**Connection budget.** Each instance opens five connections — four from
+`createRedisPgStores()` (bus pub/sub plus adapter pub/sub) and one for the
+shared read cache — so a three-host fleet needs fifteen. Multiply again by
+`SIGNALING_CLUSTER_WORKERS`, since every worker builds its own bundle.
+
+**Cluster mode is not supported.** `@socket.io/redis-adapter` requires
+`createCluster` against a cluster-mode endpoint, and `createRedisPgStores()`
+calls `createClient`. Use a non-clustered endpoint, or pass a cluster-aware
+`opts.createClient` — the override exists, so no library change is needed.
+
+#### Verifying a multi-instance fleet
+
+`stateAffinity: "shared"` only says this instance found a `REDIS_URL`. It says
+nothing about whether an event emitted here reaches a socket held by another
+host, which is measured by the active probe in `server/src/lib/fanoutProbe.ts`.
+Run this **on every host**:
+
+```bash
+curl -s localhost:4173/health | jq '{stateAffinity, fanout, instanceId}'
+```
+
+```json
+{ "stateAffinity": "shared",
+  "fanout": { "transport": "redis-adapter", "probing": true,
+              "peersSeen": ["1"], "lastPeerEventAgeMs": 445,
+              "healthy": true, "mixedTransport": false },
+  "instanceId": "0" }
+```
+
+`peersSeen` must list the *other* instances, with `healthy: true` and
+`mixedTransport: false`. Each host needs a distinct `INSTANCE_ID`; duplicates
+make two hosts indistinguishable to the probe. Probes are emitted every
+`FANOUT_PROBE_INTERVAL_MS` (default 15s), so wait at least one interval after a
+restart before concluding fan-out is broken. Check `redis` in the same response
+too: a non-empty `redis.issues[]` names a subsystem an ACL has disabled.
+
+Only once `fanout.healthy` is true on every host should nginx move from
+`ip_hash` to round-robin.
 
 ### Push notifications — FCM (Android)
 
