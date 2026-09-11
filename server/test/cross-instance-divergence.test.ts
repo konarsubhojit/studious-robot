@@ -223,7 +223,7 @@ test('a stale local record is not enough to report a user as busy', async () => 
 
     const report = await getJson(a.url, `/debug/active-calls/user-a`, callerSession);
     assert.equal(report.status, 200);
-    const blocking = (report.body.calls as any[]).find(entry => entry.callId === callId);
+    const blocking = (report.body.activeCalls as any[]).find(entry => entry.callId === callId);
     // The stale copy is still *reported* — the endpoint exists to show it —
     // but it carries the age that disqualifies it from blocking anything.
     if (blocking) assert.equal(typeof blocking.staleMs, 'number');

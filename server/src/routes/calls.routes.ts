@@ -12,6 +12,7 @@ import {
 } from '../domain/sharedCalls.ts';
 import { readCallHistory } from '../domain/callHistory.ts';
 import { notifyCallCreated, notifyCallTransition } from '../domain/notifications.ts';
+import { flushBufferedRtcSignals } from '../signaling/rtcBuffer.ts';
 
 /**
  * Constant-time check of the operator debug token, so `/debug/active-calls`
@@ -300,6 +301,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         actor: session.userId,
       });
     }
+    // A candidate held during the ring is replayed here too: a call accepted
+    // over REST is as media-ready as one accepted over the socket.
+    flushBufferedRtcSignals(io, state, result.call.callId, result.call.status);
 
     res.status(200).json(result.call);
   });
@@ -338,6 +342,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         reason: 'declined',
       });
     }
+    // A candidate held during the ring is replayed here too: a call accepted
+    // over REST is as media-ready as one accepted over the socket.
+    flushBufferedRtcSignals(io, state, result.call.callId, result.call.status);
 
     res.status(200).json(result.call);
   });
@@ -376,6 +383,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         reason: 'cancelled',
       });
     }
+    // A candidate held during the ring is replayed here too: a call accepted
+    // over REST is as media-ready as one accepted over the socket.
+    flushBufferedRtcSignals(io, state, result.call.callId, result.call.status);
 
     res.status(200).json(result.call);
   });
@@ -414,6 +424,9 @@ function createCallsRouter({ state, io, ringingTimeoutMs }: { state: import('../
         reason: 'ended',
       });
     }
+    // A candidate held during the ring is replayed here too: a call accepted
+    // over REST is as media-ready as one accepted over the socket.
+    flushBufferedRtcSignals(io, state, result.call.callId, result.call.status);
 
     res.status(200).json(result.call);
   });

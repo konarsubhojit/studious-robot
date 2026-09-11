@@ -174,6 +174,67 @@ async function handleSocketCallTransition(socket: import('socket.io').Socket, ac
  *
  * @param options
  */
+/**
+ * Deal with an RTC frame for a call that is not media-ready: hold it for replay
+ * if it is the kind that legitimately races the accept, and otherwise report it
+ * as stale, exactly as before.
+ */
+function holdOrRejectRtcSignal(socket: import('socket.io').Socket, ack: Function | undefined, options: {
+        state: import('../stores/contracts.ts').ServerState;
+        eventName: string;
+        dataKey: string;
+        call: import('../stores/contracts.ts').CallRecord;
+        callId: string;
+        userId: string;
+        value: unknown;
+    }): void {
+  const { call, callId, userId, value } = options;
+  const buffered =
+    isBufferableSignal(options.eventName, call.status) &&
+    bufferRtcSignal(options.state, callId, {
+      eventName: options.eventName,
+      dataKey: options.dataKey,
+      fromUserId: userId,
+      toUserId: call.callerId === userId ? call.calleeId : call.callerId,
+      value,
+    });
+  if (buffered) {
+    acknowledgeSuccess(socket, ack, options.eventName, {
+      callId,
+      buffered: true,
+      bufferedCount: countBufferedRtcSignals(options.state, callId),
+    });
+    return;
+  }
+  acknowledgeError(
+    socket,
+    ack,
+    options.eventName,
+    'stale_call_state',
+    `call is not ready for RTC in state: ${call.status}`,
+    options.state
+  );
+}
+
+/**
+ * Move an accepted call to `connecting_media` on its first RTC frame, and
+ * release anything buffered while it was still ringing.
+ */
+async function promoteToConnectingMedia(
+  state: import('../stores/contracts.ts').ServerState,
+  io: any,
+  callId: string,
+  userId: string
+): Promise<void> {
+  const previousStatus = 'accepted';
+  const result = await transitionCallWithShared(state, callId, 'connecting_media', { actor: userId });
+  if (!result.ok) return;
+  if (!result.stale && previousStatus !== result.call.status) {
+    notifyCallTransition(io, state, result.call, { previousStatus, actor: userId });
+  }
+  flushBufferedRtcSignals(io, state, callId, result.call.status);
+}
+
 async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function | undefined, payload: object, options: {
         state: import('../stores/contracts.ts').ServerState;
         io: any;
@@ -252,48 +313,12 @@ async function handleRtcRelay(socket: import('socket.io').Socket, ack: Function 
     : (await hydrateCallFromShared(options.state, callId, { maxAgeMs: 0 })) ?? call;
 
   if (!RTC_ACTIVE_CALL_STATES.has(current.status)) {
-    const buffered =
-      isBufferableSignal(options.eventName, current.status) &&
-      bufferRtcSignal(options.state, callId, {
-        eventName: options.eventName,
-        dataKey: options.dataKey,
-        fromUserId: userId,
-        toUserId: current.callerId === userId ? current.calleeId : current.callerId,
-        value,
-      });
-    if (buffered) {
-      acknowledgeSuccess(socket, ack, options.eventName, {
-        callId,
-        buffered: true,
-        bufferedCount: countBufferedRtcSignals(options.state, callId),
-      });
-      return;
-    }
-    acknowledgeError(
-      socket,
-      ack,
-      options.eventName,
-      'stale_call_state',
-      `call is not ready for RTC in state: ${current.status}`,
-      options.state
-    );
+    holdOrRejectRtcSignal(socket, ack, { ...options, call: current, callId, userId, value });
     return;
   }
 
   if (current.status === 'accepted') {
-    const previousStatus = current.status;
-    const result = await transitionCallWithShared(options.state, callId, 'connecting_media', {
-      actor: userId,
-    });
-    if (result.ok && !result.stale && previousStatus !== result.call.status) {
-      notifyCallTransition(options.io, options.state, result.call, {
-        previousStatus,
-        actor: userId,
-      });
-    }
-    if (result.ok) {
-      flushBufferedRtcSignals(options.io, options.state, callId, result.call.status);
-    }
+    await promoteToConnectingMedia(options.state, options.io, callId, userId);
   }
 
   // A connected client relays its liveness over this channel every 30s, which
