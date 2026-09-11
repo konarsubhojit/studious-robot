@@ -85,6 +85,16 @@ const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infin
 const QUERY_LATENCY_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000, Infinity];
 
 /**
+ * Event-loop lag lives another order of magnitude below query latencies on a
+ * healthy process (sub-millisecond to a few ms), and the resolution the
+ * monitor samples at (`EVENT_LOOP_DELAY_RESOLUTION_MS`) sets a floor on what
+ * it can ever report — so its buckets need to resolve well below that floor
+ * to separate "at the floor" from "genuinely delayed", plus a `1000`+ tail
+ * for pathological blocking (GC pauses, synchronous I/O).
+ */
+const EVENT_LOOP_LAG_BUCKETS_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, Infinity];
+
+/**
  * Upper bound on distinct `backend:kind:operation` keys tracked.  Every key
  * beyond it is folded into an `other` bucket (per backend *and* kind, so the
  * overflow row never averages reads together with writes) — a pathological
@@ -102,6 +112,21 @@ const MAX_TRACKED_SIGNALING_ERROR_CODES = 50;
 
 /** Event-loop delay sampling cadence for the `/metrics` histogram. */
 const EVENT_LOOP_DELAY_SAMPLE_MS = 1_000;
+
+/**
+ * Sampling resolution (ms) for `monitorEventLoopDelay`. The monitor reports
+ * the time between successive samples, so this value is a *floor* on every
+ * reported delay, not just a knob on precision — at the previous `20`, a
+ * perfectly idle loop could never report below ~20ms, swamping any real
+ * signal. `1` is the lowest resolution Node offers and moves that floor
+ * below the ~1-3ms lag a healthy loop actually exhibits. The added cost is a
+ * timer firing 1000x/sec instead of 50x/sec, each just recording a sample
+ * into a fixed-size native histogram (no per-sample allocation, so memory
+ * use — the constrained resource under `MemoryHigh=768M` — is unaffected);
+ * the CPU cost of that is negligible next to everything else a request
+ * handler does.
+ */
+const EVENT_LOOP_DELAY_RESOLUTION_MS = 1;
 
 /**
  * Running totals for one `backend:kind:operation`.  Separate from the wire
@@ -208,10 +233,12 @@ function createTelemetry(): Telemetry {
     pg_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
     /** Redis cache round-trip duration, in ms. */
     redis_query_duration_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
-    /** Per-sample maximum event-loop scheduling lag, in ms. */
-    event_loop_lag_ms: createHistogram(QUERY_LATENCY_BUCKETS_MS),
+    /** Per-window mean event-loop scheduling lag, in ms — the sustained-lag signal. */
+    event_loop_lag_ms: createHistogram(EVENT_LOOP_LAG_BUCKETS_MS),
+    /** Per-window maximum event-loop scheduling lag, in ms — the worst-tick/spike signal. */
+    event_loop_lag_max_ms: createHistogram(EVENT_LOOP_LAG_BUCKETS_MS),
   };
-  const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  const eventLoopDelay = monitorEventLoopDelay({ resolution: EVENT_LOOP_DELAY_RESOLUTION_MS });
   eventLoopDelay.enable();
   const eventLoopDelaySampleTimer = setInterval(() => {
     observeEventLoopDelay();
@@ -436,9 +463,13 @@ function createTelemetry(): Telemetry {
 
   function observeEventLoopDelay() {
     if (eventLoopDelay.count === 0) return;
+    const meanMs = eventLoopDelay.mean / 1_000_000;
     const maxMs = eventLoopDelay.max / 1_000_000;
+    if (Number.isFinite(meanMs)) {
+      observeHistogram(histograms.event_loop_lag_ms, meanMs);
+    }
     if (Number.isFinite(maxMs)) {
-      observeHistogram(histograms.event_loop_lag_ms, maxMs);
+      observeHistogram(histograms.event_loop_lag_max_ms, maxMs);
     }
     eventLoopDelay.reset();
   }
