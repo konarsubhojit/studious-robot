@@ -171,8 +171,11 @@ was written for the wrong topology and then rewritten across `README.md`,
 `deploy/README.md` (§5a, the architecture diagram, §14), `docs/SETUP.md` and
 `server/README.md`.
 
-Load balancing must be **round-robin, not `ip_hash`**: with Redis the affinity is
-`shared`, so pinning a user to a VM buys nothing and costs an uneven fleet.
+Load distribution is owned by the **OCI NLB backend-set policy** (5-tuple /
+3-tuple / 2-tuple), not by host-level nginx upstream directives: each VM's
+nginx proxies only to its local `127.0.0.1:4173` backend. With Redis the
+affinity is `shared`, so any of the NLB hash policies is safe; spreading
+reconnects across VMs is correct behavior.
 
 **2026-09-10 production-log fix.** A callee could accept on one signaling VM
 while the caller's socket stayed on another VM whose local hot cache still held
