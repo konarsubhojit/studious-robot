@@ -626,6 +626,7 @@ describe('ChatConversationScreen', () => {
     });
     const list = findByTestId(tree, 'chat-message-list');
     act(() => {
+      list.props.onScrollBeginDrag();
       list.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
     });
     expect(onLoadOlder).toHaveBeenCalled();
@@ -1001,6 +1002,134 @@ describe('ChatConversationScreen', () => {
     expect(scrollSpy).toHaveBeenCalled();
   });
 
+  describe('following the latest timeline entry', () => {
+    const props = {
+      peerId: 'user-bob',
+      onSendMessage: jest.fn(),
+      onBack: jest.fn(),
+      currentUserId: 'user-alice',
+    };
+    const scrollEvent = (y: number, height = 2000) => ({
+      nativeEvent: {
+        contentOffset: { y },
+        contentSize: { height },
+        layoutMeasurement: { height: 500 },
+      },
+    });
+
+    test('follows every layout batch of a long mixed history, even when the newest entry is unchanged', () => {
+      const onLoadOlder = jest.fn();
+      const page = Array.from({ length: 80 }, (_, index) => {
+        const createdAt = new Date(Date.UTC(2026, 8, 11, 10, index)).toISOString();
+        return index % 4 === 0
+          ? { type: 'call' as const, callId: `c${index}`, direction: 'incoming' as const,
+              status: 'ended', createdAt }
+          : makeMessage({ messageId: `m${index}`, createdAt });
+      });
+      const history = mergeHistoryPage([], page as any);
+      const tree = render({ ...props, messages: [], isLoadingMessages: true, onLoadOlder });
+      const list = findByTestId(tree, 'chat-message-list');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+
+      act(() => {
+        list.props.onScroll(scrollEvent(0));
+        tree.update(<ChatConversationScreen {...props} messages={history.slice(0, 10)} onLoadOlder={onLoadOlder} />);
+      });
+      act(() => { jest.runOnlyPendingTimers(); });
+      act(() => {
+        tree.update(<ChatConversationScreen {...props} messages={history} onLoadOlder={onLoadOlder} />);
+      });
+
+      for (let batch = 0; batch < 12; batch++) {
+        scrollSpy.mockClear();
+        act(() => {
+          list.props.onScroll(scrollEvent(500, 2000 + batch * 300));
+          list.props.onContentSizeChange(400, 2000 + batch * 300);
+        });
+        act(() => { jest.runOnlyPendingTimers(); });
+        expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
+      }
+
+      const entries = list.props.data.filter((item: any) => item.type === 'call' || item.type === 'message');
+      expect(entries.map((item: any) => item.message?.messageId ?? item.entries[0].callId))
+        .toEqual(page.map(entry => 'callId' in entry ? entry.callId : entry.messageId));
+      expect(entries[entries.length - 1].message.messageId).toBe('m79');
+      expect(onLoadOlder).not.toHaveBeenCalled();
+    });
+
+    test('manual scrolling cancels a queued follow and preserves position while older history loads', () => {
+      const newest = makeMessage({ messageId: 'm2' });
+      const tree = render({ ...props, messages: [newest] });
+      const list = findByTestId(tree, 'chat-message-list');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      act(() => {
+        list.props.onScrollBeginDrag();
+        list.props.onScroll(scrollEvent(200));
+        list.props.onScrollEndDrag(scrollEvent(200));
+        list.props.onMomentumScrollBegin();
+        list.props.onScroll(scrollEvent(100));
+        list.props.onMomentumScrollEnd(scrollEvent(100));
+        tree.update(<ChatConversationScreen {...props} messages={[newest, makeMessage({ messageId: 'm1' })]} />);
+      });
+      act(() => {
+        list.props.onContentSizeChange(400, 2500);
+        list.props.onLayout();
+        jest.runOnlyPendingTimers();
+      });
+      expect(scrollSpy).not.toHaveBeenCalled();
+    });
+
+    test('returning to the bottom resumes following late content and viewport changes', () => {
+      const tree = render({ ...props, messages: [makeMessage()] });
+      const list = findByTestId(tree, 'chat-message-list');
+      act(() => {
+        list.props.onScrollBeginDrag();
+        list.props.onScroll(scrollEvent(100));
+        list.props.onScrollEndDrag(scrollEvent(100));
+        list.props.onScrollBeginDrag();
+        list.props.onScroll(scrollEvent(1500));
+        list.props.onScrollEndDrag(scrollEvent(1500));
+        jest.runOnlyPendingTimers();
+      });
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      act(() => { list.props.onContentSizeChange(400, 2400); });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
+      scrollSpy.mockClear();
+      act(() => { list.props.onLayout(); });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(scrollSpy).toHaveBeenCalledWith({ animated: false });
+    });
+
+    test('receipt updates do not cancel a pending layout scroll', () => {
+      const message = makeMessage();
+      const tree = render({ ...props, messages: [message] });
+      act(() => { jest.runOnlyPendingTimers(); });
+      const list = findByTestId(tree, 'chat-message-list');
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      act(() => {
+        list.props.onContentSizeChange(400, 2000);
+        tree.update(<ChatConversationScreen {...props} messages={[{ ...message, readAt: message.createdAt }]} />);
+      });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(scrollSpy).toHaveBeenCalled();
+    });
+
+    test('opening a search result does not follow later layout changes to the bottom', () => {
+      const tree = render({
+        ...props,
+        messages: [makeMessage({ messageId: 'm2' }), makeMessage({ messageId: 'm1' })],
+        highlightMessageId: 'm1',
+      });
+      const scrollSpy = jest.spyOn(tree.root.findByType(FlatList).instance, 'scrollToEnd');
+      const list = findByTestId(tree, 'chat-message-list');
+      act(() => { jest.runOnlyPendingTimers(); });
+      act(() => { list.props.onContentSizeChange(400, 2200); });
+      act(() => { jest.runOnlyPendingTimers(); });
+      expect(scrollSpy).not.toHaveBeenCalled();
+    });
+  });
+
   test('does not auto-scroll when older history is paged in (newest message unchanged)', () => {
     const newest = makeMessage({ messageId: 'm2' });
     const tree = render({
@@ -1134,6 +1263,7 @@ describe('ChatConversationScreen', () => {
 
     const list = findByTestId(tree, 'chat-message-list');
     act(() => {
+      list.props.onScrollBeginDrag();
       list.props.onScroll({
         nativeEvent: {
           contentOffset: { y: 200 },
@@ -1192,6 +1322,7 @@ describe('ChatConversationScreen', () => {
 
     const list = findByTestId(tree, 'chat-message-list');
     act(() => {
+      list.props.onScrollBeginDrag();
       list.props.onScroll({
         nativeEvent: {
           contentOffset: { y: 200 },
@@ -1236,6 +1367,7 @@ describe('ChatConversationScreen', () => {
 
     const list = findByTestId(tree, 'chat-message-list');
     act(() => {
+      list.props.onScrollBeginDrag();
       list.props.onScroll({
         nativeEvent: {
           contentOffset: { y: 200 },

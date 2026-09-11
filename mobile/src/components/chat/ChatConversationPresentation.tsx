@@ -124,7 +124,6 @@ const TYPING_IDLE_MS = 3000;
 /** Distance (px) from the bottom of the message list still considered
  * "at the bottom" for auto-scroll / scroll-to-bottom-FAB purposes. */
 const NEAR_BOTTOM_THRESHOLD = 80;
-const AUTO_SCROLL_RETRY_COUNT = 4;
 /** Number of skeleton bubbles rendered while the first page of history loads. */
 const SKELETON_BUBBLE_COUNT = 6;
 /** Emoji offered by the long-press reaction bar. */
@@ -1578,6 +1577,8 @@ function ConversationTimeline({
   listRef,
   listItems,
   handleScroll,
+  handleScrollBeginDrag,
+  handleScrollEndDrag,
   renderItem,
   handleScrollToIndexFailed,
   handleViewableItemsChanged,
@@ -1594,6 +1595,8 @@ function ConversationTimeline({
   listRef: { current: FlatList | null };
   listItems: ListItem[];
   handleScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  handleScrollBeginDrag: () => void;
+  handleScrollEndDrag: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   renderItem: ({ item }: { item: ListItem }) => ReactElement | null;
   handleScrollToIndexFailed: (info: { index: number }) => void;
   handleViewableItemsChanged: (info: { viewableItems: Array<{ item?: ListItem }> }) => void;
@@ -1616,6 +1619,10 @@ function ConversationTimeline({
         keyExtractor={item => item.key}
         contentContainerStyle={styles.messageList}
         onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollBegin={handleScrollBeginDrag}
+        onMomentumScrollEnd={handleScrollEndDrag}
         scrollEventThrottle={32}
         keyboardShouldPersistTaps="handled"
         renderItem={renderItem}
@@ -1629,6 +1636,7 @@ function ConversationTimeline({
         viewabilityConfig={VIEWABILITY_CONFIG}
         onViewableItemsChanged={handleViewableItemsChanged}
         onContentSizeChange={handleContentSizeChange}
+        onLayout={handleContentSizeChange}
         refreshControl={
           onRefreshMessages ? (
             <RefreshControl refreshing={isRefreshingMessages} onRefresh={onRefreshMessages} />
@@ -1942,17 +1950,17 @@ function ChatConversationScreen({
   const draftPersistTimerRef = useRef((undefined as ReturnType<typeof setTimeout> | undefined));
   const didMountDraftPersistRef = useRef(false);
   const autoScrollFrameRef = useRef((null as number | null));
-  const autoScrollRetriesRef = useRef(0);
   const isMountedRef = useRef(true);
   const listRef = useRef((null as FlatList | null));
   // Tracks the newest message's id so the auto-scroll-to-bottom effect below
   // only fires for a genuinely new/sent message, not when older history is
   // paged in at the top (which must not yank the scroll position).
   const newestMessageIdRef = useRef((null as string | null));
-  // Whether the list is currently scrolled near its bottom edge; used to
-  // decide whether an incoming message should auto-scroll or instead surface
-  // the "scroll to bottom" FAB so mid-history reading isn't interrupted.
-  const isNearBottomRef = useRef(true);
+  // Follow intent survives virtualized layout batches and attachment reflows:
+  // their scroll events can report a temporary gap below the viewport even
+  // though the user never left the bottom. Only manual navigation opts out.
+  const shouldFollowLatestRef = useRef(!highlightMessageId);
+  const isUserScrollingRef = useRef(false);
 
   // Data arrives newest-first; reverse so a plain (non-inverted) FlatList
   // renders oldest-at-top / newest-at-bottom, matching a natural chat log.
@@ -2037,21 +2045,29 @@ function ChatConversationScreen({
 
   useVoiceNoteAutoAdvance(voiceNotes, { onAdvance: handleAutoAdvance });
 
-  const scheduleScrollToEnd = useCallback((retries = AUTO_SCROLL_RETRY_COUNT) => {
-    autoScrollRetriesRef.current = Math.max(autoScrollRetriesRef.current, retries);
+  const stopFollowingLatest = useCallback(() => {
+    shouldFollowLatestRef.current = false;
+    if (autoScrollFrameRef.current !== null) {
+      cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const scheduleScrollToEnd = useCallback(() => {
+    shouldFollowLatestRef.current = true;
     if (autoScrollFrameRef.current !== null) cancelAnimationFrame(autoScrollFrameRef.current);
     autoScrollFrameRef.current = requestAnimationFrame(() => {
       autoScrollFrameRef.current = null;
-      if (!isMountedRef.current) return;
-      listRef.current?.scrollToEnd({ animated: true });
+      if (!isMountedRef.current || !shouldFollowLatestRef.current) return;
+      // Animated retries chase an estimated end while FlatList is still
+      // measuring. Snap each layout pass, without a fixed retry budget.
+      listRef.current?.scrollToEnd({ animated: false });
     });
   }, []);
 
   const handleContentSizeChange = useCallback(() => {
-    if (!isNearBottomRef.current && autoScrollRetriesRef.current <= 0) return;
-    if (autoScrollRetriesRef.current <= 0) return;
-    autoScrollRetriesRef.current -= 1;
-    scheduleScrollToEnd(0);
+    if (!shouldFollowLatestRef.current || isUserScrollingRef.current) return;
+    scheduleScrollToEnd();
   }, [scheduleScrollToEnd]);
 
   // Speak the outcome of the user's own sends. Delivery is otherwise conveyed
@@ -2078,12 +2094,6 @@ function ChatConversationScreen({
     announcedStatusRef.current.forEach((_status, messageId) => {
       if (!seen.has(messageId)) announcedStatusRef.current.delete(messageId);
     });
-    return () => {
-      if (autoScrollFrameRef.current !== null) {
-        cancelAnimationFrame(autoScrollFrameRef.current);
-        autoScrollFrameRef.current = null;
-      }
-    };
   }, [messages, currentUserId]);
 
   // Keep the newest message in view: scroll to the bottom whenever the
@@ -2105,7 +2115,7 @@ function ChatConversationScreen({
         Boolean(newestMessage) &&
         !isCallEntry((newestMessage as TimelineEntry)) &&
         (newestMessage as ChatMessage).senderId === currentUserId;
-      if (isNearBottomRef.current || isOwnMessage) {
+      if (shouldFollowLatestRef.current || isOwnMessage) {
         scheduleScrollToEnd();
         setShowScrollToBottom(false);
         setNewMessageCount(0);
@@ -2123,6 +2133,7 @@ function ChatConversationScreen({
   // alone until more history is paged in.
   useEffect(() => {
     if (!activeHighlightId) return undefined;
+    stopFollowingLatest();
     const index = listItems.findIndex(
       item => item.type === 'message' && item.message.messageId === activeHighlightId,
     );
@@ -2131,7 +2142,7 @@ function ChatConversationScreen({
       listRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.5 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeHighlightId, listItems]);
+  }, [activeHighlightId, listItems, stopFollowingLatest]);
 
   // The quote highlight is a momentary "here it is" flash, not a mode.
   useEffect(() => {
@@ -2164,6 +2175,7 @@ function ChatConversationScreen({
   }, [scheduleScrollToEnd]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       clearTimeout(typingIdleTimerRef.current);
@@ -2468,7 +2480,7 @@ function ChatConversationScreen({
   const handleScroll = useCallback(
       (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      if (contentOffset.y <= 0 && !hasReachedTopRef.current) {
+      if (isUserScrollingRef.current && contentOffset.y <= 0 && !hasReachedTopRef.current) {
         hasReachedTopRef.current = true;
         onLoadOlder?.();
       } else if (contentOffset.y > 0) {
@@ -2478,7 +2490,7 @@ function ChatConversationScreen({
       if (contentSize && layoutMeasurement) {
         const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
         const isNearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD;
-        isNearBottomRef.current = isNearBottom;
+        if (isUserScrollingRef.current) shouldFollowLatestRef.current = isNearBottom;
         if (isNearBottom) {
           setShowScrollToBottom(false);
           setNewMessageCount(0);
@@ -2487,6 +2499,16 @@ function ChatConversationScreen({
     },
     [onLoadOlder],
   );
+
+  const handleScrollBeginDrag = useCallback(() => {
+    isUserScrollingRef.current = true;
+    stopFollowingLatest();
+  }, [stopFollowingLatest]);
+
+  const handleScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    handleScroll(event);
+    isUserScrollingRef.current = false;
+  }, [handleScroll]);
 
   // Pin the day of the topmost visible message: FlatList reports viewable
   // items in render order, so the first message item in that list is the one
@@ -2635,6 +2657,8 @@ function ChatConversationScreen({
           listRef={listRef}
           listItems={listItems}
           handleScroll={handleScroll}
+          handleScrollBeginDrag={handleScrollBeginDrag}
+          handleScrollEndDrag={handleScrollEndDrag}
           renderItem={renderItem}
           handleScrollToIndexFailed={handleScrollToIndexFailed}
           handleViewableItemsChanged={handleViewableItemsChanged}
