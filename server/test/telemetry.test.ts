@@ -57,6 +57,7 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     assert.ok(typeof snap.counters === 'object' && snap.counters !== null);
     assert.ok(typeof snap.histograms === 'object' && snap.histograms !== null);
     assert.ok(snap.histograms.event_loop_lag_ms, 'event loop lag histogram is exposed');
+    assert.ok(snap.histograms.event_loop_lag_max_ms, 'event loop lag max histogram is exposed');
     assert.ok(typeof snap.derived === 'object' && snap.derived !== null);
 
     // Counters should all start at 0
@@ -80,6 +81,35 @@ test('GET /metrics returns a valid snapshot on a fresh server', async () => {
     // Derived rates are null before any calls
     assert.equal(snap.derived.call_connect_rate, null);
     assert.equal(snap.derived.call_completion_rate, null);
+  } finally {
+    await teardown();
+  }
+});
+
+test('event_loop_lag_ms reports a healthy idle loop below the old 20ms sampling-resolution floor', async () => {
+  const { url, teardown } = await startServer();
+  try {
+    // The event-loop sampler observes on a 1s cadence; give it two windows to
+    // record so this isn't racing the first sample.
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+
+    const res = await getMetricsHttp(url);
+    assert.equal(res.status, 200);
+    const { event_loop_lag_ms, event_loop_lag_max_ms } = res.body.histograms;
+
+    assert.ok(event_loop_lag_ms.count > 0, 'at least one lag sample was recorded');
+    // At the previous `resolution: 20` setting, every sample floored at
+    // ~20ms regardless of actual load, so an idle loop's min/max could never
+    // go below it. With `resolution: 1` an idle loop's mean and worst tick
+    // both stay comfortably under that old floor.
+    assert.ok(
+      event_loop_lag_ms.min !== null && event_loop_lag_ms.min < 20,
+      `expected idle mean lag below the old 20ms floor, got ${event_loop_lag_ms.min}`
+    );
+    assert.ok(
+      event_loop_lag_max_ms.max !== null && event_loop_lag_max_ms.max < 20,
+      `expected idle worst-tick lag below the old 20ms floor, got ${event_loop_lag_max_ms.max}`
+    );
   } finally {
     await teardown();
   }
