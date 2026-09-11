@@ -1,4 +1,4 @@
-name: Backend CI & Deploy (self-hosted)
+name: Backend CI (self-hosted)
 
 on:
   push:
@@ -25,7 +25,7 @@ permissions:
 jobs:
   test:
     name: Lint, build & test (self-hosted)
-    runs-on: [self-hosted, Linux, X64, studious-robot-ci]
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     concurrency:
       group: backend-test-self-hosted-${{ github.event_name }}-${{ github.ref }}
@@ -106,70 +106,3 @@ jobs:
 
       - name: Run tests
         run: npm test
-
-  deploy:
-    name: Deploy to Oracle Cloud VM (self-hosted)
-    runs-on: [self-hosted, Linux, X64, studious-robot-deploy]
-    timeout-minutes: 20
-    environment: production
-    needs: test
-    # Shadow runs never deploy automatically while the hosted workflow is live.
-    if: github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch'
-
-    # Serialize deploys per branch so concurrent pushes to master can't
-    # overlap SSH reset/install/restart cycles on the same host.
-    concurrency:
-      group: backend-deploy-${{ github.ref }}
-      cancel-in-progress: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Set up CI dependencies
-        uses: ./.github/actions/setup-ci
-        with:
-          package: server
-          cache-scope: deploy
-
-      - name: Install dependencies
-        working-directory: server
-        run: npm ci
-
-      - name: Apply database migrations
-        # Runs against the direct (unpooled) Neon endpoint before the new code
-        # starts. drizzle-kit is a dev dependency, so migrations run here on the
-        # runner rather than on the VM (which installs with --omit=dev). Skipped
-        # when DATABASE_URL_DIRECT is not configured.
-        working-directory: server
-        env:
-          DATABASE_URL_DIRECT: ${{ secrets.DATABASE_URL_DIRECT }}
-        run: |
-          if [ -n "${DATABASE_URL_DIRECT:-}" ]; then
-            npm run db:migrate
-          else
-            echo "DATABASE_URL_DIRECT not set; skipping migrations"
-          fi
-
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_SSH_HOST }}
-          username: ${{ secrets.DEPLOY_SSH_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          # DEPLOY_SSH_PORT defaults to 22 when the secret is not set
-          port: ${{ secrets.DEPLOY_SSH_PORT || '22' }}
-          script: |
-            set -euo pipefail
-            cd ~/repos/studious-robot
-            git fetch --quiet origin master
-            git reset --hard origin/master
-            # Install prod deps and restart the service via the shared deploy
-            # script (single source of truth for VM + CI deploys). Graceful,
-            # rolling-friendly restart: systemd sends SIGTERM, the app drains
-            # in-flight connections (see TimeoutStopSec in the unit file), then
-            # the new process starts. The script re-verifies the service is
-            # active afterwards and fails the job if it did not come back up.
-            bash deploy/deploy.sh

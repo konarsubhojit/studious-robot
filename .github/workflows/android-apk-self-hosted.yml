@@ -32,12 +32,7 @@ permissions:
 jobs:
   build-apk:
     name: Build APK(s) (self-hosted)
-    # Role labels require isolated disposable workers; labels are not access controls.
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'studious-robot-release' || 'studious-robot-android' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 45
     environment: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'android-release' || 'ci' }}
 
