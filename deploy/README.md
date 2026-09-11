@@ -17,7 +17,7 @@ GitHub Actions (push to master)
           ├─ npm ci --omit=dev
           └─ sudo systemctl reload-or-restart robot-signal
 
-                     load balancer (round-robin, no ip_hash)
+                     OCI network load balancer (backend-set policy)
                        │
       ┌────────────────┴────────────────┐
    signal VM 0                       signal VM 1
@@ -187,7 +187,7 @@ Because shutdown is graceful, the deploy step uses **`systemctl reload-or-restar
 ## 5a. Two instances — and the shared state they oblige
 
 The fleet is **two signaling VMs**, each running one `robot-signal.service`,
-behind a round-robin load balancer. A client's requests — and its WebSocket —
+behind an OCI NLB backend set. A client's requests — and its WebSocket —
 can land on either VM, and may move between them on any reconnect. That single
 fact drives everything in this section.
 
@@ -246,9 +246,23 @@ sudo systemctl enable --now robot-signal@0 robot-signal@1
 
 ### Load balancing
 
-Use **round-robin — not `ip_hash`**. With Redis the state affinity is `shared`,
-so sticky routing buys nothing and costs you an uneven distribution. Confirm
-before switching:
+Production has two balancing layers with different responsibilities:
+
+1. **OCI Network Load Balancer (fleet layer)** distributes traffic across
+   `signal VM 0` and `signal VM 1`.
+2. **Per-VM nginx (host layer)** terminates TLS and proxies to one local backend
+   (`127.0.0.1:4173`).
+
+Because host-level nginx has a **single** upstream target, `ip_hash` does not
+apply there. The distribution decision is owned by the OCI NLB backend-set
+policy.
+
+OCI NLB backend sets use tuple-hash policies (5-tuple / 3-tuple / 2-tuple),
+not nginx-style sticky sessions. With Redis and `stateAffinity: "shared"`, any
+of these policies is safe; 5-tuple spreading a client's reconnects across both
+VMs is exactly what shared state is meant to support.
+
+Confirm shared affinity on both VMs:
 
 ```bash
 curl -fsS https://signal.yourdomain.com/health | grep -o '"stateAffinity":"[^"]*"'
@@ -258,7 +272,36 @@ curl -fsS https://signal.yourdomain.com/health | grep -o '"stateAffinity":"[^"]*
 That check is necessary but **not sufficient** — see *Verify fan-out, not just
 `stateAffinity`* below.
 
-nginx, with both VMs' private addresses:
+NLB health checks should probe `/health` so an instance that loses Redis is
+drained instead of serving degraded call behavior. This works with plain HTTP
+from the NLB because nginx already proxies `/health` to
+`http://127.0.0.1:4173/health` locally.
+
+> ⚠️ **WebSocket upgrade headers are load-bearing in this topology.**
+> OCI NLB does not provide nginx-style session affinity, so if nginx drops
+> `Upgrade` / `Connection`, one client's long-polling requests can land on
+> either VM and trigger cross-instance correctness failures.
+>
+> Verify nginx is forwarding upgrades:
+>
+> ```bash
+> sudo nginx -T | grep -A6 'proxy_pass.*4173'
+> ```
+>
+> Expected lines must include:
+>
+> ```nginx
+> proxy_http_version 1.1;
+> proxy_set_header Upgrade $http_upgrade;
+> proxy_set_header Connection "upgrade";
+> ```
+>
+> Then verify a real handshake in access logs: look for
+> `transport=websocket` requests with `101` responses, not repeated
+> `transport=polling` with `200` responses.
+
+If you are running a **different** topology with one fleet-level nginx in front
+of both VMs, keep upstream routing round-robin (no `ip_hash`):
 
 ```nginx
 upstream robot_signal {
@@ -266,9 +309,6 @@ upstream robot_signal {
     server 10.0.0.12:4173 max_fails=2 fail_timeout=10s;
 }
 ```
-
-Socket.IO needs the `Upgrade`/`Connection` headers on the `proxy_pass` (§9),
-otherwise the WebSocket transport silently degrades to long-polling.
 
 ### Verify fan-out, not just `stateAffinity`
 
@@ -301,6 +341,8 @@ fields as:
 - **`mixedTransport: true`** — a peer answered on a *different* transport, so
   neither adapter can reach the other's sockets. This is what a half-finished
   adapter migration looks like; the mismatch is also logged with `[fanout]`.
+  This is an **inter-instance** signal only; it does **not** describe whether
+  clients are on WebSocket or long-polling.
 - **`probing: false`** — no cross-instance adapter is attached at all
   (`transport: "in-memory"`), which is correct only for single-process runs.
 
@@ -423,8 +465,9 @@ Provision Redis and point the server at it with the `REDIS_URL` env var:
   provider's `rediss://…` URL (TLS).
 
 Then add `REDIS_URL=…` to `/etc/robot-signal/env` on **both** signaling VMs
-and reload the service. Use round-robin upstream routing (no `ip_hash`) after
-verifying `/health` reports `stateAffinity: "shared"` on each.
+and reload the service. In the deployed OCI topology, keep distribution policy
+changes at the NLB backend set (not host-level nginx) and verify `/health`
+reports `stateAffinity: "shared"` on each VM.
 Secure self-hosted Redis by binding to localhost (or a private subnet) and/or
 setting `requirepass`; never expose it publicly.
 
@@ -531,7 +574,25 @@ server {
 }
 ```
 
-> **nginx note:** without the `Upgrade`/`Connection` headers, Socket.IO's WebSocket transport silently falls back to long-polling.
+> ⚠️ **Critical for two-VM fleets behind an NLB:** without the
+> `Upgrade`/`Connection` headers, Socket.IO falls back to long-polling and
+> requests from one client can be balanced across different VMs. Validate this
+> immediately after changes:
+>
+> ```bash
+> sudo nginx -T | grep -A6 'proxy_pass.*4173'
+> ```
+>
+> Confirm:
+>
+> ```nginx
+> proxy_http_version 1.1;
+> proxy_set_header Upgrade $http_upgrade;
+> proxy_set_header Connection "upgrade";
+> ```
+>
+> Then confirm access logs show `transport=websocket` with `101` responses
+> instead of repeated `transport=polling` with `200` responses.
 
 Then obtain and install the certificate — `certbot --nginx` rewrites the server block to listen on 443 with TLS and installs a `certbot.timer` systemd unit that auto-renews the certificate twice daily:
 
@@ -598,6 +659,10 @@ fan-out, not just `stateAffinity`*):
 ```bash
 curl -fsS http://localhost:4173/health | grep -o '"healthy":[a-z]*'
 ```
+
+`fanout.mixedTransport` here is still only the **inter-instance adapter**
+transport check; it is not a client WebSocket/long-polling indicator. Use the
+nginx config/access-log checks in §5a/§9 for client transport verification.
 
 ---
 
@@ -745,18 +810,18 @@ limit.
 
 ### Reverse-proxy topology
 
-The load balancer fans out to both VMs; each VM's local proxy (if any) points
-at its own process. See §5a for the nginx upstream. A Caddy front end:
+The OCI NLB fans out to both signaling VMs. On each VM, local nginx/Caddy
+terminates TLS and proxies to that VM's own process (`127.0.0.1:4173`).
+`ip_hash` does not apply at this host layer because there is only one backend
+target per VM. A Caddy front end on a VM:
 
 ```caddy
 signal.yourdomain.com {
-    reverse_proxy 10.0.0.11:4173 10.0.0.12:4173
+    reverse_proxy 127.0.0.1:4173
 }
 ```
 
-Caddy load-balances round-robin by default and upgrades WebSockets without
-extra configuration. Do **not** add a hash-based policy: state affinity is
-`shared`.
+Caddy upgrades WebSockets without extra configuration.
 
 ### Incident traps to avoid
 
@@ -809,8 +874,8 @@ means that VM has no `REDIS_URL` and is keeping private state — fix it before
 sending it traffic. Then check `fanout.healthy` on both, for the reason given
 in §5a.
 
-Load distribution through the balancer (parallel, not sequential — each proxy
-worker keeps its own round-robin cursor):
+Load distribution through the OCI NLB (parallel requests should hit both VMs
+under normal hash-policy spread):
 
 ```bash
 seq 30 | xargs -P 10 -I{} curl -s https://signal.yourdomain.com/health \

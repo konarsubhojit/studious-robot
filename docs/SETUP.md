@@ -332,8 +332,21 @@ make two hosts indistinguishable to the probe. Probes are emitted every
 restart before concluding fan-out is broken. Check `redis` in the same response
 too: a non-empty `redis.issues[]` names a subsystem an ACL has disabled.
 
-Only once `fanout.healthy` is true on every host should nginx move from
-`ip_hash` to round-robin.
+`fanout.mixedTransport` verifies only **inter-instance adapter transport**
+consistency. It does **not** verify client WebSocket transport. Validate client
+transport from nginx config/logs (see `deploy/README.md`):
+
+```bash
+sudo nginx -T | grep -A6 'proxy_pass.*4173'
+```
+
+Then confirm nginx access logs show `transport=websocket` with `101` responses
+(not repeated `transport=polling` with `200` responses).
+
+In the deployed OCI topology, cross-VM distribution belongs to the NLB
+backend-set policy (5-tuple / 3-tuple / 2-tuple), while each VM's local nginx
+proxies to a single backend (`127.0.0.1:4173`). Apply balancing policy changes
+at the NLB layer, not via nginx `ip_hash` directives on the VM.
 
 ### Push notifications — FCM (Android)
 
