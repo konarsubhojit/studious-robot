@@ -22,7 +22,16 @@
 export type AnswerStageTiming = {
   /** Time taken by this stage alone, i.e. since the previous mark. */
   stageMs: number;
-  /** Time since the answer began, i.e. since `beginAnswerTimeline`. */
+  /**
+   * Time since the server recorded the accept, i.e. since
+   * {@link markAnswerAccepted} rebased the origin.
+   *
+   * Deliberately *not* measured from the Answer tap: this number exists to be
+   * compared against the server's `accepted → in_call` interval, and the
+   * accept round trip sits before that window opens. Until the accept is
+   * acknowledged it is measured from the tap, which is the closest available
+   * origin and is only ever used by stages that precede the ack.
+   */
   sinceAcceptMs: number;
 };
 
@@ -79,6 +88,28 @@ export function markAnswerStage(
   const sinceAcceptMs = Math.max(0, nowMs - timeline.startedMs);
   timeline.lastMs = nowMs;
   return { stageMs, sinceAcceptMs };
+}
+
+/**
+ * Mark the accept as acknowledged, closing the accept round trip as a stage
+ * and rebasing `sinceAcceptMs` onto it.
+ *
+ * The round trip happens before the server's `accepted → in_call` window
+ * opens, so leaving it inside the origin would charge a network hop to the
+ * first stage that reports — and would make every `sinceAcceptMs` larger than
+ * the server-side interval it is meant to explain.
+ *
+ * @returns The accept round trip's duration, or `null` when untracked.
+ */
+export function markAnswerAccepted(
+  callId: string | null | undefined,
+  nowMs: number = Date.now(),
+): AnswerStageTiming | null {
+  const timing = markAnswerStage(callId, nowMs);
+  if (!timing) return null;
+  const timeline = timelines.get(callId as string);
+  if (timeline) timeline.startedMs = nowMs;
+  return timing;
 }
 
 /** Stop timing an answer. Safe to call for a call that was never tracked. */

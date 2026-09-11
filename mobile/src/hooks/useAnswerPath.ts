@@ -9,7 +9,12 @@ import {
   describeAnswerFallback,
   describeDegradedMedia,
 } from '../call/answerPath';
-import { beginAnswerTimeline, endAnswerTimeline, markAnswerStage } from '../call/answerTimeline';
+import {
+  beginAnswerTimeline,
+  endAnswerTimeline,
+  markAnswerAccepted,
+  markAnswerStage,
+} from '../call/answerTimeline';
 import { buildCallActionUrl } from '../call/callEndpoints';
 import {
   callPeerId,
@@ -408,7 +413,12 @@ export default function useAnswerPath({
         transport,
       });
       reportCallKeepConnected(call.callId);
-      reportAnswerStage(call.callId, 'answer_accepted', transport);
+      // Closes the accept round trip as its own stage and rebases the clock
+      // onto it. Without this mark the next stage to report —
+      // `permissions_checked` — would be charged the whole network hop, which
+      // is exactly the mis-attribution this instrumentation exists to remove.
+      const accepted = markAnswerAccepted(call.callId);
+      reportAnswerStage(call.callId, 'answer_accepted', transport, accepted?.stageMs ?? null);
 
       await acquireMediaForAcceptedCall(call.callId);
     } catch (error) {

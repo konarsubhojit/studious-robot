@@ -11,6 +11,7 @@ import {
   beginAnswerTimeline,
   endAnswerTimeline,
   isAnswerTimelineActive,
+  markAnswerAccepted,
   markAnswerStage,
   resetAnswerTimelines,
 } from '../../src/call/answerTimeline';
@@ -86,5 +87,23 @@ describe('endAnswerTimeline', () => {
   it('tolerates a call that was never tracked', () => {
     expect(() => endAnswerTimeline('call-unknown')).not.toThrow();
     expect(() => endAnswerTimeline(null)).not.toThrow();
+  });
+});
+
+describe('markAnswerAccepted', () => {
+  it('returns the accept round trip and rebases sinceAcceptMs onto the ack', () => {
+    beginAnswerTimeline('call-1', 1_000);
+
+    // The accept round trip is its own stage...
+    expect(markAnswerAccepted('call-1', 1_600)).toEqual({ stageMs: 600, sinceAcceptMs: 600 });
+    // ...and is excluded from everything measured afterwards, so the client's
+    // elapsed time is comparable with the server's `accepted -> in_call`.
+    expect(markAnswerStage('call-1', 1_900)).toEqual({ stageMs: 300, sinceAcceptMs: 300 });
+    expect(markAnswerStage('call-1', 2_400)).toEqual({ stageMs: 500, sinceAcceptMs: 800 });
+  });
+
+  it('returns null for a call that is not being timed', () => {
+    expect(markAnswerAccepted('call-unknown', 1_000)).toBeNull();
+    expect(markAnswerAccepted(null, 1_000)).toBeNull();
   });
 });

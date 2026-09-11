@@ -415,6 +415,14 @@ export default function useCallRecovery({
     [peerConnectionRef, sessionIdRef, signalingUrl],
   );
 
+  // Forwarded through a ref, as the rest of this file does, so a
+  // diagnostics-only concern cannot churn the identity of a call-lifecycle
+  // callback that effects depend on.
+  const reportConnectedDiagnosticsRef = useRef(reportConnectedDiagnostics);
+  useEffect(() => {
+    reportConnectedDiagnosticsRef.current = reportConnectedDiagnostics;
+  }, [reportConnectedDiagnostics]);
+
   /**
    * Tell the server this device's media is connected.
    *
@@ -447,14 +455,13 @@ export default function useCallRecovery({
       );
       // Strictly after the emit, and never awaited: this is the event that
       // ends `connecting_media`, so a stats read must not be able to delay it.
-      void reportConnectedDiagnostics(callId, iceState, iceRestarts);
+      void reportConnectedDiagnosticsRef.current(callId, iceState, iceRestarts);
     },
     [
       activeCallIdRef,
       closeRecoveryEpisode,
       connectedReportedCallIdRef,
       iceRestartRef,
-      reportConnectedDiagnostics,
       signalingRef,
       startCallHeartbeat,
     ],
