@@ -11,6 +11,8 @@ jest.mock('../../src/appLogger', () => ({
 }));
 
 import RNFS from 'react-native-fs';
+import { withDatabase } from '../../src/storage/localDatabase';
+import type { DB } from '@op-engineering/op-sqlite';
 import {
   CHAT_DB_FILE_PATH,
   MAX_CONVERSATIONS,
@@ -22,6 +24,19 @@ import {
   resetChatDbCache,
   saveChatSnapshot,
 } from '../../src/storage/chatDb';
+
+let mockDb: jest.Mocked<DB>;
+beforeEach(async () => {
+  resetChatDbCache();
+  await withDatabase(async db => {
+    mockDb = db as jest.Mocked<DB>;
+    await db.executeBatch([['DELETE FROM chat_records'], ['DELETE FROM resource_cache']]);
+  });
+});
+afterEach(async () => {
+  await flushChatDb().catch(() => {});
+  resetChatDbCache();
+});
 
 /** `count` messages, newest first, one minute apart. */
 function makeMessages(count: number, overrides: Partial<import('../../src/hooks/useMessaging').ChatMessage> = {}): import('../../src/hooks/useMessaging').ChatMessage[] {
@@ -112,8 +127,9 @@ describe('chatDb', () => {
     expect(pruned.some(m => m.messageId === 'old-pending')).toBe(true);
   });
 
-  test('saving prunes history and writes a single coalesced file', async () => {
+  test('saving prunes history and commits one coalesced transaction', async () => {
     await loadChatSnapshot();
+    mockDb.executeBatch.mockClear();
 
     saveChatSnapshot({
       conversations: [{ conversationId: 'c1', peerId: 'bob' }],
@@ -122,22 +138,25 @@ describe('chatDb', () => {
     saveChatSnapshot({ outbox: [{ messageId: 'q1', recipientId: 'bob', body: 'queued' }] });
     await flushChatDb();
 
-    expect(RNFS.writeFile).toHaveBeenCalledTimes(1);
-    const [path, contents] = (RNFS.writeFile as jest.Mock).mock.calls[0];
-    expect(path).toBe(CHAT_DB_FILE_PATH);
-    const written = JSON.parse(contents);
+    expect(mockDb.executeBatch).toHaveBeenCalledTimes(1);
+    expect(RNFS.writeFile).not.toHaveBeenCalled();
+    resetChatDbCache();
+    const written = await loadChatSnapshot();
     expect(written.messagesByPeer.bob).toHaveLength(MAX_MESSAGES_PER_CONVERSATION);
     expect(written.outbox).toHaveLength(1);
     expect(written.conversations).toHaveLength(1);
   });
 
-  test('a write failure is swallowed so it cannot break the chat UI', async () => {
+  test('a failed durable commit rejects and can be retried without losing rows', async () => {
     await loadChatSnapshot();
-    (RNFS.writeFile as jest.Mock).mockRejectedValue(new Error('disk full'));
+    mockDb.executeBatch.mockRejectedValueOnce(new Error('disk full'));
 
     saveChatSnapshot({ conversations: [{ peerId: 'bob' }] });
 
-    await expect(flushChatDb()).resolves.toBeUndefined();
+    await expect(flushChatDb()).rejects.toThrow('disk full');
+    await flushChatDb();
+    resetChatDbCache();
+    expect((await loadChatSnapshot()).conversations).toEqual([{ peerId: 'bob' }]);
   });
 
   test('clearing removes the file and empties the snapshot', async () => {
@@ -350,10 +369,7 @@ describe('chatDb drafts', () => {
     } as any);
     await flushChatDb();
 
-    const written = JSON.parse((RNFS.writeFile as jest.Mock).mock.calls.at(-1)[1]);
     resetChatDbCache();
-    (RNFS.exists as jest.Mock).mockResolvedValue(true);
-    (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify(written));
 
     const snapshot = await loadChatSnapshot();
     expect(snapshot.drafts.pia).toEqual({
@@ -364,3 +380,68 @@ describe('chatDb drafts', () => {
     expect(snapshot.drafts.sam).toBeUndefined();
   });
 });
+
+describe('SQLite isolation and incremental writes', () => {
+      beforeEach(() => {
+        (RNFS.exists as jest.Mock).mockResolvedValue(false);
+      });
+
+      test('isolates accounts and servers, including queued sends and drafts', async () => {
+        for (const scope of ['alice@one', 'bob@one', 'alice@two']) {
+          saveChatSnapshot({
+            drafts: { bob: { text: scope } },
+            outbox: [{ messageId: 'same-id', recipientId: 'bob', body: scope }],
+          }, scope);
+          await flushChatDb(scope);
+        }
+        resetChatDbCache();
+        expect((await loadChatSnapshot('alice@one')).drafts.bob.text).toBe('alice@one');
+        expect((await loadChatSnapshot('bob@one')).outbox[0].body).toBe('bob@one');
+        await clearChatDb('alice@one');
+        expect((await loadChatSnapshot('alice@two')).outbox[0].body).toBe('alice@two');
+        expect((await loadChatSnapshot('alice@one')).outbox).toEqual([]);
+      });
+
+      test('does not assign an ownerless legacy outbox to a signed-in account', async () => {
+        (RNFS.exists as jest.Mock).mockResolvedValue(true);
+        (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify({
+          outbox: [{ messageId: 'private', recipientId: 'bob', body: 'private' }],
+        }));
+        expect((await loadChatSnapshot('new-account')).outbox).toEqual([]);
+        expect(RNFS.unlink).not.toHaveBeenCalled();
+      });
+
+      test('imports an explicitly owned legacy snapshot atomically and only once', async () => {
+        (RNFS.exists as jest.Mock).mockResolvedValue(true);
+        (RNFS.readFile as jest.Mock).mockResolvedValue(JSON.stringify({
+          ownerScope: 'alice',
+          drafts: { bob: { text: 'retained' } },
+        }));
+        expect((await loadChatSnapshot('alice')).drafts.bob.text).toBe('retained');
+        resetChatDbCache();
+        (RNFS.readFile as jest.Mock).mockClear();
+        expect((await loadChatSnapshot('alice')).drafts.bob.text).toBe('retained');
+        expect(RNFS.readFile).not.toHaveBeenCalled();
+      });
+
+      test('an outbox change never rewrites stored message rows', async () => {
+        saveChatSnapshot({ messagesByPeer: { bob: makeMessages(200) } });
+        await flushChatDb();
+        mockDb.executeBatch.mockClear();
+        saveChatSnapshot({ outbox: [{ messageId: 'q', recipientId: 'bob', body: 'hi' }] });
+        await Promise.all([flushChatDb(), flushChatDb()]);
+        expect(mockDb.executeBatch).toHaveBeenCalledTimes(1);
+        const [commands] = mockDb.executeBatch.mock.calls[0];
+        expect(commands).toHaveLength(1);
+        expect(commands[0][1]).toEqual(expect.arrayContaining(['outbox', 'q']));
+      });
+
+      test('clearing fences an in-flight load and pending writes', async () => {
+        saveChatSnapshot({ drafts: { bob: { text: 'must not return' } } }, 'alice');
+        const loading = loadChatSnapshot('alice');
+        await clearChatDb('alice');
+        await loading;
+        resetChatDbCache();
+        expect((await loadChatSnapshot('alice')).drafts).toEqual({});
+      });
+    });

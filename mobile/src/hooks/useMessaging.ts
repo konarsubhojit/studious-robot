@@ -8,7 +8,8 @@ import {
   markMessageSeen,
   setActiveConversation,
 } from '../messageNotification';
-import { saveChatSnapshot } from '../storage/chatDb';
+import { flushChatDb, loadChatSnapshot, saveChatSnapshot } from '../storage/chatDb';
+import { dataScope } from '../storage/localDatabase';
 import type { ChatDraft, ChatSnapshot } from '../storage/chatDb';
 import { API_ROUTES, MESSAGE_TYPES, isAttachmentMessageType } from '../../../shared';
 import { CLIENT_EVENTS } from '../signalingClient';
@@ -153,6 +154,7 @@ export type UseMessagingParams = {
   signalingRef: { current: SignalingClient | null; };
   socketRef: { current: Socket | null; };
   userId: string;
+  storageUserId?: string;
   updateStatus: (message: string, severity?: CallStatus['severity']) => void;
 };
 
@@ -163,8 +165,13 @@ export default function useMessaging({
   signalingUrl,
   socketRef,
   userId,
+  storageUserId = userId,
   updateStatus,
 }: UseMessagingParams) {
+  const scope = dataScope(signalingUrl, storageUserId);
+  const [stateScope, setStateScope] = useState(scope);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   // One entry per conversation the user participates in: { conversationId,
   // peerId, lastMessage, lastActivity, unreadCount }, newest-activity first.
   // `lastActivity` is whichever of the last message and the last call is
@@ -219,6 +226,25 @@ export default function useMessaging({
   const lastLocalCreatedAtMsRef = useRef(0);
 
   useEffect(() => {
+    scopeRef.current = scope;
+    setStateScope(scope);
+    setConversations([]);
+    setMessagesByPeer({});
+    setDrafts({});
+    setActiveChatPeerId(null);
+    setTypingByPeer({});
+    setPendingSendCount(0);
+    outboxRef.current = [];
+    conversationsRef.current = [];
+    messagesByPeerRef.current = {};
+    activeChatPeerIdRef.current = null;
+    attachmentUploadMetaRef.current = {};
+    clearTimeout(drainTimerRef.current ?? undefined);
+    Object.values(typingTimeoutsRef.current).forEach(clearTimeout);
+    return () => { scopeRef.current = ''; };
+  }, [scope]);
+
+  useEffect(() => {
     activeChatPeerIdRef.current = activeChatPeerId;
   }, [activeChatPeerId]);
 
@@ -250,10 +276,11 @@ export default function useMessaging({
   }, []);
 
   useChatSnapshotMirror({
-    conversations,
-    messagesByPeer,
-    drafts,
+    conversations: stateScope === scope ? conversations : [],
+    messagesByPeer: stateScope === scope ? messagesByPeer : {},
+    drafts: stateScope === scope ? drafts : {},
     onHydrate: applySnapshot,
+    scope,
   });
 
   // Mirror the open conversation into the push layer, so a message push for
@@ -287,6 +314,7 @@ export default function useMessaging({
       }));
       if (!response?.ok) return;
       const data = await response.json();
+      if (scopeRef.current !== scope) return;
       if (!Array.isArray(data.conversations)) return;
       setConversations(data.conversations);
     } catch (error) {
@@ -294,7 +322,7 @@ export default function useMessaging({
         message: errorMessage(error),
       });
     }
-  }, [authedFetchRef, sessionIdRef, signalingUrl]);
+  }, [authedFetchRef, sessionIdRef, signalingUrl, scope]);
 
   /**
    * Fetch a page of conversation history with `peerId` (`GET /messages`) and
@@ -330,7 +358,11 @@ export default function useMessaging({
         });
         if (!response?.ok) return [];
         const data = await response.json();
+        if (scopeRef.current !== scope) return [];
         const messages = Array.isArray(data.messages) ? data.messages : [];
+        messages.forEach((message: ChatMessage) => {
+          if (message.deletedAt) evictTombstonedAttachment(message.messageId);
+        });
         setMessagesByPeer(prev => ({
           ...prev,
           [trimmedPeerId]: mergeHistoryPage(prev[trimmedPeerId] ?? [], messages, { before: cursor?.before ?? before }),
@@ -343,7 +375,7 @@ export default function useMessaging({
         return [];
       }
     },
-    [authedFetchRef, sessionIdRef, signalingUrl],
+    [authedFetchRef, sessionIdRef, signalingUrl, scope],
   );
 
   /**
@@ -366,7 +398,7 @@ export default function useMessaging({
             body: JSON.stringify({ peerId: trimmedPeerId }),
           },
         }));
-        if (!response?.ok) return;
+        if (!response?.ok || scopeRef.current !== scope) return;
         setConversations(prev => withConversationRead(prev, trimmedPeerId));
       } catch (error) {
         logWarn('[Messaging] markConversationRead failed', {
@@ -374,7 +406,7 @@ export default function useMessaging({
         });
       }
     },
-    [authedFetchRef, signalingUrl],
+    [authedFetchRef, signalingUrl, scope],
   );
 
   /**
@@ -389,7 +421,14 @@ export default function useMessaging({
     async (query: string, { limit = 20, signal }: { limit?: number; signal?: AbortSignal; } = {}) => {
       const term = (query ?? '').trim();
       const sessionId = sessionIdRef.current;
-      if (!term || !sessionId) return [];
+      if (!term || signal?.aborted) return [];
+      const localResults = () => Object.entries(messagesByPeerRef.current)
+        .flatMap(([peerId, messages]) => messages
+          .filter(message => !message.deletedAt && message.body?.toLowerCase().includes(term.toLowerCase()))
+          .map(message => ({ ...message, peerId })))
+        .sort((a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? ''))
+        .slice(0, Math.max(1, Math.min(limit, 100)));
+      if (!sessionId) return localResults();
       try {
         const trimmedUrl = signalingUrl.trim();
         const response = await authedFetchRef.current?.((sid: string) => {
@@ -399,8 +438,9 @@ export default function useMessaging({
             options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
           };
         });
-        if (!response?.ok) return [];
+        if (!response?.ok) return response?.status >= 400 && response.status < 500 ? [] : localResults();
         const data = await response.json();
+        if (scopeRef.current !== scope || signal?.aborted) return [];
         return Array.isArray(data.results) ? data.results : [];
       } catch (error) {
         // An aborted request is the expected outcome of a newer keystroke, not
@@ -408,10 +448,10 @@ export default function useMessaging({
         if (!(error instanceof Error) || error.name !== 'AbortError') {
           logWarn('[Messaging] searchMessages failed', { message: errorMessage(error) });
         }
-        return [];
+        return scopeRef.current === scope && !signal?.aborted ? localResults() : [];
       }
     },
-    [authedFetchRef, sessionIdRef, signalingUrl],
+    [authedFetchRef, sessionIdRef, signalingUrl, scope],
   );
 
   /**
@@ -440,8 +480,8 @@ export default function useMessaging({
   const persistOutbox = useCallback(/** @param next */ (next: OutboxItem[]) => {
     outboxRef.current = next;
     setPendingSendCount(next.length);
-    saveChatSnapshot({ outbox: next });
-  }, []);
+    saveChatSnapshot({ outbox: next }, scope);
+  }, [scope]);
 
   /** Schedule the next drain with bounded exponential backoff plus jitter. */
   const scheduleDrain = useCallback(() => {
@@ -464,7 +504,16 @@ export default function useMessaging({
     /** @param item */
     async (item: OutboxItem) => {
       const signaling = signalingRef?.current;
-      if (!signaling || !socketRef.current?.connected) return false;
+      if (!signaling || !socketRef.current?.connected || scopeRef.current !== scope) return false;
+
+      // Failure to commit is not a send attempt: never emit an undurable row.
+      try {
+        await flushChatDb(scope);
+      } catch {
+        updateStatus('Cannot save message on this device. Free storage and retry.', 'error');
+        return false;
+      }
+      if (scopeRef.current !== scope || !outboxRef.current.some(row => row.messageId === item.messageId)) return false;
 
       try {
         const ack = await signaling.request(CLIENT_EVENTS.MESSAGE_SEND, {
@@ -480,11 +529,13 @@ export default function useMessaging({
           // resolves to the same message instead of a duplicate.
           messageId: item.messageId,
         });
+        if (scopeRef.current !== scope) return false;
         const confirmed = (ack as { message?: ChatMessage } | undefined)?.message;
         patchMessage(item.recipientId, item.messageId, entry => asSent(entry, confirmed));
         persistOutbox(withoutMessage(outboxRef.current, item.messageId));
         return true;
       } catch (error) {
+        if (scopeRef.current !== scope) return false;
         logWarn('[Messaging] sendMessage failed', { message: errorMessage(error) });
         const attempts = (item.attempts ?? 0) + 1;
         persistOutbox(
@@ -503,7 +554,7 @@ export default function useMessaging({
         return false;
       }
     },
-    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus],
+    [patchMessage, persistOutbox, signalingRef, socketRef, updateStatus, scope],
   );
 
   /**
@@ -560,9 +611,12 @@ export default function useMessaging({
       if (nextState !== 'active') return;
       drainAttemptRef.current = 0;
       drainOutboxRef.current();
+      void fetchConversations();
+      const peer = activeChatPeerIdRef.current;
+      if (peer) void fetchMessagesForPeer(peer);
     });
     return () => subscription?.remove?.();
-  }, []);
+  }, [fetchConversations, fetchMessagesForPeer]);
 
   useEffect(
     () => () => {
@@ -596,6 +650,14 @@ export default function useMessaging({
       if (!trimmedPeerId) return;
       // Text needs words; an attachment message needs an attachment.
       if (attachment ? !attachment.url : !trimmedBody) return;
+      if (!scope) return;
+      try {
+        await loadChatSnapshot(scope);
+      } catch {
+        updateStatus('Cannot open local message storage. Retry before sending.', 'error');
+        return;
+      }
+      if (scopeRef.current !== scope) return;
 
       const messageId = createMessageId();
       const createdAt = nextLocalCreatedAt(
@@ -625,10 +687,24 @@ export default function useMessaging({
       // about the send at the same moment the conversation does.
       setConversations(prev => withOutgoingMessage(prev, optimistic));
       persistOutbox([...outboxRef.current, buildOutboxItem(outgoing)]);
+      // Persist the optimistic row and queue together, before React's mirror runs.
+      messagesByPeerRef.current = prependMessage(messagesByPeerRef.current, trimmedPeerId, optimistic);
+      conversationsRef.current = withOutgoingMessage(conversationsRef.current, optimistic);
+      saveChatSnapshot({
+        messagesByPeer: messagesByPeerRef.current,
+        conversations: conversationsRef.current,
+      }, scope);
+      try {
+        await flushChatDb(scope);
+      } catch {
+        updateStatus('Message is not saved. Free device storage and retry.', 'error');
+        scheduleDrain();
+        return;
+      }
 
       await drainOutbox();
     },
-    [drainOutbox, persistOutbox, userId],
+    [drainOutbox, persistOutbox, userId, scope, scheduleDrain, updateStatus],
   );
 
   const beginAttachmentUpload = useCallback(
@@ -1010,7 +1086,9 @@ export default function useMessaging({
     clearTimeout(drainTimerRef.current ?? undefined);
     drainTimerRef.current = null;
     drainOutboxRef.current();
-  }, []);
+    const peer = activeChatPeerIdRef.current;
+    if (peer) void fetchMessagesForPeer(peer);
+  }, [fetchMessagesForPeer]);
 
   /** The socket went down: drive the offline banner. */
   const handleSocketDisconnected = useCallback(() => {
@@ -1035,19 +1113,19 @@ export default function useMessaging({
   }, []);
 
   return {
-    conversations,
-    messagesByPeer,
-    drafts,
+    conversations: stateScope === scope ? conversations : [],
+    messagesByPeer: stateScope === scope ? messagesByPeer : {},
+    drafts: stateScope === scope ? drafts : {},
     saveDraft,
     clearDraft,
     activeChatPeerId,
     setActiveChatPeerId,
     typingByPeer,
-    unreadTotal,
+    unreadTotal: stateScope === scope ? unreadTotal : 0,
     // Only reported once the socket has told us either way, so the banner
     // never flashes during the first connect.
     isOffline: isSocketConnected === false,
-    pendingSendCount,
+    pendingSendCount: stateScope === scope ? pendingSendCount : 0,
     fetchConversations,
     fetchMessagesForPeer,
     searchMessages,

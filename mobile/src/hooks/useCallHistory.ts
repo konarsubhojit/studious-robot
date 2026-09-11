@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import { DEFAULT_CALL_MEDIA_TYPE } from '../callUx';
@@ -6,6 +7,8 @@ import { errorMessage } from '../errors';
 import { bearerAuthHeaders } from '../authHeaders';
 import { loadCallMediaTypes, saveCallMediaTypes } from '../settingsStorage';
 import type { CallMediaType, CallMediaTypeMap } from '../settingsStorage';
+import { dataScope } from '../storage/localDatabase';
+import useCachedResource from '../storage/useCachedResource';
 
 /** Maximum number of call history entries to retain in memory. */
 const MAX_CALL_HISTORY = 50;
@@ -58,15 +61,17 @@ function withMediaType(entry: CallHistoryEntry, map: CallMediaTypeMap): CallHist
 /**
  * @param params
  */
-export default function useCallHistory({ authedFetchRef, sessionIdRef, signalingUrl, userId }: {
+export default function useCallHistory({ authedFetchRef, sessionIdRef, signalingUrl, userId, storageUserId = userId }: {
         authedFetchRef: { current: Function | null; };
         sessionIdRef: { current: string | null; };
         signalingUrl: string;
         userId: string;
+        storageUserId?: string;
     }) {
   // Each entry: { callId, callerId, calleeId, direction, status, endReason,
   //               createdAt, durationSeconds, isRead }
-  const [callHistory, setCallHistory] = useState(([] as CallHistoryEntry[]));
+  const [callHistory, setCallHistory] = useCachedResource<CallHistoryEntry[]>(
+    dataScope(signalingUrl, storageUserId), 'calls', []);
 
   // `callId -> modality`, mirrored to disk. Held in a ref (not state) because
   // it is only ever read while building an entry, so a change to it must not
@@ -82,15 +87,15 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
       mediaTypesRef.current = { ...stored, ...mediaTypesRef.current };
       // Backfill rows fetched before the file arrived.
       setCallHistory(prev =>
-        prev.map(entry =>
+        prev.length ? prev.map(entry =>
           entry.mediaType ? entry : withMediaType(entry, mediaTypesRef.current),
-        ),
+        ) : prev,
       );
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setCallHistory]);
 
   /**
    * Number of incoming calls that ended as 'missed' and have not yet been
@@ -124,12 +129,12 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
       const without = prev.filter(e => e.callId !== resolved.callId);
       return [resolved, ...without].slice(0, MAX_CALL_HISTORY);
     });
-  }, []);
+  }, [setCallHistory]);
 
   /** Mark all missed-call entries as read (clears the badge counter). */
   const markMissedCallsRead = useCallback(() => {
     setCallHistory(prev => prev.map(e => ({ ...e, isRead: true })));
-  }, []);
+  }, [setCallHistory]);
 
   /**
    * Fetch the authenticated user's recent call history from the server and
@@ -164,15 +169,25 @@ export default function useCallHistory({ authedFetchRef, sessionIdRef, signaling
           isRead: call.status !== 'missed' || Boolean(call.missedReadAt),
           mediaType: mediaTypesRef.current[call.callId],
         }));
-        setCallHistory(entries);
+        setCallHistory(previous => entries.slice(0, MAX_CALL_HISTORY).map((entry: CallHistoryEntry) => {
+          const held = previous.find(row => row.callId === entry.callId);
+          return { ...entry, isRead: Boolean(entry.isRead || held?.isRead), mediaType: entry.mediaType ?? held?.mediaType };
+        }));
       } catch (error) {
         logWarn('[CallHistory] fetchCallHistory failed', {
           message: errorMessage(error),
         });
       }
     },
-    [authedFetchRef, sessionIdRef, signalingUrl, userId],
+    [authedFetchRef, sessionIdRef, signalingUrl, userId, setCallHistory],
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void fetchCallHistory();
+    });
+    return () => subscription.remove();
+  }, [fetchCallHistory]);
 
   return {
     callHistory,

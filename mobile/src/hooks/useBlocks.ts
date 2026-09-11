@@ -1,8 +1,12 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { AppState } from 'react-native';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
 import { errorMessage } from '../errors';
 import { bearerAuthHeaders } from '../authHeaders';
+import { dataScope } from '../storage/localDatabase';
+import useCachedResource from '../storage/useCachedResource';
+import { invalidateDirectory } from '../storage/resourceCache';
 
 /**
  * Owns the authenticated user's blocklist: the ids they have blocked, and the
@@ -20,13 +24,15 @@ import { bearerAuthHeaders } from '../authHeaders';
  *
  * @param params
  */
-export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }: {
+export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl, userId = '' }: {
         authedFetchRef: { current: Function | null; };
         sessionIdRef: { current: string | null; };
         signalingUrl: string;
+        userId?: string;
     }) {
   /** @type ids the authenticated user has blocked. */
-  const [blockedUsers, setBlockedUsers] = useState(([] as string[]));
+  const scope = dataScope(signalingUrl, userId);
+  const [blockedUsers, setBlockedUsers] = useCachedResource<string[]>(scope, 'blocks', []);
 
   const blockedSet = useMemo(() => new Set(blockedUsers), [blockedUsers]);
 
@@ -53,10 +59,18 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
       const data = await response.json();
       if (!Array.isArray(data.blockedUsers)) return;
       setBlockedUsers(data.blockedUsers);
+      await invalidateDirectory(scope);
     } catch (error) {
       logWarn('[Blocks] fetchBlocks failed', { message: errorMessage(error) });
     }
-  }, [authedFetchRef, sessionIdRef, signalingUrl]);
+  }, [authedFetchRef, sessionIdRef, signalingUrl, scope, setBlockedUsers]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') void fetchBlocks();
+    });
+    return () => subscription.remove();
+  }, [fetchBlocks]);
 
   /**
    * Block `peerId` (`POST /blocks`).
@@ -81,13 +95,14 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
         setBlockedUsers((prev: string[]) =>
           prev.includes(trimmedPeerId) ? prev : [...prev, trimmedPeerId],
         );
+        await invalidateDirectory(scope);
         return true;
       } catch (error) {
         logWarn('[Blocks] blockUser failed', { message: errorMessage(error) });
         return false;
       }
     },
-    [authedFetchRef, signalingUrl],
+    [authedFetchRef, signalingUrl, scope, setBlockedUsers],
   );
 
   /**
@@ -110,13 +125,14 @@ export default function useBlocks({ authedFetchRef, sessionIdRef, signalingUrl }
         setBlockedUsers((prev: string[]) =>
           prev.filter((id: string) => id !== trimmedPeerId),
         );
+        await invalidateDirectory(scope);
         return true;
       } catch (error) {
         logWarn('[Blocks] unblockUser failed', { message: errorMessage(error) });
         return false;
       }
     },
-    [authedFetchRef, signalingUrl],
+    [authedFetchRef, signalingUrl, scope, setBlockedUsers],
   );
 
   return {
