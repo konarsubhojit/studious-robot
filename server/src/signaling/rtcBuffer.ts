@@ -74,6 +74,7 @@ function bufferRtcSignal(state: ServerState, callId: string, signal: PendingRtcS
   if (pending.length >= MAX_BUFFERED_RTC_SIGNALS_PER_CALL) return false;
   pending.push(signal);
   state.pendingRtcSignals.set(callId, pending);
+  state.telemetry?.recordRtcBufferOutcome('buffered');
   return true;
 }
 
@@ -82,10 +83,22 @@ function countBufferedRtcSignals(state: ServerState, callId: string): number {
   return state.pendingRtcSignals?.get(callId)?.length ?? 0;
 }
 
-/** Forget every signal held for `callId`. */
-function discardBufferedRtcSignals(state: ServerState, callId: string): number {
+/**
+ * Forget every signal held for `callId`.
+ *
+ * @param outcome - How the frames were lost, for the metric that separates a
+ *   call that simply ended before it was ever media-ready (`stranded_local`)
+ *   from a buffer this instance was still holding when a peer instance moved
+ *   the call (`stranded_remote`).
+ */
+function discardBufferedRtcSignals(
+  state: ServerState,
+  callId: string,
+  outcome: 'stranded_local' | 'stranded_remote' = 'stranded_local'
+): number {
   const held = countBufferedRtcSignals(state, callId);
   state.pendingRtcSignals?.delete(callId);
+  if (held > 0) state.telemetry?.recordRtcBufferOutcome(outcome, held);
   return held;
 }
 
@@ -114,6 +127,8 @@ function flushBufferedRtcSignals(io: any, state: ServerState, callId: string, st
   const pending = state.pendingRtcSignals?.get(callId);
   if (!pending || pending.length === 0) return 0;
   state.pendingRtcSignals?.delete(callId);
+
+  state.telemetry?.recordRtcBufferOutcome('replayed', pending.length);
 
   for (const signal of pending) {
     emitToUserSockets(io, signal.toUserId, signal.eventName, {

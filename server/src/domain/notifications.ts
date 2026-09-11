@@ -1,5 +1,6 @@
 import { pushSenders } from '../push.ts';
-import { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, TERMINAL_CALL_STATES } from '../config.ts';
+import { SIGNALING_VERSION, CALL_TRANSITION_CHANNEL, CONNECTED_CALL_STATUS, TERMINAL_CALL_STATES } from '../config.ts';
+import { measureSinceAnswered } from '../lib/callLatency.ts';
 import { resolveReachableChannels, userRoom } from '../lib/state.ts';
 import { describeActiveCallsForUser } from './calls.ts';
 import { pruneDeadDevice } from '../lib/persistence.ts';
@@ -433,6 +434,25 @@ function dispatchCallCancelledPushes(state: ServerState, call: CallRecord, reaso
 }
 
 /**
+ * The media-setup elapsed time to attach to a transition log line, if any.
+ *
+ * Only the two media-setup transitions carry one, and both are measured from
+ * the record's shared `answeredAt` rather than a process-local clock — which
+ * is what makes the split readable from a single host's journal even when the
+ * accept and the connect were handled on different instances. Subtracting the
+ * `connecting_media` line's value from the `in_call` line's gives the
+ * `connecting_media → in_call` leg.
+ *
+ * Returns an empty string when the elapsed time is absent or fails the skew
+ * bounds: a wrong number in a log line is worse than no number.
+ */
+function describeMediaSetupElapsed(call: CallRecord, nowMs: number): string {
+  if (call.status !== 'connecting_media' && call.status !== CONNECTED_CALL_STATUS) return '';
+  const elapsed = measureSinceAnswered(call, nowMs);
+  return elapsed.ok ? ` sinceAcceptedMs=${elapsed.elapsedMs}` : '';
+}
+
+/**
  * @param io Socket.IO server.
  */
 function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { previousStatus, actor = null, reason = null }: { previousStatus: string | null; actor?: string | null; reason?: string | null; }): void {
@@ -447,7 +467,9 @@ function notifyCallTransition(io: any, state: ServerState, call: CallRecord, { p
     console.log(
       `[signaling] call.transition callId=${call.callId} ${previousStatus}->${call.status}` +
         (reason ? ` reason=${reason}` : '') +
-        (actor ? ` actor=${actor}` : '')
+        (actor ? ` actor=${actor}` : '') +
+        (state.instanceId ? ` instance=${state.instanceId}` : '') +
+        describeMediaSetupElapsed(call, Date.now())
     );
     verboseLog('calls', 'transition', {
       callId: call.callId,
