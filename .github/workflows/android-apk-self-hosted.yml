@@ -32,7 +32,7 @@ permissions:
 jobs:
   build-apk:
     name: Build APK(s) (self-hosted)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: self-hosted
     timeout-minutes: 45
     environment: ${{ github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && 'android-release' || 'ci' }}
 

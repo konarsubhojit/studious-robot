@@ -31,7 +31,7 @@ permissions:
 jobs:
   test:
     name: Unit tests (self-hosted)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: self-hosted
     timeout-minutes: 20
 
     defaults:
