@@ -9,6 +9,7 @@ import {
   describeAnswerFallback,
   describeDegradedMedia,
 } from '../call/answerPath';
+import { beginAnswerTimeline, endAnswerTimeline, markAnswerStage } from '../call/answerTimeline';
 import { buildCallActionUrl } from '../call/callEndpoints';
 import {
   callPeerId,
@@ -37,6 +38,7 @@ import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
 import { SIGNALING_VERSION } from '../socketProtocol';
 import { stopIncomingRingtone } from '../ringtone';
 import * as Telemetry from '../telemetry';
+import { describeLastIceServerFetch } from '../webrtcConfig';
 import { ERROR_CODES } from '../../../shared';
 import type { CallEndSummary } from '../call/callDecisions';
 import type { CallStatus } from '../components/StatusBanner';
@@ -136,12 +138,18 @@ export default function useAnswerPath({
   recordTimelineCallRef,
 }: UseAnswerPathParams) {
   const reportAnswerStage = useCallback(
-    (callId: string | null, stage: string, reason: string | null = null) => {
+    (
+      callId: string | null,
+      stage: string,
+      reason: string | null = null,
+      durationMs: number | null = null,
+    ) => {
       if (!callId) return;
       sendPushReceipt({
         callId,
         stage,
         reason,
+        durationMs,
         sessionId: sessionIdRef.current,
         signalingUrl: (signalingUrl ?? '').trim(),
       }).catch(error => {
@@ -246,9 +254,28 @@ export default function useAnswerPath({
     [acceptCallOverHttp, signalingRef, updateStatus, waitForConnectedSocket],
   );
 
+  /**
+   * Report a stage of the answer with how long it took.
+   *
+   * The stage clock is started by `acceptIncomingCall`; a call that is not
+   * being timed reports the stage without a duration rather than a zero.
+   */
+  const reportAnswerStageTiming = useCallback(
+    (callId: string, stage: string, reason: string | null = null) => {
+      const timing = markAnswerStage(callId);
+      reportAnswerStage(callId, stage, reason, timing?.stageMs ?? null);
+    },
+    [reportAnswerStage],
+  );
+
   const acquireMediaForAcceptedCall = useCallback(
     async (callId: string) => {
       const permissions = await getMissingCallPermissions().catch(() => null);
+      reportAnswerStageTiming(
+        callId,
+        'permissions_checked',
+        permissions?.missing?.length ? permissions.missing.join(',') : 'granted',
+      );
       if (permissions?.missing?.length) {
         logWarn('[CallFlow] Answering without granted media permissions', {
           callId,
@@ -265,6 +292,9 @@ export default function useAnswerPath({
       } catch (error) {
         logError('[CallFlow] Local media failed after accepting call', error);
       }
+      // `startLocalPreview` is the single longest serialised step on this path
+      // and, until now, entirely unmeasured (diagnosis §6).
+      reportAnswerStageTiming(callId, 'media_acquired', stream ? 'ok' : 'no_stream');
 
       const degraded = describeDegradedMedia({
         hasStream: Boolean(stream),
@@ -282,13 +312,22 @@ export default function useAnswerPath({
 
       try {
         await ensurePeerConnection();
+        // Includes the ICE-server fetch, which reports its own tier and
+        // duration separately so §1 stays separable from §6.
+        reportAnswerStageTiming(callId, 'peer_connection_ready', describeLastIceServerFetch());
       } catch (error) {
         logError('[CallFlow] Failed to prepare peer connection after accept', error);
         updateStatus('Failed to connect media', 'error');
-        reportAnswerStage(callId, 'answer_failed', 'peer_connection_failed');
+        reportAnswerStageTiming(callId, 'answer_failed', 'peer_connection_failed');
       }
     },
-    [ensurePeerConnection, reportAnswerStage, startLocalPreview, updateStatus],
+    [
+      ensurePeerConnection,
+      reportAnswerStage,
+      reportAnswerStageTiming,
+      startLocalPreview,
+      updateStatus,
+    ],
   );
 
   const rememberAnsweredCall = useCallback(
@@ -340,6 +379,9 @@ export default function useAnswerPath({
     setCallSummary(null);
     logInfo('[CallFlow] Accepting incoming call', { callId: call.callId });
     acceptInFlightCallIdRef.current = call.callId;
+    // Everything from here until `rtc.answer` is sent lands inside the
+    // server's `accepted -> in_call` window, so this is where its clock starts.
+    beginAnswerTimeline(call.callId);
     reportAnswerStage(call.callId, 'answer_attempted');
 
     try {
@@ -372,6 +414,7 @@ export default function useAnswerPath({
     } catch (error) {
       const reason = (error as AnswerError)?.answerFailureReason ?? 'accept_failed';
       logError('[CallFlow] acceptIncomingCall failed', error);
+      endAnswerTimeline(call.callId);
       reportAnswerStage(call.callId, 'answer_failed', reason);
       clearPendingAnswer(call.callId, reason);
 

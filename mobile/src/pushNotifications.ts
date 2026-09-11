@@ -57,6 +57,10 @@ const DEFAULT_SIGNALING_URL = process.env.SIGNALING_URL || 'http://localhost:417
 // the `answer_*` stages cover what happened after the user tapped Answer, so a
 // call that rings but cannot be picked up is diagnosable from server logs
 // without device access.
+// The last five time the callee's own work after the accept is acknowledged,
+// which runs entirely inside the server's `accepted -> in_call` window and was
+// previously unmeasured (`docs/media-connect-latency-diagnosis.md` §6).
+// `media_connected` closes that window and carries the ICE outcome (§4).
 const RECEIPT_STAGES = new Set([
   'received',
   'ui_displayed',
@@ -67,6 +71,11 @@ const RECEIPT_STAGES = new Set([
   'answer_skipped_duplicate',
   'accept_tapped',
   'decline_tapped',
+  'permissions_checked',
+  'media_acquired',
+  'peer_connection_ready',
+  'answer_sent',
+  'media_connected',
 ]);
 // Message pushes report the same `received` stage plus what the device did
 // with it, so "the provider accepted it" (which proves nothing about the
@@ -481,6 +490,7 @@ async function buildPushReceiptRequest({
   messageId,
   stage,
   reason,
+  durationMs,
   explicitSessionId,
   explicitSignalingUrl,
 }: {
@@ -489,6 +499,7 @@ async function buildPushReceiptRequest({
   messageId: string;
   stage: string;
   reason: string | null;
+  durationMs: number | null;
   explicitSessionId: string | null;
   explicitSignalingUrl: string | null;
 }) {
@@ -504,6 +515,7 @@ async function buildPushReceiptRequest({
       ...(callId ? { callId } : { messageId }),
       stage,
       ...(reason ? { reason } : {}),
+      ...(durationMs === null ? {} : { durationMs }),
     },
   };
 }
@@ -529,6 +541,7 @@ export async function sendPushReceipt({
   messageId = null,
   stage,
   reason = null,
+  durationMs = null,
   sessionId: explicitSessionId = null,
   signalingUrl: explicitSignalingUrl = null,
 }: {
@@ -537,6 +550,12 @@ export async function sendPushReceipt({
         messageId?: string | null;
         stage: string;
         reason?: string | null;
+        /**
+         * How long the step this receipt reports took, in ms. Measured on the
+         * device: the server's own `latencyMs` runs from the call record and
+         * cannot see the client-side stages at all.
+         */
+        durationMs?: number | null;
         sessionId?: string | null;
         signalingUrl?: string | null;
     }): Promise<boolean> {
@@ -552,6 +571,7 @@ export async function sendPushReceipt({
       messageId: trimmedMessageId,
       stage,
       reason,
+      durationMs: Number.isFinite(durationMs as number) ? (durationMs as number) : null,
       explicitSessionId,
       explicitSignalingUrl,
     });

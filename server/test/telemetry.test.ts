@@ -607,7 +607,7 @@ test('call_connect_latency_ms is observed for a call this process never saw acce
   const snap = telemetry.getSnapshot();
   assert.equal(snap.histograms.call_connect_latency_ms.count, 1);
   assert.ok(
-    snap.histograms.call_connect_latency_ms.max >= 3_000,
+    (snap.histograms.call_connect_latency_ms.max ?? 0) >= 3_000,
     'the sample is measured from answeredAt, not from process start'
   );
   assert.equal(snap.counters.call_connect_latency_shared, 1);

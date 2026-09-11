@@ -112,6 +112,45 @@ export function getIceServers() {
  */
 export type IceServerTier = 'fetched' | 'cache' | 'stale-cache' | 'build-time-config';
 
+/**
+ * The outcome of the most recent {@link getIceServersForCall}.
+ *
+ * §1 of `docs/media-connect-latency-diagnosis.md` asks whether minting TURN
+ * credentials at call time sits on the `accepted -> in_call` path. The answer
+ * depends entirely on which tier a given call landed on — a cache hit is free,
+ * a fetch is a network round trip — and neither the tier nor its cost was
+ * recoverable from anything the call reported afterwards.
+ */
+export type IceServerFetchOutcome = {
+  tier: IceServerTier;
+  /** How long the resolution took, or `null` while one is still in flight. */
+  durationMs: number | null;
+};
+
+let lastIceServerFetch: IceServerFetchOutcome | null = null;
+
+/** The most recent ICE-server resolution, or `null` if none has happened. */
+export function getLastIceServerFetch(): IceServerFetchOutcome | null {
+  return lastIceServerFetch ? { ...lastIceServerFetch } : null;
+}
+
+/**
+ * The last resolution as a single receipt token, `tier` or `tier:<ms>`.
+ *
+ * `null` when no call has resolved ICE servers yet, so an absent measurement
+ * is never confused with a zero-cost one.
+ */
+export function describeLastIceServerFetch(): string | null {
+  const outcome = lastIceServerFetch;
+  if (!outcome) return null;
+  return outcome.durationMs === null ? outcome.tier : `${outcome.tier}:${outcome.durationMs}`;
+}
+
+/** Forget the last resolution. Test seam. */
+export function resetLastIceServerFetch(): void {
+  lastIceServerFetch = null;
+}
+
 /** Why a call fell back to a tier below `fetched`. */
 export type IceFallbackReason =
   | 'missing-session-id'
@@ -201,6 +240,7 @@ class IceFetchError extends Error {
  * logs. Credentials are never included; only `scheme:host`.
  */
 function reportIceServers(iceServers: IceServer[], tier: IceServerTier, metadata: Record<string, unknown> = {}): IceServer[] {
+  lastIceServerFetch = { tier, durationMs: null };
   const turnServers = getTurnServerEndpoints(iceServers);
   if (tier === 'fetched') {
     logInfo('[WebRTC] ICE servers fetched', { tier, turnServers, ...metadata });
@@ -327,6 +367,28 @@ function fallbackIceServersAfterFetchError(error: unknown, now: number, host: st
 export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl = fetch }: { signalingUrl?: string; sessionId?: string | null; fetchImpl?: typeof fetch; } = {}): Promise<IceServer[]> {
   const now = Date.now();
   const host = signalingHost(signalingUrl);
+  try {
+    return await resolveIceServersForCall({ signalingUrl, sessionId, fetchImpl, now, host });
+  } finally {
+    // `reportIceServers` has stamped the tier by now, whichever branch ran;
+    // this adds what it cannot know, namely how long getting there took.
+    if (lastIceServerFetch) lastIceServerFetch.durationMs = Math.max(0, Date.now() - now);
+  }
+}
+
+async function resolveIceServersForCall({
+  signalingUrl,
+  sessionId,
+  fetchImpl,
+  now,
+  host,
+}: {
+  signalingUrl?: string;
+  sessionId?: string | null;
+  fetchImpl: typeof fetch;
+  now: number;
+  host: string;
+}): Promise<IceServer[]> {
   if (cachedServerIceServers && cachedServerIceServersExpiresAt - now > CACHE_REFRESH_MARGIN_MS) {
     return reportIceServers(cachedServerIceServers, 'cache', {
       host,
@@ -337,6 +399,9 @@ export async function getIceServersForCall({ signalingUrl, sessionId, fetchImpl 
   if (!signalingUrl || !sessionId || typeof fetchImpl !== 'function') {
     // No fetch is even attempted here — the branch that produced a TURN-less
     // call with no trace of a request in either the client or server logs.
+    // `fetchImpl` is typed as required but still checked: callers reach this
+    // through an optional parameter whose default is `fetch`, which is absent
+    // on some runtimes.
     const reason = missingIceFallbackReason(signalingUrl, sessionId, fetchImpl);
     return reportIceServers(getIceServers(), 'build-time-config', { host, reason });
   }
@@ -364,6 +429,7 @@ export function resetIceServersForCallCache() {
   cachedServerIceServers = null;
   cachedServerIceServersExpiresAt = 0;
   pendingServerIceServers = null;
+  lastIceServerFetch = null;
 }
 
 /**

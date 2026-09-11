@@ -837,6 +837,7 @@ export default function useCallFlow({
     userIdRef,
     connectedReportedCallIdRef,
     isConnectionLostRef,
+    sessionIdRef,
     signalingUrl,
     activeIceTransportPolicy,
     ensureIceSessionId,
