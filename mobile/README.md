@@ -51,7 +51,74 @@ server using the authenticated session. Configure that server with
 credentials into a public APK. `TURN_USERNAME` and `TURN_CREDENTIAL` remain
 supported only as a fallback; without either path calls use STUN-only.
 
-## Run
+## Local data and synchronization
+
+Structured mobile data uses **SQLite through `@op-engineering/op-sqlite`**,
+an asynchronous JSI binding. SQLite was chosen for indexed row access,
+atomic transactions and recovery after interruption, rather than treating a
+key/value store as a message database. There is no universally fastest database:
+device-level latency and energy measurements are still needed before making
+comparative performance claims.
+
+The database is `wetalk-local.sqlite` in the app-private documents directory.
+WAL permits recovery; `synchronous=FULL` prioritizes outbox durability over
+maximum write throughput. Versioned schema initialization is transactional.
+Changed rows are upserted in a single batch, with unchanged peer histories
+reused instead of repeatedly sorting/serializing the entire chat document.
+Every SQL value is bound, not interpolated.
+
+| Data | Local copy | Synchronization / authority |
+| --- | --- | --- |
+| Conversations, messages, call timeline | SQLite; up to 100 recent histories and 200 entries per peer, plus pinned unsent messages/draft peers | Hydrate before rendering; refresh on registration, reconnect, foreground, opening a chat and manual refresh. Revalidate up to two 100-row pages for a cached chat; older pages remain on demand. |
+| Outgoing text and uploaded attachments | SQLite outbox and optimistic message | Commit before any socket send. Retry with the original message ID and existing capped backoff; server acknowledgements reconcile by ID. Disk failure blocks sending and surfaces an error. |
+| Drafts | SQLite, local only | Debounced edits; flush on background/unmount. No automatic cross-device draft overwrite. |
+| Recent calls / missed-call acknowledgement / media type | SQLite recent-call cache; existing local media-type preferences | Cached calls render offline. Refresh on reconnect, foreground and existing call events. Preserve local read acknowledgement when fetching server rows. |
+| Block list | SQLite snapshot | Refresh on connect/foreground and update after successful mutations. Server still enforces blocks; block/unblock is not replayed offline. Directory caches are invalidated after block updates. |
+| Directory searches | SQLite, 30 query/limit combinations per account | Reuse for 60 seconds; then fetch. Network/5xx failure may fall back to a copy younger than 7 days; authorization failures never do. Cached rows contain no presence status. |
+| Message search | Already-hydrated local messages | Server search when available; cached, non-deleted messages provide an offline fallback. This is not a full offline archive. |
+| Attachments / voice recordings | Existing filesystem cache, not database BLOBs | Existing download-on-demand/cache reuse remains; observed tombstones evict downloaded attachments, including tombstones obtained while refreshing history. Unfinished uploads still require retry. |
+| Theme, device settings, navigation, recent searches, played voice notes, notification preferences | Existing small local preference files | Local/device-specific; moving these tiny records adds migration risk without the chat-store write savings. No server settings-sync contract exists. |
+| Presence, typing, active call state, WebRTC/TURN credentials | Live memory / existing platform services | Never restored as authoritative from a durable cache. Calls require a live server. Firebase retains authentication credentials in its native SDK, not SQLite. |
+
+Concurrent conversation/history/call refreshes share in-flight requests; later
+refreshes are never suppressed by a success or failure cache. The server remains
+authoritative for receipts, reactions and deletions. Pagination keeps complete
+timestamp/type/ID cursors, and refreshes cannot resurrect a known tombstone.
+Only sends have durable offline replay: deletions, reactions and read-all requests
+remain online operations. In particular, replaying an old read-all request would
+incorrectly mark messages received later as read.
+
+### Account isolation, upgrades and limits
+
+Production cache scopes combine the configured server with the signed-in
+Firebase account UID, not an editable username. Signed-out screens do not
+hydrate an account cache, and late responses from an old scope are ignored.
+Sign-out hides, rather than deletes, the scoped cache and queued messages; the
+same account can resume them after signing in again. This is sandbox-protected
+SQLite, **not application-level encryption or end-to-end encryption**. Android
+backup is already disabled; platform device protection remains important.
+
+The old `wetalk-chat.json` contains no trustworthy account/server ownership.
+It is retained untouched rather than risking replay of another account's sends.
+Only a legacy snapshot explicitly tagged with a matching `ownerScope` can be
+automatically imported, with its migration marker in the same transaction.
+For existing untagged installations, server history repopulates online; old
+local-only drafts/unsent messages are **not automatically imported**. Do not
+delete that file before any required owner-verified recovery.
+
+Caches can be stale offline and are bounded, not a server replica. There is no
+server change-feed or background-execution guarantee: changes to older unloaded
+history are reconciled when those pages are fetched. No new polling runs while
+the app is backgrounded. Debounced draft edits can lose their final interval if
+the OS kills the process without a background event; committed outbox rows do
+not depend on that event.
+
+After adding/updating the native SQLite dependency, rebuild Android and run
+`bundle exec pod install` from `mobile/ios` on macOS before rebuilding iOS.
+Jest uses Node's built-in SQLite to test real SQL and rollback behavior; native
+JSI initialization and on-device performance still require device validation.
+
+## Run the app
 
 ```bash
 npm start          # start the Metro bundler

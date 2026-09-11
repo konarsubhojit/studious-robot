@@ -543,9 +543,12 @@ export default function useCallFlow({
     sessionIdRef,
     signalingUrl,
     userId,
+    storageUserId: identity.isRegistered ? identity.authUser?.uid ?? '' : '',
   });
 
-  const blocks = useBlocks({ authedFetchRef, sessionIdRef, signalingUrl });
+  const blocks = useBlocks({
+    authedFetchRef, sessionIdRef, signalingUrl, userId: identity.isRegistered ? identity.authUser?.uid ?? '' : '',
+  });
   const { fetchBlocks } = blocks;
   const { addToHistory, fetchCallHistory: refreshCallHistory } = callHistory;
 
@@ -568,6 +571,7 @@ export default function useCallFlow({
     authedFetchRef,
     sessionIdRef,
     calleeId,
+    userId: identity.isRegistered ? identity.authUser?.uid ?? '' : '',
   });
   const {
     checkPresence,
@@ -584,6 +588,7 @@ export default function useCallFlow({
     signalingUrl,
     socketRef,
     userId,
+    storageUserId: identity.isRegistered ? identity.authUser?.uid ?? '' : '',
     updateStatus,
   });
   const {
@@ -598,9 +603,13 @@ export default function useCallFlow({
     handleMessageDelivered,
     handleMessageRead,
     handleTypingEvent,
-    handleSocketConnected,
+    handleSocketConnected: handleMessagingConnected,
     handleSocketDisconnected,
   } = messaging;
+  const handleSocketConnected = useCallback(() => {
+    handleMessagingConnected();
+    void refreshCallHistory();
+  }, [handleMessagingConnected, refreshCallHistory]);
 
   const resetTypingStateRef = useRef(resetTypingState);
   useEffect(() => {

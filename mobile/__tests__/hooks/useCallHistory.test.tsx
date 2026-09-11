@@ -1,6 +1,15 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import useCallHistory from '../../src/hooks/useCallHistory';
+import { withDatabase } from '../../src/storage/localDatabase';
+
+const mountedTrees: renderer.ReactTestRenderer[] = [];
+beforeEach(async () => {
+  await withDatabase(async db => { await db.execute('DELETE FROM resource_cache'); });
+});
+afterEach(async () => {
+  await act(async () => { mountedTrees.splice(0).forEach(tree => tree.unmount()); });
+});
 
 jest.mock('../../src/appLogger', () => ({
   logError: jest.fn(),
@@ -24,7 +33,7 @@ function setup(overrides = {}) {
   };
   const resultRef: { current: any; } = { current: null };
   act(() => {
-    renderer.create(<TestHook resultRef={resultRef} params={params} />);
+    mountedTrees.push(renderer.create(<TestHook resultRef={resultRef} params={params} />));
   });
   return { resultRef, params };
 }

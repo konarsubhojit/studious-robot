@@ -39,11 +39,13 @@ export default function useChatSnapshotMirror({
   messagesByPeer,
   drafts,
   onHydrate,
+  scope = 'legacy',
 }: {
   conversations: ConversationSummary[];
   messagesByPeer: MessagesByPeer;
   drafts: Drafts;
   onHydrate: (snapshot: ChatSnapshot) => void;
+  scope?: string;
 }) {
   // True once the local store has been read; gates persistence so an empty
   // initial render can't overwrite the cached history with nothing.
@@ -58,9 +60,11 @@ export default function useChatSnapshotMirror({
 
   useEffect(() => {
     let cancelled = false;
-    loadChatSnapshot()
+    hydratedRef.current = false;
+    if (!scope) return undefined;
+    const hydrate = () => loadChatSnapshot(scope)
       .then(snapshot => {
-        if (cancelled) return;
+        if (cancelled || hydratedRef.current) return;
         // Flagged hydrated before the snapshot is applied, so anything the
         // caller kicks off from it (replaying a queued send) already sees a
         // store that may be written back to.
@@ -68,12 +72,17 @@ export default function useChatSnapshotMirror({
         onHydrateRef.current(snapshot);
       })
       .catch(() => {
-        hydratedRef.current = true;
+        // Do not overwrite an unreadable database with an empty first render.
       });
+    void hydrate();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active' && !hydratedRef.current) void hydrate();
+    });
     return () => {
       cancelled = true;
+      subscription.remove();
     };
-  }, []);
+  }, [scope]);
 
   /** Write the pending mirror out now, cancelling the debounce. */
   const persistNow = useCallback(() => {
@@ -81,9 +90,9 @@ export default function useChatSnapshotMirror({
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
     }
-    if (!hydratedRef.current) return;
-    saveChatSnapshot(snapshotRef.current);
-  }, []);
+    if (!hydratedRef.current || !scope) return;
+    saveChatSnapshot(snapshotRef.current, scope);
+  }, [scope]);
 
   useEffect(() => {
     snapshotRef.current = { conversations, messagesByPeer, drafts };
@@ -91,10 +100,10 @@ export default function useChatSnapshotMirror({
     if (persistTimerRef.current) return undefined;
     persistTimerRef.current = setTimeout(() => {
       persistTimerRef.current = null;
-      saveChatSnapshot(snapshotRef.current);
+      saveChatSnapshot(snapshotRef.current, scope);
     }, SNAPSHOT_PERSIST_DEBOUNCE_MS);
     return undefined;
-  }, [conversations, messagesByPeer, drafts]);
+  }, [conversations, messagesByPeer, drafts, scope]);
 
   // Leaving the foreground is the last moment the process is guaranteed to be
   // alive, so the pending mirror is written out (and pushed to disk) there.
@@ -102,12 +111,15 @@ export default function useChatSnapshotMirror({
     const subscription = AppState.addEventListener?.('change', nextState => {
       if (nextState === 'active') return;
       persistNow();
-      flushChatDb();
+      if (scope) void flushChatDb(scope).catch(() => {});
     });
     return () => subscription?.remove?.();
-  }, [persistNow]);
+  }, [persistNow, scope]);
 
-  useEffect(() => () => persistNow(), [persistNow]);
+  useEffect(() => () => {
+    persistNow();
+    if (scope) void flushChatDb(scope).catch(() => {});
+  }, [persistNow, scope]);
 
   return { persistNow };
 }

@@ -1,7 +1,8 @@
 import { MESSAGE_TYPES } from '../../../shared';
 import { byOldestFirst } from './messageIdentity';
+import { prependMessage } from './messageHistory';
 import type { AttachmentRecord } from '../../../shared/signaling/schemas';
-import type { ChatMessage, OutboxItem } from './types';
+import type { ChatMessage, MessagesByPeer, OutboxItem } from './types';
 
 /**
  * The send pipeline's pure half: what an optimistic message looks like, what
@@ -169,6 +170,19 @@ export function buildOutboxItem({
     lastAttemptAt: null,
     lastError: null,
   };
+}
+
+/** The outbox is authoritative even if the UI mirror was interrupted by process death. */
+export function restoreOutboxMessages(messages: MessagesByPeer, outbox: OutboxItem[], senderId: string): MessagesByPeer {
+  let restored = messages;
+  for (const item of outbox) {
+    if (restored[item.recipientId]?.some(entry => entry.messageId === item.messageId)) continue;
+    const message = buildOptimisticMessage({
+      ...item, senderId, createdAt: item.createdAt ?? new Date(0).toISOString(),
+    });
+    restored = prependMessage(restored, item.recipientId, isRetryable(item) ? message : asFailed(message));
+  }
+  return restored;
 }
 
 /** The server acknowledged the send: its copy wins, and the bubble stops

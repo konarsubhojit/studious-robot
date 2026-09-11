@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logWarn } from '../appLogger';
 import { API_ROUTES } from '../../../shared';
-import type { PeerPresence } from '../types/directory';
+import type { ContactRow, PeerPresence } from '../types/directory';
 import { errorMessage } from '../errors';
 import { bearerAuthHeaders } from '../authHeaders';
+import { dataScope } from '../storage/localDatabase';
+import { directoryVersion, readResource, writeResource } from '../storage/resourceCache';
 
 /**
  * How many consecutive socket `connect_error` events before the lobby is
@@ -18,10 +20,39 @@ const OFFLINE_ERROR_THRESHOLD = 3;
  * retryable error, whereas "we asked and there was nothing" is an empty state.
  */
 export class DirectorySearchError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly status?: number) {
     super(message);
     this.name = 'DirectorySearchError';
   }
+}
+
+async function fetchDirectory(
+  authedFetch: Function | null, server: string, query: string, limit: number, signal?: AbortSignal,
+): Promise<ContactRow[]> {
+  const response = await authedFetch?.((sid: string) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query) params.set('search', query);
+    return {
+      url: `${server}${API_ROUTES.USERS}?${params.toString()}`,
+      options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
+    };
+  });
+  if (!response?.ok) {
+    throw new DirectorySearchError(`Directory search failed with status ${response?.status ?? 'unknown'}`, response?.status);
+  }
+  const data = await response.json();
+  return Array.isArray(data.users) ? data.users : [];
+}
+
+function mayUseOfflineDirectory(error: unknown, updatedAt: number | undefined): boolean {
+  if (error instanceof DirectorySearchError && error.status && error.status < 500) return false;
+  return isRecent(updatedAt, 7 * 24 * 60 * 60_000);
+}
+
+function isRecent(updatedAt: number | undefined, maxAge: number): boolean {
+  if (updatedAt === undefined) return false;
+  const age = Date.now() - updatedAt;
+  return age >= 0 && age < maxAge;
 }
 
 /**
@@ -44,6 +75,7 @@ export type UsePresenceSearchParams = {
   authedFetchRef: { current: Function | null; };
   sessionIdRef: { current: string | null; };
   calleeId: string;
+  userId?: string;
 };
 
 export default function usePresenceSearch({
@@ -51,7 +83,11 @@ export default function usePresenceSearch({
   authedFetchRef,
   sessionIdRef,
   calleeId,
+  userId = '',
 }: UsePresenceSearchParams) {
+  const scope = dataScope(signalingUrl, userId);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   // Presence of the user currently entered in `calleeId`, or `null` while
   // unknown / not yet checked.  Shape: { status: 'online'|'offline', online }.
   const [calleePresence, setCalleePresence] = useState(
@@ -124,26 +160,25 @@ export default function usePresenceSearch({
       const sessionId = sessionIdRef.current;
       const trimmedUrl = (signalingUrl ?? '').trim();
       if (!sessionId || !trimmedUrl) return [];
+      const trimmedQuery = (query ?? '').trim();
+      const key = `directory:${JSON.stringify([trimmedQuery.toLowerCase(), limit])}`;
+      const version = directoryVersion(scope);
+      const isCurrent = () => !signal?.aborted && scopeRef.current === scope && version === directoryVersion(scope);
+      const cached = await readResource<ContactRow[]>(scope, key).catch(() => null);
+      if (!isCurrent()) return [];
+      // Presence is deliberately absent in stored rows; it is never a durable fact.
+      if (cached && isRecent(cached.updatedAt, 60_000)) return cached.value;
       try {
-        const trimmedQuery = (query ?? '').trim();
-        const response = await authedFetchRef.current?.((sid: string) => {
-          const params = new URLSearchParams({ limit: String(limit) });
-          if (trimmedQuery) params.set('search', trimmedQuery);
-          return {
-            url: `${trimmedUrl}${API_ROUTES.USERS}?${params.toString()}`,
-            options: { headers: bearerAuthHeaders(sid), ...(signal ? { signal } : {}) },
-          };
-        });
-        if (!response?.ok) {
-          throw new DirectorySearchError(
-            `Directory search failed with status ${response?.status ?? 'unknown'}`,
-          );
-        }
-        const data = await response.json();
-        return Array.isArray(data.users) ? data.users : [];
+        const users = await fetchDirectory(authedFetchRef.current, trimmedUrl, trimmedQuery, limit, signal);
+        if (!isCurrent()) return [];
+        await writeResource(scope, key, users.map(({ userId: id }) => ({ userId: id })), version)
+          .catch(() => logWarn('[PresenceSearch] Failed to cache directory'));
+        return users;
       } catch (error) {
         // An aborted request is the expected outcome of a newer keystroke.
         if (error instanceof Error && error.name === 'AbortError') return [];
+        if (!isCurrent()) return [];
+        if (mayUseOfflineDirectory(error, cached?.updatedAt)) return cached!.value;
         logWarn('[PresenceSearch] searchUsers failed', {
           message: errorMessage(error),
         });
@@ -152,7 +187,7 @@ export default function usePresenceSearch({
           : new DirectorySearchError(errorMessage(error) ?? 'Directory search failed');
       }
     },
-    [authedFetchRef, sessionIdRef, signalingUrl],
+    [authedFetchRef, sessionIdRef, signalingUrl, scope],
   );
 
   // Debounced presence lookup for the currently entered calleeId, so the UI

@@ -4,6 +4,9 @@ import type { ChatMessage, ConversationSummary, OutboxItem } from '../messaging/
 import { normalizeEntryTimestamps } from '../messaging/messageHistory';
 import { timestampMs } from '../../../shared/time';
 import { errorMessage } from '../errors';
+import { withDatabase } from './localDatabase';
+import { rowChanges, snapshotRows } from './chatRecords';
+import type { ChatRows } from './chatRecords';
 
 /**
  * Durable local chat store: the conversation list, per-conversation message
@@ -24,13 +27,9 @@ import { errorMessage } from '../errors';
  *   outbox         { messageId, conversationId, recipientId, body, createdAt,
  *                    attempts, lastAttemptAt, lastError }
  *
- * The rows are persisted as a single JSON document through `react-native-fs`
- * (already a dependency, and the medium `settingsStorage` uses) rather than
- * through a native SQLite module: the data set is bounded by
- * {@link MAX_MESSAGES_PER_CONVERSATION} per conversation, so a full read/write
- * is cheap, and the app avoids taking on a native dependency for it. Every
- * access goes through this module, so swapping the medium for SQLite later is
- * a change to this file alone.
+ * Rows live in SQLite behind an asynchronous JSI connection. Each flush is
+ * one atomic transaction containing only changed rows. Callers supply an
+ * account/server scope; the unscoped default exists only for legacy imports.
  */
 
 const CHAT_DB_FILE = `${RNFS.DocumentDirectoryPath}/wetalk-chat.json`;
@@ -77,20 +76,29 @@ function emptySnapshot(): ChatSnapshot {
  * Last known snapshot, so a save only has to supply the tables it changed and
  * a load after a save does not have to hit the disk.
  */
-let cache: ChatSnapshot | null = null;
-/** The in-flight read of the file, so concurrent callers share one read. */
-let loadPromise: Promise<void> | null = null;
-/** Whether the file has been folded into {@link cache} yet. */
-let hasLoaded = false;
-/**
- * Tables written before the file had been read.  A write that happened first
- * is newer than the file's copy of the same table, so it survives the read
- * instead of being overwritten by it.
- */
-let preloadWrites = new Set<keyof ChatSnapshot>();
-let writeTimer: ReturnType<typeof setTimeout> | null = null;
-/** Resolves once every scheduled write has been flushed. */
-let pendingWrite = Promise.resolve();
+type Store = {
+  cache: ChatSnapshot | null;
+  persisted?: ChatSnapshot;
+  rows: ChatRows;
+  loadPromise: Promise<void> | null;
+  preloadWrites: Set<keyof ChatSnapshot>;
+  writeTimer: ReturnType<typeof setTimeout> | null;
+  pendingWrite: Promise<void>;
+  closed: boolean;
+  inputMessages?: ChatSnapshot['messagesByPeer'];
+};
+const stores = new Map<string, Store>();
+function storeFor(scope: string): Store {
+  let store = stores.get(scope);
+  if (!store) {
+    store = {
+      cache: null, rows: new Map(), loadPromise: null, preloadWrites: new Set(),
+      writeTimer: null, pendingWrite: Promise.resolve(), closed: false,
+    };
+    stores.set(scope, store);
+  }
+  return store;
+}
 
 /**
  * Timestamp of a timeline entry, used for retention ordering.
@@ -117,6 +125,19 @@ export function pruneMessages(messages: ChatMessage[]): ChatMessage[] {
       (entry: any) => entry?.syncState === 'pending' || entry?.syncState === 'failed',
     );
   return unsent.length ? [...kept, ...unsent].sort((a, b) => entryTime(b) - entryTime(a)) : kept;
+}
+
+function prunePeerHistories(
+  histories: ChatSnapshot['messagesByPeer'], outbox: OutboxItem[], drafts: ChatSnapshot['drafts'],
+): ChatSnapshot['messagesByPeer'] {
+  const peers = Object.keys(histories);
+  if (peers.length <= MAX_CONVERSATIONS) return histories;
+  const pinned = new Set([...outbox.map(row => row.recipientId), ...Object.keys(drafts)]);
+  const newest = peers.sort((a, b) => entryTime(histories[b][0]) - entryTime(histories[a][0]));
+  return Object.fromEntries(newest.filter((peer, index) =>
+    index < MAX_CONVERSATIONS || pinned.has(peer) ||
+    histories[peer].some(row => row.syncState === 'pending' || row.syncState === 'failed'),
+  ).map(peer => [peer, histories[peer]]));
 }
 
 /**
@@ -198,7 +219,7 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
 
   return {
     conversations: conversations.slice(0, MAX_CONVERSATIONS),
-    messagesByPeer,
+    messagesByPeer: prunePeerHistories(messagesByPeer, outbox, drafts),
     outbox,
     drafts,
   };
@@ -207,59 +228,98 @@ function sanitizeSnapshot(parsed: unknown): ChatSnapshot {
 /**
  * Read the persisted chat state, pruned to the retention limits.
  *
- * Never rejects: an unreadable or corrupt file yields an empty snapshot, which
- * simply means the app starts as it did before anything was cached.
+ * SQLite failures reject so neither hydration nor sending can overwrite an
+ * unreadable database or mistake an uncommitted outbox for durable storage.
  *
  * Concurrent callers share a single read, and a save that lands while the read
- * is in flight is preserved — see {@link preloadWrites}.  Both matter because
+ * is in flight is preserved. Both matter because
  * the load is asynchronous but a save is not: the composer can queue a send
  * before the disk read resolves, and treating the resulting cache as
  * authoritative discarded every conversation, message and draft on disk.
  */
-export async function loadChatSnapshot(): Promise<ChatSnapshot> {
-  if (!loadPromise) loadPromise = readSnapshotFile();
-  await loadPromise;
+export async function loadChatSnapshot(scope = 'legacy'): Promise<ChatSnapshot> {
+  const store = storeFor(scope);
+  store.loadPromise ??= readSnapshot(store, scope).catch(error => {
+    store.loadPromise = null;
+    throw error;
+  });
+  await store.loadPromise;
   // Deliberately the live cache rather than whatever the read resolved to: a
   // save between two loads must be visible to the second, as it was when this
   // returned `cache` directly.
-  return cache ?? emptySnapshot();
+  return store.cache ?? emptySnapshot();
 }
 
-/** Read and sanitise the file, folding it under anything already written. */
-async function readSnapshotFile(): Promise<void> {
-  let fromDisk = emptySnapshot();
+/** Never assign ownerless legacy sends to whichever account happens to log in. */
+async function readLegacySnapshot(scope: string): Promise<ChatSnapshot> {
   try {
-    const exists = await RNFS.exists(CHAT_DB_FILE);
-    if (exists) {
-      const content = await RNFS.readFile(CHAT_DB_FILE, 'utf8');
-      fromDisk = sanitizeSnapshot(JSON.parse(content));
+    if (!await RNFS.exists(CHAT_DB_FILE)) return emptySnapshot();
+    const parsed = JSON.parse(await RNFS.readFile(CHAT_DB_FILE, 'utf8'));
+    if (scope !== 'legacy' && parsed?.ownerScope !== scope) return emptySnapshot();
+    return sanitizeSnapshot(parsed);
+  } catch (error) {
+    logWarn('[ChatDb] Failed to read legacy snapshot', { message: errorMessage(error) });
+    return emptySnapshot();
+  }
+}
+
+async function readSnapshot(store: Store, scope: string): Promise<void> {
+  const fromDisk = await withDatabase(async db => {
+    const result = await db.execute(
+      'SELECT kind, peer, payload FROM chat_records WHERE scope = ? ORDER BY position', [scope]);
+    const snapshot = emptySnapshot();
+    for (const row of result.rows) {
+      const value: unknown = JSON.parse(String(row.payload));
+      if (row.kind === 'messagesByPeer') {
+        const peer = String(row.peer);
+        snapshot.messagesByPeer[peer] ??= [];
+        snapshot.messagesByPeer[peer].push(value as ChatMessage);
+      } else if (row.kind === 'drafts') {
+        snapshot.drafts[String(row.peer)] = value as ChatDraft;
+      } else if (row.kind === 'conversations') {
+        snapshot.conversations.push(value as ConversationSummary);
+      } else if (row.kind === 'outbox') {
+        snapshot.outbox.push(value as OutboxItem);
+      }
     }
-  } catch (error) {
-    logWarn('[ChatDb] Failed to load chat snapshot', { message: errorMessage(error) });
-    fromDisk = emptySnapshot();
+    const migrated = await db.execute(
+      'SELECT payload FROM resource_cache WHERE scope = ? AND key = ?', [scope, 'chat:migrated']);
+    if (!migrated.rows.length) {
+      const legacy = result.rows.length ? snapshot : await readLegacySnapshot(scope);
+      await db.executeBatch([
+        ...rowChanges(scope, new Map(), snapshotRows(legacy)),
+        ['INSERT INTO resource_cache(scope, key, payload, updated_at) VALUES (?, ?, ?, ?)',
+          [scope, 'chat:migrated', 'true', Date.now()]],
+      ]);
+      return legacy;
+    }
+    return sanitizeSnapshot(snapshot);
+  });
+  if (store.closed) return;
+  store.persisted = fromDisk;
+  store.inputMessages = fromDisk.messagesByPeer;
+  store.rows = snapshotRows(fromDisk);
+  const merged = { ...fromDisk };
+  for (const table of store.preloadWrites) {
+    (merged as Record<string, unknown>)[table] = store.cache?.[table];
   }
-
-  const written = cache;
-  if (written) {
-    preloadWrites.forEach(table => {
-      // A pre-load write is the newer of the two copies, so it replaces the
-      // file's; every other table comes from the file.
-      (fromDisk as Record<string, unknown>)[table] = written[table];
-    });
-  }
-  preloadWrites = new Set();
-  cache = fromDisk;
-  hasLoaded = true;
+  store.preloadWrites.clear();
+  store.cache = merged;
 }
 
-/** Write the cached snapshot to disk now. Failures are logged, never thrown. */
-async function flushToDisk() {
-  const snapshot = cache ?? emptySnapshot();
-  try {
-    await RNFS.writeFile(CHAT_DB_FILE, JSON.stringify(snapshot), 'utf8');
-  } catch (error) {
-    logWarn('[ChatDb] Failed to persist chat snapshot', { message: errorMessage(error) });
-  }
+async function flushToDisk(store: Store, scope: string) {
+  await loadChatSnapshot(scope);
+  if (store.closed) return;
+  await withDatabase(async db => {
+    if (store.closed) return;
+    const snapshot = store.cache ?? emptySnapshot();
+    if (snapshot === store.persisted) return;
+    const rows = snapshotRows(snapshot, store.persisted, store.rows);
+    const commands = rowChanges(scope, store.rows, rows);
+    if (commands.length) await db.executeBatch(commands);
+    store.persisted = snapshot;
+    store.rows = rows;
+  });
 }
 
 /**
@@ -272,91 +332,92 @@ async function flushToDisk() {
  * every conversation's history on an outbox-only write put a full sort of the
  * entire local store on the JS thread for each message acknowledgement.
  */
-export function saveChatSnapshot(partial: Partial<ChatSnapshot>) {
-  const base = cache ?? emptySnapshot();
+export function saveChatSnapshot(partial: Partial<ChatSnapshot>, scope = 'legacy') {
+  const store = storeFor(scope);
+  if (store.closed) return;
+  const base = store.cache ?? emptySnapshot();
 
   let messagesByPeer = base.messagesByPeer;
-  if (partial.messagesByPeer) {
+  if (partial.messagesByPeer && partial.messagesByPeer !== store.inputMessages) {
     messagesByPeer = {};
     Object.keys(partial.messagesByPeer).forEach(peerId => {
-      messagesByPeer[peerId] = pruneMessages(partial.messagesByPeer![peerId]);
+      const entries = partial.messagesByPeer![peerId];
+      messagesByPeer[peerId] = entries === store.inputMessages?.[peerId] && base.messagesByPeer[peerId]
+        ? base.messagesByPeer[peerId] : pruneMessages(entries);
     });
+    store.inputMessages = partial.messagesByPeer;
   }
 
-  cache = {
+  store.cache = {
     conversations: partial.conversations
-      ? partial.conversations.slice(0, MAX_CONVERSATIONS)
+      ? (partial.conversations.length > MAX_CONVERSATIONS
+        ? partial.conversations.slice(0, MAX_CONVERSATIONS) : partial.conversations)
       : base.conversations,
     messagesByPeer,
     outbox: partial.outbox ?? base.outbox,
     drafts: partial.drafts ?? base.drafts ?? {},
   };
+  store.cache.messagesByPeer = prunePeerHistories(
+    store.cache.messagesByPeer, store.cache.outbox, store.cache.drafts);
 
   // Until the file has been folded in, remember which tables this write owns so
   // the read folds itself in underneath them rather than over them.  The test
   // is "has the read finished", not "has one started": a save landing *during*
   // the read is exactly the case this exists for.
-  if (!hasLoaded) {
+  if (!store.persisted) {
     (Object.keys(partial) as Array<keyof ChatSnapshot>).forEach(table =>
-      preloadWrites.add(table),
+      store.preloadWrites.add(table),
     );
   }
 
-  if (writeTimer) return;
-  pendingWrite = new Promise(resolve => {
-    writeTimer = setTimeout(() => {
-      writeTimer = null;
-      flushToDisk().then(resolve, resolve);
-    }, WRITE_DEBOUNCE_MS);
-  });
+  if (store.writeTimer) return;
+  store.writeTimer = setTimeout(() => {
+    store.writeTimer = null;
+    void flushChatDb(scope).catch(error => {
+      logWarn('[ChatDb] Failed to persist snapshot', { message: errorMessage(error) });
+    });
+  }, WRITE_DEBOUNCE_MS);
 }
 
 /**
  * Await any scheduled write, flushing it immediately.
  */
-export async function flushChatDb(): Promise<void> {
-  if (writeTimer) {
-    clearTimeout(writeTimer);
-    writeTimer = null;
-    await flushToDisk();
-    return;
-  }
-  await pendingWrite;
+export async function flushChatDb(scope = 'legacy'): Promise<void> {
+  const store = storeFor(scope);
+  if (store.writeTimer) clearTimeout(store.writeTimer);
+  store.writeTimer = null;
+  const write = store.pendingWrite.catch(() => {}).then(() => flushToDisk(store, scope));
+  store.pendingWrite = write;
+  await write;
 }
 
 /**
  * Drop everything held locally (e.g. on sign-out) and forget the cache.
  */
-export async function clearChatDb(): Promise<void> {
-  if (writeTimer) {
-    clearTimeout(writeTimer);
-    writeTimer = null;
-  }
-  cache = emptySnapshot();
-  // A cleared store is a known-empty one, so a later load must not go looking
-  // for the file this just deleted.
-  loadPromise = Promise.resolve();
-  hasLoaded = true;
-  preloadWrites = new Set();
-  try {
-    const exists = await RNFS.exists(CHAT_DB_FILE);
-    if (exists) await RNFS.unlink(CHAT_DB_FILE);
-  } catch (error) {
-    logWarn('[ChatDb] Failed to clear chat snapshot', { message: errorMessage(error) });
-  }
+export async function clearChatDb(scope = 'legacy'): Promise<void> {
+  const store = storeFor(scope);
+  if (store.writeTimer) clearTimeout(store.writeTimer);
+  store.closed = true;
+  await store.loadPromise?.catch(() => {});
+  await store.pendingWrite.catch(() => {});
+  await withDatabase(async db => {
+    await db.executeBatch([
+      ['DELETE FROM chat_records WHERE scope = ?', [scope]],
+      [`INSERT OR REPLACE INTO resource_cache(scope, key, payload, updated_at) VALUES (?, ?, ?, ?)`,
+        [scope, 'chat:migrated', 'true', Date.now()]],
+    ]);
+  });
+  stores.delete(scope);
+  if (scope === 'legacy' && await RNFS.exists(CHAT_DB_FILE)) await RNFS.unlink(CHAT_DB_FILE);
 }
 
 /** Test seam: forget the in-memory cache so the next load re-reads the file. */
 export function resetChatDbCache() {
-  if (writeTimer) {
-    clearTimeout(writeTimer);
-    writeTimer = null;
+  for (const store of stores.values()) {
+    if (store.writeTimer) clearTimeout(store.writeTimer);
+    store.closed = true;
   }
-  cache = null;
-  loadPromise = null;
-  hasLoaded = false;
-  preloadWrites = new Set();
-  pendingWrite = Promise.resolve();
+  stores.clear();
 }
 
 export const CHAT_DB_FILE_PATH = CHAT_DB_FILE;
