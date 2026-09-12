@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { createServer } from '../src/index.ts';
 import { createMemoryMessageStore } from '../src/messageStore.ts';
 import { createMemoryMessageBus } from '../src/messageBus.ts';
+import { createMemoryCache } from '../src/cache.ts';
 import { closeTestServer, getJson, listenOnRandomPort, postJson, readJson } from './helpers.ts';
 import { io as ioClient } from 'socket.io-client';
 
@@ -378,4 +379,90 @@ test('a write on one instance invalidates the cached read of another instance', 
   const fresh = await getJson(instanceB.url, '/conversations', bobSessionOnB);
   assert.equal(fresh.body.conversations.length, 1);
   assert.equal(fresh.body.conversations[0].lastMessage.body, 'across instances');
+});
+
+// ─── Deferred sender-side invalidation ────────────────────────────────────────
+//
+// `persistAcceptedMessage` (`src/signaling/messageHandlers/send.ts`) evicts the
+// sender's own conversation-list cache entry off the ack path, fire-and-forget.
+// These tests cover the two properties that guarantee, in place of the removed
+// `await`: the eviction still lands (so the sender is never stuck reading a
+// stale list), and a failed eviction is swallowed rather than ever reaching the
+// sender's ack.
+
+test('the sender ack does not wait for the sender\'s own cache invalidation', async (t) => {
+  const delayed = createDeferred<void>();
+  let sawSenderDelByPrefix = false;
+  const inner = createMemoryCache();
+  const cache = {
+    ...inner,
+    async delByPrefix(prefix: string) {
+      if (prefix.startsWith('conv::slow-alice')) {
+        sawSenderDelByPrefix = true;
+        await delayed.promise;
+      }
+      return inner.delByPrefix(prefix);
+    },
+  };
+  const { url, teardown } = await startServer({ cache });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'slow-alice');
+  await createSession(url, 'slow-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  // The ack must resolve while the sender's own eviction is still pending —
+  // proving it is no longer on the blocking path.
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'slow-bob',
+    body: 'do not wait for me',
+  });
+  assert.equal(ack.ok, true);
+  assert.equal(sawSenderDelByPrefix, true);
+
+  delayed.resolve();
+  // Give the detached eviction a turn to finish before the suite tears down.
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test('a failed sender-cache invalidation is swallowed and never fails the send', async (t) => {
+  const inner = createMemoryCache();
+  let senderDelByPrefixAttempts = 0;
+  const cache = {
+    ...inner,
+    async delByPrefix(prefix: string) {
+      if (prefix.startsWith('conv::broken-alice')) {
+        senderDelByPrefixAttempts += 1;
+        throw new Error('boom');
+      }
+      return inner.delByPrefix(prefix);
+    },
+  };
+  const { url, teardown } = await startServer({ cache });
+  t.after(teardown);
+
+  const aliceSession = await createSession(url, 'broken-alice');
+  await createSession(url, 'broken-bob');
+  const alice = await connectSocket(url, aliceSession);
+  t.after(() => alice.disconnect());
+
+  const ack = await emitWithAck(alice, 'message.send', {
+    version: VERSION,
+    recipientId: 'broken-bob',
+    body: 'still delivered despite a broken cache',
+  });
+  assert.equal(ack.ok, true);
+
+  // The detached invalidation runs asynchronously; give it a turn to throw.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(senderDelByPrefixAttempts, 1);
+
+  // The recipient's own cache keys are invalidated on a separate, still
+  // blocking call — the sender-side failure above must not affect it.
+  const bobSession = await createSession(url, 'broken-bob');
+  const bobList = await getJson(url, '/conversations', bobSession);
+  assert.equal(bobList.body.conversations.length, 1);
+  assert.equal(bobList.body.conversations[0].lastMessage.body, 'still delivered despite a broken cache');
 });
