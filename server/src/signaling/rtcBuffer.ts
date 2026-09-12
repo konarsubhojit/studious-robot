@@ -48,6 +48,12 @@ const BUFFERABLE_CALL_STATES = new Set(['ringing']);
  * excluded for a different reason — it reports whether a track is muted *now*,
  * so a copy replayed seconds later would announce a state that has since
  * changed.
+ *
+ * A consequence worth stating, because it has already been misread once: the
+ * `rtc_signals_*` counters this module feeds can only ever describe candidates
+ * held during a ring. An SDP frame cannot increment them, so they being zero
+ * is not evidence that an offer or answer was delivered. That question belongs
+ * to the `rtc_relays_*` counters in `callHandlers.ts`.
  */
 const BUFFERABLE_RTC_EVENTS = new Set<string>([CLIENT_EVENTS.RTC_CANDIDATE]);
 

@@ -32,6 +32,7 @@ import {
   addCallLinkListener,
   getInitialCallLink,
   registerForPushNotifications,
+  sendPushReceipt,
   unregisterPushToken,
 } from '../pushNotifications';
 import { CLIENT_EVENTS, createSignalingClient } from '../signalingClient';
@@ -154,6 +155,26 @@ const ICE_SESSION_WAIT_MS = 5000;
  * must not leave the user's call attempt hanging on it forever.
  */
 const CALL_STATE_REPORT_ACK_TIMEOUT_MS = 2000;
+
+/**
+ * How long the caller waits for the callee's answer before re-sending its
+ * offer, and how many times it will do so.
+ *
+ * The offer is relayed to the callee's *user room*, which succeeds — and is
+ * acknowledged — whether or not the callee has a socket anywhere on the fleet.
+ * A lost offer therefore leaves the call in `connecting_media` with neither
+ * side doing anything: the callee is waiting for an offer that will never
+ * arrive, and no ICE state ever changes, so none of the recovery ladder's
+ * triggers fire. The only backstop was the server's 90s media timeout.
+ *
+ * Re-offering is safe: `setRemoteDescription` with the same SDP is idempotent
+ * on the callee, and `isNegotiatingRef` prevents a retry from overlapping a
+ * renegotiation. The window is long enough to cover a slow callee finishing
+ * `startLocalPreview` (measured at ~10s on the anchor incident's handset)
+ * without re-offering into a healthy answer that is merely in flight.
+ */
+const OFFER_ANSWER_TIMEOUT_MS = 8000;
+const MAX_OFFER_ATTEMPTS = 3;
 
 // How long the answer path waits for a socket, how many times it retries over
 // one, which HTTP failures mean what, how a media-less answer describes itself
@@ -902,6 +923,39 @@ export default function useCallFlow({
    * @param [endReason=null]      - Canonical end-reason code
    *   (one of the keys from CALL_END_REASON_LABELS) for history tracking.
    */
+  /**
+   * The offer whose answer is still outstanding, and how many times it has
+   * been sent for this call.
+   *
+   * Tracked per call rather than globally so a timer left over from a call
+   * that has since ended can recognise itself as stale and do nothing.
+   */
+  const offerRetryRef = useRef({
+    timer: null as ReturnType<typeof setTimeout> | null,
+    callId: null as string | null,
+    attempt: 0,
+  });
+
+  /**
+   * Stop waiting for an answer to the outstanding offer.
+   *
+   * Called when the answer arrives and when the call is torn down; a pending
+   * timer that outlived its call would otherwise re-offer into nothing.
+   */
+  const cancelOfferRetries = useCallback((reason: string) => {
+    const pending = offerRetryRef.current;
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      logVerbose('[CallFlow] Offer retry cancelled', { callId: pending.callId, reason });
+    }
+    offerRetryRef.current = { timer: null, callId: null, attempt: 0 };
+  }, []);
+
+  const cancelOfferRetriesRef = useRef(cancelOfferRetries);
+  useEffect(() => {
+    cancelOfferRetriesRef.current = cancelOfferRetries;
+  }, [cancelOfferRetries]);
+
   const endActiveCall = useCallback(
     /**
      * @param [nextMessage='Call ended']
@@ -994,6 +1048,7 @@ export default function useCallFlow({
       stopCallHeartbeat(endReason ? `call-ended:${endReason}` : 'call-ended');
       closeRecoveryEpisode(endReason ? `call-ended:${endReason}` : 'call-ended');
       cancelIceRestartsRef.current?.('call-ended');
+      cancelOfferRetriesRef.current?.(endReason ? `call-ended:${endReason}` : 'call-ended');
       connectedReportedCallIdRef.current = null;
       // A call that was accepted but never connected — the
       // `media_connect_timeout` case — would otherwise leave its answer clock
@@ -1146,6 +1201,10 @@ export default function useCallFlow({
     startLocalPreviewRef.current = startLocalPreview;
   }, [startLocalPreview]);
 
+  const sendInitialOfferRef = useRef(
+    null as ((signaling: ReturnType<typeof createSignalingClient>, callId: string) => Promise<void>) | null,
+  );
+
   /**
    * Start local media and send the caller's initial RTC offer.
    *
@@ -1153,9 +1212,16 @@ export default function useCallFlow({
    * `call.state_changed` handler so that handler is dispatch and this is the
    * peer connection it drives. A failure here ends the call: an offer that was
    * never sent means media that will never arrive.
+   *
+   * An offer that *was* sent is not proof it was delivered — the server relays
+   * it into the callee's user room and acknowledges the emit either way — so
+   * each attempt arms a retry (see {@link OFFER_ANSWER_TIMEOUT_MS}) that the
+   * arriving answer cancels.
    */
   const sendInitialOffer = useCallback(
     async (signaling: ReturnType<typeof createSignalingClient>, callId: string) => {
+      const pending = offerRetryRef.current;
+      const attempt = pending.callId === callId ? pending.attempt + 1 : 1;
       try {
         await startLocalPreviewRef.current?.();
         const pc = await ensurePeerConnectionRef.current?.();
@@ -1173,14 +1239,67 @@ export default function useCallFlow({
             if (!ack?.ok) logWarn('[CallFlow] rtc.offer ack failed', ack?.error);
           },
         );
+        // The caller's counterpart to `answer_sent`. Sent without a duration:
+        // the answer timeline is started by the callee, so the caller has no
+        // stage clock to read and a fabricated zero would be worse than none.
+        sendPushReceipt({
+          callId,
+          stage: 'offer_sent',
+          reason: `attempt:${attempt}`,
+          sessionId: sessionIdRef.current,
+          signalingUrl: signalingUrl.trim(),
+        }).catch(error => {
+          logWarn('[CallFlow] offer_sent receipt failed', { message: errorMessage(error) });
+        });
+        scheduleOfferRetry(signaling, callId, attempt);
       } catch (error) {
         logError('[CallFlow] Failed to create/send RTC offer', error);
+        cancelOfferRetries('offer-failed');
         updateStatus('Failed to connect media', 'error');
         endActiveCallRef.current?.('Failed to connect media', 'error');
       }
     },
-    [updateStatus],
+    // `scheduleOfferRetry` is a hoisted declaration read through a ref, so it is
+    // deliberately absent here; including it would make this callback — and
+    // therefore the socket handlers that hold it — unstable.
+    [cancelOfferRetries, sessionIdRef, signalingUrl, updateStatus],
   );
+
+  useEffect(() => {
+    sendInitialOfferRef.current = sendInitialOffer;
+  }, [sendInitialOffer]);
+
+  /**
+   * Arm the wait for this offer's answer.
+   *
+   * Gives up after {@link MAX_OFFER_ATTEMPTS}: past that the problem is not a
+   * dropped frame, and the server's media timeout is the right thing to end
+   * the call. A retry that fires for a call this device is no longer on, or
+   * that has already connected, is discarded rather than sent.
+   */
+  function scheduleOfferRetry(
+    signaling: ReturnType<typeof createSignalingClient>,
+    callId: string,
+    attempt: number,
+  ): void {
+    const pending = offerRetryRef.current;
+    if (pending.timer) clearTimeout(pending.timer);
+    if (attempt >= MAX_OFFER_ATTEMPTS) {
+      logWarn('[CallFlow] Offer unanswered after every attempt', { callId, attempt });
+      offerRetryRef.current = { timer: null, callId, attempt };
+      return;
+    }
+    const timer = setTimeout(() => {
+      offerRetryRef.current = { timer: null, callId, attempt };
+      if (activeCallIdRef.current !== callId || isInCallRef.current) {
+        logVerbose('[CallFlow] Offer retry skipped', { callId, attempt });
+        return;
+      }
+      logWarn('[CallFlow] No answer to the RTC offer; re-offering', { callId, attempt });
+      void sendInitialOfferRef.current?.(signaling, callId);
+    }, OFFER_ANSWER_TIMEOUT_MS);
+    offerRetryRef.current = { timer, callId, attempt };
+  }
 
   /**
    * Reconcile this device's calls with the server's after a reconnect.
@@ -1220,6 +1339,7 @@ export default function useCallFlow({
     activeCallIdRef,
     activeCallRef,
     beginIceRecoveryRef,
+    cancelOfferRetriesRef,
     consumeForeignDeviceCallEvent,
     createOrGetSession,
     detachManagerPingRef,

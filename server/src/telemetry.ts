@@ -75,6 +75,12 @@ export type Telemetry = {
       status: string;
       endReason?: string | null;
       /**
+       * The ring start for any call that rang, carried in the shared store so
+       * the instance that sees the call end can measure how long it rang even
+       * when it did not create it.
+       */
+      createdAt?: string | null;
+      /**
        * Stamped on the accepted transition and carried in the shared store, so
        * the instance that sees `in_call` can measure the connect latency even
        * when it did not handle the accept.
@@ -84,6 +90,7 @@ export type Telemetry = {
     previousStatus: string
   ) => void;
   recordRtcBufferOutcome: (outcome: RtcBufferOutcome, count?: number) => void;
+  recordRtcRelay: (eventName: string, recipients: number | null) => void;
   recordSignalingError: (code?: string) => void;
   recordMessagePersistenceFailure: () => void;
   recordCacheHit: () => void;
@@ -103,6 +110,17 @@ export type Telemetry = {
  * `docs/media-connect-latency-diagnosis.md` §2.
  */
 export type RtcBufferOutcome = 'buffered' | 'replayed' | 'stranded_local' | 'stranded_remote';
+
+/**
+ * RTC events whose relays are counted individually.
+ *
+ * The relay counter exists to answer "did this frame have anywhere to go",
+ * and the question is only ever asked of the three events that carry a call's
+ * media negotiation. Anything else — `call.media-state`, or a future event
+ * routed through the same relay — is folded into `other` so the per-event
+ * breakdown can never grow without bound.
+ */
+const RELAYED_RTC_EVENTS = ['rtc.offer', 'rtc.answer', 'rtc.candidate'] as const;
 
 /** Histogram upper-bound buckets in milliseconds. */
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1000, 2000, 5000, 10000, 30000, Infinity];
@@ -264,11 +282,41 @@ function createTelemetry(): Telemetry {
     call_setup_latency_local: 0,
     call_setup_latency_unmeasured: 0,
     call_setup_latency_skew_rejected: 0,
+    // The same four again, for `call_ring_duration_ms` measured from the
+    // record's `createdAt`.
+    call_ring_duration_shared: 0,
+    call_ring_duration_local: 0,
+    call_ring_duration_unmeasured: 0,
+    call_ring_duration_skew_rejected: 0,
+    // Ends this process could not attribute to a ring *or* a conversation:
+    // the record says the call was answered, but the `in_call` transition was
+    // handled by a peer instance, so no duration sample can be taken here. The
+    // sample is not lost — the instance that handled `in_call` takes it — but
+    // charging it to the ring histogram would be a lie, so it is counted.
+    call_ring_duration_answered_elsewhere: 0,
     // ── RTC hold-and-replay buffer (see rtcBuffer.ts) ───────────────────────
+    // These four count *ICE candidates held during a ring* and nothing else:
+    // `rtcBuffer.ts` buffers only `rtc.candidate`, and only while the call is
+    // `ringing`. An SDP frame can never increment any of them, so an all-zero
+    // reading says nothing whatsoever about whether an offer or answer was
+    // delivered — that question is answered by the `rtc_relays_*` counters
+    // below.
     rtc_signals_buffered: 0, // frames held because the call was still ringing
     rtc_signals_replayed: 0, // held frames released into a media-ready call
     rtc_signals_stranded_local: 0, // discarded: the call ended on this instance
     rtc_signals_stranded_remote: 0, // discarded: a peer instance moved the call
+    // ── RTC relay (see signaling/callHandlers.ts) ───────────────────────────
+    // Every frame this instance forwarded to the peer's user room, split by
+    // event so a missing offer is distinguishable from a missing answer.
+    rtc_relays_offer: 0,
+    rtc_relays_answer: 0,
+    rtc_relays_candidate: 0,
+    rtc_relays_other: 0,
+    // Of the relays whose recipients were counted, those that reached *no*
+    // socket anywhere on the fleet. The emit is a room broadcast, so this is
+    // the only evidence that a frame was acknowledged as sent and silently
+    // went nowhere.
+    rtc_relays_no_recipient: 0,
     signaling_errors: 0, // acknowledgeError / error ack responses
     message_persist_errors: 0, // accepted messages that failed durable persistence
     cache_hits: 0, // read served from the shared read cache
@@ -443,15 +491,44 @@ function createTelemetry(): Telemetry {
     counters[provenance.local] += 1;
   }
 
-  function recordRingEnd(counter: 'calls_declined' | 'calls_missed', ts: CallTimestamp | undefined, nowMs: number) {
+  function recordRingEnd(
+    counter: 'calls_declined' | 'calls_missed',
+    call: { createdAt?: string | null },
+    ts: CallTimestamp | undefined,
+    nowMs: number
+  ) {
     counters[counter] += 1;
-    if (ts?.ringingMs !== null && ts?.ringingMs !== undefined) {
-      observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
-    }
+    observeRingDuration(call, ts, nowMs);
+  }
+
+  /**
+   * Observe one `ringing → terminal` sample.
+   *
+   * Measured from the record's own `createdAt` in preference to this process's
+   * `ringingMs`, for the same reason `call_connect_latency_ms` prefers
+   * `answeredAt`: a call created on one instance and ended on another has no
+   * local ring start at all, and the record's is readable from both hosts.
+   */
+  function observeRingDuration(
+    call: { createdAt?: string | null },
+    ts: CallTimestamp | undefined,
+    nowMs: number
+  ) {
+    observeDerivedLatency({
+      histogram: histograms.call_ring_duration_ms,
+      shared: measureElapsedMs(call.createdAt, nowMs, MAX_PLAUSIBLE_SETUP_LATENCY_MS),
+      localElapsedMs: ts?.ringingMs != null ? nowMs - ts.ringingMs : null,
+      provenance: {
+        shared: 'call_ring_duration_shared',
+        local: 'call_ring_duration_local',
+        unmeasured: 'call_ring_duration_unmeasured',
+        skewRejected: 'call_ring_duration_skew_rejected',
+      },
+    });
   }
 
   function recordCallEnd(
-    call: { endReason?: string | null },
+    call: { endReason?: string | null; createdAt?: string | null; answeredAt?: string | null },
     ts: CallTimestamp | undefined,
     nowMs: number,
   ) {
@@ -462,9 +539,21 @@ function createTelemetry(): Telemetry {
     ts.endedMs = nowMs;
     if (ts.inCallMs !== null) {
       observeHistogram(histograms.call_duration_ms, nowMs - ts.inCallMs);
-    } else if (ts.ringingMs !== null) {
-      observeHistogram(histograms.call_ring_duration_ms, nowMs - ts.ringingMs);
+      return;
     }
+    // `inCallMs` is only set by the instance that *handled* the `in_call`
+    // transition, and a transition applied from the cross-instance bus does not
+    // reach this recorder at all — so its absence does not mean the call was
+    // never answered. The record knows: a call with `answeredAt` set did not
+    // end during its ring, whichever host saw it connect, and charging its
+    // whole conversation to `call_ring_duration_ms` is how a twenty-minute
+    // "ring" gets recorded. Counted rather than silently dropped, so the
+    // histogram's blind spot stays visible.
+    if (typeof call.answeredAt === 'string' && call.answeredAt !== '') {
+      counters.call_ring_duration_answered_elsewhere += 1;
+      return;
+    }
+    observeRingDuration(call, ts, nowMs);
   }
 
   function recordCallTransition(call: { callId: string; status: string; endReason?: string | null; createdAt?: string | null; answeredAt?: string | null; }, previousStatus: string) {
@@ -479,10 +568,10 @@ function createTelemetry(): Telemetry {
         recordInCall(call, ts, nowMs);
         break;
       case 'declined':
-        recordRingEnd('calls_declined', ts, nowMs);
+        recordRingEnd('calls_declined', call, ts, nowMs);
         break;
       case 'missed':
-        recordRingEnd('calls_missed', ts, nowMs);
+        recordRingEnd('calls_missed', call, ts, nowMs);
         break;
       case 'ended':
         recordCallEnd(call, ts, nowMs);
@@ -511,6 +600,30 @@ function createTelemetry(): Telemetry {
   function recordRtcBufferOutcome(outcome: RtcBufferOutcome, count: number = 1) {
     if (!Number.isFinite(count) || count <= 0) return;
     counters[RTC_BUFFER_COUNTERS[outcome]] += count;
+  }
+
+  /**
+   * Record that an RTC frame was forwarded to the peer's user room.
+   *
+   * The relay is a room broadcast that succeeds whether or not the peer has a
+   * socket anywhere on the fleet, and it acknowledges the sender either way —
+   * so a frame that went nowhere used to leave no trace at all. That is the
+   * failure this counts.
+   *
+   * @param eventName - The relayed event; anything outside
+   *   {@link RELAYED_RTC_EVENTS} is bucketed as `other`.
+   * @param recipients - How many sockets the room held, or `null` when the
+   *   count was not taken. Counting costs an adapter round trip, so the caller
+   *   takes it only for the one-or-two-per-call SDP frames and passes `null`
+   *   for the high-rate candidate stream; a `null` still counts the relay, it
+   *   just cannot contribute to `rtc_relays_no_recipient`.
+   */
+  function recordRtcRelay(eventName: string, recipients: number | null = null) {
+    const bucket = (RELAYED_RTC_EVENTS as readonly string[]).includes(eventName)
+      ? (`rtc_relays_${eventName.slice('rtc.'.length)}` as keyof typeof counters)
+      : 'rtc_relays_other';
+    counters[bucket] += 1;
+    if (recipients === 0) counters.rtc_relays_no_recipient += 1;
   }
 
   /**
@@ -680,6 +793,7 @@ function createTelemetry(): Telemetry {
     recordCallCreated,
     recordCallTransition,
     recordRtcBufferOutcome,
+    recordRtcRelay,
     recordSignalingError,
     recordMessagePersistenceFailure,
     recordCacheHit,

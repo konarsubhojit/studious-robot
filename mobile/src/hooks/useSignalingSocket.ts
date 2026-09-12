@@ -84,6 +84,7 @@ type UseSignalingSocketParams = Omit<SocketHandlers, 'disconnectSocket'> & {
   activeCallIdRef: MutableRef<string | null>;
   activeCallRef: MutableRef<CallRecord | null>;
   beginIceRecoveryRef: MutableRef<((trigger: RecoveryTrigger) => void) | null>;
+  cancelOfferRetriesRef: MutableRef<((reason: string) => void) | null>;
   detachManagerPingRef: MutableRef<(() => void) | null>;
   deviceIdRef: MutableRef<string | null>;
   dispatchCallEvent: DispatchCallEvent;
@@ -124,6 +125,7 @@ export default function useSignalingSocket({
   activeCallIdRef,
   activeCallRef,
   beginIceRecoveryRef,
+  cancelOfferRetriesRef,
   consumeForeignDeviceCallEvent,
   createOrGetSession,
   detachManagerPingRef,
@@ -409,17 +411,42 @@ export default function useSignalingSocket({
        * is reporting on.
        */
       const reportAnswerSent = (callId: string) => {
+        // An untimed answer still gets its receipt. Returning early here meant
+        // an answer that *was* sent could leave no trace at all whenever the
+        // stage clock had been ended or evicted — indistinguishable, in server
+        // logs, from an answer that was never sent.
         const timing = markAnswerStage(callId);
-        if (!timing) return;
         sendPushReceipt({
           callId,
           stage: 'answer_sent',
-          reason: `sinceAccept:${timing.sinceAcceptMs}`,
-          durationMs: timing.stageMs,
+          reason: timing ? `sinceAccept:${timing.sinceAcceptMs}` : 'untimed',
+          durationMs: timing?.stageMs ?? null,
           sessionId: sessionIdRef.current,
           signalingUrl: signalingUrl.trim(),
         }).catch(error => {
           logWarn('[CallFlow] answer_sent receipt failed', { message: errorMessage(error) });
+        });
+      };
+
+      /**
+       * Report an offer this device received but did not answer.
+       *
+       * Each of these paths used to end in a bare `return` (or, for a missing
+       * peer connection, in nothing at all), so a callee that acquired media
+       * and then dropped the offer looked identical in server logs to one that
+       * never received it — the "then nothing" signature of the incident this
+       * was written for.
+       */
+      const reportOfferDropped = (callId: string | null | undefined, reason: string) => {
+        if (!callId) return;
+        sendPushReceipt({
+          callId,
+          stage: 'answer_failed',
+          reason,
+          sessionId: sessionIdRef.current,
+          signalingUrl: signalingUrl.trim(),
+        }).catch(error => {
+          logWarn('[CallFlow] answer_failed receipt failed', { message: errorMessage(error) });
         });
       };
 
@@ -431,17 +458,23 @@ export default function useSignalingSocket({
         });
         if (offerDecision === 'ignore-unknown-call') {
           logWarn('[CallFlow] rtc.offer for unknown callId', { callId });
+          reportOfferDropped(callId, 'offer_unknown_call');
           return;
         }
         if (offerDecision === 'ignore-glare') {
-          logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer');
+          logWarn('[CallFlow] Glare: ignoring concurrent rtc.offer', { callId });
+          reportOfferDropped(callId, 'offer_glare');
           return;
         }
         isNegotiatingRef.current = true;
         logInfo('[CallFlow] RTC offer received');
         try {
           const pc = await ensurePeerConnectionRef.current?.();
-          if (!pc) return;
+          if (!pc) {
+            logWarn('[CallFlow] No peer connection to answer the rtc.offer with', { callId });
+            reportOfferDropped(callId, 'peer_connection_missing');
+            return;
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           const buffered = iceCandidateBufferRef.current;
           iceCandidateBufferRef.current = [];
@@ -490,6 +523,9 @@ export default function useSignalingSocket({
           return;
         }
         logInfo('[CallFlow] RTC answer received');
+        // The offer this answers has been delivered: stop the retry that was
+        // armed in case it had not been.
+        cancelOfferRetriesRef.current?.('answer-received');
         try {
           const pc = peerConnectionRef.current;
           if (!pc) return;
